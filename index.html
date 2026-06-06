@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;700&family=Geist:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
-<link rel="icon" type="image/png" href="prismatic_logo_icon.png">
+<link rel="icon" type="image/png" href="prismatic_logo_icon.png?v=2">
 <style>
 :root {
   --bg-obsidian: #080809;
@@ -623,7 +623,7 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
 <nav>
   <div class="container">
     <a href="/" class="nav-logo">
-      <img src="prismatic_logo_icon.png" alt="Prismatic Engine" width="28" height="28" style="display:block;">
+      <img src="prismatic_logo_icon.png?v=2" alt="Prismatic Engine" width="28" height="28" style="display:block;">
       <span>PRISMATIC ENGINE</span>
     </a>
     <div class="nav-links">
@@ -647,76 +647,7 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
     </div>
     
     <div class="prism-visual">
-      <svg viewBox="0 0 800 200" fill="none" class="prism-svg" xmlns="http://www.w3.org/2000/svg">
-        <defs>
-          <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-            <feGaussianBlur stdDeviation="6" result="blur" />
-            <feMerge>
-              <feMergeNode in="blur" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
-          <filter id="prism-glow" x="-20%" y="-20%" width="140%" height="140%">
-            <feGaussianBlur stdDeviation="8" result="blur" />
-            <feMerge>
-              <feMergeNode in="blur" />
-              <feMergeNode in="SourceGraphic" />
-            </feMerge>
-          </filter>
-          <linearGradient id="white-beam-grad" x1="100" y1="100" x2="350" y2="100" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stop-color="#ffffff" stop-opacity="0" />
-            <stop offset="100%" stop-color="#ffffff" stop-opacity="1" />
-          </linearGradient>
-          <linearGradient id="agy-grad" x1="370" y1="82" x2="720" y2="30" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stop-color="#ffffff" />
-            <stop offset="15%" stop-color="#E74C3C" />
-            <stop offset="100%" stop-color="#E74C3C" stop-opacity="0" />
-          </linearGradient>
-          <linearGradient id="jules-grad" x1="374" y1="90" x2="720" y2="58" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stop-color="#ffffff" />
-            <stop offset="15%" stop-color="#F39C12" />
-            <stop offset="100%" stop-color="#F39C12" stop-opacity="0" />
-          </linearGradient>
-          <linearGradient id="bolt-grad" x1="378" y1="98" x2="720" y2="86" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stop-color="#ffffff" />
-            <stop offset="15%" stop-color="#F1C40F" />
-            <stop offset="100%" stop-color="#F1C40F" stop-opacity="0" />
-          </linearGradient>
-          <linearGradient id="hermes-grad" x1="382" y1="106" x2="720" y2="114" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stop-color="#ffffff" />
-            <stop offset="15%" stop-color="#2ECC71" />
-            <stop offset="100%" stop-color="#2ECC71" stop-opacity="0" />
-          </linearGradient>
-          <linearGradient id="codex-grad" x1="386" y1="114" x2="720" y2="142" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stop-color="#ffffff" />
-            <stop offset="15%" stop-color="#3498DB" />
-            <stop offset="100%" stop-color="#3498DB" stop-opacity="0" />
-          </linearGradient>
-          <linearGradient id="research-grad" x1="390" y1="122" x2="720" y2="170" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stop-color="#ffffff" />
-            <stop offset="15%" stop-color="#9B59B6" />
-            <stop offset="100%" stop-color="#9B59B6" stop-opacity="0" />
-          </linearGradient>
-        </defs>
-
-        <!-- Incoming beam -->
-        <path d="M 50 100 L 350 100" stroke="url(#white-beam-grad)" stroke-width="4" filter="url(#glow)" stroke-linecap="round" class="beam-in" />
-
-        <!-- Outgoing beams -->
-        <path d="M 370 82 Q 450 95 720 30" stroke="url(#agy-grad)" stroke-width="3" filter="url(#glow)" stroke-linecap="round" class="beam-out a-beam" />
-        <path d="M 374 90 Q 450 99 720 58" stroke="url(#jules-grad)" stroke-width="3" filter="url(#glow)" stroke-linecap="round" class="beam-out j-beam" />
-        <path d="M 378 98 Q 450 103 720 86" stroke="url(#bolt-grad)" stroke-width="3" filter="url(#glow)" stroke-linecap="round" class="beam-out b-beam" />
-        <path d="M 382 106 Q 450 107 720 114" stroke="url(#hermes-grad)" stroke-width="3" filter="url(#glow)" stroke-linecap="round" class="beam-out h-beam" />
-        <path d="M 386 114 Q 450 111 720 142" stroke="url(#codex-grad)" stroke-width="3" filter="url(#glow)" stroke-linecap="round" class="beam-out c-beam" />
-        <path d="M 390 122 Q 450 115 720 170" stroke="url(#research-grad)" stroke-width="3" filter="url(#glow)" stroke-linecap="round" class="beam-out r-beam" />
-
-        <!-- Prism Triangle -->
-        <polygon points="320,160 380,50 440,160" fill="rgba(10, 10, 11, 0.75)" stroke="rgba(255, 255, 255, 0.15)" stroke-width="2.5" class="prism-glass" />
-        <polygon points="320,160 380,50 440,160" fill="none" stroke="rgba(255, 255, 255, 0.35)" stroke-width="1" filter="url(#prism-glow)" class="prism-glass-glow" />
-
-        <!-- Dispersion Sparkle -->
-        <circle cx="378" cy="100" r="4" fill="#ffffff" filter="url(#glow)" class="prism-sparkle" />
-      </svg>
+      <img src="prismatic_hero_illustration.png?v=2" alt="Data enters the prism — the Agent Spectrum executes" style="width:100%;max-width:900px;height:auto;border-radius:4px;border:1px solid var(--border-steel);">
     </div>
   </div>
 </section>
@@ -949,7 +880,7 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
   <div class="container">
     <div class="footer-grid">
       <div class="footer-brand">
-        <img src="prismatic_logo_icon.png" alt="Prismatic Engine" width="24" height="24" style="display:block;opacity:0.6;">
+        <img src="prismatic_logo_icon.png?v=2" alt="Prismatic Engine" width="24" height="24" style="display:block;opacity:0.6;">
         <span>Prismatic Engine</span>
       </div>
       <div class="footer-links">
