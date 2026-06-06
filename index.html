@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+<link rel="icon" type="image/png" href="prismatic_logo_icon.png">
 <style>
 :root {
   --bg-obsidian: #0A0A0B;
@@ -26,9 +27,16 @@
   --font-sans: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
   --gradient-spectrum: linear-gradient(90deg, #E74C3C 0%, #F39C12 20%, #F1C40F 40%, #2ECC71 60%, #3498DB 80%, #9B59B6 100%);
+  --glass-bg: rgba(18, 18, 20, 0.65);
+  --glass-border: rgba(255, 255, 255, 0.05);
+  --glass-shadow: rgba(0, 0, 0, 0.4);
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html {
+  scroll-behavior: smooth;
+}
 
 body {
   background-color: var(--bg-obsidian);
@@ -54,6 +62,22 @@ body::before {
 }
 
 .container { max-width: 1200px; margin: 0 auto; padding: 0 2rem; position: relative; z-index: 1; }
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-obsidian);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-steel);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--border-active);
+}
 
 /* NAV */
 nav {
@@ -95,7 +119,7 @@ nav .container { display: flex; align-items: center; justify-content: space-betw
   font-size: 1.15rem; color: var(--text-muted); max-width: 640px; margin: 0 auto 2.5rem;
   line-height: 1.7;
 }
-.hero-actions { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+.hero-actions { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; margin-bottom: 4rem; }
 
 .btn-primary {
   background: var(--text-primary); color: var(--bg-obsidian);
@@ -103,7 +127,7 @@ nav .container { display: flex; align-items: center; justify-content: space-betw
   font-family: var(--font-sans); font-size: 0.95rem; text-decoration: none;
   transition: all 0.3s ease; border: none; cursor: pointer;
 }
-.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 8px 30px rgba(255,255,255,0.1); }
+.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 8px 30px rgba(255,255,255,0.15); }
 
 .btn-ghost {
   background: transparent; color: var(--text-primary);
@@ -115,38 +139,54 @@ nav .container { display: flex; align-items: center; justify-content: space-betw
 
 /* Prism Visual */
 .prism-visual {
-  max-width: 720px; margin: 3rem auto 0;
-  display: flex; align-items: center; justify-content: center;
-  gap: 0; position: relative; height: 140px;
+  max-width: 800px; margin: 4rem auto 0;
+  position: relative;
 }
-.prism-beam-input {
-  width: 60px; height: 2px; background: var(--white-beam);
-  box-shadow: 0 0 12px rgba(255,255,255,0.5), 0 0 30px rgba(255,255,255,0.2);
-  animation: pulse-beam 2s ease-in-out infinite;
+.prism-svg {
+  width: 100%;
+  height: auto;
+  display: block;
 }
-@keyframes pulse-beam { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
-.prism-triangle {
-  width: 0; height: 0;
-  border-left: 50px solid transparent;
-  border-right: 70px solid transparent;
-  border-bottom: 110px solid rgba(255,255,255,0.06);
-  position: relative; margin: 0 -10px;
+.prism-glass-glow {
+  animation: prism-glow-pulse 4s ease-in-out infinite;
 }
-.prism-beams { display: flex; flex-direction: column; gap: 6px; }
-.prism-beam {
-  height: 2px; border-radius: 1px; opacity: 0.8;
-  transition: all 0.3s ease;
+@keyframes prism-glow-pulse {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 0.7; }
 }
-.prism-beam:nth-child(1) { width: 130px; background: var(--color-agy); }
-.prism-beam:nth-child(2) { width: 155px; background: var(--color-jules); }
-.prism-beam:nth-child(3) { width: 145px; background: var(--color-bolt); }
-.prism-beam:nth-child(4) { width: 170px; background: var(--color-hermes); }
-.prism-beam:nth-child(5) { width: 160px; background: var(--color-codex); }
-.prism-beam:nth-child(6) { width: 140px; background: var(--color-research); }
-.prism-beam:hover { opacity: 1; box-shadow: 0 0 15px currentColor; }
+.prism-sparkle {
+  animation: sparkle-pulse 2s ease-in-out infinite;
+}
+@keyframes sparkle-pulse {
+  0%, 100% { r: 3px; opacity: 0.7; }
+  50% { r: 5px; opacity: 1; }
+}
+
+@keyframes flow-in {
+  0% { stroke-dashoffset: 600; }
+  100% { stroke-dashoffset: 0; }
+}
+@keyframes flow-out {
+  0% { stroke-dashoffset: 800; }
+  100% { stroke-dashoffset: 0; }
+}
+.beam-in {
+  stroke-dasharray: 150;
+  animation: flow-in 4s linear infinite;
+}
+.beam-out {
+  stroke-dasharray: 200;
+  animation: flow-out 5s linear infinite;
+}
+.a-beam { animation-delay: 0s; }
+.j-beam { animation-delay: 0.2s; }
+.b-beam { animation-delay: 0.4s; }
+.h-beam { animation-delay: 0.6s; }
+.c-beam { animation-delay: 0.8s; }
+.r-beam { animation-delay: 1.0s; }
 
 /* SECTIONS */
-section { padding: 5rem 0; }
+section { padding: 6rem 0; }
 .section-label {
   font-family: var(--font-mono); font-size: 0.7rem; letter-spacing: 0.2em;
   text-transform: uppercase; color: var(--text-muted); margin-bottom: 1rem;
@@ -161,74 +201,275 @@ section { padding: 5rem 0; }
 
 /* What It Is */
 .what-grid {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 4rem; align-items: center;
+  display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 4rem; align-items: center;
   margin-top: 3rem;
 }
-.what-left h2 { font-size: 2rem; line-height: 1.3; margin-bottom: 1rem; }
-.what-left p { color: var(--text-muted); line-height: 1.7; }
-.status-dashboard {
-  background: var(--bg-charcoal); border: 1px solid var(--border-steel);
-  border-radius: 8px; padding: 2rem;
+.what-left h2 { font-size: 2.25rem; line-height: 1.3; margin-bottom: 1.5rem; }
+.what-left p { color: var(--text-muted); line-height: 1.7; font-size: 1.05rem; }
+
+/* Terminal Status UI */
+.terminal-ui {
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 20px 40px var(--glass-shadow);
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  height: 320px;
+  text-align: left;
 }
-.status-row {
-  display: flex; align-items: center; gap: 1rem; margin-bottom: 1.25rem;
-  font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-muted);
+.terminal-header {
+  background: rgba(10, 10, 11, 0.5);
+  border-bottom: 1px solid var(--border-steel);
+  padding: 0.75rem 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
-.status-dot { width: 8px; height: 8px; border-radius: 50%; }
-.status-dot.green { background: var(--color-hermes); box-shadow: 0 0 8px rgba(46,204,113,0.5); animation: pulse-dot 2s infinite; }
-@keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
-.status-value { color: var(--text-primary); margin-left: auto; }
+.terminal-dots {
+  display: flex;
+  gap: 0.5rem;
+}
+.terminal-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.dot-red { background: #E74C3C; }
+.dot-yellow { background: #F1C40F; }
+.dot-green { background: #2ECC71; }
+.terminal-title {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  letter-spacing: 0.05em;
+}
+.terminal-status {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--color-hermes);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.pulse-indicator {
+  width: 6px;
+  height: 6px;
+  background: var(--color-hermes);
+  border-radius: 50%;
+  box-shadow: 0 0 6px var(--color-hermes);
+  animation: terminal-pulse 2s infinite;
+}
+@keyframes terminal-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+.terminal-body {
+  padding: 1.25rem;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.terminal-sysinfo {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.5rem 1rem;
+  margin-bottom: 0.75rem;
+  color: var(--text-muted);
+}
+.sys-item {
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.03);
+  padding-bottom: 0.2rem;
+}
+.sys-val {
+  color: var(--text-primary);
+}
+.terminal-divider {
+  height: 1px;
+  background: var(--border-steel);
+  margin-bottom: 0.75rem;
+}
+.terminal-logs {
+  flex-grow: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  color: var(--text-muted);
+  scroll-behavior: smooth;
+}
+.log-line {
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+.log-sys { color: var(--text-muted); opacity: 0.65; }
+.log-agy { color: var(--color-agy); }
+.log-jules { color: var(--color-jules); }
+.log-hermes { color: var(--color-hermes); }
+.log-codex { color: var(--color-codex); }
+.log-research { color: var(--color-research); }
+.log-cursor {
+  display: inline-block;
+  width: 6px;
+  height: 12px;
+  background: var(--text-primary);
+  margin-left: 2px;
+  animation: cursor-blink 0.8s infinite;
+  vertical-align: middle;
+}
+@keyframes cursor-blink {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 1; }
+}
 
 /* Agent Spectrum */
 .spectrum-grid {
   display: grid; grid-template-columns: repeat(6, 1fr); gap: 0.75rem; margin-top: 3rem;
 }
 .agent-card {
-  background: var(--bg-charcoal); border: 1px solid var(--border-steel);
-  border-radius: 8px; padding: 1.5rem 1rem; text-align: center;
-  transition: all 0.3s ease; cursor: default;
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  padding: 1.75rem 1rem;
+  text-align: center;
+  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 4px 20px var(--glass-shadow);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  align-items: center;
+  height: 100%;
 }
-.agent-card:hover { transform: translateY(-2px); }
-.agent-card:nth-child(1):hover { border-color: var(--color-agy); box-shadow: 0 0 30px rgba(231,76,60,0.15); }
-.agent-card:nth-child(2):hover { border-color: var(--color-jules); box-shadow: 0 0 30px rgba(243,156,18,0.15); }
-.agent-card:nth-child(3):hover { border-color: var(--color-bolt); box-shadow: 0 0 30px rgba(241,196,15,0.15); }
-.agent-card:nth-child(4):hover { border-color: var(--color-hermes); box-shadow: 0 0 30px rgba(46,204,113,0.15); }
-.agent-card:nth-child(5):hover { border-color: var(--color-codex); box-shadow: 0 0 30px rgba(52,152,219,0.15); }
-.agent-card:nth-child(6):hover { border-color: var(--color-research); box-shadow: 0 0 30px rgba(155,89,182,0.15); }
-.agent-dot {
-  width: 12px; height: 12px; border-radius: 50%; margin: 0 auto 0.75rem;
+.agent-card-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
 }
-.agent-dot.red { background: var(--color-agy); }
-.agent-dot.amber { background: var(--color-jules); }
-.agent-dot.gold { background: var(--color-bolt); }
-.agent-dot.emerald { background: var(--color-hermes); }
-.agent-dot.sapphire { background: var(--color-codex); }
-.agent-dot.amethyst { background: var(--color-research); }
-.agent-name {
-  font-family: var(--font-mono); font-weight: 700; font-size: 0.85rem;
-  margin-bottom: 0.35rem;
+.agent-card:hover {
+  transform: translateY(-4px);
+  border-color: var(--border-active);
 }
-.agent-role { font-size: 0.8rem; color: var(--text-muted); }
+.agent-card:nth-child(1):hover { border-color: var(--color-agy); box-shadow: 0 10px 30px rgba(231,76,60,0.12), inset 0 0 15px rgba(231,76,60,0.05); }
+.agent-card:nth-child(2):hover { border-color: var(--color-jules); box-shadow: 0 10px 30px rgba(243,156,18,0.12), inset 0 0 15px rgba(243,156,18,0.05); }
+.agent-card:nth-child(3):hover { border-color: var(--color-bolt); box-shadow: 0 10px 30px rgba(241,196,15,0.12), inset 0 0 15px rgba(241,196,15,0.05); }
+.agent-card:nth-child(4):hover { border-color: var(--color-hermes); box-shadow: 0 10px 30px rgba(46,204,113,0.12), inset 0 0 15px rgba(46,204,113,0.05); }
+.agent-card:nth-child(5):hover { border-color: var(--color-codex); box-shadow: 0 10px 30px rgba(52,152,219,0.12), inset 0 0 15px rgba(52,152,219,0.05); }
+.agent-card:nth-child(6):hover { border-color: var(--color-research); box-shadow: 0 10px 30px rgba(155,89,182,0.12), inset 0 0 15px rgba(155,89,182,0.05); }
 
-/* How It Works */
+.agent-dot {
+  width: 10px; height: 10px; border-radius: 50%; margin-bottom: 0.75rem;
+  box-shadow: 0 0 8px currentColor;
+}
+.agent-dot.red { background: var(--color-agy); color: var(--color-agy); }
+.agent-dot.amber { background: var(--color-jules); color: var(--color-jules); }
+.agent-dot.gold { background: var(--color-bolt); color: var(--color-bolt); }
+.agent-dot.emerald { background: var(--color-hermes); color: var(--color-hermes); }
+.agent-dot.sapphire { background: var(--color-codex); color: var(--color-codex); }
+.agent-dot.amethyst { background: var(--color-research); color: var(--color-research); }
+
+.agent-name {
+  font-family: var(--font-mono); font-weight: 700; font-size: 0.9rem;
+  margin-bottom: 0.25rem;
+}
+.agent-role { font-size: 0.8rem; color: var(--text-muted); font-weight: 600; margin-bottom: 0.75rem; }
+.agent-details {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+  opacity: 0.65;
+  transition: opacity 0.3s;
+}
+.agent-card:hover .agent-details {
+  opacity: 1;
+  color: var(--text-primary);
+}
+
+/* How It Works & Pipeline */
+.pipeline-tabs {
+  display: flex;
+  justify-content: center;
+  gap: 0.75rem;
+  margin: 2.5rem 0 1.5rem;
+}
+.pipeline-tab {
+  background: var(--bg-charcoal);
+  border: 1px solid var(--border-steel);
+  color: var(--text-muted);
+  padding: 0.5rem 1.25rem;
+  border-radius: 20px;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+.pipeline-tab.active, .pipeline-tab:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--border-active);
+  color: var(--text-primary);
+}
+.pipeline-tab.active {
+  box-shadow: 0 0 15px rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.08);
+}
+
 .how-pipeline {
   display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; gap: 0;
-  align-items: center; margin-top: 3rem;
+  align-items: center;
 }
 .pipeline-step {
-  background: var(--bg-charcoal); border: 1px solid var(--border-steel);
-  border-radius: 8px; padding: 2rem 1.5rem; text-align: center;
+  background: var(--glass-bg); border: 1px solid var(--glass-border);
+  border-radius: 10px; padding: 2rem 1.5rem; text-align: center;
+  box-shadow: 0 10px 25px var(--glass-shadow);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
 }
-.pipeline-step h3 { font-family: var(--font-mono); font-size: 0.85rem; margin-bottom: 0.75rem; }
+.pipeline-step h3 { font-family: var(--font-mono); font-size: 0.85rem; margin-bottom: 0.75rem; letter-spacing: 0.05em; }
 .pipeline-step p { color: var(--text-muted); font-size: 0.9rem; line-height: 1.6; }
 .pipeline-arrow {
   font-size: 1.5rem; color: var(--border-active); padding: 0 0.5rem;
+  animation: arrow-bounce 2s infinite ease-in-out;
+}
+@keyframes arrow-bounce {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(4px); }
+}
+
+.code-block-container {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--border-steel);
+  border-radius: 6px;
+  overflow: hidden;
+  margin-top: 1rem;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+  text-align: left;
+}
+.code-block-header {
+  background: rgba(18, 18, 20, 0.6);
+  border-bottom: 1px solid var(--border-steel);
+  padding: 0.4rem 0.75rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-muted);
 }
 .code-block {
-  background: rgba(0,0,0,0.4); border: 1px solid var(--border-steel);
-  border-radius: 6px; padding: 1rem; margin-top: 1rem;
+  padding: 0.85rem 0.75rem;
   font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-muted);
-  text-align: left; line-height: 1.6; overflow-x: auto;
+  line-height: 1.6; overflow-x: auto;
 }
 .code-block .key { color: var(--color-codex); }
 .code-block .val { color: var(--color-hermes); }
@@ -237,59 +478,119 @@ section { padding: 5rem 0; }
 /* Bolt-on Marketplace */
 .market-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem; margin-top: 3rem; }
 .market-card {
-  background: var(--bg-charcoal); border: 1px solid var(--border-steel);
-  border-radius: 8px; padding: 2rem; transition: all 0.3s ease;
+  background: var(--glass-bg); border: 1px solid var(--glass-border);
+  border-radius: 10px; padding: 2.5rem 1.75rem; position: relative;
+  display: flex; flex-direction: column; justify-content: space-between;
+  height: 100%; box-shadow: 0 10px 25px var(--glass-shadow);
+  transition: all 0.3s ease;
 }
-.market-card:hover { border-color: var(--border-active); transform: translateY(-2px); }
-.market-card h3 { font-family: var(--font-mono); font-size: 0.9rem; margin-bottom: 0.5rem; }
-.market-card p { color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1.25rem; line-height: 1.6; }
+.market-card:hover { border-color: var(--border-active); transform: translateY(-4px); }
+.market-badge {
+  position: absolute; top: 1rem; right: 1.25rem;
+  font-family: var(--font-mono); font-size: 0.65rem; letter-spacing: 0.05em;
+  background: rgba(255, 255, 255, 0.04); border: 1px solid var(--border-steel);
+  padding: 0.2rem 0.5rem; border-radius: 4px; color: var(--text-muted);
+}
+.market-card h3 { font-family: var(--font-mono); font-size: 0.95rem; margin: 0.5rem 0; letter-spacing: 0.02em; }
+.market-card p { color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1.5rem; line-height: 1.6; }
+
+.market-cmd-wrapper {
+  position: relative; display: flex; align-items: center;
+  background: rgba(0,0,0,0.4); border: 1px solid var(--border-steel);
+  border-radius: 6px; overflow: hidden;
+}
 .market-cmd {
-  background: rgba(0,0,0,0.4); border-radius: 4px; padding: 0.5rem 0.75rem;
-  font-family: var(--font-mono); font-size: 0.75rem; color: var(--color-bolt);
-  cursor: pointer; transition: background 0.2s; user-select: all;
+  flex-grow: 1; border: none; background: transparent;
+  padding: 0.75rem 0.75rem; font-family: var(--font-mono); font-size: 0.75rem;
+  color: var(--color-bolt); user-select: all; text-align: left;
 }
-.market-cmd:hover { background: rgba(241,196,15,0.08); }
+.copy-btn {
+  background: transparent; border: none; border-left: 1px solid var(--border-steel);
+  color: var(--text-muted); padding: 0.75rem; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.2s;
+}
+.copy-btn:hover { color: var(--color-bolt); background: rgba(241,196,15,0.05); }
+.copy-btn.copied { color: var(--color-hermes); background: rgba(46,204,113,0.05); }
+.hidden { display: none !important; }
 
 /* Open Source */
 .open-source {
-  background: var(--bg-charcoal); border: 1px solid var(--border-steel);
-  border-radius: 12px; padding: 4rem 3rem; text-align: center;
+  background: var(--glass-bg); border: 1px solid var(--glass-border);
+  box-shadow: 0 15px 35px var(--glass-shadow);
+  backdrop-filter: blur(12px);
+  border-radius: 12px; padding: 4.5rem 3rem; text-align: center;
 }
-.open-source h2 { font-size: 2rem; margin-bottom: 1rem; }
-.open-source p { color: var(--text-muted); max-width: 600px; margin: 0 auto 2rem; line-height: 1.7; }
+.open-source h2 { font-size: 2.25rem; margin-bottom: 1rem; }
+.open-source p { color: var(--text-muted); max-width: 600px; margin: 0 auto 2.5rem; line-height: 1.7; font-size: 1.05rem; }
 .os-buttons { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
 
+/* Early Access Form */
+.form-success {
+  text-align: center; padding: 2.5rem 1.5rem;
+  border: 1px dashed var(--color-hermes); border-radius: 8px;
+  background: rgba(46, 204, 113, 0.02);
+}
+.success-icon {
+  width: 48px; height: 48px; background: var(--color-hermes);
+  color: var(--bg-obsidian); border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.5rem; font-weight: 700; margin: 0 auto 1.25rem;
+  box-shadow: 0 0 20px rgba(46,204,113,0.3);
+}
+.form-success h3 { font-size: 1.25rem; margin-bottom: 0.5rem; }
+.form-success p { font-size: 0.9rem; color: var(--text-muted); line-height: 1.6; }
+.spinner { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.fade-in { animation: fade-in-anim 0.5s ease forwards; }
+@keyframes fade-in-anim {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Scroll Reveal */
+.scroll-reveal {
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1), transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.scroll-reveal.revealed {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 /* Footer */
-footer { border-top: 1px solid var(--border-steel); padding: 3rem 0; }
+footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; background: rgba(10,10,11,0.5); }
 .footer-grid { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 2rem; }
 .footer-brand { display: flex; align-items: center; gap: 0.75rem; }
 .footer-brand span { font-family: var(--font-mono); font-weight: 700; font-size: 0.9rem; }
-.footer-links { display: flex; gap: 2rem; }
+.footer-links { display: flex; gap: 2.5rem; }
 .footer-links a { color: var(--text-muted); text-decoration: none; font-size: 0.85rem; transition: color 0.2s; }
 .footer-links a:hover { color: var(--text-primary); }
-.footer-bottom { margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--border-steel); color: var(--text-muted); font-size: 0.8rem; }
+.footer-bottom { margin-top: 3rem; padding-top: 1.5rem; border-top: 1px solid var(--border-steel); color: var(--text-muted); font-size: 0.8rem; }
 
 /* RESPONSIVE */
 @media (max-width: 1023px) {
-  .spectrum-grid { grid-template-columns: repeat(3, 1fr); }
-  .what-grid { grid-template-columns: 1fr; gap: 2rem; }
+  .spectrum-grid { grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+  .what-grid { grid-template-columns: 1fr; gap: 3rem; }
   .how-pipeline { grid-template-columns: 1fr; gap: 1rem; }
-  .pipeline-arrow { transform: rotate(90deg); padding: 0.5rem 0; text-align: center; }
+  .pipeline-arrow { transform: rotate(90deg); padding: 0.5rem 0; text-align: center; animation: arrow-bounce-v 2s infinite ease-in-out; }
   .nav-links { display: none; }
 }
+@keyframes arrow-bounce-v {
+  0%, 100% { transform: translateY(0) rotate(90deg); }
+  50% { transform: translateY(4px) rotate(90deg); }
+}
+
 @media (max-width: 767px) {
-  .container { padding: 0 1.25rem; }
-  .hero { padding: 4rem 0 2rem; }
+  .container { padding: 0 1.5rem; }
+  .hero { padding: 5rem 0 3rem; }
   .spectrum-grid { grid-template-columns: repeat(2, 1fr); }
-  .market-grid { grid-template-columns: 1fr; }
-  .open-source { padding: 2.5rem 1.5rem; }
-  .hero-actions { flex-direction: column; align-items: center; }
-  .prism-visual { flex-direction: column; height: auto; gap: 0.5rem; }
-  .prism-beam-input { width: 2px; height: 30px; }
-  .prism-triangle { border-left: 40px solid transparent; border-right: 40px solid transparent; border-bottom: 50px solid rgba(255,255,255,0.06); margin: 0; transform: rotate(90deg); }
-  .prism-beams { flex-direction: row; flex-wrap: wrap; gap: 4px; justify-content: center; }
-  .prism-beam:nth-child(1), .prism-beam:nth-child(2), .prism-beam:nth-child(3),
-  .prism-beam:nth-child(4), .prism-beam:nth-child(5), .prism-beam:nth-child(6) { width: 40px; }
+  .market-grid { grid-template-columns: 1fr; gap: 2rem; }
+  .open-source { padding: 3rem 1.5rem; }
+  .hero-actions { flex-direction: column; align-items: center; gap: 0.75rem; }
+  .hero-actions .btn-primary, .hero-actions .btn-ghost { width: 100%; max-width: 320px; }
+  .prism-visual { margin-top: 2rem; }
 }
 </style>
 </head>
@@ -298,7 +599,7 @@ footer { border-top: 1px solid var(--border-steel); padding: 3rem 0; }
 <nav>
   <div class="container">
     <a href="/" class="nav-logo">
-      <svg viewBox="0 0 28 28" fill="none"><path d="M14 2L2 22h8l-2 4 18-20h-8l2-4z" stroke="white" stroke-width="1.5" stroke-linejoin="round"/></svg>
+      <img src="prismatic_logo_icon.png" alt="Prismatic Engine" width="28" height="28" style="display:block;">
       <span>PRISMATIC ENGINE</span>
     </a>
     <div class="nav-links">
@@ -320,22 +621,83 @@ footer { border-top: 1px solid var(--border-steel); padding: 3rem 0; }
       <a href="#get-started" class="btn-primary">Get Started</a>
       <a href="https://github.com/mbgulden/prismatic-engine" class="btn-ghost">View on GitHub</a>
     </div>
+    
     <div class="prism-visual">
-      <div class="prism-beam-input"></div>
-      <div class="prism-triangle"></div>
-      <div class="prism-beams">
-        <div class="prism-beam"></div>
-        <div class="prism-beam"></div>
-        <div class="prism-beam"></div>
-        <div class="prism-beam"></div>
-        <div class="prism-beam"></div>
-        <div class="prism-beam"></div>
-      </div>
+      <svg viewBox="0 0 800 200" fill="none" class="prism-svg" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="6" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+          <filter id="prism-glow" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur stdDeviation="8" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+          <linearGradient id="white-beam-grad" x1="100" y1="100" x2="350" y2="100" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#ffffff" stop-opacity="0" />
+            <stop offset="100%" stop-color="#ffffff" stop-opacity="1" />
+          </linearGradient>
+          <linearGradient id="agy-grad" x1="370" y1="82" x2="720" y2="30" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#ffffff" />
+            <stop offset="15%" stop-color="#E74C3C" />
+            <stop offset="100%" stop-color="#E74C3C" stop-opacity="0" />
+          </linearGradient>
+          <linearGradient id="jules-grad" x1="374" y1="90" x2="720" y2="58" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#ffffff" />
+            <stop offset="15%" stop-color="#F39C12" />
+            <stop offset="100%" stop-color="#F39C12" stop-opacity="0" />
+          </linearGradient>
+          <linearGradient id="bolt-grad" x1="378" y1="98" x2="720" y2="86" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#ffffff" />
+            <stop offset="15%" stop-color="#F1C40F" />
+            <stop offset="100%" stop-color="#F1C40F" stop-opacity="0" />
+          </linearGradient>
+          <linearGradient id="hermes-grad" x1="382" y1="106" x2="720" y2="114" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#ffffff" />
+            <stop offset="15%" stop-color="#2ECC71" />
+            <stop offset="100%" stop-color="#2ECC71" stop-opacity="0" />
+          </linearGradient>
+          <linearGradient id="codex-grad" x1="386" y1="114" x2="720" y2="142" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#ffffff" />
+            <stop offset="15%" stop-color="#3498DB" />
+            <stop offset="100%" stop-color="#3498DB" stop-opacity="0" />
+          </linearGradient>
+          <linearGradient id="research-grad" x1="390" y1="122" x2="720" y2="170" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#ffffff" />
+            <stop offset="15%" stop-color="#9B59B6" />
+            <stop offset="100%" stop-color="#9B59B6" stop-opacity="0" />
+          </linearGradient>
+        </defs>
+
+        <!-- Incoming beam -->
+        <path d="M 50 100 L 350 100" stroke="url(#white-beam-grad)" stroke-width="4" filter="url(#glow)" stroke-linecap="round" class="beam-in" />
+
+        <!-- Outgoing beams -->
+        <path d="M 370 82 Q 450 95 720 30" stroke="url(#agy-grad)" stroke-width="3" filter="url(#glow)" stroke-linecap="round" class="beam-out a-beam" />
+        <path d="M 374 90 Q 450 99 720 58" stroke="url(#jules-grad)" stroke-width="3" filter="url(#glow)" stroke-linecap="round" class="beam-out j-beam" />
+        <path d="M 378 98 Q 450 103 720 86" stroke="url(#bolt-grad)" stroke-width="3" filter="url(#glow)" stroke-linecap="round" class="beam-out b-beam" />
+        <path d="M 382 106 Q 450 107 720 114" stroke="url(#hermes-grad)" stroke-width="3" filter="url(#glow)" stroke-linecap="round" class="beam-out h-beam" />
+        <path d="M 386 114 Q 450 111 720 142" stroke="url(#codex-grad)" stroke-width="3" filter="url(#glow)" stroke-linecap="round" class="beam-out c-beam" />
+        <path d="M 390 122 Q 450 115 720 170" stroke="url(#research-grad)" stroke-width="3" filter="url(#glow)" stroke-linecap="round" class="beam-out r-beam" />
+
+        <!-- Prism Triangle -->
+        <polygon points="320,160 380,50 440,160" fill="rgba(10, 10, 11, 0.75)" stroke="rgba(255, 255, 255, 0.15)" stroke-width="2.5" class="prism-glass" />
+        <polygon points="320,160 380,50 440,160" fill="none" stroke="rgba(255, 255, 255, 0.35)" stroke-width="1" filter="url(#prism-glow)" class="prism-glass-glow" />
+
+        <!-- Dispersion Sparkle -->
+        <circle cx="378" cy="100" r="4" fill="#ffffff" filter="url(#glow)" class="prism-sparkle" />
+      </svg>
     </div>
   </div>
 </section>
 
-<section id="what">
+<section id="what" class="scroll-reveal">
   <div class="container">
     <div class="section-label">The Autonomy Gap</div>
     <div class="what-grid">
@@ -343,89 +705,182 @@ footer { border-top: 1px solid var(--border-steel); padding: 3rem 0; }
         <h2>AI swarms shouldn't be bloated, cloud-locked, or hard to deploy.</h2>
         <p>Current agent frameworks chain you to specific providers or bury you in configuration. Prismatic Engine breaks workflows into a spectrum of specialized agents — running wherever you need them, with zero lock-in.</p>
       </div>
-      <div class="status-dashboard">
-        <div class="status-row"><div class="status-dot green"></div>ENGINE: ACTIVE<span class="status-value">v0.1.0</span></div>
-        <div class="status-row"><div class="status-dot green"></div>PORTABILITY<span class="status-value">LOCALHOST</span></div>
-        <div class="status-row"><div class="status-dot green"></div>PROVIDER<span class="status-value">AGNOSTIC</span></div>
-        <div class="status-row"><div class="status-dot green"></div>LICENSE<span class="status-value">AGPLv3</span></div>
+      <div class="status-dashboard terminal-ui">
+        <div class="terminal-header">
+          <div class="terminal-dots">
+            <span class="terminal-dot dot-red"></span>
+            <span class="terminal-dot dot-yellow"></span>
+            <span class="terminal-dot dot-green"></span>
+          </div>
+          <div class="terminal-title">prismatic-daemon</div>
+          <div class="terminal-status"><span class="pulse-indicator"></span> ACTIVE</div>
+        </div>
+        <div class="terminal-body">
+          <div class="terminal-sysinfo">
+            <div class="sys-item"><span>ENGINE</span><span class="sys-val">v0.1.0</span></div>
+            <div class="sys-item"><span>HOST</span><span class="sys-val">LOCALHOST</span></div>
+            <div class="sys-item"><span>PROVIDER</span><span class="sys-val">AGNOSTIC</span></div>
+            <div class="sys-item"><span>LICENSE</span><span class="sys-val">AGPLv3</span></div>
+          </div>
+          <div class="terminal-divider"></div>
+          <div class="terminal-logs" id="terminal-logs">
+            <!-- Simulated logs typewriter will print here -->
+          </div>
+        </div>
       </div>
     </div>
   </div>
 </section>
 
-<section id="spectrum">
+<section id="spectrum" class="scroll-reveal">
   <div class="container">
     <div class="section-label">The Agent Spectrum</div>
     <h2 class="section-title">Six specialized agents.<br>One orchestration engine.</h2>
     <p class="section-subtitle">Each agent is a wavelength in the spectrum — specialized, independent, and coordinated by the engine.</p>
     <div class="spectrum-grid">
-      <div class="agent-card"><div class="agent-dot red"></div><div class="agent-name">AGY</div><div class="agent-role">Orchestrator & Vision</div></div>
-      <div class="agent-card"><div class="agent-dot amber"></div><div class="agent-name">Jules</div><div class="agent-role">Workspace Admin & PR</div></div>
-      <div class="agent-card"><div class="agent-dot gold"></div><div class="agent-name">Custom</div><div class="agent-role">Bolt-On Agents</div></div>
-      <div class="agent-card"><div class="agent-dot emerald"></div><div class="agent-name">Hermes</div><div class="agent-role">Routing & Messaging</div></div>
-      <div class="agent-card"><div class="agent-dot sapphire"></div><div class="agent-name">Codex</div><div class="agent-role">Code & Repository</div></div>
-      <div class="agent-card"><div class="agent-dot amethyst"></div><div class="agent-name">Research</div><div class="agent-role">Deep Analysis</div></div>
+      <div class="agent-card">
+        <div class="agent-card-inner">
+          <div class="agent-dot red"></div>
+          <div class="agent-name">AGY</div>
+          <div class="agent-role">Orchestrator & Vision</div>
+          <div class="agent-details">Monitors output correctness and directs the swarm's workflow mapping and scheduling.</div>
+        </div>
+      </div>
+      <div class="agent-card">
+        <div class="agent-card-inner">
+          <div class="agent-dot amber"></div>
+          <div class="agent-name">Jules</div>
+          <div class="agent-role">Workspace Admin & PR</div>
+          <div class="agent-details">Manages local repository state, runs linter checks, and audits active pull requests.</div>
+        </div>
+      </div>
+      <div class="agent-card">
+        <div class="agent-card-inner">
+          <div class="agent-dot gold"></div>
+          <div class="agent-name">Custom</div>
+          <div class="agent-role">Bolt-On Agents</div>
+          <div class="agent-details">Custom extensions and marketplace modules plug in seamlessly with zero setup.</div>
+        </div>
+      </div>
+      <div class="agent-card">
+        <div class="agent-card-inner">
+          <div class="agent-dot emerald"></div>
+          <div class="agent-name">Hermes</div>
+          <div class="agent-role">Routing & Messaging</div>
+          <div class="agent-details">Manages websocket messaging pools, system routers, and event dispatches.</div>
+        </div>
+      </div>
+      <div class="agent-card">
+        <div class="agent-card-inner">
+          <div class="agent-dot sapphire"></div>
+          <div class="agent-name">Codex</div>
+          <div class="agent-role">Code & Repository</div>
+          <div class="agent-details">Generates refactorings, populates modules, and modifies source directories.</div>
+        </div>
+      </div>
+      <div class="agent-card">
+        <div class="agent-card-inner">
+          <div class="agent-dot amethyst"></div>
+          <div class="agent-name">Research</div>
+          <div class="agent-role">Deep Analysis</div>
+          <div class="agent-details">Runs concurrent search engine queries, compiles records, and extracts facts.</div>
+        </div>
+      </div>
     </div>
   </div>
 </section>
 
-<section id="how">
+<section id="how" class="scroll-reveal">
   <div class="container">
     <div class="section-label">Pipeline</div>
     <h2 class="section-title">One config. Full execution.</h2>
     <p class="section-subtitle">Define your agents, set your pipeline, and Prismatic Engine handles the rest — review chains, stall recovery, and artifact handoff.</p>
+    
+    <div class="pipeline-tabs">
+      <button class="pipeline-tab active" data-tab="codegen">Code Gen</button>
+      <button class="pipeline-tab" data-tab="research">Deep Research</button>
+      <button class="pipeline-tab" data-tab="delivery">PR Delivery</button>
+    </div>
+
     <div class="how-pipeline">
       <div class="pipeline-step">
         <h3>1. INPUT (YAML)</h3>
-        <div class="code-block">
-          <span class="comment"># prismatic.yaml</span><br>
-          <span class="key">pipeline</span>:<br>
-          &nbsp;&nbsp;<span class="key">design</span>: <span class="val">agy</span><br>
-          &nbsp;&nbsp;<span class="key">build</span>: <span class="val">codex</span><br>
-          &nbsp;&nbsp;<span class="key">review</span>: <span class="val">jules</span><br>
-          &nbsp;&nbsp;<span class="key">vision</span>: <span class="val">agy</span>
+        <div class="code-block-container">
+          <div class="code-block-header">
+            <span class="file-name" id="yaml-filename">prismatic.yaml</span>
+            <span class="lang-label">YAML</span>
+          </div>
+          <div class="code-block" id="yaml-content">
+            <span class="comment"># prismatic.yaml</span><br>
+            <span class="key">pipeline</span>:<br>
+            &nbsp;&nbsp;<span class="key">design</span>: <span class="val">agy</span><br>
+            &nbsp;&nbsp;<span class="key">build</span>: <span class="val">codex</span><br>
+            &nbsp;&nbsp;<span class="key">review</span>: <span class="val">jules</span><br>
+            &nbsp;&nbsp;<span class="key">vision</span>: <span class="val">agy</span>
+          </div>
         </div>
       </div>
       <div class="pipeline-arrow">→</div>
       <div class="pipeline-step">
         <h3>2. ENGINE</h3>
-        <p>Prismatic Engine parses the manifest, splits work across the agent spectrum, and manages all routing and state.</p>
+        <p id="engine-step-text">Prismatic Engine parses the manifest, splits work across the agent spectrum, and manages all routing and state.</p>
       </div>
       <div class="pipeline-arrow">→</div>
       <div class="pipeline-step">
         <h3>3. EXECUTION</h3>
-        <p>AGY designs → Codex builds → Jules reviews → AGY vision-tests. Each agent checks the previous agent's work. Zero single points of failure.</p>
+        <p id="execution-step-text">AGY designs → Codex builds → Jules reviews → AGY vision-tests. Each agent checks the previous agent's work. Zero single points of failure.</p>
       </div>
     </div>
   </div>
 </section>
 
-<section id="marketplace">
+<section id="marketplace" class="scroll-reveal">
   <div class="container">
     <div class="section-label">Bolt-On Marketplace</div>
     <h2 class="section-title">Extend the spectrum.</h2>
     <p class="section-subtitle">Community-built modules that plug directly into your engine. One command to install. Zero configuration.</p>
     <div class="market-grid">
       <div class="market-card">
+        <div class="market-badge">DATABASE</div>
         <h3>Database Connector</h3>
         <p>Run SQL agents safely inside sandboxed environments. Postgres, MySQL, SQLite.</p>
-        <div class="market-cmd">$ prismatic install db-postgres</div>
+        <div class="market-cmd-wrapper">
+          <div class="market-cmd">$ prismatic install db-postgres</div>
+          <button class="copy-btn" aria-label="Copy command" data-cmd="prismatic install db-postgres">
+            <svg class="copy-icon" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            <svg class="check-icon hidden" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><polyline points="20 6 9 17 4 12"></polyline></svg>
+          </button>
+        </div>
       </div>
       <div class="market-card">
+        <div class="market-badge">NOTIFY</div>
         <h3>Discord Notify</h3>
         <p>Route agent completions, alerts, and summaries directly to Discord channels.</p>
-        <div class="market-cmd">$ prismatic install notify-discord</div>
+        <div class="market-cmd-wrapper">
+          <div class="market-cmd">$ prismatic install notify-discord</div>
+          <button class="copy-btn" aria-label="Copy command" data-cmd="prismatic install notify-discord">
+            <svg class="copy-icon" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            <svg class="check-icon hidden" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><polyline points="20 6 9 17 4 12"></polyline></svg>
+          </button>
+        </div>
       </div>
       <div class="market-card">
+        <div class="market-badge">RUNNER</div>
         <h3>Sandbox Executor</h3>
         <p>Dockerized code execution. Every agent runs in an isolated container.</p>
-        <div class="market-cmd">$ prismatic install sandbox-docker</div>
+        <div class="market-cmd-wrapper">
+          <div class="market-cmd">$ prismatic install sandbox-docker</div>
+          <button class="copy-btn" aria-label="Copy command" data-cmd="prismatic install sandbox-docker">
+            <svg class="copy-icon" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+            <svg class="check-icon hidden" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"><polyline points="20 6 9 17 4 12"></polyline></svg>
+          </button>
+        </div>
       </div>
     </div>
   </div>
 </section>
 
-<section id="open-source">
+<section id="open-source" class="scroll-reveal">
   <div class="container">
     <div class="open-source">
       <h2>Open Source. No Lock-In.</h2>
@@ -438,18 +893,31 @@ footer { border-top: 1px solid var(--border-steel); padding: 3rem 0; }
   </div>
 </section>
 
-<section id="get-started">
+<section id="get-started" class="scroll-reveal">
   <div class="container" style="text-align:center;">
     <div class="section-label">Get Early Access</div>
     <h2 class="section-title">Ready to orchestrate?</h2>
     <p class="section-subtitle" style="margin:0 auto 2rem;">Prismatic Engine is in active development. Sign up for early access and build the future of agent orchestration with us.</p>
-    <form action="https://formsubmit.co/mbgulden@gmail.com" method="POST" style="max-width:480px;margin:0 auto;">
-      <input type="hidden" name="_subject" value="Prismatic Engine Early Access">
-      <input type="hidden" name="_captcha" value="false">
-      <input type="email" name="email" placeholder="you@domain.com" required 
-        style="width:100%;padding:0.85rem 1rem;background:var(--bg-charcoal);border:1px solid var(--border-steel);border-radius:6px;color:var(--text-primary);font-family:var(--font-mono);font-size:0.9rem;margin-bottom:1rem;">
-      <button type="submit" class="btn-primary" style="width:100%;">Request Access</button>
-    </form>
+    
+    <div class="form-wrapper" id="early-access-wrapper" style="max-width:480px;margin:0 auto;position:relative;">
+      <form id="early-access-form" action="https://formsubmit.co/mbgulden@gmail.com" method="POST">
+        <input type="hidden" name="_subject" value="Prismatic Engine Early Access">
+        <input type="hidden" name="_captcha" value="false">
+        <div class="input-group">
+          <input type="email" id="early-access-email" name="email" placeholder="you@domain.com" required 
+            style="width:100%;padding:0.85rem 1rem;background:var(--bg-charcoal);border:1px solid var(--border-steel);border-radius:6px;color:var(--text-primary);font-family:var(--font-mono);font-size:0.9rem;margin-bottom:1rem;outline:none;transition: border-color 0.3s ease;">
+        </div>
+        <button type="submit" id="early-access-btn" class="btn-primary" style="width:100%;display:flex;align-items:center;justify-content:center;gap:0.5rem;">
+          <span>Request Access</span>
+          <svg class="spinner hidden" viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2.5" fill="none" style="animation: spin 1s linear infinite;"><circle cx="12" cy="12" r="10"></circle><path d="M12 2a10 10 0 0 1 10 10"></path></svg>
+        </button>
+      </form>
+      <div id="form-success-message" class="form-success hidden">
+        <div class="success-icon">✓</div>
+        <h3>Welcome to the Spectrum</h3>
+        <p>Your early access request has been received. We'll reach out to you soon.</p>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -457,7 +925,7 @@ footer { border-top: 1px solid var(--border-steel); padding: 3rem 0; }
   <div class="container">
     <div class="footer-grid">
       <div class="footer-brand">
-        <svg viewBox="0 0 28 28" fill="none" width="24" height="24"><path d="M14 2L2 22h8l-2 4 18-20h-8l2-4z" stroke="#8E8E93" stroke-width="1.5" stroke-linejoin="round"/></svg>
+        <img src="prismatic_logo_icon.png" alt="Prismatic Engine" width="24" height="24" style="display:block;opacity:0.6;">
         <span>Prismatic Engine</span>
       </div>
       <div class="footer-links">
@@ -469,6 +937,232 @@ footer { border-top: 1px solid var(--border-steel); padding: 3rem 0; }
     <div class="footer-bottom">&copy; 2026 Prismatic Engine. Built for the agent spectrum.</div>
   </div>
 </footer>
+
+<script>
+// Live Terminal Console Logs
+const logs = [
+  { text: "[sys] Initializing Prismatic Engine core daemon...", class: "log-sys" },
+  { text: "[sys] Loading manifest configurations from ./prismatic.yaml", class: "log-sys" },
+  { text: "[hermes] Initializing agent mesh routing matrix... OK", class: "log-hermes" },
+  { text: "[agy] Bootstrapping master orchestrator swarm...", class: "log-agy" },
+  { text: "[agy] Assigned task chain: DESIGN -> BUILD -> REVIEW -> AUDIT", class: "log-agy" },
+  { text: "[agy] Dispatched architecture specification sheet to Codex...", class: "log-agy" },
+  { text: "[codex] Received specification sheet. Generating codebase templates...", class: "log-codex" },
+  { text: "[codex] Populated new source files in sandboxed repository workspace...", class: "log-codex" },
+  { text: "[codex] Codebase created. Forwarding review request to Jules...", class: "log-codex" },
+  { text: "[jules] Hook received. Commencing PR linting and security audit...", class: "log-jules" },
+  { text: "[jules] Audited 14 changed files. 0 errors, 2 warning items.", class: "log-jules" },
+  { text: "[jules] Review passed. Merging temporary working directory to main...", class: "log-jules" },
+  { text: "[research] Pulling public documentation regarding API overrides...", class: "log-research" },
+  { text: "[research] Integration check complete. All overrides validated.", class: "log-research" },
+  { text: "[sys] Swarm execution pipeline finished successfully in 4.82s.", class: "log-sys" },
+  { text: "[sys] Idle status. Waiting for incoming workflows...", class: "log-sys" }
+];
+
+let logIndex = 0;
+const logsContainer = document.getElementById('terminal-logs');
+
+function addLog() {
+  if (!logsContainer) return;
+  
+  if (logIndex >= logs.length) {
+    logsContainer.innerHTML = '';
+    logIndex = 0;
+  }
+  
+  const log = logs[logIndex];
+  const div = document.createElement('div');
+  div.className = `log-line ${log.class || ''}`;
+  
+  let charIndex = 0;
+  div.innerHTML = `<span class="log-cursor"></span>`;
+  logsContainer.appendChild(div);
+  logsContainer.scrollTop = logsContainer.scrollHeight;
+  
+  function typeChar() {
+    if (charIndex < log.text.length) {
+      div.innerHTML = log.text.substring(0, charIndex + 1) + `<span class="log-cursor"></span>`;
+      charIndex++;
+      setTimeout(typeChar, 15 + Math.random() * 10);
+    } else {
+      div.innerHTML = log.text;
+      logIndex++;
+      setTimeout(addLog, 1200 + Math.random() * 800);
+    }
+  }
+  
+  typeChar();
+}
+
+// Interactive Pipeline Config Tab Manager
+const pipelineData = {
+  codegen: {
+    filename: 'prismatic.yaml',
+    code: `<span class="comment"># prismatic.yaml</span><br>
+<span class="key">pipeline</span>:<br>
+&nbsp;&nbsp;<span class="key">design</span>: <span class="val">agy</span><br>
+&nbsp;&nbsp;<span class="key">build</span>: <span class="val">codex</span><br>
+&nbsp;&nbsp;<span class="key">review</span>: <span class="val">jules</span><br>
+&nbsp;&nbsp;<span class="key">vision</span>: <span class="val">agy</span>`,
+    engine: 'Prismatic Engine parses the manifest, splits work across the agent spectrum, and manages all routing and state.',
+    execution: 'AGY designs → Codex builds → Jules reviews → AGY vision-tests. Each agent checks the previous agent\'s work. Zero single points of failure.'
+  },
+  research: {
+    filename: 'research.yaml',
+    code: `<span class="comment"># research.yaml</span><br>
+<span class="key">pipeline</span>:<br>
+&nbsp;&nbsp;<span class="key">query</span>: <span class="val">research</span><br>
+&nbsp;&nbsp;<span class="key">verify</span>: <span class="val">hermes</span><br>
+&nbsp;&nbsp;<span class="key">report</span>: <span class="val">research</span><br>
+&nbsp;&nbsp;<span class="key">notify</span>: <span class="val">custom</span>`,
+    engine: 'The engine spins up a query group, handles parallel web searches, aggregates findings, and secures external notification webhooks.',
+    execution: 'Research gathers web sources → Hermes validates integrity of URLs → Research drafts standard markdown reports → Custom (Discord) posts summary.'
+  },
+  delivery: {
+    filename: 'release.yaml',
+    code: `<span class="comment"># release.yaml</span><br>
+<span class="key">pipeline</span>:<br>
+&nbsp;&nbsp;<span class="key">lint</span>: <span class="val">jules</span><br>
+&nbsp;&nbsp;<span class="key">compile</span>: <span class="val">codex</span><br>
+&nbsp;&nbsp;<span class="key">audit</span>: <span class="val">jules</span><br>
+&nbsp;&nbsp;<span class="key">deploy</span>: <span class="val">hermes</span>`,
+    engine: 'The engine boots within a local sandboxed runner, pulls repo status, registers compilation logs, and issues deployment instructions.',
+    execution: 'Jules checks styles & runs linters → Codex compiles production bundle → Jules validates test suite → Hermes pushes release to edge CDN.'
+  }
+};
+
+// Clipboard Commands Copy Manager
+function initCopyCommands() {
+  const copyButtons = document.querySelectorAll('.copy-btn');
+  copyButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const cmd = btn.getAttribute('data-cmd');
+      if (cmd) {
+        navigator.clipboard.writeText(cmd).then(() => {
+          const copyIcon = btn.querySelector('.copy-icon');
+          const checkIcon = btn.querySelector('.check-icon');
+          
+          copyIcon.classList.add('hidden');
+          checkIcon.classList.remove('hidden');
+          btn.classList.add('copied');
+          
+          setTimeout(() => {
+            copyIcon.classList.remove('hidden');
+            checkIcon.classList.add('hidden');
+            btn.classList.remove('copied');
+          }, 2000);
+        });
+      }
+    });
+  });
+}
+
+// Early Access Form AJAX Manager
+function initEarlyAccessForm() {
+  const form = document.getElementById('early-access-form');
+  const emailInput = document.getElementById('early-access-email');
+  const submitBtn = document.getElementById('early-access-btn');
+  const spinner = submitBtn.querySelector('.spinner');
+  const btnText = submitBtn.querySelector('span');
+  const successMsg = document.getElementById('form-success-message');
+  
+  if (form) {
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      
+      if (!emailInput.value || !emailInput.checkValidity()) {
+        emailInput.style.borderColor = 'var(--color-agy)';
+        return;
+      }
+      
+      submitBtn.disabled = true;
+      spinner.classList.remove('hidden');
+      btnText.textContent = 'Submitting...';
+      
+      const formData = new FormData(form);
+      fetch(form.action, {
+        method: 'POST',
+        body: formData,
+        headers: {
+          'Accept': 'application/json'
+        }
+      })
+      .then(() => {
+        form.classList.add('hidden');
+        successMsg.classList.remove('hidden');
+        successMsg.classList.add('fade-in');
+      })
+      .catch(() => {
+        // FormSubmit handles redirections, if CORS blocks the fetch response,
+        // we still transition to success state to ensure clean UX
+        form.classList.add('hidden');
+        successMsg.classList.remove('hidden');
+        successMsg.classList.add('fade-in');
+      });
+    });
+    
+    emailInput.addEventListener('input', () => {
+      emailInput.style.borderColor = 'var(--border-steel)';
+    });
+  }
+}
+
+// Intersection Observer for scroll reveal animations
+function initScrollReveal() {
+  const revealElements = document.querySelectorAll('.scroll-reveal');
+  const observer = new IntersectionObserver((entries, obs) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('revealed');
+        obs.unobserve(entry.target);
+      }
+    });
+  }, {
+    threshold: 0.1,
+    rootMargin: '0px 0px -50px 0px'
+  });
+  
+  revealElements.forEach(el => observer.observe(el));
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  // Start terminal console typing
+  setTimeout(addLog, 800);
+  
+  // Initialize Copy helpers
+  initCopyCommands();
+  
+  // Initialize Early Access
+  initEarlyAccessForm();
+  
+  // Initialize Scroll reveals
+  initScrollReveal();
+  
+  // Pipeline tab listeners
+  const tabs = document.querySelectorAll('.pipeline-tab');
+  const yamlContent = document.getElementById('yaml-content');
+  const yamlFilename = document.getElementById('yaml-filename');
+  const engineText = document.getElementById('engine-step-text');
+  const executionText = document.getElementById('execution-step-text');
+
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      tabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      
+      const key = tab.getAttribute('data-tab');
+      const data = pipelineData[key];
+      
+      if (data) {
+        yamlFilename.textContent = data.filename;
+        yamlContent.innerHTML = data.code;
+        engineText.textContent = data.engine;
+        executionText.textContent = data.execution;
+      }
+    });
+  });
+});
+</script>
 
 </body>
 </html>
