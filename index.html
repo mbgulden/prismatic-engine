@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Prismatic Engine — One Engine. Full Spectrum Autonomy.</title>
+<meta name="description" content="Prismatic Engine is a portable, multi-agent orchestration engine. Deploy autonomous agent swarms across any infrastructure — local, edge, or cloud.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg-obsidian: #0A0A0B;
+  --bg-charcoal: #121214;
+  --border-steel: #222226;
+  --border-active: #3A3A42;
+  --text-primary: #F5F5F7;
+  --text-muted: #8E8E93;
+  --white-beam: #FFFFFF;
+  --color-agy: #E74C3C;
+  --color-jules: #F39C12;
+  --color-bolt: #F1C40F;
+  --color-hermes: #2ECC71;
+  --color-codex: #3498DB;
+  --color-research: #9B59B6;
+  --font-sans: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  --gradient-spectrum: linear-gradient(90deg, #E74C3C 0%, #F39C12 20%, #F1C40F 40%, #2ECC71 60%, #3498DB 80%, #9B59B6 100%);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background-color: var(--bg-obsidian);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+
+/* Grid background */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: 
+    linear-gradient(var(--border-steel) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border-steel) 1px, transparent 1px);
+  background-size: 60px 60px;
+  opacity: 0.05;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.container { max-width: 1200px; margin: 0 auto; padding: 0 2rem; position: relative; z-index: 1; }
+
+/* NAV */
+nav {
+  position: sticky; top: 0; z-index: 100;
+  background: rgba(10,10,11,0.85);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border-steel);
+  padding: 1rem 0;
+}
+nav .container { display: flex; align-items: center; justify-content: space-between; }
+.nav-logo { display: flex; align-items: center; gap: 0.75rem; text-decoration: none; }
+.nav-logo svg { width: 28px; height: 28px; }
+.nav-logo span { font-family: var(--font-mono); font-weight: 700; font-size: 0.95rem; color: var(--text-primary); letter-spacing: 0.05em; }
+.nav-links { display: flex; gap: 2rem; align-items: center; }
+.nav-links a { color: var(--text-muted); text-decoration: none; font-size: 0.875rem; transition: color 0.2s; }
+.nav-links a:hover { color: var(--text-primary); }
+.nav-cta {
+  background: transparent; border: 1px solid var(--border-steel);
+  color: var(--text-primary); padding: 0.5rem 1.25rem; border-radius: 4px;
+  font-family: var(--font-sans); font-weight: 600; font-size: 0.875rem;
+  cursor: pointer; transition: all 0.3s ease; text-decoration: none;
+}
+.nav-cta:hover { border-color: var(--border-active); box-shadow: 0 0 20px rgba(255,255,255,0.05); }
+
+/* HERO */
+.hero { padding: 6rem 0 4rem; text-align: center; position: relative; }
+.hero-label {
+  font-family: var(--font-mono); font-size: 0.75rem; letter-spacing: 0.2em;
+  text-transform: uppercase; color: var(--text-muted); margin-bottom: 2rem;
+}
+.hero h1 {
+  font-family: var(--font-sans); font-weight: 800; font-size: clamp(2.5rem, 6vw, 4rem);
+  line-height: 1.1; margin-bottom: 1.5rem;
+  background: linear-gradient(180deg, #FFFFFF 0%, #A0A0A8 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.hero p {
+  font-size: 1.15rem; color: var(--text-muted); max-width: 640px; margin: 0 auto 2.5rem;
+  line-height: 1.7;
+}
+.hero-actions { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+
+.btn-primary {
+  background: var(--text-primary); color: var(--bg-obsidian);
+  padding: 0.85rem 2rem; border-radius: 6px; font-weight: 700;
+  font-family: var(--font-sans); font-size: 0.95rem; text-decoration: none;
+  transition: all 0.3s ease; border: none; cursor: pointer;
+}
+.btn-primary:hover { transform: translateY(-1px); box-shadow: 0 8px 30px rgba(255,255,255,0.1); }
+
+.btn-ghost {
+  background: transparent; color: var(--text-primary);
+  padding: 0.85rem 2rem; border-radius: 6px; font-weight: 600;
+  font-family: var(--font-sans); font-size: 0.95rem; text-decoration: none;
+  border: 1px solid var(--border-steel); transition: all 0.3s ease; cursor: pointer;
+}
+.btn-ghost:hover { border-color: var(--border-active); transform: translateY(-1px); }
+
+/* Prism Visual */
+.prism-visual {
+  max-width: 720px; margin: 3rem auto 0;
+  display: flex; align-items: center; justify-content: center;
+  gap: 0; position: relative; height: 140px;
+}
+.prism-beam-input {
+  width: 60px; height: 2px; background: var(--white-beam);
+  box-shadow: 0 0 12px rgba(255,255,255,0.5), 0 0 30px rgba(255,255,255,0.2);
+  animation: pulse-beam 2s ease-in-out infinite;
+}
+@keyframes pulse-beam { 0%, 100% { opacity: 0.6; } 50% { opacity: 1; } }
+.prism-triangle {
+  width: 0; height: 0;
+  border-left: 50px solid transparent;
+  border-right: 70px solid transparent;
+  border-bottom: 110px solid rgba(255,255,255,0.06);
+  position: relative; margin: 0 -10px;
+}
+.prism-beams { display: flex; flex-direction: column; gap: 6px; }
+.prism-beam {
+  height: 2px; border-radius: 1px; opacity: 0.8;
+  transition: all 0.3s ease;
+}
+.prism-beam:nth-child(1) { width: 130px; background: var(--color-agy); }
+.prism-beam:nth-child(2) { width: 155px; background: var(--color-jules); }
+.prism-beam:nth-child(3) { width: 145px; background: var(--color-bolt); }
+.prism-beam:nth-child(4) { width: 170px; background: var(--color-hermes); }
+.prism-beam:nth-child(5) { width: 160px; background: var(--color-codex); }
+.prism-beam:nth-child(6) { width: 140px; background: var(--color-research); }
+.prism-beam:hover { opacity: 1; box-shadow: 0 0 15px currentColor; }
+
+/* SECTIONS */
+section { padding: 5rem 0; }
+.section-label {
+  font-family: var(--font-mono); font-size: 0.7rem; letter-spacing: 0.2em;
+  text-transform: uppercase; color: var(--text-muted); margin-bottom: 1rem;
+}
+.section-title {
+  font-family: var(--font-sans); font-weight: 600; font-size: 2.25rem;
+  line-height: 1.3; margin-bottom: 1.5rem;
+}
+.section-subtitle {
+  color: var(--text-muted); font-size: 1.1rem; max-width: 600px; line-height: 1.7;
+}
+
+/* What It Is */
+.what-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 4rem; align-items: center;
+  margin-top: 3rem;
+}
+.what-left h2 { font-size: 2rem; line-height: 1.3; margin-bottom: 1rem; }
+.what-left p { color: var(--text-muted); line-height: 1.7; }
+.status-dashboard {
+  background: var(--bg-charcoal); border: 1px solid var(--border-steel);
+  border-radius: 8px; padding: 2rem;
+}
+.status-row {
+  display: flex; align-items: center; gap: 1rem; margin-bottom: 1.25rem;
+  font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-muted);
+}
+.status-dot { width: 8px; height: 8px; border-radius: 50%; }
+.status-dot.green { background: var(--color-hermes); box-shadow: 0 0 8px rgba(46,204,113,0.5); animation: pulse-dot 2s infinite; }
+@keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+.status-value { color: var(--text-primary); margin-left: auto; }
+
+/* Agent Spectrum */
+.spectrum-grid {
+  display: grid; grid-template-columns: repeat(6, 1fr); gap: 0.75rem; margin-top: 3rem;
+}
+.agent-card {
+  background: var(--bg-charcoal); border: 1px solid var(--border-steel);
+  border-radius: 8px; padding: 1.5rem 1rem; text-align: center;
+  transition: all 0.3s ease; cursor: default;
+}
+.agent-card:hover { transform: translateY(-2px); }
+.agent-card:nth-child(1):hover { border-color: var(--color-agy); box-shadow: 0 0 30px rgba(231,76,60,0.15); }
+.agent-card:nth-child(2):hover { border-color: var(--color-jules); box-shadow: 0 0 30px rgba(243,156,18,0.15); }
+.agent-card:nth-child(3):hover { border-color: var(--color-bolt); box-shadow: 0 0 30px rgba(241,196,15,0.15); }
+.agent-card:nth-child(4):hover { border-color: var(--color-hermes); box-shadow: 0 0 30px rgba(46,204,113,0.15); }
+.agent-card:nth-child(5):hover { border-color: var(--color-codex); box-shadow: 0 0 30px rgba(52,152,219,0.15); }
+.agent-card:nth-child(6):hover { border-color: var(--color-research); box-shadow: 0 0 30px rgba(155,89,182,0.15); }
+.agent-dot {
+  width: 12px; height: 12px; border-radius: 50%; margin: 0 auto 0.75rem;
+}
+.agent-dot.red { background: var(--color-agy); }
+.agent-dot.amber { background: var(--color-jules); }
+.agent-dot.gold { background: var(--color-bolt); }
+.agent-dot.emerald { background: var(--color-hermes); }
+.agent-dot.sapphire { background: var(--color-codex); }
+.agent-dot.amethyst { background: var(--color-research); }
+.agent-name {
+  font-family: var(--font-mono); font-weight: 700; font-size: 0.85rem;
+  margin-bottom: 0.35rem;
+}
+.agent-role { font-size: 0.8rem; color: var(--text-muted); }
+
+/* How It Works */
+.how-pipeline {
+  display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; gap: 0;
+  align-items: center; margin-top: 3rem;
+}
+.pipeline-step {
+  background: var(--bg-charcoal); border: 1px solid var(--border-steel);
+  border-radius: 8px; padding: 2rem 1.5rem; text-align: center;
+}
+.pipeline-step h3 { font-family: var(--font-mono); font-size: 0.85rem; margin-bottom: 0.75rem; }
+.pipeline-step p { color: var(--text-muted); font-size: 0.9rem; line-height: 1.6; }
+.pipeline-arrow {
+  font-size: 1.5rem; color: var(--border-active); padding: 0 0.5rem;
+}
+.code-block {
+  background: rgba(0,0,0,0.4); border: 1px solid var(--border-steel);
+  border-radius: 6px; padding: 1rem; margin-top: 1rem;
+  font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-muted);
+  text-align: left; line-height: 1.6; overflow-x: auto;
+}
+.code-block .key { color: var(--color-codex); }
+.code-block .val { color: var(--color-hermes); }
+.code-block .comment { color: var(--border-active); }
+
+/* Bolt-on Marketplace */
+.market-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.5rem; margin-top: 3rem; }
+.market-card {
+  background: var(--bg-charcoal); border: 1px solid var(--border-steel);
+  border-radius: 8px; padding: 2rem; transition: all 0.3s ease;
+}
+.market-card:hover { border-color: var(--border-active); transform: translateY(-2px); }
+.market-card h3 { font-family: var(--font-mono); font-size: 0.9rem; margin-bottom: 0.5rem; }
+.market-card p { color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1.25rem; line-height: 1.6; }
+.market-cmd {
+  background: rgba(0,0,0,0.4); border-radius: 4px; padding: 0.5rem 0.75rem;
+  font-family: var(--font-mono); font-size: 0.75rem; color: var(--color-bolt);
+  cursor: pointer; transition: background 0.2s; user-select: all;
+}
+.market-cmd:hover { background: rgba(241,196,15,0.08); }
+
+/* Open Source */
+.open-source {
+  background: var(--bg-charcoal); border: 1px solid var(--border-steel);
+  border-radius: 12px; padding: 4rem 3rem; text-align: center;
+}
+.open-source h2 { font-size: 2rem; margin-bottom: 1rem; }
+.open-source p { color: var(--text-muted); max-width: 600px; margin: 0 auto 2rem; line-height: 1.7; }
+.os-buttons { display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap; }
+
+/* Footer */
+footer { border-top: 1px solid var(--border-steel); padding: 3rem 0; }
+.footer-grid { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 2rem; }
+.footer-brand { display: flex; align-items: center; gap: 0.75rem; }
+.footer-brand span { font-family: var(--font-mono); font-weight: 700; font-size: 0.9rem; }
+.footer-links { display: flex; gap: 2rem; }
+.footer-links a { color: var(--text-muted); text-decoration: none; font-size: 0.85rem; transition: color 0.2s; }
+.footer-links a:hover { color: var(--text-primary); }
+.footer-bottom { margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid var(--border-steel); color: var(--text-muted); font-size: 0.8rem; }
+
+/* RESPONSIVE */
+@media (max-width: 1023px) {
+  .spectrum-grid { grid-template-columns: repeat(3, 1fr); }
+  .what-grid { grid-template-columns: 1fr; gap: 2rem; }
+  .how-pipeline { grid-template-columns: 1fr; gap: 1rem; }
+  .pipeline-arrow { transform: rotate(90deg); padding: 0.5rem 0; text-align: center; }
+  .nav-links { display: none; }
+}
+@media (max-width: 767px) {
+  .container { padding: 0 1.25rem; }
+  .hero { padding: 4rem 0 2rem; }
+  .spectrum-grid { grid-template-columns: repeat(2, 1fr); }
+  .market-grid { grid-template-columns: 1fr; }
+  .open-source { padding: 2.5rem 1.5rem; }
+  .hero-actions { flex-direction: column; align-items: center; }
+  .prism-visual { flex-direction: column; height: auto; gap: 0.5rem; }
+  .prism-beam-input { width: 2px; height: 30px; }
+  .prism-triangle { border-left: 40px solid transparent; border-right: 40px solid transparent; border-bottom: 50px solid rgba(255,255,255,0.06); margin: 0; transform: rotate(90deg); }
+  .prism-beams { flex-direction: row; flex-wrap: wrap; gap: 4px; justify-content: center; }
+  .prism-beam:nth-child(1), .prism-beam:nth-child(2), .prism-beam:nth-child(3),
+  .prism-beam:nth-child(4), .prism-beam:nth-child(5), .prism-beam:nth-child(6) { width: 40px; }
+}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="container">
+    <a href="/" class="nav-logo">
+      <svg viewBox="0 0 28 28" fill="none"><path d="M14 2L2 22h8l-2 4 18-20h-8l2-4z" stroke="white" stroke-width="1.5" stroke-linejoin="round"/></svg>
+      <span>PRISMATIC ENGINE</span>
+    </a>
+    <div class="nav-links">
+      <a href="#spectrum">Spectrum</a>
+      <a href="#how">How It Works</a>
+      <a href="#marketplace">Marketplace</a>
+      <a href="#open-source">Open Source</a>
+      <a href="https://github.com/mbgulden/prismatic-engine" class="nav-cta">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<section class="hero">
+  <div class="container">
+    <div class="hero-label">Spectrum Orchestration</div>
+    <h1>One Engine.<br>Full Spectrum Autonomy.</h1>
+    <p>Prismatic Engine is a portable, multi-agent orchestration engine. Input your workflows and let the agent spectrum deploy, collaborate, and execute across any infrastructure — local, edge, or cloud.</p>
+    <div class="hero-actions">
+      <a href="#get-started" class="btn-primary">Get Started</a>
+      <a href="https://github.com/mbgulden/prismatic-engine" class="btn-ghost">View on GitHub</a>
+    </div>
+    <div class="prism-visual">
+      <div class="prism-beam-input"></div>
+      <div class="prism-triangle"></div>
+      <div class="prism-beams">
+        <div class="prism-beam"></div>
+        <div class="prism-beam"></div>
+        <div class="prism-beam"></div>
+        <div class="prism-beam"></div>
+        <div class="prism-beam"></div>
+        <div class="prism-beam"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="what">
+  <div class="container">
+    <div class="section-label">The Autonomy Gap</div>
+    <div class="what-grid">
+      <div class="what-left">
+        <h2>AI swarms shouldn't be bloated, cloud-locked, or hard to deploy.</h2>
+        <p>Current agent frameworks chain you to specific providers or bury you in configuration. Prismatic Engine breaks workflows into a spectrum of specialized agents — running wherever you need them, with zero lock-in.</p>
+      </div>
+      <div class="status-dashboard">
+        <div class="status-row"><div class="status-dot green"></div>ENGINE: ACTIVE<span class="status-value">v0.1.0</span></div>
+        <div class="status-row"><div class="status-dot green"></div>PORTABILITY<span class="status-value">LOCALHOST</span></div>
+        <div class="status-row"><div class="status-dot green"></div>PROVIDER<span class="status-value">AGNOSTIC</span></div>
+        <div class="status-row"><div class="status-dot green"></div>LICENSE<span class="status-value">AGPLv3</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="spectrum">
+  <div class="container">
+    <div class="section-label">The Agent Spectrum</div>
+    <h2 class="section-title">Six specialized agents.<br>One orchestration engine.</h2>
+    <p class="section-subtitle">Each agent is a wavelength in the spectrum — specialized, independent, and coordinated by the engine.</p>
+    <div class="spectrum-grid">
+      <div class="agent-card"><div class="agent-dot red"></div><div class="agent-name">AGY</div><div class="agent-role">Orchestrator & Vision</div></div>
+      <div class="agent-card"><div class="agent-dot amber"></div><div class="agent-name">Jules</div><div class="agent-role">Workspace Admin & PR</div></div>
+      <div class="agent-card"><div class="agent-dot gold"></div><div class="agent-name">Custom</div><div class="agent-role">Bolt-On Agents</div></div>
+      <div class="agent-card"><div class="agent-dot emerald"></div><div class="agent-name">Hermes</div><div class="agent-role">Routing & Messaging</div></div>
+      <div class="agent-card"><div class="agent-dot sapphire"></div><div class="agent-name">Codex</div><div class="agent-role">Code & Repository</div></div>
+      <div class="agent-card"><div class="agent-dot amethyst"></div><div class="agent-name">Research</div><div class="agent-role">Deep Analysis</div></div>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="container">
+    <div class="section-label">Pipeline</div>
+    <h2 class="section-title">One config. Full execution.</h2>
+    <p class="section-subtitle">Define your agents, set your pipeline, and Prismatic Engine handles the rest — review chains, stall recovery, and artifact handoff.</p>
+    <div class="how-pipeline">
+      <div class="pipeline-step">
+        <h3>1. INPUT (YAML)</h3>
+        <div class="code-block">
+          <span class="comment"># prismatic.yaml</span><br>
+          <span class="key">pipeline</span>:<br>
+          &nbsp;&nbsp;<span class="key">design</span>: <span class="val">agy</span><br>
+          &nbsp;&nbsp;<span class="key">build</span>: <span class="val">codex</span><br>
+          &nbsp;&nbsp;<span class="key">review</span>: <span class="val">jules</span><br>
+          &nbsp;&nbsp;<span class="key">vision</span>: <span class="val">agy</span>
+        </div>
+      </div>
+      <div class="pipeline-arrow">→</div>
+      <div class="pipeline-step">
+        <h3>2. ENGINE</h3>
+        <p>Prismatic Engine parses the manifest, splits work across the agent spectrum, and manages all routing and state.</p>
+      </div>
+      <div class="pipeline-arrow">→</div>
+      <div class="pipeline-step">
+        <h3>3. EXECUTION</h3>
+        <p>AGY designs → Codex builds → Jules reviews → AGY vision-tests. Each agent checks the previous agent's work. Zero single points of failure.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="marketplace">
+  <div class="container">
+    <div class="section-label">Bolt-On Marketplace</div>
+    <h2 class="section-title">Extend the spectrum.</h2>
+    <p class="section-subtitle">Community-built modules that plug directly into your engine. One command to install. Zero configuration.</p>
+    <div class="market-grid">
+      <div class="market-card">
+        <h3>Database Connector</h3>
+        <p>Run SQL agents safely inside sandboxed environments. Postgres, MySQL, SQLite.</p>
+        <div class="market-cmd">$ prismatic install db-postgres</div>
+      </div>
+      <div class="market-card">
+        <h3>Discord Notify</h3>
+        <p>Route agent completions, alerts, and summaries directly to Discord channels.</p>
+        <div class="market-cmd">$ prismatic install notify-discord</div>
+      </div>
+      <div class="market-card">
+        <h3>Sandbox Executor</h3>
+        <p>Dockerized code execution. Every agent runs in an isolated container.</p>
+        <div class="market-cmd">$ prismatic install sandbox-docker</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="open-source">
+  <div class="container">
+    <div class="open-source">
+      <h2>Open Source. No Lock-In.</h2>
+      <p>Prismatic Engine is fully open source under AGPLv3. Run it on your servers, package it into your commercial apps, or self-host. Fork it. Extend it. Own it.</p>
+      <div class="os-buttons">
+        <a href="https://github.com/mbgulden/prismatic-engine" class="btn-primary">Fork on GitHub</a>
+        <a href="https://www.gnu.org/licenses/agpl-3.0.en.html" class="btn-ghost">Read AGPLv3 License</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="get-started">
+  <div class="container" style="text-align:center;">
+    <div class="section-label">Get Early Access</div>
+    <h2 class="section-title">Ready to orchestrate?</h2>
+    <p class="section-subtitle" style="margin:0 auto 2rem;">Prismatic Engine is in active development. Sign up for early access and build the future of agent orchestration with us.</p>
+    <form action="https://formsubmit.co/mbgulden@gmail.com" method="POST" style="max-width:480px;margin:0 auto;">
+      <input type="hidden" name="_subject" value="Prismatic Engine Early Access">
+      <input type="hidden" name="_captcha" value="false">
+      <input type="email" name="email" placeholder="you@domain.com" required 
+        style="width:100%;padding:0.85rem 1rem;background:var(--bg-charcoal);border:1px solid var(--border-steel);border-radius:6px;color:var(--text-primary);font-family:var(--font-mono);font-size:0.9rem;margin-bottom:1rem;">
+      <button type="submit" class="btn-primary" style="width:100%;">Request Access</button>
+    </form>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <div class="footer-grid">
+      <div class="footer-brand">
+        <svg viewBox="0 0 28 28" fill="none" width="24" height="24"><path d="M14 2L2 22h8l-2 4 18-20h-8l2-4z" stroke="#8E8E93" stroke-width="1.5" stroke-linejoin="round"/></svg>
+        <span>Prismatic Engine</span>
+      </div>
+      <div class="footer-links">
+        <a href="https://github.com/mbgulden/prismatic-engine">GitHub</a>
+        <a href="https://www.gnu.org/licenses/agpl-3.0.en.html">License</a>
+        <a href="mailto:michael@prismaticengine.com">Contact</a>
+      </div>
+    </div>
+    <div class="footer-bottom">&copy; 2026 Prismatic Engine. Built for the agent spectrum.</div>
+  </div>
+</footer>
+
+</body>
+</html>
