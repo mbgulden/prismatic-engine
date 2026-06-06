@@ -7,25 +7,26 @@
 <meta name="description" content="Prismatic Engine is a portable, multi-agent orchestration engine. Deploy autonomous agent swarms across any infrastructure — local, edge, or cloud.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;700&family=Geist:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
 <link rel="icon" type="image/png" href="prismatic_logo_icon.png">
 <style>
 :root {
-  --bg-obsidian: #0A0A0B;
-  --bg-charcoal: #121214;
+  --bg-obsidian: #080809;
+  --bg-chassis: #121217;
+  --bg-charcoal: #0e0e12;
   --border-steel: #222226;
   --border-active: #3A3A42;
   --text-primary: #F5F5F7;
   --text-muted: #8E8E93;
   --white-beam: #FFFFFF;
-  --color-agy: #E74C3C;
-  --color-jules: #F39C12;
-  --color-bolt: #F1C40F;
-  --color-hermes: #2ECC71;
-  --color-codex: #3498DB;
-  --color-research: #9B59B6;
-  --font-sans: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
+  --color-agy: #ff4545;
+  --color-jules: #ff9f1c;
+  --color-bolt: #ffcc00;
+  --color-hermes: #00e676;
+  --color-codex: #00b0ff;
+  --color-research: #d500f9;
+  --font-sans: 'Geist', 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: 'Geist Mono', 'JetBrains Mono', monospace;
   --gradient-spectrum: linear-gradient(90deg, #E74C3C 0%, #F39C12 20%, #F1C40F 40%, #2ECC71 60%, #3498DB 80%, #9B59B6 100%);
   --glass-bg: rgba(18, 18, 20, 0.65);
   --glass-border: rgba(255, 255, 255, 0.05);
@@ -55,8 +56,8 @@ body::before {
   background-image: 
     linear-gradient(var(--border-steel) 1px, transparent 1px),
     linear-gradient(90deg, var(--border-steel) 1px, transparent 1px);
-  background-size: 60px 60px;
-  opacity: 0.05;
+  background-size: 40px 40px;
+  opacity: 0.12;
   pointer-events: none;
   z-index: 0;
 }
@@ -186,7 +187,30 @@ nav .container { display: flex; align-items: center; justify-content: space-betw
 .r-beam { animation-delay: 1.0s; }
 
 /* SECTIONS */
-section { padding: 6rem 0; }
+section { padding: 5rem 0; }
+
+/* Industrial Chassis Cards */
+.agent-card, .market-card, .open-source, .status-dashboard, .pipeline-step {
+  border-radius: 4px !important;
+  position: relative;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.03), 0 10px 30px rgba(0,0,0,0.6);
+}
+.agent-card::before, .market-card::before {
+  content: '';
+  position: absolute;
+  top: 8px; left: 8px;
+  width: 3px; height: 3px;
+  background: #333;
+  border-radius: 50%;
+}
+.agent-card::after, .market-card::after {
+  content: '';
+  position: absolute;
+  top: 8px; right: 8px;
+  width: 3px; height: 3px;
+  background: #333;
+  border-radius: 50%;
+}
 .section-label {
   font-family: var(--font-mono); font-size: 0.7rem; letter-spacing: 0.2em;
   text-transform: uppercase; color: var(--text-muted); margin-bottom: 1rem;
@@ -536,7 +560,7 @@ section { padding: 6rem 0; }
   color: var(--bg-obsidian); border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
   font-size: 1.5rem; font-weight: 700; margin: 0 auto 1.25rem;
-  box-shadow: 0 0 20px rgba(46,204,113,0.3);
+box-shadow: 0 0 30px rgba(213,0,249,0.2)
 }
 .form-success h3 { font-size: 1.25rem; margin-bottom: 0.5rem; }
 .form-success p { font-size: 0.9rem; color: var(--text-muted); line-height: 1.6; }
