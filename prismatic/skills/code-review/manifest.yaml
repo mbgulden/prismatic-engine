@@ -1,0 +1,13 @@
+name: code-review
+version: 1.0.0
+description: Review pull requests for security flaws, performance issues, and style violations
+author: Prismatic Engine
+category: review
+labels: [agent:codex]
+config:
+  default_rules:
+    - security: Check for SQL injection, XSS, CSRF, hardcoded secrets, auth bypass
+    - performance: Check for N+1 queries, missing indexes, memory leaks, unnecessary allocations
+    - style: Check for consistency with project conventions, naming, formatting
+  max_comments: 10
+  require_review: true

@@ -1,0 +1,31 @@
+# ============================================================
+# Prismatic Engine — Workspace Registry
+# ============================================================
+# Each workspace maps to a directory on disk.  The coordinator
+# resolves workspace context for agents from this registry.
+#
+# Uncomment and customize the example below:
+#
+# workspaces:
+#   - name: hermes-core
+#     path: /home/ubuntu/work/
+#     description: "Primary Hermes development workspace"
+#     tags:
+#       - primary
+#       - hermes
+#
+#   - name: active-oahu-tours
+#     path: /home/ubuntu/work/active-oahu-tours/
+#     description: "Kai's Oahu tours automation workspace"
+#     tags:
+#       - kai
+#       - production
+#
+#   - name: antigravity
+#     path: /home/ubuntu/work/antigravity-cli/
+#     description: "AGY CLI development workspace"
+#     tags:
+#       - agy
+#       - cli
+
+workspaces: []

@@ -1,0 +1,85 @@
+# ============================================================
+# Prismatic Engine — Router Settings
+# ============================================================
+# The router determines which agent should handle incoming work
+# based on issue labels, keywords in the title/description, and
+# pipeline-specific overrides.
+
+# ── Default agent for unlabeled / unmatched issues ─────────
+default_agent: hermes
+
+# ── Pipeline definitions ───────────────────────────────────
+# Each pipeline maps a set of routing rules to an agent.
+pipeline:
+
+  # Pipeline for Hermes core tasks
+  - name: hermes
+    agent: hermes
+    labels:
+      - pipeline:hermes
+    keywords:
+      - "prismatic"
+      - "hermes agent"
+      - "signal provider"
+    settings:
+      mode: signal
+      timeout: 300
+      next_label: pipeline:review
+
+  # Pipeline for Kai (Active Oahu Tours)
+  - name: kai
+    agent: kai
+    labels:
+      - pipeline:kai
+    keywords:
+      - "oahu"
+      - "tour"
+      - "booking"
+      - "customer"
+    settings:
+      mode: signal
+      timeout: 600
+      next_label: pipeline:review
+
+  # Pipeline for AGY (Antigravity CLI)
+  - name: agy
+    agent: agy
+    labels:
+      - pipeline:agy
+    keywords:
+      - "antigravity"
+      - "cli"
+      - "agy"
+    settings:
+      mode: subprocess
+      timeout: 120
+
+# ── Routing rules (label-based, evaluated in order) ────────
+routing:
+
+  # Exact label match → direct dispatch
+  - label: pipeline:hermes
+    target: hermes
+    priority: 10
+
+  - label: pipeline:kai
+    target: kai
+    priority: 10
+
+  - label: pipeline:agy
+    target: agy
+    priority: 10
+
+  # Keyword fallback (lower priority)
+  - keyword: "prismatic"
+    target: hermes
+    priority: 5
+
+  - keyword: "tour"
+    target: kai
+    priority: 5
+
+  # Default catch-all
+  - keyword: "*"
+    target: hermes
+    priority: 0

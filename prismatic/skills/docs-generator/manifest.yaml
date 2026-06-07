@@ -1,0 +1,11 @@
+name: docs-generator
+version: 1.0.0
+description: Auto-generate clean markdown documentation from code structure and docstrings
+author: Prismatic Engine
+category: documentation
+labels: [agent:hermes]
+config:
+  output_format: markdown
+  include_examples: true
+  include_api_ref: true
+  max_depth: 3

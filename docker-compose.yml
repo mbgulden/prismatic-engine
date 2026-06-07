@@ -1,0 +1,20 @@
+version: "3.9"
+
+services:
+  prismatic-engine:
+    build: .
+    image: prismatic-engine:latest
+    container_name: prismatic-engine
+    restart: unless-stopped
+    environment:
+      - LINEAR_API_KEY=${LINEAR_API_KEY:?LINEAR_API_KEY is required}
+      - LINEAR_TEAM_ID=${LINEAR_TEAM_ID:-GRO}
+      - PRISMATIC_NUDGE_DIR=/tmp/prismatic
+    volumes:
+      - prismatic_nudge:/tmp/prismatic
+      - ./config:/etc/prismatic:ro
+    ports:
+      - "9001:9001"
+
+volumes:
+  prismatic_nudge:

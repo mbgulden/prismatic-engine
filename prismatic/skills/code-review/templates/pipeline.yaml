@@ -1,0 +1,176 @@
+# =============================================================================
+# Pipeline Template — Code Review Skill
+# =============================================================================
+# This template shows how the code-review skill fits into various CI/CD
+# pipelines.  The skill is typically placed _after_ build/unit-test steps
+# (so it runs on compilable code) and _before_ merge/deploy gates.
+#
+# Reference: ./README.md
+
+# ---------------------------------------------------------------------------
+# Example 1: Standalone review on pull request (most common)
+# ---------------------------------------------------------------------------
+# Triggers on every PR push and posts inline comments.  The pipeline blocks
+# merge if `require_review: true` and any `error`-severity issues are found.
+# ---------------------------------------------------------------------------
+name: pr-code-review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+pipeline:
+  # 1. Checkout and build (fast-fail if code doesn't compile)
+  - action: checkout
+    depth: 1
+
+  - action: build
+    command: make build
+
+  # 2. Run unit + lint checks before review (avoids noise on broken code)
+  - action: lint
+    command: make lint
+
+  # 3. Code review — analyses the diff against the base branch
+  - skill: code-review
+    config:
+      rules:
+        - security
+        - performance
+        - style
+      max_comments: 15
+      require_review: true
+      vcs:
+        provider: github
+        review_event: REQUEST_CHANGES
+        bot_name: Prismatic Engine
+
+  # 4. Gating — block merge if review produced errors
+  - action: gate
+    condition: code-review.errors == 0
+    on_failure: |
+      ❌ Code review found issues. Please address all error-severity
+         comments before merging.
+
+# ---------------------------------------------------------------------------
+# Example 2: Review + auto-approve for trivial changes
+# ---------------------------------------------------------------------------
+# Trusted contributors or small changes get a lighter touch: style-only
+# checks and automatic approval if no issues are found.
+# ---------------------------------------------------------------------------
+name: code-review-trivial
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+pipeline:
+  - action: checkout
+  - action: build
+
+  - skill: code-review
+    config:
+      rules:
+        - style
+      max_comments: 5
+      require_review: false
+      vcs:
+        provider: github
+        review_event: APPROVE  # Auto-approve if no errors/warnings
+
+# ---------------------------------------------------------------------------
+# Example 3: Security-only review (high-sensitivity pipeline)
+# ---------------------------------------------------------------------------
+# Runs on every PR targeting the `main` or `release/*` branch.  Skips
+# style/performance and focuses solely on security.  A single error-severity
+# finding blocks the pipeline.
+# ---------------------------------------------------------------------------
+name: code-review-security-gate
+
+on:
+  pull_request:
+    branches:
+      - main
+      - release/**
+    types: [opened, synchronize]
+
+pipeline:
+  - action: checkout
+  - action: build
+
+  - skill: code-review
+    config:
+      rules:
+        - security
+      max_comments: 25
+      severity_overrides:
+        hardcoded-secrets: error
+        csrf: error
+      require_review: true
+      vcs:
+        provider: github
+        review_event: REQUEST_CHANGES
+
+  - action: gate
+    condition: code-review.errors == 0
+    on_failure: |
+      🔒 Security review failed — correct all `error`-level findings before
+         merging into the protected branch.
+
+# ---------------------------------------------------------------------------
+# Example 4: Nightly full scan
+# ---------------------------------------------------------------------------
+# Reviews all open PRs nightly with a comprehensive rule set.  Posts
+# COMMENT-level reviews (non-blocking) so authors see feedback in the
+# morning without blocking their work.
+# ---------------------------------------------------------------------------
+name: code-review-nightly
+
+on:
+  schedule:
+    - cron: "0 3 * * *"   # Every night at 03:00 UTC
+
+pipeline:
+  - action: fetch_open_prs
+    max: 50
+
+  - for_each: pr
+    pipeline:
+      - action: checkout
+        ref: pr.head.ref
+        base: pr.base.ref
+
+      - skill: code-review
+        config:
+          rules:
+            - security
+            - performance
+            - style
+          max_comments: 30
+          require_review: false
+          vcs:
+            provider: github
+            review_event: COMMENT  # Non-blocking overnight advisory
+
+# ---------------------------------------------------------------------------
+# Example 5: Local / CLI usage
+# ---------------------------------------------------------------------------
+# Developers can run the skill locally before pushing to review their own
+# changes.  Output goes to terminal (no VCS posting).
+# ----------------------------------------------------------------------------
+pipeline:
+  - action: checkout
+    path: ./
+
+  - skill: code-review
+    config:
+      rules:
+        - security
+        - performance
+        - style
+      output_format: terminal
+      require_review: false
+      max_comments: 50
+
+# Expected usage:
+#   prismatic run --pipeline templates/pipeline.yaml --diff HEAD~1

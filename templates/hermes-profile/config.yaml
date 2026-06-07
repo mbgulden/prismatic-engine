@@ -1,0 +1,13 @@
+name: prismatic
+description: "Prismatic Engine — agent orchestration hub"
+model: deepseek-v4-flash
+provider: deepseek
+
+telegram:
+  enabled: false
+
+cron:
+  - name: prismatic-dispatcher
+    schedule: "*/5 * * * *"
+    prompt: "Run the Prismatic Engine dispatcher loop: poll Linear for labeled issues, route to agents, track completion."
+    deliver: local

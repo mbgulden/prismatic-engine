@@ -1,0 +1,119 @@
+# =============================================================================
+# Research Synthesizer — Configuration Template
+# =============================================================================
+# Copy this file, rename it, and adjust the values below to define your
+# research scope. The skill will read this config at runtime.
+#
+# Usage:
+#   cp research-config.yaml my-project.yaml
+#   prismatic run research-synthesizer --config my-project.yaml
+# =============================================================================
+
+research:
+  # ---------------------------------------------------------------------------
+  # Research Metadata
+  # ---------------------------------------------------------------------------
+  title: "My Research Project"
+  description: >
+    A brief description of what you're investigating. This context helps
+    the synthesis engine prioritize and frame findings appropriately.
+
+  # ---------------------------------------------------------------------------
+  # Source Definitions
+  # ---------------------------------------------------------------------------
+  # Each source entry defines one origin of data. You can mix types freely.
+  sources:
+
+    # --- Google Drive Sources ------------------------------------------------
+    # Search Drive by text query (matches filename and content).
+    # Optionally constrain by MIME type and result count.
+    - type: google_drive
+      query: "quarterly review Q2 2026"
+      mime_types:
+        - application/vnd.google-apps.document
+        - application/vnd.google-apps.spreadsheet
+      max_results: 5               # optional; overrides manifest default
+      include_trashed: false
+
+    # Drive source with explicit file IDs (bypasses search).
+    - type: google_drive
+      file_ids:
+        - "1abc123def456ghi789jkl"  # replace with actual Drive file ID
+        - "2xyz789abc012def345mno"
+      mime_types:
+        - application/vnd.google-apps.document
+
+    # --- Web Sources ---------------------------------------------------------
+    # Provide one or more URLs to fetch and analyze.
+    - type: web
+      urls:
+        - "https://example.com/industry-report"
+        - "https://news.example.com/latest-analysis"
+        - "https://docs.example.com/standards/v2"
+      timeout_seconds: 30           # optional; per-request timeout
+
+    # --- Local File Sources --------------------------------------------------
+    # File paths or glob patterns on the local filesystem.
+    - type: local
+      paths:
+        - "/home/user/research/notes/*.md"
+        - "/home/user/research/data/survey-results.csv"
+        - "/home/user/research/whitepapers/"
+      recursive: true               # optional; recurse into subdirectories
+      max_files: 20                 # optional; limit file count
+
+  # ---------------------------------------------------------------------------
+  # Synthesis Controls
+  # ---------------------------------------------------------------------------
+  # Depth of analysis.
+  # Options: quick | balanced | comprehensive
+  depth: comprehensive
+
+  # Output format.
+  # Options: structured | narrative | bullet | executive
+  output_format: structured
+
+  # Whether to tag each finding with source citations.
+  include_citations: true
+
+  # Optional: custom taxonomy tags to classify findings.
+  # The engine will attempt to group findings under these headings.
+  taxonomy:
+    - "Market Position"
+    - "Competitive Threats"
+    - "Opportunities"
+    - "Risks"
+    - "Key Metrics"
+
+  # ---------------------------------------------------------------------------
+  # Output Controls
+  # ---------------------------------------------------------------------------
+  output:
+    # File path to write the synthesis result. If omitted, output is returned
+    # to the caller (stdout / agent response).
+    # path: "/home/user/research/synthesis-output.md"
+
+    # Append a full source index at the end of the document.
+    include_source_index: true
+
+    # Include a brief confidence/quality assessment per finding.
+    include_confidence: true
+
+    # Maximum length of the final synthesis in characters (0 = no limit).
+    max_length: 50000
+
+  # ---------------------------------------------------------------------------
+  # Advanced Options
+  # ---------------------------------------------------------------------------
+  advanced:
+    # Deduplicate similar content across sources before synthesis.
+    deduplicate: true
+
+    # Language of the output (ISO 639-1 code). Default: en
+    language: "en"
+
+    # If true, the skill will continue even if some sources fail.
+    graceful_failures: true
+
+    # Log level for debugging. Options: debug | info | warn | error
+    log_level: "info"

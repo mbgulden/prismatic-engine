@@ -1,0 +1,11 @@
+name: research-synthesizer
+version: 1.0.0
+description: Synthesize research from multiple sources — Google Drive, web, local files — into structured summaries
+author: Prismatic Engine
+category: research
+labels: [agent:research]
+config:
+  max_sources: 10
+  output_format: structured
+  include_citations: true
+  preferred_depth: comprehensive

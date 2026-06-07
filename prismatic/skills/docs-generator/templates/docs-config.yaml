@@ -1,0 +1,114 @@
+# =============================================================================
+# Prismatic Docs Generator — Configuration Template
+# =============================================================================
+# Copy this file to your project root as docs-config.yaml and customise.
+# Then run:  prismatic run docs-generator --config docs-config.yaml
+# =============================================================================
+
+# ---- Project Metadata ----
+title: "My Project"                          # Documentation site title
+description: >                               # Short description (shown in header)
+  Auto-generated documentation for My Project.
+version: "1.0.0"                             # Project version
+
+# ---- Source & Output ----
+source_dir: "./src"                           # Root directory of source code
+output_dir: "./docs"                          # Output directory for generated docs
+output_format: "markdown"                     # markdown | markdown-single | html | json | yaml
+
+# ---- Content Options ----
+include_examples: true                        # Extract and render @example / # Example blocks
+include_api_ref: true                         # Generate full API reference section
+max_depth: 3                                  # Max nesting depth for module traversal
+strip_private: true                           # Skip names prefixed with _ (underscore)
+include_private: false                        # Override: include private members (takes precedence)
+
+# ---- Filtering ----
+ignore_patterns:                              # Glob patterns to exclude from scanning
+  - "**/tests/**"
+  - "**/test_*"
+  - "**/__pycache__/**"
+  - "**/node_modules/**"
+  - "**/vendor/**"
+  - "**/.*"                                   # Dotfiles / dotdirs
+  - "**/*.min.*"                              # Minified assets
+  - "**/build/**"
+  - "**/dist/**"
+
+# ---- Format-Specific Options ----
+format_options:
+  markdown:
+    index_filename: "index.md"                # Entry-point filename
+    separate_modules: true                    # One file per module vs. single-file
+    line_numbers: false                       # Include source line numbers in headings
+    table_of_contents: true                   # Auto-generate ToC at the top of each page
+    badges:
+      enabled: true
+      include_version: true
+      include_python: true
+      include_license: false
+
+  html:
+    theme: "default"                          # default | dark | light | custom
+    custom_css: ""                            # Path to a custom CSS file (optional)
+    embed_styles: true                        # Inline CSS vs. external link
+    responsive: true                          # Mobile-friendly viewport
+
+  json:
+    pretty_print: true                        # Indented JSON vs. compact
+    include_source: true                      # Include raw source in output
+
+  yaml:
+    pretty_print: true
+    include_source: false
+
+# ---- Advanced ----
+parsing:
+  follow_imports: false                       # Resolve and document imported symbols
+  resolve_type_aliases: true                  # Expand type aliases in signatures
+  max_example_lines: 50                       # Cap extracted example blocks at N lines
+
+  docstring_style: "auto"                     # auto | google | numpy | rst | jsdoc | javadoc
+                                             # "auto" attempts to detect per-file
+
+llm_enhance:                                  # Optional: enrich sparse docs with LLM
+  enabled: false
+  model: ""                                   # e.g. "deepseek-v4-flash"
+  api_key_env: "PRISMATIC_LLM_API_KEY"        # Env var holding the API key
+  temperature: 0.3
+  max_retries: 2
+
+# ---- Hooks (optional) ----
+hooks:
+  pre_generate: ""                            # Shell command run before generation
+  post_generate: ""                           # Shell command run after generation
+  on_error: ""                                # Shell command run on generation failure
+
+# =============================================================================
+# Example: Minimal config for a Python project
+# =============================================================================
+# title: "My Library"
+# source_dir: "./mylib"
+# output_dir: "./docs/api"
+# output_format: "markdown-single"
+# ignore_patterns:
+#   - "**/tests/**"
+#   - "**/__pycache__/**"
+
+# =============================================================================
+# Example: Full monorepo documentation
+# =============================================================================
+# title: "Monorepo"
+# description: "Documentation for the entire monorepo"
+# version: "3.2.1"
+# source_dir: "./packages"
+# output_dir: "./website/docs"
+# output_format: "markdown"
+# max_depth: 4
+# include_examples: true
+# include_api_ref: true
+# llm_enhance:
+#   enabled: true
+#   model: "deepseek-v4-flash"
+#   api_key_env: "OPENAI_API_KEY"
+#   temperature: 0.2
