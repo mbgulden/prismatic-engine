@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450" width="100%" height="100%">
+  <defs>
+    <!-- Background Gradient -->
+    <radialGradient id="bgGrad" cx="50%" cy="50%" r="70%">
+      <stop offset="0%" stop-color="#1E293B"/>
+      <stop offset="100%" stop-color="#0F172A"/>
+    </radialGradient>
+    
+    <!-- Box Gradients -->
+    <linearGradient id="primaryGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3B82F6"/>
+      <stop offset="100%" stop-color="#1D4ED8"/>
+    </linearGradient>
+    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#06B6D4"/>
+      <stop offset="100%" stop-color="#0891B2"/>
+    </linearGradient>
+    <linearGradient id="successGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10B981"/>
+      <stop offset="100%" stop-color="#047857"/>
+    </linearGradient>
+    
+    <!-- Box Shadows -->
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <drop-shadow dx="2" dy="4" stdDeviation="4" flood-color="#000" flood-opacity="0.5"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="100%" height="100%" fill="url(#bgGrad)"/>
+
+  <!-- Title -->
+  <text x="400" y="40" font-family="'Outfit', 'Inter', sans-serif" font-size="22" font-weight="bold" fill="#F8FAFC" text-anchor="middle">
+    Prismatic Engine: Local AI Agent Pipeline
+  </text>
+  <text x="400" y="65" font-family="'Outfit', 'Inter', sans-serif" font-size="12" fill="#94A3B8" text-anchor="middle">
+    Free-to-Run "Forever" Workers Integration Architecture
+  </text>
+
+  <!-- Central Flow Line -->
+  <line x1="140" y1="210" x2="660" y2="210" stroke="#475569" stroke-width="2" stroke-dasharray="6,4"/>
+
+  <!-- Node 1: Task Intake -->
+  <g transform="translate(40, 160)" filter="url(#shadow)">
+    <rect width="160" height="90" rx="8" fill="url(#primaryGrad)"/>
+    <text x="80" y="35" font-family="'Inter', sans-serif" font-size="14" font-weight="bold" fill="#FFFFFF" text-anchor="middle">Task Intake</text>
+    <text x="80" y="55" font-family="'Inter', sans-serif" font-size="11" fill="#DBEAFE" text-anchor="middle">SQLite Queue</text>
+    <text x="80" y="70" font-family="'Inter', sans-serif" font-size="10" fill="#93C5FD" text-anchor="middle">(prismatic_tasks.db)</text>
+  </g>
+
+  <!-- Connection Arrow 1 -->
+  <polygon points="215,205 215,215 225,210" fill="#3B82F6"/>
+
+  <!-- Node 2: Prismatic Engine Coordinator -->
+  <g transform="translate(240, 130)" filter="url(#shadow)">
+    <rect width="180" height="150" rx="8" fill="#1E293B" stroke="#475569" stroke-width="2"/>
+    <rect width="180" height="35" rx="8" fill="#334155"/>
+    <text x="90" y="22" font-family="'Inter', sans-serif" font-size="13" font-weight="bold" fill="#F8FAFC" text-anchor="middle">Dispatcher / Router</text>
+    
+    <text x="90" y="65" font-family="'Inter', sans-serif" font-size="11" fill="#CBD5E1" text-anchor="middle">LocalAgent Interface</text>
+    <line x1="20" y1="80" x2="160" y2="80" stroke="#334155" stroke-width="1"/>
+    
+    <text x="90" y="105" font-family="'Inter', sans-serif" font-size="11" fill="#E2E8F0" text-anchor="middle">Tool Execution Interceptor</text>
+    
+    <rect x="25" y="120" width="130" height="20" rx="4" fill="#0F172A" stroke="#475569"/>
+    <text x="90" y="133" font-family="'Consolas', monospace" font-size="9" fill="#38BDF8" text-anchor="middle">local_agents.yaml</text>
+  </g>
+
+  <!-- Connection Arrow 2 -->
+  <polygon points="435,205 435,215 445,210" fill="#06B6D4"/>
+
+  <!-- Node 3: Local Signal Provider -->
+  <g transform="translate(460, 160)" filter="url(#shadow)">
+    <rect width="160" height="90" rx="8" fill="url(#accentGrad)"/>
+    <text x="80" y="35" font-family="'Inter', sans-serif" font-size="13" font-weight="bold" fill="#FFFFFF" text-anchor="middle">Signal Provider</text>
+    <text x="80" y="55" font-family="'Inter', sans-serif" font-size="11" fill="#ECFDF5" text-anchor="middle">Subprocess / Docker</text>
+    <text x="80" y="70" font-family="'Inter', sans-serif" font-size="10" fill="#CFFAFE" text-anchor="middle">Local Workspace Mounting</text>
+  </g>
+
+  <!-- Connection Arrow 3 -->
+  <polygon points="635,205 635,215 645,210" fill="#10B981"/>
+
+  <!-- Node 4: Local LLM Endpoint -->
+  <g transform="translate(600, 310)" filter="url(#shadow)">
+    <rect width="160" height="90" rx="8" fill="url(#successGrad)"/>
+    <text x="80" y="35" font-family="'Inter', sans-serif" font-size="13" font-weight="bold" fill="#FFFFFF" text-anchor="middle">Local Inference Host</text>
+    <text x="80" y="55" font-family="'Inter', sans-serif" font-size="11" fill="#ECFDF5" text-anchor="middle">Ollama / vLLM / llama</text>
+    <text x="80" y="70" font-family="'Inter', sans-serif" font-size="10" fill="#A7F3D0" text-anchor="middle">(API Endpoint: Qwen / Llama)</text>
+  </g>
+
+  <!-- Loop: Tools execution path -->
+  <path d="M 330,280 C 330,355 590,355 590,355" fill="none" stroke="#F59E0B" stroke-width="2" stroke-dasharray="4,2"/>
+  <polygon points="325,290 330,280 335,290" fill="#F59E0B"/>
+  
+  <text x="460" y="345" font-family="'Inter', sans-serif" font-size="10" fill="#FBBF24" text-anchor="middle">
+    Tool Execution &amp; Feedback Loop (JSON)
+  </text>
+  
+  <!-- Outer Connector for Signal Completion -->
+  <path d="M 680,250 L 680,310" stroke="#10B981" stroke-width="2"/>
+
+</svg>

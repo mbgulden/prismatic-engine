@@ -1,0 +1,6 @@
+rating: 4
+dependencies:
+- find
+- grep
+- python3
+compatibility_notes: Runs on bash-compatible terminals. Highly portable.

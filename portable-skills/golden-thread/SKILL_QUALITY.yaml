@@ -1,0 +1,6 @@
+rating: 5
+dependencies:
+- autonomous-execution-discipline
+- linear-api-mcp
+compatibility_notes: Highly compatible with Linux/macOS. Requires Linear API access
+  for issue tracking.

@@ -1,0 +1,6 @@
+rating: 5
+dependencies:
+- orchestrator-delegation-discipline
+- golden-thread
+compatibility_notes: Requires a persistent task daemon or cron system. Script nudge_detector.py
+  requires python3.

@@ -1,0 +1,5 @@
+rating: 4
+dependencies:
+- autonomous-execution-discipline
+compatibility_notes: Compatible with Linux and macOS. Requires subagent execution
+  capability.

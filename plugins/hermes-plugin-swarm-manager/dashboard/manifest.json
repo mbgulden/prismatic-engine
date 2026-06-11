@@ -1,0 +1,13 @@
+{
+  "name": "hermes-plugin-swarm-manager",
+  "label": "⧉ Swarm Manager",
+  "description": "Unified Swarm Manager workspace explorer, session director, and terminal console",
+  "icon": "Users",
+  "version": "0.1.0-local",
+  "tab": {
+    "path": "/swarm-manager",
+    "position": "end"
+  },
+  "entry": "dist/index.js",
+  "slots": ["global-injector"]
+}

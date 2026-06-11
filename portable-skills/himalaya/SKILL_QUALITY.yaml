@@ -1,0 +1,5 @@
+rating: 4
+dependencies:
+- himalaya
+compatibility_notes: Requires the himalaya binary in the system PATH. Works across
+  Linux, macOS, and Windows.

@@ -1,0 +1,12 @@
+{
+  "name": "hermes-plugin-lock-dashboard",
+  "label": "🔒 Locks",
+  "description": "Live swarm lock state — see which files are locked, by which agent, for how long",
+  "icon": "Lock",
+  "version": "0.1.0",
+  "tab": {
+    "path": "/lock-dashboard",
+    "position": "end"
+  },
+  "entry": "dist/index.js"
+}

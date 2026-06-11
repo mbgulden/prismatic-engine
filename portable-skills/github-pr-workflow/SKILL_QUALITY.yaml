@@ -1,0 +1,7 @@
+rating: 5
+dependencies:
+- git
+- gh
+- github-auth
+compatibility_notes: Requires GitHub authorization token if utilizing the API fallback.
+  Works on Linux, macOS, and Windows.

@@ -1,0 +1,26 @@
+{
+  "name": "hermes-plugin-mcp-controller",
+  "label": "MCP Servers",
+  "description": "Control panel for active MCP servers",
+  "icon": "Layers",
+  "version": "0.1.0-local",
+  "tab": {
+    "path": "/mcp-controller",
+    "position": "end"
+  },
+  "tabs": [
+    {
+      "label": "Servers",
+      "path": "/mcp-controller"
+    },
+    {
+      "label": "Tools",
+      "path": "/mcp-controller/tools"
+    },
+    {
+      "label": "Logs",
+      "path": "/mcp-controller/logs"
+    }
+  ],
+  "entry": "dist/index.js"
+}

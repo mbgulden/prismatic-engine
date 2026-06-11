@@ -1,0 +1,12 @@
+{
+  "name": "hermes-plugin-realtime-activity-stream",
+  "label": "Activity Stream",
+  "description": "SSE-multiplexed live running process status",
+  "icon": "Activity",
+  "version": "0.1.0-local",
+  "tab": {
+    "path": "/activity-stream",
+    "position": "end"
+  },
+  "entry": "dist/index.js"
+}

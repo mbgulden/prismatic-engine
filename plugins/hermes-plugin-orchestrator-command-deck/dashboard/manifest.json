@@ -1,0 +1,27 @@
+{
+  "name": "hermes-plugin-orchestrator-command-deck",
+  "label": "Orchestrator Deck",
+  "description": "Swarm command dispatch layout, agent status indicators, and cross-tab synchronization",
+  "icon": "Terminal",
+  "version": "0.1.0-local",
+  "tab": {
+    "path": "/orchestrator",
+    "position": "end"
+  },
+  "tabs": [
+    {
+      "label": "Control",
+      "path": "/orchestrator"
+    },
+    {
+      "label": "Queue",
+      "path": "/orchestrator/queue"
+    },
+    {
+      "label": "Logs",
+      "path": "/orchestrator/logs"
+    }
+  ],
+  "entry": "dist/index.js",
+  "slots": ["global-injector"]
+}

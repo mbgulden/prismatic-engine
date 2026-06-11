@@ -1,0 +1,177 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 650" width="100%" height="100%">
+  <!-- Definitions for styling and markers -->
+  <defs>
+    <style>
+      .bg { fill: #0f172a; }
+      .title { font-family: 'Outfit', 'Inter', sans-serif; font-size: 24px; font-weight: 700; fill: #f8fafc; letter-spacing: 0.5px; }
+      .subtitle { font-family: 'Inter', sans-serif; font-size: 14px; fill: #94a3b8; }
+      .legend-text { font-family: 'Inter', sans-serif; font-size: 12px; fill: #cbd5e1; }
+      .node-rect { stroke-width: 2; rx: 8; ry: 8; filter: drop-shadow(0px 4px 6px rgba(0,0,0,0.3)); }
+      .node-text { font-family: 'Inter', sans-serif; font-size: 14px; font-weight: 600; fill: #ffffff; text-anchor: middle; }
+      .node-subtext { font-family: 'Inter', sans-serif; font-size: 11px; fill: #e2e8f0; text-anchor: middle; opacity: 0.85; }
+      .arrow-line { stroke-width: 2.5; stroke-dasharray: none; fill: none; }
+      .loopback-line { stroke: #ec4899; stroke-width: 2.5; stroke-dasharray: 6 4; fill: none; }
+      .gate-rect { stroke: #f59e0b; fill: #78350f; stroke-width: 2; rx: 6; ry: 6; }
+      .gate-text { font-family: 'Inter', sans-serif; font-size: 11px; font-weight: bold; fill: #fef3c7; text-anchor: middle; }
+      
+      /* Colors */
+      .c-decompose { fill: #0369a1; stroke: #38bdf8; }
+      .c-dispatch { fill: #4338ca; stroke: #818cf8; }
+      .c-execute { fill: #6d28d9; stroke: #a78bfa; }
+      .c-review { fill: #b45309; stroke: #fbbf24; }
+      .c-feedback { fill: #9f1239; stroke: #fb7185; }
+      .c-refine { fill: #9d174d; stroke: #f472b6; }
+      .c-integrate { fill: #065f46; stroke: #34d399; }
+      
+      /* Markers */
+      .marker-blue { fill: #38bdf8; }
+      .marker-purple { fill: #a78bfa; }
+      .marker-amber { fill: #fbbf24; }
+      .marker-rose { fill: #fb7185; }
+      .marker-pink { fill: #f472b6; }
+      .marker-emerald { fill: #34d399; }
+    </style>
+    
+    <!-- Markers for arrows -->
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#38bdf8" />
+    </marker>
+    <marker id="arrow-purple" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#a78bfa" />
+    </marker>
+    <marker id="arrow-amber" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#fbbf24" />
+    </marker>
+    <marker id="arrow-rose" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#fb7185" />
+    </marker>
+    <marker id="arrow-pink" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#f472b6" />
+    </marker>
+    <marker id="arrow-emerald" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#34d399" />
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="100%" height="100%" class="bg" />
+
+  <!-- Header -->
+  <text x="40" y="50" class="title">Prismatic Engine — 7-Step Iterative Loop Flow</text>
+  <text x="40" y="75" class="subtitle">Multi-Agent State Machine &amp; Human Verification Gates (Interactive/Collaborative/Autonomous)</text>
+
+  <!-- Step 1: Decompose -->
+  <g transform="translate(350, 110)">
+    <rect width="200" height="60" class="node-rect c-decompose" x="-100" y="-30"/>
+    <text y="-5" class="node-text">Step 1: DECOMPOSE</text>
+    <text y="15" class="node-subtext">Megaprompt → Contracts</text>
+  </g>
+
+  <!-- HITL Gate 1 (Decomposition Review) -->
+  <g transform="translate(350, 205)">
+    <rect width="160" height="30" class="gate-rect" x="-80" y="-15"/>
+    <text y="4" class="gate-text">Gate 1: Plan Approval</text>
+  </g>
+
+  <!-- Step 2: Dispatch -->
+  <g transform="translate(350, 290)">
+    <rect width="200" height="60" class="node-rect c-dispatch" x="-100" y="-30"/>
+    <text y="-5" class="node-text">Step 2: DISPATCH</text>
+    <text y="15" class="node-subtext">Executor Assignment</text>
+  </g>
+
+  <!-- Step 3: Execute -->
+  <g transform="translate(350, 390)">
+    <rect width="200" height="60" class="node-rect c-execute" x="-100" y="-30"/>
+    <text y="-5" class="node-text">Step 3: EXECUTE</text>
+    <text y="15" class="node-subtext">Lanes, Branch, Mutex Locks</text>
+  </g>
+
+  <!-- Step 4: Review -->
+  <g transform="translate(350, 500)">
+    <rect width="200" height="60" class="node-rect c-review" x="-100" y="-30"/>
+    <text y="-5" class="node-text">Step 4: REVIEW</text>
+    <text y="15" class="node-subtext">Automated Linters / Jules</text>
+  </g>
+
+  <!-- HITL Gate 2 (Review Approval) -->
+  <g transform="translate(350, 580)">
+    <rect width="160" height="30" class="gate-rect" x="-80" y="-15"/>
+    <text y="4" class="gate-text">Gate 2: Review Approval</text>
+  </g>
+
+  <!-- Step 5: Feedback -->
+  <g transform="translate(130, 500)">
+    <rect width="180" height="60" class="node-rect c-feedback" x="-90" y="-30"/>
+    <text y="-5" class="node-text">Step 5: FEEDBACK</text>
+    <text y="15" class="node-subtext">Error Payload Construction</text>
+  </g>
+
+  <!-- Step 6: Refine -->
+  <g transform="translate(130, 390)">
+    <rect width="180" height="60" class="node-rect c-refine" x="-90" y="-30"/>
+    <text y="-5" class="node-text">Step 6: REFINE</text>
+    <text y="15" class="node-subtext">Worker Branch Revision</text>
+  </g>
+
+  <!-- Step 7: Integrate -->
+  <g transform="translate(680, 500)">
+    <rect width="180" height="60" class="node-rect c-integrate" x="-90" y="-30"/>
+    <text y="-5" class="node-text">Step 7: INTEGRATE</text>
+    <text y="15" class="node-subtext">Governor Merge &amp; Cleanup</text>
+  </g>
+
+  <!-- Connections (Lines & Arrows) -->
+  
+  <!-- Decompose -> Gate 1 -->
+  <path d="M 350 140 L 350 190" stroke="#38bdf8" class="arrow-line" marker-end="url(#arrow-blue)" />
+  
+  <!-- Gate 1 -> Dispatch (Direct bypass in Collab/Auto) -->
+  <path d="M 350 220 L 350 260" stroke="#818cf8" class="arrow-line" marker-end="url(#arrow-blue)" />
+  
+  <!-- Dispatch -> Execute -->
+  <path d="M 350 320 L 350 360" stroke="#a78bfa" class="arrow-line" marker-end="url(#arrow-purple)" />
+  
+  <!-- Execute -> Review -->
+  <path d="M 350 420 L 350 470" stroke="#fbbf24" class="arrow-line" marker-end="url(#arrow-amber)" />
+
+  <!-- Review -> Gate 2 -->
+  <path d="M 350 530 L 350 565" stroke="#fbbf24" class="arrow-line" marker-end="url(#arrow-amber)" />
+
+  <!-- Review/Gate 2 (Fail) -> Feedback -->
+  <path d="M 270 580 L 130 580 L 130 530" stroke="#fb7185" fill="none" stroke-width="2.5" marker-end="url(#arrow-rose)" />
+  
+  <!-- Review/Gate 2 (Pass) -> Integrate -->
+  <path d="M 430 580 L 680 580 L 680 530" stroke="#34d399" fill="none" stroke-width="2.5" marker-end="url(#arrow-emerald)" />
+
+  <!-- Feedback -> Refine -->
+  <path d="M 130 470 L 130 420" stroke="#f472b6" class="arrow-line" marker-end="url(#arrow-pink)" />
+
+  <!-- Refine -> Execute (Loopback refinement) -->
+  <path d="M 220 390 L 250 390" stroke="#f472b6" class="arrow-line" marker-end="url(#arrow-pink)" />
+
+  <!-- Labels for Mode Switches -->
+  <text x="360" y="175" class="legend-text" fill="#f59e0b">Interactive: Requires User approval</text>
+  <text x="360" y="245" class="legend-text" fill="#94a3b8">Collab / Auto: Auto-Bypassed</text>
+  
+  <text x="360" y="555" class="legend-text" fill="#f59e0b">Interactive / Collab: Human Gated</text>
+  <text x="460" y="595" class="legend-text" fill="#34d399">Autonomous: Auto-Merged</text>
+  
+  <!-- Legend panel -->
+  <g transform="translate(620, 100)">
+    <rect width="240" height="180" fill="#1e293b" stroke="#334155" stroke-width="1.5" rx="6" ry="6" />
+    <text x="15" y="25" font-family="'Inter', sans-serif" font-size="12" font-weight="bold" fill="#f8fafc">ORCHESTRATION MODES</text>
+    
+    <circle cx="25" cy="55" r="5" fill="#f59e0b" />
+    <text x="40" y="59" font-family="Inter" font-size="11" fill="#e2e8f0">Interactive Mode</text>
+    <text x="40" y="73" font-family="Inter" font-size="10" fill="#94a3b8">Human approves Step 1, 4, 7</text>
+    
+    <circle cx="25" cy="95" r="5" fill="#38bdf8" />
+    <text x="40" y="99" font-family="Inter" font-size="11" fill="#e2e8f0">Collaborative Mode</text>
+    <text x="40" y="113" font-family="Inter" font-size="10" fill="#94a3b8">Human reviews Step 4 only (Default)</text>
+    
+    <circle cx="25" cy="135" r="5" fill="#34d399" />
+    <text x="40" y="139" font-family="Inter" font-size="11" fill="#e2e8f0">Autonomous Mode</text>
+    <text x="40" y="153" font-family="Inter" font-size="10" fill="#94a3b8">Fully automated review + merge</text>
+  </g>
+</svg>

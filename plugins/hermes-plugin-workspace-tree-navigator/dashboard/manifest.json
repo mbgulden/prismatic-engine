@@ -1,0 +1,13 @@
+{
+  "name": "hermes-plugin-workspace-tree-navigator",
+  "label": "Workspace Tree",
+  "description": "Interactive workspace directory navigator with file previews, download buttons, and mobile-responsive layout",
+  "icon": "FolderOpen",
+  "version": "0.2.0",
+  "tab": {
+    "path": "/workspace-tree",
+    "position": "end"
+  },
+  "entry": "dist/index.js",
+  "api": "plugin_api.py"
+}

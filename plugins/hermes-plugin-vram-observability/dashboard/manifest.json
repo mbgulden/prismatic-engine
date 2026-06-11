@@ -1,0 +1,12 @@
+{
+  "name": "hermes-plugin-vram-observability",
+  "label": "GPU Monitor",
+  "description": "Real-time GPU resource monitor and VRAM analyzer",
+  "icon": "Cpu",
+  "version": "0.1.0-local",
+  "tab": {
+    "path": "/gpu-observability",
+    "position": "end"
+  },
+  "entry": "dist/index.js"
+}

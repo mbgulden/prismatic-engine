@@ -2,8 +2,8 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
-dist/
-build/
+/dist/
+/build/
 *.egg
 .venv/
 env/
@@ -18,3 +18,5 @@ Thumbs.db
 
 # Config overrides
 config.local.yaml
+.gdocs_token.json
+scratch/

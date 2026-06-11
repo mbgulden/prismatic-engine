@@ -1,0 +1,1676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Orchestration Command Deck — Prismatic Hub</title>
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  
+  <style>
+    /* -------------------------------------------------- */
+    /* 1. CSS Design Tokens & Themes                      */
+    /* -------------------------------------------------- */
+    :root {
+      --bg-deep-space: #06070a;
+      --bg-industrial: #0e1117;
+      --bg-card: #151a22;
+      --bg-card-hover: #1c232e;
+      --bg-input: #090c10;
+      --border-subtle: #252e3d;
+      --border-active: #3b495c;
+      --text-primary: #f5f6f7;
+      --text-secondary: #8b9bb4;
+      --text-muted: #536279;
+
+      /* Agent Colors (Signature Wavelengths) */
+      --color-antigravity: #F39C12; /* Amber */
+      --color-jules: #E67E22;        /* Orange */
+      --color-codex: #E74C3C;        /* Red */
+      --color-kai: #2ECC71;          /* Green */
+      --color-fred: #3498DB;         /* Blue */
+      --color-ned: #9B59B6;          /* Purple */
+
+      /* Priority Colors */
+      --color-low: #536279;
+      --color-medium: #3498DB;
+      --color-high: #E67E22;
+      --color-critical: #E74C3C;
+
+      --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+
+      --radius-sm: 4px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+      --transition-speed: 0.2s;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-deep-space);
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+      padding-bottom: 20px;
+    }
+
+    /* Scrollbars */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: var(--bg-deep-space);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--border-subtle);
+      border-radius: var(--radius-sm);
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--text-secondary);
+    }
+
+    /* Utility classes */
+    .hidden {
+      display: none !important;
+    }
+
+    /* -------------------------------------------------- */
+    /* 2. Layout Elements & Structure                     */
+    /* -------------------------------------------------- */
+    .container {
+      max-width: 1440px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      flex: 1;
+    }
+
+    header {
+      background: var(--bg-industrial);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 16px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: relative;
+      overflow: hidden;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    }
+
+    header::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, 
+        var(--color-antigravity), 
+        var(--color-jules), 
+        var(--color-codex), 
+        var(--color-kai), 
+        var(--color-fred), 
+        var(--color-ned)
+      );
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand .logo {
+      width: 24px;
+      height: 24px;
+      background: linear-gradient(135deg, var(--color-antigravity), var(--color-ned));
+      clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
+      filter: drop-shadow(0 0 6px rgba(243, 156, 18, 0.4));
+      animation: logo-glow 4s infinite alternate;
+    }
+
+    @keyframes logo-glow {
+      0% { filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.2)); }
+      100% { filter: drop-shadow(0 0 10px rgba(108, 92, 231, 0.6)); }
+    }
+
+    .brand-title {
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      font-family: var(--font-mono);
+      background: linear-gradient(90deg, #fff, var(--text-secondary));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .brand-subtitle {
+      font-size: 11px;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-top: 2px;
+    }
+
+    .header-info {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+    }
+
+    .telemetry-item {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      font-family: var(--font-mono);
+      font-size: 12px;
+    }
+
+    .telemetry-label {
+      color: var(--text-muted);
+      text-transform: uppercase;
+      font-size: 10px;
+    }
+
+    .telemetry-value {
+      color: var(--text-primary);
+      font-weight: bold;
+    }
+
+    /* Tab Controls */
+    .nav-tabs {
+      display: flex;
+      background: var(--bg-industrial);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 4px;
+      gap: 4px;
+    }
+
+    .nav-tab {
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      font-family: var(--font-sans);
+      font-size: 14px;
+      font-weight: 600;
+      padding: 10px 20px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: all var(--transition-speed) ease;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .nav-tab:hover {
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text-primary);
+    }
+
+    .nav-tab.active {
+      background: var(--bg-deep-space);
+      color: var(--text-primary);
+      box-shadow: inset 0 0 10px rgba(0,0,0,0.5);
+      border-bottom: 2px solid var(--color-antigravity);
+    }
+
+    /* Main Content Layout Grid */
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: 8fr 4fr;
+      gap: 20px;
+    }
+
+    /* Panel Card Structure */
+    .panel-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+      position: relative;
+    }
+
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border-subtle);
+      padding-bottom: 12px;
+      margin-bottom: 4px;
+    }
+
+    .panel-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      text-transform: uppercase;
+      font-family: var(--font-mono);
+      letter-spacing: 0.5px;
+    }
+
+    .panel-title span.pulse-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: var(--color-kai);
+      display: inline-block;
+      box-shadow: 0 0 8px var(--color-kai);
+      animation: status-pulse 1.5s infinite;
+    }
+
+    /* -------------------------------------------------- */
+    /* 3. Mode Switch Selector                            */
+    /* -------------------------------------------------- */
+    .mode-switch-wrapper {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .mode-toggle-bar {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      background: var(--bg-input);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 4px;
+      position: relative;
+    }
+
+    .mode-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      font-family: var(--font-sans);
+      font-size: 13px;
+      font-weight: 700;
+      padding: 12px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: all var(--transition-speed) ease;
+      text-align: center;
+      text-transform: uppercase;
+      z-index: 2;
+    }
+
+    .mode-btn.active {
+      color: var(--text-primary);
+      background: var(--bg-card);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.5), inset 0 0 1px rgba(255,255,255,0.1);
+    }
+
+    /* Dynamic Border color based on Mode */
+    .mode-toggle-bar.interactive .mode-btn.active { border-bottom: 2px solid var(--color-fred); }
+    .mode-toggle-bar.collaborative .mode-btn.active { border-bottom: 2px solid var(--color-antigravity); }
+    .mode-toggle-bar.autonomous .mode-btn.active { border-bottom: 2px solid var(--color-kai); }
+
+    .mode-description {
+      font-size: 12px;
+      color: var(--text-secondary);
+      background: var(--bg-deep-space);
+      border: 1px dashed var(--border-subtle);
+      padding: 12px;
+      border-radius: var(--radius-md);
+      line-height: 1.5;
+    }
+
+    /* -------------------------------------------------- */
+    /* 4. Agent Controls Layout                           */
+    /* -------------------------------------------------- */
+    .agent-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 16px;
+    }
+
+    .agent-control-card {
+      background: var(--bg-deep-space);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 16px;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      transition: all var(--transition-speed) ease;
+    }
+
+    .agent-control-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; bottom: 0;
+      width: 4px;
+      background: var(--agent-color);
+    }
+
+    .agent-control-card:hover {
+      border-color: var(--agent-color);
+      box-shadow: 0 4px 15px var(--agent-color-glow);
+    }
+
+    .agent-info {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .agent-name-role {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .agent-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .agent-role {
+      font-size: 11px;
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+      margin-top: 2px;
+    }
+
+    .agent-status-badge {
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-family: var(--font-mono);
+    }
+
+    .status-running { background: rgba(46, 204, 113, 0.1); color: var(--color-kai); border: 1px solid rgba(46, 204, 113, 0.2); }
+    .status-paused { background: rgba(243, 156, 18, 0.1); color: var(--color-antigravity); border: 1px solid rgba(243, 156, 18, 0.2); }
+    .status-idle { background: rgba(139, 155, 180, 0.1); color: var(--text-secondary); border: 1px solid rgba(139, 155, 180, 0.2); }
+    .status-terminated { background: rgba(231, 76, 60, 0.1); color: var(--color-codex); border: 1px solid rgba(231, 76, 60, 0.2); }
+
+    .agent-current-task {
+      background: rgba(0,0,0,0.3);
+      border: 1px solid rgba(255,255,255,0.02);
+      border-radius: var(--radius-sm);
+      padding: 8px 10px;
+      font-size: 12px;
+      line-height: 1.4;
+      font-family: var(--font-mono);
+      color: rgba(255, 255, 255, 0.7);
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      overflow: hidden;
+    }
+
+    .agent-actions-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+      margin-top: 4px;
+    }
+
+    .agent-btn {
+      font-family: var(--font-sans);
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      padding: 8px 0;
+      border-radius: 4px;
+      border: 1px solid var(--border-subtle);
+      background: var(--bg-card);
+      color: var(--text-primary);
+      cursor: pointer;
+      transition: all var(--transition-speed) ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .agent-btn:hover:not(:disabled) {
+      background: var(--bg-card-hover);
+      border-color: var(--text-secondary);
+    }
+
+    .agent-btn:disabled {
+      opacity: 0.2;
+      cursor: not-allowed;
+    }
+
+    .agent-btn.btn-kill:hover:not(:disabled) {
+      background: rgba(231, 76, 60, 0.2);
+      border-color: var(--color-codex);
+      color: #ff6b6b;
+    }
+
+    /* -------------------------------------------------- */
+    /* 5. Dispatch Form                                   */
+    /* -------------------------------------------------- */
+    .dispatch-form {
+      display: grid;
+      grid-template-columns: 3fr 4fr 2fr auto;
+      gap: 12px;
+      align-items: flex-end;
+      background: var(--bg-deep-space);
+      border: 1px solid var(--border-subtle);
+      padding: 16px;
+      border-radius: var(--radius-md);
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .form-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      font-family: var(--font-mono);
+      color: var(--text-secondary);
+      letter-spacing: 0.5px;
+    }
+
+    .form-select, .form-input {
+      background: var(--bg-input);
+      border: 1px solid var(--border-subtle);
+      border-radius: 4px;
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      font-size: 13px;
+      padding: 10px 12px;
+      outline: none;
+      transition: border-color var(--transition-speed) ease;
+      width: 100%;
+    }
+
+    .form-select:focus, .form-input:focus {
+      border-color: var(--border-active);
+    }
+
+    .form-input::placeholder {
+      color: var(--text-muted);
+    }
+
+    .dispatch-btn {
+      background: var(--color-antigravity);
+      border: none;
+      color: #000;
+      font-family: var(--font-sans);
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+      padding: 11px 20px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all var(--transition-speed) ease;
+      box-shadow: 0 4px 10px rgba(243, 156, 18, 0.3);
+      height: 38px;
+    }
+
+    .dispatch-btn:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 15px rgba(243, 156, 18, 0.4);
+    }
+
+    /* -------------------------------------------------- */
+    /* 6. Task Queue Viewer                               */
+    /* -------------------------------------------------- */
+    .queue-container {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      overflow-y: auto;
+      max-height: 520px;
+      padding-right: 4px;
+    }
+
+    .queue-item {
+      background: var(--bg-deep-space);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      transition: all var(--transition-speed) ease;
+    }
+
+    .queue-item:hover {
+      border-color: var(--border-active);
+      background: rgba(255, 255, 255, 0.01);
+    }
+
+    .queue-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .queue-task-desc {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-primary);
+      line-height: 1.4;
+    }
+
+    .queue-badges {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .priority-badge {
+      font-size: 9px;
+      font-weight: 800;
+      text-transform: uppercase;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: var(--font-mono);
+      letter-spacing: 0.5px;
+    }
+
+    .priority-low { background: rgba(83, 98, 121, 0.15); color: var(--color-low); border: 1px solid rgba(83, 98, 121, 0.3); }
+    .priority-medium { background: rgba(52, 152, 219, 0.15); color: var(--color-medium); border: 1px solid rgba(52, 152, 219, 0.3); }
+    .priority-high { background: rgba(230, 126, 34, 0.15); color: var(--color-high); border: 1px solid rgba(230, 126, 34, 0.3); }
+    .priority-critical { 
+      background: rgba(231, 76, 60, 0.15); 
+      color: var(--color-critical); 
+      border: 1px solid rgba(231, 76, 60, 0.3);
+      animation: critical-pulse 1.5s infinite alternate;
+    }
+
+    @keyframes critical-pulse {
+      0% { box-shadow: 0 0 2px rgba(231, 76, 60, 0.1); }
+      100% { box-shadow: 0 0 8px rgba(231, 76, 60, 0.5); }
+    }
+
+    .agent-badge {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text-primary);
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: var(--font-mono);
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .agent-badge-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+    }
+
+    .queue-time {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+    }
+
+    .queue-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .queue-action-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      cursor: pointer;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      padding: 4px 8px;
+      border-radius: 4px;
+      border: 1px solid transparent;
+      transition: all var(--transition-speed) ease;
+    }
+
+    .queue-action-btn:hover {
+      color: var(--text-primary);
+      background: var(--bg-card);
+      border-color: var(--border-subtle);
+    }
+
+    .queue-action-btn.btn-cancel:hover {
+      color: var(--color-critical);
+      background: rgba(231, 76, 60, 0.1);
+      border-color: rgba(231, 76, 60, 0.2);
+    }
+
+    .queue-empty-msg {
+      font-size: 13px;
+      color: var(--text-muted);
+      text-align: center;
+      padding: 40px 20px;
+      border: 1px dashed var(--border-subtle);
+      border-radius: var(--radius-md);
+      font-style: italic;
+    }
+
+    /* -------------------------------------------------- */
+    /* 7. Agent Log Viewer                                */
+    /* -------------------------------------------------- */
+    .log-viewer-panel {
+      grid-column: span 2;
+    }
+
+    .log-nav-bar {
+      display: flex;
+      border-bottom: 1px solid var(--border-subtle);
+      gap: 4px;
+      overflow-x: auto;
+      margin-bottom: 10px;
+    }
+
+    .log-agent-tab {
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+      font-size: 12px;
+      padding: 10px 16px;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all var(--transition-speed) ease;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+
+    .log-agent-tab:hover {
+      color: var(--text-primary);
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .log-agent-tab.active {
+      color: var(--agent-tab-color);
+      border-bottom-color: var(--agent-tab-color);
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .log-agent-tab-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background-color: var(--agent-tab-color);
+    }
+
+    .console-window {
+      background: #020305;
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 16px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      line-height: 1.6;
+      height: 320px;
+      overflow-y: auto;
+      color: #c5cdd8;
+      box-shadow: inset 0 4px 15px rgba(0,0,0,0.8);
+      position: relative;
+    }
+
+    .log-line {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 4px;
+    }
+
+    .log-timestamp {
+      color: var(--text-muted);
+      user-select: none;
+      flex-shrink: 0;
+    }
+
+    .log-content {
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .log-line.info .log-content { color: #c5cdd8; }
+    .log-line.warn .log-content { color: #f39c12; }
+    .log-line.error .log-content { color: #e74c3c; font-weight: bold; }
+    .log-line.success .log-content { color: #2ecc71; }
+
+    .log-status-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--text-muted);
+      margin-top: 8px;
+    }
+
+    /* -------------------------------------------------- */
+    /* 8. Interactive Modals                             */
+    /* -------------------------------------------------- */
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(4px);
+      z-index: 1000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: opacity var(--transition-speed) ease;
+    }
+
+    .modal-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 28px;
+      width: 440px;
+      max-width: 90%;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      transform: translateY(0);
+      transition: transform var(--transition-speed) ease;
+    }
+
+    .modal-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text-primary);
+      text-transform: uppercase;
+      font-family: var(--font-mono);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .modal-desc {
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+    }
+
+    .modal-btn {
+      padding: 10px 18px;
+      border-radius: 4px;
+      font-family: var(--font-sans);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: all var(--transition-speed) ease;
+      border: 1px solid var(--border-subtle);
+    }
+
+    .modal-btn-cancel {
+      background: transparent;
+      color: var(--text-secondary);
+    }
+
+    .modal-btn-cancel:hover {
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text-primary);
+    }
+
+    .modal-btn-confirm {
+      background: var(--color-antigravity);
+      border: none;
+      color: #000;
+    }
+
+    .modal-btn-confirm:hover {
+      transform: translateY(-1px);
+    }
+
+    .modal-btn-confirm.kill-style {
+      background: var(--color-critical);
+      color: #fff;
+    }
+
+    /* Toast Notification */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: var(--bg-card);
+      border-left: 4px solid var(--color-kai);
+      border-top: 1px solid var(--border-subtle);
+      border-right: 1px solid var(--border-subtle);
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 14px 20px;
+      border-radius: var(--radius-md);
+      box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+      z-index: 1000;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      animation: toast-slide var(--transition-speed) cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+
+    @keyframes toast-slide {
+      from { transform: translateY(100px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+
+    /* -------------------------------------------------- */
+    /* 9. Mobile Styles (Stacked & Drawers)               */
+    /* -------------------------------------------------- */
+    
+    /* Toggle Mobile Queue Drawer Button */
+    .mobile-queue-toggle {
+      display: none;
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      z-index: 99;
+      background: var(--color-antigravity);
+      color: #000;
+      border: none;
+      width: 54px;
+      height: 54px;
+      border-radius: 50%;
+      box-shadow: 0 4px 15px rgba(243, 156, 18, 0.4);
+      cursor: pointer;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+    }
+
+    @media (max-width: 768px) {
+      .dashboard-grid {
+        grid-template-columns: 1fr;
+      }
+
+      /* Stack control card buttons vertically for better tap areas */
+      .agent-actions-row {
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+
+      /* Stack dispatch form fields */
+      .dispatch-form {
+        grid-template-columns: 1fr;
+        gap: 14px;
+      }
+
+      .dispatch-btn {
+        width: 100%;
+        height: 48px; /* Large mobile tap targets */
+      }
+
+      /* Large tap targets of 48px for general interactions */
+      .nav-tab, .mode-btn {
+        min-height: 48px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .agent-btn {
+        min-height: 48px; /* Touch target minimum height */
+      }
+
+      /* Mobile task queue panel drawer behavior */
+      .right-column-panel {
+        position: fixed;
+        top: 0; right: 0; bottom: 0;
+        width: 320px;
+        background: var(--bg-card);
+        border-left: 1px solid var(--border-subtle);
+        box-shadow: -5px 0 25px rgba(0,0,0,0.5);
+        z-index: 500;
+        transform: translateX(100%);
+        transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        display: flex;
+        flex-direction: column;
+        border-radius: 0;
+      }
+
+      .right-column-panel.open {
+        transform: translateX(0);
+      }
+
+      .mobile-queue-toggle {
+        display: flex;
+      }
+
+      .close-drawer-btn {
+        display: block !important;
+        background: transparent;
+        border: none;
+        color: var(--text-secondary);
+        font-size: 20px;
+        cursor: pointer;
+        padding: 8px;
+      }
+
+      .queue-container {
+        max-height: calc(100vh - 100px);
+      }
+
+      .log-viewer-panel {
+        grid-column: span 1;
+      }
+    }
+
+    .close-drawer-btn {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    
+    <!-- Header -->
+    <header>
+      <div class="brand">
+        <div class="logo"></div>
+        <div>
+          <h1 class="brand-title">Orchestrator Control Deck</h1>
+          <p class="brand-subtitle">Swarm Core &middot; Agent Control Center</p>
+        </div>
+      </div>
+      
+      <!-- Telemetry Info -->
+      <div class="header-info">
+        <div class="telemetry-item">
+          <span class="telemetry-label">System Mode</span>
+          <span class="telemetry-value" id="header-mode-status" style="color: var(--color-fred)">Interactive</span>
+        </div>
+        <div class="telemetry-item">
+          <span class="telemetry-label">Active Agents</span>
+          <span class="telemetry-value" id="header-active-count">2 / 6</span>
+        </div>
+        <div class="telemetry-item">
+          <span class="telemetry-label">Queue Backlog</span>
+          <span class="telemetry-value" id="header-queue-count" style="color: var(--color-antigravity)">4 Tasks</span>
+        </div>
+        <div class="telemetry-item">
+          <span class="telemetry-label">System Time</span>
+          <span class="telemetry-value" id="live-clock">22:48:24</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Navigation Tabs Bar -->
+    <div class="nav-tabs">
+      <button class="nav-tab active" onclick="switchMainTab('control')">
+        <span>🎮</span> Control Panel
+      </button>
+      <button class="nav-tab" onclick="switchMainTab('queue')">
+        <span>💼</span> Task Queue
+      </button>
+      <button class="nav-tab" onclick="switchMainTab('logs')">
+        <span>📜</span> Swarm Logs
+      </button>
+    </div>
+
+    <!-- Main Views Container -->
+    <div class="dashboard-grid">
+      
+      <!-- Left Column: Controls (Shown under 'Control' Tab always, or on full desktop) -->
+      <div class="left-column-panels" id="control-view-section" style="display: flex; flex-direction: column; gap: 20px;">
+        
+        <!-- Mode Switch Panel -->
+        <section class="panel-card">
+          <div class="panel-header">
+            <h2 class="panel-title"><span class="pulse-dot"></span> Orchestration Spectrum Mode</h2>
+          </div>
+          <div class="mode-switch-wrapper">
+            <div class="mode-toggle-bar interactive" id="mode-toggle-container">
+              <button class="mode-btn active" onclick="changeMode('interactive')">Interactive</button>
+              <button class="mode-btn" onclick="changeMode('collaborative')">Collaborative</button>
+              <button class="mode-btn" onclick="changeMode('autonomous')">Autonomous</button>
+            </div>
+            <div class="mode-description" id="mode-desc-text">
+              <strong>Interactive Mode:</strong> High guardrail stance. Swarm agents run commands inside secure sandbox cages and must prompt for explicit user permission approvals before committing files, executing build commands, or running network tasks.
+            </div>
+          </div>
+        </section>
+
+        <!-- Quick Dispatch Form Panel -->
+        <section class="panel-card">
+          <div class="panel-header">
+            <h2 class="panel-title">⚡ Command Dispatch Sandbox</h2>
+          </div>
+          <form class="dispatch-form" onsubmit="dispatchTask(event)">
+            <div class="form-group">
+              <label class="form-label">Target Agent Wavelength</label>
+              <select class="form-select" id="dispatch-agent">
+                <option value="Antigravity">Antigravity (Amber)</option>
+                <option value="Jules">Jules (Orange)</option>
+                <option value="Codex">Codex (Red)</option>
+                <option value="Kai">Kai (Green)</option>
+                <option value="Fred">Fred (Blue)</option>
+                <option value="Ned">Ned (Purple)</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Task Description</label>
+              <input type="text" class="form-input" id="dispatch-desc" placeholder="e.g. Optimize resource configurations..." required>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Task Priority</label>
+              <select class="form-select" id="dispatch-priority">
+                <option value="Low">Low</option>
+                <option value="Medium" selected>Medium</option>
+                <option value="High">High</option>
+                <option value="Critical">Critical</option>
+              </select>
+            </div>
+            <button type="submit" class="dispatch-btn">Dispatch</button>
+          </form>
+        </section>
+
+        <!-- Swarm Agent Controls Panel -->
+        <section class="panel-card">
+          <div class="panel-header">
+            <h2 class="panel-title">📡 Agent Co-Processors</h2>
+          </div>
+          <div class="agent-grid" id="agent-controls-container">
+            <!-- Rendered Dynamically via JS -->
+          </div>
+        </section>
+        
+      </div>
+
+      <!-- Right Column: Task Queue (Shown under 'Queue' Tab, or side-by-side on desktop) -->
+      <div class="panel-card right-column-panel" id="queue-view-section">
+        <div class="panel-header" style="border-bottom: 1px solid var(--border-subtle); padding-bottom: 12px; margin-bottom: 4px;">
+          <h2 class="panel-title">💼 Swarm Task Queue</h2>
+          <button class="close-drawer-btn" onclick="toggleMobileQueue(false)">&times;</button>
+        </div>
+        <div class="queue-container" id="task-queue-list">
+          <!-- Rendered Dynamically via JS -->
+        </div>
+      </div>
+
+      <!-- Log Viewer: Spans bottom (Shown under 'Logs' Tab, or bottom on desktop) -->
+      <section class="panel-card log-viewer-panel" id="logs-view-section">
+        <div class="panel-header">
+          <h2 class="panel-title">📜 Agent Logs Console</h2>
+        </div>
+        <div class="log-nav-bar" id="log-agent-tabs-container">
+          <!-- Rendered Dynamically via JS -->
+        </div>
+        <div class="console-window" id="console-output">
+          <!-- Rendered Dynamically via JS -->
+        </div>
+        <div class="log-status-bar">
+          <span id="log-details-indicator">Viewing Antigravity (last 50 lines)</span>
+          <span>Monospace Output &middot; Autoscroll Active</span>
+        </div>
+      </section>
+
+    </div>
+
+  </div>
+
+  <!-- Mobile Task Queue Toggle -->
+  <button class="mobile-queue-toggle" onclick="toggleMobileQueue(true)">
+    💼
+  </button>
+
+  <!-- Action Confirmation Modal -->
+  <div class="modal-overlay hidden" id="confirmation-modal">
+    <div class="modal-card">
+      <h3 class="modal-title" id="modal-title-text">⚠️ Confirm Swarm Intervention</h3>
+      <p class="modal-desc" id="modal-desc-text-content">Are you sure you want to perform this action on the agent co-processor?</p>
+      <div class="modal-actions">
+        <button class="modal-btn modal-btn-cancel" onclick="closeConfirmationModal()">Cancel</button>
+        <button class="modal-btn modal-btn-confirm" id="modal-confirm-btn" onclick="executeConfirmedAction()">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Wrapper -->
+  <div id="toast-container"></div>
+
+  <!-- -------------------------------------------------- */
+  /* 10. Dashboard JavaScript Logic                      */
+  /* -------------------------------------------------- */ -->
+  <script>
+    // 1. Initial State Data
+    const agents = {
+      Antigravity: { name: 'Antigravity', role: 'Main Spoke CLI', status: 'Running', task: 'Resolving Linear Issue GRO-1222', color: 'var(--color-antigravity)', glow: 'rgba(243, 156, 18, 0.15)' },
+      Jules: { name: 'Jules', role: 'Async Git & PR Agent', status: 'Idle', task: 'Idle &middot; Listening to Linear webhooks', color: 'var(--color-jules)', glow: 'rgba(230, 126, 34, 0.15)' },
+      Codex: { name: 'Codex', role: 'Code reviewer specialist', status: 'Paused', task: 'Awaiting safe-directory approvals', color: 'var(--color-codex)', glow: 'rgba(231, 76, 60, 0.15)' },
+      Kai: { name: 'Kai', role: 'K3s cluster balancer', status: 'Running', task: 'Monitoring Sovereign Sentinel states', color: 'var(--color-kai)', glow: 'rgba(46, 204, 113, 0.15)' },
+      Fred: { name: 'Fred', role: 'Deployment staging gatekeeper', status: 'Idle', task: 'Idle &middot; Awaiting staging run signals', color: 'var(--color-fred)', glow: 'rgba(52, 152, 219, 0.15)' },
+      Ned: { name: 'Ned', role: 'Swarm research synthesizer', status: 'Idle', task: 'Idle &middot; Compiling logs backup', color: 'var(--color-ned)', glow: 'rgba(155, 89, 182, 0.15)' }
+    };
+
+    let tasks = [
+      { id: 1, agent: 'Antigravity', desc: 'Implement high-fidelity HTML command deck for command-deck plugin', priority: 'Critical', age: 2 },
+      { id: 2, agent: 'Jules', desc: 'Sync local git safe.directory configurations with swarm profiles', priority: 'High', age: 8 },
+      { id: 3, agent: 'Kai', desc: 'Check K3s namespaces for stale agent-worker containers', priority: 'Medium', age: 15 },
+      { id: 4, agent: 'Codex', desc: 'Verify changes in PR #42 against security policies', priority: 'Low', age: 34 }
+    ];
+
+    let currentMode = 'interactive';
+    let activeLogAgent = 'Antigravity';
+    let currentTab = 'control'; // Tab options: control, queue, logs
+
+    // Log storage: maintains last 50 lines of logs per agent
+    const logs = {
+      Antigravity: [], Jules: [], Codex: [], Kai: [], Fred: [], Ned: []
+    };
+
+    // Populate initial logs
+    function seedInitialLogs() {
+      const levels = ['INFO', 'SUCCESS', 'WARN'];
+      const actions = {
+        Antigravity: ['Command resolved successfully', 'Permission safe check: ok', 'Broadcasted tab-synccomposer state change', 'Reading manifest.json under orchestrator-command-deck'],
+        Jules: ['Checking commits on dev-branch', 'Linear event match detected: GRO-123', 'Rebasing workspace logs to local backup', 'Git fetch complete: origin'],
+        Codex: ['Parsing security abstract syntax trees', 'Safe directory audit: no violations found', 'Review completed for diff PR #12', 'VRAM watchdog check: 24% capacity'],
+        Kai: ['Autonomously balancing resource threads', 'Sentinel check: heartbeat response in 12ms', 'Flushing SQLite cached event log keys', 'K3s cluster telemetry matched baseline'],
+        Fred: ['Listening for local package release hook', 'Staging container setup: verified safe', 'Pty keepalive timeout updated to 120m', 'Safe gate checks passed'],
+        Ned: ['Research query finalized: Safe directory exceptions', 'Synthesizing report: agent-runs output', 'Linear ticket GRO-1222 re-labelled to agent:ned', 'Archived legacy configs']
+      };
+
+      Object.keys(logs).forEach(agent => {
+        let baseTime = new Date();
+        baseTime.setMinutes(baseTime.getMinutes() - 40);
+        for(let i = 0; i < 35; i++) {
+          baseTime.setSeconds(baseTime.getSeconds() + 45);
+          const timeStr = baseTime.toTimeString().split(' ')[0];
+          const lvl = levels[Math.floor(Math.random() * levels.length)];
+          const act = actions[agent][i % actions[agent].length] + ' (' + i + ')';
+          logs[agent].push({ time: timeStr, level: lvl, text: `[${lvl}] ${act}` });
+        }
+      });
+    }
+
+    // Modal state
+    let pendingModalAction = { agent: '', action: '' };
+
+    // 2. DOM Rendering & UI Management
+    function init() {
+      seedInitialLogs();
+      updateClock();
+      setInterval(updateClock, 1000);
+      renderAgentControls();
+      renderQueue();
+      renderLogTabs();
+      renderConsoleLogs();
+      setupTabsResponsiveView();
+      window.addEventListener('resize', setupTabsResponsiveView);
+
+      // Periodically append new logs for Running agents to make console feel alive
+      setInterval(generateLiveLogs, 3000);
+    }
+
+    function updateClock() {
+      const clockEl = document.getElementById('live-clock');
+      if (clockEl) {
+        clockEl.textContent = new Date().toTimeString().split(' ')[0];
+      }
+    }
+
+    // Toggle Tab Views (Specifically useful for Mobile Stacked View vs Desktop Side-by-Side)
+    function switchMainTab(tabId) {
+      currentTab = tabId;
+      document.querySelectorAll('.nav-tab').forEach(tab => {
+        tab.classList.remove('active');
+        if (tab.innerText.toLowerCase().includes(tabId)) {
+          tab.classList.add('active');
+        }
+      });
+
+      const controlSec = document.getElementById('control-view-section');
+      const queueSec = document.getElementById('queue-view-section');
+      const logsSec = document.getElementById('logs-view-section');
+
+      // If mobile, show only selected tab
+      if (window.innerWidth <= 768) {
+        controlSec.classList.add('hidden');
+        queueSec.classList.add('hidden');
+        logsSec.classList.add('hidden');
+
+        if (tabId === 'control') {
+          controlSec.classList.remove('hidden');
+        } else if (tabId === 'queue') {
+          queueSec.classList.remove('hidden');
+          // Make sure right column panels don't use absolute positioning inside mobile drawer when tabbed
+          queueSec.style.position = 'relative';
+          queueSec.style.transform = 'none';
+          queueSec.style.width = '100%';
+        } else if (tabId === 'logs') {
+          logsSec.classList.remove('hidden');
+        }
+      } else {
+        // Desktop View: Reset layout states
+        controlSec.classList.remove('hidden');
+        queueSec.classList.remove('hidden');
+        logsSec.classList.remove('hidden');
+        queueSec.removeAttribute('style');
+      }
+    }
+
+    function setupTabsResponsiveView() {
+      // Re-evaluate display when window size changes
+      switchMainTab(currentTab);
+    }
+
+    function toggleMobileQueue(open) {
+      const queueSec = document.getElementById('queue-view-section');
+      if (open) {
+        queueSec.classList.add('open');
+        queueSec.classList.remove('hidden');
+      } else {
+        queueSec.classList.remove('open');
+      }
+    }
+
+    // 3. Render Functions
+    function renderAgentControls() {
+      const container = document.getElementById('agent-controls-container');
+      if (!container) return;
+
+      container.innerHTML = '';
+      let activeCount = 0;
+
+      Object.values(agents).forEach(agent => {
+        const isRunning = agent.status === 'Running';
+        const isPaused = agent.status === 'Paused';
+        const isIdle = agent.status === 'Idle';
+        const isTerminated = agent.status === 'Terminated';
+        
+        if (isRunning) activeCount++;
+
+        const card = document.createElement('div');
+        card.className = `agent-control-card ${agent.status.toLowerCase()}`;
+        card.style.setProperty('--agent-color', agent.color);
+        card.style.setProperty('--agent-color-glow', agent.glow);
+        card.innerHTML = `
+          <div class="agent-info">
+            <div class="agent-name-role">
+              <span class="agent-title">
+                <span class="agent-badge-dot" style="background-color: ${agent.color}; width: 8px; height: 8px; display: inline-block; border-radius: 50%;"></span>
+                ${agent.name}
+              </span>
+              <span class="agent-role">${agent.role}</span>
+            </div>
+            <span class="agent-status-badge status-${agent.status.toLowerCase()}">${agent.status}</span>
+          </div>
+          <div class="agent-current-task" title="${agent.task}">
+            Task: ${agent.task}
+          </div>
+          <div class="agent-actions-row">
+            <button class="agent-btn" onclick="openConfirmationModal('${agent.name}', 'start')" ${isRunning || isPaused ? 'disabled' : ''}>Start</button>
+            <button class="agent-btn" onclick="openConfirmationModal('${agent.name}', 'pause')" ${!isRunning ? 'disabled' : ''}>Pause</button>
+            <button class="agent-btn" onclick="openConfirmationModal('${agent.name}', 'resume')" ${!isPaused ? 'disabled' : ''}>Resume</button>
+            <button class="agent-btn btn-kill" onclick="openConfirmationModal('${agent.name}', 'kill')" ${isTerminated || isIdle ? 'disabled' : ''}>Kill</button>
+          </div>
+        `;
+        container.appendChild(card);
+      });
+
+      document.getElementById('header-active-count').textContent = `${activeCount} / ${Object.keys(agents).length}`;
+    }
+
+    function renderQueue() {
+      const container = document.getElementById('task-queue-list');
+      if (!container) return;
+
+      container.innerHTML = '';
+      
+      if (tasks.length === 0) {
+        container.innerHTML = `<div class="queue-empty-msg">No pending tasks in swarm backlog. Ready for command dispatch.</div>`;
+        document.getElementById('header-queue-count').textContent = '0 Tasks';
+        return;
+      }
+
+      tasks.forEach((task, index) => {
+        const agentColor = agents[task.agent] ? agents[task.agent].color : 'var(--text-muted)';
+        
+        const item = document.createElement('div');
+        item.className = 'queue-item';
+        item.innerHTML = `
+          <div class="queue-row">
+            <span class="queue-task-desc">${task.desc}</span>
+          </div>
+          <div class="queue-row">
+            <div class="queue-badges">
+              <span class="priority-badge priority-${task.priority.toLowerCase()}">${task.priority}</span>
+              <span class="agent-badge">
+                <span class="agent-badge-dot" style="background-color: ${agentColor}"></span>
+                ${task.agent}
+              </span>
+            </div>
+            <span class="queue-time">${task.age}m ago</span>
+          </div>
+          <div class="queue-row" style="margin-top: 4px; border-top: 1px solid rgba(255,255,255,0.03); padding-top: 6px;">
+            <div class="queue-actions">
+              <button class="queue-action-btn" onclick="shiftQueuePriority(${task.id}, -1)" ${index === 0 ? 'disabled' : ''}>▲ Move Up</button>
+              <button class="queue-action-btn" onclick="shiftQueuePriority(${task.id}, 1)" ${index === tasks.length - 1 ? 'disabled' : ''}>▼ Move Down</button>
+            </div>
+            <button class="queue-action-btn btn-cancel" onclick="cancelQueueTask(${task.id})">Cancel</button>
+          </div>
+        `;
+        container.appendChild(item);
+      });
+
+      document.getElementById('header-queue-count').textContent = `${tasks.length} Task${tasks.length > 1 ? 's' : ''}`;
+    }
+
+    function renderLogTabs() {
+      const container = document.getElementById('log-agent-tabs-container');
+      if (!container) return;
+
+      container.innerHTML = '';
+      Object.keys(agents).forEach(agentKey => {
+        const agent = agents[agentKey];
+        const isActive = agentKey === activeLogAgent;
+        const btn = document.createElement('button');
+        btn.className = `log-agent-tab ${isActive ? 'active' : ''}`;
+        btn.style.setProperty('--agent-tab-color', agent.color);
+        btn.onclick = () => selectLogAgent(agentKey);
+        btn.innerHTML = `
+          <span class="log-agent-tab-dot"></span>
+          ${agent.name}
+        `;
+        container.appendChild(btn);
+      });
+    }
+
+    function renderConsoleLogs() {
+      const container = document.getElementById('console-output');
+      if (!container) return;
+
+      container.innerHTML = '';
+      const lines = logs[activeLogAgent] || [];
+
+      lines.forEach(line => {
+        const lineDiv = document.createElement('div');
+        lineDiv.className = `log-line ${line.level.toLowerCase()}`;
+        lineDiv.innerHTML = `
+          <span class="log-timestamp">${line.time}</span>
+          <span class="log-content">${line.text}</span>
+        `;
+        container.appendChild(lineDiv);
+      });
+
+      // Autoscroll
+      container.scrollTop = container.scrollHeight;
+      document.getElementById('log-details-indicator').textContent = `Viewing ${activeLogAgent} (last ${lines.length} lines)`;
+    }
+
+    // 4. State Interactions
+    function changeMode(mode) {
+      currentMode = mode;
+      
+      const toggleContainer = document.getElementById('mode-toggle-container');
+      const headerStatus = document.getElementById('header-mode-status');
+      const descText = document.getElementById('mode-desc-text');
+
+      // Reset styles
+      toggleContainer.className = 'mode-toggle-bar';
+      toggleContainer.querySelectorAll('.mode-btn').forEach(btn => btn.classList.remove('active'));
+
+      // Add active state
+      toggleContainer.classList.add(mode);
+      const activeBtn = toggleContainer.querySelector(`button[onclick*="${mode}"]`);
+      if (activeBtn) activeBtn.classList.add('active');
+
+      if (mode === 'interactive') {
+        headerStatus.textContent = 'Interactive';
+        headerStatus.style.color = 'var(--color-fred)';
+        descText.innerHTML = `<strong>Interactive Mode:</strong> High guardrail stance. Swarm agents run commands inside secure sandbox cages and must prompt for explicit user permission approvals before committing files, executing build commands, or running network tasks.`;
+        showToast('System mode switched to: Interactive (Full Guardrails)', 'info');
+      } else if (mode === 'collaborative') {
+        headerStatus.textContent = 'Collaborative';
+        headerStatus.style.color = 'var(--color-antigravity)';
+        descText.innerHTML = `<strong>Collaborative Mode:</strong> Semi-autonomous swarm. Agents coordinate on high-level branches autonomously, but synchronize plans on Linear at critical pipeline junctions (such as pull request proposals or risk level classifications).`;
+        showToast('System mode switched to: Collaborative (Shared Supervision)', 'info');
+      } else if (mode === 'autonomous') {
+        headerStatus.textContent = 'Autonomous';
+        headerStatus.style.color = 'var(--color-kai)';
+        descText.innerHTML = `<strong>Autonomous Mode:</strong> Unrestricted agentic flow. The swarm autonomously plans, assigns subagents, resolves files, runs builds, and updates issue tracking logs, requesting human intervention only upon critical build failures.`;
+        showToast('System mode switched to: Autonomous (Full Autopilot)', 'warn');
+      }
+    }
+
+    function selectLogAgent(agentKey) {
+      activeLogAgent = agentKey;
+      renderLogTabs();
+      renderConsoleLogs();
+    }
+
+    function dispatchTask(event) {
+      event.preventDefault();
+      const agent = document.getElementById('dispatch-agent').value;
+      const desc = document.getElementById('dispatch-desc').value;
+      const priority = document.getElementById('dispatch-priority').value;
+
+      const newTask = {
+        id: Date.now(),
+        agent: agent,
+        desc: desc,
+        priority: priority,
+        age: 0
+      };
+
+      tasks.push(newTask);
+      renderQueue();
+
+      // Show toast
+      showToast(`Dispatched task to ${agent}: "${desc}"`, 'success');
+
+      // Clear input
+      document.getElementById('dispatch-desc').value = '';
+
+      // Append Log
+      appendAgentLog(agent, `[INFO] Received new Sandbox Dispatch command: "${desc}"`, 'info');
+    }
+
+    function shiftQueuePriority(taskId, shift) {
+      const idx = tasks.findIndex(t => t.id === taskId);
+      if (idx === -1) return;
+
+      const targetIdx = idx + shift;
+      if (targetIdx < 0 || targetIdx >= tasks.length) return;
+
+      // Swap
+      const temp = tasks[idx];
+      tasks[idx] = tasks[targetIdx];
+      tasks[targetIdx] = temp;
+
+      renderQueue();
+      showToast('Task queue order shifted', 'info');
+    }
+
+    function cancelQueueTask(taskId) {
+      const idx = tasks.findIndex(t => t.id === taskId);
+      if (idx === -1) return;
+
+      const removedTask = tasks[idx];
+      tasks.splice(idx, 1);
+      renderQueue();
+
+      showToast(`Canceled task: "${removedTask.desc}"`, 'error');
+      appendAgentLog(removedTask.agent, `[WARN] Canceled queue task manually by user request`, 'warn');
+    }
+
+    // 5. Agent Control Action confirmations
+    function openConfirmationModal(agentName, action) {
+      pendingModalAction = { agent: agentName, action: action };
+      
+      const modal = document.getElementById('confirmation-modal');
+      const title = document.getElementById('modal-title-text');
+      const desc = document.getElementById('modal-desc-text-content');
+      const confirmBtn = document.getElementById('modal-confirm-btn');
+
+      // Setup labels
+      title.textContent = `⚠️ Confirm Swarm Intervention`;
+      desc.innerHTML = `Are you sure you want to perform the action <strong>${action.toUpperCase()}</strong> on agent co-processor <strong>${agentName}</strong>?<br><br>This will affect its active thread context and update its live execution lifecycle state.`;
+
+      // Button styles
+      confirmBtn.className = 'modal-btn modal-btn-confirm';
+      if (action === 'kill') {
+        confirmBtn.classList.add('kill-style');
+      }
+
+      modal.classList.remove('hidden');
+    }
+
+    function closeConfirmationModal() {
+      document.getElementById('confirmation-modal').classList.add('hidden');
+      pendingModalAction = { agent: '', action: '' };
+    }
+
+    function executeConfirmedAction() {
+      const { agent, action } = pendingModalAction;
+      if (!agent || !action) return;
+
+      // Apply state change
+      const targetAgent = agents[agent];
+      if (targetAgent) {
+        if (action === 'start') {
+          targetAgent.status = 'Running';
+          targetAgent.task = 'Initializing active loop context...';
+          appendAgentLog(agent, `[SUCCESS] Lifecycle status transitioned to: RUNNING via Command Deck`, 'success');
+        } else if (action === 'pause') {
+          targetAgent.status = 'Paused';
+          appendAgentLog(agent, `[WARN] Lifecycle status transitioned to: PAUSED via Command Deck`, 'warn');
+        } else if (action === 'resume') {
+          targetAgent.status = 'Running';
+          appendAgentLog(agent, `[SUCCESS] Lifecycle status transitioned to: RUNNING (Resumed)`, 'success');
+        } else if (action === 'kill') {
+          targetAgent.status = 'Terminated';
+          targetAgent.task = 'Terminated by operator signal';
+          appendAgentLog(agent, `[ERROR] Lifecycle status transitioned to: TERMINATED (SIGKILL broadcasted)`, 'error');
+        }
+      }
+
+      closeConfirmationModal();
+      renderAgentControls();
+      showToast(`Agent ${agent} successfully transitioned state to ${action.toUpperCase()}`, 'success');
+
+      // If active logs window is this agent, update immediately
+      if (activeLogAgent === agent) {
+        renderConsoleLogs();
+      }
+    }
+
+    // Log Utility
+    function appendAgentLog(agentName, text, level = 'info') {
+      const timeStr = new Date().toTimeString().split(' ')[0];
+      const logLines = logs[agentName];
+      logLines.push({ time: timeStr, level: level, text: text });
+      
+      // Cap at 50
+      if (logLines.length > 50) {
+        logLines.shift();
+      }
+
+      if (activeLogAgent === agentName) {
+        renderConsoleLogs();
+      }
+    }
+
+    // Toast Utility
+    function showToast(message, type = 'success') {
+      const container = document.getElementById('toast-container');
+      if (!container) return;
+
+      const toast = document.createElement('div');
+      toast.className = 'toast';
+      
+      let borderCol = 'var(--color-kai)';
+      let symbol = '✓';
+      if (type === 'error') {
+        borderCol = 'var(--color-codex)';
+        symbol = '🛑';
+      } else if (type === 'warn') {
+        borderCol = 'var(--color-antigravity)';
+        symbol = '⚠️';
+      } else if (type === 'info') {
+        borderCol = 'var(--color-fred)';
+        symbol = '🔍';
+      }
+
+      toast.style.borderLeftColor = borderCol;
+      toast.innerHTML = `
+        <span>${symbol}</span>
+        <span>${message}</span>
+      `;
+
+      container.appendChild(toast);
+
+      // Remove after 3s
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transition = 'opacity 0.3s ease';
+        setTimeout(() => toast.remove(), 300);
+      }, 3000);
+    }
+
+    // Live active feed logs generator
+    function generateLiveLogs() {
+      // Choose a running agent
+      const runningAgents = Object.values(agents).filter(a => a.status === 'Running');
+      if (runningAgents.length === 0) return;
+
+      const randomAgent = runningAgents[Math.floor(Math.random() * runningAgents.length)];
+      
+      const liveMessages = [
+        'Checking memory allocation profiles... OK',
+        'Syncing BroadcastChannel state across local storage tabs',
+        'Validating signature hashes on active tree namespaces',
+        'Executing safe subprocess execution context',
+        'Telemetry verified: K3s node state within limits',
+        'Polling webhook event buffer queue',
+        'Applying layout rendering updates to DOM frame'
+      ];
+
+      const levels = ['info', 'info', 'success', 'info'];
+      const randomMsg = liveMessages[Math.floor(Math.random() * liveMessages.length)];
+      const randomLvl = levels[Math.floor(Math.random() * levels.length)];
+
+      appendAgentLog(randomAgent.name, `[${randomLvl.toUpperCase()}] ${randomMsg}`, randomLvl);
+    }
+
+    // 6. Init run
+    window.onload = init;
+  </script>
+</body>
+</html>

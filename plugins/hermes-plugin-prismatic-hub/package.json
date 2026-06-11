@@ -1,0 +1,17 @@
+{
+  "name": "hermes-plugin-prismatic-hub",
+  "version": "0.1.0",
+  "description": "Prismatic Agent Hub UI mockup",
+  "main": "dashboard/dist/index.js",
+  "scripts": {
+    "build": "webpack --mode production"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.29.7",
+    "@babel/preset-env": "^7.29.7",
+    "@babel/preset-react": "^7.29.7",
+    "babel-loader": "^10.1.1",
+    "webpack": "^5.107.2",
+    "webpack-cli": "^7.0.3"
+  }
+}

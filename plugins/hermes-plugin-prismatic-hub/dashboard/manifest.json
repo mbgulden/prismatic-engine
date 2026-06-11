@@ -1,0 +1,30 @@
+{
+  "name": "hermes-plugin-prismatic-hub",
+  "label": "Prismatic Hub",
+  "description": "Portable multi-agent coordination hub dashboard, event dispatcher activity, and skill marketplace",
+  "icon": "Layers",
+  "version": "0.1.0-local",
+  "tab": {
+    "path": "/prismatic-hub",
+    "position": "end"
+  },
+  "tabs": [
+    {
+      "label": "Dashboard",
+      "path": "/prismatic-hub"
+    },
+    {
+      "label": "Workspaces",
+      "path": "/prismatic-hub/workspaces"
+    },
+    {
+      "label": "Skills",
+      "path": "/prismatic-hub/skills"
+    },
+    {
+      "label": "Signals",
+      "path": "/prismatic-hub/signals"
+    }
+  ],
+  "entry": "dist/index.js"
+}

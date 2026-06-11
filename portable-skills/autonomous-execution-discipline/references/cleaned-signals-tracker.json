@@ -1,0 +1,104 @@
+{
+  "_schema": "v1",
+  "_description": "Tracks nudge signal cleanups to detect resurrection loops. A signal that reappears after being deleted means the dispatcher has persistent stale state.",
+  "signals": {
+    "GRO-675": {
+      "issue_id": "GRO-675",
+      "title": "Prismatic Hub Phase 3: Build bolt-on skill marketplace system",
+      "signal_id": "09569334-7d70-4af9-92e1-58b3a2f1cf12",
+      "resurrections": [
+        {
+          "cleanup_time": "2026-06-07T14:56:00Z",
+          "reason": "Pre-completed work - artifacts verified on disk and completion comment existed from prior nudge executor session. Trigger file survived (prior session crashed after completing work but before deleting trigger file).",
+          "dispatcher_comments_count": 50,
+          "agent_output_comment": true
+        }
+      ],
+      "escalation_level": 0,
+      "notes": "GRO-675 has 50+ dispatcher routing comments with only 1 agent output comment. Classic dispatcher comment spam loop. Dedup DB (GRO-669) should prevent recurrence on NEW issues."
+    },
+    "GRO-678": {
+      "issue_id": "GRO-678",
+      "title": "Prismatic Hub Phase 4: GitHub repo + distribution setup",
+      "signal_id": "",
+      "resurrections": [
+        {
+          "cleanup_time": "2026-06-07T19:34:00Z",
+          "reason": "agent:done label already set but issue stuck In Progress with 14 dispatcher routing comments. Verified GitHub repo mbgulden/prismatic-engine exists (Phase 4 deliverable complete). Moved to Done.",
+          "dispatcher_comments_count": 14,
+          "agent_output_comment": false
+        }
+      ],
+      "escalation_level": 0,
+      "notes": "Found during GRO-679 cleanup. Same dispatcher comment spam pattern. No prior agent output comment."
+    },
+    "GRO-679": {
+      "issue_id": "GRO-679",
+      "title": "Prismatic Hub Phase 5: Open source launch prep",
+      "signal_id": "bd119f7d-ed17-49c7-875b-d99e3c346db7",
+      "resurrections": [
+        {
+          "cleanup_time": "2026-06-07T19:31:00Z",
+          "reason": "Pre-completed work \u2014 prior nudge executor built all Phase 5 artifacts (LICENSE, CONTRIBUTING, CODE_OF_CONDUCT, SECURITY, SPDX headers, community-registry.json, bolt-on authoring guide) at prismatic-engine-staging/. Trigger file survived after prior executor's completion comment (crashed before cleanup). 42 dispatcher routing comments detected.",
+          "dispatcher_comments_count": 42,
+          "agent_output_comment": true
+        }
+      ],
+      "escalation_level": 0,
+      "notes": "42 dispatcher routing comments, 1 agent output comment (confirmed Phase 5 complete). Transitioned to Done + agent:done. Trigger files deleted."
+    },
+    "GRO-683": {
+      "issue_id": "GRO-683",
+      "title": "Fred + AGY: Design simplest AGY invocation + monitoring pattern for swarm",
+      "signal_id": "5ec87968-62fa-4cbb-a9d1-7b5a40730221",
+      "resurrections": [
+        {
+          "cleanup_time": "2026-06-07T23:36:18Z",
+          "reason": "Pre-completed work \u2014 all 4 work items verified on disk (agy_monitor.py exists, agent_dispatcher.py uses --print mode, antigravity-cli-orchestration skill documents full pattern, headless invocation research done in GRO-681). 51 dispatcher routing comments detected, zero agent output comments. Classic dispatcher comment spam loop.",
+          "dispatcher_comments_count": 51,
+          "agent_output_comment": false
+        }
+      ],
+      "escalation_level": 0,
+      "notes": "51 dispatcher routing comments, 0 agent output comments. All work items pre-verified on disk. Transitioned to Done + agent:done. Trigger file deleted."
+    },
+    "GRO-812": {
+      "issue_id": "GRO-812",
+      "title": "Prismatic Engine: AGY Review & Implementation Plan",
+      "signal_id": "f014efcb-248d-4c5e-93c6-73aa9fe30c4c",
+      "resurrections": [
+        {
+          "cleanup_time": "2026-06-09T01:37:00Z",
+          "reason": "Pre-completed work \u2014 230-line implementation plan existed at prismatic-engine/reports/agy-implementation-plan.md. 17 dispatcher comments, 1 agent output. Michael reviewed on Jun 8. Moved to Done with agent:done.",
+          "dispatcher_comments_count": 17,
+          "agent_output_comment": true
+        }
+      ],
+      "escalation_level": 0,
+      "notes": "Case 2 pre-completed work. Deliverable at ~/work/prismatic-engine/reports/agy-implementation-plan.md (230 lines). Dispatcher comment spam loop \u2014 17 routing comments."
+    },
+    "GRO-903": {
+      "issue_id": "GRO-903",
+      "title": "Veo API Setup: Vertex AI Model Garden access for video generation",
+      "signal_id": "0899457c-1f04-4a2d-8c08-bce6b6ebfa9f",
+      "resurrections": [
+        {
+          "cleanup_time": "2026-06-09T11:25:56Z",
+          "reason": "Pre-completed work \u2014 Veo 3.1 confirmed LIVE (HTTP 200), all 3 acceptance criteria met (Vertex AI enabled, IAM configured, SDK installed). veo_client.py lines 8-15 document all prerequisites. Assets generated for GRO-904 through GRO-908. Moved to Done + agent:done.",
+          "dispatcher_comments_count": 0,
+          "agent_output_comment": false
+        }
+      ],
+      "escalation_level": 0,
+      "notes": "Nudge file triggered at 2026-06-09 05:22 AM. Issue was In Progress. Pre-verification found complete implementation. No dispatcher spam."
+    }
+  },
+  "GRO-690": {
+    "signal_id": "d83785df-f43b-4570-a31d-3fe290da5f48",
+    "title": "Evaluate Hub Agent Manager Pro \u2192 Hermes dashboard Phase 2+",
+    "cleaned_count": 1,
+    "last_cleaned": "2026-06-08T03:25:08.398686Z",
+    "outcome": "evaluation_complete",
+    "state_update": "moved to In Progress, agent:done"
+  }
+}
