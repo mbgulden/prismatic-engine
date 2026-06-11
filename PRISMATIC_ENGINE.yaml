@@ -1,0 +1,110 @@
+# Prismatic Engine — Configuration
+#
+# Soul: "The missing link between your idea and the manifestation of that idea in reality."
+# Alignment: Every agent, every lane, every lock exists to shorten the bridge from vision to reality.
+# See SOUL.md for the full document.
+
+version: 1
+
+# ── Project Identity ─────────────────────────────────────
+project:
+  name: "Prismatic Engine"
+  soul_doc: "SOUL.md"
+  alignment_guide: "soul-alignment-guide.md"
+  tagline: "Your idea → a team of agents → reality."
+
+# ── Agent Configuration ──────────────────────────────────
+# Each agent has:
+#   role:          What they contribute to the spectrum
+#   lanes:
+#     owner:       Directories they can write to
+#     read_only:   Directories they are restricted from modifying
+#   branch_prefix: Required branch naming convention
+#   soul:          Why they exist
+
+agents:
+  fred:
+    role: "Orchestrator — sees everything, routes work, keeps the big picture"
+    lanes:
+      owner: ["src/", "infra/", "deploy/"]
+      read_only: ["content/"]
+    branch_prefix: "feature/"
+    soul: "Fred is the nervous system. Without him, the team has no coordination."
+
+  kai:
+    role: "Content — anchors voice, taste, and brand in every page"
+    lanes:
+      owner: ["content/", "active-oahu/"]
+      read_only: ["src/"]
+    branch_prefix: "content/"
+    soul: "Kai makes sure the output sounds like you, not like a machine."
+
+  agy:
+    role: "Research & Design — explores, challenges, produces visions"
+    lanes:
+      owner: ["assets/", "designs/", "research/"]
+      read_only: ["src/", "content/"]
+    branch_prefix: "design/"
+    soul: "AGY sees what's possible. Without AGY, the team builds the wrong thing."
+
+  jules:
+    role: "Code Review — reviews, polishes, PR audits"
+    lanes:
+      owner: []
+      read_only: ["*"]
+    branch_prefix: "fix/"
+    soul: "Jules makes sure it works before it reaches the world."
+
+  ned:
+    role: "Code Execution — autonomous executor of tasks and pipelines"
+    lanes:
+      owner: ["scripts/", "prismatic/"]
+      read_only: ["content/", "assets/", "designs/", "research/"]
+    branch_prefix: "execution/"
+    soul: "Ned is the workhorse. He executes code tasks autonomously."
+
+# ── Lock Configuration ───────────────────────────────────
+# Locking prevents agent collisions. Centralized in the user's home dir.
+
+locks:
+  file: "/home/ubuntu/.antigravity/swarm_locks.json"
+  heartbeat_ttl_ms: 300000  # 5-min heartbeat TTL
+
+# ── Staging Configuration ────────────────────────────────
+# The staging branch is the proving ground before reality.
+
+staging:
+  governor: "fred"
+  branch: "deploy-fresh"
+
+# ── Pipeline Templates ───────────────────────────────────
+# Recipes for common input-to-reality transformations.
+
+pipelines:
+  content-pipeline:
+    description: "Research → write → review → publish"
+    steps:
+      - role: "researcher"
+        agent: "agy"
+        output: "research/"
+      - role: "writer"
+        agent: "kai"
+        output: "content/"
+      - role: "reviewer"
+        agent: "jules"
+        output: "content/"
+    soul: "A single article should feel like a team spent a week on it."
+
+  code-pipeline:
+    description: "Design → implement → review → deploy"
+    steps:
+      - role: "designer"
+        agent: "agy"
+        output: "designs/"
+      - role: "implementer"
+        agent: "fred"
+        output: "src/"
+      - role: "reviewer"
+        agent: "jules"
+        output: "src/"
+    soul: "Every feature ships complete, not half-baked."
