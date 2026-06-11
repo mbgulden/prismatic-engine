@@ -1,110 +1,58 @@
-# Prismatic Engine — Configuration
+# PRISMATIC ENGINE — Workspace Governance
+# Phase 1: Convention Layer
+# Installed: 2026-06-11 by Ned (agent:ned)
 #
-# Soul: "The missing link between your idea and the manifestation of that idea in reality."
-# Alignment: Every agent, every lane, every lock exists to shorten the bridge from vision to reality.
-# See SOUL.md for the full document.
+# This file governs how AI agents collaborate on this repository.
+# Every agent MUST respect lane assignments, branch conventions, and locking protocol.
 
 version: 1
 
-# ── Project Identity ─────────────────────────────────────
-project:
-  name: "Prismatic Engine"
-  soul_doc: "SOUL.md"
-  alignment_guide: "soul-alignment-guide.md"
-  tagline: "Your idea → a team of agents → reality."
-
-# ── Agent Configuration ──────────────────────────────────
-# Each agent has:
-#   role:          What they contribute to the spectrum
-#   lanes:
-#     owner:       Directories they can write to
-#     read_only:   Directories they are restricted from modifying
-#   branch_prefix: Required branch naming convention
-#   soul:          Why they exist
-
 agents:
   fred:
-    role: "Orchestrator — sees everything, routes work, keeps the big picture"
+    role: Orchestrator & Infrastructure
     lanes:
-      owner: ["src/", "infra/", "deploy/"]
-      read_only: ["content/"]
+      owner: ["src/", "infra/", "deploy/", ".github/"]
+      read_only: ["content/", "active-oahu/"]
     branch_prefix: "feature/"
-    soul: "Fred is the nervous system. Without him, the team has no coordination."
+    staging_governor: true  # Only Fred merges to staging
 
   kai:
-    role: "Content — anchors voice, taste, and brand in every page"
+    role: Content Writer
     lanes:
       owner: ["content/", "active-oahu/"]
-      read_only: ["src/"]
+      read_only: ["src/", "infra/", "deploy/"]
     branch_prefix: "content/"
-    soul: "Kai makes sure the output sounds like you, not like a machine."
 
   agy:
-    role: "Research & Design — explores, challenges, produces visions"
+    role: Designer & Researcher
     lanes:
       owner: ["assets/", "designs/", "research/"]
-      read_only: ["src/", "content/"]
+      read_only: ["src/", "content/", "active-oahu/"]
     branch_prefix: "design/"
-    soul: "AGY sees what's possible. Without AGY, the team builds the wrong thing."
 
   jules:
-    role: "Code Review — reviews, polishes, PR audits"
+    role: PR Agent & Code Reviewer
     lanes:
-      owner: []
-      read_only: ["*"]
+      owner: []  # No direct edits — PR-only
+      read_only: ["*"]  # Everything
     branch_prefix: "fix/"
-    soul: "Jules makes sure it works before it reaches the world."
 
   ned:
-    role: "Code Execution — autonomous executor of tasks and pipelines"
+    role: Code Execution & Task Agent
     lanes:
-      owner: ["scripts/", "prismatic/"]
+      owner: ["scripts/", "prismatic/", "plugins/"]
       read_only: ["content/", "assets/", "designs/", "research/"]
-    branch_prefix: "execution/"
-    soul: "Ned is the workhorse. He executes code tasks autonomously."
-
-# ── Lock Configuration ───────────────────────────────────
-# Locking prevents agent collisions. Centralized in the user's home dir.
+    branch_prefix: "ned/"
 
 locks:
   file: "/home/ubuntu/.antigravity/swarm_locks.json"
-  heartbeat_ttl_ms: 300000  # 5-min heartbeat TTL
-
-# ── Staging Configuration ────────────────────────────────
-# The staging branch is the proving ground before reality.
+  heartbeat_interval_s: 60
+  heartbeat_ttl_ms: 300000  # 5-minute stale timeout
 
 staging:
-  governor: "fred"
+  governor: "fred"  # Only this agent merges to deploy-fresh/staging
   branch: "deploy-fresh"
 
-# ── Pipeline Templates ───────────────────────────────────
-# Recipes for common input-to-reality transformations.
-
-pipelines:
-  content-pipeline:
-    description: "Research → write → review → publish"
-    steps:
-      - role: "researcher"
-        agent: "agy"
-        output: "research/"
-      - role: "writer"
-        agent: "kai"
-        output: "content/"
-      - role: "reviewer"
-        agent: "jules"
-        output: "content/"
-    soul: "A single article should feel like a team spent a week on it."
-
-  code-pipeline:
-    description: "Design → implement → review → deploy"
-    steps:
-      - role: "designer"
-        agent: "agy"
-        output: "designs/"
-      - role: "implementer"
-        agent: "fred"
-        output: "src/"
-      - role: "reviewer"
-        agent: "jules"
-        output: "src/"
-    soul: "Every feature ships complete, not half-baked."
+commit:
+  prefix_format: "[AGENT] description (#ISSUE)"
+  example: "[Kai] Add mokulua islands tour page (#GRO-1215)"
