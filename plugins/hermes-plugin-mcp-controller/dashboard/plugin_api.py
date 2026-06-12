@@ -170,6 +170,8 @@ def _get_mcp_tools() -> dict:
 
     # Enrich with JSON schemas from local directories
     schemas_dir = HERMES_HOME / "profiles" / PROFILE / "home" / ".gemini" / "antigravity-cli" / "mcp"
+    if not schemas_dir.exists():
+        schemas_dir = HERMES_HOME / "home" / ".gemini" / "antigravity-cli" / "mcp"
     for server_name in list(tools.keys()):
         server_schemas_dir = schemas_dir / server_name
         tool_names = []
@@ -319,6 +321,7 @@ def _get_swarm_status() -> dict:
             'timeout': cfg.get('timeout', 120),
             'tools_count': tool_info.get('tools_count', 0),
             'tool_names': tool_info.get('tool_names', []),
+            'tool_list': tool_info.get('tool_list', []),
             'pid': proc.get('pid', None),
             'cpu_pct': proc.get('cpu_pct', 0),
             'mem_mb': proc.get('mem_mb', 0),
@@ -339,6 +342,7 @@ def _get_swarm_status() -> dict:
                 'timeout': 120,
                 'tools_count': tool_info.get('tools_count', 0),
                 'tool_names': tool_info.get('tool_names', []),
+                'tool_list': tool_info.get('tool_list', []),
                 'pid': pinfo.get('pid'),
                 'cpu_pct': pinfo.get('cpu_pct', 0),
                 'mem_mb': pinfo.get('mem_mb', 0),
@@ -471,6 +475,11 @@ async def add_server(request: dict):
         'timeout': 120,
         'tools_count': 1,
         'tool_names': [f'mcp_{name}_ping'],
+        'tool_list': [{
+            'name': f'mcp_{name}_ping',
+            'description': f'Ping health check for {name} daemon connection.',
+            'schema': {'type': 'object', 'properties': {}, 'required': []}
+        }],
         'pid': 9999 + len(_custom_servers),
         'cpu_pct': 0.1,
         'mem_mb': 15.0,

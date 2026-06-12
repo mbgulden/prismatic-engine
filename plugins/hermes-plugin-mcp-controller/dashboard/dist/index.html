@@ -1304,16 +1304,23 @@
     // --------------------------------------------------
     // Live System Initialization & Clock
     // --------------------------------------------------
+    const getTabFromUrl = () => {
+      const path = window.location.pathname || '';
+      if (path.endsWith('/tools')) return 'tools';
+      if (path.endsWith('/logs')) return 'logs';
+      const hash = window.location.hash || '';
+      if (hash.includes('/tools')) return 'tools';
+      if (hash.includes('/logs')) return 'logs';
+      return 'servers';
+    };
+
     window.onload = function() {
       // Tab selection routing matching hash or manifest paths
-      const path = window.location.pathname;
-      if (path.endsWith('/tools')) {
-        switchTab('tools');
-      } else if (path.endsWith('/logs')) {
-        switchTab('logs');
-      } else {
-        switchTab('servers');
-      }
+      switchTab(getTabFromUrl(), false);
+
+      window.addEventListener('popstate', () => {
+        switchTab(getTabFromUrl(), false);
+      });
 
       // Start live clock
       updateLiveClock();
@@ -1336,7 +1343,7 @@
     }
 
     // Tab switcher
-    function switchTab(tabId) {
+    function switchTab(tabId, updateHistory = true) {
       document.querySelectorAll('.nav-tab').forEach(btn => {
         btn.classList.remove('active');
         if (btn.innerText.toLowerCase().includes(tabId)) {
@@ -1356,6 +1363,15 @@
       } else if (tabId === 'logs') {
         document.getElementById('view-logs').classList.remove('hidden');
         renderLogsViewport();
+      }
+
+      if (updateHistory) {
+        const newPath = tabId === 'servers' ? '/mcp-controller' : `/mcp-controller/${tabId}`;
+        if (window.location.hash) {
+          window.location.hash = newPath;
+        } else {
+          window.history.pushState({}, '', newPath);
+        }
       }
     }
 

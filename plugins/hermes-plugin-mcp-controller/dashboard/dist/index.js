@@ -525,7 +525,11 @@
       h('path', { d: 'M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15' })),
     plus: () => h('svg', { width: 12, height: 12, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' },
       h('line', { x1: 12, y1: 5, x2: 12, y2: 19 }),
-      h('line', { x1: 5, y1: 12, x2: 19, y2: 12 }))
+      h('line', { x1: 5, y1: 12, x2: 19, y2: 12 })),
+    connect: () => h('svg', { width: 12, height: 12, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' },
+      h('polygon', { points: '6 4 20 12 6 20 6 4' })),
+    disconnect: () => h('svg', { width: 12, height: 12, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' },
+      h('rect', { x: 5, y: 5, width: 14, height: 14, rx: 2, ry: 2 }))
   };
 
   // ── Routing Helpers ─────────────────────────────────
@@ -558,6 +562,8 @@
     const [notifications, setNotifications] = useState([]);
 
     const [expandedTools, setExpandedTools] = useState({});
+    const [expandedServerCards, setExpandedServerCards] = useState({});
+    const [selectedServerLogs, setSelectedServerLogs] = useState([]);
 
     // Add Server form state
     const [srvName, setSrvName] = useState('');
@@ -610,6 +616,13 @@
         .catch(() => {});
     }, [logServerFilter]);
 
+    const fetchSelectedServerLogs = useCallback(() => {
+      if (!selectedServerName) return;
+      fetchJSON(API_BASE + '/logs?lines=30&server=' + selectedServerName)
+        .then(d => setSelectedServerLogs(d.entries || []))
+        .catch(() => {});
+    }, [selectedServerName]);
+
     const fetchTools = useCallback(() => {
       setToolsLoading(true);
       fetchJSON(API_BASE + '/tools')
@@ -641,6 +654,13 @@
       const iv = setInterval(fetchLogs, 5000);
       return () => clearInterval(iv);
     }, [fetchLogs]);
+
+    // Selected server logs polling
+    useEffect(() => {
+      fetchSelectedServerLogs();
+      const iv = setInterval(fetchSelectedServerLogs, 4000);
+      return () => clearInterval(iv);
+    }, [fetchSelectedServerLogs]);
 
     // Tools loading on tab change
     useEffect(() => {
@@ -728,11 +748,7 @@
       return statusData.servers.find(s => s.name === selectedServerName) || statusData.servers[0];
     }, [statusData, selectedServerName]);
 
-    // Filtered logs for selected server logs tail
-    const selectedServerLogs = useMemo(() => {
-      if (!selectedServerName) return [];
-      return logs.filter(l => l.server === selectedServerName);
-    }, [logs, selectedServerName]);
+    // Selected server logs are loaded into the selectedServerLogs state variable via API polling
 
     // Render stats/summary row
     const renderSummary = () => {
@@ -821,6 +837,7 @@
             h('div', { style: { display: 'flex', flexDirection: 'column', gap: 12 } },
               statusData?.servers && statusData.servers.map(s => {
                 const isSelected = s.name === selectedServerName;
+                const isCardExpanded = !!expandedServerCards[s.name];
                 return h('div', {
                   key: s.name,
                   className: `mcp-card ${s.health} ${isSelected ? 'selected' : ''}`,
@@ -847,6 +864,52 @@
                       h('span', { className: 'mcp-stat-lbl' }, 'Latency'),
                       h('span', { className: 'mcp-stat-val' }, s.last_response_ms ? `${s.last_response_ms}ms` : 'N/A')
                     )
+                  ),
+                  // Expandable Tools Trigger inside card (Mobile stacked optimization)
+                  h('div', {
+                    style: {
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                      marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(255, 255, 255, 0.04)',
+                      fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', cursor: 'pointer'
+                    },
+                    onClick: (e) => {
+                      e.stopPropagation();
+                      setExpandedServerCards(prev => ({ ...prev, [s.name]: !isCardExpanded }));
+                    }
+                  },
+                    h('span', null, isCardExpanded ? 'Hide Tools List' : 'Expand Tools List'),
+                    isCardExpanded ? Icons.chevronUp() : Icons.chevron()
+                  ),
+                  isCardExpanded && h('div', {
+                    style: {
+                      marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6,
+                      maxHeight: 220, overflowY: 'auto', paddingRight: 4
+                    },
+                    onClick: (e) => e.stopPropagation()
+                  },
+                    s.tool_list && s.tool_list.length > 0 ? s.tool_list.map(t => {
+                      const isToolExpanded = !!expandedTools[`card-${s.name}-${t.name}`];
+                      return h('div', {
+                        key: t.name,
+                        style: {
+                          background: 'rgba(0, 0, 0, 0.2)', border: '1px solid var(--border-subtle)',
+                          borderRadius: 4, padding: 8, display: 'flex', flexDirection: 'column', gap: 4
+                        }
+                      },
+                        h('div', {
+                          style: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' },
+                          onClick: () => setExpandedTools(prev => ({ ...prev, [`card-${s.name}-${t.name}`]: !isToolExpanded }))
+                        },
+                          h('span', { style: { fontWeight: 700, color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 10 } }, t.name),
+                          isToolExpanded ? Icons.chevronUp() : Icons.chevron()
+                        ),
+                        h('p', { style: { color: 'var(--text-secondary)', fontSize: 10, margin: 0 } }, t.description || 'No description.'),
+                        isToolExpanded && h('pre', {
+                          className: 'mcp-code-pre',
+                          style: { marginTop: 4, padding: 6, fontSize: 9, overflowX: 'auto', background: '#090c10' }
+                        }, JSON.stringify(t.schema, null, 2))
+                      );
+                    }) : h('div', { style: { color: 'var(--text-muted)', fontStyle: 'italic', fontSize: 10 } }, 'No tools registered.')
                   )
                 );
               })
@@ -869,12 +932,12 @@
                     className: 'mcp-btn mcp-btn-connect',
                     onClick: () => triggerServerAction(selectedServer.name, 'connect'),
                     disabled: selectedServer.health === 'healthy' || actionLoading[selectedServer.name + '-connect']
-                  }, Icons.plus(), actionLoading[selectedServer.name + '-connect'] ? '...' : 'Connect'),
+                  }, Icons.connect(), actionLoading[selectedServer.name + '-connect'] ? '...' : 'Connect'),
                   h('button', {
                     className: 'mcp-btn mcp-btn-disconnect',
                     onClick: () => triggerServerAction(selectedServer.name, 'disconnect'),
                     disabled: selectedServer.health === 'offline' || selectedServer.health === 'disabled' || actionLoading[selectedServer.name + '-disconnect']
-                  }, Icons.plus(), actionLoading[selectedServer.name + '-disconnect'] ? '...' : 'Disconnect'),
+                  }, Icons.disconnect(), actionLoading[selectedServer.name + '-disconnect'] ? '...' : 'Disconnect'),
                   h('button', {
                     className: 'mcp-btn mcp-btn-reconnect',
                     onClick: () => triggerServerAction(selectedServer.name, 'reconnect'),
@@ -912,17 +975,33 @@
                 )
               ),
 
-              // Server specific tool names list
+              // Server specific tool list (with descriptions and schemas)
               h('div', null,
                 h('h4', { style: { margin: '0 0 10px 0', fontSize: 11, textTransform: 'uppercase', color: 'var(--text-secondary)' } }, `Registered Tools (${selectedServer.tools_count})`),
-                h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
-                  selectedServer.tool_names && selectedServer.tool_names.length > 0 ? selectedServer.tool_names.map(t => h('span', {
-                    key: t,
-                    style: {
-                      fontSize: 10, padding: '3px 8px', borderRadius: 4, background: 'rgba(108,92,231,0.12)',
-                      color: '#a29bfe', border: '1px solid rgba(108,92,231,0.2)', fontFamily: 'var(--font-mono)'
-                    }
-                  }, t)) : h('span', { style: { fontSize: 11, color: 'var(--text-muted)' } }, 'No tools bound to this server connection.')
+                h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } },
+                  selectedServer.tool_list && selectedServer.tool_list.length > 0 ? selectedServer.tool_list.map(t => {
+                    const isExpanded = !!expandedTools[selectedServer.name + '-' + t.name];
+                    return h('div', {
+                      key: t.name,
+                      className: 'mcp-tool-card'
+                    },
+                      h('div', {
+                        className: 'mcp-tool-card-summary',
+                        onClick: () => setExpandedTools(prev => ({ ...prev, [selectedServer.name + '-' + t.name]: !isExpanded })),
+                        style: { padding: '8px 12px', fontSize: 12 }
+                      },
+                        h('span', { style: { fontWeight: 700, fontFamily: 'var(--font-mono)' } }, t.name),
+                        isExpanded ? Icons.chevronUp() : Icons.chevron()
+                      ),
+                      isExpanded && h('div', { className: 'mcp-tool-card-details', style: { padding: 12 } },
+                        h('p', { className: 'mcp-tool-desc', style: { fontSize: 11, margin: '0 0 10px 0' } }, t.description || 'No description provided.'),
+                        h('div', null,
+                          h('div', { style: { fontSize: 9, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-secondary)', marginBottom: 4 } }, 'Parameters Schema'),
+                          h('pre', { className: 'mcp-code-pre', style: { padding: 8, fontSize: 10 } }, JSON.stringify(t.schema, null, 2))
+                        )
+                      )
+                    );
+                  }) : h('span', { style: { fontSize: 11, color: 'var(--text-muted)' } }, 'No tools bound to this server connection.')
                 )
               ),
 
