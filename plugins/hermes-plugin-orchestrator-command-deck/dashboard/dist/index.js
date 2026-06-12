@@ -338,6 +338,11 @@
       font-family: 'JetBrains Mono', monospace;
     }
 
+    .deck-agent-status-badge.status-running { background: rgba(46, 204, 113, 0.1); color: var(--color-kai); border: 1px solid rgba(46, 204, 113, 0.2); }
+    .deck-agent-status-badge.status-paused { background: rgba(243, 156, 18, 0.1); color: var(--color-antigravity); border: 1px solid rgba(243, 156, 18, 0.2); }
+    .deck-agent-status-badge.status-idle { background: rgba(139, 155, 180, 0.1); color: var(--text-secondary); border: 1px solid rgba(139, 155, 180, 0.2); }
+    .deck-agent-status-badge.status-terminated { background: rgba(231, 76, 60, 0.1); color: var(--color-codex); border: 1px solid rgba(231, 76, 60, 0.2); }
+
     .deck-agent-task {
       background: rgba(0,0,0,0.3);
       border: 1px solid rgba(255,255,255,0.02);
@@ -350,6 +355,18 @@
       white-space: nowrap;
       text-overflow: ellipsis;
       overflow: hidden;
+    }
+
+    .deck-agent-telemetry {
+      display: flex;
+      gap: 12px;
+      font-size: 11px;
+      color: var(--text-secondary);
+      font-family: 'JetBrains Mono', monospace;
+      background: rgba(255,255,255,0.01);
+      padding: 4px 8px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-subtle);
     }
 
     .deck-agent-actions {
@@ -491,6 +508,21 @@
       border-radius: 3px;
       font-family: 'JetBrains Mono', monospace;
     }
+    
+    .deck-priority-badge.priority-low { background: rgba(83, 98, 121, 0.15); color: var(--color-low); border: 1px solid rgba(83, 98, 121, 0.3); }
+    .deck-priority-badge.priority-medium { background: rgba(52, 152, 219, 0.15); color: var(--color-medium); border: 1px solid rgba(52, 152, 219, 0.3); }
+    .deck-priority-badge.priority-high { background: rgba(230, 126, 34, 0.15); color: var(--color-high); border: 1px solid rgba(230, 126, 34, 0.3); }
+    .deck-priority-badge.priority-critical { 
+      background: rgba(231, 76, 60, 0.15); 
+      color: var(--color-critical); 
+      border: 1px solid rgba(231, 76, 60, 0.3);
+      animation: deck-critical-pulse 1.5s infinite alternate;
+    }
+
+    @keyframes deck-critical-pulse {
+      0% { box-shadow: 0 0 2px rgba(231, 76, 60, 0.1); }
+      100% { box-shadow: 0 0 8px rgba(231, 76, 60, 0.5); }
+    }
 
     .deck-agent-badge {
       font-size: 10px;
@@ -521,16 +553,19 @@
       padding: 4px 8px;
       border-radius: 4px;
       transition: all var(--transition-speed) ease;
+      border: 1px solid transparent;
     }
 
     .deck-queue-btn:hover {
       color: var(--text-primary);
       background: var(--bg-card);
+      border-color: var(--border-subtle);
     }
 
     .deck-queue-btn.btn-cancel:hover {
       color: var(--color-critical);
       background: rgba(231, 76, 60, 0.1);
+      border-color: rgba(231, 76, 60, 0.2);
     }
 
     /* Logs Console */
@@ -555,6 +590,7 @@
       display: flex;
       align-items: center;
       gap: 6px;
+      white-space: nowrap;
     }
 
     .deck-log-tab.active {
@@ -586,12 +622,18 @@
     .deck-log-timestamp {
       color: var(--text-muted);
       user-select: none;
+      flex-shrink: 0;
     }
 
-    .deck-log-line.info { color: #c5cdd8; }
-    .deck-log-line.warn { color: #f39c12; }
-    .deck-log-line.error { color: #e74c3c; font-weight: bold; }
-    .deck-log-line.success { color: #2ecc71; }
+    .deck-log-content {
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .deck-log-line.info .deck-log-content { color: #c5cdd8; }
+    .deck-log-line.warn .deck-log-content { color: #f39c12; }
+    .deck-log-line.error .deck-log-content { color: #e74c3c; font-weight: bold; }
+    .deck-log-line.success .deck-log-content { color: #2ecc71; }
 
     /* Modals & Toasts */
     .deck-modal-overlay {
@@ -707,12 +749,53 @@
   `;
   document.head.appendChild(styleEl);
 
+  const getTabFromUrl = () => {
+    const path = window.location.pathname;
+    const hash = window.location.hash;
+    
+    if (path.endsWith('/queue') || hash.includes('queue')) {
+      return 'queue';
+    }
+    if (path.endsWith('/logs') || hash.includes('logs')) {
+      return 'logs';
+    }
+    return 'control';
+  };
+
   // 4. Primary Command Deck visual component
   function OrchestratorApp() {
     // --------------------------------------------------
     // State management
     // --------------------------------------------------
-    const [currentTab, setCurrentTab] = React.useState('control'); // control, queue, logs
+    const [currentTab, setCurrentTab] = React.useState(getTabFromUrl); // control, queue, logs
+    
+    // Sync tab from history popstate and hash change
+    React.useEffect(() => {
+      const syncTab = () => {
+        setCurrentTab(getTabFromUrl());
+      };
+      window.addEventListener('popstate', syncTab);
+      window.addEventListener('hashchange', syncTab);
+      syncTab(); // initial sync
+      return () => {
+        window.removeEventListener('popstate', syncTab);
+        window.removeEventListener('hashchange', syncTab);
+      };
+    }, []);
+
+    const handleTabClick = (tabId) => {
+      setCurrentTab(tabId);
+      const isMockup = window.location.pathname.endsWith('.html');
+      if (isMockup) {
+        window.location.hash = `orchestrator/${tabId === 'control' ? '' : tabId}`;
+      } else {
+        const newPath = `/orchestrator${tabId === 'control' ? '' : '/' + tabId}`;
+        if (window.location.pathname !== newPath) {
+          window.history.pushState({ tab: tabId }, '', newPath);
+        }
+      }
+      showToast(`Navigated to ${tabId.toUpperCase()}`, 'info');
+    };
     const [currentMode, setCurrentMode] = React.useState('interactive'); // interactive, collaborative, autonomous
     const [activeLogAgent, setActiveLogAgent] = React.useState('Antigravity');
     const [mobileQueueOpen, setMobileQueueOpen] = React.useState(false);
@@ -726,23 +809,18 @@
     // Modal States
     const [modal, setModal] = React.useState({ isOpen: false, agentName: '', action: '' });
 
-    // Swarm Co-Processors State
+    // Swarm Co-Processors State (populated by API)
     const [agents, setAgents] = React.useState({
-      Antigravity: { name: 'Antigravity', role: 'Main Spoke CLI', status: 'Running', task: 'Resolving Linear Issue GRO-1222', color: 'var(--color-antigravity)', glow: 'rgba(243, 156, 18, 0.15)' },
-      Jules: { name: 'Jules', role: 'Async Git & PR Agent', status: 'Idle', task: 'Idle · Listening to Linear webhooks', color: 'var(--color-jules)', glow: 'rgba(230, 126, 34, 0.15)' },
-      Codex: { name: 'Codex', role: 'Code reviewer specialist', status: 'Paused', task: 'Awaiting safe-directory approvals', color: 'var(--color-codex)', glow: 'rgba(231, 76, 60, 0.15)' },
-      Kai: { name: 'Kai', role: 'K3s cluster balancer', status: 'Running', task: 'Monitoring Sovereign Sentinel states', color: 'var(--color-kai)', glow: 'rgba(46, 204, 113, 0.15)' },
-      Fred: { name: 'Fred', role: 'Deployment staging gatekeeper', status: 'Idle', task: 'Idle · Awaiting staging run signals', color: 'var(--color-fred)', glow: 'rgba(52, 152, 219, 0.15)' },
-      Ned: { name: 'Ned', role: 'Swarm research synthesizer', status: 'Idle', task: 'Idle · Compiling logs backup', color: 'var(--color-ned)', glow: 'rgba(155, 89, 182, 0.15)' }
+      Antigravity: { name: 'Antigravity', role: 'Main Spoke CLI', status: 'Running', task: 'Resolving Linear Issue GRO-1222', color: 'var(--color-antigravity)', glow: 'rgba(243, 156, 18, 0.15)', cpu_pct: 0, mem_mb: 0 },
+      Jules: { name: 'Jules', role: 'Async Git & PR Agent', status: 'Idle', task: 'Idle · Listening to Linear webhooks', color: 'var(--color-jules)', glow: 'rgba(230, 126, 34, 0.15)', cpu_pct: 0, mem_mb: 0 },
+      Codex: { name: 'Codex', role: 'Code reviewer specialist', status: 'Paused', task: 'Awaiting safe-directory approvals', color: 'var(--color-codex)', glow: 'rgba(231, 76, 60, 0.15)', cpu_pct: 0, mem_mb: 0 },
+      Kai: { name: 'Kai', role: 'K3s cluster balancer', status: 'Running', task: 'Monitoring Sovereign Sentinel states', color: 'var(--color-kai)', glow: 'rgba(46, 204, 113, 0.15)', cpu_pct: 0, mem_mb: 0 },
+      Fred: { name: 'Fred', role: 'Deployment staging gatekeeper', status: 'Idle', task: 'Idle · Awaiting staging run signals', color: 'var(--color-fred)', glow: 'rgba(52, 152, 219, 0.15)', cpu_pct: 0, mem_mb: 0 },
+      Ned: { name: 'Ned', role: 'Swarm research synthesizer', status: 'Idle', task: 'Idle · Compiling logs backup', color: 'var(--color-ned)', glow: 'rgba(155, 89, 182, 0.15)', cpu_pct: 0, mem_mb: 0 }
     });
 
     // Task Queue State
-    const [tasks, setTasks] = React.useState([
-      { id: 1, agent: 'Antigravity', desc: 'Implement high-fidelity HTML command deck for command-deck plugin', priority: 'Critical', age: 2 },
-      { id: 2, agent: 'Jules', desc: 'Sync local git safe.directory configurations with swarm profiles', priority: 'High', age: 8 },
-      { id: 3, agent: 'Kai', desc: 'Check K3s namespaces for stale agent-worker containers', priority: 'Medium', age: 15 },
-      { id: 4, agent: 'Codex', desc: 'Verify changes in PR #42 against security policies', priority: 'Low', age: 34 }
-    ]);
+    const [tasks, setTasks] = React.useState([]);
 
     // Logs Console State
     const [logs, setLogs] = React.useState({
@@ -751,65 +829,44 @@
 
     const consoleRef = React.useRef(null);
 
-    // Seed logs on mount
+    // Fetch full state on mount and poll
     React.useEffect(() => {
-      const levels = ['INFO', 'SUCCESS', 'WARN'];
-      const actions = {
-        Antigravity: ['Command resolved successfully', 'Permission safe check: ok', 'Broadcasted tab-sync composer state change', 'Reading manifest.json under orchestrator-command-deck'],
-        Jules: ['Checking commits on dev-branch', 'Linear event match detected: GRO-123', 'Rebasing workspace logs to local backup', 'Git fetch complete: origin'],
-        Codex: ['Parsing security abstract syntax trees', 'Safe directory audit: no violations found', 'Review completed for diff PR #12', 'VRAM watchdog check: 24% capacity'],
-        Kai: ['Autonomously balancing resource threads', 'Sentinel check: heartbeat response in 12ms', 'Flushing SQLite cached event log keys', 'K3s cluster telemetry matched baseline'],
-        Fred: ['Listening for local package release hook', 'Staging container setup: verified safe', 'Pty keepalive timeout updated to 120m', 'Safe gate checks passed'],
-        Ned: ['Research query finalized: Safe directory exceptions', 'Synthesizing report: agent-runs output', 'Linear ticket GRO-1222 re-labelled to agent:ned', 'Archived legacy configs']
+      const fetchStatus = () => {
+        api('/api/plugins/hermes-plugin-orchestrator-command-deck/status')
+          .then(data => {
+            if (data) {
+              if (data.mode) setCurrentMode(data.mode);
+              if (data.ui_agents) setAgents(data.ui_agents);
+              if (data.tasks) setTasks(data.tasks);
+            }
+          })
+          .catch(err => console.error("[command-deck] Failed to fetch status:", err));
       };
 
-      const initialLogs = {};
-      Object.keys(actions).forEach(agent => {
-        initialLogs[agent] = [];
-        let baseTime = new Date();
-        baseTime.setMinutes(baseTime.getMinutes() - 40);
-        for(let i = 0; i < 35; i++) {
-          baseTime.setSeconds(baseTime.getSeconds() + 45);
-          const timeStr = baseTime.toTimeString().split(' ')[0];
-          const lvl = levels[Math.floor(Math.random() * levels.length)];
-          const act = actions[agent][i % actions[agent].length] + ' (' + i + ')';
-          initialLogs[agent].push({ time: timeStr, level: lvl, text: `[${lvl}] ${act}` });
-        }
-      });
-      setLogs(initialLogs);
+      fetchStatus();
+      const interval = setInterval(fetchStatus, 3000);
+      return () => clearInterval(interval);
     }, []);
 
-    // Periodic live log appender
+    // Fetch active agent logs and poll
     React.useEffect(() => {
-      const interval = setInterval(() => {
-        // Find a running agent
-        const runningKeys = Object.keys(agents).filter(k => agents[k].status === 'Running');
-        if (runningKeys.length === 0) return;
-        const randomKey = runningKeys[Math.floor(Math.random() * runningKeys.length)];
+      const fetchLogs = () => {
+        api(`/api/plugins/hermes-plugin-orchestrator-command-deck/agent/${activeLogAgent}/logs`)
+          .then(data => {
+            if (data && Array.isArray(data)) {
+              setLogs(prev => ({
+                ...prev,
+                [activeLogAgent]: data
+              }));
+            }
+          })
+          .catch(err => console.error(`[command-deck] Failed to fetch logs for ${activeLogAgent}:`, err));
+      };
 
-        const liveMessages = [
-          'Checking memory allocation profiles... OK',
-          'Syncing BroadcastChannel state across local storage tabs',
-          'Validating signature hashes on active tree namespaces',
-          'Executing safe subprocess execution context',
-          'Telemetry verified: K3s node state within limits',
-          'Polling webhook event buffer queue',
-          'Applying layout rendering updates to DOM frame'
-        ];
-        const msg = liveMessages[Math.floor(Math.random() * liveMessages.length)];
-        const level = Math.random() > 0.8 ? 'WARN' : 'INFO';
-        const timeStr = new Date().toTimeString().split(' ')[0];
-
-        setLogs(prev => {
-          const updated = { ...prev };
-          if (!updated[randomKey]) updated[randomKey] = [];
-          updated[randomKey] = [...updated[randomKey], { time: timeStr, level: level, text: `[${level}] ${msg}` }].slice(-50);
-          return updated;
-        });
-      }, 3000);
-
+      fetchLogs();
+      const interval = setInterval(fetchLogs, 3000);
       return () => clearInterval(interval);
-    }, [agents]);
+    }, [activeLogAgent]);
 
     // Autoscroll log console
     React.useEffect(() => {
@@ -834,37 +891,44 @@
     // Event Handlers
     // --------------------------------------------------
     const handleModeChange = (mode) => {
-      setCurrentMode(mode);
-      showToast(`Orchestrator Mode switched to: ${mode.toUpperCase()}`, mode === 'autonomous' ? 'warn' : 'info');
+      api('/api/plugins/hermes-plugin-orchestrator-command-deck/mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode })
+      })
+      .then(res => {
+        if (res && res.success) {
+          setCurrentMode(mode);
+          showToast(`Orchestrator Mode switched to: ${mode.toUpperCase()}`, mode === 'autonomous' ? 'warn' : 'info');
+        }
+      })
+      .catch(err => console.error("[command-deck] Failed to change mode:", err));
     };
 
     const handleFormSubmit = (e) => {
       e.preventDefault();
       if (!dispatchDesc) return;
 
-      const newTask = {
-        id: Date.now(),
-        agent: dispatchAgent,
-        desc: dispatchDesc,
-        priority: dispatchPriority,
-        age: 0
-      };
-
-      setTasks(prev => [...prev, newTask]);
-      setDispatchDesc('');
-      showToast(`Dispatched task to ${dispatchAgent}: "${dispatchDesc}"`, 'success');
-
-      // Add to log
-      const timeStr = new Date().toTimeString().split(' ')[0];
-      setLogs(prev => {
-        const updated = { ...prev };
-        updated[dispatchAgent] = [...(updated[dispatchAgent] || []), {
-          time: timeStr,
-          level: 'INFO',
-          text: `[INFO] Received new Sandbox Dispatch command: "${dispatchDesc}"`
-        }].slice(-50);
-        return updated;
-      });
+      api('/api/plugins/hermes-plugin-orchestrator-command-deck/tasks/dispatch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agent: dispatchAgent,
+          description: dispatchDesc,
+          priority: dispatchPriority
+        })
+      })
+      .then(res => {
+        if (res && res.success) {
+          setDispatchDesc('');
+          showToast(`Dispatched task to ${dispatchAgent}: "${dispatchDesc}"`, 'success');
+          // Refresh tasks
+          if (res.task) {
+            setTasks(prev => [...prev, res.task]);
+          }
+        }
+      })
+      .catch(err => console.error("[command-deck] Failed to dispatch task:", err));
     };
 
     const triggerAction = (agentName, action) => {
@@ -873,70 +937,56 @@
 
     const handleConfirmAction = () => {
       const { agentName, action } = modal;
-      setAgents(prev => {
-        const updated = { ...prev };
-        const agent = updated[agentName];
-        if (agent) {
-          if (action === 'start') {
-            agent.status = 'Running';
-            agent.task = 'Initializing active loop context...';
-          } else if (action === 'pause') {
-            agent.status = 'Paused';
-          } else if (action === 'resume') {
-            agent.status = 'Running';
-          } else if (action === 'kill') {
-            agent.status = 'Terminated';
-            agent.task = 'Terminated by operator signal';
-          }
+      api(`/api/plugins/hermes-plugin-orchestrator-command-deck/agent/${agentName}/control`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action })
+      })
+      .then(res => {
+        if (res && res.success) {
+          setModal({ isOpen: false, agentName: '', action: '' });
+          showToast(`Agent ${agentName} lifecycle transitioned to ${action.toUpperCase()}`, 'success');
+          
+          // Instantly update agent status locally to avoid visual lag
+          setAgents(prev => {
+            const updated = { ...prev };
+            if (updated[agentName]) {
+              updated[agentName].status = action === 'start' || action === 'resume' ? 'Running' : action === 'pause' ? 'Paused' : 'Terminated';
+            }
+            return updated;
+          });
         }
-        return updated;
-      });
-
-      // Log the lifecycle change
-      const timeStr = new Date().toTimeString().split(' ')[0];
-      const lvl = action === 'kill' ? 'ERROR' : action === 'pause' ? 'WARN' : 'SUCCESS';
-      const txt = `[${lvl}] Lifecycle status transitioned to: ${action.toUpperCase()} via Command Deck`;
-      setLogs(prev => {
-        const updated = { ...prev };
-        updated[agentName] = [...(updated[agentName] || []), { time: timeStr, level: lvl, text: txt }].slice(-50);
-        return updated;
-      });
-
-      setModal({ isOpen: false, agentName: '', action: '' });
-      showToast(`Agent ${agentName} lifecycle transitioned to ${action.toUpperCase()}`, 'success');
+      })
+      .catch(err => console.error("[command-deck] Failed to control agent:", err));
     };
 
     const handleCancelTask = (id) => {
-      const task = tasks.find(t => t.id === id);
-      setTasks(prev => prev.filter(t => t.id !== id));
-      if (task) {
-        showToast(`Canceled task: "${task.desc}"`, 'error');
-        // Log cancel
-        const timeStr = new Date().toTimeString().split(' ')[0];
-        setLogs(prev => {
-          const updated = { ...prev };
-          updated[task.agent] = [...(updated[task.agent] || []), {
-            time: timeStr,
-            level: 'WARN',
-            text: `[WARN] Canceled queue task manually by user request`
-          }].slice(-50);
-          return updated;
-        });
-      }
+      api(`/api/plugins/hermes-plugin-orchestrator-command-deck/tasks/${id}/cancel`, {
+        method: 'POST'
+      })
+      .then(res => {
+        if (res && res.success) {
+          showToast('Task canceled successfully', 'error');
+          setTasks(prev => prev.filter(t => t.id !== id));
+        }
+      })
+      .catch(err => console.error("[command-deck] Failed to cancel task:", err));
     };
 
-    const handleShiftPriority = (id, direction) => {
-      const idx = tasks.findIndex(t => t.id === id);
-      if (idx === -1) return;
-      const targetIdx = idx + direction;
-      if (targetIdx < 0 || targetIdx >= tasks.length) return;
-
-      const newTasks = [...tasks];
-      const temp = newTasks[idx];
-      newTasks[idx] = newTasks[targetIdx];
-      newTasks[targetIdx] = temp;
-      setTasks(newTasks);
-      showToast('Task queue priority order shifted', 'info');
+    const handleShiftPriority = (id, directionVal) => {
+      const direction = directionVal === -1 ? 'up' : 'down';
+      api(`/api/plugins/hermes-plugin-orchestrator-command-deck/tasks/${id}/reorder`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ direction })
+      })
+      .then(res => {
+        if (res && res.success && res.tasks) {
+          setTasks(res.tasks);
+          showToast('Task queue priority order shifted', 'info');
+        }
+      })
+      .catch(err => console.error("[command-deck] Failed to reorder task:", err));
     };
 
     // Calculate dynamic state metrics
@@ -977,9 +1027,9 @@
 
     const renderNavTabs = () => {
       return h('div', { className: 'deck-nav-tabs' }, [
-        h('button', { className: `deck-nav-tab ${currentTab === 'control' ? 'active' : ''}`, onClick: () => setCurrentTab('control') }, '🎮 Control Panel'),
-        h('button', { className: `deck-nav-tab ${currentTab === 'queue' ? 'active' : ''}`, onClick: () => setCurrentTab('queue') }, '💼 Task Queue'),
-        h('button', { className: `deck-nav-tab ${currentTab === 'logs' ? 'active' : ''}`, onClick: () => setCurrentTab('logs') }, '📜 Swarm Logs')
+        h('button', { className: `deck-nav-tab ${currentTab === 'control' ? 'active' : ''}`, onClick: () => handleTabClick('control') }, '🎮 Control Panel'),
+        h('button', { className: `deck-nav-tab ${currentTab === 'queue' ? 'active' : ''}`, onClick: () => handleTabClick('queue') }, '💼 Task Queue'),
+        h('button', { className: `deck-nav-tab ${currentTab === 'logs' ? 'active' : ''}`, onClick: () => handleTabClick('logs') }, '📜 Swarm Logs')
       ]);
     };
 
@@ -1062,6 +1112,11 @@
               h('span', { className: `deck-agent-status-badge status-${agent.status.toLowerCase()}` }, agent.status)
             ]),
             h('div', { className: 'deck-agent-task', title: agent.task }, `Task: ${agent.task}`),
+            h('div', { className: 'deck-agent-telemetry' }, [
+              h('span', null, `CPU: ${agent.cpu_pct || 0.0}%`),
+              h('span', null, `Mem: ${agent.mem_mb || 0.0} MB`),
+              h('span', null, `PIDs: ${agent.processes || 0}`)
+            ]),
             h('div', { className: 'deck-agent-actions' }, [
               h('button', { className: 'deck-agent-btn', onClick: () => triggerAction(agent.name, 'start'), disabled: isRunning || isPaused }, 'Start'),
               h('button', { className: 'deck-agent-btn', onClick: () => triggerAction(agent.name, 'pause'), disabled: !isRunning }, 'Pause'),
@@ -1082,13 +1137,13 @@
           ]),
           h('div', { className: 'deck-queue-row' }, [
             h('div', { className: 'deck-queue-badges' }, [
-              h('span', { className: `priority-badge priority-${task.priority.toLowerCase()}` }, task.priority),
+              h('span', { className: `deck-priority-badge priority-${task.priority.toLowerCase()}` }, task.priority),
               h('span', { className: 'deck-agent-badge' }, [
                 h('span', { className: 'agent-badge-dot', style: { backgroundColor: color } }),
                 task.agent
               ])
             ]),
-            h('span', { className: 'queue-time' }, `${task.age}m ago`)
+            h('span', { className: 'queue-time' }, `${task.age || 0}m ago`)
           ]),
           h('div', { className: 'deck-queue-row', style: { marginTop: 4, borderTop: '1px solid rgba(255,255,255,0.03)', paddingTop: 6 } }, [
             h('div', { className: 'deck-queue-actions' }, [
@@ -1112,7 +1167,6 @@
     };
 
     const renderLogsPanel = () => {
-      const activeColor = agents[activeLogAgent] ? agents[activeLogAgent].color : 'var(--text-muted)';
       const lines = logs[activeLogAgent] || [];
 
       return h('section', { className: 'deck-panel-card log-viewer-panel' }, [
@@ -1133,7 +1187,7 @@
         h('div', { ref: consoleRef, className: 'deck-console' }, lines.map((line, idx) => {
           return h('div', { key: idx, className: `deck-log-line ${line.level.toLowerCase()}` }, [
             h('span', { className: 'deck-log-timestamp' }, line.time),
-            h('span', null, line.text)
+            h('span', { className: 'deck-log-content' }, line.text)
           ]);
         })),
         h('div', { style: { display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-muted)', fontFamily: 'JetBrains Mono', marginTop: 8 } }, [
@@ -1207,10 +1261,14 @@
         gridChildren.push(renderLogsPanel());
       }
     } else {
-      // Desktop View
-      gridChildren.push(h('div', { style: { display: 'flex', flexDirection: 'column', gap: 20 } }, controlSection));
-      gridChildren.push(renderQueuePanel(false));
-      gridChildren.push(renderLogsPanel());
+      // Desktop View - Render ONLY the active tab's panel and span full 2 columns
+      if (currentTab === 'control') {
+        gridChildren.push(h('div', { style: { display: 'flex', flexDirection: 'column', gap: 20, gridColumn: 'span 2' } }, controlSection));
+      } else if (currentTab === 'queue') {
+        gridChildren.push(h('div', { style: { gridColumn: 'span 2' } }, [renderQueuePanel(false)]));
+      } else if (currentTab === 'logs') {
+        gridChildren.push(renderLogsPanel()); // Already has .log-viewer-panel class with grid-column: span 2
+      }
     }
 
     return h('div', { className: 'deck-container' }, [
@@ -1225,7 +1283,7 @@
     ]);
   }
 
-  // Cross-tab sync injector component (copied from legacy code block)
+  // Cross-tab sync injector component
   function SyncInjector() {
     React.useEffect(() => {
       const channel = new window.BroadcastChannel("hermes-tab-sync");

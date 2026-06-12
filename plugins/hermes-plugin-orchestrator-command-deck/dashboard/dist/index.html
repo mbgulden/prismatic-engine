@@ -282,6 +282,11 @@
       animation: status-pulse 1.5s infinite;
     }
 
+    @keyframes status-pulse {
+      0%, 100% { opacity: 0.6; transform: scale(0.9); }
+      50% { opacity: 1; transform: scale(1.1); }
+    }
+
     /* -------------------------------------------------- */
     /* 3. Mode Switch Selector                            */
     /* -------------------------------------------------- */
@@ -426,6 +431,18 @@
       white-space: nowrap;
       text-overflow: ellipsis;
       overflow: hidden;
+    }
+
+    .agent-telemetry {
+      display: flex;
+      gap: 12px;
+      font-size: 11px;
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+      background: rgba(255,255,255,0.01);
+      padding: 4px 8px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-subtle);
     }
 
     .agent-actions-row {
@@ -798,8 +815,6 @@
       display: flex;
       flex-direction: column;
       gap: 20px;
-      transform: translateY(0);
-      transition: transform var(--transition-speed) ease;
     }
 
     .modal-title {
@@ -1017,15 +1032,15 @@
         </div>
         <div class="telemetry-item">
           <span class="telemetry-label">Active Agents</span>
-          <span class="telemetry-value" id="header-active-count">2 / 6</span>
+          <span class="telemetry-value" id="header-active-count">0 / 6</span>
         </div>
         <div class="telemetry-item">
           <span class="telemetry-label">Queue Backlog</span>
-          <span class="telemetry-value" id="header-queue-count" style="color: var(--color-antigravity)">4 Tasks</span>
+          <span class="telemetry-value" id="header-queue-count" style="color: var(--color-antigravity)">0 Tasks</span>
         </div>
         <div class="telemetry-item">
           <span class="telemetry-label">System Time</span>
-          <span class="telemetry-value" id="live-clock">22:48:24</span>
+          <span class="telemetry-value" id="live-clock">--:--:--</span>
         </div>
       </div>
     </header>
@@ -1046,7 +1061,7 @@
     <!-- Main Views Container -->
     <div class="dashboard-grid">
       
-      <!-- Left Column: Controls (Shown under 'Control' Tab always, or on full desktop) -->
+      <!-- Left Column: Controls -->
       <div class="left-column-panels" id="control-view-section" style="display: flex; flex-direction: column; gap: 20px;">
         
         <!-- Mode Switch Panel -->
@@ -1112,7 +1127,7 @@
         
       </div>
 
-      <!-- Right Column: Task Queue (Shown under 'Queue' Tab, or side-by-side on desktop) -->
+      <!-- Right Column: Task Queue -->
       <div class="panel-card right-column-panel" id="queue-view-section">
         <div class="panel-header" style="border-bottom: 1px solid var(--border-subtle); padding-bottom: 12px; margin-bottom: 4px;">
           <h2 class="panel-title">💼 Swarm Task Queue</h2>
@@ -1123,7 +1138,7 @@
         </div>
       </div>
 
-      <!-- Log Viewer: Spans bottom (Shown under 'Logs' Tab, or bottom on desktop) -->
+      <!-- Log Viewer -->
       <section class="panel-card log-viewer-panel" id="logs-view-section">
         <div class="panel-header">
           <h2 class="panel-title">📜 Agent Logs Console</h2>
@@ -1164,78 +1179,36 @@
   <!-- Toast Notification Wrapper -->
   <div id="toast-container"></div>
 
-  <!-- -------------------------------------------------- */
-  /* 10. Dashboard JavaScript Logic                      */
-  /* -------------------------------------------------- */ -->
+  <!-- Javascript Logic -->
   <script>
-    // 1. Initial State Data
-    const agents = {
-      Antigravity: { name: 'Antigravity', role: 'Main Spoke CLI', status: 'Running', task: 'Resolving Linear Issue GRO-1222', color: 'var(--color-antigravity)', glow: 'rgba(243, 156, 18, 0.15)' },
-      Jules: { name: 'Jules', role: 'Async Git & PR Agent', status: 'Idle', task: 'Idle &middot; Listening to Linear webhooks', color: 'var(--color-jules)', glow: 'rgba(230, 126, 34, 0.15)' },
-      Codex: { name: 'Codex', role: 'Code reviewer specialist', status: 'Paused', task: 'Awaiting safe-directory approvals', color: 'var(--color-codex)', glow: 'rgba(231, 76, 60, 0.15)' },
-      Kai: { name: 'Kai', role: 'K3s cluster balancer', status: 'Running', task: 'Monitoring Sovereign Sentinel states', color: 'var(--color-kai)', glow: 'rgba(46, 204, 113, 0.15)' },
-      Fred: { name: 'Fred', role: 'Deployment staging gatekeeper', status: 'Idle', task: 'Idle &middot; Awaiting staging run signals', color: 'var(--color-fred)', glow: 'rgba(52, 152, 219, 0.15)' },
-      Ned: { name: 'Ned', role: 'Swarm research synthesizer', status: 'Idle', task: 'Idle &middot; Compiling logs backup', color: 'var(--color-ned)', glow: 'rgba(155, 89, 182, 0.15)' }
-    };
-
-    let tasks = [
-      { id: 1, agent: 'Antigravity', desc: 'Implement high-fidelity HTML command deck for command-deck plugin', priority: 'Critical', age: 2 },
-      { id: 2, agent: 'Jules', desc: 'Sync local git safe.directory configurations with swarm profiles', priority: 'High', age: 8 },
-      { id: 3, agent: 'Kai', desc: 'Check K3s namespaces for stale agent-worker containers', priority: 'Medium', age: 15 },
-      { id: 4, agent: 'Codex', desc: 'Verify changes in PR #42 against security policies', priority: 'Low', age: 34 }
-    ];
-
+    const API_BASE = '/api/plugins/hermes-plugin-orchestrator-command-deck';
+    
+    let agents = {};
+    let tasks = [];
     let currentMode = 'interactive';
     let activeLogAgent = 'Antigravity';
-    let currentTab = 'control'; // Tab options: control, queue, logs
-
-    // Log storage: maintains last 50 lines of logs per agent
-    const logs = {
-      Antigravity: [], Jules: [], Codex: [], Kai: [], Fred: [], Ned: []
-    };
-
-    // Populate initial logs
-    function seedInitialLogs() {
-      const levels = ['INFO', 'SUCCESS', 'WARN'];
-      const actions = {
-        Antigravity: ['Command resolved successfully', 'Permission safe check: ok', 'Broadcasted tab-synccomposer state change', 'Reading manifest.json under orchestrator-command-deck'],
-        Jules: ['Checking commits on dev-branch', 'Linear event match detected: GRO-123', 'Rebasing workspace logs to local backup', 'Git fetch complete: origin'],
-        Codex: ['Parsing security abstract syntax trees', 'Safe directory audit: no violations found', 'Review completed for diff PR #12', 'VRAM watchdog check: 24% capacity'],
-        Kai: ['Autonomously balancing resource threads', 'Sentinel check: heartbeat response in 12ms', 'Flushing SQLite cached event log keys', 'K3s cluster telemetry matched baseline'],
-        Fred: ['Listening for local package release hook', 'Staging container setup: verified safe', 'Pty keepalive timeout updated to 120m', 'Safe gate checks passed'],
-        Ned: ['Research query finalized: Safe directory exceptions', 'Synthesizing report: agent-runs output', 'Linear ticket GRO-1222 re-labelled to agent:ned', 'Archived legacy configs']
-      };
-
-      Object.keys(logs).forEach(agent => {
-        let baseTime = new Date();
-        baseTime.setMinutes(baseTime.getMinutes() - 40);
-        for(let i = 0; i < 35; i++) {
-          baseTime.setSeconds(baseTime.getSeconds() + 45);
-          const timeStr = baseTime.toTimeString().split(' ')[0];
-          const lvl = levels[Math.floor(Math.random() * levels.length)];
-          const act = actions[agent][i % actions[agent].length] + ' (' + i + ')';
-          logs[agent].push({ time: timeStr, level: lvl, text: `[${lvl}] ${act}` });
-        }
-      });
-    }
-
-    // Modal state
+    let currentTab = 'control';
     let pendingModalAction = { agent: '', action: '' };
 
-    // 2. DOM Rendering & UI Management
     function init() {
-      seedInitialLogs();
       updateClock();
       setInterval(updateClock, 1000);
-      renderAgentControls();
-      renderQueue();
-      renderLogTabs();
-      renderConsoleLogs();
+      
+      // Fetch initial data
+      fetchStatus();
+      fetchLogs();
+      
+      // Setup Pollers
+      setInterval(fetchStatus, 3000);
+      setInterval(fetchLogs, 3000);
+      
       setupTabsResponsiveView();
       window.addEventListener('resize', setupTabsResponsiveView);
-
-      // Periodically append new logs for Running agents to make console feel alive
-      setInterval(generateLiveLogs, 3000);
+      
+      // Listen to navigation events
+      window.addEventListener('popstate', syncTabFromUrl);
+      window.addEventListener('hashchange', syncTabFromUrl);
+      syncTabFromUrl(); // initial sync
     }
 
     function updateClock() {
@@ -1245,8 +1218,58 @@
       }
     }
 
-    // Toggle Tab Views (Specifically useful for Mobile Stacked View vs Desktop Side-by-Side)
-    function switchMainTab(tabId) {
+    function fetchStatus() {
+      fetch(`${API_BASE}/status`)
+        .then(res => res.json())
+        .then(data => {
+          if (data) {
+            agents = data.ui_agents || {};
+            tasks = data.tasks || [];
+            
+            if (data.mode && data.mode !== currentMode) {
+              updateModeUI(data.mode);
+            }
+            
+            renderAgentControls();
+            renderQueue();
+            renderLogTabs();
+          }
+        })
+        .catch(err => console.error("Error fetching status:", err));
+    }
+
+    function fetchLogs() {
+      fetch(`${API_BASE}/agent/${activeLogAgent}/logs`)
+        .then(res => res.json())
+        .then(data => {
+          if (data && Array.isArray(data)) {
+            renderConsoleLogs(data);
+          }
+        })
+        .catch(err => console.error("Error fetching logs:", err));
+    }
+
+    function getTabFromUrl() {
+      const path = window.location.pathname;
+      const hash = window.location.hash;
+      
+      if (path.endsWith('/queue') || hash.includes('queue')) {
+        return 'queue';
+      }
+      if (path.endsWith('/logs') || hash.includes('logs')) {
+        return 'logs';
+      }
+      return 'control';
+    }
+
+    function syncTabFromUrl() {
+      const tabId = getTabFromUrl();
+      if (tabId !== currentTab) {
+        switchMainTab(tabId, false);
+      }
+    }
+
+    function switchMainTab(tabId, updateHistory = true) {
       currentTab = tabId;
       document.querySelectorAll('.nav-tab').forEach(tab => {
         tab.classList.remove('active');
@@ -1259,17 +1282,23 @@
       const queueSec = document.getElementById('queue-view-section');
       const logsSec = document.getElementById('logs-view-section');
 
-      // If mobile, show only selected tab
-      if (window.innerWidth <= 768) {
-        controlSec.classList.add('hidden');
-        queueSec.classList.add('hidden');
-        logsSec.classList.add('hidden');
+      // Hide all by default
+      controlSec.classList.add('hidden');
+      queueSec.classList.add('hidden');
+      logsSec.classList.add('hidden');
 
+      // Reset style overrides
+      controlSec.style.gridColumn = '';
+      queueSec.style.gridColumn = '';
+      queueSec.style.position = '';
+      queueSec.style.transform = '';
+      queueSec.style.width = '';
+
+      if (window.innerWidth <= 768) {
         if (tabId === 'control') {
           controlSec.classList.remove('hidden');
         } else if (tabId === 'queue') {
           queueSec.classList.remove('hidden');
-          // Make sure right column panels don't use absolute positioning inside mobile drawer when tabbed
           queueSec.style.position = 'relative';
           queueSec.style.transform = 'none';
           queueSec.style.width = '100%';
@@ -1277,16 +1306,35 @@
           logsSec.classList.remove('hidden');
         }
       } else {
-        // Desktop View: Reset layout states
-        controlSec.classList.remove('hidden');
-        queueSec.classList.remove('hidden');
-        logsSec.classList.remove('hidden');
-        queueSec.removeAttribute('style');
+        // Desktop View: render only active view and span full grid
+        if (tabId === 'control') {
+          controlSec.classList.remove('hidden');
+          controlSec.style.gridColumn = 'span 2';
+        } else if (tabId === 'queue') {
+          queueSec.classList.remove('hidden');
+          queueSec.style.gridColumn = 'span 2';
+        } else if (tabId === 'logs') {
+          logsSec.classList.remove('hidden');
+        }
+      }
+
+      if (updateHistory) {
+        const isMockup = window.location.pathname.endsWith('.html');
+        if (isMockup) {
+          const newHash = `orchestrator/${tabId === 'control' ? '' : tabId}`;
+          if (window.location.hash !== '#' + newHash && window.location.hash !== newHash) {
+            window.location.hash = newHash;
+          }
+        } else {
+          const newPath = `/orchestrator${tabId === 'control' ? '' : '/' + tabId}`;
+          if (window.location.pathname !== newPath) {
+            window.history.pushState({ tab: tabId }, '', newPath);
+          }
+        }
       }
     }
 
     function setupTabsResponsiveView() {
-      // Re-evaluate display when window size changes
       switchMainTab(currentTab);
     }
 
@@ -1300,7 +1348,6 @@
       }
     }
 
-    // 3. Render Functions
     function renderAgentControls() {
       const container = document.getElementById('agent-controls-container');
       if (!container) return;
@@ -1333,6 +1380,11 @@
           </div>
           <div class="agent-current-task" title="${agent.task}">
             Task: ${agent.task}
+          </div>
+          <div class="agent-telemetry">
+            <span>CPU: ${agent.cpu_pct || 0.0}%</span>
+            <span>Mem: ${agent.mem_mb || 0.0} MB</span>
+            <span>PIDs: ${agent.processes || 0}</span>
           </div>
           <div class="agent-actions-row">
             <button class="agent-btn" onclick="openConfirmationModal('${agent.name}', 'start')" ${isRunning || isPaused ? 'disabled' : ''}>Start</button>
@@ -1376,7 +1428,7 @@
                 ${task.agent}
               </span>
             </div>
-            <span class="queue-time">${task.age}m ago</span>
+            <span class="queue-time">${task.age || 0}m ago</span>
           </div>
           <div class="queue-row" style="margin-top: 4px; border-top: 1px solid rgba(255,255,255,0.03); padding-top: 6px;">
             <div class="queue-actions">
@@ -1396,6 +1448,9 @@
       const container = document.getElementById('log-agent-tabs-container');
       if (!container) return;
 
+      // Only re-render tabs if count changes to avoid focus jumps
+      if (container.children.length === Object.keys(agents).length) return;
+
       container.innerHTML = '';
       Object.keys(agents).forEach(agentKey => {
         const agent = agents[agentKey];
@@ -1412,13 +1467,11 @@
       });
     }
 
-    function renderConsoleLogs() {
+    function renderConsoleLogs(lines) {
       const container = document.getElementById('console-output');
       if (!container) return;
 
       container.innerHTML = '';
-      const lines = logs[activeLogAgent] || [];
-
       lines.forEach(line => {
         const lineDiv = document.createElement('div');
         lineDiv.className = `log-line ${line.level.toLowerCase()}`;
@@ -1429,50 +1482,67 @@
         container.appendChild(lineDiv);
       });
 
-      // Autoscroll
       container.scrollTop = container.scrollHeight;
       document.getElementById('log-details-indicator').textContent = `Viewing ${activeLogAgent} (last ${lines.length} lines)`;
     }
 
-    // 4. State Interactions
-    function changeMode(mode) {
+    function updateModeUI(mode) {
       currentMode = mode;
-      
       const toggleContainer = document.getElementById('mode-toggle-container');
       const headerStatus = document.getElementById('header-mode-status');
       const descText = document.getElementById('mode-desc-text');
 
-      // Reset styles
       toggleContainer.className = 'mode-toggle-bar';
       toggleContainer.querySelectorAll('.mode-btn').forEach(btn => btn.classList.remove('active'));
-
-      // Add active state
       toggleContainer.classList.add(mode);
-      const activeBtn = toggleContainer.querySelector(`button[onclick*="${mode}"]`);
+
+      const activeBtn = toggleContainer.querySelector(`button[onclick*="'${mode}'"]`);
       if (activeBtn) activeBtn.classList.add('active');
 
       if (mode === 'interactive') {
         headerStatus.textContent = 'Interactive';
         headerStatus.style.color = 'var(--color-fred)';
         descText.innerHTML = `<strong>Interactive Mode:</strong> High guardrail stance. Swarm agents run commands inside secure sandbox cages and must prompt for explicit user permission approvals before committing files, executing build commands, or running network tasks.`;
-        showToast('System mode switched to: Interactive (Full Guardrails)', 'info');
       } else if (mode === 'collaborative') {
         headerStatus.textContent = 'Collaborative';
         headerStatus.style.color = 'var(--color-antigravity)';
-        descText.innerHTML = `<strong>Collaborative Mode:</strong> Semi-autonomous swarm. Agents coordinate on high-level branches autonomously, but synchronize plans on Linear at critical pipeline junctions (such as pull request proposals or risk level classifications).`;
-        showToast('System mode switched to: Collaborative (Shared Supervision)', 'info');
+        descText.innerHTML = `<strong>Collaborative Mode:</strong> Semi-autonomous swarm. Agents coordinate on branches autonomously, but synchronize plans on Linear at critical pipeline junctions (such as pull request proposals or risk level classifications).`;
       } else if (mode === 'autonomous') {
         headerStatus.textContent = 'Autonomous';
         headerStatus.style.color = 'var(--color-kai)';
         descText.innerHTML = `<strong>Autonomous Mode:</strong> Unrestricted agentic flow. The swarm autonomously plans, assigns subagents, resolves files, runs builds, and updates issue tracking logs, requesting human intervention only upon critical build failures.`;
-        showToast('System mode switched to: Autonomous (Full Autopilot)', 'warn');
       }
+    }
+
+    function changeMode(mode) {
+      fetch(`${API_BASE}/mode`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode })
+      })
+      .then(res => res.json())
+      .then(res => {
+        if (res.success) {
+          updateModeUI(mode);
+          showToast(`System mode switched to: ${mode.toUpperCase()}`, mode === 'autonomous' ? 'warn' : 'info');
+        }
+      })
+      .catch(err => console.error("Error setting mode:", err));
     }
 
     function selectLogAgent(agentKey) {
       activeLogAgent = agentKey;
-      renderLogTabs();
-      renderConsoleLogs();
+      
+      // Update tab active classes
+      document.querySelectorAll('.log-agent-tab').forEach(tab => {
+        if (tab.innerText.trim() === agentKey) {
+          tab.classList.add('active');
+        } else {
+          tab.classList.remove('active');
+        }
+      });
+
+      fetchLogs();
     }
 
     function dispatchTask(event) {
@@ -1481,56 +1551,57 @@
       const desc = document.getElementById('dispatch-desc').value;
       const priority = document.getElementById('dispatch-priority').value;
 
-      const newTask = {
-        id: Date.now(),
-        agent: agent,
-        desc: desc,
-        priority: priority,
-        age: 0
-      };
-
-      tasks.push(newTask);
-      renderQueue();
-
-      // Show toast
-      showToast(`Dispatched task to ${agent}: "${desc}"`, 'success');
-
-      // Clear input
-      document.getElementById('dispatch-desc').value = '';
-
-      // Append Log
-      appendAgentLog(agent, `[INFO] Received new Sandbox Dispatch command: "${desc}"`, 'info');
+      fetch(`${API_BASE}/tasks/dispatch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agent: agent,
+          description: desc,
+          priority: priority
+        })
+      })
+      .then(res => res.json())
+      .then(res => {
+        if (res.success) {
+          document.getElementById('dispatch-desc').value = '';
+          showToast(`Dispatched task to ${agent}: "${desc}"`, 'success');
+          fetchStatus();
+        }
+      })
+      .catch(err => console.error("Error dispatching task:", err));
     }
 
     function shiftQueuePriority(taskId, shift) {
-      const idx = tasks.findIndex(t => t.id === taskId);
-      if (idx === -1) return;
-
-      const targetIdx = idx + shift;
-      if (targetIdx < 0 || targetIdx >= tasks.length) return;
-
-      // Swap
-      const temp = tasks[idx];
-      tasks[idx] = tasks[targetIdx];
-      tasks[targetIdx] = temp;
-
-      renderQueue();
-      showToast('Task queue order shifted', 'info');
+      const direction = shift === -1 ? 'up' : 'down';
+      fetch(`${API_BASE}/tasks/${taskId}/reorder`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ direction })
+      })
+      .then(res => res.json())
+      .then(res => {
+        if (res.success) {
+          showToast('Task queue order shifted', 'info');
+          fetchStatus();
+        }
+      })
+      .catch(err => console.error("Error reordering task:", err));
     }
 
     function cancelQueueTask(taskId) {
-      const idx = tasks.findIndex(t => t.id === taskId);
-      if (idx === -1) return;
-
-      const removedTask = tasks[idx];
-      tasks.splice(idx, 1);
-      renderQueue();
-
-      showToast(`Canceled task: "${removedTask.desc}"`, 'error');
-      appendAgentLog(removedTask.agent, `[WARN] Canceled queue task manually by user request`, 'warn');
+      fetch(`${API_BASE}/tasks/${taskId}/cancel`, {
+        method: 'POST'
+      })
+      .then(res => res.json())
+      .then(res => {
+        if (res.success) {
+          showToast('Task canceled successfully', 'error');
+          fetchStatus();
+        }
+      })
+      .catch(err => console.error("Error canceling task:", err));
     }
 
-    // 5. Agent Control Action confirmations
     function openConfirmationModal(agentName, action) {
       pendingModalAction = { agent: agentName, action: action };
       
@@ -1539,11 +1610,9 @@
       const desc = document.getElementById('modal-desc-text-content');
       const confirmBtn = document.getElementById('modal-confirm-btn');
 
-      // Setup labels
       title.textContent = `⚠️ Confirm Swarm Intervention`;
       desc.innerHTML = `Are you sure you want to perform the action <strong>${action.toUpperCase()}</strong> on agent co-processor <strong>${agentName}</strong>?<br><br>This will affect its active thread context and update its live execution lifecycle state.`;
 
-      // Button styles
       confirmBtn.className = 'modal-btn modal-btn-confirm';
       if (action === 'kill') {
         confirmBtn.classList.add('kill-style');
@@ -1561,53 +1630,25 @@
       const { agent, action } = pendingModalAction;
       if (!agent || !action) return;
 
-      // Apply state change
-      const targetAgent = agents[agent];
-      if (targetAgent) {
-        if (action === 'start') {
-          targetAgent.status = 'Running';
-          targetAgent.task = 'Initializing active loop context...';
-          appendAgentLog(agent, `[SUCCESS] Lifecycle status transitioned to: RUNNING via Command Deck`, 'success');
-        } else if (action === 'pause') {
-          targetAgent.status = 'Paused';
-          appendAgentLog(agent, `[WARN] Lifecycle status transitioned to: PAUSED via Command Deck`, 'warn');
-        } else if (action === 'resume') {
-          targetAgent.status = 'Running';
-          appendAgentLog(agent, `[SUCCESS] Lifecycle status transitioned to: RUNNING (Resumed)`, 'success');
-        } else if (action === 'kill') {
-          targetAgent.status = 'Terminated';
-          targetAgent.task = 'Terminated by operator signal';
-          appendAgentLog(agent, `[ERROR] Lifecycle status transitioned to: TERMINATED (SIGKILL broadcasted)`, 'error');
+      fetch(`${API_BASE}/agent/${agent}/control`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action })
+      })
+      .then(res => res.json())
+      .then(res => {
+        if (res.success) {
+          closeConfirmationModal();
+          showToast(`Agent ${agent} successfully transitioned state to ${action.toUpperCase()}`, 'success');
+          fetchStatus();
+          if (activeLogAgent === agent) {
+            fetchLogs();
+          }
         }
-      }
-
-      closeConfirmationModal();
-      renderAgentControls();
-      showToast(`Agent ${agent} successfully transitioned state to ${action.toUpperCase()}`, 'success');
-
-      // If active logs window is this agent, update immediately
-      if (activeLogAgent === agent) {
-        renderConsoleLogs();
-      }
+      })
+      .catch(err => console.error("Error controlling agent:", err));
     }
 
-    // Log Utility
-    function appendAgentLog(agentName, text, level = 'info') {
-      const timeStr = new Date().toTimeString().split(' ')[0];
-      const logLines = logs[agentName];
-      logLines.push({ time: timeStr, level: level, text: text });
-      
-      // Cap at 50
-      if (logLines.length > 50) {
-        logLines.shift();
-      }
-
-      if (activeLogAgent === agentName) {
-        renderConsoleLogs();
-      }
-    }
-
-    // Toast Utility
     function showToast(message, type = 'success') {
       const container = document.getElementById('toast-container');
       if (!container) return;
@@ -1636,7 +1677,6 @@
 
       container.appendChild(toast);
 
-      // Remove after 3s
       setTimeout(() => {
         toast.style.opacity = '0';
         toast.style.transition = 'opacity 0.3s ease';
@@ -1644,32 +1684,6 @@
       }, 3000);
     }
 
-    // Live active feed logs generator
-    function generateLiveLogs() {
-      // Choose a running agent
-      const runningAgents = Object.values(agents).filter(a => a.status === 'Running');
-      if (runningAgents.length === 0) return;
-
-      const randomAgent = runningAgents[Math.floor(Math.random() * runningAgents.length)];
-      
-      const liveMessages = [
-        'Checking memory allocation profiles... OK',
-        'Syncing BroadcastChannel state across local storage tabs',
-        'Validating signature hashes on active tree namespaces',
-        'Executing safe subprocess execution context',
-        'Telemetry verified: K3s node state within limits',
-        'Polling webhook event buffer queue',
-        'Applying layout rendering updates to DOM frame'
-      ];
-
-      const levels = ['info', 'info', 'success', 'info'];
-      const randomMsg = liveMessages[Math.floor(Math.random() * liveMessages.length)];
-      const randomLvl = levels[Math.floor(Math.random() * levels.length)];
-
-      appendAgentLog(randomAgent.name, `[${randomLvl.toUpperCase()}] ${randomMsg}`, randomLvl);
-    }
-
-    // 6. Init run
     window.onload = init;
   </script>
 </body>

@@ -23,5 +23,6 @@
     }
   ],
   "entry": "dist/index.js",
-  "slots": ["global-injector"]
+  "slots": ["global-injector"],
+  "api": "plugin_api.py"
 }
