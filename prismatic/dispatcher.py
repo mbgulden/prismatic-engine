@@ -458,13 +458,20 @@ def signal_fred(issue_id: str, title: str = "", priority: int = 3) -> bool:
     )
 
 
-def signal_kai(issue_id: str, title: str = "", priority: int = 3) -> bool:
+def signal_kai(
+    issue_id: str,
+    title: str = "",
+    priority: int = 3,
+    signal_type: str = "",
+) -> bool:
     """Signal agent:kai by writing a nudge file.
 
     Args:
         issue_id: Linear issue identifier/ID.
         title: Human-readable summary.
         priority: Signal priority (0-5).
+        signal_type: Optional signal classification
+            (e.g. ``"agy_review_complete"``).
 
     Returns:
         ``True`` if the signal was written.
@@ -475,6 +482,7 @@ def signal_kai(issue_id: str, title: str = "", priority: int = 3) -> bool:
         issue_id=issue_id,
         title=title or f"Work on {issue_id}",
         priority=priority,
+        signal_type=signal_type,
     )
 
 
@@ -1056,6 +1064,24 @@ class EventRouterDedup:
             ON dedup_log(cycle_id)
             """
         )
+        # ── Label snapshots — track which labels issues had per cycle ──
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS label_snapshots (
+                issue_id TEXT NOT NULL,
+                label_name TEXT NOT NULL,
+                cycle_id TEXT NOT NULL,
+                seen_at TEXT NOT NULL,
+                PRIMARY KEY (issue_id, label_name, cycle_id)
+            )
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_label_snapshots_issue
+            ON label_snapshots(issue_id, label_name)
+            """
+        )
         self._conn.commit()
 
     def is_processed(self, issue_id: str, agent_label: str, cycle_id: str) -> bool:
@@ -1085,12 +1111,155 @@ class EventRouterDedup:
         )
         return cursor.fetchone()[0]
 
+    def snapshot_labels(
+        self, issue_id: str, label_names: list[str], cycle_id: str
+    ) -> None:
+        """Record the current label set for an issue in this cycle."""
+        now = datetime.now(timezone.utc).isoformat()
+        self._conn.executemany(
+            """
+            INSERT OR IGNORE INTO label_snapshots
+            (issue_id, label_name, cycle_id, seen_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            [(issue_id, name, cycle_id, now) for name in label_names],
+        )
+        self._conn.commit()
+
+    def had_label(self, issue_id: str, label_name: str) -> bool:
+        """Check if an issue ever had a specific label in any cycle."""
+        cursor = self._conn.execute(
+            "SELECT 1 FROM label_snapshots WHERE issue_id=? AND label_name=?",
+            (issue_id, label_name),
+        )
+        return cursor.fetchone() is not None
+
+    def had_labels(self, issue_id: str, label_names: list[str]) -> bool:
+        """Check if an issue ever had ALL of the specified labels."""
+        placeholders = ",".join("?" * len(label_names))
+        params = [issue_id] + label_names
+        cursor = self._conn.execute(
+            f"SELECT COUNT(DISTINCT label_name) FROM label_snapshots "
+            f"WHERE issue_id=? AND label_name IN ({placeholders})",
+            params,
+        )
+        count = cursor.fetchone()[0]
+        return count == len(label_names)
+
     def close(self) -> None:
         self._conn.close()
 
 
 # Re-export for external callers
 dedup = EventRouterDedup
+
+
+# ═══════════════════════════════════════════════════════════════
+# AGY → Kai Completion Detection
+# ═══════════════════════════════════════════════════════════════
+
+
+def detect_agy_kai_completions(
+    dedup: EventRouterDedup,
+    cycle_id: str,
+) -> int:
+    """Detect AGY→Fred transitions and signal Kai.
+
+    When an issue transitions from ``agent:agy`` → ``agent:fred``
+    AND it previously had ``agent:kai``, Kai should be notified
+    that the AGY review is complete.
+
+    Strategy:
+      1. Record label snapshots for all agent-labeled issues.
+      2. Query all ``agent:fred`` issues (not ``agent::fred`` — the
+         actual Linear label name).
+      3. For each, check if the dedup DB shows the issue previously
+         had ``agent:agy`` AND ``agent:kai``.
+      4. If yes and not already signalled this cycle, create a Kai
+         nudge with ``signal_type: "agy_review_complete"``.
+
+    Returns:
+        Number of Kai signals sent.
+    """
+    signalled = 0
+
+    # 1. Snapshot: record current labels for issues the dispatcher
+    #    has seen (builds label history over cycles)
+    agent_labels = [
+        f"agent::{name}" for name in AGENT_CONFIG
+    ] + [
+        # Also track single-colon variants (actual Linear label names)
+        f"agent:{name}" for name in AGENT_CONFIG
+    ]
+    for label_name in agent_labels:
+        try:
+            issues = get_issues_with_label(label_name, max_issues=50)
+        except Exception:
+            continue
+        for issue in issues:
+            try:
+                dedup.snapshot_labels(
+                    issue["id"],
+                    issue.get("labels", []),
+                    cycle_id,
+                )
+            except Exception:
+                pass
+
+    # 2. Query agent:fred issues (the ACTUAL Linear label format)
+    try:
+        fred_issues = get_issues_with_label("agent:fred", max_issues=100)
+    except Exception:
+        return 0
+
+    # 3. Detect AGY→Kai transitions
+    for issue in fred_issues:
+        issue_id = issue["id"]
+        identifier = issue.get("identifier", issue_id)
+        current_labels = issue.get("labels", [])
+
+        # Skip if still has agent:agy (transition not complete)
+        if "agent:agy" in current_labels:
+            continue
+
+        # Skip if already signalled this cycle
+        if dedup.is_processed(issue_id, "agy_review_complete", cycle_id):
+            continue
+
+        # Check if issue previously had agent:agy AND agent:kai
+        if not dedup.had_labels(issue_id, ["agent:agy", "agent:kai"]):
+            continue
+
+        # Record snapshot for current labels
+        dedup.snapshot_labels(issue_id, current_labels, cycle_id)
+
+        # 4. Signal Kai
+        provider = _get_signal_provider()
+        ok = provider.send_work(
+            target="kai",
+            issue_id=identifier,
+            title=f"AGY review complete: {issue.get('title', identifier)}",
+            priority=2,  # High priority — Kai should act on this
+            signal_type="agy_review_complete",
+        )
+        if ok:
+            dedup.mark_processed(issue_id, "agy_review_complete", cycle_id)
+            signalled += 1
+            print(
+                f"[dispatcher] 🔔 Kai signalled (AGY review complete): "
+                f"{identifier}"
+            )
+            # Post a brief comment
+            try:
+                add_comment(
+                    issue_id,
+                    f"🔔 **AGY review complete** — Kai has been notified "
+                    f"to review the results.",
+                )
+            except Exception:
+                pass
+
+    return signalled
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1209,6 +1378,19 @@ def dispatch_once(
         recover_stalled_agy(max_retries=MAX_CYCLES_BEFORE_RECOVER)
     except Exception as exc:
         print(f"[dispatcher] recover_stalled_agy error: {exc}")
+        counts["errors"] += 1
+
+    # 5. Detect AGY→Kai completions — signal Kai when AGY finishes a review
+    try:
+        agy_kai_count = detect_agy_kai_completions(dedup, cycle_id)
+        if agy_kai_count:
+            print(
+                f"[dispatcher] 🔔 Signaled Kai for {agy_kai_count} "
+                f"AGY review completion(s)"
+            )
+            counts["dispatched"] += agy_kai_count
+    except Exception as exc:
+        print(f"[dispatcher] detect_agy_kai_completions error: {exc}")
         counts["errors"] += 1
 
     return counts
