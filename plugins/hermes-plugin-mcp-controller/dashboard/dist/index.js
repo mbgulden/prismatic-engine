@@ -487,8 +487,15 @@
         .mcp-tab-btn {
           flex: 1;
           justify-content: center;
-          padding: 8px 4px;
-          font-size: 11px;
+          padding: 12px 6px;
+          font-size: 12px;
+          min-height: 44px;
+        }
+        .mcp-btn {
+          padding: 12px 16px;
+          min-height: 44px;
+          font-size: 12px;
+          justify-content: center;
         }
         .mcp-stat-row {
           grid-template-columns: 1fr;
@@ -575,7 +582,11 @@
       injectStyles();
       const handler = () => setTab(getCurrentTab());
       window.addEventListener('popstate', handler);
-      return () => window.removeEventListener('popstate', handler);
+      window.addEventListener('hashchange', handler);
+      return () => {
+        window.removeEventListener('popstate', handler);
+        window.removeEventListener('hashchange', handler);
+      };
     }, []);
 
     const handleSwitchTab = (tabId) => {
