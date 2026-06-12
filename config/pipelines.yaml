@@ -1,0 +1,89 @@
+# ============================================================
+# Prismatic Engine — Pipeline Definitions
+# ============================================================
+# Auto-routing pipelines for multi-step agent workflows.
+# Each pipeline has a chain of agent transitions and trigger
+# keywords that auto-detect the pipeline type from issue titles.
+#
+# Loaded by: prismatic.router.load_pipeline_templates()
+# Override path: PRISMATIC_PIPELINE_CONFIG env var
+#
+# Part of INGEST-5 (GRO-1467) — Automate the pipeline.
+# ============================================================
+
+pipelines:
+
+  # ── INGEST Pipeline ──────────────────────────────────────
+  # Documents → Index → Patterns → Skills → Guide → Automation
+  # Trigger: issues with [INGEST-N] pattern in title
+  ingest:
+    name: "Document Ingestion Pipeline"
+    description: >
+      Ingest specification documents from Agent Swarm Ops,
+      index them, extract reusable patterns, convert to
+      Hermes skills and Linear templates, produce an
+      integration guide, then automate the pipeline.
+    chain:
+      - agent: agy
+        label: "agent:agy"
+        step: "INGEST-1: Index documents → structured capability map"
+        next_label: "agent:agy"
+      - agent: agy
+        label: "agent:agy"
+        step: "INGEST-2: Extract patterns → reusable building blocks"
+        next_label: "agent:fred"
+      - agent: fred
+        label: "agent:fred"
+        step: "INGEST-3: Convert blocks → skills + templates"
+        next_label: "agent:jules"
+      - agent: jules
+        label: "agent:jules"
+        step: "INGEST-4: Generate integration guide"
+        next_label: "agent:ned"
+      - agent: ned
+        label: "agent:ned"
+        step: "INGEST-5: Automate the pipeline — cron + dispatcher"
+        next_label: ""  # terminal
+    triggers:
+      - "[INGEST-"
+      - "INGEST-"
+      - "ingest-"
+      - "document ingestion"
+
+  # ── Dev Agency Pipeline (example) ────────────────────────
+  dev-agency:
+    name: "Dev Agency"
+    description: "Full agency pipeline: Fred → Kai → AGY → Codex"
+    chain:
+      - agent: fred
+        label: "agent:fred"
+        next_label: "agent:kai"
+      - agent: kai
+        label: "agent:kai"
+        next_label: "agent:agy"
+      - agent: agy
+        label: "agent:agy"
+        next_label: "agent:codex"
+      - agent: codex
+        label: "agent:codex"
+        next_label: ""  # terminal
+    triggers:
+      - "pipeline::dev-agency"
+
+  # ── Content Pipeline (example) ───────────────────────────
+  content:
+    name: "Content Production"
+    description: "Research → draft → review → publish"
+    chain:
+      - agent: agy
+        label: "agent:agy"
+        next_label: "agent:jules"
+      - agent: jules
+        label: "agent:jules"
+        next_label: "agent:fred"
+      - agent: fred
+        label: "agent:fred"
+        next_label: ""  # terminal — Fred publishes
+    triggers:
+      - "pipeline::content"
+      - "[CONTENT]"
