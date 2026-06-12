@@ -1,9 +1,9 @@
 {
   "name": "hermes-plugin-mcp-controller",
   "label": "MCP Servers",
-  "description": "Control panel for active MCP servers",
+  "description": "Control panel for active MCP servers — health monitoring, tool registry, log viewer",
   "icon": "Layers",
-  "version": "0.1.0-local",
+  "version": "0.2.0-local",
   "tab": {
     "path": "/mcp-controller",
     "position": "end"
@@ -22,5 +22,6 @@
       "path": "/mcp-controller/logs"
     }
   ],
-  "entry": "dist/index.js"
+  "entry": "dist/index.js",
+  "api": "plugin_api.py"
 }
