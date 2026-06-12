@@ -37,6 +37,13 @@ from typing import Any, Callable
 
 # ── Relative package imports ──────────────────────────────────
 from .providers.signals import create_signal_provider, SignalPayload
+from .credit_policy_engine import (
+    CreditPolicyEngine,
+    PolicyAction,
+    PolicyDecision,
+    evaluate_agent_launch,
+    AGENT_PROVIDER_MAP,
+)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -63,6 +70,43 @@ MAX_CYCLES_BEFORE_RECOVER: int = int(
 
 # Nudge directory for file-based signal providers
 NUDGE_DIR: str = os.environ.get("PRISMATIC_NUDGE_DIR", "/tmp/prismatic")
+
+# Pipeline metrics log for dashboard consumption
+PIPELINE_METRICS_PATH: str = os.environ.get(
+    "PRISMATIC_METRICS_PATH", "/tmp/pipeline_metrics.jsonl"
+)
+
+
+def log_completed_pipeline_metrics(
+    issue_id: str,
+    agent: str,
+    status: str,
+    reason: str = "",
+    cost: int = 0,
+    **kwargs,
+) -> None:
+    """Append a line to the pipeline metrics JSONL file.
+
+    This is consumed by ``scripts/pipeline_dashboard.py`` for
+    real-time pipeline health monitoring.
+    """
+    entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "issue_id": issue_id,
+        "agent": agent,
+        "status": status,
+        "reason": reason,
+        "cost": cost,
+        **kwargs,
+    }
+    try:
+        metrics_dir = os.path.dirname(PIPELINE_METRICS_PATH)
+        if metrics_dir:
+            os.makedirs(metrics_dir, exist_ok=True)
+        with open(PIPELINE_METRICS_PATH, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except OSError as exc:
+        print(f"[dispatcher] Failed to write metrics: {exc}")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1362,6 +1406,54 @@ def dispatch_once(
             launcher = AGENT_LAUNCHERS.get(agent_name)
             if not launcher:
                 continue
+
+            # ── Credit policy enforcement ───────────────────────────
+            label = f"agent:{agent_name}" if not agent_name.startswith("agent:") else agent_name
+            decision = evaluate_agent_launch(
+                label, issue_id, operation="code_generation"
+            )
+            if decision.action == PolicyAction.DENY:
+                identifier = issue.get("identifier", issue_id)
+                print(
+                    f"[dispatcher] 🚫 BLOCKED {agent_name} → {identifier}: "
+                    f"{decision.reason}"
+                )
+                try:
+                    add_comment(
+                        issue_id,
+                        f"🚫 **Credit policy blocked**: {decision.reason}\n"
+                        f"Estimated cost: {decision.estimated_cost} credits.",
+                    )
+                except Exception:
+                    pass
+                # Log to metrics
+                log_completed_pipeline_metrics(
+                    issue_id=issue_id,
+                    agent=agent_name,
+                    status="blocked",
+                    reason=decision.reason,
+                    cost=decision.estimated_cost,
+                )
+                counts["blocked"] = counts.get("blocked", 0) + 1
+                dedup.mark_processed(issue_id, label, cycle_id)
+                continue
+            elif decision.action == PolicyAction.WARN:
+                identifier = issue.get("identifier", issue_id)
+                print(
+                    f"[dispatcher] ⚠️  WARN {agent_name} → {identifier}: "
+                    f"{decision.reason}"
+                )
+            elif decision.action == PolicyAction.ASK_USER:
+                # Headless dispatcher cannot ask user — log and skip
+                identifier = issue.get("identifier", issue_id)
+                print(
+                    f"[dispatcher] ❓ ASK_USER {agent_name} → {identifier}: "
+                    f"{decision.reason}"
+                )
+                counts["pending_approval"] = counts.get("pending_approval", 0) + 1
+                dedup.mark_processed(issue_id, label, cycle_id)
+                continue
+            # ── End credit policy ──────────────────────────────────
 
             try:
                 result = launcher(issue_id, title=issue.get("title", ""))
