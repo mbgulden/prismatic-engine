@@ -12,9 +12,13 @@ Adding a new signal type:
 
 Signal types defined here:
     - ``agy_review_complete`` — AGY finished reviewing an issue; Kai should
-      pick up the results.
+      pick up the results. (Legacy Kai-specific variant — still supported.)
+    - ``review_complete`` — Generalized: ANY reviewer agent finished work;
+      the ``origin_agent`` metadata field tells the recipient which issue
+      was routed back. Pattern: Kai→AGY→Kai, Ned→AGY→Ned, etc.
 
 Born from: GRO-1481 — Fix AGY→Kai nudge back
+Generalized: GRO-1485 — Close the feedback loop for all agent pairs
 """
 
 from __future__ import annotations
@@ -32,9 +36,22 @@ SIGNAL_TYPES: dict[str, dict[str, Any]] = {
             "or further routing."
         ),
         "priority": 2,        # High priority — Kai should act promptly
-        "target": "kai",       # Primary recipient
+        "target": "kai",       # Primary recipient (legacy Kai-specific)
         "notify": "fred",      # Also notify Fred for oversight
         "action": "review",    # Kai should REVIEW AGY's output
+    },
+    "review_complete": {
+        "description": (
+            "Generalized review completion signal. Any agent (Kai, Ned, "
+            "etc.) that previously requested a peer review has now had "
+            "that review completed by the reviewer agent. The "
+            "``origin_agent`` metadata field identifies which agent "
+            "should pick up the results."
+        ),
+        "priority": 2,        # High priority — origin should act promptly
+        "target": "dynamic",   # Determined by origin_agent metadata
+        "notify": "fred",      # Also notify Fred for oversight
+        "action": "review",    # Origin should REVIEW the output
     },
 }
 
@@ -57,6 +74,30 @@ def is_agy_review_complete(metadata: dict[str, Any]) -> bool:
         ``True`` if this is an ``agy_review_complete`` signal.
     """
     return metadata.get("signal_type") == "agy_review_complete"
+
+
+def is_review_complete(metadata: dict[str, Any]) -> bool:
+    """Check if a signal payload indicates a generalized review completion.
+
+    Args:
+        metadata: The ``metadata`` dict from a SignalPayload.
+
+    Returns:
+        ``True`` if this is a ``review_complete`` signal.
+    """
+    return metadata.get("signal_type") == "review_complete"
+
+
+def get_origin_agent(metadata: dict[str, Any]) -> str | None:
+    """Extract the origin agent from review_complete signal metadata.
+
+    Args:
+        metadata: The ``metadata`` dict from a SignalPayload.
+
+    Returns:
+        Origin agent name (e.g. ``"kai"``), or ``None`` if not set.
+    """
+    return metadata.get("origin_agent")
 
 
 def get_signal_info(signal_type: str) -> dict[str, Any] | None:

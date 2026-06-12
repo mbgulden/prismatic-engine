@@ -1155,31 +1155,36 @@ dedup = EventRouterDedup
 
 
 # ═══════════════════════════════════════════════════════════════
-# AGY → Kai Completion Detection
+# Origin Completion Detection (Generalized Peer-Review Loop)
 # ═══════════════════════════════════════════════════════════════
 
 
-def detect_agy_kai_completions(
+def detect_origin_completions(
     dedup: EventRouterDedup,
     cycle_id: str,
 ) -> int:
-    """Detect AGY→Fred transitions and signal Kai.
+    """Detect completed review loops and signal origin agents.
 
-    When an issue transitions from ``agent:agy`` → ``agent:fred``
-    AND it previously had ``agent:kai``, Kai should be notified
-    that the AGY review is complete.
+    When an issue transitions through a reviewer agent (e.g. ``agent:agy``)
+    and lands at ``agent:fred``, the dispatcher determines which agent
+    originally requested the review and signals them to pick up results.
+
+    This closes the feedback loop: Kai→AGY→Kai, Ned→AGY→Ned, etc.
+    — any agent can request peer review and get results back automatically.
 
     Strategy:
-      1. Record label snapshots for all agent-labeled issues.
-      2. Query all ``agent:fred`` issues (not ``agent::fred`` — the
-         actual Linear label name).
-      3. For each, check if the dedup DB shows the issue previously
-         had ``agent:agy`` AND ``agent:kai``.
-      4. If yes and not already signalled this cycle, create a Kai
-         nudge with ``signal_type: "agy_review_complete"``.
+      1. Record label snapshots for all agent-labeled issues (builds
+         history across cycles).
+      2. Query all ``agent:fred`` issues.
+      3. For each, check the label history for a reviewer agent (typically
+         ``agent:agy``) and an origin agent (any other agent that preceded
+         the reviewer).
+      4. If origin found and not already signalled this cycle, signal the
+         origin with ``signal_type: "review_complete"`` and
+         ``origin_agent`` metadata.
 
     Returns:
-        Number of Kai signals sent.
+        Number of origin signals sent.
     """
     signalled = 0
 
@@ -1212,7 +1217,7 @@ def detect_agy_kai_completions(
     except Exception:
         return 0
 
-    # 3. Detect AGY→Kai transitions
+    # 3. Detect origin→reviewer→fred transitions
     for issue in fred_issues:
         issue_id = issue["id"]
         identifier = issue.get("identifier", issue_id)
@@ -1222,39 +1227,59 @@ def detect_agy_kai_completions(
         if "agent:agy" in current_labels:
             continue
 
+        # Build the dedup key for this specific detection
+        dedup_key = f"origin_complete:{identifier}"
+
         # Skip if already signalled this cycle
-        if dedup.is_processed(issue_id, "agy_review_complete", cycle_id):
+        if dedup.is_processed(issue_id, dedup_key, cycle_id):
             continue
 
-        # Check if issue previously had agent:agy AND agent:kai
-        if not dedup.had_labels(issue_id, ["agent:agy", "agent:kai"]):
+        # Determine the origin agent: look through all configured agents
+        # for one that both (a) previously appeared on this issue and
+        # (b) is NOT the current reviewer (agy) or the terminal (fred)
+        origin_agent = None
+        for agent_name in AGENT_CONFIG:
+            label = f"agent:{agent_name}"
+            if label in ("agent:agy", "agent:fred", "agent:done"):
+                continue
+            if dedup.had_label(issue_id, label):
+                # Also require that agent:agy was in the history
+                # (confirms this was a review, not a direct dispatch)
+                if dedup.had_label(issue_id, "agent:agy"):
+                    origin_agent = agent_name
+                    break
+
+        if not origin_agent:
             continue
 
         # Record snapshot for current labels
         dedup.snapshot_labels(issue_id, current_labels, cycle_id)
 
-        # 4. Signal Kai
+        # 4. Signal the origin agent
         provider = _get_signal_provider()
         ok = provider.send_work(
-            target="kai",
+            target=origin_agent,
             issue_id=identifier,
-            title=f"AGY review complete: {issue.get('title', identifier)}",
-            priority=2,  # High priority — Kai should act on this
-            signal_type="agy_review_complete",
+            title=(
+                f"Review complete: {issue.get('title', identifier)}"
+            ),
+            priority=2,  # High priority — origin should act on this
+            signal_type="review_complete",
+            origin_agent=origin_agent,
         )
         if ok:
-            dedup.mark_processed(issue_id, "agy_review_complete", cycle_id)
+            dedup.mark_processed(issue_id, dedup_key, cycle_id)
             signalled += 1
             print(
-                f"[dispatcher] 🔔 Kai signalled (AGY review complete): "
-                f"{identifier}"
+                f"[dispatcher] 🔔 {origin_agent.capitalize()} signalled "
+                f"(review complete): {identifier}"
             )
             # Post a brief comment
             try:
                 add_comment(
                     issue_id,
-                    f"🔔 **AGY review complete** — Kai has been notified "
-                    f"to review the results.",
+                    f"🔔 **Review complete** — **{origin_agent}** has been "
+                    f"notified to review the results.",
                 )
             except Exception:
                 pass
@@ -1380,17 +1405,17 @@ def dispatch_once(
         print(f"[dispatcher] recover_stalled_agy error: {exc}")
         counts["errors"] += 1
 
-    # 5. Detect AGY→Kai completions — signal Kai when AGY finishes a review
+    # 5. Detect origin completions — signal origin agents when reviews finish
     try:
-        agy_kai_count = detect_agy_kai_completions(dedup, cycle_id)
-        if agy_kai_count:
+        origin_count = detect_origin_completions(dedup, cycle_id)
+        if origin_count:
             print(
-                f"[dispatcher] 🔔 Signaled Kai for {agy_kai_count} "
-                f"AGY review completion(s)"
+                f"[dispatcher] 🔔 Signaled {origin_count} "
+                f"origin agent(s) for review completion"
             )
-            counts["dispatched"] += agy_kai_count
+            counts["dispatched"] += origin_count
     except Exception as exc:
-        print(f"[dispatcher] detect_agy_kai_completions error: {exc}")
+        print(f"[dispatcher] detect_origin_completions error: {exc}")
         counts["errors"] += 1
 
     return counts
