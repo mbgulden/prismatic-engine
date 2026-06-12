@@ -1,0 +1,435 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 250" width="100%" height="100%">
+  <defs>
+    <!-- Background grid pattern -->
+    <pattern id="iso-grid" width="60" height="34.64" patternUnits="userSpaceOnUse">
+      <path d="M 30 0 L 30 34.64 M 0 17.32 L 30 0 L 60 17.32 L 30 34.64" fill="none" stroke="rgba(255, 255, 255, 0.03)" stroke-width="0.75"/>
+    </pattern>
+    
+    <!-- Radial mask for grid fading -->
+    <radialGradient id="grid-fade" cx="45%" cy="50%" r="55%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="1" />
+      <stop offset="50%" stop-color="#ffffff" stop-opacity="0.6" />
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0" />
+    </radialGradient>
+    <mask id="grid-mask">
+      <rect width="900" height="250" fill="url(#grid-fade)" />
+    </mask>
+
+    <!-- Filters for Glow -->
+    <filter id="glow-light" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="2" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+    <filter id="glow-heavy" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="6" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+    
+    <!-- Prism Face Gradients -->
+    <linearGradient id="prism-left-edge" x1="310" y1="180" x2="370" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="rgba(255,255,255,0.2)" />
+      <stop offset="50%" stop-color="#ffffff" />
+      <stop offset="100%" stop-color="rgba(255,255,255,0.6)" />
+    </linearGradient>
+    
+    <!-- Comet Glows and Tails -->
+    <!-- Red (AGY) -->
+    <radialGradient id="red-glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ff3366" stop-opacity="1" />
+      <stop offset="30%" stop-color="#ff3366" stop-opacity="0.6" />
+      <stop offset="100%" stop-color="#ff3366" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="red-tail" x1="0" y1="0" x2="-60" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="1" />
+      <stop offset="15%" stop-color="#ff3366" stop-opacity="0.8" />
+      <stop offset="100%" stop-color="#ff3366" stop-opacity="0" />
+    </linearGradient>
+    
+    <!-- Orange (Jules) -->
+    <radialGradient id="orange-glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ff9f0a" stop-opacity="1" />
+      <stop offset="30%" stop-color="#ff9f0a" stop-opacity="0.6" />
+      <stop offset="100%" stop-color="#ff9f0a" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="orange-tail" x1="0" y1="0" x2="-60" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="1" />
+      <stop offset="15%" stop-color="#ff9f0a" stop-opacity="0.8" />
+      <stop offset="100%" stop-color="#ff9f0a" stop-opacity="0" />
+    </linearGradient>
+    
+    <!-- Green (Custom) -->
+    <radialGradient id="green-glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#30d158" stop-opacity="1" />
+      <stop offset="30%" stop-color="#30d158" stop-opacity="0.6" />
+      <stop offset="100%" stop-color="#30d158" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="green-tail" x1="0" y1="0" x2="-60" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="1" />
+      <stop offset="15%" stop-color="#30d158" stop-opacity="0.8" />
+      <stop offset="100%" stop-color="#30d158" stop-opacity="0" />
+    </linearGradient>
+    
+    <!-- Cyan (Hermes) -->
+    <radialGradient id="cyan-glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#64d2ff" stop-opacity="1" />
+      <stop offset="30%" stop-color="#64d2ff" stop-opacity="0.6" />
+      <stop offset="100%" stop-color="#64d2ff" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="cyan-tail" x1="0" y1="0" x2="-60" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="1" />
+      <stop offset="15%" stop-color="#64d2ff" stop-opacity="0.8" />
+      <stop offset="100%" stop-color="#64d2ff" stop-opacity="0" />
+    </linearGradient>
+
+    <!-- Blue (Codex) -->
+    <radialGradient id="blue-glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#5e5ce6" stop-opacity="1" />
+      <stop offset="30%" stop-color="#5e5ce6" stop-opacity="0.6" />
+      <stop offset="100%" stop-color="#5e5ce6" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="blue-tail" x1="0" y1="0" x2="-60" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="1" />
+      <stop offset="15%" stop-color="#5e5ce6" stop-opacity="0.8" />
+      <stop offset="100%" stop-color="#5e5ce6" stop-opacity="0" />
+    </linearGradient>
+
+    <!-- Magenta (Research) -->
+    <radialGradient id="magenta-glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ff375f" stop-opacity="1" />
+      <stop offset="30%" stop-color="#ff375f" stop-opacity="0.6" />
+      <stop offset="100%" stop-color="#ff375f" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="magenta-tail" x1="0" y1="0" x2="-60" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="1" />
+      <stop offset="15%" stop-color="#ff375f" stop-opacity="0.8" />
+      <stop offset="100%" stop-color="#ff375f" stop-opacity="0" />
+    </linearGradient>
+
+    <style>
+      .bg-rect { fill: #080809; }
+      
+      /* Beam Animations */
+      .beam-glow-heavy {
+        animation: beam-glow-pulse 3s infinite ease-in-out;
+      }
+      .beam-glow-med {
+        animation: beam-glow-pulse 3s infinite ease-in-out 0.5s;
+      }
+      .beam-core {
+        animation: beam-width-pulse 3s infinite ease-in-out;
+      }
+      
+      @keyframes beam-glow-pulse {
+        0%, 100% { opacity: 0.12; }
+        50% { opacity: 0.25; }
+      }
+      @keyframes beam-width-pulse {
+        0%, 100% { stroke-width: 5px; opacity: 0.9; }
+        50% { stroke-width: 7px; opacity: 1; }
+      }
+
+      /* Sliding Particles in White Beam */
+      .p-slide {
+        animation: p-slide-keyframes 2.5s infinite linear;
+      }
+      @keyframes p-slide-keyframes {
+        0% { transform: translateX(0); opacity: 0; }
+        10% { opacity: 0.8; }
+        90% { opacity: 0.8; }
+        100% { transform: translateX(330px); opacity: 0; }
+      }
+
+      /* Space Dust Animations */
+      @keyframes dust-fade {
+        0%, 100% { opacity: 0.1; }
+        50% { opacity: 0.7; }
+      }
+      .dust-particle {
+        fill: #ffffff;
+        animation: dust-fade 4s infinite ease-in-out;
+      }
+
+      /* Prism breathing glow */
+      @keyframes prism-breathe {
+        0%, 100% {
+          filter: drop-shadow(0 0 8px rgba(100, 210, 255, 0.15)) drop-shadow(0 0 20px rgba(255, 255, 255, 0.05));
+          opacity: 0.9;
+        }
+        50% {
+          filter: drop-shadow(0 0 18px rgba(100, 210, 255, 0.35)) drop-shadow(0 0 35px rgba(255, 255, 255, 0.18));
+          opacity: 1;
+        }
+      }
+      .prism-group {
+        animation: prism-breathe 4s infinite ease-in-out;
+      }
+
+      /* Comet Motion */
+      .comet {
+        animation-name: comet-fly-keyframes;
+        animation-iteration-count: infinite;
+        animation-timing-function: cubic-bezier(0.4, 0, 1, 1);
+        animation-fill-mode: both;
+        opacity: 0;
+      }
+      
+      @keyframes comet-fly-keyframes {
+        0% {
+          offset-distance: 0%;
+          opacity: 0;
+        }
+        6% {
+          opacity: 1;
+        }
+        85% {
+          opacity: 1;
+        }
+        100% {
+          offset-distance: 100%;
+          opacity: 0;
+        }
+      }
+
+      /* Individual Comets Configuration */
+      .comet-1 {
+        offset-path: path('M 390,100 C 480,90 620,30 920,30');
+        animation-duration: 3.6s;
+        animation-delay: 0s;
+      }
+      .comet-2 {
+        offset-path: path('M 394,108 C 480,102 620,66 920,66');
+        animation-duration: 3.6s;
+        animation-delay: 0.6s;
+      }
+      .comet-3 {
+        offset-path: path('M 398,116 C 480,114 620,102 920,102');
+        animation-duration: 3.6s;
+        animation-delay: 1.2s;
+      }
+      .comet-4 {
+        offset-path: path('M 402,124 C 480,126 620,138 920,138');
+        animation-duration: 3.6s;
+        animation-delay: 1.8s;
+      }
+      .comet-5 {
+        offset-path: path('M 406,132 C 480,138 620,174 920,174');
+        animation-duration: 3.6s;
+        animation-delay: 2.4s;
+      }
+      .comet-6 {
+        offset-path: path('M 410,140 C 480,150 620,210 920,210');
+        animation-duration: 3.6s;
+        animation-delay: 3.0s;
+      }
+
+      /* Comet internal particles drift */
+      @keyframes p1-drift {
+        0%, 100% { transform: translate(0, 0); opacity: 0.6; }
+        50% { transform: translate(-4px, 1px); opacity: 0.9; }
+      }
+      @keyframes p2-drift {
+        0%, 100% { transform: translate(0, 0); opacity: 0.5; }
+        50% { transform: translate(-8px, -1px); opacity: 0.8; }
+      }
+      @keyframes p3-drift {
+        0%, 100% { transform: translate(0, 0); opacity: 0.4; }
+        50% { transform: translate(-12px, 2px); opacity: 0.7; }
+      }
+      .comet-p1 { animation: p1-drift 0.5s infinite ease-in-out; }
+      .comet-p2 { animation: p2-drift 0.7s infinite ease-in-out; }
+      .comet-p3 { animation: p3-drift 0.6s infinite ease-in-out; }
+    </style>
+  </defs>
+
+  <!-- Dark Background -->
+  <rect class="bg-rect" width="900" height="250" />
+
+  <!-- Isometric Grid -->
+  <rect width="900" height="250" fill="url(#iso-grid)" mask="url(#grid-mask)" />
+
+  <!-- Ambient Cinematic Dust Particles -->
+  <circle cx="150" cy="50" r="1" class="dust-particle" style="animation-delay: 0s; --duration: 4s;" />
+  <circle cx="280" cy="210" r="1.5" class="dust-particle" style="animation-delay: 1.2s; --duration: 5s;" />
+  <circle cx="490" cy="70" r="1" class="dust-particle" style="animation-delay: 2.5s; --duration: 3.5s;" />
+  <circle cx="620" cy="190" r="2" class="dust-particle" style="animation-delay: 0.6s; --duration: 6s;" />
+  <circle cx="710" cy="40" r="1" class="dust-particle" style="animation-delay: 1.8s; --duration: 4.5s;" />
+  <circle cx="830" cy="140" r="1.2" class="dust-particle" style="animation-delay: 3s; --duration: 5.5s;" />
+  <circle cx="110" cy="160" r="1.5" class="dust-particle" style="animation-delay: 0.8s; --duration: 4.8s;" />
+
+  <!-- STATIC SPECTRUM PATHS (Visual track for comets) -->
+  <g opacity="0.12" stroke-linecap="round">
+    <path d="M 390,100 C 480,90 620,30 920,30" stroke="#ff3366" stroke-width="1.5" fill="none" />
+    <path d="M 394,108 C 480,102 620,66 920,66" stroke="#ff9f0a" stroke-width="1.5" fill="none" />
+    <path d="M 398,116 C 480,114 620,102 920,102" stroke="#30d158" stroke-width="1.5" fill="none" />
+    <path d="M 402,124 C 480,126 620,138 920,138" stroke="#64d2ff" stroke-width="1.5" fill="none" />
+    <path d="M 406,132 C 480,138 620,174 920,174" stroke="#5e5ce6" stroke-width="1.5" fill="none" />
+    <path d="M 410,140 C 480,150 620,210 920,210" stroke="#ff375f" stroke-width="1.5" fill="none" />
+  </g>
+
+  <!-- BROAD WHITE DATA BEAM (Incoming from Left) -->
+  <!-- Heavy Ambient Glow -->
+  <line x1="0" y1="120" x2="340" y2="120" stroke="rgba(100, 210, 255, 0.08)" stroke-width="45" stroke-linecap="round" />
+  <!-- Neon Ionization Glow -->
+  <line x1="0" y1="120" x2="340" y2="120" stroke="rgba(0, 240, 255, 0.15)" stroke-width="20" stroke-linecap="round" filter="url(#glow-heavy)" class="beam-glow-heavy" />
+  <line x1="0" y1="120" x2="340" y2="120" stroke="rgba(255, 255, 255, 0.12)" stroke-width="12" stroke-linecap="round" filter="url(#glow-light)" class="beam-glow-med" />
+  <!-- Core Laser Beam -->
+  <line x1="0" y1="120" x2="340" y2="120" stroke="#ffffff" stroke-width="5" stroke-linecap="round" filter="url(#glow-light)" class="beam-core" />
+
+  <!-- Flowing energy particles inside the white beam -->
+  <circle cx="10" cy="119" r="2" fill="#ffffff" filter="url(#glow-light)" class="p-slide" style="animation-delay: 0s; animation-duration: 2.2s;" />
+  <circle cx="20" cy="121" r="1.5" fill="#64d2ff" filter="url(#glow-light)" class="p-slide" style="animation-delay: 0.4s; animation-duration: 1.8s;" />
+  <circle cx="30" cy="118" r="2.5" fill="#ffffff" filter="url(#glow-light)" class="p-slide" style="animation-delay: 0.8s; animation-duration: 2.5s;" />
+  <circle cx="15" cy="122" r="1.2" fill="#64d2ff" filter="url(#glow-light)" class="p-slide" style="animation-delay: 1.2s; animation-duration: 2.0s;" />
+  <circle cx="25" cy="120" r="1.8" fill="#ffffff" filter="url(#glow-light)" class="p-slide" style="animation-delay: 1.6s; animation-duration: 2.3s;" />
+
+  <!-- REFRACED LINES INSIDE THE PRISM (Splitting of Light) -->
+  <g stroke-width="2" opacity="0.75" stroke-linecap="round">
+    <line x1="340" y1="120" x2="390" y2="100" stroke="#ff3366" />
+    <line x1="340" y1="120" x2="394" y2="108" stroke="#ff9f0a" />
+    <line x1="340" y1="120" x2="398" y2="116" stroke="#30d158" />
+    <line x1="340" y1="120" x2="402" y2="124" stroke="#64d2ff" />
+    <line x1="340" y1="120" x2="406" y2="132" stroke="#5e5ce6" />
+    <line x1="340" y1="120" x2="410" y2="140" stroke="#ff375f" />
+    <!-- Unrefracted white core line fading in center -->
+    <line x1="340" y1="120" x2="368" y2="120" stroke="#ffffff" stroke-width="2" opacity="0.8" />
+  </g>
+
+  <!-- 3D GLASS PRISM ENGINE -->
+  <g class="prism-group">
+    <!-- Semi-transparent Glass Base Fill -->
+    <polygon points="310,180 370,60 430,180" fill="rgba(10, 18, 30, 0.72)" />
+    
+    <!-- Facet 1: Top-Left (Subtle white-blue reflection) -->
+    <polygon points="310,180 370,60 370,140" fill="url(#prism-left-edge)" opacity="0.35" />
+    <!-- Facet 2: Top-Right (Color refraction gradient) -->
+    <polygon points="370,60 430,180 370,140" fill="rgba(100, 210, 255, 0.06)" />
+    <!-- Facet 3: Bottom (Dark grounded shadow) -->
+    <polygon points="310,180 430,180 370,140" fill="rgba(0,0,0,0.4)" />
+
+    <!-- Facet Lines (Internal structure) -->
+    <line x1="370" y1="140" x2="370" y2="60" stroke="rgba(255, 255, 255, 0.12)" stroke-width="1" />
+    <line x1="370" y1="140" x2="310" y2="180" stroke="rgba(255, 255, 255, 0.10)" stroke-width="1" />
+    <line x1="370" y1="140" x2="430" y2="180" stroke="rgba(255, 255, 255, 0.10)" stroke-width="1" />
+
+    <!-- Main Outer Prism Edges -->
+    <!-- Base (Dark) -->
+    <line x1="310" y1="180" x2="430" y2="180" stroke="rgba(255, 255, 255, 0.15)" stroke-width="1.5" />
+    <!-- Right Face (Color Dispersion Side) -->
+    <line x1="370" y1="60" x2="430" y2="180" stroke="rgba(255, 255, 255, 0.25)" stroke-width="1.5" />
+    <!-- Left Face (Input Impact Side) -->
+    <line x1="310" y1="180" x2="370" y2="60" stroke="url(#prism-left-edge)" stroke-width="2.5" />
+
+    <!-- Entry Impact Flare -->
+    <circle cx="340" cy="120" r="4.5" fill="#ffffff" filter="url(#glow-light)" />
+    <circle cx="340" cy="120" r="10" fill="#64d2ff" opacity="0.3" filter="url(#glow-heavy)" />
+    
+    <!-- Exit Sparks at Refraction Points -->
+    <circle cx="390" cy="100" r="2.5" fill="#ff3366" filter="url(#glow-light)" />
+    <circle cx="394" cy="108" r="2.5" fill="#ff9f0a" filter="url(#glow-light)" />
+    <circle cx="398" cy="116" r="2.5" fill="#30d158" filter="url(#glow-light)" />
+    <circle cx="402" cy="124" r="2.5" fill="#64d2ff" filter="url(#glow-light)" />
+    <circle cx="406" cy="132" r="2.5" fill="#5e5ce6" filter="url(#glow-light)" />
+    <circle cx="410" cy="140" r="2.5" fill="#ff375f" filter="url(#glow-light)" />
+  </g>
+
+  <!-- MOVING COMETS WITH AGENT SYMBOLS & TAILS -->
+
+  <!-- Comet 1: AGY (Ruby Gem - Red) -->
+  <g class="comet comet-1">
+    <path d="M 0,-4 C -15,-4 -40,-1 -60,0 C -40,1 -15,4 0,4 Z" fill="url(#red-tail)" />
+    <circle cx="0" cy="0" r="10" fill="url(#red-glow)" />
+    <!-- Trailing particles -->
+    <circle cx="-15" cy="-2" r="1.5" fill="#ffffff" opacity="0.8" class="comet-p1" />
+    <circle cx="-30" cy="3" r="1" fill="#ff3366" opacity="0.6" class="comet-p2" />
+    <circle cx="-45" cy="-1" r="0.8" fill="#ff3366" opacity="0.4" class="comet-p3" />
+    <circle cx="0" cy="0" r="2" fill="#ffffff" />
+    <g transform="translate(0, 0) scale(1.1)">
+      <!-- Ruby Gem Symbol -->
+      <path d="M 0,-5.5 L 4.5,-5.5 L 7.5,-2 L 0,5 L -7.5,-2 L -4.5,-5.5 Z" stroke="#ffffff" stroke-width="1.2" fill="none" stroke-linejoin="round" />
+      <path d="M -4.5,-5.5 L 0,-1.5 L 4.5,-5.5 M -7.5,-2 L 0,-1.5 L 7.5,-2 M 0,-1.5 L 0,5" stroke="#ffffff" stroke-width="0.8" fill="none" opacity="0.8" stroke-linejoin="round" />
+    </g>
+  </g>
+
+  <!-- Comet 2: Jules (Gear - Orange) -->
+  <g class="comet comet-2">
+    <path d="M 0,-4 C -15,-4 -40,-1 -60,0 C -40,1 -15,4 0,4 Z" fill="url(#orange-tail)" />
+    <circle cx="0" cy="0" r="10" fill="url(#orange-glow)" />
+    <!-- Trailing particles -->
+    <circle cx="-15" cy="-3" r="1.5" fill="#ffffff" opacity="0.8" class="comet-p1" />
+    <circle cx="-30" cy="1" r="1" fill="#ff9f0a" opacity="0.6" class="comet-p2" />
+    <circle cx="-45" cy="2" r="0.8" fill="#ff9f0a" opacity="0.4" class="comet-p3" />
+    <circle cx="0" cy="0" r="2" fill="#ffffff" />
+    <g transform="translate(0, 0) scale(1.1)">
+      <!-- Gear Symbol -->
+      <path d="M -1.5,-5 L 1.5,-5 L 2,-3 L 3.5,-2.5 L 5.5,-3.5 L 7,-2 L 6,0 L 6,1.5 L 7,3 L 5.5,4.5 L 3.5,3.5 L 2,4 L 1.5,6 L -1.5,6 L -2,4 L -3.5,3.5 L -5.5,4.5 L -7,3 L -6,1.5 L -6,0 L -7,-2 L -5.5,-3.5 L -3.5,-2.5 L -2,-3 Z" stroke="#ffffff" stroke-width="1.2" fill="none" stroke-linejoin="round" />
+      <circle cx="0" cy="0" r="1.8" stroke="#ffffff" stroke-width="1" fill="none" />
+    </g>
+  </g>
+
+  <!-- Comet 3: Custom (Puzzle Piece - Green) -->
+  <g class="comet comet-3">
+    <path d="M 0,-4 C -15,-4 -40,-1 -60,0 C -40,1 -15,4 0,4 Z" fill="url(#green-tail)" />
+    <circle cx="0" cy="0" r="10" fill="url(#green-glow)" />
+    <!-- Trailing particles -->
+    <circle cx="-15" cy="2" r="1.5" fill="#ffffff" opacity="0.8" class="comet-p1" />
+    <circle cx="-30" cy="-2" r="1" fill="#30d158" opacity="0.6" class="comet-p2" />
+    <circle cx="-45" cy="1" r="0.8" fill="#30d158" opacity="0.4" class="comet-p3" />
+    <circle cx="0" cy="0" r="2" fill="#ffffff" />
+    <g transform="translate(0, 0) scale(1.1)">
+      <!-- Puzzle Piece Symbol -->
+      <path d="M -4,-4 H -1.5 C -1.5,-5.5 1.5,-5.5 1.5,-4 H 4 V -1.5 C 5.5,-1.5 5.5,1.5 4,1.5 V 4 H 1.5 C 1.5,2.5 -1.5,2.5 -1.5,4 H -4 V 1.5 C -5.5,1.5 -5.5,-1.5 -4,-1.5 Z" stroke="#ffffff" stroke-width="1.2" fill="none" stroke-linejoin="round" />
+    </g>
+  </g>
+
+  <!-- Comet 4: Hermes (Wing - Cyan) -->
+  <g class="comet comet-4">
+    <path d="M 0,-4 C -15,-4 -40,-1 -60,0 C -40,1 -15,4 0,4 Z" fill="url(#cyan-tail)" />
+    <circle cx="0" cy="0" r="10" fill="url(#cyan-glow)" />
+    <!-- Trailing particles -->
+    <circle cx="-15" cy="-1" r="1.5" fill="#ffffff" opacity="0.8" class="comet-p1" />
+    <circle cx="-30" cy="2" r="1" fill="#64d2ff" opacity="0.6" class="comet-p2" />
+    <circle cx="-45" cy="-2" r="0.8" fill="#64d2ff" opacity="0.4" class="comet-p3" />
+    <circle cx="0" cy="0" r="2" fill="#ffffff" />
+    <g transform="translate(0, 0) scale(1.1)">
+      <!-- Wing Symbol -->
+      <path d="M 6.5,-1.5 C 4,-4 -3.5,-4 -5.5,-2 C -3.5,-1 -1,-1 1,-1 C -2,0 -2.5,1.5 -2.5,2.5 C -1,1.5 0.5,1 1.5,0.5 C 0,2 -1,3.5 0.2,4 C 2.2,3.5 4.5,2 6.5,-1.5 Z" stroke="#ffffff" stroke-width="1.2" fill="none" stroke-linejoin="round" />
+    </g>
+  </g>
+
+  <!-- Comet 5: Codex (Code Brackets - Blue) -->
+  <g class="comet comet-5">
+    <path d="M 0,-4 C -15,-4 -40,-1 -60,0 C -40,1 -15,4 0,4 Z" fill="url(#blue-tail)" />
+    <circle cx="0" cy="0" r="10" fill="url(#blue-glow)" />
+    <!-- Trailing particles -->
+    <circle cx="-15" cy="3" r="1.5" fill="#ffffff" opacity="0.8" class="comet-p1" />
+    <circle cx="-30" cy="-3" r="1" fill="#5e5ce6" opacity="0.6" class="comet-p2" />
+    <circle cx="-45" cy="0" r="0.8" fill="#5e5ce6" opacity="0.4" class="comet-p3" />
+    <circle cx="0" cy="0" r="2" fill="#ffffff" />
+    <g transform="translate(0, 0) scale(1.1)">
+      <!-- Code Brackets Symbol -->
+      <path d="M -5,-3.5 L -8,0 L -5,3.5 M 1,-4.5 L -1,5 M 5,-3.5 L 8,0 L 5,3.5" stroke="#ffffff" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+    </g>
+  </g>
+
+  <!-- Comet 6: Research (Magnifying Glass - Magenta) -->
+  <g class="comet comet-6">
+    <path d="M 0,-4 C -15,-4 -40,-1 -60,0 C -40,1 -15,4 0,4 Z" fill="url(#magenta-tail)" />
+    <circle cx="0" cy="0" r="10" fill="url(#magenta-glow)" />
+    <!-- Trailing particles -->
+    <circle cx="-15" cy="-2" r="1.5" fill="#ffffff" opacity="0.8" class="comet-p1" />
+    <circle cx="-30" cy="2" r="1" fill="#ff375f" opacity="0.6" class="comet-p2" />
+    <circle cx="-45" cy="-3" r="0.8" fill="#ff375f" opacity="0.4" class="comet-p3" />
+    <circle cx="0" cy="0" r="2" fill="#ffffff" />
+    <g transform="translate(0, 0) scale(1.1)">
+      <!-- Magnifying Glass Symbol -->
+      <circle cx="-1.5" cy="-1.5" r="2.5" stroke="#ffffff" stroke-width="1.2" fill="none" />
+      <line x1="0.3" y1="0.3" x2="4.5" y2="4.5" stroke="#ffffff" stroke-width="1.2" stroke-linecap="round" />
+    </g>
+  </g>
+</svg>

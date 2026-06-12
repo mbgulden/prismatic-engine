@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%">
+  <defs>
+    <!-- Prism Fill (Glass Look) -->
+    <linearGradient id="logo-prism-fill" x1="38" y1="18" x2="76" y2="62" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="rgba(255, 255, 255, 0.12)" />
+      <stop offset="100%" stop-color="rgba(255, 255, 255, 0.02)" />
+    </linearGradient>
+
+    <!-- Prism Stroke Gradient (Glowing Glass Edge) -->
+    <linearGradient id="logo-prism-stroke" x1="38" y1="18" x2="76" y2="62" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="rgba(255, 255, 255, 0.6)" />
+      <stop offset="40%" stop-color="rgba(100, 210, 255, 0.5)" />
+      <stop offset="100%" stop-color="rgba(255, 55, 95, 0.4)" />
+    </linearGradient>
+
+    <!-- Dispersion (Refraction Inside Prism) -->
+    <linearGradient id="logo-dispersion" x1="38" y1="35" x2="57" y2="51" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="30%" stop-color="#ffffff" />
+      <stop offset="70%" stop-color="#ff3366" />
+      <stop offset="100%" stop-color="#ff9f0a" />
+    </linearGradient>
+
+    <!-- Output Spectrum Beam Gradient -->
+    <linearGradient id="logo-output-beam" x1="57" y1="51" x2="85" y2="79" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ff9f0a" />
+      <stop offset="30%" stop-color="#ff3366" />
+      <stop offset="70%" stop-color="#64d2ff" />
+      <stop offset="100%" stop-color="#5e5ce6" />
+    </linearGradient>
+  </defs>
+
+  <!-- Stem of the "P" -->
+  <line x1="28" y1="16" x2="28" y2="84" stroke="#ffffff" stroke-width="8" stroke-linecap="round" />
+
+  <!-- Input Data Beam -->
+  <line x1="12" y1="35" x2="38" y2="35" stroke="#ffffff" stroke-width="6" stroke-linecap="round" />
+
+  <!-- Internal Dispersion -->
+  <line x1="38" y1="35" x2="57" y2="51" stroke="url(#logo-dispersion)" stroke-width="3.5" stroke-linecap="round" />
+
+  <!-- Prism triangular loop of the "P" -->
+  <polygon points="38,18 76,40 38,62" fill="url(#logo-prism-fill)" stroke="url(#logo-prism-stroke)" stroke-width="4.5" stroke-linejoin="round" />
+
+  <!-- Output Refracted Spectrum Beam -->
+  <line x1="57" y1="51" x2="85" y2="79" stroke="url(#logo-output-beam)" stroke-width="7" stroke-linecap="round" />
+</svg>

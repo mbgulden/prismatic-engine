@@ -20,3 +20,5 @@ Thumbs.db
 config.local.yaml
 .gdocs_token.json
 scratch/
+.wrangler/
+node_modules/
