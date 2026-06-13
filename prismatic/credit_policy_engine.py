@@ -418,4 +418,19 @@ def evaluate_agent_launch(
         PolicyDecision with the verdict.
     """
     engine = get_engine_for_label(agent_label)
-    return engine.evaluate(issue_id, operation, **kwargs)
+    decision = engine.evaluate(issue_id, operation, **kwargs)
+    # ── Telemetry: record credit evaluation ──────────────────
+    try:
+        from .telemetry import get_collector
+        collector = get_collector()
+        collector.record_credit(
+            run_id=f"policy-{agent_label}-{issue_id}",
+            agent=agent_label,
+            provider=engine.provider,
+            credits_spent=decision.estimated_cost,
+            operation=operation,
+        )
+    except Exception:
+        pass  # Telemetry is best-effort
+    # ── End telemetry ─────────────────────────────────────────
+    return decision

@@ -522,13 +522,31 @@ def signal_kai(
         ``True`` if the signal was written.
     """
     provider = _get_signal_provider()
-    return provider.send_work(
+    result = provider.send_work(
         target="kai",
         issue_id=issue_id,
         title=title or f"Work on {issue_id}",
         priority=priority,
         signal_type=signal_type,
     )
+    # ── Telemetry: record Kai orchestrator dispatch ───────────
+    if result:
+        try:
+            import uuid
+            collector = get_collector()
+            status = "dispatched" if signal_type != "agy_review_complete" else "review"
+            collector.record_agent_run(
+                run_id=f"kai-orch-{uuid.uuid4().hex[:8]}",
+                agent="kai",
+                issue_id=issue_id,
+                provider=AGENT_PROVIDER_MAP.get("kai", ""),
+                status=status,
+                credits_spent=0,
+            )
+        except Exception:
+            pass  # Telemetry is best-effort
+    # ── End telemetry ─────────────────────────────────────────
+    return result
 
 
 def launch_agy(issue_id: str, task: str = "") -> subprocess.Popen | None:
@@ -1321,6 +1339,20 @@ def detect_origin_completions(
                 f"[dispatcher] 🔔 {origin_agent.capitalize()} signalled "
                 f"(review complete): {identifier}"
             )
+            # ── Telemetry: record validation (review verdict) ──────
+            try:
+                collector = get_collector()
+                collector.record_validation(
+                    run_id=f"review-{origin_agent}-{identifier}",
+                    agent="agy",
+                    event_type="review_verdict",
+                    total=1,
+                    passed=1,
+                    failed=0,
+                )
+            except Exception:
+                pass  # Telemetry is best-effort
+            # ── End telemetry ───────────────────────────────────────
             # Post a brief comment
             try:
                 add_comment(
@@ -1451,6 +1483,19 @@ def dispatch_once(
                 counts["pending_approval"] = counts.get("pending_approval", 0) + 1
                 dedup.mark_processed(issue_id, label, cycle_id)
                 continue
+            # ── Telemetry: record credit evaluation ──────────────
+            try:
+                collector = get_collector()
+                collector.record_credit(
+                    run_id=f"{cycle_id}-{agent_name}-{issue.get('identifier', issue_id)}",
+                    agent=agent_name,
+                    provider=AGENT_PROVIDER_MAP.get(agent_name, ""),
+                    credits_spent=decision.estimated_cost,
+                    operation="code_generation",
+                )
+            except Exception:
+                pass  # Telemetry is best-effort
+            # ── End credit telemetry ───────────────────────────────
             # ── End credit policy ──────────────────────────────────
 
             try:
