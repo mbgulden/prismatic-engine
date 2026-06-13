@@ -222,6 +222,259 @@ def cmd_db_upgrade(db_path: str | None = None) -> int:
 
 
 # ── CLI Entry Point ─────────────────────────────────────
+# ── Telemetry Dashboard ───────────────────────────────────
+
+# Color thresholds for terminal output
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
+RED = "\033[31m"
+BOLD = "\033[1m"
+RESET = "\033[0m"
+CYAN = "\033[36m"
+
+
+def cmd_telemetry_dashboard(hours: int = 24, db_path: str | None = None) -> int:
+    """Render a telemetry dashboard from the collector database.
+
+    Args:
+        hours: Time window in hours (default: 24).
+        db_path: Path to the SQLite database file.
+                 Defaults to $PRISMATIC_STATE_DIR/event_router.db
+
+    Returns:
+        0 on success, 1 on failure.
+    """
+    try:
+        from .telemetry import get_collector  # noqa: F401 — verify module importable
+    except ImportError as exc:
+        print(f"prismatic-admin: cannot import telemetry module: {exc}", file=sys.stderr)
+        print("  Ensure prismatic-engine is installed or run from the repo root.", file=sys.stderr)
+        return 1
+
+    from datetime import datetime, timezone, timedelta
+    import sqlite3
+
+    target_path = Path(db_path) if db_path else Path(
+        os.environ.get("PRISMATIC_STATE_DIR",
+                       str(PRISMATIC_HOME / ".prismatic"))
+    ) / "event_router.db"
+
+    if not target_path.exists():
+        print(f"prismatic-admin: no telemetry database found at {target_path}")
+        print("  The collector creates this on first use — start the dispatcher first.")
+        return 1
+
+    conn = sqlite3.connect(str(target_path))
+    conn.row_factory = sqlite3.Row
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+
+    try:
+        print()
+        print(f"{BOLD}{'='*70}{RESET}")
+        print(f"{BOLD}  Prismatic Telemetry Dashboard — Last {hours}h{RESET}")
+        print(f"{BOLD}  DB: {target_path}{RESET}")
+        print(f"{BOLD}{'='*70}{RESET}")
+        print()
+
+        # 1. Agent Throughput
+        print(f"{BOLD}▸ Agent Throughput (runs/hour){RESET}")
+        print(f"  {'Agent':<12} {'Runs':<8} {'Completed':<12} {'Failed':<8} {'Rate/h':<10}")
+        print(f"  {'─'*12} {'─'*8} {'─'*12} {'─'*8} {'─'*10}")
+
+        rows = conn.execute(
+            """SELECT agent, COUNT(*) as total,
+                      SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+                      SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
+               FROM telemetry_agent_runs
+               WHERE start_time >= ?
+               GROUP BY agent ORDER BY total DESC""",
+            (cutoff,)
+        ).fetchall()
+
+        if rows:
+            for r in rows:
+                rate = r["total"] / max(hours, 1)
+                status_color = RED if r["failed"] > 0 else GREEN
+                print(
+                    f"  {r['agent']:<12} {r['total']:<8} "
+                    f"{GREEN}{r['completed']:<12}{RESET} "
+                    f"{status_color}{r['failed']:<8}{RESET} "
+                    f"{rate:.1f}/h"
+                )
+        else:
+            print(f"  {YELLOW}(no agent run data in window){RESET}")
+        print()
+
+        # 2. Credit Burn Rate
+        print(f"{BOLD}▸ Credit Burn{RESET}")
+        print(f"  {'Agent':<12} {'Credits':<12} {'Rate/h':<10} {'Ops':<6}")
+        print(f"  {'─'*12} {'─'*12} {'─'*10} {'─'*6}")
+
+        credit_rows = conn.execute(
+            """SELECT agent, SUM(credits_spent) as total_credits,
+                      COUNT(*) as ops
+               FROM telemetry_credit_ledger
+               WHERE recorded_at >= ?
+               GROUP BY agent ORDER BY total_credits DESC""",
+            (cutoff,)
+        ).fetchall()
+
+        total_credits = 0
+        if credit_rows:
+            for r in credit_rows:
+                rate = r["total_credits"] / max(hours, 1)
+                total_credits += r["total_credits"]
+                color = RED if rate > 50 else (YELLOW if rate > 20 else GREEN)
+                print(
+                    f"  {r['agent']:<12} "
+                    f"{color}{r['total_credits']:<12}{RESET} "
+                    f"{rate:.1f}/h{'':<5} "
+                    f"{r['ops']:<6}"
+                )
+            print(f"  {'─'*12} {'─'*12} {'─'*10} {'─'*6}")
+            print(
+                f"  {'TOTAL':<12} {BOLD}{total_credits:<12}{RESET} "
+                f"{total_credits / max(hours, 1):.1f}/h"
+            )
+        else:
+            print(f"  {YELLOW}(no credit data in window){RESET}")
+        print()
+
+        # 3. Token Metrics
+        print(f"{BOLD}▸ Token Metrics{RESET}")
+        print(f"  {'Agent':<12} {'Tokens':<10} {'TPS':<8} {'Context%':<10} {'VRAM(MB)':<10}")
+        print(f"  {'─'*12} {'─'*10} {'─'*8} {'─'*10} {'─'*10}")
+
+        token_rows = conn.execute(
+            """SELECT agent, SUM(prompt_tokens + completion_tokens) as total_tokens,
+                      AVG(tps) as avg_tps, AVG(context_pct) as avg_context,
+                      MAX(vram_mb) as max_vram
+               FROM telemetry_token_metrics
+               WHERE recorded_at >= ?
+               GROUP BY agent ORDER BY total_tokens DESC""",
+            (cutoff,)
+        ).fetchall()
+
+        if token_rows:
+            for r in token_rows:
+                tps = r["avg_tps"] or 0
+                ctx = r["avg_context"] or 0
+                tps_color = RED if tps < 5 else (YELLOW if tps < 20 else GREEN)
+                ctx_color = RED if ctx > 80 else (YELLOW if ctx > 60 else GREEN)
+                print(
+                    f"  {r['agent']:<12} "
+                    f"{r['total_tokens']:<10} "
+                    f"{tps_color}{tps:.1f}{'':<4}{RESET} "
+                    f"{ctx_color}{ctx:.1f}%{'':<5}{RESET} "
+                    f"{r['max_vram'] or 0:<10}"
+                )
+        else:
+            print(f"  {YELLOW}(no token data in window){RESET}")
+        print()
+
+        # 4. Failure Rate
+        print(f"{BOLD}▸ Failure Rate{RESET}")
+        total_runs = conn.execute(
+            "SELECT COUNT(*) as cnt FROM telemetry_agent_runs WHERE start_time >= ?",
+            (cutoff,)
+        ).fetchone()["cnt"]
+        failed_runs = conn.execute(
+            "SELECT COUNT(*) as cnt FROM telemetry_agent_runs "
+            "WHERE start_time >= ? AND status = 'failed'",
+            (cutoff,)
+        ).fetchone()["cnt"]
+
+        if total_runs > 0:
+            fail_rate = (failed_runs / total_runs) * 100
+            color = RED if fail_rate > 20 else (YELLOW if fail_rate > 5 else GREEN)
+            print(f"  Total runs: {total_runs}")
+            print(f"  Failed:     {color}{failed_runs}{RESET}")
+            print(f"  Rate:       {color}{fail_rate:.1f}%{RESET}")
+        else:
+            print(f"  {YELLOW}(no run data in window){RESET}")
+        print()
+
+        # 5. Active Loop Events
+        print(f"{BOLD}▸ Loop Events{RESET}")
+        loop_rows = conn.execute(
+            """SELECT loop_type, COUNT(*) as cnt
+               FROM telemetry_loop_events
+               WHERE created_at >= ?
+               GROUP BY loop_type ORDER BY cnt DESC""",
+            (cutoff,)
+        ).fetchall()
+
+        if loop_rows:
+            for r in loop_rows:
+                loop_type = r["loop_type"] or "unknown"
+                print(f"  {loop_type:<20} {r['cnt']}")
+        else:
+            print(f"  {YELLOW}(no loop events in window){RESET}")
+        print()
+
+        # 6. Validation Events
+        print(f"{BOLD}▸ Validation{RESET}")
+        val = conn.execute(
+            """SELECT SUM(total_tests) as total, SUM(passed) as passed,
+                      SUM(failed) as failed, SUM(rollback) as rollbacks
+               FROM telemetry_validation_events
+               WHERE created_at >= ?""",
+            (cutoff,)
+        ).fetchone()
+
+        if val and val["total"]:
+            total_v = val["total"]
+            passed_v = val["passed"] or 0
+            failed_v = val["failed"] or 0
+            rollbacks_v = val["rollbacks"] or 0
+            pass_rate = (passed_v / max(total_v, 1)) * 100
+            color = RED if pass_rate < 80 else (YELLOW if pass_rate < 95 else GREEN)
+            print(f"  Tests:     {total_v}")
+            print(f"  Passed:    {GREEN}{passed_v}{RESET}")
+            print(f"  Failed:    {RED if failed_v > 0 else GREEN}{failed_v}{RESET}")
+            print(f"  Rollbacks: {YELLOW if rollbacks_v > 0 else GREEN}{rollbacks_v}{RESET}")
+            print(f"  Pass Rate: {color}{pass_rate:.1f}%{RESET}")
+        else:
+            print(f"  {YELLOW}(no validation data in window){RESET}")
+        print()
+
+        # 7. Circuit Breakers
+        print(f"{BOLD}▸ Circuit Breakers{RESET}")
+        breaker_rows = conn.execute(
+            """SELECT issue_id, agent, micro_count, macro_count, tripped, last_seen
+               FROM telemetry_circuit_breakers
+               WHERE tripped = 1 OR last_seen >= ?
+               ORDER BY tripped DESC, last_seen DESC""",
+            (cutoff,)
+        ).fetchall()
+
+        if breaker_rows:
+            for r in breaker_rows:
+                state = f"{RED}TRIPPED{RESET}" if r["tripped"] else f"{GREEN}ok{RESET}"
+                print(
+                    f"  [{state}] {r['issue_id']} ({r['agent']}) — "
+                    f"micro={r['micro_count']}, macro={r['macro_count']}"
+                )
+        else:
+            print(f"  {GREEN}(no breaker activity in window){RESET}")
+        print()
+
+        print(f"{BOLD}{'='*70}{RESET}")
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        print(f"  Snapshot: {now_str}")
+        print(f"{BOLD}{'='*70}{RESET}")
+        print()
+
+        return 0
+
+    except sqlite3.OperationalError as exc:
+        print(f"prismatic-admin: database error: {exc}", file=sys.stderr)
+        print("  The telemetry tables may not exist yet. Run the dispatcher once first.", file=sys.stderr)
+        return 1
+    finally:
+        conn.close()
+
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -257,6 +510,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to database (default: $PRISMATIC_HOME/.prismatic/db/event_router.db)",
     )
 
+    # telemetry dashboard
+    telemetry_parser = sub.add_parser("telemetry", help="View telemetry data")
+    telemetry_sub = telemetry_parser.add_subparsers(dest="telemetry_command", required=True)
+
+    dashboard_parser = telemetry_sub.add_parser(
+        "dashboard", help="Render telemetry dashboard"
+    )
+    dashboard_parser.add_argument(
+        "--hours", type=int, default=24,
+        help="Time window in hours (default: 24)"
+    )
+    dashboard_parser.add_argument(
+        "--db-path", dest="db_path_arg",
+        help="Path to database (default: $PRISMATIC_STATE_DIR/event_router.db)"
+    )
+
     return parser
 
 
@@ -269,6 +538,12 @@ def main() -> None:
 
     elif args.command == "db" and args.db_command == "upgrade":
         sys.exit(cmd_db_upgrade(getattr(args, "db_path", None)))
+
+    elif args.command == "telemetry" and args.telemetry_command == "dashboard":
+        sys.exit(cmd_telemetry_dashboard(
+            hours=getattr(args, "hours", 24),
+            db_path=getattr(args, "db_path_arg", None),
+        ))
 
     else:
         parser.print_help()
