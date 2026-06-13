@@ -11,8 +11,8 @@ When the user asks for a comprehensive assessment of their agent orchestration s
 
 ### Phase 1: Research (read, don't re-research)
 Before dispatching AGY, check if prior research exists:
-- `find /home/ubuntu/work/prismatic-engine/reports -name "*.md"` — AGY already produced 24 reports
-- `find /home/ubuntu/work/prismatic-engine/specs -name "*.md"` — architecture specs
+- `find $PRISMATIC_HOME/work/prismatic-engine/reports -name "*.md"` — AGY already produced 24 reports
+- `find $PRISMATIC_HOME/work/prismatic-engine/specs -name "*.md"` — architecture specs
 - Read the synthesis briefing (agy-comprehensive-synthesis-briefing.md) — it already maps all reports to a current-state audit
 - Only dispatch AGY if existing research is insufficient or stale (>1 week with significant code changes)
 
@@ -55,12 +55,12 @@ AGY excels at foundational work. Launch sequentially (not parallel — AGY works
 
 | What | Where |
 |------|-------|
-| Rubric assessment | `/home/ubuntu/work/prismatic-engine/reports/rubric-assessment-2026-06-11.md` |
-| AGY synthesis briefing | `/home/ubuntu/work/prismatic-engine/reports/agy-comprehensive-synthesis-briefing.md` |
-| Core evaluation | `/home/ubuntu/work/prismatic-engine/reports/core-evaluation.md` |
-| Architecture spec | `/home/ubuntu/work/prismatic-engine/specs/prismatic-engine-architecture-v1.md` |
-| 7-step loop spec | `/home/ubuntu/work/prismatic-engine/specs/7-step-loop-specification.md` |
-| Dashboard mockup | `/home/ubuntu/work/agentic-swarm-ops/docs/architecture/prismatic-hub-dashboard-mockup.md` |
-| Plugin dashboards | `/home/ubuntu/work/agentic-swarm-ops/plugins/hermes-plugin-*/dashboard/` |
-| Portable skills | `/home/ubuntu/work/prismatic-engine/portable-skills/` |
-| Agent profiles | `/home/ubuntu/work/prismatic-engine/profiles/` |
+| Rubric assessment | `$PRISMATIC_HOME/work/prismatic-engine/reports/rubric-assessment-2026-06-11.md` |
+| AGY synthesis briefing | `$PRISMATIC_HOME/work/prismatic-engine/reports/agy-comprehensive-synthesis-briefing.md` |
+| Core evaluation | `$PRISMATIC_HOME/work/prismatic-engine/reports/core-evaluation.md` |
+| Architecture spec | `$PRISMATIC_HOME/work/prismatic-engine/specs/prismatic-engine-architecture-v1.md` |
+| 7-step loop spec | `$PRISMATIC_HOME/work/prismatic-engine/specs/7-step-loop-specification.md` |
+| Dashboard mockup | `$PRISMATIC_HOME/work/agentic-swarm-ops/docs/architecture/prismatic-hub-dashboard-mockup.md` |
+| Plugin dashboards | `$PRISMATIC_HOME/work/agentic-swarm-ops/plugins/hermes-plugin-*/dashboard/` |
+| Portable skills | `$PRISMATIC_HOME/work/prismatic-engine/portable-skills/` |
+| Agent profiles | `$PRISMATIC_HOME/work/prismatic-engine/profiles/` |

@@ -41,8 +41,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=ubuntu
-EnvironmentFile=/home/ubuntu/.hermes/profiles/<profile>/.env
-Environment=HOME=/home/ubuntu
+EnvironmentFile=$PRISMATIC_HOME/.hermes/profiles/<profile>/.env
+Environment=HOME=$PRISMATIC_HOME
 ExecStart=/home/ubuntu/.local/bin/hermes --profile <profile> gateway run
 Restart=always
 RestartSec=5

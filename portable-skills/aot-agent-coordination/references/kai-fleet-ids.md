@@ -41,10 +41,10 @@ Second Witness — cron 2f2da24ba5e3, every 30min, AGY review terminal for Prism
 GrowthWebDev: `b6fb2651-5a1f-4714-9bcd-9eb6e759ffef`
 
 ## Profile Locations
-- Kai (main): `/home/ubuntu/.hermes/profiles/kai/config.yaml` — deepseek-v4-flash, delegation enabled, HD MCP
-- Kai-CSS: `/home/ubuntu/.hermes/profiles/kai-css/config.yaml` — deepseek-v4-flash, no delegation
-- Kai-Content: `/home/ubuntu/.hermes/profiles/kai-content/config.yaml` — deepseek-v4-flash, no delegation
-- Kai-JS: `/home/ubuntu/.hermes/profiles/kai-js/config.yaml` — deepseek-v4-flash, has browser toolset
+- Kai (main): `$PRISMATIC_HOME/.hermes/profiles/kai/config.yaml` — deepseek-v4-flash, delegation enabled, HD MCP
+- Kai-CSS: `$PRISMATIC_HOME/.hermes/profiles/kai-css/config.yaml` — deepseek-v4-flash, no delegation
+- Kai-Content: `$PRISMATIC_HOME/.hermes/profiles/kai-content/config.yaml` — deepseek-v4-flash, no delegation
+- Kai-JS: `$PRISMATIC_HOME/.hermes/profiles/kai-js/config.yaml` — deepseek-v4-flash, has browser toolset
 
 ## Skills Loaded by Each Cron
 
@@ -75,7 +75,7 @@ Detects when sub-agents complete work:
 
 ## Shared Agent Context
 
-**Path:** `/home/ubuntu/work/active-oahu-static/.aot-agent-context.md`
+**Path:** `$PRISMATIC_HOME/work/active-oahu-static/.aot-agent-context.md`
 
 Loaded by all Kai sub-agents on every execution (Step 0 in each skill). Contains: site structure, brand voice, design tokens, active branch state, fleet roster, review pipeline, CF Pages deploy delay. Eliminates cold starts.
 

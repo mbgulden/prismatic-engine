@@ -10,7 +10,7 @@ Before processing ANY queue items, verify which outputs already exist on the REA
 
 ```python
 import os
-base = "/home/ubuntu/work/research"
+base = os.environ.get("PRISMATIC_HOME", "/home/ubuntu") + "/work/research"
 # Check each item's output path
 for item in queue["queue"]:
     path = os.path.expanduser(item["output"])
@@ -18,7 +18,7 @@ for item in queue["queue"]:
     # Only process items that are missing
 ```
 
-**CRITICAL**: Do NOT use `execute_code` for this check — the sandbox resolves `~` to `~/.hermes/profiles/orchestrator/home/`, not the real `/home/ubuntu/`. Use `terminal()` with a Python inline script OR use absolute paths in `execute_code` (`/home/ubuntu/work/research/...`).
+**CRITICAL**: Do NOT use `execute_code` for this check — the sandbox resolves `~` to `~/.hermes/profiles/orchestrator/home/`, not the real `$PRISMATIC_HOME/`. Use `terminal()` with a Python inline script OR use absolute paths in `execute_code` (`$PRISMATIC_HOME/work/research/...`).
 
 ### Step 2: Batch by Priority
 Queue domain priority: `hd-engine` > `active-oahu-tours` > `ai-consulting` > `hermes-infra`
@@ -38,7 +38,7 @@ delegate_task(tasks=[
 Each subagent task should include:
 - **Goal**: One sentence describing the deliverable
 - **Context**: Full details — output path, format requirements, data sources, tone/style
-- **Output path**: Always absolute (`/home/ubuntu/work/research/...`)
+- **Output path**: Always absolute (`$PRISMATIC_HOME/work/research/...`)
 - **Toolsets**: `["web", "terminal", "file"]` for research tasks (web for research, terminal for curl/scripting, file for output)
 
 ### Step 4: Verify Outputs
@@ -68,7 +68,7 @@ Rewrite `queue.json`:
 - Total processing for 4 items with 2 waves: ~8-15 minutes
 
 ## Pitfalls
-- **Sandbox path isolation**: `execute_code` sees `~/.hermes/profiles/orchestrator/home/`, not `/home/ubuntu/`. Use absolute paths or `terminal()` for filesystem checks.
+- **Sandbox path isolation**: `execute_code` sees `~/.hermes/profiles/orchestrator/home/`, not `$PRISMATIC_HOME/`. Use absolute paths or `terminal()` for filesystem checks.
 - **Subagent output not verified**: Subagents report "completed" even if files are empty or written to wrong paths. Always verify with `os.path.getsize()`.
 - **Queue items already completed by prior run**: The cron runs nightly — prior sessions may have completed items. Check file existence before processing.
 - **Domain priority**: Don't process `hermes-infra` items when `hd-engine` items are still pending. Revenue-first.

@@ -32,7 +32,7 @@ The Second Witness needs a context file with:
 5. Review protocol steps
 6. Fix task creation rules
 
-Template: `/home/ubuntu/work/prismatic-engine/specs/second-witness-context.md`
+Template: `$PRISMATIC_HOME/work/prismatic-engine/specs/second-witness-context.md`
 
 ## Cron Setup
 ```yaml

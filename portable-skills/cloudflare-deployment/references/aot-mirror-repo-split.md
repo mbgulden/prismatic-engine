@@ -19,7 +19,7 @@ The two repos have **diverged** — they contain different versions of templates
 The Python generation scripts (`generate_pages.py`, `generate_rental_pages.py`, etc.) in the mirror repo use a hardcoded path:
 
 ```python
-SITE = "/home/ubuntu/work/active-oahu-static/site"
+SITE = os.environ.get("PRISMATIC_HOME", "/home/ubuntu") + "/work/active-oahu-static/site"
 ```
 
 They read templates from `active-oahu-static`, NOT from the mirror repo. This means:

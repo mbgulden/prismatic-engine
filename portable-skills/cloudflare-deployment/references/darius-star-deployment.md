@@ -22,7 +22,7 @@ A Worker (`darius-star-router`) on the `whatanadventure.games` zone proxies sub-
 
 The Worker injects `<base href="/darius-star/">` into proxied HTML so relative game asset URLs resolve correctly. Requests NOT matching `/darius-star*` pass through to the main `whatanadventure-games.pages.dev` Pages project.
 
-Worker script location: `/home/ubuntu/work/darius-star/worker-darius-star.js`
+Worker script location: `$PRISMATIC_HOME/work/darius-star/worker-darius-star.js`
 
 ## Deploy = Repo Root, Not Dist/
 CF Pages deploys from the repo root directly (no build step). The `dist/` directory in the repo is NOT what gets deployed — it's gitignored and irrelevant to CF Pages. The source `index.html` at the repo root IS the deployed game.

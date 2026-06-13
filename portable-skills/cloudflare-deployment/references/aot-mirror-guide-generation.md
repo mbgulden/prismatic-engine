@@ -5,7 +5,7 @@ generation for the WordPress static mirror at `active-oahu-tours-mirror`.
 
 ## Repository & Paths
 
-- **Repo**: `/home/ubuntu/work/active-oahu-tours-mirror`
+- **Repo**: `$PRISMATIC_HOME/work/active-oahu-tours-mirror`
 - **Templates**: `site/_templates/head.html` (181 lines), `body_top.html` (218 lines), `body_bottom.html` (1,255 lines)
 - **Output**: `site/guides/<slug>/index.html`
 - **Pages generated**: sea-turtles-oahu, ocean-kayaking-beginners-oahu, waimanalo-beach

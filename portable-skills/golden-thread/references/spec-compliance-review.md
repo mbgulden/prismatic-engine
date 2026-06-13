@@ -21,7 +21,7 @@ For each issue, cross-reference what the issue CLAIMS against what actually EXIS
 - **Symlinks**: `readlink -f` and `ls -la`. Broken symlink = broken deliverable.
 - **Files**: `search_files` for expected deliverables. Design spec exists but zero implementation code? That's design-only.
 - **Configuration**: `cat` the config files. Does the config match the blueprint's required sections?
-- **Hardcoded paths**: `grep -rl '/home/ubuntu'` against the target directory. Count remaining hardcoded refs.
+- **Hardcoded paths**: `grep -rl '$PRISMATIC_HOME'` against the target directory. Count remaining hardcoded refs.
 - **Build artifacts**: Check `dist/`, `build/`, wheel files. Packaging config exists but no build was run?
 
 ### Step 4: Rate Each Issue
@@ -71,7 +71,7 @@ For each NEEDS_CHANGES or BLOCKED item, create a child Linear issue with:
 ## Common Gap Patterns
 - **Design-only**: Spec exists, zero code. `prismatic/interface/` and `prismatic/core/` directories missing despite detailed design doc.
 - **Symlink broken**: `active` symlink points to nonexistent target. `versions/` directory empty — no builds promoted.
-- **Hardcoded paths survive**: Migration script analyzed but never executed. 277 `/home/ubuntu` refs remain.
+- **Hardcoded paths survive**: Migration script analyzed but never executed. 277 `$PRISMATIC_HOME` refs remain.
 - **Partial export**: 7 of 15 skills exported. The export script exists but wasn't run to completion.
 - **Analysis without action**: Security scanner analysis identifies all patterns but zero sanitized versions produced.
 

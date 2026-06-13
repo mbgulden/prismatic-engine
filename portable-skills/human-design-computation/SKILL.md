@@ -27,7 +27,7 @@ Two repos under ~/work/:
 | OpenHumanDesignMCP | Swiss Ephemeris backend: chart calc, transits, cartography, image rendering |
 | next-step-bot | Telegram bot (Jamie): AI classification, birth data routing, /chart, /map |
 
-Source path for imports: /home/ubuntu/work/OpenHumanDesignMCP/hd-mcp-server/src/
+Source path for imports: $PRISMATIC_HOME/work/OpenHumanDesignMCP/hd-mcp-server/src/
 
 ## SEO Page Generation
 
@@ -218,7 +218,7 @@ print(pytesseract.image_to_string(img))
 - AGY cannot compare two images — use Gemini API for reference-vs-output comparison
 - Critical: when AGY moves centers, explicitly tell it to move gates too: "If you move a center, move ALL its gates by the same dx,dy offset. Gates must stay inside their centers."
 
-**Primary renderer:** `/home/ubuntu/work/hd-bodygraph/render-pro.mjs` — custom Neutrino-style production SVG renderer (~40KB SVG output).
+**Primary renderer:** `$PRISMATIC_HOME/work/hd-bodygraph/render-pro.mjs` — custom Neutrino-style production SVG renderer (~40KB SVG output).
 
 **Design principles (matching Neutrino Design app, current as of 2026-05-30):**
 
@@ -383,11 +383,11 @@ Bridge in `server.py` (port 8081):
 
 **For any production pipeline — REST APIs, PDF reports, payment flows — use the REST bridge pattern, NOT MCP transport.** Import the engine modules directly for speed, reliability, and simplicity.
 
-Support file: `references/rest-bridge-local-engine.md` — covers direct engine import, endpoint design (public vs auth), HTML/CSS → wkhtmltopdf pipeline, payment webhook integration, and embeddable widget pattern. Reference implementation at `/home/ubuntu/work/hd-platform/reports/server.py`.
+Support file: `references/rest-bridge-local-engine.md` — covers direct engine import, endpoint design (public vs auth), HTML/CSS → wkhtmltopdf pipeline, payment webhook integration, and embeddable widget pattern. Reference implementation at `$PRISMATIC_HOME/work/hd-platform/reports/server.py`.
 
 Quick start for any new chart-serving endpoint:
 ```python
-import sys; sys.path.insert(0, "/home/ubuntu/work/OpenHumanDesignMCP/hd-mcp-server/src")
+import sys; sys.path.insert(0, os.environ.get("PRISMATIC_HOME", "/home/ubuntu") + "/work/OpenHumanDesignMCP/hd-mcp-server/src")
 from cosmic_calculator import calculate_natal_chart
 from ephemeris_engine import init_ephemeris
 init_ephemeris()
@@ -398,15 +398,15 @@ chart = calculate_natal_chart(name="...", birth_dt=datetime(...), lat=..., lon=.
 
 The FastAPI server in `hd-platform/api/` requires these additional packages beyond the MCP engine:
 ```bash
-/home/ubuntu/.local/share/pipx/venvs/hermes-agent/bin/python -m pip install sqlalchemy redis asyncpg psycopg2-binary
+${PRISMATIC_HOME}/.local/share/pipx/venvs/hermes-agent/bin/python -m pip install sqlalchemy redis asyncpg psycopg2-binary
 ```
 
 **Symptom if missing**: `ModuleNotFoundError` for `sqlalchemy`, `redis`, or `asyncpg`. The API starts and immediately exits with exit code 1.
 
 **Start command**:
 ```bash
-cd /home/ubuntu/work/hd-platform
-/home/ubuntu/.local/share/pipx/venvs/hermes-agent/bin/python -m uvicorn api.main:app --host 0.0.0.0 --port 8000
+cd ${PRISMATIC_HOME}/work/hd-platform
+${PRISMATIC_HOME}/.local/share/pipx/venvs/hermes-agent/bin/python -m uvicorn api.main:app --host 0.0.0.0 --port 8000
 ```
 
 ### Timezone Pitfall in API Wrappers
@@ -857,7 +857,7 @@ Key: `COPY pyproject.toml` first → `pip install` → THEN `COPY src/` for laye
 
 On Debian/Ubuntu with PEP 668, use the hermes-agent venv:
 ```bash
-/home/ubuntu/.local/share/pipx/venvs/hermes-agent/bin/python -m pip install <package>
+${PRISMATIC_HOME}/.local/share/pipx/venvs/hermes-agent/bin/python -m pip install <package>
 ```
 
 ## CRITICAL: read_file Output Format — Never Pipe to write_file

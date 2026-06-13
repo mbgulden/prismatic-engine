@@ -187,16 +187,16 @@ git push
 
 ## Google Sheets Delivery (Preferred)
 
-Google Sheets is better than CSV — shareable, commentable, multi-sheet. When the GDrive MCP's read-only tools are insufficient for creating new sheets, use the `googleapis` Node SDK directly from `/home/ubuntu/work/local-gdrive-mcp/`:
+Google Sheets is better than CSV — shareable, commentable, multi-sheet. When the GDrive MCP's read-only tools are insufficient for creating new sheets, use the `googleapis` Node SDK directly from `$PRISMATIC_HOME/work/local-gdrive-mcp/`:
 
 ```javascript
 import { google } from 'googleapis';
 
 // Auth (reuse MCP credentials)
 const creds = JSON.parse(fs.readFileSync(
-  '/home/ubuntu/.config/mcp-gdrive/.gdrive-server-credentials.json', 'utf8'));
+  '$PRISMATIC_HOME/.config/mcp-gdrive/.gdrive-server-credentials.json', 'utf8'));
 const keys = JSON.parse(fs.readFileSync(
-  '/home/ubuntu/.config/mcp-gdrive/gcp-oauth.keys.json', 'utf8'));
+  '$PRISMATIC_HOME/.config/mcp-gdrive/gcp-oauth.keys.json', 'utf8'));
 const cfg = keys.installed || keys.web;
 const auth = new google.auth.OAuth2(cfg.client_id, cfg.client_secret, 'http://localhost:8085');
 auth.setCredentials(creds);

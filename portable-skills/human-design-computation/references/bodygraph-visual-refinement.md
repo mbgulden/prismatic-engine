@@ -16,9 +16,9 @@ Requires `librsvg2-bin`: `sudo apt-get install -y librsvg2-bin`
 ### Step 2: Launch AGY with reference + code + test command
 ```bash
 agy --print "Compare our output at /tmp/current.png with the Neutrino reference at /path/to/ref.jpg.
-List every visual difference. Then read /home/ubuntu/work/hd-bodygraph/render-pro.mjs
+List every visual difference. Then read ${PRISMATIC_HOME}/work/hd-bodygraph/render-pro.mjs
 and fix ALL differences. Test: node render-pro.mjs becca-data.json > test.svg && rsvg-convert -w 820 test.svg -o test.png"
---print-timeout 300s --add-dir /home/ubuntu/work/hd-bodygraph --dangerously-skip-permissions
+--print-timeout 300s --add-dir ${PRISMATIC_HOME}/work/hd-bodygraph --dangerously-skip-permissions
 ```
 
 ### Step 3: AGY iterates internally
@@ -90,7 +90,7 @@ const px = -dy/len * offset, py = dx/len * offset;
 
 ### Site screenshot capture (for AGY site audits)
 ```bash
-cd /home/ubuntu/work/hd-bodygraph && LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH node -e "
+cd ${PRISMATIC_HOME}/work/hd-bodygraph && LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH node -e "
 const { chromium } = require('playwright');
 (async () => {
   const browser = await chromium.launch({ args: ['--no-sandbox'] });

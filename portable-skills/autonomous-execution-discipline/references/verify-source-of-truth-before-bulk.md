@@ -8,7 +8,7 @@ When a pipeline generates bulk tasks (broken link checks, SEO audits, lint fixes
 
 **Symptom:** Kai had 91 "Fix broken link" issues. Every week the cron would create more.
 
-**Root cause:** The broken link checker (`aot_broken_link_check.py`) was crawling `/home/ubuntu/work/active-oahu-tours-mirror` — a DEAD DIRECTORY. The actual mirror lived at `/home/ubuntu/work/active-oahu-static`.
+**Root cause:** The broken link checker (`aot_broken_link_check.py`) was crawling `$PRISMATIC_HOME/work/active-oahu-tours-mirror` — a DEAD DIRECTORY. The actual mirror lived at `$PRISMATIC_HOME/work/active-oahu-static`.
 
 **Impact:** 85 of 91 issues were FALSE POSITIVES. The files existed, just not where the checker looked. Kai was drowning in phantom tasks for weeks.
 

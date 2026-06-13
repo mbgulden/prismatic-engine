@@ -1,8 +1,8 @@
 # AGY Watchdog (v2)
 
-**Location:** `/home/ubuntu/work/agentic-swarm-ops/ops/agy_watchdog.py`
+**Location:** `$PRISMATIC_HOME/work/agentic-swarm-ops/ops/agy_watchdog.py`
 
-**Invocation:** `python3 /home/ubuntu/work/agentic-swarm-ops/ops/agy_watchdog.py` (workdir doesn't matter)
+**Invocation:** `python3 $PRISMATIC_HOME/work/agentic-swarm-ops/ops/agy_watchdog.py` (workdir doesn't matter)
 
 **Exit code semantics:** The script returns `exit(len(alerts))` — exit 0 = all clear, exit 1 = one alert, exit 2+ = multiple alerts. The exit code is an alert *count*, not a severity code. Always check the output text to understand *what* the alerts are.
 
@@ -91,7 +91,7 @@ When the watchdog prints only alerts without per-process detail (because no AGY 
 # 1. OAuth — read expiry directly
 python3 -c "
 import json, time; from datetime import datetime, timezone
-p = '/home/ubuntu/.hermes/profiles/orchestrator/home/.gemini/antigravity-cli/antigravity-oauth-token'
+p = '${PRISMATIC_HOME}/.hermes/profiles/orchestrator/home/.gemini/antigravity-cli/antigravity-oauth-token'
 with open(p) as f: d = json.load(f)
 exp = datetime.fromisoformat(d['token']['expiry'])
 print(f'Expires: {exp.isoformat()}')
@@ -101,7 +101,7 @@ print(f'Remaining: {(exp - datetime.now(timezone.utc)).total_seconds():.0f}s')
 # 2. Agent run records — any stuck in 'running' state?
 python3 -c "
 import json, os; from datetime import datetime, timezone
-d = '/home/ubuntu/work/agentic-swarm-ops/agent-runs'
+d = '${PRISMATIC_HOME}/work/agentic-swarm-ops/agent-runs'
 if os.path.isdir(d):
     for f in sorted(os.listdir(d)):
         if not f.endswith('.json'): continue
@@ -115,7 +115,7 @@ if os.path.isdir(d):
 # 3. Brain transcript — last activity timestamp
 python3 -c "
 import os, time
-brain = '/home/ubuntu/.hermes/profiles/orchestrator/home/.gemini/antigravity-cli/brain'
+brain = '${PRISMATIC_HOME}/.hermes/profiles/orchestrator/home/.gemini/antigravity-cli/brain'
 latest = 0
 for d in os.listdir(brain):
     t = os.path.join(brain, d, '.system_generated', 'logs', 'transcript.jsonl')
@@ -131,7 +131,7 @@ else:
 # 4. Log file signals with line context (not just signal names)
 python3 -c "
 import os
-logdir = '/home/ubuntu/.hermes/profiles/orchestrator/home/.gemini/antigravity-cli/log'
+logdir = '${PRISMATIC_HOME}/.hermes/profiles/orchestrator/home/.gemini/antigravity-cli/log'
 logs = sorted([f for f in os.listdir(logdir) if f.startswith('cli-')], reverse=True)
 if logs:
     with open(os.path.join(logdir, logs[0])) as f:
@@ -146,7 +146,7 @@ Each probe answers a specific question: *can AGY authenticate? are there ghost s
 
 ## Inactivity Recovery (v2)
 
-Port of Hub Watchdog.ts — monitors agent run records (`/home/ubuntu/work/agentic-swarm-ops/agent-runs/`) for records stuck in `running` state:
+Port of Hub Watchdog.ts — monitors agent run records (`$PRISMATIC_HOME/work/agentic-swarm-ops/agent-runs/`) for records stuck in `running` state:
 
 | Threshold | Behavior |
 |-----------|----------|

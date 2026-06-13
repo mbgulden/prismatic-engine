@@ -46,15 +46,15 @@ Moving Google Cloud SDK (543MB) from local to NAS:
 
 ```bash
 # FAILED: mv timed out, left partial copy
-mv /home/ubuntu/.hermes/profiles/orchestrator/home/google-cloud-sdk \
+mv ${PRISMATIC_HOME}/.hermes/profiles/orchestrator/home/google-cloud-sdk \
    /home/ubuntu/mounts/synology-agentic-context/archived-tools/
 
 # WORKED: rsync with --remove-source-files
 rsync -a --remove-source-files \
-  /home/ubuntu/.hermes/profiles/orchestrator/home/google-cloud-sdk/ \
+  ${PRISMATIC_HOME}/.hermes/profiles/orchestrator/home/google-cloud-sdk/ \
   /home/ubuntu/mounts/synology-agentic-context/archived-tools/google-cloud-sdk/
 # ...thousands of chgrp errors scroll by...
-rm -rf /home/ubuntu/.hermes/profiles/orchestrator/home/google-cloud-sdk
+rm -rf ${PRISMATIC_HOME}/.hermes/profiles/orchestrator/home/google-cloud-sdk
 
 # Verify
 du -sh /home/ubuntu/mounts/synology-agentic-context/archived-tools/google-cloud-sdk/

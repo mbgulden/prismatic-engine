@@ -1,7 +1,7 @@
 # Reference: GRO-150 — Active Oahu Tours Financial Dashboard
 
 **Status:** ✅ COMPLETED (previously completed in prior session)
-**Original artifact:** `/home/ubuntu/work/agentic-swarm-ops/docs/active-oahu-tours-financial-dashboard.md`
+**Original artifact:** `$PRISMATIC_HOME/work/agentic-swarm-ops/docs/active-oahu-tours-financial-dashboard.md`
 
 ## What Was Delivered
 

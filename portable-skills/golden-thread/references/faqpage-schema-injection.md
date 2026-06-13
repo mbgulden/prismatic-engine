@@ -107,7 +107,7 @@ Skip them — adding invisible schema that doesn't match visible content is a Go
 Always check `'"@type": "FAQPage"' in html` before writing. A prior session or script run may have already added the schema.
 
 ## Real Case: HD Growth Engine (June 2026)
-- **Input:** 133 HTML pages (64 gates, 36 channels, 5 types, 12 profiles, 8 authorities, 9 centers) in `/home/ubuntu/work/hd-platform/docs/human-design/`
+- **Input:** 133 HTML pages (64 gates, 36 channels, 5 types, 12 profiles, 8 authorities, 9 centers) in `$PRISMATIC_HOME/work/hd-platform/docs/human-design/`
 - **Result:** 124 pages received FAQPage schema (+5,423 lines). 9 center pages skipped (no FAQ sections). 0 double-injections.
 - **Commit:** `304ba38` on `mbgulden/hd-platform` main branch
 - **Deployment:** Cloudflare Pages auto-deploy from GitHub push

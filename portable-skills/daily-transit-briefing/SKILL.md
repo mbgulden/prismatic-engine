@@ -32,7 +32,7 @@ From `~/work/next-step-bot/family.json`:
 Use the transit engine to get today's planetary positions:
 
 ```python
-import sys; sys.path.insert(0, "/home/ubuntu/work/OpenHumanDesignMCP/hd-mcp-server/src")
+import sys; sys.path.insert(0, os.environ.get("PRISMATIC_HOME", "/home/ubuntu") + "/work/OpenHumanDesignMCP/hd-mcp-server/src")
 from transit_engine import calculate_transit_positions
 from ephemeris_engine import julday, init_ephemeris
 from datetime import datetime

@@ -17,7 +17,7 @@ from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
-CREDS_DIR = Path("/home/ubuntu/.config/mcp-gdrive")
+CREDS_DIR = Path("$PRISMATIC_HOME/.config/mcp-gdrive")
 KEYS_PATH = CREDS_DIR / "gcp-oauth.keys.json"
 WRITE_TOKEN_PATH = CREDS_DIR / ".gdocs-write-token.pickle"
 

@@ -14,7 +14,7 @@ The standalone bot (`bot.py`) runs as the `ubuntu` user via systemd. It imports 
 # Test raw import as the ubuntu user
 sudo -u ubuntu python3 -c "
 import sys
-sys.path.insert(0, '/home/ubuntu/work/OpenHumanDesignMCP/hd-mcp-server/src')
+sys.path.insert(0, '${PRISMATIC_HOME}/work/OpenHumanDesignMCP/hd-mcp-server/src')
 from mcp_server import get_deep_context, get_relationship_composite
 print('OK')
 "
@@ -33,7 +33,7 @@ sudo pip install --break-system-packages pyswisseph mcp
 # Verify
 sudo -u ubuntu python3 -c "
 import sys
-sys.path.insert(0, '/home/ubuntu/work/OpenHumanDesignMCP/hd-mcp-server/src')
+sys.path.insert(0, '${PRISMATIC_HOME}/work/OpenHumanDesignMCP/hd-mcp-server/src')
 from mcp_server import get_deep_context
 print('OK')
 "

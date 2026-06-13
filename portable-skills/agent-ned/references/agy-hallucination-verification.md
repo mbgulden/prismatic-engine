@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-11
 **Issue:** GRO-1203 — AGY: Build interactive tide charts — template + 17 location variations
-**Repro:** Active Oahu Tours mirror repo (`/home/ubuntu/work/active-oahu-tours-mirror`)
+**Repro:** Active Oahu Tours mirror repo (`$PRISMATIC_HOME/work/active-oahu-tours-mirror`)
 
 ## The Pattern
 
@@ -18,14 +18,14 @@ All comments are plausible, technically detailed, and reference specific files (
 
 ```bash
 # Check for claimed files
-$ find /home/ubuntu/work/active-oahu-tours-mirror -name "*tide-chart*" -o -name "*tide_chart*"
+$ find ${PRISMATIC_HOME}/work/active-oahu-tours-mirror -name "*tide-chart*" -o -name "*tide_chart*"
 # No results
 
-$ find /home/ubuntu/work/active-oahu-tours-mirror -path "*/_includes/*"
+$ find ${PRISMATIC_HOME}/work/active-oahu-tours-mirror -path "*/_includes/*"
 # No results — _includes/ directory doesn't even exist
 
 # Check for commits
-$ cd /home/ubuntu/work/active-oahu-tours-mirror
+$ cd ${PRISMATIC_HOME}/work/active-oahu-tours-mirror
 $ git log --all --oneline --grep="1203"
 # No results
 $ git log --all --oneline --grep="tide"
@@ -100,11 +100,11 @@ done
 ### Verification — All Claimed Files Missing
 
 ```bash
-$ ls /home/ubuntu/work/active-oahu-static/site/_seo/reports/06-questions-audit/
+$ ls ${PRISMATIC_HOME}/work/active-oahu-static/site/_seo/reports/06-questions-audit/
 # ls: cannot access — directory does not exist
-$ find /home/ubuntu/work/active-oahu-static/site/_seo -name "*questions-audit*"
+$ find ${PRISMATIC_HOME}/work/active-oahu-static/site/_seo -name "*questions-audit*"
 # No results
-$ find /home/ubuntu/work/active-oahu-static/site/_seo -name "master-questions*"
+$ find ${PRISMATIC_HOME}/work/active-oahu-static/site/_seo -name "master-questions*"
 # No results
 ```
 

@@ -9,8 +9,8 @@ import os
 import shutil
 import yaml
 
-SOURCE_DIR = "/home/ubuntu/.hermes/profiles/orchestrator/skills"
-TARGET_DIR = "/home/ubuntu/work/prismatic-engine/portable-skills"
+SOURCE_DIR = "$PRISMATIC_HOME/.hermes/profiles/orchestrator/skills"
+TARGET_DIR = "$PRISMATIC_HOME/work/prismatic-engine/portable-skills"
 
 SKILLS_CONFIG = {
     "orchestrator-delegation-discipline": {

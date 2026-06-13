@@ -18,7 +18,7 @@ The AI Consulting pipeline had extensive preparation (outreach lists, LinkedIn r
 
 ## Key Heuristics
 
-- **Artifacts ARE the research** — if files exist in `/home/ubuntu/work/research/<project>/`, read them first before launching AGY
+- **Artifacts ARE the research** — if files exist in `$PRISMATIC_HOME/work/research/<project>/`, read them first before launching AGY
 - **Revenue-first task selection** — pick the task that generates revenue conversations fastest (outreach emails > LinkedIn publishing > Cal.com setup)
 - **Clear Michael handoffs** — when the next step requires Michael (finding contact names, publishing a profile), make the 🫵 action item impossible to misunderstand
 - **Linear comments as status** — each task gets a comment with file path, next action, and revenue potential estimate

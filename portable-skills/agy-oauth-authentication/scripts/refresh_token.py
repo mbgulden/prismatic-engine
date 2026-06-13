@@ -8,7 +8,7 @@ access token to both required locations.
 
 IMPORTANT: Uses absolute paths, not os.path.expanduser('~'), because in Hermes
 agent contexts (cron jobs, subagents) HOME is set to the profile's sandboxed
-home, not the system /home/ubuntu.
+home, not the system $PRISMATIC_HOME.
 """
 
 import json
@@ -25,8 +25,8 @@ TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 
 # Absolute paths — not os.path.expanduser('~') (sandboxed in Hermes contexts)
 TOKEN_PATHS = [
-    "/home/ubuntu/.hermes/profiles/orchestrator/home/.gemini/antigravity-cli/antigravity-oauth-token",
-    "/home/ubuntu/.gemini/antigravity-cli/antigravity-oauth-token",
+    "$PRISMATIC_HOME/.hermes/profiles/orchestrator/home/.gemini/antigravity-cli/antigravity-oauth-token",
+    "$PRISMATIC_HOME/.gemini/antigravity-cli/antigravity-oauth-token",
 ]
 
 

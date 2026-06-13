@@ -28,7 +28,7 @@ Only prints when there's something actionable. Silence = all clear.
 import os, glob
 from datetime import datetime, timezone
 
-CRON_OUTPUT_DIR = "/home/ubuntu/.hermes/profiles/orchestrator/cron/output"
+CRON_OUTPUT_DIR = os.environ.get("PRISMATIC_HOME", "/home/ubuntu") + "/.hermes/profiles/orchestrator/cron/output"
 
 def get_latest_output(job_id):
     """Get the most recent cron output from its subdirectory."""

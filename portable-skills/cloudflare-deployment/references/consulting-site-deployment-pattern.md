@@ -56,9 +56,9 @@ Based on AGY's design brief, build a single-file static HTML page with:
 
 Serve from a local directory on a dedicated port:
 ```bash
-mkdir -p /home/ubuntu/work/<project>-site
+mkdir -p ${PRISMATIC_HOME}/work/<project>-site
 # Write index.html
-cd /home/ubuntu/work/<project>-site && python3 -m http.server <port> --bind 127.0.0.1 &
+cd ${PRISMATIC_HOME}/work/<project>-site && python3 -m http.server <port> --bind 127.0.0.1 &
 ```
 
 ## Step 4: Tunnel Routing
@@ -92,7 +92,7 @@ When the site has a lead magnet:
 1. Write markdown with white background styling
 2. Match website fonts (Space Grotesk, Plus Jakarta Sans etc)
 3. Convert: `pandoc input.md -o output.pdf --pdf-engine=wkhtmltopdf`
-4. Host alongside the site: `cp output.pdf /home/ubuntu/work/<project>-site/`
+4. Host alongside the site: `cp output.pdf $PRISMATIC_HOME/work/<project>-site/`
 
 ## Tone Rules (from beyondsaas.ai feedback)
 

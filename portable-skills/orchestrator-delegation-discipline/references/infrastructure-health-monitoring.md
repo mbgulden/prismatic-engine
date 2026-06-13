@@ -40,7 +40,7 @@ Silent-when-healthy cron scripts that monitor system resources and alert only on
 
 ```python
 def send_telegram(text):
-    token = read_from_env_file("/home/ubuntu/work/next-step-bot/.env")
+    token = read_from_env_file(os.environ.get("PRISMATIC_HOME", "/home/ubuntu") + "/work/next-step-bot/.env")
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = json.dumps({"chat_id": "8190664947", "text": text, "parse_mode": "Markdown"})
     urllib.request.urlopen(urllib.request.Request(url, data=payload.encode(), 
@@ -63,9 +63,9 @@ cronjob create no_agent=true schedule="every 10m" \
 
 ## Files
 
-- `/home/ubuntu/work/agentic-swarm-ops/ops/agy_resource_monitor.py`
-- `/home/ubuntu/work/agentic-swarm-ops/ops/proxmox_cluster_monitor.py`
-- Symlinked to `/home/ubuntu/.hermes/scripts/` for cron access
+- `$PRISMATIC_HOME/work/agentic-swarm-ops/ops/agy_resource_monitor.py`
+- `$PRISMATIC_HOME/work/agentic-swarm-ops/ops/proxmox_cluster_monitor.py`
+- Symlinked to `$PRISMATIC_HOME/.hermes/scripts/` for cron access
 
 ## Proxmox Access
 

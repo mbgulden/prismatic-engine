@@ -52,7 +52,7 @@ Flywheel serves CSS with WordPress-generated version suffixes (`?ver=3.7.5`, `?v
 After matching, capture all three sites at desktop + mobile + mobile-open:
 
 ```bash
-cd /home/ubuntu/work/hd-bodygraph && \
+cd ${PRISMATIC_HOME}/work/hd-bodygraph && \
 LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH node -e "
 const { chromium } = require('playwright');
 (async () => {

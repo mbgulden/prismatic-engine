@@ -23,7 +23,7 @@ print(json.dumps({
 
 The token structure is: `{"a": "<account_id>", "t": "<tunnel_id>", "s": "<secret>"}`.
 
-Write the output to `/home/ubuntu/.cloudflared/<tunnel_id>.json` if you ever need local config mode (for a NON-dashboard-managed tunnel — dashboard-managed tunnels ignore local config regardless).
+Write the output to `$PRISMATIC_HOME/.cloudflared/<tunnel_id>.json` if you ever need local config mode (for a NON-dashboard-managed tunnel — dashboard-managed tunnels ignore local config regardless).
 
 ## Session Diagnostic Pattern: Dashboard Change Not Syncing
 

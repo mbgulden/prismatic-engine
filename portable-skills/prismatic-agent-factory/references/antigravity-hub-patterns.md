@@ -1,7 +1,7 @@
 # Antigravity Orchestration Hub — Extracted Patterns
 
 Source: AGY ingest of mbgulden/Antigravity-Orchestration-Hub, 2026-06-13
-Full report: /home/ubuntu/work/agentic-swarm-ops/docs/antigravity-hub-secrets.md
+Full report: $PRISMATIC_HOME/work/agentic-swarm-ops/docs/antigravity-hub-secrets.md
 
 ## 5 Core Patterns
 

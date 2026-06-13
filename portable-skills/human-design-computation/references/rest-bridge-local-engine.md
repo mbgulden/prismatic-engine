@@ -10,7 +10,7 @@ import os
 
 ENGINE_PATH = os.environ.get(
     "ENGINE_PATH",
-    "/home/ubuntu/work/OpenHumanDesignMCP/hd-mcp-server/src"
+    os.environ.get("PRISMATIC_HOME", "/home/ubuntu") + "/work/OpenHumanDesignMCP/hd-mcp-server/src"
 )
 sys.path.insert(0, ENGINE_PATH)
 
@@ -79,7 +79,7 @@ chart.keys() = [
 
 ## REST Server Endpoint Design
 
-Two endpoint tiers per the reference implementation at `/home/ubuntu/work/hd-platform/reports/server.py`:
+Two endpoint tiers per the reference implementation at `$PRISMATIC_HOME/work/hd-platform/reports/server.py`:
 
 | Endpoint | Auth | Returns | Use Case |
 |---|---|---|---|
@@ -132,10 +132,10 @@ buy-report.html (Cloudflare Pages)
 
 ## Widget Integration
 
-Free embeddable widget at `/docs/widget.js` (14KB) — drop a `<div class="hde-chart-widget">` on any page. Widget calls `/api/public/compute-chart` (no auth), renders results client-side. Reference at `/home/ubuntu/work/hd-platform/docs/widget.js`.
+Free embeddable widget at `/docs/widget.js` (14KB) — drop a `<div class="hde-chart-widget">` on any page. Widget calls `/api/public/compute-chart` (no auth), renders results client-side. Reference at `$PRISMATIC_HOME/work/hd-platform/docs/widget.js`.
 
 ## Reference Implementation
 
-Full REST bridge + PDF report generator at `/home/ubuntu/work/hd-platform/reports/server.py` (~600 lines).
-Payment server at `/home/ubuntu/work/hd-platform/payment/server.py` (~200 lines).
-Free chart widget at `/home/ubuntu/work/hd-platform/docs/widget.js` + `/docs/widget-demo.html`.
+Full REST bridge + PDF report generator at `$PRISMATIC_HOME/work/hd-platform/reports/server.py` (~600 lines).
+Payment server at `$PRISMATIC_HOME/work/hd-platform/payment/server.py` (~200 lines).
+Free chart widget at `$PRISMATIC_HOME/work/hd-platform/docs/widget.js` + `/docs/widget-demo.html`.

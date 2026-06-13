@@ -9,7 +9,7 @@ When an `agent:ned` issue is labeled `requires:human-approval` and Ned verifies 
 **Issue:** "Send Idaho Personalized Outreach Emails — Hawley Troxell Partners"
 
 **What happened:**
-- 4 outreach emails drafted at `/home/ubuntu/work/research/ai-consulting/idaho-personalized-outreach-emails-2026-06-09.md`
+- 4 outreach emails drafted at `$PRISMATIC_HOME/work/research/ai-consulting/idaho-personalized-outreach-emails-2026-06-09.md`
 - Pre-flight checks: LinkedIn updated ✅, Cal.com published ✅, SMB Report live ✅
 - Ned verified everything 3 times, posted the same "Blocked — Needs Human Send" comment 3 times
 - Dispatcher routed 5+ times: Jun 11 08:38, 09:49, 10:12, 11:01, 11:15

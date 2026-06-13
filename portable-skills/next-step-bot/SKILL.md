@@ -89,10 +89,10 @@ NEXTSTEP_MODEL=gpt-5.5
 NEXTSTEP_NAME=Sage
 NEXTSTEP_PROFILE=becca
 NEXTSTEP_ACTIVE_PROFILE=becca
-NEXTSTEP_MCP_SRC=/home/ubuntu/work/OpenHumanDesignMCP/hd-mcp-server/src
-NEXTSTEP_FAMILY_PATH=/home/ubuntu/work/next-step-bot/family.json
-OHDMCP_FAMILY_JSON=/home/ubuntu/work/next-step-bot/family.json   # ← REQUIRED for HD
-NEXTSTEP_DB_PATH=/home/ubuntu/work/next-step-becca/data/next_step.db
+NEXTSTEP_MCP_SRC=${PRISMATIC_HOME}/work/OpenHumanDesignMCP/hd-mcp-server/src
+NEXTSTEP_FAMILY_PATH=${PRISMATIC_HOME}/work/next-step-bot/family.json
+OHDMCP_FAMILY_JSON=${PRISMATIC_HOME}/work/next-step-bot/family.json   # ← REQUIRED for HD
+NEXTSTEP_DB_PATH=${PRISMATIC_HOME}/work/next-step-becca/data/next_step.db
 EOF
 chmod 600 .env
 ```
@@ -234,4 +234,4 @@ The existing GDrive MCP is read-only (`drive.readonly` scope). GDocs write uses 
 
 - **`swisseph` not `pyswisseph` — HD MCP import pitfall (Jun 2026):** The pip package is `pyswisseph` but the Python import is `swisseph`. The HD MCP server uses `import swisseph as swe` — not `import pyswisseph`. The package installs as `swisseph.cpython-312-x86_64-linux-gnu.so` in dist-packages. Install: `sudo pip install --break-system-packages pyswisseph`. Verify: `python3 -c "import swisseph; print('OK')"`. Without this, all HD chart calculations fail silently.
 
-- **Multi-bot token identity confusion (Jun 2026):** When multiple bots share the same bot ID (e.g., `8983301978`) with different hash suffixes, tools that read `.env` files can silently pick the wrong token. Autobot (`8842175068`), Jeff (`8983301978`), and the shared `next-step-bot/.env` all have different tokens. When writing scripts that need to send Telegram messages, NEVER assume `/home/ubuntu/work/next-step-bot/.env` is the right source — always use the bot's own profile `.env` at `/home/ubuntu/.hermes/profiles/<profile>/.env`.
+- **Multi-bot token identity confusion (Jun 2026):** When multiple bots share the same bot ID (e.g., `8983301978`) with different hash suffixes, tools that read `.env` files can silently pick the wrong token. Autobot (`8842175068`), Jeff (`8983301978`), and the shared `next-step-bot/.env` all have different tokens. When writing scripts that need to send Telegram messages, NEVER assume `$PRISMATIC_HOME/work/next-step-bot/.env` is the right source — always use the bot's own profile `.env` at `$PRISMATIC_HOME/.hermes/profiles/<profile>/.env`.

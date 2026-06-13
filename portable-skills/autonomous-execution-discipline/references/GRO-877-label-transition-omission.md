@@ -30,11 +30,11 @@ When you see dispatcher spam:
 ## Verified Artifacts (Jun 13, 2026)
 
 ```
-/home/ubuntu/work/darius-star/assets/sprites/boss_idle.png   — 681KB
-/home/ubuntu/work/darius-star/assets/sprites/boss_rage.png   — 915KB
-/home/ubuntu/work/darius-star/assets/sprites/boss_charge.png — 747KB
-/home/ubuntu/work/darius-star/assets/sprites/boss_fire.png   — 835KB
-/home/ubuntu/work/darius-star/assets/sprites/boss_death.png  — 629KB
+$PRISMATIC_HOME/work/darius-star/assets/sprites/boss_idle.png   — 681KB
+$PRISMATIC_HOME/work/darius-star/assets/sprites/boss_rage.png   — 915KB
+$PRISMATIC_HOME/work/darius-star/assets/sprites/boss_charge.png — 747KB
+$PRISMATIC_HOME/work/darius-star/assets/sprites/boss_fire.png   — 835KB
+$PRISMATIC_HOME/work/darius-star/assets/sprites/boss_death.png  — 629KB
 ```
 
 All: 1024x1024, transparent RGBA, confirmed on disk.

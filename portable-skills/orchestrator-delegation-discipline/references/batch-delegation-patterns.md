@@ -41,7 +41,7 @@ Subagents have NO memory of the parent conversation. Every task must include:
 
 ### Good context example
 ```
-The Astro scaffold is at /home/ubuntu/work/active-oahu-tours/. 
+The Astro scaffold is at $PRISMATIC_HOME/work/active-oahu-tours/. 
 We have media inventory at docs/active-oahu/media-inventory.json (9,592 files).
 Read that JSON for the file structure. Output to docs/active-oahu/media-tags.json.
 Do NOT process the actual Synology mount — use the inventory JSON only.

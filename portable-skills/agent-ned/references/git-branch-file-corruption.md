@@ -8,7 +8,7 @@ A file exists on disk at the expected path and `ls -la` reports a plausible byte
 (98 bytes), but the file's **actual content** is a git error message, not source code.
 
 ```bash
-$ ls -la /home/ubuntu/work/agentic-swarm-ops/ops/credit_policy_engine.py
+$ ls -la ${PRISMATIC_HOME}/work/agentic-swarm-ops/ops/credit_policy_engine.py
 -rw-rw-r-- 1 ubuntu ubuntu 98 Jun 12 22:09 ops/credit_policy_engine.py
 
 $ cat ops/credit_policy_engine.py

@@ -55,8 +55,8 @@ Cron job (`every 1m`) under orchestrator profile:
 
 | File | Path |
 |---|---|
-| Bridge module | `/home/ubuntu/work/bot-delegation/bridge.py` |
-| Bot copy | `/home/ubuntu/work/next-step-{user}/bot_delegation.py` |
+| Bridge module | `$PRISMATIC_HOME/work/bot-delegation/bridge.py` |
+| Bot copy | `$PRISMATIC_HOME/work/next-step-{user}/bot_delegation.py` |
 | Request dir | `/tmp/bot-delegation/requests/` |
 | Response dir | `/tmp/bot-delegation/responses/` |
 

@@ -112,7 +112,7 @@ After adding a new launcher, clear stale dedup entries from the previous broken 
 ```bash
 python3 -c "
 import sqlite3
-db = '/home/ubuntu/.hermes/profiles/orchestrator/state/event-router/router.db'
+db = '${PRISMATIC_HOME}/.hermes/profiles/orchestrator/state/event-router/router.db'
 conn = sqlite3.connect(db)
 conn.execute(\"DELETE FROM processed_events WHERE dedup_key LIKE '%agent:ned%'\")
 conn.commit()
@@ -336,7 +336,7 @@ Darius Star music tracks are generated via Google's Lyria 2 model on Vertex AI. 
 
 ### Quick Reference
 ```bash
-cd /home/ubuntu/work/darius-star
+cd $PRISMATIC_HOME/work/darius-star
 
 # Verify connectivity (may take 30s+ if ADC refresh needed)
 python3 tools/generate_audio.py --check
@@ -539,7 +539,7 @@ When configuring Ned's cron: `model='deepseek-v4-pro', provider='deepseek'`. If 
   **Verification:** `grep` for the inserted text after each change. **Real example:** GRO-936 applied 7 changes to an 8180-line monolithic index.html using Python string replacement; patch tool failed on blocks with duplicate closing-brace patterns.
 
 - ❌ **Ned creating branches** — Ned works directly on master. No feature branches for Ned's work unless explicitly requested
-- ❌ **`search_files` timeout on large directories** — `search_files` can time out (60s+) on big trees like `/home/ubuntu`. **Fix:** Don't scan the whole tree. First check known project directories with `terminal` + `ls` (e.g., `ls /home/ubuntu/work/`), then target the specific repo with `find <repo> -name "file.js"`. Pattern: `terminal → ls` to locate the repo, then `search_files` inside the repo. This session: `search_files` on `/home/ubuntu` timed at 60s; `ls /home/ubuntu/work/` returned instantly.
+- ❌ **`search_files` timeout on large directories** — `search_files` can time out (60s+) on big trees like `$PRISMATIC_HOME`. **Fix:** Don't scan the whole tree. First check known project directories with `terminal` + `ls` (e.g., `ls $PRISMATIC_HOME/work/`), then target the specific repo with `find <repo> -name "file.js"`. Pattern: `terminal → ls` to locate the repo, then `search_files` inside the repo. This session: `search_files` on `$PRISMATIC_HOME` timed at 60s; `ls $PRISMATIC_HOME/work/` returned instantly.
 - ❌ **`execute_code` sandbox lacks `LINEAR_API_KEY` (and other env vars)** — The `execute_code` Python sandbox does NOT inherit `LINEAR_API_KEY` from the parent environment. Any Linear API work MUST use `terminal` + a Python script (or `curl`). Also missing: `google-cloud-aiplatform` (for Lyria), various OAuth tokens. **Pattern:** write the Python script to `/tmp/ned_<purpose>.py`, then run with `python3 /tmp/ned_<purpose>.py`. This is the universal pattern for all Linear API work in cron sessions.
 
 - ❌ **`urllib.request` → HTTP 500 on Linear paginated team queries — use curl subprocess instead** — Python's `urllib.request` library consistently produces `HTTP Error 500: Internal Server Error` on Linear GraphQL paginated team queries even when the query has ZERO `description`/`comments` fields. This is a distinct failure mode from the description/comments 500 — even minimal-field queries fail when sent via urllib. The root cause appears to be urllib's HTTP/2 negotiation or header handling with Linear's API. **Fix:** Use `subprocess.run(['curl', '-s', '-X', 'POST', ...], capture_output=True, text=True)` for ALL Linear API calls in Python scripts. Curl subprocess is the only reliable transport for paginated team queries. **Pattern:**
@@ -607,7 +607,7 @@ When the maintenance sweeps complete or a session produces pipeline work, check
 pipeline health with the dashboard (built in GRO-1478):
 
 ```bash
-cd /home/ubuntu/work/prismatic-engine
+cd $PRISMATIC_HOME/work/prismatic-engine
 python3 scripts/pipeline_dashboard.py             # full dashboard
 python3 scripts/pipeline_dashboard.py --summary   # single-line for golden thread
 python3 scripts/pipeline_dashboard.py --json      # programmatic output

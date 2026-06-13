@@ -95,8 +95,8 @@ CLIENT_SECRET = "$GOOGLE_OAUTH_CLIENT_SECRET"
 # Use ABSOLUTE paths — os.path.expanduser('~') resolves to the Hermes profile's
 # sandboxed home, NOT the system /home/ubuntu, in cron-job and subagent contexts.
 TOKEN_PATHS = [
-    "/home/ubuntu/.hermes/profiles/orchestrator/home/.gemini/antigravity-cli/antigravity-oauth-token",
-    "/home/ubuntu/.gemini/antigravity-cli/antigravity-oauth-token",
+    os.environ.get("PRISMATIC_HOME", "/home/ubuntu") + "/.hermes/profiles/orchestrator/home/.gemini/antigravity-cli/antigravity-oauth-token",
+    os.environ.get("PRISMATIC_HOME", "/home/ubuntu") + "/.gemini/antigravity-cli/antigravity-oauth-token",
 ]
 token_file = next((p for p in TOKEN_PATHS if os.path.exists(p)), None)
 if not token_file:
@@ -141,7 +141,7 @@ print(f"Token refreshed. New expiry: {expiry_dt.isoformat()}")
 
 ## Pitfalls
 
-- **`os.path.expanduser('~')` in Hermes context**: When running as a cron job or subagent, the Hermes agent sets `HOME` to the profile's sandboxed home (`/home/ubuntu/.hermes/profiles/orchestrator/home/`), NOT the system `/home/ubuntu/`. This means `os.path.expanduser('~/.hermes/...')` produces a DOUBLED path like `/home/ubuntu/.hermes/profiles/orchestrator/home/.hermes/...`. Always use absolute paths starting with `/home/ubuntu/` in any Python snippet that writes files outside the sandbox. The terminal tool is unaffected — its `$HOME` is the real system home.
+- **`os.path.expanduser('~')` in Hermes context**: When running as a cron job or subagent, the Hermes agent sets `HOME` to the profile's sandboxed home (`$PRISMATIC_HOME/.hermes/profiles/orchestrator/home/`), NOT the system `$PRISMATIC_HOME/`. This means `os.path.expanduser('~/.hermes/...')` produces a DOUBLED path like `$PRISMATIC_HOME/.hermes/profiles/orchestrator/home/.hermes/...`. Always use absolute paths starting with `$PRISMATIC_HOME/` in any Python snippet that writes files outside the sandbox. The terminal tool is unaffected — its `$HOME` is the real system home.
 - **`--print` mode returns SIGTERM -15** even with valid tokens. Use `--prompt-interactive` + PTY.
 - **Token format**: `auth_method: "consumer"`, standard OAuth2 Bearer token.
 - **ADC fallback**: AGY's interactive mode falls back to gcloud ADC when its own auth provider fails.
@@ -156,7 +156,7 @@ print(f"Token refreshed. New expiry: {expiry_dt.isoformat()}")
 ## Autonomous Recovery (Cron-Safe)
 
 The full recovery flow requires zero user interaction:
-1. Run watchdog: python3 /home/ubuntu/work/agentic-swarm-ops/ops/agy_watchdog.py
+1. Run watchdog: python3 $PRISMATIC_HOME/work/agentic-swarm-ops/ops/agy_watchdog.py
 2. If OAuth expired or expiring_soon: python3 <skill-dir>/scripts/refresh_token.py
 3. **Kill stuck AGY processes**: `kill $(ps -e -o pid,comm | awk '/agy-bin/{print $1}') 2>/dev/null; sleep 2` — OAuth expiry causes all running AGY processes to deadlock in `futex_wait_queue`. They will **never self-recover**, even after token refresh. Kill them all. Uses `ps -e -o pid,comm` instead of `pgrep -f` to avoid the self-kill pitfall in Hermes terminal context.
 4. Re-run watchdog to confirm green (zero processes + OAuth ok)

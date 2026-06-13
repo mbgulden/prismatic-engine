@@ -61,7 +61,7 @@ This avoids waiting for CF Pages deploy + CDN cache propagation between each CSS
 **Full Playwright capture:**
 
 ```bash
-cd /home/ubuntu/work/hd-bodygraph && \
+cd ${PRISMATIC_HOME}/work/hd-bodygraph && \
 LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH node -e "
 const { chromium } = require('playwright');
 (async () => {
@@ -108,8 +108,8 @@ Present filtered findings to the user. Separate confirmed issues from AGY halluc
 
 ```bash
 # Compare CSS files between staging and mirror
-diff <(ls /home/ubuntu/work/active-oahu-static/site/wp-content/themes/activeoahu/css/) \
-     <(ls /home/ubuntu/work/active-oahu-tours-mirror/site/wp-content/themes/activeoahu/css/)
+diff <(ls ${PRISMATIC_HOME}/work/active-oahu-static/site/wp-content/themes/activeoahu/css/) \
+     <(ls ${PRISMATIC_HOME}/work/active-oahu-tours-mirror/site/wp-content/themes/activeoahu/css/)
 ```
 
 In the June 2026 session, `brand-overrides.css` (GRO-751 Brand Design System, 316 lines) was present in staging but completely missing from the mirror. This file handled: desktop dropdown hover behavior (`left:-999em` → `left:0`), orange accent borders on sub-menus, mobile menu styling at 549px, brand CSS custom properties, and CTA button theming. Without it, the mirror nav looked broken despite having identical HTML structure.

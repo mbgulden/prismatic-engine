@@ -11,7 +11,7 @@ When you have a static site with 100+ HTML pages and no sitemap, generate one pr
 import os
 from datetime import datetime, timezone
 
-base_dir = '/home/ubuntu/work/<repo>/docs'
+base_dir = os.environ.get("PRISMATIC_HOME", "/home/ubuntu") + "/work/<repo>/docs"
 base_url = 'https://<domain>.com'
 
 pages = []
@@ -57,7 +57,7 @@ print(f"Sitemap: {len(pages)} URLs → {base_dir}/sitemap.xml")
 
 ## Deploy
 ```bash
-cd /home/ubuntu/work/<repo> && \
+cd ${PRISMATIC_HOME}/work/<repo> && \
   git add docs/sitemap.xml && \
   git commit -m "Add SEO sitemap with N URLs" && \
   git push origin main

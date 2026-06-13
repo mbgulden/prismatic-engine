@@ -5,16 +5,16 @@
 ## Deliverables
 
 ### 1. Catalog
-- **Location:** `/home/ubuntu/work/context-corpus/gemini-takeout/nas-takeout-catalog.md`
+- **Location:** `$PRISMATIC_HOME/work/context-corpus/gemini-takeout/nas-takeout-catalog.md`
 - Documents all 4 NAS upload batches, their sizes, and venture mapping
 
 ### 2. Pipeline Script
-- **Location:** `/home/ubuntu/work/context-corpus/gemini-takeout/nas-takeout-pipeline.sh`
+- **Location:** `$PRISMATIC_HOME/work/context-corpus/gemini-takeout/nas-takeout-pipeline.sh`
 - Three modes: `extract` (unzip new archives), `index` (build JSON index), `catalog` (summary)
-- Usage: `bash /home/ubuntu/work/context-corpus/gemini-takeout/nas-takeout-pipeline.sh all`
+- Usage: `bash $PRISMATIC_HOME/work/context-corpus/gemini-takeout/nas-takeout-pipeline.sh all`
 
 ### 3. Corpus Index Update
-- **Location:** `/home/ubuntu/work/context-corpus/gemini-takeout/nas-corpus-index.json`
+- **Location:** `$PRISMATIC_HOME/work/context-corpus/gemini-takeout/nas-corpus-index.json`
 - Machine-readable index of all NAS-hosted takeout extraction points
 
 ### 4. Convenience Symlinks
@@ -28,7 +28,7 @@
 
 | Dataset | Location | Status |
 |---------|----------|--------|
-| Small Gemini sample (83KB, 6 convos) | `/home/ubuntu/work/context-corpus/gemini-takeout/` | ✅ Fully indexed (INDEX.md, project map, summaries, linear candidates) |
+| Small Gemini sample (83KB, 6 convos) | `$PRISMATIC_HOME/work/context-corpus/gemini-takeout/` | ✅ Fully indexed (INDEX.md, project map, summaries, linear candidates) |
 | Large NAS takeout (6.6GB, 575 files) | NAS raw-archives */extracted/ | ✅ Extracted to NAS, ✅ Cataloged, ✅ Pipeline built, ❌ Not venture-indexed |
 
 ## What's Left

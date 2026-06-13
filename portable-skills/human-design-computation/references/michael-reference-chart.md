@@ -45,7 +45,7 @@ G, Heart/Ego, Spleen, Throat
 ## Verification command
 ```python
 import sys
-sys.path.insert(0, '/home/ubuntu/work/OpenHumanDesignMCP/hd-mcp-server/src')
+sys.path.insert(0, os.environ.get("PRISMATIC_HOME", "/home/ubuntu") + "/work/OpenHumanDesignMCP/hd-mcp-server/src")
 from datetime import datetime
 from cosmic_calculator import calculate_natal_chart
 from ephemeris_engine import init_ephemeris

@@ -95,9 +95,9 @@ terminal(background=true): "cd ... && python bot.py"  # spawns bash PID E → py
 [Service]
 Type=simple
 User=ubuntu
-WorkingDirectory=/home/ubuntu/work/next-step-becca
-EnvironmentFile=/home/ubuntu/work/next-step-becca/.env
-ExecStart=/home/ubuntu/.local/share/pipx/venvs/hermes-agent/bin/python /home/ubuntu/work/next-step-becca/bot.py
+WorkingDirectory=$PRISMATIC_HOME/work/next-step-becca
+EnvironmentFile=$PRISMATIC_HOME/work/next-step-becca/.env
+ExecStart=$PRISMATIC_HOME/.local/share/pipx/venvs/hermes-agent/bin/python $PRISMATIC_HOME/work/next-step-becca/bot.py
 Restart=on-failure
 RestartSec=10
 ```

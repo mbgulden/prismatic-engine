@@ -51,8 +51,8 @@ staging:
 
 1. **Create the hook script** — copy from prismatic-engine, adapt `DEFAULT_PRODUCTION`:
    ```bash
-   cp /home/ubuntu/work/prismatic-engine/scripts/pre-push-hook.py \
-      /home/ubuntu/work/active-oahu-tours-mirror/scripts/
+   cp ${PRISMATIC_HOME}/work/prismatic-engine/scripts/pre-push-hook.py \
+      ${PRISMATIC_HOME}/work/active-oahu-tours-mirror/scripts/
    # Edit: change DEFAULT_PRODUCTION = "master"
    # Edit: add configurable production_branch via staging.production_branch
    ```

@@ -2,7 +2,7 @@
 
 The canonical example of a SOUL.md deeply informed by the user's Human Design chart is at:
 
-**`/home/ubuntu/work/next-step-becca/SOUL.md`**
+**`$PRISMATIC_HOME/work/next-step-becca/SOUL.md`**
 
 ## What makes it different from a basic SOUL.md
 

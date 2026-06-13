@@ -19,7 +19,7 @@ CRITICAL — Never ask the user
 **When the user says "keep going," "be proactive," or finishes a batch of work — NEVER ask "what should I do next?" or "want me to handle X?"**
 
 Instead:
-1. Check project registry (`/home/ubuntu/work/project-registry.json`) for items with `next_action`
+1. Check project registry (`$PRISMATIC_HOME/work/project-registry.json`) for items with `next_action`
 2. Check current todo list
 3. Check golden thread skill for stalled items
 4. Pick the **highest-impact** item (revenue > marketing > infrastructure)

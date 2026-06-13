@@ -21,16 +21,16 @@ sudo kill <PID>
 ```
 
 ### 2. Locate the correct Python binary
-The HD Platform uses a venv at `/home/ubuntu/work/hd-platform/.venv/`. Always use `.venv/bin/python3`, never `/usr/bin/python3`.
+The HD Platform uses a venv at `$PRISMATIC_HOME/work/hd-platform/.venv/`. Always use `.venv/bin/python3`, never `/usr/bin/python3`.
 
 ### 3. Determine WorkingDirectory for relative imports
 If the app uses `from .routes import ...` (relative imports), the CWD must be the PARENT of the package:
-- `api/main.py` with `from .routes import ...` → WorkingDirectory=`/home/ubuntu/work/hd-platform`, app path=`api.main:app`
-- NOT: WorkingDirectory=`/home/ubuntu/work/hd-platform/api`, app path=`main:app` (this fails with `ImportError: attempted relative import with no known parent package`)
+- `api/main.py` with `from .routes import ...` → WorkingDirectory=`$PRISMATIC_HOME/work/hd-platform`, app path=`api.main:app`
+- NOT: WorkingDirectory=`$PRISMATIC_HOME/work/hd-platform/api`, app path=`main:app` (this fails with `ImportError: attempted relative import with no known parent package`)
 
 ### 4. Set PYTHONPATH for cross-project dependencies
 ```ini
-Environment=PYTHONPATH=/home/ubuntu/work/hd-platform:/home/ubuntu/work/OpenHumanDesignMCP/hd-mcp-server/src
+Environment=PYTHONPATH=$PRISMATIC_HOME/work/hd-platform:$PRISMATIC_HOME/work/OpenHumanDesignMCP/hd-mcp-server/src
 ```
 
 ### 5. Service unit template
@@ -42,10 +42,10 @@ After=network.target
 [Service]
 Type=simple
 User=ubuntu
-WorkingDirectory=/home/ubuntu/work/hd-platform
-Environment=PYTHONPATH=/home/ubuntu/work/hd-platform:/home/ubuntu/work/OpenHumanDesignMCP/hd-mcp-server/src
+WorkingDirectory=$PRISMATIC_HOME/work/hd-platform
+Environment=PYTHONPATH=$PRISMATIC_HOME/work/hd-platform:$PRISMATIC_HOME/work/OpenHumanDesignMCP/hd-mcp-server/src
 Environment=PORT=<PORT>
-ExecStart=/home/ubuntu/work/hd-platform/.venv/bin/python3 -m uvicorn <module>:app --host 0.0.0.0 --port <PORT>
+ExecStart=$PRISMATIC_HOME/work/hd-platform/.venv/bin/python3 -m uvicorn <module>:app --host 0.0.0.0 --port <PORT>
 Restart=always
 RestartSec=5
 

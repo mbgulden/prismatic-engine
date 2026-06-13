@@ -73,7 +73,7 @@ def translate_page(path):
 Use `terminal(background=true, notify_on_complete=true)` with `tee` to capture progress:
 
 ```bash
-cd /home/ubuntu/work && python3 -u translate-ja-batch.py 2>&1 | tee /tmp/translate-ja.log
+cd ${PRISMATIC_HOME}/work && python3 -u translate-ja-batch.py 2>&1 | tee /tmp/translate-ja.log
 ```
 
 Add `-u` flag for unbuffered stdout so progress is visible in the log file. Check progress with `cat /tmp/translate-ja.log`.

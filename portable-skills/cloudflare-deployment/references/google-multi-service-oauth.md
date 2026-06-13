@@ -4,14 +4,14 @@ Pattern for adding new Google APIs (Analytics, Search Console, Tag Manager, GMB)
 
 ## The Problem
 
-The GDrive MCP server at `/home/ubuntu/work/local-gdrive-mcp/` starts with `drive.readonly` and `spreadsheets` scopes. When you need to add more Google services (GA4, Search Console, GTM, GMB), the existing tokens don't have the new scopes.
+The GDrive MCP server at `$PRISMATIC_HOME/work/local-gdrive-mcp/` starts with `drive.readonly` and `spreadsheets` scopes. When you need to add more Google services (GA4, Search Console, GTM, GMB), the existing tokens don't have the new scopes.
 
 ## The Pattern
 
 ### 1. Generate a Comprehensive Auth URL
 
 ```bash
-cd /home/ubuntu/work/local-gdrive-mcp
+cd ${PRISMATIC_HOME}/work/local-gdrive-mcp
 node get_full_auth_url.js
 ```
 

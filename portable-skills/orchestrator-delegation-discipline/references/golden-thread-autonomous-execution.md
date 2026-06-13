@@ -21,7 +21,7 @@ When triggered: do not pause to ask "should I continue?" — identify the highes
 
 ## Registry Pattern
 
-The project registry at `/home/ubuntu/work/project-registry.json` tracks:
+The project registry at `$PRISMATIC_HOME/work/project-registry.json` tracks:
 - `_last_updated`: timestamp — update after each work session
 - `ventures.<id>.next_action`: the single next concrete step for each project
 - `ventures.<id>.products.<pid>.next_action`: per-product next steps

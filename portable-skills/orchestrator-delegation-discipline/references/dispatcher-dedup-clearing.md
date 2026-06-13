@@ -10,7 +10,7 @@ Dispatcher report shows: `Newly Launched: 0` + `Status: All dedup'd (within TTL)
 ```bash
 python3 << 'PYEOF'
 import sqlite3
-db = "/home/ubuntu/.hermes/profiles/orchestrator/state/event-router/router.db"
+db = "${PRISMATIC_HOME}/.hermes/profiles/orchestrator/state/event-router/router.db"
 conn = sqlite3.connect(db)
 conn.execute("DELETE FROM processed_events")
 conn.commit()

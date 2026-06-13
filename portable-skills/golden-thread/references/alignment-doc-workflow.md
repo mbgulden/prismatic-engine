@@ -32,7 +32,7 @@ For each deliverable document:
 
 ### 5. Save Locally
 ```bash
-mkdir -p /home/ubuntu/work/alignment-deliverables/
+mkdir -p ${PRISMATIC_HOME}/work/alignment-deliverables/
 ```
 Save each improved deliverable as a separate markdown file. Naming convention: descriptive dash-case (`outreach-email-msp.md`, `server-liquidation-listings.md`).
 

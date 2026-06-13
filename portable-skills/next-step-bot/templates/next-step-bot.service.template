@@ -5,9 +5,9 @@ After=network.target
 [Service]
 Type=simple
 User=ubuntu
-WorkingDirectory=/home/ubuntu/work/next-step-{user}
-EnvironmentFile=/home/ubuntu/work/next-step-{user}/.env
-ExecStart=/home/ubuntu/.local/share/pipx/venvs/hermes-agent/bin/python /home/ubuntu/work/next-step-{user}/bot.py
+WorkingDirectory=$PRISMATIC_HOME/work/next-step-{user}
+EnvironmentFile=$PRISMATIC_HOME/work/next-step-{user}/.env
+ExecStart=$PRISMATIC_HOME/.local/share/pipx/venvs/hermes-agent/bin/python $PRISMATIC_HOME/work/next-step-{user}/bot.py
 Restart=always
 RestartSec=10
 StandardOutput=journal

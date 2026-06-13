@@ -22,7 +22,7 @@ PYEOF
 
 Then cross-reference against git log:
 ```bash
-cd /home/ubuntu/work/<repo>
+cd ${PRISMATIC_HOME}/work/<repo>
 git log --oneline --format="%h %ai %s" -80 | grep -E 'GRO-8[0-9]{2}|GRO-9[0-9]{2}'
 ```
 

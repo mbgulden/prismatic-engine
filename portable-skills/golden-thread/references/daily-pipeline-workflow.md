@@ -14,7 +14,7 @@ registry  sub-agents   strategy    direct fix  structured
 
 ## Phase 1: SELECT PROJECT
 
-1. Read `/home/ubuntu/work/project-registry.json` for all projects with `next_action`
+1. Read `$PRISMATIC_HOME/work/project-registry.json` for all projects with `next_action`
 2. Query Linear for non-done issues across all projects
 3. Pick the project with the **oldest next_action** (most stalled)
 4. Tiebreaker priority: AI Consulting > HD Engine > Active Oahu > other revenue

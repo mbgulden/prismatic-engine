@@ -1,6 +1,6 @@
 # AOT Static Mirror — Batch Operations
 
-Two most common task types Ned handles on Active Oahu Tours static mirror (`/home/ubuntu/work/active-oahu-tours-mirror`). Both follow the same workflow: script → run → verify → commit → push.
+Two most common task types Ned handles on Active Oahu Tours static mirror (`$PRISMATIC_HOME/work/active-oahu-tours-mirror`). Both follow the same workflow: script → run → verify → commit → push.
 
 ## Task Type 1: Schema Injection (Product, Review, FAQ, BreadcrumbList)
 
@@ -8,7 +8,7 @@ Two most common task types Ned handles on Active Oahu Tours static mirror (`/hom
 
 ### Pre-flight
 ```bash
-cd /home/ubuntu/work/active-oahu-tours-mirror
+cd ${PRISMATIC_HOME}/work/active-oahu-tours-mirror
 git branch --show-current  # Must be master
 git status                  # Check for pre-existing dirty files
 wc -l inject-all-schema.py  # Current version: ~533 lines (comprehensive), old: ~304 lines
@@ -70,7 +70,7 @@ If `git log --oneline --all --grep="GRO-XXXX"` finds the work on a non-master br
 import re, json
 from pathlib import Path
 
-site_dir = Path('/home/ubuntu/work/active-oahu-tours-mirror/site')
+site_dir = Path(os.environ.get("PRISMATIC_HOME", "/home/ubuntu") + "/work/active-oahu-tours-mirror/site")
 page_items = {}
 
 for f in sorted(site_dir.rglob('*.html')):

@@ -39,13 +39,13 @@ REFACTORING_KEYWORDS = [
 
 # Project → filesystem repo path mapping
 REPO_MAP = {
-    'Darius Star': '/home/ubuntu/work/darius-star',
-    'Active Oahu Tours': '/home/ubuntu/work/active-oahu-tours-mirror',
-    'Active Oahu Tours — Static Mirror Migration': '/home/ubuntu/work/active-oahu-static',
-    'Prismatic Engine': '/home/ubuntu/work/prismatic-engine',
-    'HD Growth Engine': '/home/ubuntu/work/hd-platform',
-    'WAG': '/home/ubuntu/work/wag',
-    'Growth Weave': '/home/ubuntu/work/growthweave',
+    'Darius Star': '$PRISMATIC_HOME/work/darius-star',
+    'Active Oahu Tours': '$PRISMATIC_HOME/work/active-oahu-tours-mirror',
+    'Active Oahu Tours — Static Mirror Migration': '$PRISMATIC_HOME/work/active-oahu-static',
+    'Prismatic Engine': '$PRISMATIC_HOME/work/prismatic-engine',
+    'HD Growth Engine': '$PRISMATIC_HOME/work/hd-platform',
+    'WAG': '$PRISMATIC_HOME/work/wag',
+    'Growth Weave': '$PRISMATIC_HOME/work/growthweave',
 }
 
 

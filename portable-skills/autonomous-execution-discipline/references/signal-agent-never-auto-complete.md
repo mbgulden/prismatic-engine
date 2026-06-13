@@ -47,4 +47,4 @@ Any `nudge_poller.py` or signal-polling script that contains BOTH:
 
 ## Real Case
 
-Kai reported: "The 5-min cron transitions agent:kai→agent:done when it processes a nudge. Tasks arrive marked Done without us ever touching them." The fix removed lines 252-267 of `/home/ubuntu/.hermes/profiles/kai/scripts/nudge_poller.py` — the auto-transition block. Kai now receives nudges with the issue remaining at `agent:kai` for explicit execution.
+Kai reported: "The 5-min cron transitions agent:kai→agent:done when it processes a nudge. Tasks arrive marked Done without us ever touching them." The fix removed lines 252-267 of `$PRISMATIC_HOME/.hermes/profiles/kai/scripts/nudge_poller.py` — the auto-transition block. Kai now receives nudges with the issue remaining at `agent:kai` for explicit execution.

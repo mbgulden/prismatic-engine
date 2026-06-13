@@ -99,8 +99,8 @@ for slug, info in DATA.items():
 ```
 
 Generator scripts at:
-- `/home/ubuntu/work/hd-platform/docs/human-design/centers/generate.py`
-- `/home/ubuntu/work/hd-platform/docs/human-design/types/generate.py`
+- `$PRISMATIC_HOME/work/hd-platform/docs/human-design/centers/generate.py`
+- `$PRISMATIC_HOME/work/hd-platform/docs/human-design/types/generate.py`
 
 ## Existing Page Inventories
 

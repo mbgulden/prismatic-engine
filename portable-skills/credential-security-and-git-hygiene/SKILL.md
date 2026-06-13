@@ -76,9 +76,9 @@ Point systemd at the project's local `.env`:
 [Service]
 Type=simple
 User=ubuntu
-WorkingDirectory=/home/ubuntu/work/project-name
-EnvironmentFile=/home/ubuntu/work/project-name/.env
-ExecStart=/path/to/venv/bin/python /home/ubuntu/work/project-name/bot.py
+WorkingDirectory=$PRISMATIC_HOME/work/project-name
+EnvironmentFile=$PRISMATIC_HOME/work/project-name/.env
+ExecStart=/path/to/venv/bin/python $PRISMATIC_HOME/work/project-name/bot.py
 Restart=always
 RestartSec=10
 StandardOutput=journal

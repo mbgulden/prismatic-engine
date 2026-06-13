@@ -14,7 +14,7 @@ MCP Engine (cosmic_calculator.py)
 
 ## Primary Renderer: render-pro.mjs
 
-`/home/ubuntu/work/hd-bodygraph/render-pro.mjs` — custom production SVG renderer built on Gonzih geometry.
+`$PRISMATIC_HOME/work/hd-bodygraph/render-pro.mjs` — custom production SVG renderer built on Gonzih geometry.
 
 **Does NOT call Gonzih's `renderToSVG()`.** Uses Gonzih geometry constants (inlined) but performs all SVG generation itself. This gives full control over every pixel.
 
@@ -147,9 +147,9 @@ with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
     json.dump(render_data, f)
     tmp = f.name
 result = subprocess.run(
-    ["node", "/home/ubuntu/work/hd-bodygraph/render-pro.mjs", tmp],
+    ["node", os.environ.get("PRISMATIC_HOME", "/home/ubuntu") + "/work/hd-bodygraph/render-pro.mjs", tmp],
     capture_output=True, text=True, timeout=15,
-    cwd="/home/ubuntu/work/hd-bodygraph",
+    cwd=os.environ.get("PRISMATIC_HOME", "/home/ubuntu") + "/work/hd-bodygraph",
 )
 svg = result.stdout
 ```

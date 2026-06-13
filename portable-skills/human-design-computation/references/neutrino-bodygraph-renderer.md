@@ -1,6 +1,6 @@
 # Neutrino-Style Bodygraph Renderer Architecture
 
-Reference renderer: `/home/ubuntu/work/hd-bodygraph/render-pro.mjs`
+Reference renderer: `$PRISMATIC_HOME/work/hd-bodygraph/render-pro.mjs`
 
 ## Layout Specification (from May 30, 2026 pixel-level analysis of Neutrino reference)
 

@@ -4,7 +4,7 @@ When modifying a Hermes dashboard plugin (e.g., `hermes-plugin-swarm-manager`), 
 
 ## 1. Install Dependencies
 ```bash
-cd /home/ubuntu/work/prismatic-engine/plugins/hermes-plugin-<name>
+cd ${PRISMATIC_HOME}/work/prismatic-engine/plugins/hermes-plugin-<name>
 npm install
 ```
 Plugins typically depend on `webpack`, `webpack-cli`, `babel-loader`, and `@babel/preset-react`. First install may take 5-10 seconds.
@@ -20,10 +20,10 @@ This runs `webpack --mode production` and outputs to `dashboard/dist/index.js`. 
 ## 3. Deploy to Active Profile
 ```bash
 # Copy the built bundle
-cp dashboard/dist/index.js /home/ubuntu/.hermes/profiles/orchestrator/plugins/hermes-plugin-<name>/dashboard/dist/index.js
+cp dashboard/dist/index.js ${PRISMATIC_HOME}/.hermes/profiles/orchestrator/plugins/hermes-plugin-<name>/dashboard/dist/index.js
 
 # Copy the API module (if created/updated)
-cp dashboard/plugin_api.py /home/ubuntu/.hermes/profiles/orchestrator/plugins/hermes-plugin-<name>/dashboard/plugin_api.py
+cp dashboard/plugin_api.py ${PRISMATIC_HOME}/.hermes/profiles/orchestrator/plugins/hermes-plugin-<name>/dashboard/plugin_api.py
 ```
 
 ## 4. Plugin API File Pattern
@@ -57,5 +57,5 @@ api('/api/dashboard/locks').then(data => ...)
 
 ## Pitfalls
 - **node_modules must NOT be committed.** After `npm install`, only stage source files + dist + manifest — not the entire node_modules tree.
-- **The orchestrator profile is at** `/home/ubuntu/.hermes/profiles/orchestrator/` — deploy plugins here for them to be active.
-- **Plugin source lives in** `/home/ubuntu/work/prismatic-engine/plugins/` — modify source here, build, then copy to orchestrator.
+- **The orchestrator profile is at** `$PRISMATIC_HOME/.hermes/profiles/orchestrator/` — deploy plugins here for them to be active.
+- **Plugin source lives in** `$PRISMATIC_HOME/work/prismatic-engine/plugins/` — modify source here, build, then copy to orchestrator.

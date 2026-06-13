@@ -21,7 +21,7 @@ sudo pip install --break-system-packages --ignore-installed typing-extensions mc
 ```bash
 sudo -u ubuntu python3 -c "
 import sys
-sys.path.insert(0, '/home/ubuntu/work/OpenHumanDesignMCP/hd-mcp-server/src')
+sys.path.insert(0, '${PRISMATIC_HOME}/work/OpenHumanDesignMCP/hd-mcp-server/src')
 from mcp_server import get_deep_context, get_relationship_composite
 print('✅ HD MCP importable')
 "
@@ -37,5 +37,5 @@ sudo systemctl restart next-step-bot
 **Pitfalls:**
 - `pip install --user` installs to the current user's home — invisible to the systemd `ubuntu` user
 - Don't install inside a venv unless the systemd service uses that venv's python
-- The ephemeris path must be accessible: `/home/ubuntu/work/OpenHumanDesignMCP/hd-mcp-server/ephemeris/`
+- The ephemeris path must be accessible: `$PRISMATIC_HOME/work/OpenHumanDesignMCP/hd-mcp-server/ephemeris/`
 - Verify the bot's process environment: `cat /proc/<pid>/environ | tr '\0' '\n' | grep -E 'PYTHONPATH|MCP'`

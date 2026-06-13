@@ -3,7 +3,7 @@
 ## How Dedup Works
 
 The dispatcher (`agent_dispatcher.py`) uses `EventRouterDedup` backed by SQLite at:
-`/home/ubuntu/.hermes/profiles/orchestrator/state/event-router/router.db`
+`$PRISMATIC_HOME/.hermes/profiles/orchestrator/state/event-router/router.db`
 
 Table: `processed_events` — columns: `dedup_key`, `event_type`, `created_at`, `expires_at`, `metadata`
 
@@ -33,7 +33,7 @@ The dispatcher skips dedup check entirely for signal agents (line 1053 in agent_
 ```bash
 python3 -c "
 import sqlite3
-db = '/home/ubuntu/.hermes/profiles/orchestrator/state/event-router/router.db'
+db = '${PRISMATIC_HOME}/.hermes/profiles/orchestrator/state/event-router/router.db'
 conn = sqlite3.connect(db)
 conn.execute('DELETE FROM processed_events')
 conn.commit()

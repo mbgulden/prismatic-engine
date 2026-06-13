@@ -21,8 +21,8 @@ CLIENT_ID = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleuserconte
 CLIENT_SECRET = "$GOOGLE_OAUTH_CLIENT_SECRET"
 
 TOKEN_PATHS = [
-    "/home/ubuntu/.hermes/profiles/orchestrator/home/.gemini/antigravity-cli/antigravity-oauth-token",
-    "/home/ubuntu/.gemini/antigravity-cli/antigravity-oauth-token",
+    os.environ.get("PRISMATIC_HOME", "/home/ubuntu") + "/.hermes/profiles/orchestrator/home/.gemini/antigravity-cli/antigravity-oauth-token",
+    os.environ.get("PRISMATIC_HOME", "/home/ubuntu") + "/.gemini/antigravity-cli/antigravity-oauth-token",
 ]
 
 # Find first existing token file

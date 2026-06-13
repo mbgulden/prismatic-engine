@@ -11,9 +11,9 @@ For every In Progress `agent:fred` issue (excluding `requires:human-approval`):
 
 ```bash
 for id in GRO-XXXX ...; do
-  for repo in /home/ubuntu/work/prismatic-engine /home/ubuntu/work/agentic-swarm-ops \
-              /home/ubuntu/work/active-oahu-tours-mirror /home/ubuntu/work/darius-star \
-              /home/ubuntu/work/OpenHumanDesignMCP; do
+  for repo in ${PRISMATIC_HOME}/work/prismatic-engine ${PRISMATIC_HOME}/work/agentic-swarm-ops \
+              ${PRISMATIC_HOME}/work/active-oahu-tours-mirror ${PRISMATIC_HOME}/work/darius-star \
+              ${PRISMATIC_HOME}/work/OpenHumanDesignMCP; do
     git -C "$repo" log --oneline --all --grep="$id" 2>/dev/null
   done
 done

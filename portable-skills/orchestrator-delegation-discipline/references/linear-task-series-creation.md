@@ -17,7 +17,7 @@ Proven pattern for programmatically creating parent tasks and subtasks on Linear
 ```python
 import json, subprocess
 
-with open("/home/ubuntu/.hermes/profiles/orchestrator/.env") as f:
+with open(os.environ.get("PRISMATIC_HOME", "/home/ubuntu") + "/.hermes/profiles/orchestrator/.env") as f:
     for line in f:
         if line.startswith("LINEAR_API_KEY="):
             api_key = line.split("=", 1)[1].strip()
