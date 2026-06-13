@@ -92,7 +92,7 @@ To prevent runtime process modification, the executing code and the development 
 
 ### 2.2 Network and IPC Port Routing
 If the runtime daemon and test servers run concurrently, port collisions must be avoided:
-- **Production/Stable Engine Port:** `PRISMATIC_PORT=9000` (for gRPC or webhook endpoints).
+- **Production/Stable Engine Port:** `PRISMATIC_PORT=9000` (for gRPC or webhook endpoints). **Note: Phase 1 (current) — the dispatcher operates in polling mode only (Linear GraphQL API). Port 9000 binding and HTTP/gRPC server are deferred to Phase 2. The watchdog health check falls back to systemd service status.**
 - **Staging/Sandbox Test Port:** `PRISMATIC_PORT=9001` (explicitly bound during sandbox validation).
 
 ### 2.3 Executing Runtime Commands
