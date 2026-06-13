@@ -105,6 +105,11 @@ def parse_status_line(line: str) -> dict[str, Any] | None:
 
 def main() -> None:
     """Read stdin line-by-line, parse AGY status JSON, push to telemetry."""
+    # Ensure prismatic-engine is on the path (called from hook scripts)
+    _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _repo_root not in sys.path:
+        sys.path.insert(0, _repo_root)
+
     # Lazy import — defer until we need the collector
     from prismatic.telemetry import get_collector
 
