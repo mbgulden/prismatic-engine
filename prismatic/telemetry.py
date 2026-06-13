@@ -211,6 +211,76 @@ class TelemetryCollector:
         finally:
             conn.close()
 
+    def record_agent_run(
+        self,
+        run_id: str,
+        agent: str,
+        issue_id: str,
+        provider: str = "",
+        model: str | None = None,
+        status: str = "dispatched",
+        credits_spent: int = 0,
+    ) -> None:
+        """Record an agent dispatch event.
+
+        Called at dispatch time with status='dispatched'.
+        Update later with status='completed'/'failed' when the run finishes.
+        """
+        event = {
+            "run_id": run_id,
+            "agent": agent,
+            "provider": provider,
+            "model": model,
+            "issue_id": issue_id,
+            "status": status,
+            "start_time": datetime.now(timezone.utc).isoformat(),
+            "end_time": None,
+            "exit_code": None,
+            "credits_spent": credits_spent,
+            "error_message": None,
+        }
+        self._push("agent_run", event)
+
+    def update_agent_run(
+        self,
+        run_id: str,
+        status: str,
+        exit_code: int | None = None,
+        credits_spent: int = 0,
+        error_message: str | None = None,
+    ) -> None:
+        """Update an agent run record (completion/failure)."""
+        event = {
+            "run_id": run_id,
+            "status": status,
+            "end_time": datetime.now(timezone.utc).isoformat(),
+            "exit_code": exit_code,
+            "credits_spent": credits_spent,
+            "error_message": error_message,
+        }
+        self._push("agent_run_update", event)
+
+    def record_credit(
+        self,
+        run_id: str,
+        agent: str,
+        provider: str,
+        credits_spent: int,
+        model: str | None = None,
+        operation: str = "",
+    ) -> None:
+        """Record a credit expenditure in the ledger."""
+        event = {
+            "run_id": run_id,
+            "agent": agent,
+            "provider": provider,
+            "model": model,
+            "credits_spent": credits_spent,
+            "operation": operation,
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._push("credit", event)
+
     def get_dashboard_data(self, hours: int = 24) -> dict[str, Any]:
         """Query recent telemetry for dashboard display."""
         conn = sqlite3.connect(self._db_path)
@@ -320,6 +390,47 @@ class TelemetryCollector:
                             data["created_at"],
                         ),
                     )
+                elif event_type == "agent_run":
+                    conn.execute(
+                        """INSERT OR REPLACE INTO telemetry_agent_runs
+                           (run_id, agent, provider, model, issue_id,
+                            status, start_time, end_time, exit_code,
+                            credits_spent, error_message)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            data["run_id"], data["agent"],
+                            data.get("provider", ""), data.get("model"),
+                            data.get("issue_id", ""), data.get("status", "dispatched"),
+                            data["start_time"], data.get("end_time"),
+                            data.get("exit_code"), data.get("credits_spent", 0),
+                            data.get("error_message"),
+                        ),
+                    )
+                elif event_type == "agent_run_update":
+                    conn.execute(
+                        """UPDATE telemetry_agent_runs
+                           SET status = ?, end_time = ?, exit_code = ?,
+                               credits_spent = credits_spent + ?,
+                               error_message = ?
+                           WHERE run_id = ?""",
+                        (
+                            data["status"], data["end_time"],
+                            data.get("exit_code"), data.get("credits_spent", 0),
+                            data.get("error_message"), data["run_id"],
+                        ),
+                    )
+                elif event_type == "credit":
+                    conn.execute(
+                        """INSERT INTO telemetry_credit_ledger
+                           (run_id, agent, provider, model, credits_spent,
+                            operation, recorded_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            data["run_id"], data["agent"], data["provider"],
+                            data.get("model"), data["credits_spent"],
+                            data.get("operation", ""), data["recorded_at"],
+                        ),
+                    )
                 conn.commit()
             except Exception:
                 pass  # Telemetry failures must never crash the dispatcher
@@ -390,6 +501,35 @@ class TelemetryCollector:
                 );
                 CREATE INDEX IF NOT EXISTS idx_validation_run
                     ON telemetry_validation_events(run_id);
+
+                CREATE TABLE IF NOT EXISTS telemetry_agent_runs (
+                    run_id          TEXT PRIMARY KEY,
+                    agent           TEXT NOT NULL,
+                    provider        TEXT,
+                    model           TEXT,
+                    issue_id        TEXT,
+                    status          TEXT DEFAULT 'dispatched',
+                    start_time      TEXT NOT NULL,
+                    end_time        TEXT,
+                    exit_code       INTEGER,
+                    credits_spent   INTEGER DEFAULT 0,
+                    error_message   TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_agent_runs_agent
+                    ON telemetry_agent_runs(agent, start_time);
+
+                CREATE TABLE IF NOT EXISTS telemetry_credit_ledger (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id          TEXT NOT NULL,
+                    agent           TEXT NOT NULL,
+                    provider        TEXT NOT NULL,
+                    model           TEXT,
+                    credits_spent   INTEGER NOT NULL,
+                    operation       TEXT,
+                    recorded_at     TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_credit_ledger_run
+                    ON telemetry_credit_ledger(run_id);
             """)
             conn.commit()
         finally:

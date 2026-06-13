@@ -44,6 +44,7 @@ from .credit_policy_engine import (
     evaluate_agent_launch,
     AGENT_PROVIDER_MAP,
 )
+from .telemetry import get_collector
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -58,9 +59,9 @@ DEFAULT_DB_PATH: str = os.path.join(
 )
 
 # Agent binary paths — override via env vars
-AGY_PATH: str = os.environ.get("AGY_PATH", "/home/ubuntu/.local/bin/agy")
-JULES_PATH: str = os.environ.get("JULES_PATH", "/home/ubuntu/.local/bin/jules")
-CODEX_PATH: str = os.environ.get("CODEX_PATH", "/home/ubuntu/.local/bin/codex")
+AGY_PATH: str = os.environ.get("AGY_PATH", "agy")
+JULES_PATH: str = os.environ.get("JULES_PATH", "jules")
+CODEX_PATH: str = os.environ.get("CODEX_PATH", "codex")
 
 # Polling interval (seconds)
 POLL_INTERVAL: int = int(os.environ.get("PRISMATIC_POLL_INTERVAL", "30"))
@@ -1463,6 +1464,18 @@ def dispatch_once(
                         f"[dispatcher] 🚀 Dispatched {agent_name_pretty} "
                         f"→ {identifier}: {issue.get('title', '')}"
                     )
+                    # ── Telemetry: record agent run ──────────────────
+                    run_id = f"{cycle_id}-{agent_name}-{identifier}"
+                    collector = get_collector()
+                    collector.record_agent_run(
+                        run_id=run_id,
+                        agent=agent_name,
+                        issue_id=identifier,
+                        provider=AGENT_PROVIDER_MAP.get(agent_name, ""),
+                        status="dispatched",
+                        credits_spent=decision.estimated_cost,
+                    )
+                    # ── End telemetry ──────────────────────────────────
                     # Post a comment tracking the dispatch
                     try:
                         add_comment(
@@ -1527,6 +1540,8 @@ def main_loop(
     print()
 
     dedup = EventRouterDedup()
+    collector = get_collector()
+    print(f"[dispatcher] Telemetry collector active → {DEFAULT_DB_PATH}")
 
     try:
         pipelines = load_pipeline_templates()
@@ -1556,6 +1571,17 @@ def main_loop(
                 f"{counts['stale_killed']} stale killed, "
                 f"{counts['errors']} errors"
             )
+            # ── Telemetry: log cycle metrics ─────────────────────
+            if counts.get("dispatched", 0) > 0:
+                dashboard = collector.get_dashboard_data(hours=1)
+                loops = sum(r.get("cnt", 0) for r in dashboard.get("loops", []))
+                tripped = dashboard.get("breakers_tripped", 0)
+                if loops or tripped:
+                    print(
+                        f"[telemetry] Last hour: {loops} loop events, "
+                        f"{tripped} breaker(s) tripped"
+                    )
+            # ── End telemetry ─────────────────────────────────────
         except KeyboardInterrupt:
             print("\n[dispatcher] Interrupted — shutting down")
             break
