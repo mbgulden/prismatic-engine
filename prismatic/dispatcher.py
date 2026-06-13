@@ -539,11 +539,109 @@ def signal_kai(
     )
 
 
+def _resolve_hook_path() -> str:
+    """Resolve the path to the AGY statusline hook script."""
+    # Look relative to this file, then via PRISMATIC_ENGINE env
+    candidates = [
+        os.path.join(os.path.dirname(__file__), "core/telemetry/agy_hook.sh"),
+        os.path.join(os.path.dirname(__file__), "..", "core", "telemetry", "agy_hook.sh"),
+        os.path.join(
+            os.environ.get("PRISMATIC_ENGINE", ""),
+            "prismatic", "core", "telemetry", "agy_hook.sh",
+        ),
+        os.path.join(
+            os.environ.get("PRISMATIC_ENGINE", ""),
+            "core", "telemetry", "agy_hook.sh",
+        ),
+    ]
+    for candidate in candidates:
+        norm = os.path.normpath(candidate)
+        if os.path.isfile(norm) and os.access(norm, os.X_OK):
+            return norm
+    return os.path.normpath(candidates[0])  # Default to first candidate
+
+
+def _record_agy_started(issue_id: str, run_id: str) -> None:
+    """Record a telemetry agent_run 'started' event for AGY."""
+    try:
+        from .telemetry import get_collector
+        collector = get_collector()
+        collector.record_agent_run(
+            run_id=run_id,
+            agent="agy",
+            issue_id=issue_id,
+            provider="google-antigravity",
+            status="started",
+        )
+    except Exception:
+        pass  # Telemetry is best-effort at subprocess launch
+
+
+def _record_agy_exit(issue_id: str, run_id: str, returncode: int | None) -> None:
+    """Record a telemetry agent_run completion/failure event for AGY."""
+    try:
+        from .telemetry import get_collector
+        collector = get_collector()
+        status = "completed" if returncode == 0 else "failed"
+        collector.update_agent_run(
+            run_id=run_id,
+            status=status,
+            exit_code=returncode or 0,
+        )
+    except Exception:
+        pass  # Telemetry is best-effort
+
+
+def _pipe_agy_through_hook(
+    agy_proc: subprocess.Popen,
+    hook_path: str,
+    issue_id: str,
+    run_id: str,
+) -> None:
+    """Background thread: pipe AGY stdout through the hook, then
+    record the exit telemetry when the pipeline completes."""
+    try:
+        hook_proc = subprocess.Popen(
+            [hook_path, "--issue", issue_id] if issue_id else [hook_path],
+            stdin=agy_proc.stdout,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+        # Close the pipe in the parent so the hook sees EOF when AGY finishes
+        if agy_proc.stdout:
+            agy_proc.stdout.close()
+
+        hook_proc.wait()
+        hook_stderr = hook_proc.stderr.read().decode(errors="replace") if hook_proc.stderr else ""
+
+        agy_proc.wait()
+        _record_agy_exit(issue_id, run_id, agy_proc.returncode)
+
+        if hook_proc.returncode != 0:
+            print(
+                f"[dispatcher] AGY hook (pid={hook_proc.pid}) exited "
+                f"with code {hook_proc.returncode}: {hook_stderr[:500]}"
+            )
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"[dispatcher] AGY hook pipe failed: {exc}")
+        # Ensure AGY is still waited on even if hook fails
+        if agy_proc.poll() is None:
+            agy_proc.wait()
+
+
+def _make_run_id(prefix: str = "agy") -> str:
+    """Generate a unique run ID for telemetry tracking."""
+    from datetime import datetime
+    return f"{prefix}-{datetime.now().strftime('%Y%m%d_%H%M%S')}-{os.getpid()}"
+
+
 def launch_agy(issue_id: str, task: str = "") -> subprocess.Popen | None:
     """Launch the AGY CLI in headless mode for the given issue.
 
-    The AGY process is started as a background subprocess with the
-    issue ID passed via the ``--issue`` flag.
+    The AGY process is started as a background subprocess. Its stdout
+    is piped through the AGY statusline hook script which feeds
+    structured telemetry into the Prismatic observability system.
+    A watcher thread records completion/failure telemetry on exit.
 
     Args:
         issue_id: Linear issue UUID or identifier.
@@ -556,6 +654,10 @@ def launch_agy(issue_id: str, task: str = "") -> subprocess.Popen | None:
         print(f"[dispatcher] AGY binary not found at {AGY_PATH}")
         return None
 
+    run_id = _make_run_id()
+    hook_path = _resolve_hook_path()
+    hook_exists = os.path.isfile(hook_path) and os.access(hook_path, os.X_OK)
+
     try:
         cmd = [
             AGY_PATH,
@@ -565,14 +667,48 @@ def launch_agy(issue_id: str, task: str = "") -> subprocess.Popen | None:
         if task:
             cmd.extend(["--task", task])
 
+        # Always capture stdout for the telemetry hook.
+        # If the hook script exists, pipe AGY's output through it.
+        # If not, stdout still goes to PIPE (consumed by a watcher)
+        # to prevent pipe-buffer deadlock.
         proc = subprocess.Popen(
             cmd,
-            stdout=subprocess.DEVNULL,
+            stdout=subprocess.PIPE if hook_exists else subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
             env=HEADLESS_ENV,
         )
-        print(f"[dispatcher] Launched AGY (pid={proc.pid}) for issue {issue_id}")
+
+        # Record the start of the run
+        _record_agy_started(issue_id, run_id)
+
+        # Pipe AGY's stdout through the telemetry hook
+        if hook_exists:
+            t = threading.Thread(
+                target=_pipe_agy_through_hook,
+                args=(proc, hook_path, issue_id, run_id),
+                daemon=True,
+            )
+            t.start()
+        else:
+            print(
+                f"[dispatcher] AGY hook not found at {hook_path} — "
+                f"telemetry recording disabled"
+            )
+            # Still wait for exit in a background thread for exit telemetry
+            t = threading.Thread(
+                target=lambda: (
+                    proc.wait(),
+                    _record_agy_exit(issue_id, run_id, proc.returncode),
+                ),
+                daemon=True,
+            )
+            t.start()
+
+        print(
+            f"[dispatcher] Launched AGY (pid={proc.pid}, "
+            f"run={run_id}) for issue {issue_id}"
+        )
         return proc
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"[dispatcher] Failed to launch AGY: {exc}")
