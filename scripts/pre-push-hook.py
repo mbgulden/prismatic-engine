@@ -26,7 +26,8 @@ from pathlib import Path
 from typing import Any
 
 # ── Constants ──────────────────────────────────────────
-LOCK_FILE = Path("/home/ubuntu/.antigravity/swarm_locks.json")
+PRISMATIC_HOME = os.environ.get('PRISMATIC_HOME', '/home/ubuntu')
+LOCK_FILE = Path(PRISMATIC_HOME) / '.antigravity' / 'swarm_locks.json'
 STALE_TTL_MS = 300_000  # 5 minutes
 GOVERNOR_AGENT = "fred"
 STAGING_BRANCH = "deploy-fresh"
