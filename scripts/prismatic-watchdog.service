@@ -1,0 +1,12 @@
+[Unit]
+Description=Prismatic Engine Watchdog — Health Monitor
+After=prismatic-dispatcher.service
+BindsTo=prismatic-dispatcher.service
+
+[Service]
+Type=oneshot
+ExecStart=/home/ubuntu/work/prismatic-engine/scripts/watchdog.sh
+Environment=PRISMATIC_HOME=/home/ubuntu
+Environment=PATH=/home/ubuntu/.local/bin:/usr/local/bin:/usr/bin:/bin
+StandardOutput=append:/home/ubuntu/.prismatic/logs/watchdog.log
+StandardError=append:/home/ubuntu/.prismatic/logs/watchdog.log

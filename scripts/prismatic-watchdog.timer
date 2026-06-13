@@ -1,0 +1,12 @@
+[Unit]
+Description=Prismatic Engine Watchdog Timer — 60s Health Checks
+Requires=prismatic-dispatcher.service
+
+[Timer]
+OnBootSec=120
+OnUnitActiveSec=60
+AccuracySec=5
+Persistent=true
+
+[Install]
+WantedBy=timers.target
