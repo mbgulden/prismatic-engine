@@ -45,7 +45,7 @@ agents:
     branch_prefix: "ned/"
 
 locks:
-  file: "/home/ubuntu/.antigravity/swarm_locks.json"
+  file: "${PRISMATIC_HOME}/.antigravity/swarm_locks.json"
   heartbeat_interval_s: 60
   heartbeat_ttl_ms: 300000  # 5-minute stale timeout
 
