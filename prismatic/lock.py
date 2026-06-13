@@ -12,7 +12,7 @@ Usage:
     prismatic-lock heartbeat <file> <agent> # Refresh heartbeat
 
 Config:
-    Lock registry: /home/ubuntu/.antigravity/swarm_locks.json
+    Lock registry: $PRISMATIC_HOME/.antigravity/swarm_locks.json
     Stale TTL: 300000ms (5 minutes) — from PRISMATIC_ENGINE.yaml
 """
 
@@ -30,7 +30,8 @@ from pathlib import Path
 from typing import Any
 
 # ── Constants ──────────────────────────────────────────
-LOCK_FILE = Path("/home/ubuntu/.antigravity/swarm_locks.json")
+_PRISMATIC_HOME = Path(os.environ.get("PRISMATIC_HOME", "/home/ubuntu"))
+LOCK_FILE = _PRISMATIC_HOME / ".antigravity" / "swarm_locks.json"
 STALE_TTL_MS = 300_000  # 5 minutes
 
 

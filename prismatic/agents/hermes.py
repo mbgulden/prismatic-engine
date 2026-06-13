@@ -117,7 +117,7 @@ class HermesAgent(BaseAgent):
         """Discover workspace context from the filesystem.
 
         Checks common Hermes workspace locations:
-        - ``/home/ubuntu/work/`` — primary workspace
+        - ``$PRISMATIC_HOME/work/`` — primary workspace
         - ``/workspace/`` — container workspace
         - A ``PRISMATIC_WORKSPACE`` env var
 
@@ -137,8 +137,9 @@ class HermesAgent(BaseAgent):
             return context
 
         # Check common locations
+        prismatic_home = os.environ.get("PRISMATIC_HOME", "/home/ubuntu")
         for candidate in [
-            Path("/home/ubuntu/work"),
+            Path(prismatic_home) / "work",
             Path("/workspace"),
             Path(".").resolve(),
         ]:
