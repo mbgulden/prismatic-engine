@@ -1,0 +1,61 @@
+# Prismatic Engine — Default Configuration Template
+# This file is the canonical schema. User overrides live at:
+#   $PRISMATIC_HOME/.prismatic/config.yaml
+#
+# prismatic-admin config migrate --current <user_config> merges
+# new defaults from this file while preserving user-set values.
+
+# ── Agent Identity ──────────────────────────────────────
+agent:
+  name: "orchestrator"
+  profile_dir: "~/.hermes/profiles/orchestrator"
+
+# ── Workspace Governance ────────────────────────────────
+governance:
+  lock_registry: "~/.antigravity/swarm_locks.json"
+  lock_ttl_ms: 300000
+  staging_branch: "deploy-fresh"
+  production_branch: "main"
+
+# ── Lane Definitions ────────────────────────────────────
+# Which agent owns which paths. Agents can only write to files within their lanes.
+lanes:
+  fred:
+    - "src/"
+    - "infra/"
+    - "deploy/"
+    - ".github/"
+  ned:
+    - "scripts/"
+    - "prismatic/"
+    - "plugins/"
+    - "src/"
+    - "tests/"
+  agy:
+    - "research/"
+    - "assets/"
+  kai:
+    - "content/"
+    - "active-oahu/"
+  jules:
+    - "src/"
+    - "tests/"
+
+# ── Pipeline Configuration ──────────────────────────────
+pipeline:
+  enabled: true
+  stages: ["lint", "test", "deploy"]
+  timeout_seconds: 600
+  require_concurrent_runs: false
+
+# ── Logging ─────────────────────────────────────────────
+logging:
+  level: "INFO"
+  format: "json"
+  output: "~/.prismatic/logs/engine.log"
+
+# ── Database ────────────────────────────────────────────
+database:
+  path: "~/.prismatic/db/event_router.db"
+  backup_enabled: true
+  backup_interval_hours: 24

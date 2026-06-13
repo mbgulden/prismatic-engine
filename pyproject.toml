@@ -43,6 +43,7 @@ Documentation = "https://github.com/mbgulden/prismatic-engine"
 prismatic-engine = "prismatic.dispatcher:main"
 prismatic-engine-skills = "prismatic.skills:cli_skills"
 prismatic-lock = "prismatic.lock:main"
+prismatic-admin = "prismatic.admin:main"
 
 [tool.setuptools.packages.find]
 include = ["prismatic*"]
