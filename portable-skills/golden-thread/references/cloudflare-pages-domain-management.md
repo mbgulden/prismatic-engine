@@ -12,7 +12,7 @@ curl -s "https://api.cloudflare.com/client/v4/..." \
   -H "Content-Type: application/json"
 ```
 
-**Pitfall:** `curl -H "Authorization: Bearer $CLOUDFLARE_API_KEY"` will fail with `6003: Invalid format for Authorization header`. The token verification endpoint (`/user/tokens/verify`) requires Bearer auth — it will reject Global Keys. Test auth by querying zones instead.
+**Pitfall:** Sending an authenticated API request with Bearer auth to the token verification endpoint will fail with `6003: Invalid format for Authorization header`. The token verification endpoint (`/user/tokens/verify`) requires Bearer auth — it will reject Global Keys. Test auth by querying zones instead.
 
 **Account ID:** `196c1798da487413b0281ccc570f05a1` (Michael's account)
 

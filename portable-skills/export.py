@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Prismatic Engine: Portable Skills Export Script
-Copies the 7 selected skills from the orchestrator profile to the shareable bundle,
+Copies the 19 selected skills from the orchestrator profile to the shareable bundle,
 including references, templates, and scripts, and writes the quality metadata.
 """
 
@@ -67,6 +67,102 @@ SKILLS_CONFIG = {
             "rating": 4,
             "dependencies": ["himalaya"],
             "compatibility_notes": "Requires the himalaya binary in the system PATH. Works across Linux, macOS, and Windows."
+        }
+    },
+    "linear": {
+        "source_subpath": "productivity/linear",
+        "quality": {
+            "rating": 5,
+            "dependencies": ["curl", "python3"],
+            "compatibility_notes": "Requires LINEAR_API_KEY env var. Works on any platform with curl and Python."
+        }
+    },
+    "agy-oauth-authentication": {
+        "source_subpath": "agent-orchestration/agy-oauth-authentication",
+        "quality": {
+            "rating": 4,
+            "dependencies": ["agy"],
+            "compatibility_notes": "Requires Google Antigravity CLI (agy). OAuth browser flow needs desktop environment."
+        }
+    },
+    "agent-ned": {
+        "source_subpath": "agent-orchestration/agent-ned",
+        "quality": {
+            "rating": 5,
+            "dependencies": ["linear", "git", "python3"],
+            "compatibility_notes": "Primary executor agent. Requires Linear API, git, and Python 3.10+."
+        }
+    },
+    "cloudflare-deployment": {
+        "source_subpath": "infrastructure/cloudflare-deployment",
+        "quality": {
+            "rating": 4,
+            "dependencies": ["wrangler", "node"],
+            "compatibility_notes": "Requires Cloudflare Wrangler CLI and Node.js."
+        }
+    },
+    "credential-security-and-git-hygiene": {
+        "source_subpath": "engineering/credential-security-and-git-hygiene",
+        "quality": {
+            "rating": 5,
+            "dependencies": ["git", "gitleaks"],
+            "compatibility_notes": "Cross-platform. Requires gitleaks for secret scanning."
+        }
+    },
+    "expert-interview-content-production": {
+        "source_subpath": "content-strategy/expert-interview-content-production",
+        "quality": {
+            "rating": 4,
+            "dependencies": ["pandoc", "python3"],
+            "compatibility_notes": "Requires pandoc for PDF conversion. Works on Linux/macOS."
+        }
+    },
+    "daily-transit-briefing": {
+        "source_subpath": "human-design/daily-transit-briefing",
+        "quality": {
+            "rating": 4,
+            "dependencies": ["python3"],
+            "compatibility_notes": "Requires Human Design computation engine. Linux/macOS compatible."
+        }
+    },
+    "human-design-computation": {
+        "source_subpath": "human-design/human-design-computation",
+        "quality": {
+            "rating": 5,
+            "dependencies": ["python3", "swisseph"],
+            "compatibility_notes": "Requires Swiss Ephemeris library. Linux/macOS compatible."
+        }
+    },
+    "next-step-bot": {
+        "source_subpath": "next-step-bot",
+        "quality": {
+            "rating": 4,
+            "dependencies": ["python3", "telegram"],
+            "compatibility_notes": "Requires Telegram Bot API token. Linux/macOS compatible."
+        }
+    },
+    "aot-agent-coordination": {
+        "source_subpath": "content-strategy/aot-agent-coordination",
+        "quality": {
+            "rating": 4,
+            "dependencies": [],
+            "compatibility_notes": "Coordination protocol skill. Pure documentation — 100% portable."
+        }
+    },
+    "prismatic-agent-factory": {
+        "source_subpath": "agent-orchestration/prismatic-agent-factory",
+        "quality": {
+            "rating": 4,
+            "dependencies": ["python3"],
+            "compatibility_notes": "Reusable agent factory pattern. Linux/macOS compatible."
+        }
+    },
+    "kai-css-agent": {
+        "source_subpath": "agent-orchestration/kai-css-agent",
+        "quality": {
+            "rating": 4,
+            "dependencies": [],
+            "compatibility_notes": "CSS/styling specialist agent skill. Pure documentation — 100% portable."
         }
     }
 }

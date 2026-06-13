@@ -21,7 +21,9 @@ registry  sub-agents   strategy    direct fix  structured
 
 ## Phase 2: RESEARCH (Sub-agents, NOT AGY)
 
-**CRITICAL:** AGY `--print` with web research consistently times out. Use `delegate_task` with `toolsets: ['web', 'terminal']` instead. Proven 3/3 successful on June 8, 2026.
+**⚠️ Phase 0 CHECK FIRST:** Before launching sub-agents, check if the research already exists on disk. Use the Phase 0 artifact check from `agy-research-strategist`. If the project has 10+ research files including a gap analysis document, **skip Phase 2 entirely** and go to Phase 3 (synthesize directly from existing artifacts). The daily pipeline does not require fresh research every run — it requires forward momentum. Re-researching a well-researched project wastes 5+ minutes and produces zero new value.
+
+**Real case (Jun 2026):** AI Consulting — Phase 0 found 50+ artifacts including a 286-line gap analysis. Skipped Phase 2. Built recruiting pipeline directly from artifacts. Saved 5+ minutes vs. launching sub-agents.
 
 Launch 3 sub-agents in parallel:
 1. **Assumption Challenge** — "Challenge these assumptions with real evidence. Search competitor sites, pricing pages, forums."

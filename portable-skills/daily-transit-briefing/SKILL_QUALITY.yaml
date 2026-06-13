@@ -1,0 +1,4 @@
+rating: 4
+dependencies:
+- python3
+compatibility_notes: Requires Human Design computation engine. Linux/macOS compatible.

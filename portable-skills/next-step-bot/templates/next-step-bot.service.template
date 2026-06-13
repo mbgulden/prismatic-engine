@@ -1,0 +1,17 @@
+[Unit]
+Description=Next Step Bot — {USER} ({HD_NOTES})
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/work/next-step-{user}
+EnvironmentFile=/home/ubuntu/work/next-step-{user}/.env
+ExecStart=/home/ubuntu/.local/share/pipx/venvs/hermes-agent/bin/python /home/ubuntu/work/next-step-{user}/bot.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

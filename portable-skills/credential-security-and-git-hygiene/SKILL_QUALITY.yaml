@@ -1,0 +1,5 @@
+rating: 5
+dependencies:
+- git
+- gitleaks
+compatibility_notes: Cross-platform. Requires gitleaks for secret scanning.

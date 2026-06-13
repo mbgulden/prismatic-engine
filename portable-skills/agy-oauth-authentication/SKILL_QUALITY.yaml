@@ -1,0 +1,5 @@
+rating: 4
+dependencies:
+- agy
+compatibility_notes: Requires Google Antigravity CLI (agy). OAuth browser flow needs
+  desktop environment.

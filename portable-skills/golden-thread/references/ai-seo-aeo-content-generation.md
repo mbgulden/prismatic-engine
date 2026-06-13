@@ -39,6 +39,7 @@ Combine research outputs into:
    - 3-6 Q&A pairs per page
    - Questions mirror AEO block H2s
    - Answers are condensed 1-2 sentence versions of AEO blocks
+   - **For programmatic injection into existing pages** (extract visible FAQ → generate matching JSON-LD → insert in `<head>`), see `references/faqpage-schema-injection.md` — handles `<h3>`/`<h4>` variation, insertion point detection, and idempotent re-runs.
 
 3. **Statistical Density Table**:
    - 15-20 verifiable statistics with sources

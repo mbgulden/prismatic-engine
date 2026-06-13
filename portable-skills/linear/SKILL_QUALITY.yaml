@@ -1,0 +1,6 @@
+rating: 5
+dependencies:
+- curl
+- python3
+compatibility_notes: Requires LINEAR_API_KEY env var. Works on any platform with curl
+  and Python.

@@ -1,0 +1,7 @@
+rating: 5
+dependencies:
+- linear
+- git
+- python3
+compatibility_notes: Primary executor agent. Requires Linear API, git, and Python
+  3.10+.

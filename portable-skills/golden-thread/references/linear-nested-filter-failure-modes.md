@@ -69,7 +69,7 @@ query($tid: String!) {
 2. If 500, try `first: 30` on same project query
 3. If still 500, try `team(id:...){ issues(first: 30) }` → filter client-side by project ID
 4. If ALL fail, verify with `{ viewer { id } }` — if viewer returns 200, API is up and the issue is query structure
-5. Use `curl` instead of Python `urllib` to rule out Python-specific issues: `curl -s -H "Authorization: $LINEAR_API_KEY" -H "Content-Type: application/json" -d '...' https://api.linear.app/graphql`
+5. Use the Linear API directly to rule out Python-specific issues — send an authenticated POST to the GraphQL endpoint with the query.
 
 ## Client-Side Filter Pattern
 ```python

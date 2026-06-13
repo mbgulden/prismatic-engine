@@ -1,0 +1,5 @@
+rating: 4
+dependencies:
+- python3
+- telegram
+compatibility_notes: Requires Telegram Bot API token. Linux/macOS compatible.

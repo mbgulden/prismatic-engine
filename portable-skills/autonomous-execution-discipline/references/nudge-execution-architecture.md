@@ -94,5 +94,6 @@ See `~/work/prismatic-engine-staging/prismatic/nudge_executor.py`.
 ## Key Pitfalls
 
 - **Never replace execution with notification**: Detection ≠ execution. Both crons required.
+- **Nudge poller must NEVER auto-complete tasks (CRITICAL — Jun 2026):** A signal-polling agent that transitions `agent:<target>` → `agent:done` on nudge receipt is auto-completing work without execution. The poller's job is to ROUTE, not to complete. Only the execution agent (after explicit verification) marks Done. See `references/signal-agent-never-auto-complete.md` for the full pattern with the Kai nudge_poller.py case study. Signs of this bug: poller posts "✅ completed processing" without doing work, or issues arrive Done that were never touched.
 - **Nudge file path migration**: SignalProvider writes to `/tmp/prismatic/nudge-*`. Agents that poll `/tmp/nudge-*` won't see them. Old backward-compat shim has been removed — all consumers must read the new path.
 - **Model selection**: Nudge Executor uses `deepseek-v4-flash` (cheapest cloud). When GPU node `100.78.237.7` is online, switch to `qwen3:32b` (free, unlimited). Never use `deepseek-v4-pro` for cron tasks.

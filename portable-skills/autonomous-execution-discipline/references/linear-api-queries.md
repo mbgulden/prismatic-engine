@@ -6,7 +6,7 @@ Quick-reference for querying Linear issues via the GraphQL API. Keep this handy 
 
 ```
 POST https://api.linear.app/graphql
-Authorization: lin_api_PLACEHOLDER_KEY_HERE
+Authorization: $LINEAR_API_KEY
 Content-Type: application/json
 ```
 

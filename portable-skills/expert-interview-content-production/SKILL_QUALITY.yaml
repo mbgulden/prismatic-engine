@@ -1,0 +1,5 @@
+rating: 4
+dependencies:
+- pandoc
+- python3
+compatibility_notes: Requires pandoc for PDF conversion. Works on Linux/macOS.

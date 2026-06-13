@@ -1,0 +1,4 @@
+rating: 4
+dependencies:
+- python3
+compatibility_notes: Reusable agent factory pattern. Linux/macOS compatible.

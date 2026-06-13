@@ -1,0 +1,5 @@
+rating: 5
+dependencies:
+- python3
+- swisseph
+compatibility_notes: Requires Swiss Ephemeris library. Linux/macOS compatible.
