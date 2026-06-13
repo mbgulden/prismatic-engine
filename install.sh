@@ -79,7 +79,7 @@ fi
 ok "Prismatic Engine installed ($INSTALL_METHOD)"
 
 # ── Create default config directory ─────────────────────────
-CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/prismatic"
+CONFIG_DIR="${PRISMATIC_HOME:-$HOME}/.prismatic"
 if [ ! -d "$CONFIG_DIR" ]; then
     mkdir -p "$CONFIG_DIR"
     info "Created config directory: $CONFIG_DIR"
