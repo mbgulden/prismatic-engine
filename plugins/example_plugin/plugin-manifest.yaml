@@ -1,0 +1,31 @@
+# Schema version meta-information
+schema_version: "1.0.0"
+
+# Unique identifier (alphanumeric, lowercase, dashes/underscores)
+name: "example-plugin"
+
+# Semantic version of the plugin
+version: "1.0.0"
+
+# Short summary of capabilities
+description: "Reference example plugin demonstrating the PrismaticPlugin ABC contract and manifest schema. Does nothing — exists purely as a template for new plugin authors."
+
+# Author identity
+author: "Ned (agent:ned)"
+
+# Fully qualified Python class path acting as the entry point
+entry_point: "example_plugin.plugin:ExamplePlugin"
+
+# SemVer range for supported core engine versions
+core_version_constraint: ">=1.0.0, <2.0.0"
+
+# External dependencies
+dependencies:
+  pip: []
+
+# Custom persona extensions (none — this is an example)
+personas: []
+
+# Lifecycle hooks subscribed to
+hooks:
+  - "on_init"
