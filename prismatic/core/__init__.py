@@ -19,9 +19,21 @@ __all__ = [
     "SecurityException",
     "SwarmLockManager",
     "Dispatcher",
+    "CircuitBreakerRouter",
+    "get_router",
+    "check_and_route_agy",
+    "CircuitBreakerState",
+    "MODEL_PRIORITY_CHAIN",
 ]
 
 from .registry import PluginLoader
 from .contracts import validate_path, SecurityException
 from .locking import SwarmLockManager
 from .dispatcher import Dispatcher
+from .router import (
+    CircuitBreakerRouter,
+    get_router,
+    check_and_route_agy,
+    CircuitBreakerState,
+    MODEL_PRIORITY_CHAIN,
+)

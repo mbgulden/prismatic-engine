@@ -555,6 +555,11 @@ def launch_agy(issue_id: str, task: str = "") -> subprocess.Popen | None:
     The AGY process is started as a background subprocess with the
     issue ID passed via the ``--issue`` flag.
 
+    Before launching, the :class:`CircuitBreakerRouter` checks live
+    telemetry for cooldown timers and quota exhaustion signals.  If
+    the circuit is open, the ``--model`` flag is rewritten to use a
+    fallback model from the priority chain.
+
     Args:
         issue_id: Linear issue UUID or identifier.
         task: Optional task description.
@@ -574,6 +579,20 @@ def launch_agy(issue_id: str, task: str = "") -> subprocess.Popen | None:
         ]
         if task:
             cmd.extend(["--task", task])
+
+        # ── Circuit breaker: check live telemetry for quota/cooldown ──
+        try:
+            from prismatic.core.router import check_and_route_agy
+            cmd, cb_state = check_and_route_agy(issue_id, cmd)
+            if cb_state.fallback_applied:
+                print(
+                    f"[dispatcher] Circuit breaker: {issue_id} → "
+                    f"model={cb_state.recommended_model} "
+                    f"(reason: {cb_state.fallback_reason})"
+                )
+        except Exception as exc:
+            # Circuit breaker failure is non-fatal — launch with defaults
+            print(f"[dispatcher] Circuit breaker check failed: {exc}")
 
         proc = subprocess.Popen(
             cmd,
