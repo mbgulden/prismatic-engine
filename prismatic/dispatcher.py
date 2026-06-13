@@ -650,17 +650,19 @@ AGENT_LAUNCHERS: dict[str, Callable[..., Any]] = {
 def load_pipeline_templates(config_path: str = "") -> dict[str, Any]:
     """Load pipeline definitions from a YAML/JSON config file.
 
-    The default config path is ``./config/agents.yaml``, overridable
-    via the ``PRISMATIC_PIPELINE_CONFIG`` env var.
+    The default config path is ``~/.config/prismatic/pipelines.yaml``, 
+    overridable via the ``PRISMATIC_PIPELINE_CONFIG`` env var.
 
     Delegates to :func:`prismatic.router.load_pipeline_templates`.
     """
     from .router import load_pipeline_templates as _load
 
+    default_config = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "prismatic" / "pipelines.yaml"
+    
     path = (
         config_path
         or os.environ.get("PRISMATIC_PIPELINE_CONFIG")
-        or os.path.join(os.path.dirname(__file__), "..", "config", "agents.yaml")
+        or str(default_config)
     )
     return _load(path)
 
@@ -1383,11 +1385,6 @@ def dispatch_once(
 
     # 2. Dispatch to each agent
     for agent_name, config in AGENT_CONFIG.items():
-        if config.get("mode") == "signal":
-            # Signal-based agents (fred, kai) — only dispatch if
-            # they have pending work nudges
-            continue  # Signal providers handle their own dispatch
-
         label = f"agent::{agent_name}"
         try:
             issues = get_issues_with_label(label)
@@ -1576,50 +1573,117 @@ def main_loop(
     print("[dispatcher] Shutdown complete")
 
 
+def init_config(force: bool = False) -> None:
+    """Initialize default configuration files in the user's config directory."""
+    config_dir = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "prismatic"
+    config_dir.mkdir(parents=True, exist_ok=True)
+
+    template_dir = Path(__file__).parent / "templates" / "config"
+    if not template_dir.is_dir():
+        print(f"[dispatcher] Error: Template directory not found at {template_dir}")
+        return
+
+    copied = 0
+    skipped = 0
+    for template_file in template_dir.glob("*.yaml"):
+        target_file = config_dir / template_file.name
+        if target_file.exists() and not force:
+            print(f"[dispatcher] Skipping existing config: {target_file}")
+            skipped += 1
+            continue
+        
+        try:
+            import shutil
+            shutil.copy2(template_file, target_file)
+            print(f"[dispatcher] Initialized {target_file}")
+            copied += 1
+        except OSError as exc:
+            print(f"[dispatcher] Error copying {template_file.name}: {exc}")
+
+    print(f"\n[dispatcher] Initialization complete: {copied} copied, {skipped} skipped.")
+    print(f"[dispatcher] Config directory: {config_dir}")
+
+
 def main() -> None:
     """Entry point: parse CLI arguments and start the dispatcher.
 
     Supports:
-        ``--once``    Run a single dispatch cycle and exit.
-        ``--interval N``  Override the poll interval.
-        ``--help``    Show usage.
+        ``serve``     Start the dispatcher event loop.
+        ``init``      Initialize default configuration files.
         ``skills``    Skill marketplace subcommands.
+        ``--help``    Show usage.
+
+    Legacy Support (for backward compatibility):
+        ``--once``, ``--interval``, ``--setup-pipelines`` work as before.
     """
     import argparse
 
-    # ── Delegate to skills subcommand early ───────────────────
-    if len(sys.argv) > 1 and sys.argv[1] == "skills":
-        from .skills import cli_skills
-        sys.exit(cli_skills(sys.argv[2:]))
+    # ── Legacy support: Rewrite sys.argv ─────────────────────────
+    # If the first argument is a legacy flag, insert 'serve' before it.
+    legacy_flags = {"--once", "--interval", "--setup-pipelines"}
+    if len(sys.argv) > 1 and sys.argv[1] in legacy_flags:
+        sys.argv.insert(1, "serve")
 
     parser = argparse.ArgumentParser(
         description="Prismatic Engine — agent orchestration dispatcher",
     )
-    parser.add_argument(
+    subparsers = parser.add_subparsers(dest="command", help="Subcommand to run")
+
+    # ── Serve Subcommand ──────────────────────────────────────
+    serve_parser = subparsers.add_parser("serve", help="Start the dispatcher event loop")
+    serve_parser.add_argument(
         "--once",
         action="store_true",
         help="Run a single dispatch cycle and exit",
     )
-    parser.add_argument(
+    serve_parser.add_argument(
         "--interval",
         type=int,
         default=POLL_INTERVAL,
         help=f"Poll interval in seconds (default: {POLL_INTERVAL})",
     )
-    parser.add_argument(
+    serve_parser.add_argument(
         "--setup-pipelines",
         action="store_true",
         help="Run pipeline setup on all matching issues, then exit",
     )
 
+    # ── Init Subcommand ───────────────────────────────────────
+    init_parser = subparsers.add_parser("init", help="Initialize default configuration files")
+    init_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing configuration files",
+    )
+
+    # ── Skills Subcommand ─────────────────────────────────────
+    subparsers.add_parser("skills", help="Skill marketplace subcommands (run 'skills --help' for details)")
+
+    # ── Help / No Command ─────────────────────────────────────
+    if len(sys.argv) == 1:
+        parser.print_help()
+        sys.exit(0)
+
+    # Handle 'skills' early to delegate to skills.py
+    if sys.argv[1] == "skills":
+        from .skills import cli_skills
+        sys.exit(cli_skills(sys.argv[2:]))
+
     args = parser.parse_args()
 
-    if args.setup_pipelines:
-        issues = setup_pipeline_issues()
-        print(f"Set up {len(issues)} pipeline issues")
-        return
-
-    main_loop(interval=args.interval, once=args.once)
+    if args.command == "init":
+        init_config(force=args.force)
+    elif args.command == "serve":
+        if args.setup_pipelines:
+            issues = setup_pipeline_issues()
+            print(f"Set up {len(issues)} pipeline issues")
+            return
+        main_loop(interval=args.interval, once=args.once)
+    else:
+        # Default fallback
+        if args.command is None:
+            print("Please specify a command: serve, init, or skills.")
+            parser.print_help()
 
 
 # ═══════════════════════════════════════════════════════════════

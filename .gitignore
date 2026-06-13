@@ -16,6 +16,11 @@ env/
 .DS_Store
 Thumbs.db
 
+# Prismatic State
+prismatic_state/
+/tmp/prismatic/
+/tmp/pipeline_metrics.jsonl
+
 # Config overrides
 config.local.yaml
 .gdocs_token.json

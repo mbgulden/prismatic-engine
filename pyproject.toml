@@ -49,4 +49,4 @@ prismatic-admin = "prismatic.admin:main"
 include = ["prismatic*"]
 
 [tool.setuptools.package-data]
-prismatic = ["skills/**/*"]
+prismatic = ["skills/**/*", "templates/**/*"]

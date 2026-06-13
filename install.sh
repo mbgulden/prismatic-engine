@@ -48,10 +48,10 @@ if ! command -v python3 &> /dev/null; then
     exit 1
 fi
 
-PYTHON_VERSION=$(python3 --version 2>&1 | grep -oP '\d+\.\d+' | head -1)
+PYTHON_VERSION=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
 REQUIRED_VERSION="3.10"
 if [ "$(printf '%s\n' "$REQUIRED_VERSION" "$PYTHON_VERSION" | sort -V | head -1)" != "$REQUIRED_VERSION" ]; then
-    err "Python $REQUIRED_VERSION+ required.  Found: $(python3 --version)"
+    err "Python $REQUIRED_VERSION+ required.  Found: $PYTHON_VERSION"
     exit 1
 fi
 ok "Python $PYTHON_VERSION"
@@ -85,17 +85,48 @@ if [ ! -d "$CONFIG_DIR" ]; then
     info "Created config directory: $CONFIG_DIR"
 fi
 
-# Copy default config files if they exist alongside the script
-for cfg in agents.yaml workspaces.yaml router.yaml; do
-    if [ -f "$SCRIPT_DIR/config/$cfg" ]; then
-        if [ ! -f "$CONFIG_DIR/$cfg" ]; then
-            cp "$SCRIPT_DIR/config/$cfg" "$CONFIG_DIR/$cfg"
-            ok "Copied $cfg to $CONFIG_DIR/"
-        else
-            warn "$CONFIG_DIR/$cfg already exists — skipping"
-        fi
-    fi
-done
+# ── Initialize default config ───────────────────────────────
+info "Initializing default configuration..."
+if command -v prismatic-engine &> /dev/null; then
+    prismatic-engine init
+elif [ -f "$HOME/.local/bin/prismatic-engine" ]; then
+    "$HOME/.local/bin/prismatic-engine" init
+else
+    warn "prismatic-engine command not found in PATH — skipping 'init'"
+fi
+
+# ── Systemd Service Generation ──────────────────────────────
+if [ "$PLATFORM" = "linux" ] && [ -d "/etc/systemd/system" ]; then
+    echo ""
+    info "Systemd detected. You can run Prismatic Engine as a service."
+    
+    ENGINE_BIN=$(command -v prismatic-engine || echo "$HOME/.local/bin/prismatic-engine")
+    
+    echo ""
+    echo "Run the following to set up the service:"
+    echo "-----------------------------------------------------------"
+    echo "cat <<EOF | sudo tee /etc/systemd/system/prismatic.service"
+    echo "[Unit]"
+    echo "Description=Prismatic Engine Coordinator"
+    echo "After=network.target"
+    echo ""
+    echo "[Service]"
+    echo "Type=simple"
+    echo "User=$USER"
+    echo "ExecStart=$ENGINE_BIN serve"
+    echo "Restart=always"
+    echo "Environment=LINEAR_API_KEY=your_key_here"
+    echo "Environment=PRISMATIC_TEAM_ID=your_team_id"
+    echo ""
+    echo "[Install]"
+    echo "WantedBy=multi-user.target"
+    echo "EOF"
+    echo ""
+    echo "sudo systemctl daemon-reload"
+    echo "sudo systemctl enable prismatic"
+    echo "sudo systemctl start prismatic"
+    echo "-----------------------------------------------------------"
+fi
 
 # ── Print next steps ────────────────────────────────────────
 echo ""

@@ -1,0 +1,1893 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MCP Server Controller — Prismatic Hub</title>
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  
+  <style>
+    /* -------------------------------------------------- */
+    /* 1. CSS Design Tokens & Themes                      */
+    /* -------------------------------------------------- */
+    :root {
+      --bg-deep-space: #06070a;
+      --bg-industrial: #0e1117;
+      --bg-card: #151a22;
+      --bg-card-hover: #1c232e;
+      --bg-input: #090c10;
+      --border-subtle: #252e3d;
+      --border-active: #3b495c;
+      --text-primary: #f5f6f7;
+      --text-secondary: #8b9bb4;
+      --text-muted: #536279;
+
+      /* Status Colors */
+      --color-connected: #2ECC71;
+      --color-reconnecting: #F1C40F;
+      --color-disconnected: #E74C3C;
+      --color-accent: #9B59B6; /* Purple (agent:ned signature) */
+      --color-accent-glow: rgba(155, 89, 182, 0.4);
+      --color-amber: #F39C12;
+
+      --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+
+      --radius-sm: 4px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+      --transition-speed: 0.2s;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-deep-space);
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+      padding-bottom: 20px;
+    }
+
+    /* Scrollbars */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: var(--bg-deep-space);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--border-subtle);
+      border-radius: var(--radius-sm);
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--text-secondary);
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    /* -------------------------------------------------- */
+    /* 2. Layout Elements & Header                        */
+    /* -------------------------------------------------- */
+    .container {
+      max-width: 1440px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    header {
+      background: var(--bg-industrial);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 16px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: relative;
+      overflow: hidden;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    }
+
+    header::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: linear-gradient(90deg, #F39C12, #E67E22, #E74C3C, var(--color-accent), #3498DB, #2ECC71);
+    }
+
+    .header-brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .header-logo {
+      width: 24px;
+      height: 24px;
+      background: linear-gradient(135deg, var(--color-accent), #3498DB);
+      clip-path: polygon(0% 20%, 100% 20%, 100% 80%, 0% 80%);
+      filter: drop-shadow(0 0 6px var(--color-accent-glow));
+    }
+
+    .header-title {
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      font-family: var(--font-mono);
+      background: linear-gradient(90deg, #fff, var(--text-secondary));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .header-tag {
+      font-size: 10px;
+      background: rgba(155, 89, 182, 0.15);
+      border: 1px solid var(--color-accent);
+      color: var(--color-accent);
+      padding: 2px 8px;
+      border-radius: 20px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+
+    .header-meta {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .live-indicator {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(46, 204, 113, 0.08);
+      border: 1px solid rgba(46, 204, 113, 0.2);
+      color: var(--color-connected);
+      padding: 4px 10px;
+      border-radius: var(--radius-sm);
+      font-weight: 600;
+    }
+
+    .live-dot {
+      width: 6px;
+      height: 6px;
+      background-color: var(--color-connected);
+      border-radius: 50%;
+      box-shadow: 0 0 8px var(--color-connected);
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(0.95); opacity: 0.5; }
+      50% { transform: scale(1.2); opacity: 1; }
+      100% { transform: scale(0.95); opacity: 0.5; }
+    }
+
+    /* -------------------------------------------------- */
+    /* 3. Navigation Tabs                                 */
+    /* -------------------------------------------------- */
+    .nav-tabs {
+      display: flex;
+      gap: 8px;
+      background: var(--bg-industrial);
+      padding: 4px;
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+    }
+
+    .nav-tab {
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      font-family: var(--font-sans);
+      font-size: 13px;
+      font-weight: 600;
+      padding: 8px 16px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: all var(--transition-speed) ease;
+    }
+
+    .nav-tab:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .nav-tab.active {
+      color: #fff;
+      background: var(--color-accent);
+      box-shadow: 0 2px 10px rgba(155, 89, 182, 0.2);
+    }
+
+    /* -------------------------------------------------- */
+    /* 4. Desktop Two-Column Layout                       */
+    /* -------------------------------------------------- */
+    .dashboard-layout {
+      display: grid;
+      grid-template-columns: 380px 1fr;
+      gap: 20px;
+      align-items: start;
+    }
+
+    .panel-card {
+      background: var(--bg-industrial);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+    }
+
+    .panel-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: 0.3px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border-subtle);
+      padding-bottom: 12px;
+    }
+
+    /* -------------------------------------------------- */
+    /* 5. Server List & Cards                             */
+    /* -------------------------------------------------- */
+    .server-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .server-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 16px;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      transition: all var(--transition-speed) ease;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .server-card:hover {
+      background: var(--bg-card-hover);
+      border-color: var(--border-active);
+      transform: translateY(-1px);
+    }
+
+    .server-card.selected {
+      border-color: var(--color-accent);
+      box-shadow: inset 0 0 0 1px var(--color-accent), 0 0 15px rgba(155, 89, 182, 0.15);
+    }
+
+    .server-card::before {
+      content: '';
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      width: 3px;
+      background-color: transparent;
+      transition: background-color var(--transition-speed) ease;
+    }
+
+    .server-card.connected::before { background-color: var(--color-connected); }
+    .server-card.reconnecting::before { background-color: var(--color-reconnecting); }
+    .server-card.disconnected::before { background-color: var(--color-disconnected); }
+
+    .server-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+    }
+
+    .server-card-info h3 {
+      font-size: 14px;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 2px;
+    }
+
+    .server-card-info span {
+      font-size: 11px;
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+    }
+
+    .status-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 2px 8px;
+      border-radius: 12px;
+      border: 1px solid transparent;
+    }
+
+    .status-badge.connected {
+      background: rgba(46, 204, 113, 0.1);
+      border-color: rgba(46, 204, 113, 0.2);
+      color: var(--color-connected);
+    }
+
+    .status-badge.reconnecting {
+      background: rgba(241, 196, 15, 0.1);
+      border-color: rgba(241, 196, 15, 0.2);
+      color: var(--color-reconnecting);
+    }
+
+    .status-badge.disconnected {
+      background: rgba(231, 76, 60, 0.1);
+      border-color: rgba(231, 76, 60, 0.2);
+      color: var(--color-disconnected);
+    }
+
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+    }
+
+    .status-badge.connected .status-dot { background-color: var(--color-connected); box-shadow: 0 0 6px var(--color-connected); }
+    .status-badge.reconnecting .status-dot { background-color: var(--color-reconnecting); box-shadow: 0 0 6px var(--color-reconnecting); }
+    .status-badge.disconnected .status-dot { background-color: var(--color-disconnected); }
+
+    .server-card-metrics {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      font-size: 11px;
+      border-top: 1px solid rgba(255, 255, 255, 0.03);
+      padding-top: 10px;
+    }
+
+    .metric-item {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .metric-label {
+      color: var(--text-secondary);
+    }
+
+    .metric-value {
+      font-weight: 600;
+      color: #fff;
+      font-family: var(--font-mono);
+    }
+
+    /* -------------------------------------------------- */
+    /* 6. Server Control Actions                           */
+    /* -------------------------------------------------- */
+    .server-actions {
+      display: flex;
+      gap: 6px;
+    }
+
+    .btn {
+      background: var(--bg-input);
+      border: 1px solid var(--border-subtle);
+      color: var(--text-primary);
+      padding: 6px 12px;
+      font-size: 11px;
+      font-weight: 700;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: all var(--transition-speed) ease;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-family: var(--font-sans);
+    }
+
+    .btn:hover:not(:disabled) {
+      background: var(--bg-card-hover);
+      border-color: var(--border-active);
+      color: #fff;
+    }
+
+    .btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .btn-connect {
+      color: var(--color-connected);
+      border-color: rgba(46, 204, 113, 0.3);
+    }
+    .btn-connect:hover:not(:disabled) {
+      background: rgba(46, 204, 113, 0.08) !important;
+      border-color: var(--color-connected) !important;
+    }
+
+    .btn-disconnect {
+      color: var(--color-disconnected);
+      border-color: rgba(231, 76, 60, 0.3);
+    }
+    .btn-disconnect:hover:not(:disabled) {
+      background: rgba(231, 76, 60, 0.08) !important;
+      border-color: var(--color-disconnected) !important;
+    }
+
+    .btn-reconnect {
+      color: var(--color-reconnecting);
+      border-color: rgba(241, 196, 15, 0.3);
+    }
+    .btn-reconnect:hover:not(:disabled) {
+      background: rgba(241, 196, 15, 0.08) !important;
+      border-color: var(--color-reconnecting) !important;
+    }
+
+    .btn-primary {
+      background: var(--color-accent);
+      border-color: var(--color-accent);
+      color: #fff;
+    }
+    .btn-primary:hover:not(:disabled) {
+      background: rgba(155, 89, 182, 0.85);
+      border-color: rgba(155, 89, 182, 0.85);
+      box-shadow: 0 0 10px rgba(155, 89, 182, 0.3);
+    }
+
+    /* -------------------------------------------------- */
+    /* 7. Detailed Panel Right Column                     */
+    /* -------------------------------------------------- */
+    .detail-panel {
+      min-height: 500px;
+    }
+
+    .detail-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border-subtle);
+      padding-bottom: 16px;
+    }
+
+    .detail-title h2 {
+      font-size: 18px;
+      font-weight: 800;
+      color: #fff;
+    }
+
+    .detail-title p {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-top: 4px;
+      font-family: var(--font-mono);
+    }
+
+    .detail-section {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .section-subtitle {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--text-secondary);
+      font-weight: 700;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+      padding-bottom: 6px;
+    }
+
+    .config-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      font-family: var(--font-mono);
+    }
+
+    .config-table td {
+      padding: 6px 0;
+      vertical-align: top;
+    }
+
+    .config-table td.label {
+      color: var(--text-secondary);
+      width: 120px;
+    }
+
+    .config-table td.value {
+      color: #fff;
+    }
+
+    /* Expandable Tools List */
+    .tools-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .tool-item {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      transition: all var(--transition-speed) ease;
+    }
+
+    .tool-item-summary {
+      padding: 12px 16px;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+      font-weight: 600;
+      color: #fff;
+      user-select: none;
+    }
+
+    .tool-item-summary:hover {
+      background: var(--bg-card-hover);
+    }
+
+    .tool-name-container {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .tool-icon {
+      font-size: 11px;
+      background: rgba(155, 89, 182, 0.1);
+      color: var(--color-accent);
+      padding: 2px 6px;
+      border-radius: var(--radius-sm);
+      font-family: var(--font-mono);
+      font-weight: 700;
+    }
+
+    .tool-arrow {
+      font-size: 10px;
+      color: var(--text-secondary);
+      transition: transform var(--transition-speed) ease;
+    }
+
+    .tool-item.expanded .tool-arrow {
+      transform: rotate(180deg);
+    }
+
+    .tool-item-details {
+      padding: 0 16px 16px 16px;
+      border-top: 1px solid rgba(255, 255, 255, 0.03);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      background: rgba(0, 0, 0, 0.1);
+    }
+
+    .tool-description {
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+      padding-top: 12px;
+    }
+
+    .schema-header {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-secondary);
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    .schema-pre {
+      background: var(--bg-input);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 10px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: #a29bfe;
+      overflow-x: auto;
+      max-height: 200px;
+    }
+
+    /* -------------------------------------------------- */
+    /* 8. Log Console (Tail)                              */
+    /* -------------------------------------------------- */
+    .console-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .console-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .console-filters {
+      display: flex;
+      gap: 6px;
+    }
+
+    .console-filter-btn {
+      background: transparent;
+      border: 1px solid var(--border-subtle);
+      color: var(--text-secondary);
+      font-size: 10px;
+      padding: 3px 8px;
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: var(--font-mono);
+    }
+
+    .console-filter-btn.active {
+      background: var(--border-active);
+      color: #fff;
+    }
+
+    .console-viewport {
+      background: #050608;
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 16px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      line-height: 1.6;
+      height: 320px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      box-shadow: inset 0 2px 10px rgba(0,0,0,0.5);
+    }
+
+    /* Log line colors (syntax highlighting) */
+    .log-line {
+      white-space: pre-wrap;
+      color: #b9c2ce;
+      border-left: 2px solid transparent;
+      padding-left: 8px;
+    }
+
+    .log-time {
+      color: var(--text-muted);
+      margin-right: 8px;
+    }
+
+    .log-level {
+      font-weight: 700;
+      margin-right: 6px;
+    }
+
+    .log-line.info { border-color: #3498DB; }
+    .log-line.info .log-level { color: #3498DB; }
+    
+    .log-line.success { border-color: var(--color-connected); }
+    .log-line.success .log-level { color: var(--color-connected); }
+
+    .log-line.warn { border-color: var(--color-reconnecting); }
+    .log-line.warn .log-level { color: var(--color-reconnecting); }
+
+    .log-line.error { border-color: var(--color-disconnected); }
+    .log-line.error .log-level { color: var(--color-disconnected); }
+
+    .log-line.debug { border-color: #7f8c8d; }
+    .log-line.debug .log-level { color: #7f8c8d; }
+    .log-line.debug .log-text { color: #7f8c8d; }
+
+    /* -------------------------------------------------- */
+    /* 9. Forms: Add Server Form                          */
+    /* -------------------------------------------------- */
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .form-group label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-secondary);
+      font-weight: 700;
+    }
+
+    .form-control {
+      background: var(--bg-input);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 8px 12px;
+      font-size: 12px;
+      color: #fff;
+      font-family: var(--font-sans);
+      outline: none;
+      transition: border-color var(--transition-speed) ease;
+    }
+
+    .form-control:focus {
+      border-color: var(--color-accent);
+    }
+
+    .form-control::placeholder {
+      color: var(--text-muted);
+    }
+
+    .form-control-textarea {
+      resize: vertical;
+      min-height: 60px;
+      font-family: var(--font-mono);
+    }
+
+    /* -------------------------------------------------- */
+    /* 10. Tools Tab View (Grid layout)                   */
+    /* -------------------------------------------------- */
+    .tools-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 16px;
+    }
+
+    .tool-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .tool-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+      padding-bottom: 10px;
+    }
+
+    .tool-card-name {
+      font-size: 15px;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .tool-card-server {
+      font-size: 11px;
+      color: var(--text-secondary);
+      font-family: var(--font-mono);
+      background: rgba(255,255,255,0.05);
+      padding: 2px 8px;
+      border-radius: 4px;
+      border: 1px solid rgba(255,255,255,0.03);
+    }
+
+    /* -------------------------------------------------- */
+    /* 11. Modal Add Server (Overlay)                     */
+    /* -------------------------------------------------- */
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+
+    .modal-content {
+      background: var(--bg-industrial);
+      border: 1px solid var(--border-active);
+      border-radius: var(--radius-lg);
+      width: 500px;
+      max-width: 90%;
+      padding: 24px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      position: relative;
+    }
+
+    .modal-close {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      background: transparent;
+      border: none;
+      color: var(--text-secondary);
+      font-size: 20px;
+      cursor: pointer;
+      line-height: 1;
+    }
+    .modal-close:hover {
+      color: #fff;
+    }
+
+    /* -------------------------------------------------- */
+    /* 12. Responsive Design (Mobile First principles)     */
+    /* -------------------------------------------------- */
+    @media (max-width: 1024px) {
+      .dashboard-layout {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 768px) {
+      .container {
+        padding: 12px;
+        gap: 12px;
+      }
+      
+      header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 16px;
+      }
+
+      .header-meta {
+        width: 100%;
+        justify-content: space-between;
+      }
+
+      .nav-tabs {
+        width: 100%;
+        justify-content: space-between;
+      }
+
+      .nav-tab {
+        flex: 1;
+        justify-content: center;
+        padding: 12px 6px;
+        font-size: 12px;
+        min-height: 44px;
+      }
+
+      /* Mobile card layout updates */
+      .server-card {
+        padding: 14px;
+      }
+
+      .server-card-metrics {
+        grid-template-columns: 1fr;
+        gap: 6px;
+      }
+
+      .btn {
+        flex: 1;
+        justify-content: center;
+        padding: 12px 16px;
+        min-height: 44px;
+        font-size: 12px;
+      }
+
+      .server-actions {
+        width: 100%;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    
+    <!-- Top Brand Header -->
+    <header>
+      <div class="header-brand">
+        <div class="header-logo"></div>
+        <h1 class="header-title">MCP CONTROLLER</h1>
+        <span class="header-tag">Ned-Spectrum</span>
+      </div>
+      <div class="header-meta">
+        <div class="live-indicator">
+          <div class="live-dot"></div>
+          DAEMON ONLINE
+        </div>
+        <div>
+          <span>Local Time:</span>
+          <span id="live-clock" style="font-family: var(--font-mono); font-weight: bold; color: #fff;">00:00:00</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Tab navigation -->
+    <div class="nav-tabs">
+      <button class="nav-tab active" onclick="switchTab('servers')">
+        <span>🔌</span> Servers
+      </button>
+      <button class="nav-tab" onclick="switchTab('tools')">
+        <span>🛠️</span> Tools Registry
+      </button>
+      <button class="nav-tab" onclick="switchTab('logs')">
+        <span>📜</span> Daemon Logs
+      </button>
+    </div>
+
+    <!-- 1. SERVERS VIEW -->
+    <div id="view-servers" class="tab-content dashboard-layout">
+      
+      <!-- Left Column: Connected Servers List -->
+      <div class="panel-card">
+        <div class="panel-title">
+          <span>Active MCP Servers</span>
+          <button class="btn btn-primary" onclick="openAddServerModal()" style="padding: 4px 10px; font-size: 10px;">
+            + Add Server
+          </button>
+        </div>
+
+        <div class="server-list" id="mcp-servers-container">
+          <!-- Dynamically filled -->
+        </div>
+      </div>
+
+      <!-- Right Column: Detail Panel & Logs Tail -->
+      <div class="panel-card detail-panel" id="server-detail-panel">
+        <!-- Dynamically filled on server selection -->
+        <div style="height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--text-secondary); text-align: center; padding: 40px 0;">
+          <span style="font-size: 32px; margin-bottom: 12px;">🔌</span>
+          <h3>No Server Selected</h3>
+          <p style="font-size: 12px; margin-top: 4px; max-width: 280px;">Select an MCP server from the list on the left to examine its parameter schema, details, and logs tail.</p>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- 2. TOOLS VIEW -->
+    <div id="view-tools" class="tab-content hidden">
+      <div class="panel-card">
+        <div class="panel-title">
+          <span>Global Tools Registry</span>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <input type="text" id="tool-search" class="form-control" placeholder="Filter tools..." oninput="filterTools()" style="padding: 4px 10px; font-size: 11px; width: 200px;">
+          </div>
+        </div>
+
+        <div class="tools-grid" id="global-tools-container">
+          <!-- Dynamically filled -->
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. LOGS VIEW -->
+    <div id="view-logs" class="tab-content hidden">
+      <div class="panel-card">
+        <div class="panel-title">
+          <span>Unified Daemon Logs</span>
+          <div style="display: flex; gap: 8px;">
+            <button class="btn" onclick="clearAllLogs()" style="padding: 4px 10px; font-size: 11px;">Clear Screen</button>
+          </div>
+        </div>
+
+        <div class="console-panel">
+          <div class="console-header">
+            <div class="console-filters" id="log-server-filters">
+              <button class="console-filter-btn active" onclick="filterLogs('all')">ALL SECTIONS</button>
+              <!-- Filled dynamically -->
+            </div>
+            <div style="display: flex; gap: 10px; font-size: 11px; align-items: center;">
+              <input type="checkbox" id="auto-scroll-checkbox" checked>
+              <label for="auto-scroll-checkbox" style="color: var(--text-secondary);">Auto Scroll</label>
+            </div>
+          </div>
+          <div class="console-viewport" id="global-logs-viewport">
+            <!-- Unified logs -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Add Server Modal -->
+  <div class="modal-overlay hidden" id="add-server-modal">
+    <div class="modal-content">
+      <button class="modal-close" onclick="closeAddServerModal()">&times;</button>
+      <h3 style="color: #fff; font-size: 16px; border-bottom: 1px solid var(--border-subtle); padding-bottom: 12px; margin-bottom: 4px;">
+        Register New MCP Server
+      </h3>
+      
+      <form id="add-server-form" onsubmit="handleAddServer(event)" style="display: flex; flex-direction: column; gap: 12px;">
+        <div class="form-group">
+          <label for="srv-name">Server Name</label>
+          <input type="text" id="srv-name" class="form-control" placeholder="e.g. synology-mcp" required>
+        </div>
+
+        <div class="form-group">
+          <label for="srv-loader">Loader Type</label>
+          <select id="srv-loader" class="form-control" style="background: var(--bg-input);">
+            <option value="Lazy">Lazy (Loads schemas on demand)</option>
+            <option value="Eager">Eager (Pre-binds schemas on launch)</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="srv-cmd">Startup Command</label>
+          <input type="text" id="srv-cmd" class="form-control" placeholder="e.g. npx -y @modelcontextprotocol/server-postgres" required>
+        </div>
+
+        <div class="form-group">
+          <label for="srv-args">Arguments (comma-separated)</label>
+          <input type="text" id="srv-args" class="form-control" placeholder="e.g. postgres://localhost/db, --readonly">
+        </div>
+
+        <div class="form-group">
+          <label for="srv-env">Environment Variables (KEY=VAL, comma-separated)</label>
+          <textarea id="srv-env" class="form-control form-control-textarea" placeholder="e.g. DATABASE_URL=..., SCHEMA=public"></textarea>
+        </div>
+
+        <div style="display: flex; gap: 8px; margin-top: 12px; justify-content: flex-end;">
+          <button type="button" class="btn" onclick="closeAddServerModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Save Config</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    // --------------------------------------------------
+    // Mock Database & Server State
+    // --------------------------------------------------
+    let servers = [
+      {
+        name: 'gdrive',
+        status: 'CONNECTED',
+        type: 'Lazy',
+        version: '1.2.0-local',
+        lastPing: '14ms',
+        command: 'mcp-server-gdrive',
+        args: '--auth-token-cache=~/.hermes/cache/gdrive.json',
+        env: 'GDRIVE_SCOPES=https://www.googleapis.com/auth/drive.readonly',
+        tools: [
+          {
+            name: 'drive_about',
+            description: 'Retrieve metadata about the current user\'s Google Drive storage limits, file count, and sync state.',
+            schema: {
+              type: "object",
+              properties: {},
+              required: []
+            }
+          },
+          {
+            name: 'drive_search',
+            description: 'Search for files and folders using standard Google Drive queries. Supports filtering by name, size, type, and parent folder.',
+            schema: {
+              type: "object",
+              properties: {
+                query: { type: "string", description: "Search query query string matching file names or contents" },
+                limit: { type: "integer", description: "Maximum results count (default 10)" }
+              },
+              required: ["query"]
+            }
+          },
+          {
+            name: 'drive_read_file',
+            description: 'Read file contents by file ID. Automatically converts Google Docs/Slides/Sheets to readable text formats.',
+            schema: {
+              type: "object",
+              properties: {
+                fileId: { type: "string", description: "Google Drive alphanumeric unique file ID" }
+              },
+              required: ["fileId"]
+            }
+          },
+          {
+            name: 'sheets_read',
+            description: 'Direct spreadsheet cells reader. Select specific sheets and cell coordinates to return raw JSON values.',
+            schema: {
+              type: "object",
+              properties: {
+                spreadsheetId: { type: "string", description: "Spreadsheet ID" },
+                range: { type: "string", description: "A1 notation range (e.g. Sheet1!A1:D20)" }
+              },
+              required: ["spreadsheetId", "range"]
+            }
+          }
+        ],
+        logs: [
+          { time: '22:45:10', level: 'INFO', text: '[INFO] Initializing Google Drive OAuth secure connection client...' },
+          { time: '22:45:11', level: 'SUCCESS', text: '[SUCCESS] OAuth handshake complete. Token cached to ~/.hermes/cache/gdrive.json.' },
+          { time: '22:45:11', level: 'INFO', text: '[INFO] Mapping file system directory metadata index (3,402 items checked).' },
+          { time: '22:45:12', level: 'SUCCESS', text: '[SUCCESS] Schema registration ready. Bound 4 lazy tools successfully.' },
+          { time: '22:50:30', level: 'INFO', text: '[INFO] Received ping check from orchestrator.' },
+          { time: '22:50:30', level: 'SUCCESS', text: '[SUCCESS] Ping callback resolved in 14ms.' }
+        ]
+      },
+      {
+        name: 'sqlite-connector',
+        status: 'CONNECTED',
+        type: 'Eager',
+        version: '0.4.1',
+        lastPing: '8ms',
+        command: 'python3 -m mcp_sqlite',
+        args: '--db-path=~/.hermes/db/orchestrator_dedup.db',
+        env: 'SQLITE_MAX_TIMEOUT_MS=2000, SQLITE_PRAGMA_JOURNAL=WAL',
+        tools: [
+          {
+            name: 'query_db',
+            description: 'Execute read-only SQL SELECT queries on the event dedup database. Validates statements for SQL injection markers.',
+            schema: {
+              type: "object",
+              properties: {
+                sql: { type: "string", description: "SQL query statement" }
+              },
+              required: ["sql"]
+            }
+          },
+          {
+            name: 'insert_hash',
+            description: 'Write a new event hash to prevent duplicates in the execution queue. Returns boolean flag indicating uniqueness.',
+            schema: {
+              type: "object",
+              properties: {
+                hash: { type: "string", description: "SHA256 signature key hash" },
+                reference: { type: "string", description: "Associated Linear issue reference ID (e.g. GRO-671)" }
+              },
+              required: ["hash", "reference"]
+            }
+          },
+          {
+            name: 'list_tables',
+            description: 'Enumerate table definitions, column types, indices, and constraints within the active database connection.',
+            schema: {
+              type: "object",
+              properties: {},
+              required: []
+            }
+          }
+        ],
+        logs: [
+          { time: '22:46:01', level: 'INFO', text: '[INFO] Opening SQLite file handle: ~/.hermes/db/orchestrator_dedup.db' },
+          { time: '22:46:01', level: 'SUCCESS', text: '[SUCCESS] Database state loaded. Active journal mode: WAL. Connection pool initialized.' },
+          { time: '22:46:02', level: 'INFO', text: '[INFO] Pre-scanning database constraints. Tables: [event_hashes, execution_logs, configuration_state]' },
+          { time: '22:46:02', level: 'SUCCESS', text: '[SUCCESS] Schema bound eager: registered 3 tools to registry.' },
+          { time: '22:49:15', level: 'INFO', text: '[INFO] SELECT count(*) from event_hashes evaluated: count=1,424.' },
+          { time: '22:50:31', level: 'INFO', text: '[INFO] Received ping check from orchestrator.' },
+          { time: '22:50:31', level: 'SUCCESS', text: '[SUCCESS] Ping callback resolved in 8ms.' }
+        ]
+      },
+      {
+        name: 'local-ollama',
+        status: 'RECONNECTING',
+        type: 'Eager',
+        version: '0.1.0',
+        lastPing: 'Timeout (3000ms)',
+        command: 'ollama run qwen2.5:32b',
+        args: '--mcp --host=http://127.0.0.1:31434',
+        env: 'OLLAMA_NUM_PARALLEL=4, OLLAMA_FLASH_ATTENTION=1',
+        tools: [
+          {
+            name: 'generate_completion',
+            description: 'Run inference completions directly on locally loaded model weights. Bypasses orchestrator wrapper.',
+            schema: {
+              type: "object",
+              properties: {
+                prompt: { type: "string", description: "Instruction input" },
+                temperature: { type: "number", description: "Generation temperature (0.0 - 1.0)" }
+              },
+              required: ["prompt"]
+            }
+          },
+          {
+            name: 'get_model_info',
+            description: 'Fetch detailed parameter metrics, layer offload status, and system VRAM consumption stats.',
+            schema: {
+              type: "object",
+              properties: {},
+              required: []
+            }
+          }
+        ],
+        logs: [
+          { time: '22:48:30', level: 'INFO', text: '[INFO] Initializing connection to local Ollama API on port 31434...' },
+          { time: '22:48:33', level: 'WARN', text: '[WARN] Timeout reached (3000ms) waiting for http://127.0.0.1:31434/api/tags. Endpoint may be loading weights.' },
+          { time: '22:49:00', level: 'INFO', text: '[INFO] Re-attempting connection handshake (Try #2)...' },
+          { time: '22:49:03', level: 'WARN', text: '[WARN] Timeout reached (3000ms). Connection refused. Retrying in 30 seconds.' },
+          { time: '22:49:33', level: 'INFO', text: '[INFO] Re-attempting connection handshake (Try #3)...' },
+          { time: '22:49:36', level: 'WARN', text: '[WARN] Timeout reached (3000ms). Connection refused. Retrying in 60 seconds.' }
+        ]
+      },
+      {
+        name: 'github-mcp',
+        status: 'DISCONNECTED',
+        type: 'Lazy',
+        version: '2.0.1',
+        lastPing: 'N/A',
+        command: 'npx -y @modelcontextprotocol/server-github',
+        args: '--allowed-orgs=mbgulden',
+        env: 'GITHUB_TOKEN= (MISSING)',
+        tools: [
+          {
+            name: 'get_pr',
+            description: 'Read detailed description, files changes, and conversation history of a specific repository Pull Request.',
+            schema: {
+              type: "object",
+              properties: {
+                owner: { type: "string" },
+                repo: { type: "string" },
+                pullNumber: { type: "integer" }
+              },
+              required: ["owner", "repo", "pullNumber"]
+            }
+          },
+          {
+            name: 'create_branch',
+            description: 'Initialize a new repository branch from a specified target reference branch.',
+            schema: {
+              type: "object",
+              properties: {
+                owner: { type: "string" },
+                repo: { type: "string" },
+                branch: { type: "string" },
+                refBranch: { type: "string" }
+              },
+              required: ["owner", "repo", "branch"]
+            }
+          },
+          {
+            name: 'post_comment',
+            description: 'Post an issue comment on an open or closed repository issue ticket.',
+            schema: {
+              type: "object",
+              properties: {
+                owner: { type: "string" },
+                repo: { type: "string" },
+                issueNumber: { type: "integer" },
+                body: { type: "string" }
+              },
+              required: ["owner", "repo", "issueNumber", "body"]
+            }
+          }
+        ],
+        logs: [
+          { time: '22:40:00', level: 'INFO', text: '[INFO] Launching GitHub MCP Lazy loader...' },
+          { time: '22:40:01', level: 'ERROR', text: '[ERROR] Environment variable validation failed: GITHUB_TOKEN is undefined.' },
+          { time: '22:40:01', level: 'INFO', text: '[INFO] MCP process exited with status code 1. Service state changed to DISCONNECTED.' }
+        ]
+      }
+    ];
+
+    let selectedServerName = 'gdrive';
+    let expandedTools = {};
+    let expandedServerCards = {};
+    let globalLogs = [];
+
+    // Compile log messages in chronological order
+    function rebuildGlobalLogs() {
+      globalLogs = [];
+      servers.forEach(s => {
+        s.logs.forEach(l => {
+          globalLogs.push({
+            server: s.name,
+            time: l.time,
+            level: l.level,
+            text: l.text
+          });
+        });
+      });
+      // Sort by time
+      globalLogs.sort((a, b) => a.time.localeCompare(b.time));
+    }
+
+    // --------------------------------------------------
+    // Live System Initialization & Clock
+    // --------------------------------------------------
+    const getTabFromUrl = () => {
+      const path = window.location.pathname || '';
+      if (path.endsWith('/tools')) return 'tools';
+      if (path.endsWith('/logs')) return 'logs';
+      const hash = window.location.hash || '';
+      if (hash.includes('/tools')) return 'tools';
+      if (hash.includes('/logs')) return 'logs';
+      return 'servers';
+    };
+
+    window.onload = function() {
+      // Tab selection routing matching hash or manifest paths
+      switchTab(getTabFromUrl(), false);
+
+      window.addEventListener('popstate', () => {
+        switchTab(getTabFromUrl(), false);
+      });
+
+      // Start live clock
+      updateLiveClock();
+      setInterval(updateLiveClock, 1000);
+
+      // Render dashboards
+      rebuildGlobalLogs();
+      renderServerList();
+      renderServerDetail();
+      renderToolsRegistry();
+      renderLogsViewport();
+      renderLogFilters();
+    };
+
+    function updateLiveClock() {
+      const clockEl = document.getElementById('live-clock');
+      if (clockEl) {
+        clockEl.textContent = new Date().toTimeString().split(' ')[0];
+      }
+    }
+
+    // Tab switcher
+    function switchTab(tabId, updateHistory = true) {
+      document.querySelectorAll('.nav-tab').forEach(btn => {
+        btn.classList.remove('active');
+        if (btn.innerText.toLowerCase().includes(tabId)) {
+          btn.classList.add('active');
+        }
+      });
+
+      document.querySelectorAll('.tab-content').forEach(section => {
+        section.classList.add('hidden');
+      });
+
+      if (tabId === 'servers') {
+        document.getElementById('view-servers').classList.remove('hidden');
+      } else if (tabId === 'tools') {
+        document.getElementById('view-tools').classList.remove('hidden');
+        renderToolsRegistry();
+      } else if (tabId === 'logs') {
+        document.getElementById('view-logs').classList.remove('hidden');
+        renderLogsViewport();
+      }
+
+      if (updateHistory) {
+        const newPath = tabId === 'servers' ? '/mcp-controller' : `/mcp-controller/${tabId}`;
+        if (window.location.hash) {
+          window.location.hash = newPath;
+        } else {
+          window.history.pushState({}, '', newPath);
+        }
+      }
+    }
+
+    // --------------------------------------------------
+    // Render: Server List (Left Column)
+    // --------------------------------------------------
+    function renderServerList() {
+      const container = document.getElementById('mcp-servers-container');
+      if (!container) return;
+
+      container.innerHTML = '';
+      servers.forEach(s => {
+        const isSelected = s.name === selectedServerName;
+        const statusClass = s.status.toLowerCase();
+
+        const card = document.createElement('div');
+        card.className = `server-card ${statusClass} ${isSelected ? 'selected' : ''}`;
+        card.onclick = () => selectServer(s.name);
+
+        card.innerHTML = `
+          <div class="server-card-header">
+            <div class="server-card-info">
+              <h3>${s.name}</h3>
+              <span>v${s.version} · ${s.type} loader</span>
+            </div>
+            <span class="status-badge ${statusClass}">
+              <span class="status-dot"></span>
+              ${s.status}
+            </span>
+          </div>
+          <div class="server-card-metrics">
+            <div class="metric-item">
+              <span class="metric-label">Last Ping:</span>
+              <span class="metric-value" style="color: ${s.status === 'CONNECTED' ? '#2ECC71' : s.status === 'RECONNECTING' ? '#F1C40F' : '#E74C3C'}">${s.lastPing}</span>
+            </div>
+            <div class="metric-item">
+              <span class="metric-label">Tools Registered:</span>
+              <span class="metric-value">${s.tools.length}</span>
+            </div>
+          </div>
+        `;
+
+        const isCardExpanded = !!expandedServerCards[s.name];
+        
+        // Expandable tools trigger (stacked cards optimization)
+        const expandTrigger = document.createElement('div');
+        expandTrigger.style.cssText = `
+          display: flex; justify-content: space-between; align-items: center;
+          margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.04);
+          font-size: 11px; font-weight: 600; color: var(--text-secondary); cursor: pointer;
+        `;
+        expandTrigger.innerHTML = `
+          <span>${isCardExpanded ? 'Hide Tools List' : 'Expand Tools List'}</span>
+          <span>${isCardExpanded ? '▲' : '▼'}</span>
+        `;
+        expandTrigger.onclick = (e) => {
+          e.stopPropagation();
+          expandedServerCards[s.name] = !isCardExpanded;
+          renderServerList();
+        };
+        card.appendChild(expandTrigger);
+
+        if (isCardExpanded) {
+          const toolsDiv = document.createElement('div');
+          toolsDiv.style.cssText = `
+            margin-top: 8px; display: flex; flex-direction: column; gap: 6px;
+            max-height: 220px; overflow-y: auto; padding-right: 4px;
+          `;
+          toolsDiv.onclick = (e) => e.stopPropagation();
+
+          if (s.tools && s.tools.length > 0) {
+            s.tools.forEach(t => {
+              const isToolExpanded = !!expandedTools[`card-${s.name}-${t.name}`];
+              const toolCard = document.createElement('div');
+              toolCard.style.cssText = `
+                background: rgba(0, 0, 0, 0.2); border: 1px solid var(--border-subtle);
+                border-radius: 4px; padding: 8px; display: flex; flex-direction: column; gap: 4px;
+              `;
+              
+              const summary = document.createElement('div');
+              summary.style.cssText = `display: flex; justify-content: space-between; align-items: center; cursor: pointer;`;
+              summary.innerHTML = `
+                <span style="font-weight: 700; color: #fff; font-family: var(--font-mono); font-size: 10px;">${t.name}</span>
+                <span>${isToolExpanded ? '▲' : '▼'}</span>
+              `;
+              summary.onclick = () => {
+                expandedTools[`card-${s.name}-${t.name}`] = !isToolExpanded;
+                renderServerList();
+              };
+              toolCard.appendChild(summary);
+
+              const desc = document.createElement('p');
+              desc.style.cssText = `color: var(--text-secondary); font-size: 10px; margin: 0;`;
+              desc.textContent = t.description || 'No description.';
+              toolCard.appendChild(desc);
+
+              if (isToolExpanded) {
+                const schemaPre = document.createElement('pre');
+                schemaPre.className = 'schema-pre';
+                schemaPre.style.cssText = `margin-top: 4px; padding: 6px; font-size: 9px; overflow-x: auto; background: #090c10; border: 1px solid var(--border-subtle);`;
+                schemaPre.textContent = JSON.stringify(t.schema, null, 2);
+                toolCard.appendChild(schemaPre);
+              }
+
+              toolsDiv.appendChild(toolCard);
+            });
+          } else {
+            const noTools = document.createElement('div');
+            noTools.style.cssText = `color: var(--text-muted); font-style: italic; font-size: 10px;`;
+            noTools.textContent = 'No tools registered.';
+            toolsDiv.appendChild(noTools);
+          }
+          card.appendChild(toolsDiv);
+        }
+
+        container.appendChild(card);
+      });
+    }
+
+    function selectServer(name) {
+      selectedServerName = name;
+      renderServerList();
+      renderServerDetail();
+    }
+
+    // --------------------------------------------------
+    // Render: Server Detail (Right Column)
+    // --------------------------------------------------
+    function renderServerDetail() {
+      const container = document.getElementById('server-detail-panel');
+      if (!container) return;
+
+      const server = servers.find(s => s.name === selectedServerName);
+      if (!server) {
+        container.innerHTML = `
+          <div style="height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--text-secondary); text-align: center; padding: 40px 0;">
+            <span style="font-size: 32px; margin-bottom: 12px;">🔌</span>
+            <h3>No Server Selected</h3>
+            <p style="font-size: 12px; margin-top: 4px; max-width: 280px;">Select an MCP server from the list on the left to examine its parameter schema, details, and logs tail.</p>
+          </div>
+        `;
+        return;
+      }
+
+      const isConnected = server.status === 'CONNECTED';
+      const isReconnecting = server.status === 'RECONNECTING';
+      const isDisconnected = server.status === 'DISCONNECTED';
+
+      // Render server details page structure
+      container.innerHTML = `
+        <div class="detail-header">
+          <div class="detail-title">
+            <h2>${server.name}</h2>
+            <p>v${server.version} · Loader Type: ${server.type}</p>
+          </div>
+          <div class="server-actions">
+            <button class="btn btn-connect" onclick="triggerConnect('${server.name}')" ${isConnected || isReconnecting ? 'disabled' : ''}>
+              Connect
+            </button>
+            <button class="btn btn-disconnect" onclick="triggerDisconnect('${server.name}')" ${isDisconnected ? 'disabled' : ''}>
+              Disconnect
+            </button>
+            <button class="btn btn-reconnect" onclick="triggerReconnect('${server.name}')" ${isDisconnected ? 'disabled' : ''}>
+              Reconnect
+            </button>
+          </div>
+        </div>
+
+        <div class="detail-section">
+          <div class="section-subtitle">Process Configuration</div>
+          <table class="config-table">
+            <tr>
+              <td class="label">Startup Command:</td>
+              <td class="value"><code>${server.command}</code></td>
+            </tr>
+            <tr>
+              <td class="label">Args Array:</td>
+              <td class="value"><code>${server.args || 'None'}</code></td>
+            </tr>
+            <tr>
+              <td class="label">Env Config:</td>
+              <td class="value"><code>${server.env || 'None'}</code></td>
+            </tr>
+          </table>
+        </div>
+
+        <div class="detail-section">
+          <div class="section-subtitle">Registered Tools (${server.tools.length})</div>
+          <div class="tools-list" id="detail-tools-container">
+            <!-- Render server specific tool cards -->
+          </div>
+        </div>
+
+        <div class="detail-section" style="flex: 1; min-height: 200px;">
+          <div class="section-subtitle">Server Log Tail (Last 30 lines)</div>
+          <div class="console-viewport" id="detail-logs-viewport" style="height: 220px;">
+            <!-- Render server specific log lines -->
+          </div>
+        </div>
+      `;
+
+      // Fill tools list
+      const toolsContainer = document.getElementById('detail-tools-container');
+      if (toolsContainer) {
+        if (server.tools.length === 0) {
+          toolsContainer.innerHTML = `<p style="font-size: 12px; color: var(--text-secondary); font-style: italic;">No registered tools under this server schema.</p>`;
+        } else {
+          server.tools.forEach((tool, idx) => {
+            const isExpanded = expandedTools[server.name + '_' + tool.name];
+            const item = document.createElement('div');
+            item.className = `tool-item ${isExpanded ? 'expanded' : ''}`;
+            
+            item.innerHTML = `
+              <div class="tool-item-summary" onclick="toggleToolDetail('${server.name}', '${tool.name}')">
+                <div class="tool-name-container">
+                  <span class="tool-icon">tool</span>
+                  <span>${tool.name}</span>
+                </div>
+                <span class="tool-arrow">▼</span>
+              </div>
+              <div class="tool-item-details ${isExpanded ? '' : 'hidden'}">
+                <p class="tool-description">${tool.description}</p>
+                <div class="schema-header">Parameter Schema</div>
+                <pre class="schema-pre">${JSON.stringify(tool.schema, null, 2)}</pre>
+              </div>
+            `;
+            toolsContainer.appendChild(item);
+          });
+        }
+      }
+
+      // Fill server logs
+      const logViewport = document.getElementById('detail-logs-viewport');
+      if (logViewport) {
+        logViewport.innerHTML = '';
+        const recentLogs = server.logs.slice(-30);
+        recentLogs.forEach(l => {
+          const logLine = document.createElement('div');
+          logLine.className = `log-line ${l.level.toLowerCase()}`;
+          logLine.innerHTML = `
+            <span class="log-time">${l.time}</span>
+            <span class="log-level">[${l.level}]</span>
+            <span class="log-text">${escapeHtml(l.text.replace(/\[(INFO|SUCCESS|WARN|ERROR)\]\s*/, ''))}</span>
+          `;
+          logViewport.appendChild(logLine);
+        });
+        logViewport.scrollTop = logViewport.scrollHeight;
+      }
+    }
+
+    function toggleToolDetail(serverName, toolName) {
+      const key = serverName + '_' + toolName;
+      expandedTools[key] = !expandedTools[key];
+      renderServerDetail();
+    }
+
+    // Escape HTML helpers
+    function escapeHtml(text) {
+      return text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    // --------------------------------------------------
+    // Server Control Trigger Simulators
+    // --------------------------------------------------
+    function addLogEntry(server, level, text) {
+      const now = new Date();
+      const timeStr = now.toTimeString().split(' ')[0];
+      server.logs.push({ time: timeStr, level: level, text: `[${level}] ${text}` });
+      rebuildGlobalLogs();
+    }
+
+    function triggerConnect(serverName) {
+      const s = servers.find(s => s.name === serverName);
+      if (!s) return;
+
+      s.status = 'CONNECTED';
+      s.lastPing = `${Math.floor(Math.random() * 20) + 5}ms`;
+      addLogEntry(s, 'INFO', `Triggered connect command line...`);
+      addLogEntry(s, 'SUCCESS', `MCP daemon process running. Schemas successfully bound.`);
+      
+      renderServerList();
+      renderServerDetail();
+      renderLogsViewport();
+    }
+
+    function triggerDisconnect(serverName) {
+      const s = servers.find(s => s.name === serverName);
+      if (!s) return;
+
+      s.status = 'DISCONNECTED';
+      s.lastPing = 'N/A';
+      addLogEntry(s, 'WARN', `Disconnect command received. Sending SIGTERM to process...`);
+      addLogEntry(s, 'INFO', `Process terminated. Resources cleaned up.`);
+      
+      renderServerList();
+      renderServerDetail();
+      renderLogsViewport();
+    }
+
+    function triggerReconnect(serverName) {
+      const s = servers.find(s => s.name === serverName);
+      if (!s) return;
+
+      s.status = 'RECONNECTING';
+      s.lastPing = 'Timeout (3000ms)';
+      addLogEntry(s, 'WARN', `Initiating process reconnect cycle...`);
+      
+      renderServerList();
+      renderServerDetail();
+      renderLogsViewport();
+
+      setTimeout(() => {
+        if (s.status === 'RECONNECTING') {
+          s.status = 'CONNECTED';
+          s.lastPing = `${Math.floor(Math.random() * 15) + 4}ms`;
+          addLogEntry(s, 'SUCCESS', `Reconnection handshake completed successfully.`);
+          
+          if (selectedServerName === serverName) {
+            renderServerDetail();
+          }
+          renderServerList();
+          renderLogsViewport();
+        }
+      }, 2000);
+    }
+
+    // --------------------------------------------------
+    // Render: Global Tools Registry Tab
+    // --------------------------------------------------
+    function renderToolsRegistry() {
+      const container = document.getElementById('global-tools-container');
+      if (!container) return;
+
+      const filterVal = document.getElementById('tool-search').value.toLowerCase();
+      container.innerHTML = '';
+
+      let toolCount = 0;
+      servers.forEach(s => {
+        s.tools.forEach(tool => {
+          if (tool.name.toLowerCase().includes(filterVal) || tool.description.toLowerCase().includes(filterVal)) {
+            toolCount++;
+            const card = document.createElement('div');
+            card.className = 'tool-card';
+            
+            card.innerHTML = `
+              <div class="tool-card-header">
+                <div class="tool-card-name">
+                  <span class="tool-icon">tool</span>
+                  <span>${tool.name}</span>
+                </div>
+                <span class="tool-card-server">Server: ${s.name}</span>
+              </div>
+              <p style="font-size: 12px; color: var(--text-secondary); line-height: 1.5;">${tool.description}</p>
+              <div>
+                <div class="schema-header">Schema Parameters</div>
+                <pre class="schema-pre">${JSON.stringify(tool.schema, null, 2)}</pre>
+              </div>
+            `;
+            container.appendChild(card);
+          }
+        });
+      });
+
+      if (toolCount === 0) {
+        container.innerHTML = `<div style="text-align: center; color: var(--text-secondary); padding: 40px 0;">No tools matching search filters.</div>`;
+      }
+    }
+
+    function filterTools() {
+      renderToolsRegistry();
+    }
+
+    // --------------------------------------------------
+    // Render: Unified Daemon Logs Tab
+    // --------------------------------------------------
+    let selectedLogServer = 'all';
+
+    function renderLogFilters() {
+      const container = document.getElementById('log-server-filters');
+      if (!container) return;
+
+      container.innerHTML = `<button class="console-filter-btn ${selectedLogServer === 'all' ? 'active' : ''}" onclick="filterLogs('all')">ALL LOGS</button>`;
+      servers.forEach(s => {
+        container.innerHTML += `<button class="console-filter-btn ${selectedLogServer === s.name ? 'active' : ''}" onclick="filterLogs('${s.name}')">${s.name.toUpperCase()}</button>`;
+      });
+    }
+
+    function filterLogs(serverName) {
+      selectedLogServer = serverName;
+      renderLogFilters();
+      renderLogsViewport();
+    }
+
+    function renderLogsViewport() {
+      const viewport = document.getElementById('global-logs-viewport');
+      if (!viewport) return;
+
+      viewport.innerHTML = '';
+      rebuildGlobalLogs();
+
+      const filtered = selectedLogServer === 'all' 
+        ? globalLogs 
+        : globalLogs.filter(l => l.server === selectedLogServer);
+
+      if (filtered.length === 0) {
+        viewport.innerHTML = `<div class="log-line debug"><span class="log-text">[system] Logs trace buffer empty. Ready.</span></div>`;
+        return;
+      }
+
+      filtered.forEach(l => {
+        const line = document.createElement('div');
+        line.className = `log-line ${l.level.toLowerCase()}`;
+        line.innerHTML = `
+          <span class="log-time">${l.time}</span>
+          <span class="log-level" style="font-family: var(--font-mono)">[${l.server}] [${l.level}]</span>
+          <span class="log-text">${escapeHtml(l.text.replace(/\[(INFO|SUCCESS|WARN|ERROR)\]\s*/, ''))}</span>
+        `;
+        viewport.appendChild(line);
+      });
+
+      const autoScroll = document.getElementById('auto-scroll-checkbox').checked;
+      if (autoScroll) {
+        viewport.scrollTop = viewport.scrollHeight;
+      }
+    }
+
+    function clearAllLogs() {
+      if (selectedLogServer === 'all') {
+        servers.forEach(s => s.logs = []);
+      } else {
+        const s = servers.find(s => s.name === selectedLogServer);
+        if (s) s.logs = [];
+      }
+      rebuildGlobalLogs();
+      renderLogsViewport();
+      renderServerDetail();
+    }
+
+    // --------------------------------------------------
+    // Modal Overlay: Register New Server Form
+    // --------------------------------------------------
+    function openAddServerModal() {
+      document.getElementById('add-server-modal').classList.remove('hidden');
+    }
+
+    function closeAddServerModal() {
+      document.getElementById('add-server-modal').classList.add('hidden');
+      document.getElementById('add-server-form').reset();
+    }
+
+    function handleAddServer(e) {
+      e.preventDefault();
+
+      const name = document.getElementById('srv-name').value.trim();
+      const loader = document.getElementById('srv-loader').value;
+      const cmd = document.getElementById('srv-cmd').value.trim();
+      const args = document.getElementById('srv-args').value.trim();
+      const env = document.getElementById('srv-env').value.trim();
+
+      if (servers.some(s => s.name.toLowerCase() === name.toLowerCase())) {
+        alert(`MCP Server "${name}" is already registered.`);
+        return;
+      }
+
+      const newServer = {
+        name: name,
+        status: 'CONNECTED',
+        type: loader,
+        version: '1.0.0-local',
+        lastPing: '4ms',
+        command: cmd,
+        args: args,
+        env: env,
+        tools: [
+          {
+            name: `${name}_health_ping`,
+            description: `Check health latency check for the ${name} daemon connection.`,
+            schema: {
+              type: "object",
+              properties: {},
+              required: []
+            }
+          }
+        ],
+        logs: [
+          { time: new Date().toTimeString().split(' ')[0], level: 'INFO', text: `[INFO] Initializing newly registered daemon: ${name}...` },
+          { time: new Date().toTimeString().split(' ')[0], level: 'SUCCESS', text: `[SUCCESS] Daemon execution parameters registered successfully.` }
+        ]
+      };
+
+      servers.push(newServer);
+      selectedServerName = name;
+
+      // Reset
+      closeAddServerModal();
+      rebuildGlobalLogs();
+      renderServerList();
+      renderServerDetail();
+      renderLogFilters();
+      
+      // Auto-focus the logs page to see registration success
+      switchTab('servers');
+    }
+  </script>
+</body>
+</html>
