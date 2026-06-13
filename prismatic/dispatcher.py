@@ -1416,6 +1416,30 @@ def dispatch_once(
         print(f"[dispatcher] setup_pipeline_issues error: {exc}")
         counts["errors"] += 1
 
+    # ── AI Ultra Credit Tracker ───────────────────────────
+    throttle_dispatch = False
+    try:
+        from .credit_tracker import AIUltraCreditTracker
+        tracker = AIUltraCreditTracker()
+        
+        # Scan workspace assets/designs/research for new media artifacts
+        # (also scan /tmp for any temporary media generated during current run)
+        workspace_root = os.getcwd()
+        for media_dir in ["assets", "designs", "research", "/tmp"]:
+            full_path = os.path.join(workspace_root, media_dir) if media_dir != "/tmp" else "/tmp"
+            if os.path.exists(full_path):
+                tracker.parse_media_artifacts(full_path, run_id_prefix=f"cycle-{cycle_id}")
+
+        # Check burn velocity and exhaustion warning
+        alert = tracker.evaluate_exhaustion_warning(lookback_hours=1.0)
+        if alert:
+            throttle_dispatch = True
+            print(f"[dispatcher] ⚠️ Credit exhaustion warning alert! Throttling active. Message: {alert['message']}")
+            # Post comment to Linear if any issues are active
+    except Exception as exc:
+        print(f"[dispatcher] Credit tracking/alert error: {exc}")
+    # ── End Credit Tracker ─────────────────────────────────
+
     # 2. Dispatch to each agent
     for agent_name, config in AGENT_CONFIG.items():
         label = f"agent::{agent_name}"
@@ -1499,6 +1523,9 @@ def dispatch_once(
             # ── End credit policy ──────────────────────────────────
 
             try:
+                if throttle_dispatch:
+                    print(f"[dispatcher] ⚠️ Throttling dispatch of {agent_name} (5s delay) due to high credit burn velocity.")
+                    time.sleep(5)
                 result = launcher(issue_id, title=issue.get("title", ""))
                 if result:
                     dedup.mark_processed(issue_id, label, cycle_id)
