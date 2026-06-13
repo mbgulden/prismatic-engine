@@ -43,6 +43,13 @@ ALERT_FAILURE_RATE = float(os.environ.get("PRISMATIC_ALERT_FAILURE_RATE", "0.20"
 ALERT_WINDOW_HOURS = int(os.environ.get("PRISMATIC_ALERT_WINDOW_HOURS", "1"))
 """Lookback window in hours for alert evaluation."""
 
+# ── Retention periods (env-overridable, in days) ──────────
+RETENTION_AGENT_RUNS = int(os.environ.get("PRISMATIC_RETENTION_AGENT_RUNS", "30"))
+RETENTION_TOOL_CALLS = int(os.environ.get("PRISMATIC_RETENTION_TOOL_CALLS", "7"))
+RETENTION_LOOP_EVENTS = int(os.environ.get("PRISMATIC_RETENTION_LOOP_EVENTS", "90"))
+RETENTION_RESOURCE_SNAPSHOTS = int(os.environ.get("PRISMATIC_RETENTION_RESOURCE_SNAPSHOTS", "1"))
+RETENTION_CREDIT_LEDGER = int(os.environ.get("PRISMATIC_RETENTION_CREDIT_LEDGER", "90"))
+
 
 class TelemetryCollector:
     """Non-blocking telemetry collector.
@@ -529,6 +536,64 @@ class TelemetryCollector:
                     )
         finally:
             conn.close()
+
+    def cleanup_expired(self, dry_run: bool = False) -> dict[str, int]:
+        """Purge telemetry rows past their retention periods.
+
+        Returns a dict of {table_name: rows_deleted}.
+
+        Retention periods (env-overridable):
+          - agent_runs > RETENTION_AGENT_RUNS days (default 30)
+          - loop_events > RETENTION_LOOP_EVENTS days (default 90)
+          - credit_ledger > RETENTION_CREDIT_LEDGER days (default 90)
+          - token_metrics > RETENTION_LOOP_EVENTS days (default 90)
+          - validation_events > RETENTION_LOOP_EVENTS days (default 90)
+        """
+        conn = sqlite3.connect(self._db_path)
+        deleted: dict[str, int] = {}
+
+        # Map table → (column, retention_days)
+        tables = {
+            "telemetry_agent_runs": ("start_time", RETENTION_AGENT_RUNS),
+            "telemetry_loop_events": ("created_at", RETENTION_LOOP_EVENTS),
+            "telemetry_credit_ledger": ("recorded_at", RETENTION_CREDIT_LEDGER),
+            "telemetry_token_metrics": ("recorded_at", RETENTION_LOOP_EVENTS),
+            "telemetry_validation_events": ("created_at", RETENTION_LOOP_EVENTS),
+        }
+
+        try:
+            for table, (col, days) in tables.items():
+                cutoff = datetime.now(timezone.utc).timestamp() - (days * 86400)
+                cutoff_str = datetime.fromtimestamp(cutoff, tz=timezone.utc).isoformat()
+
+                if dry_run:
+                    cursor = conn.execute(
+                        f"SELECT COUNT(*) as cnt FROM {table} WHERE {col} < ?",
+                        (cutoff_str,),
+                    )
+                    row = cursor.fetchone()
+                    deleted[table] = row[0] if row else 0
+                else:
+                    cursor = conn.execute(
+                        f"DELETE FROM {table} WHERE {col} < ?",
+                        (cutoff_str,),
+                    )
+                    deleted[table] = cursor.rowcount
+
+            if not dry_run:
+                conn.execute("VACUUM")
+                conn.commit()
+        except Exception as exc:
+            print(
+                f"prismatic.telemetry: cleanup failed: {exc}",
+                file=__import__("sys").stderr,
+            )
+            if not dry_run:
+                conn.rollback()
+        finally:
+            conn.close()
+
+        return deleted
 
     # ── Internal ────────────────────────────────────────────
 

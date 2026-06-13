@@ -539,6 +539,58 @@ def cmd_telemetry_alerts(
     return 0
 
 
+
+def cmd_telemetry_cleanup(
+    dry_run: bool = False,
+    db_path: str | None = None,
+) -> int:
+    """Purge telemetry rows past their retention periods.
+
+    With --dry-run, reports what would be deleted without deleting.
+    """
+    import os as _os
+
+    if db_path:
+        target_path = db_path
+    else:
+        state_dir = _os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state")
+        target_path = _os.path.join(state_dir, "event_router.db")
+
+    if not _os.path.exists(target_path):
+        print(f"prismatic-admin: no telemetry database found at {target_path}")
+        return 1
+
+    try:
+        from .telemetry import TelemetryCollector
+    except ImportError as exc:
+        print(f"prismatic-admin: cannot import telemetry module: {exc}",
+              file=sys.stderr)
+        return 1
+
+    collector = TelemetryCollector(db_path=target_path)
+    import time as _time
+    _time.sleep(0.5)
+
+    deleted = collector.cleanup_expired(dry_run=dry_run)
+
+    if dry_run:
+        print("prismatic-admin: cleanup dry-run — would delete:\n")
+    else:
+        print("prismatic-admin: cleanup complete — deleted:\n")
+
+    total = 0
+    for table, count in sorted(deleted.items()):
+        print(f"  {table}: {count} row(s)")
+        total += count
+
+    print(f"\n  Total: {total} row(s)")
+
+    if not dry_run and total > 0:
+        print("  Database vacuumed to reclaim disk space")
+
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="prismatic-admin",
@@ -606,6 +658,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Post alert comments to affected Linear issues (requires LINEAR_API_KEY)"
     )
 
+    # telemetry cleanup
+    cleanup_parser = telemetry_sub.add_parser(
+        "cleanup", help="Purge expired telemetry rows past retention periods"
+    )
+    cleanup_parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Show what would be deleted without actually deleting"
+    )
+    cleanup_parser.add_argument(
+        "--db-path", dest="db_path_arg",
+        help="Path to database (default: $PRISMATIC_STATE_DIR/event_router.db)"
+    )
+
     return parser
 
 
@@ -630,6 +695,12 @@ def main() -> None:
             hours=getattr(args, "hours", None),
             db_path=getattr(args, "db_path_arg", None),
             post_comments=getattr(args, "post", False),
+        ))
+
+    elif args.command == "telemetry" and args.telemetry_command == "cleanup":
+        sys.exit(cmd_telemetry_cleanup(
+            dry_run=getattr(args, "dry_run", False),
+            db_path=getattr(args, "db_path_arg", None),
         ))
 
     else:
