@@ -301,6 +301,34 @@ class TelemetryCollector:
         }
         self._push("credit", event)
 
+    def record_agy_live_state(
+        self,
+        run_id: str,
+        active_model: str | None = None,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        context_usage_pct: float = 0.0,
+        rate_limits: dict[str, Any] | None = None,
+        raw_payload: str | None = None,
+    ) -> None:
+        """Record a snapshot of AGY's live runtime state.
+
+        Called by the AGY status line hook parser whenever AGY emits
+        a status line JSON payload. All writes go through the queue.
+        """
+        event = {
+            "run_id": run_id,
+            "active_model": active_model,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "context_usage_pct": context_usage_pct,
+            "rate_limits": json.dumps(rate_limits) if rate_limits else None,
+            "raw_payload": raw_payload,
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._push("agy_live_state", event)
+
+
     def get_dashboard_data(self, hours: int = 24) -> dict[str, Any]:
         """Query recent telemetry for dashboard display.
 
@@ -698,6 +726,24 @@ class TelemetryCollector:
                             data.get("operation", ""), data["recorded_at"],
                         ),
                     )
+                elif event_type == "agy_live_state":
+                    conn.execute(
+                        """INSERT INTO agy_live_state
+                           (run_id, active_model, prompt_tokens,
+                            completion_tokens, context_usage_pct,
+                            rate_limits, raw_payload, recorded_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            data["run_id"], data.get("active_model"),
+                            data.get("prompt_tokens", 0),
+                            data.get("completion_tokens", 0),
+                            data.get("context_usage_pct", 0.0),
+                            data.get("rate_limits"),
+                            data.get("raw_payload"),
+                            data["recorded_at"],
+                        ),
+                    )
+
                 conn.commit()
             except Exception:
                 pass  # Telemetry failures must never crash the dispatcher
@@ -797,6 +843,22 @@ class TelemetryCollector:
                 );
                 CREATE INDEX IF NOT EXISTS idx_credit_ledger_run
                     ON telemetry_credit_ledger(run_id);
+
+                CREATE TABLE IF NOT EXISTS agy_live_state (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id          TEXT NOT NULL,
+                    active_model    TEXT,
+                    prompt_tokens   INTEGER DEFAULT 0,
+                    completion_tokens INTEGER DEFAULT 0,
+                    context_usage_pct REAL,
+                    rate_limits     TEXT,
+                    raw_payload     TEXT,
+                    recorded_at     TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_agy_live_run
+                    ON agy_live_state(run_id);
+                CREATE INDEX IF NOT EXISTS idx_agy_live_time
+                    ON agy_live_state(recorded_at);
             """)
             conn.commit()
         finally:
