@@ -72,6 +72,14 @@ MAX_CYCLES_BEFORE_RECOVER: int = int(
 # Nudge directory for file-based signal providers
 NUDGE_DIR: str = os.environ.get("PRISMATIC_NUDGE_DIR", "/tmp/prismatic")
 
+# Headless environment for subprocess agents (prevents TTY ioctl crashes)
+HEADLESS_ENV: dict[str, str] = {
+    **os.environ,
+    "TERM": "xterm",
+    "DEBIAN_FRONTEND": "noninteractive",
+    "PYTHONUNBUFFERED": "1",
+}
+
 # Pipeline metrics log for dashboard consumption
 PIPELINE_METRICS_PATH: str = os.environ.get(
     "PRISMATIC_METRICS_PATH", "/tmp/pipeline_metrics.jsonl"
@@ -562,6 +570,7 @@ def launch_agy(issue_id: str, task: str = "") -> subprocess.Popen | None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
+            env=HEADLESS_ENV,
         )
         print(f"[dispatcher] Launched AGY (pid={proc.pid}) for issue {issue_id}")
         return proc
@@ -594,6 +603,7 @@ def launch_jules(issue_id: str, task: str = "") -> subprocess.Popen | None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
+            env=HEADLESS_ENV,
         )
         print(f"[dispatcher] Launched Jules (pid={proc.pid}) for issue {issue_id}")
         return proc
@@ -626,6 +636,7 @@ def launch_codex(issue_id: str, task: str = "") -> subprocess.Popen | None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
+            env=HEADLESS_ENV,
         )
         print(f"[dispatcher] Launched Codex (pid={proc.pid}) for issue {issue_id}")
         return proc
