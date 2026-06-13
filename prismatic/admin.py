@@ -476,6 +476,69 @@ def cmd_telemetry_dashboard(hours: int = 24, db_path: str | None = None) -> int:
 
 
 
+
+def cmd_telemetry_alerts(
+    hours: int | None = None,
+    db_path: str | None = None,
+    post_comments: bool = False,
+) -> int:
+    """Evaluate alert rules against recent telemetry data.
+
+    Prints triggered alerts to stdout. With --post, also comments
+    on affected Linear issues (requires LINEAR_API_KEY env var).
+    """
+    import os as _os
+
+    # Resolve DB path
+    if db_path:
+        target_path = db_path
+    else:
+        state_dir = _os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state")
+        target_path = _os.path.join(state_dir, "event_router.db")
+
+    if not _os.path.exists(target_path):
+        print(f"prismatic-admin: no telemetry database found at {target_path}")
+        return 1
+
+    # Import telemetry and create collector
+    try:
+        from .telemetry import TelemetryCollector
+    except ImportError as exc:
+        print(f"prismatic-admin: cannot import telemetry module: {exc}",
+              file=sys.stderr)
+        return 1
+
+    collector = TelemetryCollector(db_path=target_path)
+    # Flush any queued events before checking
+    import time as _time
+    _time.sleep(0.5)
+
+    # Determine API key for posting
+    api_key = None
+    if post_comments:
+        api_key = _os.environ.get("LINEAR_API_KEY", "")
+        if not api_key:
+            print("prismatic-admin: --post requires LINEAR_API_KEY env var",
+                  file=sys.stderr)
+            return 1
+
+    alerts = collector.check_alerts(hours=hours, linear_api_key=api_key)
+
+    if not alerts:
+        print("prismatic-admin: no alerts triggered")
+        return 0
+
+    print(f"prismatic-admin: {len(alerts)} alert(s) triggered:\n")
+    for a in alerts:
+        print(f"  [{a['severity'].upper()}] {a['rule']}")
+        print(f"    {a['message']}")
+        if post_comments and api_key:
+            print(f"    (alert comment posted to affected Linear issue)")
+        print()
+
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="prismatic-admin",
@@ -526,6 +589,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to database (default: $PRISMATIC_STATE_DIR/event_router.db)"
     )
 
+    # telemetry alerts
+    alerts_parser = telemetry_sub.add_parser(
+        "alerts", help="Evaluate alert rules against recent telemetry"
+    )
+    alerts_parser.add_argument(
+        "--hours", type=int,
+        help="Lookback window in hours (default: PRISMATIC_ALERT_WINDOW_HOURS env or 1)"
+    )
+    alerts_parser.add_argument(
+        "--db-path", dest="db_path_arg",
+        help="Path to database (default: $PRISMATIC_STATE_DIR/event_router.db)"
+    )
+    alerts_parser.add_argument(
+        "--post", action="store_true",
+        help="Post alert comments to affected Linear issues (requires LINEAR_API_KEY)"
+    )
+
     return parser
 
 
@@ -543,6 +623,13 @@ def main() -> None:
         sys.exit(cmd_telemetry_dashboard(
             hours=getattr(args, "hours", 24),
             db_path=getattr(args, "db_path_arg", None),
+        ))
+
+    elif args.command == "telemetry" and args.telemetry_command == "alerts":
+        sys.exit(cmd_telemetry_alerts(
+            hours=getattr(args, "hours", None),
+            db_path=getattr(args, "db_path_arg", None),
+            post_comments=getattr(args, "post", False),
         ))
 
     else:

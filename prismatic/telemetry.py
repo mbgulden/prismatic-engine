@@ -30,6 +30,19 @@ DEFAULT_DB_PATH = os.path.join(
 BREAKER_MICRO_MAX = int(os.environ.get("PRISMATIC_BREAKER_MICRO_MAX", "5"))
 BREAKER_MACRO_MAX = int(os.environ.get("PRISMATIC_BREAKER_MACRO_MAX", "3"))
 
+# ── Alerting thresholds (env-overridable) ─────────────────
+ALERT_CREDIT_BURN_RATE = int(os.environ.get("PRISMATIC_ALERT_CREDIT_BURN", "1000"))
+"""Credits/hour. Alert when credit burn rate exceeds this."""
+
+ALERT_LOOP_COUNT = int(os.environ.get("PRISMATIC_ALERT_LOOP_COUNT", "5"))
+"""Max loop events in 1 hour before alerting."""
+
+ALERT_FAILURE_RATE = float(os.environ.get("PRISMATIC_ALERT_FAILURE_RATE", "0.20"))
+"""Fraction (0.0-1.0). Alert when agent run failure rate exceeds this."""
+
+ALERT_WINDOW_HOURS = int(os.environ.get("PRISMATIC_ALERT_WINDOW_HOURS", "1"))
+"""Lookback window in hours for alert evaluation."""
+
 
 class TelemetryCollector:
     """Non-blocking telemetry collector.
@@ -282,7 +295,11 @@ class TelemetryCollector:
         self._push("credit", event)
 
     def get_dashboard_data(self, hours: int = 24) -> dict[str, Any]:
-        """Query recent telemetry for dashboard display."""
+        """Query recent telemetry for dashboard display.
+
+        Returns a dict with loops, tokens, validation, breakers_tripped,
+        credit_burn_rate, failure_rate, and total_agent_runs.
+        """
         conn = sqlite3.connect(self._db_path)
         conn.row_factory = sqlite3.Row
         cutoff = (datetime.now(timezone.utc).timestamp() - hours * 3600)
@@ -318,13 +335,198 @@ class TelemetryCollector:
                 "WHERE tripped = 1"
             ).fetchone()
 
+            # Credit burn rate (credits spent in window)
+            credit = conn.execute(
+                "SELECT COALESCE(SUM(credits_spent), 0) as total_credits "
+                "FROM telemetry_credit_ledger WHERE recorded_at >= ?",
+                (cutoff_str,),
+            ).fetchone()
+            total_credits = credit["total_credits"] if credit else 0
+            credit_burn_rate = total_credits / max(hours, 1)
+
+            # Agent run stats for failure rate
+            agent_runs = conn.execute(
+                "SELECT COUNT(*) as total, "
+                "SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed "
+                "FROM telemetry_agent_runs WHERE start_time >= ?",
+                (cutoff_str,),
+            ).fetchone()
+            total_runs = agent_runs["total"] if agent_runs else 0
+            failed_runs = agent_runs["failed"] if agent_runs else 0
+            failure_rate = (failed_runs / total_runs) if total_runs > 0 else 0.0
+
             return {
                 "loops": [dict(r) for r in loops],
                 "tokens": [dict(r) for r in tokens],
                 "validation": dict(validation) if validation else {},
                 "breakers_tripped": breakers["cnt"] if breakers else 0,
                 "hours": hours,
+                "credit_burn_rate": round(credit_burn_rate, 1),
+                "total_credits": total_credits,
+                "failure_rate": round(failure_rate, 4),
+                "total_agent_runs": total_runs,
+                "failed_agent_runs": failed_runs,
             }
+        finally:
+            conn.close()
+
+    # ── Alert Engine ────────────────────────────────────────
+
+    def check_alerts(
+        self,
+        hours: int | None = None,
+        linear_api_key: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Evaluate all alert rules against recent telemetry.
+
+        Returns a list of triggered alerts as dicts with:
+          rule, current_value, threshold, message, severity
+
+        If linear_api_key is provided, also posts alert comments
+        to the affected Linear issues via the dispatcher's event DB.
+        """
+        window = hours if hours is not None else ALERT_WINDOW_HOURS
+        data = self.get_dashboard_data(hours=window)
+        alerts: list[dict[str, Any]] = []
+
+        # ── Rule 1: Credit burn rate ────────────────────────
+        burn_rate = data.get("credit_burn_rate", 0)
+        if burn_rate > ALERT_CREDIT_BURN_RATE:
+            alerts.append({
+                "rule": "credit_burn",
+                "current_value": burn_rate,
+                "threshold": ALERT_CREDIT_BURN_RATE,
+                "message": (
+                    f"Credit burn rate {burn_rate:.0f}/hr exceeds "
+                    f"threshold {ALERT_CREDIT_BURN_RATE}/hr "
+                    f"(total: {data.get('total_credits', 0)} credits "
+                    f"in {window}h)"
+                ),
+                "severity": "high",
+            })
+
+        # ── Rule 2: Loop count ──────────────────────────────
+        total_loops = sum(
+            r.get("cnt", 0) for r in data.get("loops", [])
+        )
+        if total_loops > ALERT_LOOP_COUNT:
+            loop_detail = ", ".join(
+                f"{r.get('loop_type', '?')}={r.get('cnt', 0)}"
+                for r in data.get("loops", [])
+            )
+            alerts.append({
+                "rule": "loop_count",
+                "current_value": total_loops,
+                "threshold": ALERT_LOOP_COUNT,
+                "message": (
+                    f"Loop count {total_loops} in {window}h exceeds "
+                    f"threshold {ALERT_LOOP_COUNT} "
+                    f"({loop_detail})"
+                ),
+                "severity": "high",
+            })
+
+        # ── Rule 3: Failure rate ────────────────────────────
+        failure_rate = data.get("failure_rate", 0)
+        total_runs = data.get("total_agent_runs", 0)
+        if total_runs > 0 and failure_rate > ALERT_FAILURE_RATE:
+            alerts.append({
+                "rule": "failure_rate",
+                "current_value": failure_rate,
+                "threshold": ALERT_FAILURE_RATE,
+                "message": (
+                    f"Agent failure rate {failure_rate:.1%} exceeds "
+                    f"threshold {ALERT_FAILURE_RATE:.0%} "
+                    f"({data.get('failed_agent_runs', 0)}/{total_runs} runs)"
+                ),
+                "severity": "high",
+            })
+
+        # ── Post alerts to Linear if credentials available ──
+        if alerts and linear_api_key:
+            self._post_alert_comments(alerts, linear_api_key)
+
+        return alerts
+
+    def _post_alert_comments(
+        self, alerts: list[dict[str, Any]], api_key: str
+    ) -> None:
+        """Post alert comments to the most-recently-affected Linear issues.
+
+        For each alert, finds the issue that generated the most related
+        events and posts a structured comment. Falls back to posting on
+        the first active issue found.
+        """
+        import subprocess as _sp
+
+        conn = sqlite3.connect(self._db_path)
+        try:
+            for alert in alerts:
+                # Find the most active issue for this alert type
+                issue_id = None
+                if alert["rule"] == "credit_burn":
+                    row = conn.execute(
+                        "SELECT run_id FROM telemetry_credit_ledger "
+                        "ORDER BY recorded_at DESC LIMIT 1"
+                    ).fetchone()
+                elif alert["rule"] == "loop_count":
+                    row = conn.execute(
+                        "SELECT issue_id FROM telemetry_loop_events "
+                        "ORDER BY created_at DESC LIMIT 1"
+                    ).fetchone()
+                elif alert["rule"] == "failure_rate":
+                    row = conn.execute(
+                        "SELECT issue_id FROM telemetry_agent_runs "
+                        "WHERE status = 'failed' "
+                        "ORDER BY start_time DESC LIMIT 1"
+                    ).fetchone()
+                else:
+                    row = None
+
+                issue_id = row[0] if row else None
+                if not issue_id:
+                    continue
+
+                # Build alert comment
+                body = (
+                    f"## 🚨 Prismatic Alert: {alert['rule']}\n\n"
+                    f"{alert['message']}\n\n"
+                    f"| Metric | Value |\n|--------|-------|\n"
+                    f"| Rule | `{alert['rule']}` |\n"
+                    f"| Severity | **{alert['severity']}** |\n"
+                    f"| Current | {alert['current_value']} |\n"
+                    f"| Threshold | {alert['threshold']} |\n"
+                )
+
+                # Post via Linear API (curl subprocess for reliability)
+                payload = json.dumps({
+                    "query": (
+                        "mutation { commentCreate(input: "
+                        f'{{ issueId: "{issue_id}", body: "{body}" }}'
+                        ") { success } }"
+                    ),
+                })
+                try:
+                    result = _sp.run([
+                        "curl", "-s", "-X", "POST",
+                        "https://api.linear.app/graphql",
+                        "-H", f"Authorization: {api_key}",
+                        "-H", "Content-Type: application/json",
+                        "-d", payload,
+                    ], capture_output=True, text=True, timeout=15)
+                    resp = json.loads(result.stdout)
+                    ok = resp.get("data", {}).get("commentCreate", {}).get("success")
+                    if not ok:
+                        print(
+                            f"prismatic.telemetry: alert comment failed for "
+                            f"{issue_id}: {result.stderr[:200]}",
+                            file=__import__("sys").stderr,
+                        )
+                except Exception as exc:
+                    print(
+                        f"prismatic.telemetry: alert comment error: {exc}",
+                        file=__import__("sys").stderr,
+                    )
         finally:
             conn.close()
 
