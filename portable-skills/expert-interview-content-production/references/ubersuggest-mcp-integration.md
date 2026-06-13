@@ -47,7 +47,7 @@ async def call(session, tool, args):
 
 async def main():
     url = "https://ubersuggest-mcp.neilpatelapi.com/mcp"
-    headers = {"Authorization": f"Bearer {TOKEN}"}
+    headers = {"Authorization": f"Bearer {os.environ['UBERSUGGEST_API_TOKEN']}"}
     async with streamablehttp_client(url, headers=headers) as (read, write, _):
         async with ClientSession(read, write) as session:
             await session.initialize()

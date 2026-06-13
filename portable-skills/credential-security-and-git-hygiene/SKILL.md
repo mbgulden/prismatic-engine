@@ -144,9 +144,9 @@ curl -s "https://api.cloudflare.com/client/v4/user" \
   -H "X-Auth-Email: $EMAIL" -H "X-Auth-Key: $KEY"
 # 9103 "Unknown X-Auth-Key" → expired or revoked
 
-# Cloudflare API Token test (cfat_ prefix)
+# Cloudflare API Token test
 curl -s "https://api.cloudflare.com/client/v4/zones" \
-  -H "Authorization: Bearer $TOKEN"
+  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
 # 1000 "Invalid API Token" → expired or revoked
 ```
 
