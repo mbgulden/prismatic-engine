@@ -1721,6 +1721,81 @@ def init_config(force: bool = False) -> None:
     print(f"[dispatcher] Config directory: {config_dir}")
 
 
+def cmd_billing_report(args: Any) -> None:
+    """CLI handler for billing-report subcommand (Phase 4.4)."""
+    from prismatic.billing.cost_attribution import CostAttributionEngine
+
+    engine = CostAttributionEngine()
+
+    # ── Set attribution mode ──
+    if args.set_attribution:
+        issue_id, client_id, project_id = args.set_attribution
+        engine.set_attribution(issue_id, client_id, project_id)
+        print(f"✓ Mapped {issue_id} → client={client_id}, project={project_id}")
+        return
+
+    # ── Report mode ──
+    if args.projection:
+        proj = engine.project_costs(
+            client_id=args.client, project_id=args.project
+        )
+        print(f"\n{'='*60}")
+        print(f"  Cost Projection (7-day rolling average)")
+        print(f"{'='*60}")
+        print(f"  Client:      {args.client or 'all'}")
+        print(f"  Project:     {args.project or 'all'}")
+        print(f"  Days of data: {len([c for c in proj.daily_costs if c > 0])}/{len(proj.daily_costs)}")
+        print(f"  Avg daily:   ${proj.average_daily:.4f}")
+        print(f"  Projected/mo: ${proj.projected_monthly:.4f}")
+        print(f"  Trend:       {proj.trend} (confidence: {proj.confidence})")
+        print(f"{'='*60}\n")
+        if proj.daily_costs:
+            print("  Daily costs:")
+            for i, cost in enumerate(proj.daily_costs):
+                day = (datetime.now(timezone.utc) - timedelta(days=len(proj.daily_costs) - 1 - i)).strftime("%Y-%m-%d")
+                bar = "█" * min(int(cost * 50), 50) if cost > 0 else ""
+                print(f"    {day}: ${cost:8.4f} {bar}")
+            print()
+
+    # ── Billing report ──
+    if args.format == "json":
+        print(engine.generate_report_json(
+            client_id=args.client, project_id=args.project
+        ))
+    elif args.format == "csv":
+        print(engine.generate_report_csv(
+            client_id=args.client, project_id=args.project
+        ))
+    else:
+        reports = engine.generate_report(
+            client_id=args.client, project_id=args.project
+        )
+        if not reports:
+            print("\n  No billing data found for the specified period.")
+            return
+
+        print(f"\n{'='*70}")
+        print(f"  Client Cost Attribution Report")
+        print(f"{'='*70}")
+        for report in reports:
+            print(f"\n  Client:  {report.client_id}")
+            print(f"  Project: {report.project_id}")
+            print(f"  Total:   ${report.total_cost_usd:.6f}")
+            print(f"  Period:  {report.period_start[:10]} → {report.period_end[:10]}")
+            print(f"  {'─'*50}")
+            if report.agent_breakdown:
+                print(f"  Agent Breakdown:")
+                for agent, adata in sorted(report.agent_breakdown.items(),
+                                           key=lambda x: x[1]["cost_usd"], reverse=True):
+                    print(f"    {agent:30s} ${adata['cost_usd']:10.6f}  ({adata['entries']} entries)")
+            if report.model_breakdown:
+                print(f"  Model Breakdown:")
+                for model, mdata in sorted(report.model_breakdown.items(),
+                                           key=lambda x: x[1]["cost_usd"], reverse=True):
+                    print(f"    {model:30s} ${mdata['cost_usd']:10.6f}  ({mdata['entries']} entries)")
+        print(f"{'='*70}\n")
+
+
 def main() -> None:
     """Entry point: parse CLI arguments and start the dispatcher.
 
@@ -1773,6 +1848,31 @@ def main() -> None:
         help="Overwrite existing configuration files",
     )
 
+    # ── Billing-Report Subcommand (Phase 4.4) ─────────────────
+    billing_parser = subparsers.add_parser(
+        "billing-report", help="Generate client cost attribution report"
+    )
+    billing_parser.add_argument(
+        "--client", type=str, default=None, help="Filter by client ID"
+    )
+    billing_parser.add_argument(
+        "--project", type=str, default=None, help="Filter by project ID"
+    )
+    billing_parser.add_argument(
+        "--format", type=str, default="table",
+        choices=["table", "json", "csv"],
+        help="Output format (default: table)"
+    )
+    billing_parser.add_argument(
+        "--projection", action="store_true",
+        help="Show rolling 7-day cost projection"
+    )
+    billing_parser.add_argument(
+        "--set-attribution", nargs=3,
+        metavar=("ISSUE_ID", "CLIENT_ID", "PROJECT_ID"),
+        help="Map an issue to client/project for billing"
+    )
+
     # ── Skills Subcommand ─────────────────────────────────────
     subparsers.add_parser("skills", help="Skill marketplace subcommands (run 'skills --help' for details)")
 
@@ -1790,6 +1890,8 @@ def main() -> None:
 
     if args.command == "init":
         init_config(force=args.force)
+    elif args.command == "billing-report":
+        cmd_billing_report(args)
     elif args.command == "serve":
         if args.setup_pipelines:
             issues = setup_pipeline_issues()
