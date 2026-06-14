@@ -9,10 +9,12 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch, MagicMock
 
+import grpc
 import prismatic.lock
 import pytest
 from fastapi.testclient import TestClient
 from prismatic.gateway.server import app
+from prismatic.gateway.proto_out import gateway_pb2, gateway_pb2_grpc
 from prismatic.run_records import AgentRunRecordStore
 from prismatic.gateway.webhook_router import (
     _verify_github_signature,
@@ -252,6 +254,174 @@ class TestHMACVerification:
 def _compute_hmac(body: bytes, secret: str) -> str:
     import hmac, hashlib
     return hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+
+
+# ── gRPC Endpoints ─────────────────────────────────────────
+
+
+class TestGrpcEndpoints:
+    """Integration tests for the gRPC server (LockService, RunService, WatchdogService).
+
+    Starts a gRPC server on a random port alongside the FastAPI test client.
+    """
+
+    @pytest.fixture(autouse=True)
+    def grpc_server_and_channel(self, tmp_path: Path) -> Any:
+        """Start a gRPC server on a random port and return a channel.
+
+        Runs the gRPC event loop in a background daemon thread.
+        """
+        import asyncio
+        import socket
+        import threading
+        from prismatic.gateway.grpc_server import serve_grpc
+        from prismatic.run_records import AgentRunRecordStore
+
+        state_dir = tmp_path / "prismatic_state"
+        state_dir.mkdir(exist_ok=True)
+        store = AgentRunRecordStore(store_path=str(state_dir / "run_records.json"))
+
+        loop = asyncio.new_event_loop()
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("", 0))
+            port = s.getsockname()[1]
+
+        server = loop.run_until_complete(serve_grpc(port, store))
+
+        # Run event loop in background thread so it processes RPCs
+        def _run_loop() -> None:
+            asyncio.set_event_loop(loop)
+            loop.run_forever()
+
+        bg_thread = threading.Thread(target=_run_loop, daemon=True)
+        bg_thread.start()
+
+        channel = grpc.insecure_channel(f"localhost:{port}")
+        grpc.channel_ready_future(channel).result(timeout=5)
+
+        yield (channel, store)
+
+        channel.close()
+        loop.call_soon_threadsafe(server.stop, 5)
+        loop.call_soon_threadsafe(loop.stop)
+        bg_thread.join(timeout=5)
+
+    # ── LockService tests ────────────────────────────────
+
+    def test_list_locks_empty(self, grpc_server_and_channel: Any) -> None:
+        channel, _ = grpc_server_and_channel
+        stub = gateway_pb2_grpc.LockServiceStub(channel)
+        resp = stub.ListLocks(gateway_pb2.ListLocksRequest())
+        assert len(resp.locks) == 0
+
+    def test_list_locks_with_data(self, grpc_server_and_channel: Any, tmp_path: Path) -> None:
+        channel, _ = grpc_server_and_channel
+        lock_file = Path(prismatic.lock.LOCK_FILE)
+        lock_file.write_text(json.dumps([{
+            "file": "/test/foo.txt", "agent": "jules",
+            "heartbeat_ms": 1_000_000.0, "acquired_ms": 1_000_000.0,
+        }]))
+        stub = gateway_pb2_grpc.LockServiceStub(channel)
+        resp = stub.ListLocks(gateway_pb2.ListLocksRequest())
+        assert len(resp.locks) == 1
+        assert resp.locks[0].file == "/test/foo.txt"
+
+    def test_get_lock_found(self, grpc_server_and_channel: Any, tmp_path: Path) -> None:
+        channel, _ = grpc_server_and_channel
+        Path(prismatic.lock.LOCK_FILE).write_text(json.dumps([{
+            "file": "/test/bar.txt", "agent": "jules",
+            "heartbeat_ms": 1_000_000.0, "acquired_ms": 1_000_000.0,
+        }]))
+        stub = gateway_pb2_grpc.LockServiceStub(channel)
+        resp = stub.GetLock(gateway_pb2.GetLockRequest(file_path="/test/bar.txt"))
+        assert resp.file == "/test/bar.txt"
+        assert resp.agent == "jules"
+
+    def test_get_lock_not_found(self, grpc_server_and_channel: Any) -> None:
+        channel, _ = grpc_server_and_channel
+        stub = gateway_pb2_grpc.LockServiceStub(channel)
+        with pytest.raises(grpc.RpcError) as exc:
+            stub.GetLock(gateway_pb2.GetLockRequest(file_path="/nonexistent.txt"))
+        assert exc.value.code() == grpc.StatusCode.NOT_FOUND
+
+    def test_list_stale_locks(self, grpc_server_and_channel: Any, tmp_path: Path) -> None:
+        channel, _ = grpc_server_and_channel
+        lock_file = Path(prismatic.lock.LOCK_FILE)
+        lock_file.write_text(json.dumps([
+            {"file": "/stale/a", "agent": "old", "heartbeat_ms": 1.0, "acquired_ms": 1.0},
+            {"file": "/fresh/b", "agent": "new", "heartbeat_ms": time.time() * 1000, "acquired_ms": time.time() * 1000},
+        ]))
+        stub = gateway_pb2_grpc.LockServiceStub(channel)
+        resp = stub.ListStaleLocks(gateway_pb2.ListStaleLocksRequest())
+        assert len(resp.locks) == 1
+        assert resp.locks[0].file == "/stale/a"
+
+    # ── RunService tests ─────────────────────────────────
+
+    def test_list_runs_empty_grpc(self, grpc_server_and_channel: Any) -> None:
+        channel, _ = grpc_server_and_channel
+        stub = gateway_pb2_grpc.RunServiceStub(channel)
+        resp = stub.ListRuns(gateway_pb2.ListRunsRequest())
+        assert len(resp.records) == 0
+
+    def test_create_and_list_run_grpc(self, grpc_server_and_channel: Any) -> None:
+        channel, _ = grpc_server_and_channel
+        stub = gateway_pb2_grpc.RunServiceStub(channel)
+        create_resp = stub.CreateRun(gateway_pb2.CreateRunRequest(issue_id="GRO-9999", agent_name="jules"))
+        assert create_resp.run_id != ""
+        assert create_resp.status == "created"
+        run_id = create_resp.run_id
+
+        list_resp = stub.ListRuns(gateway_pb2.ListRunsRequest())
+        assert len(list_resp.records) >= 1
+        ids = [r.run_id for r in list_resp.records]
+        assert run_id in ids
+
+    def test_complete_run_grpc(self, grpc_server_and_channel: Any) -> None:
+        channel, store = grpc_server_and_channel
+        stub = gateway_pb2_grpc.RunServiceStub(channel)
+        create = stub.CreateRun(gateway_pb2.CreateRunRequest(issue_id="GRO-0002", agent_name="jules"))
+        complete = stub.CompleteRun(gateway_pb2.CompleteRunRequest(
+            run_id=create.run_id, status="completed", output_path="/tmp/out.txt",
+        ))
+        assert complete.status == "completed"
+
+        # Verify via HTTP endpoint too
+        record = store.get_run(create.run_id)
+        assert record is not None
+        assert record.status == "completed"
+
+    def test_get_run_not_found_grpc(self, grpc_server_and_channel: Any) -> None:
+        channel, _ = grpc_server_and_channel
+        stub = gateway_pb2_grpc.RunServiceStub(channel)
+        with pytest.raises(grpc.RpcError) as exc:
+            stub.GetRun(gateway_pb2.GetRunRequest(run_id="nonexistent"))
+        assert exc.value.code() == grpc.StatusCode.NOT_FOUND
+
+    # ── WatchdogService tests ────────────────────────────
+
+    def test_health_grpc(self, grpc_server_and_channel: Any) -> None:
+        channel, _ = grpc_server_and_channel
+        stub = gateway_pb2_grpc.WatchdogServiceStub(channel)
+        resp = stub.Health(gateway_pb2.HealthRequest())
+        assert resp.status == "ok"
+        assert resp.uptime_seconds >= 0
+        assert resp.started_at > 0
+
+    def test_heartbeat_grpc(self, grpc_server_and_channel: Any) -> None:
+        channel, _ = grpc_server_and_channel
+        stub = gateway_pb2_grpc.WatchdogServiceStub(channel)
+        resp = stub.Heartbeat(gateway_pb2.HeartbeatRequest(agent_name="jules"))
+        assert resp.status == "ok"
+        assert resp.server_time > 0
+
+
+def _find_free_port() -> int:
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("", 0))
+        return s.getsockname()[1]
 
 
 # ── Webhook Router Integration ────────────────────────────

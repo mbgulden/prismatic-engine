@@ -32,8 +32,10 @@ dependencies = [
 
 [project.optional-dependencies]
 http = ["requests>=2.31"]
+gateway = ["fastapi>=0.100", "uvicorn[standard]>=0.20", "grpcio>=1.81"]
+grpc = ["grpcio>=1.81"]
 redis = ["redis>=5.0"]
-all = ["prismatic-engine[http,redis]"]
+all = ["prismatic-engine[http,redis,gateway]"]
 
 [project.urls]
 Homepage = "https://github.com/mbgulden/prismatic-engine"
@@ -44,6 +46,7 @@ prismatic-engine = "prismatic.dispatcher:main"
 prismatic-engine-skills = "prismatic.skills:cli_skills"
 prismatic-lock = "prismatic.lock:main"
 prismatic-admin = "prismatic.admin:main"
+prismatic-gateway = "prismatic.gateway.server:main"
 
 [tool.setuptools.packages.find]
 include = ["prismatic*"]
