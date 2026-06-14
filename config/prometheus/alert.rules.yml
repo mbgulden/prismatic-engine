@@ -1,0 +1,88 @@
+# =============================================================================
+# Prometheus Alerting Rules — Prismatic Engine (Phase 4.5 / GRO-1584)
+# =============================================================================
+# Deploy to: /etc/prometheus/alert.rules.yml
+#
+# Four alert rules per GRO-1584 specification:
+#   1. HighLockContention — 5+ waiters contending for same file lock
+#   2. AgentStall — No agent task completions in 15 minutes
+#   3. CreditBurnRate — Credit burn rate exceeds threshold
+#   4. CircuitBreakerTrip — Circuit breaker has tripped
+#
+# Severity routing (see alertmanager.yml):
+#   critical → Telegram
+#   warning  → Slack (#hermes-feed)
+#   info     → log file
+# =============================================================================
+
+groups:
+  - name: prismatic_alerts
+    rules:
+      # ── Rule 1: HighLockContention ─────────────────────────────────────
+      # Triggers when 5+ waiters contend for the same file lock.
+      # Severity: critical (dispatches to Telegram)
+      - alert: HighLockContention
+        expr: prismatic_lock_waiters >= 5
+        for: 2m
+        labels:
+          severity: critical
+          component: locking
+        annotations:
+          summary: "HighLockContention: {{ $value }} waiters contending for file locks"
+          description: >
+            Lock contention has reached {{ $value }} simultaneous waiters
+            (threshold: 5). The centralized lock registry at
+            $PRISMATIC_HOME/.antigravity/swarm_locks.json has multiple
+            agents waiting on the same file paths. Investigate stalled
+            agents and consider releasing stale locks.
+
+      # ── Rule 2: AgentStall ─────────────────────────────────────────────
+      # Triggers when zero agent task completions are observed in 15 minutes.
+      # Severity: critical (dispatches to Telegram)
+      - alert: AgentStall
+        expr: rate(prismatic_agent_completions[15m]) == 0
+        for: 5m
+        labels:
+          severity: critical
+          component: dispatcher
+        annotations:
+          summary: "AgentStall: No agent task completions in 15+ minutes"
+          description: >
+            Zero agent task completions observed in the last 15 minutes.
+            The dispatch loop may be hung, the provider API may be down,
+            or all agents may be stalled. Check dispatcher logs and
+            provider health.
+
+      # ── Rule 3: CreditBurnRate ─────────────────────────────────────────
+      # Triggers when credit burn rate exceeds the configured threshold.
+      # Severity: warning (dispatches to Slack #hermes-feed)
+      - alert: CreditBurnRate
+        expr: sum(rate(prismatic_credits_spent[1h])) * 3600 > 1000
+        for: 5m
+        labels:
+          severity: warning
+          component: billing
+        annotations:
+          summary: "CreditBurnRate: credits/hour exceeds threshold"
+          description: >
+            Credit burn rate is {{ $value | humanize }} credits/hour,
+            exceeding the threshold of 1000 credits/hour. Review active
+            agent runs and model selection. Consider switching to smaller
+            models or pausing non-critical agents.
+
+      # ── Rule 4: CircuitBreakerTrip ─────────────────────────────────────
+      # Triggers when any circuit breaker is in tripped state.
+      # Severity: critical (dispatches to Telegram)
+      - alert: CircuitBreakerTrip
+        expr: prismatic_circuit_breaker_tripped > 0
+        for: 1m
+        labels:
+          severity: critical
+          component: governance
+        annotations:
+          summary: "CircuitBreakerTrip: {{ $value }} circuit breaker(s) tripped"
+          description: >
+            {{ $value }} circuit breaker(s) are currently in tripped state.
+            Agent dispatch for affected issue/agent pairs has been paused.
+            Review the telemetry_circuit_breakers table and manually reset
+            breakers after investigation.
