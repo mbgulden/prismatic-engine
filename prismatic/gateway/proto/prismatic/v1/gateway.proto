@@ -1,0 +1,113 @@
+syntax = "proto3";
+
+package prismatic.v1;
+
+// ── Lock Service ──────────────────────────────────────
+
+service LockService {
+  // List all active file locks
+  rpc ListLocks (ListLocksRequest) returns (ListLocksResponse);
+  // Get lock for a specific file
+  rpc GetLock (GetLockRequest) returns (Lock);
+  // List stale locks (heartbeat expired)
+  rpc ListStaleLocks (ListStaleLocksRequest) returns (ListStaleLocksResponse);
+}
+
+message ListLocksRequest {}
+message ListLocksResponse {
+  repeated Lock locks = 1;
+}
+
+message GetLockRequest {
+  string file_path = 1;
+}
+
+message ListStaleLocksRequest {}
+message ListStaleLocksResponse {
+  repeated Lock locks = 1;
+}
+
+message Lock {
+  string file = 1;
+  string agent = 2;
+  double heartbeat_ms = 3;
+  double acquired_ms = 4;
+}
+
+// ── Run Record Service ────────────────────────────────
+
+service RunService {
+  rpc ListRuns (ListRunsRequest) returns (ListRunsResponse);
+  rpc GetRun (GetRunRequest) returns (RunRecord);
+  rpc CreateRun (CreateRunRequest) returns (CreateRunResponse);
+  rpc CompleteRun (CompleteRunRequest) returns (CompleteRunResponse);
+}
+
+message ListRunsRequest {
+  string status_filter = 1;
+  int32 limit = 2;
+}
+
+message ListRunsResponse {
+  repeated RunRecord records = 1;
+}
+
+message GetRunRequest {
+  string run_id = 1;
+}
+
+message CreateRunRequest {
+  string issue_id = 1;
+  string agent_name = 2;
+}
+
+message CreateRunResponse {
+  string run_id = 1;
+  string status = 2;
+}
+
+message CompleteRunRequest {
+  string run_id = 1;
+  string status = 2;
+  string output_path = 3;
+  string error_message = 4;
+}
+
+message CompleteRunResponse {
+  string run_id = 1;
+  string status = 2;
+}
+
+message RunRecord {
+  string run_id = 1;
+  string issue_id = 2;
+  string agent_name = 3;
+  string status = 4;
+  string started_at = 5;
+  string completed_at = 6;
+  string output_path = 7;
+  string error_message = 8;
+}
+
+// ── Watchdog Service ──────────────────────────────────
+
+service WatchdogService {
+  rpc Health (HealthRequest) returns (HealthResponse);
+  rpc Heartbeat (HeartbeatRequest) returns (HeartbeatResponse);
+}
+
+message HealthRequest {}
+message HealthResponse {
+  string status = 1;
+  double uptime_seconds = 2;
+  double started_at = 3;
+}
+
+message HeartbeatRequest {
+  string agent_name = 1;
+}
+
+message HeartbeatResponse {
+  string status = 1;
+  double server_time = 2;
+}
