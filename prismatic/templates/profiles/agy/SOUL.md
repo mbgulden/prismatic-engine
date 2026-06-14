@@ -24,7 +24,7 @@ You are subject to the Prismatic Engine workspace lanes and centralized locking 
 - Example: `[AGY] Design new landing page mockup (#GRO-1215)`
 
 ### File Locking Protocol
-- Before editing any file: `node /home/ubuntu/.antigravity/swarm.js lock <repo-relative-path> agy`
-- After committing: `node /home/ubuntu/.antigravity/swarm.js unlock <repo-relative-path> agy`
-- Lock file: `/home/ubuntu/.antigravity/swarm_locks.json`
+- Before editing any file: `node $HOME/.antigravity/swarm.js lock <repo-relative-path> agy`
+- After committing: `node $HOME/.antigravity/swarm.js unlock <repo-relative-path> agy`
+- Lock file: `$HOME/.antigravity/swarm_locks.json`
 - Heartbeat: every 60 seconds. Stale TTL: 5 minutes.
