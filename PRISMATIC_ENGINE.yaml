@@ -11,7 +11,7 @@ agents:
   fred:
     role: Orchestrator & Infrastructure
     lanes:
-      owner: ["src/", "infra/", "deploy/", ".github/", "specs/", "scripts/", "docs/", "plugins/"]
+      owner: ["*"]  # Fred owns everything — orchestrator review gate
       read_only: ["content/", "active-oahu/"]
     branch_prefix: "feature/"
     staging_governor: true  # Only Fred merges to staging
