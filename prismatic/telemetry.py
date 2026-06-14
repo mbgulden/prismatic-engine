@@ -281,6 +281,36 @@ class TelemetryCollector:
         }
         self._push("credit", event)
 
+    def record_vertex_billing_snapshot(
+        self,
+        project: str = "spartan-impact-497114-m2",
+        total_cost: float = 0.0,
+        credits: float = 0.0,
+        currency: str = "USD",
+        quota_data: str | None = None,
+        service_breakdown: str | None = None,
+        error_info: str | None = None,
+        raw_payload: str | None = None,
+    ) -> None:
+        """Record a Vertex AI billing/quota snapshot to the ledger.
+
+        Delegates to the VertexAIMonitor's persistence layer.
+        This method is a lightweight bridge so the telemetry collector
+        can record GCP billing events alongside other telemetry.
+        """
+        event = {
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+            "project": project,
+            "total_cost": total_cost,
+            "credits": credits,
+            "currency": currency,
+            "quota_data": quota_data or "{}",
+            "service_breakdown": service_breakdown or "{}",
+            "error_info": error_info,
+            "raw_payload": raw_payload or "{}",
+        }
+        self._push("vertex_billing", event)
+
     def get_dashboard_data(self, hours: int = 24) -> dict[str, Any]:
         """Query recent telemetry for dashboard display."""
         conn = sqlite3.connect(self._db_path)
@@ -431,6 +461,22 @@ class TelemetryCollector:
                             data.get("operation", ""), data["recorded_at"],
                         ),
                     )
+                elif event_type == "vertex_billing":
+                    conn.execute(
+                        """INSERT INTO gcp_vertex_billing_ledger
+                           (recorded_at, project, total_cost, credits,
+                            currency, quota_data, service_breakdown,
+                            error_info, raw_payload)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            data["recorded_at"], data["project"],
+                            data["total_cost"], data["credits"],
+                            data["currency"], data["quota_data"],
+                            data["service_breakdown"],
+                            data.get("error_info"),
+                            data.get("raw_payload", "{}"),
+                        ),
+                    )
                 conn.commit()
             except Exception:
                 pass  # Telemetry failures must never crash the dispatcher
@@ -530,6 +576,23 @@ class TelemetryCollector:
                 );
                 CREATE INDEX IF NOT EXISTS idx_credit_ledger_run
                     ON telemetry_credit_ledger(run_id);
+
+                CREATE TABLE IF NOT EXISTS gcp_vertex_billing_ledger (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    recorded_at     TEXT NOT NULL,
+                    project         TEXT NOT NULL DEFAULT 'spartan-impact-497114-m2',
+                    total_cost      REAL DEFAULT 0.0,
+                    credits         REAL DEFAULT 0.0,
+                    currency        TEXT DEFAULT 'USD',
+                    quota_data      TEXT,
+                    service_breakdown TEXT,
+                    error_info      TEXT,
+                    raw_payload     TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_vertex_billing_time
+                    ON gcp_vertex_billing_ledger(recorded_at);
+                CREATE INDEX IF NOT EXISTS idx_vertex_billing_project
+                    ON gcp_vertex_billing_ledger(project, recorded_at);
             """)
             conn.commit()
         finally:
