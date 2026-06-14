@@ -121,7 +121,9 @@ def main() -> None:
     parser.add_argument("--check", action="store_true", help="Run a single health check")
     parser.add_argument("--monitor", action="store_true", help="Run in monitoring loop")
     parser.add_argument("--interval", type=int, default=30, help="Poll interval in seconds (default: 30)")
-    parser.add_argument("--base-url", type=str, default="http://localhost:9000", help="Gateway base URL")
+    parser.add_argument("--base-url", type=str,
+                        default=f"http://localhost:{os.environ.get('PRISMATIC_GATEWAY_PORT', os.environ.get('PRISMATIC_PORT', '9000'))}",
+                        help="Gateway base URL")
     parser.add_argument("--log-level", type=str, default="info", choices=["debug", "info", "warning", "error"])
     args = parser.parse_args()
 
