@@ -1,0 +1,42 @@
+[
+  {
+    "run_id": "abc-001",
+    "issue_id": "2",
+    "agent_name": "ned",
+    "status": "completed",
+    "started_at": "2026-06-01T00:00:00Z",
+    "completed_at": "2026-06-01T01:00:00Z",
+    "output_path": null,
+    "error_message": null
+  },
+  {
+    "run_id": "abc-002",
+    "issue_id": "7",
+    "agent_name": "agy",
+    "status": "completed",
+    "started_at": "2026-06-02T00:00:00Z",
+    "completed_at": "2026-06-02T02:00:00Z",
+    "output_path": null,
+    "error_message": null
+  },
+  {
+    "run_id": "abc-003",
+    "issue_id": "14",
+    "agent_name": "jules",
+    "status": "running",
+    "started_at": "2026-06-03T00:00:00Z",
+    "completed_at": null,
+    "output_path": null,
+    "error_message": null
+  },
+  {
+    "run_id": "abc-004",
+    "issue_id": "30",
+    "agent_name": "kai",
+    "status": "pending",
+    "started_at": null,
+    "completed_at": null,
+    "output_path": null,
+    "error_message": null
+  }
+]
