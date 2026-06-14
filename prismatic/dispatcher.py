@@ -1634,6 +1634,18 @@ def main_loop(
     collector = get_collector()
     print(f"[dispatcher] Telemetry collector active → {DEFAULT_DB_PATH}")
 
+    # ── Prometheus metrics server (Phase 4.2 / GRO-1581) ──
+    metrics_port = int(os.environ.get("PRISMATIC_METRICS_PORT", "0"))
+    if metrics_port > 0:
+        try:
+            from prismatic.telemetry.metrics import start_metrics_server as _start_ms
+            _start_ms(port=metrics_port, addr="0.0.0.0")
+            print(f"[dispatcher] Prometheus /metrics → :{metrics_port}")
+        except Exception as exc:
+            print(f"[dispatcher] Metrics server skipped: {exc}")
+    else:
+        print("[dispatcher] Metrics server OFF (set PRISMATIC_METRICS_PORT=9000 to enable)")
+
     try:
         pipelines = load_pipeline_templates()
         pipeline_count = len(pipelines.get("pipelines", {}))

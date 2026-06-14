@@ -29,8 +29,14 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+# ── Prometheus metrics (best-effort, import may fail if prometheus_client not installed) ──
+try:
+    from prismatic.telemetry.metrics import ACTIVE_LOCKS as _ACTIVE_LOCKS
+except ImportError:
+    _ACTIVE_LOCKS = None
+
 # ── Constants ──────────────────────────────────────────
-_PRISMATIC_HOME = Path(os.environ.get("PRISMATIC_HOME", "/home/ubuntu"))
+_PRISMATIC_HOME = Path(os.environ.get("PRISMATIC_HOME", os.path.expanduser("~")))
 LOCK_FILE = _PRISMATIC_HOME / ".antigravity" / "swarm_locks.json"
 STALE_TTL_MS = 300_000  # 5 minutes
 
@@ -88,6 +94,14 @@ def _get_repo_root() -> Path | None:
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         pass
     return None
+
+
+def _get_repo_name() -> str:
+    """Return the current git repository name (for metric labelling)."""
+    repo_root = _get_repo_root()
+    if repo_root:
+        return repo_root.name
+    return "unknown"
 
 
 def _make_relative(filepath: str) -> str:
@@ -164,6 +178,13 @@ def cmd_lock(filepath: str, agent_id: str) -> int:
         })
         _write_locks(locks)
 
+        # ── Update Prometheus gauge (best-effort) ──
+        if _ACTIVE_LOCKS is not None:
+            try:
+                _ACTIVE_LOCKS.labels(repo=_get_repo_name()).inc()
+            except Exception:
+                pass
+
     print(f"🔒 Locked: {filepath} → {agent_id}")
     return 0
 
@@ -188,6 +209,14 @@ def cmd_unlock(filepath: str, agent_id: str) -> int:
                     return 1
                 removed_lock = locks.pop(i)
                 _write_locks(locks)
+
+                # ── Update Prometheus gauge (best-effort) ──
+                if _ACTIVE_LOCKS is not None:
+                    try:
+                        _ACTIVE_LOCKS.labels(repo=_get_repo_name()).dec()
+                    except Exception:
+                        pass
+
                 print(
                     f"🔓 Unlocked: {filepath} (was held by {agent_id} "
                     f"for {_duration_ms(removed_lock['timestamp'])})"
