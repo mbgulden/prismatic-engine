@@ -1,5 +1,4 @@
-"""
-Webhook receiver router for the Prismatic Gateway.
+"""Webhook receiver router for the Prismatic Gateway.
 
 Handles incoming webhooks from:
   - GitHub (PR opened, synchronized, review submitted)
@@ -18,6 +17,8 @@ import os
 from typing import Any
 
 from fastapi import APIRouter, Request, Response
+
+from prismatic.dispatcher import signal_fred
 
 logger = logging.getLogger("prismatic.gateway.webhook_router")
 
@@ -67,17 +68,30 @@ async def github_webhook(request: Request) -> Response:
     logger.info("GitHub webhook received: event=%s action=%s", event, action)
 
     # Route PR events
-    if event == "pull_request":
+    if event == "pull_request" and action in ("opened", "synchronize", "reopened"):
         pr_number = payload.get("pull_request", {}).get("number")
-        pr_action = payload.get("action")
-        logger.info("PR #%s %s — queued for dispatcher processing", pr_number, pr_action)
-        # TODO: route to dispatcher queue (GRO-1573 integration)
+        logger.info("PR #%s %s — signaling dispatcher", pr_number, action)
+        try:
+            signal_fred(
+                issue_id=f"github-pr-{pr_number}",
+                title=f"GitHub PR #{pr_number}: {action}",
+                priority=4,
+            )
+        except Exception as exc:
+            logger.error("Failed to signal dispatcher for PR #%s: %s", pr_number, exc)
 
     elif event == "pull_request_review":
         pr_number = payload.get("pull_request", {}).get("number")
         review_state = payload.get("review", {}).get("state")
-        logger.info("PR #%s review: %s — queued for dispatcher", pr_number, review_state)
-        # TODO: route to dispatcher
+        logger.info("PR #%s review: %s — signaling dispatcher", pr_number, review_state)
+        try:
+            signal_fred(
+                issue_id=f"github-pr-review-{pr_number}",
+                title=f"GitHub PR #{pr_number} review: {review_state}",
+                priority=3,
+            )
+        except Exception as exc:
+            logger.error("Failed to signal dispatcher for PR review #%s: %s", pr_number, exc)
 
     return Response(status_code=202, content=json.dumps({"status": "accepted", "event": event, "action": action}), media_type="application/json")
 
@@ -104,9 +118,18 @@ async def linear_webhook(request: Request) -> Response:
 
     # Route issue updates
     if payload.get("type") == "Issue":
-        issue_id = data.get("id")
+        issue_id_data = data.get("id")
         state_name = data.get("state", {}).get("name") if data.get("state") else None
-        logger.info("Issue %s → state: %s — queued for dispatcher", issue_id, state_name)
-        # TODO: route to dispatcher queue (GRO-1573 integration)
+        identifier = data.get("identifier", issue_id_data)
+        logger.info("Issue %s → state: %s — signaling dispatcher", identifier, state_name)
+        if state_name in ("Todo", "In Progress"):
+            try:
+                signal_fred(
+                    issue_id=issue_id_data,
+                    title=f"Linear {identifier} → {state_name}",
+                    priority=3,
+                )
+            except Exception as exc:
+                logger.error("Failed to signal dispatcher for issue %s: %s", identifier, exc)
 
     return Response(status_code=202, content=json.dumps({"status": "accepted", "action": action}), media_type="application/json")
