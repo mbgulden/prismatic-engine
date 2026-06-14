@@ -26,6 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from prismatic.gateway.webhook_router import router as webhook_router
 from prismatic.gateway.grpc_server import serve_grpc
+from prismatic.gateway.slack_client import SlackBot, verify_slack_request, ApprovalCard
 from prismatic.lock import _read_locks as read_swarm_locks
 from prismatic.run_records import AgentRunRecordStore
 
@@ -54,15 +55,17 @@ app.include_router(webhook_router, prefix="/api/gateway")
 
 _started_at: float = 0.0
 _run_store: AgentRunRecordStore | None = None
+_slack_bot: SlackBot | None = None
 
 
 @app.on_event("startup")
 async def startup() -> None:
-    global _started_at, _run_store
+    global _started_at, _run_store, _slack_bot
     _started_at = time.time()
     state_dir = os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state/")
     store_path = os.path.join(state_dir, "run_records.json")
     _run_store = AgentRunRecordStore(store_path=store_path)
+    _slack_bot = SlackBot(run_store=_run_store)
     logger.info(
         "Gateway started at %s, store=%s",
         time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(_started_at)),
@@ -168,6 +171,114 @@ async def complete_run(run_id: str, payload: dict[str, Any]):
         error=payload.get("error_message"),
     )
     return {"run_id": run_id, "status": payload.get("status", "completed")}
+
+
+# ── Slack Endpoints ──────────────────────────────────────
+
+
+@app.post("/api/gateway/slack/interactive")
+async def slack_interactive(request: Request) -> Response:
+    """Receive Slack interactive action callbacks (button clicks, etc.).
+
+    Verifies the request signature, then passes the payload to SlackBot
+    for processing (approve/reject decisions, etc.).
+    """
+    global _slack_bot
+
+    # Slack sends interactive payloads as form-encoded body with a 'payload' field
+    body = await request.body()
+    content_type = request.headers.get("content-type", "")
+
+    if "application/x-www-form-urlencoded" in content_type:
+        from urllib.parse import parse_qs
+
+        parsed = parse_qs(body.decode("utf-8"))
+        payload_raw = parsed.get("payload", [None])[0]
+        if not payload_raw:
+            return Response(
+                status_code=400,
+                content=json.dumps({"error": "missing payload field"}),
+                media_type="application/json",
+            )
+        payload = json.loads(payload_raw)
+    else:
+        payload = json.loads(body)
+
+    # Verify Slack request signature
+    timestamp = request.headers.get("X-Slack-Request-Timestamp", "")
+    signature = request.headers.get("X-Slack-Signature", "")
+    if not verify_slack_request(body, timestamp, signature):
+        logger.warning("Slack interactive: invalid signature")
+        return Response(
+            status_code=401,
+            content=json.dumps({"error": "invalid signature"}),
+            media_type="application/json",
+        )
+
+    if _slack_bot is None:
+        return Response(
+            status_code=500,
+            content=json.dumps({"error": "SlackBot not initialized"}),
+            media_type="application/json",
+        )
+
+    result = _slack_bot.process_interactive_action(payload)
+    logger.info("Slack interactive processed: %s", result.get("action", "unknown"))
+
+    # Respond with the ephemeral message to show in Slack
+    return Response(
+        status_code=200,
+        content=json.dumps({
+            "response_type": "ephemeral",
+            "text": result.get("response_text", "Action processed."),
+        }),
+        media_type="application/json",
+    )
+
+
+@app.post("/api/gateway/slack/commands")
+async def slack_commands(request: Request) -> Response:
+    """Receive Slack slash commands (/prismatic).
+
+    Verifies the request signature, routes the command text to SlackBot,
+    and returns the response as an ephemeral Slack message.
+    """
+    global _slack_bot
+
+    body = await request.body()
+    timestamp = request.headers.get("X-Slack-Request-Timestamp", "")
+    signature = request.headers.get("X-Slack-Signature", "")
+    if not verify_slack_request(body, timestamp, signature):
+        logger.warning("Slack command: invalid signature")
+        return Response(
+            status_code=401,
+            content=json.dumps({"error": "invalid signature"}),
+            media_type="application/json",
+        )
+
+    from urllib.parse import parse_qs
+
+    parsed = parse_qs(body.decode("utf-8"))
+    command_text = parsed.get("text", [""])[0]
+    channel_id = parsed.get("channel_id", [None])[0]
+
+    if _slack_bot is None:
+        return Response(
+            status_code=500,
+            content=json.dumps({"error": "SlackBot not initialized"}),
+            media_type="application/json",
+        )
+
+    response_text = _slack_bot.handle_command(command_text, channel=channel_id)
+
+    return Response(
+        status_code=200,
+        content=json.dumps({
+            "response_type": "ephemeral",
+            "text": response_text,
+        }),
+        media_type="application/json",
+    )
 
 
 # ── CLI Entry Point ─────────────────────────────────────
