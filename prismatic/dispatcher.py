@@ -46,6 +46,27 @@ from .credit_policy_engine import (
 )
 from .telemetry import get_collector
 
+# ── IPC Bridge event emission (best-effort) ─────────────────────
+try:
+    from .gateway.ipc_bridge import send_event_via_socket
+    _HAS_IPC_BRIDGE = True
+except ImportError:
+    _HAS_IPC_BRIDGE = False
+
+
+def _emit_agent_event(event_type: str, agent_name: str, issue_id: str, **extra) -> None:
+    """Emit an agent lifecycle event to the IPC bridge (best-effort)."""
+    if not _HAS_IPC_BRIDGE:
+        return
+    try:
+        send_event_via_socket(
+            event_type=event_type,
+            source=f"dispatcher:{agent_name}",
+            payload={"agent": agent_name, "issue_id": issue_id, **extra},
+        )
+    except Exception:
+        pass  # Best-effort — don't break dispatch over event emission
+
 
 # ═══════════════════════════════════════════════════════════════
 # Constants
@@ -601,6 +622,7 @@ def launch_agy(issue_id: str, task: str = "") -> subprocess.Popen | None:
             stdin=subprocess.DEVNULL,
         )
         print(f"[dispatcher] Launched AGY (pid={proc.pid}) for issue {issue_id}")
+        _emit_agent_event("agent_launched", "agy", issue_id, pid=proc.pid)
         return proc
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"[dispatcher] Failed to launch AGY: {exc}")
@@ -633,6 +655,7 @@ def launch_jules(issue_id: str, task: str = "") -> subprocess.Popen | None:
             stdin=subprocess.DEVNULL,
         )
         print(f"[dispatcher] Launched Jules (pid={proc.pid}) for issue {issue_id}")
+        _emit_agent_event("agent_launched", "jules", issue_id, pid=proc.pid)
         return proc
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"[dispatcher] Failed to launch Jules: {exc}")
@@ -665,6 +688,7 @@ def launch_codex(issue_id: str, task: str = "") -> subprocess.Popen | None:
             stdin=subprocess.DEVNULL,
         )
         print(f"[dispatcher] Launched Codex (pid={proc.pid}) for issue {issue_id}")
+        _emit_agent_event("agent_launched", "codex", issue_id, pid=proc.pid)
         return proc
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"[dispatcher] Failed to launch Codex: {exc}")
@@ -1567,6 +1591,8 @@ def dispatch_once(
                         credits_spent=decision.estimated_cost,
                     )
                     # ── End telemetry ──────────────────────────────────
+                    # Emit agent_launched event to IPC bridge
+                    _emit_agent_event("agent_launched", agent_name, identifier, cycle_id=cycle_id)
                     # Post a comment tracking the dispatch
                     try:
                         add_comment(
