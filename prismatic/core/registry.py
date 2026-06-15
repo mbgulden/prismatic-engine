@@ -28,6 +28,10 @@ from prismatic.interface.plugin import (
     PrismaticPlugin,
     PluginValidationError,
 )
+from prismatic.core.hardware_profiles import (
+    HardwareProfileError,
+    HardwareProfileRegistry,
+)
 
 logger = logging.getLogger("prismatic.loader")
 
@@ -38,12 +42,18 @@ class PluginLoader:
     plugins from the target plugin directory.
     """
 
-    def __init__(self, core_version: str, plugins_dir: str) -> None:
+    def __init__(
+        self,
+        core_version: str,
+        plugins_dir: str,
+        hardware_registry: HardwareProfileRegistry | None = None,
+    ) -> None:
         self.core_version = core_version
         self.plugins_dir = plugins_dir
         self.loaded_plugins: Dict[str, PrismaticPlugin] = {}
         self.registered_personas: Dict[str, Dict[str, Any]] = {}
         self.registered_tools: List[Dict[str, Any]] = []
+        self.hardware_registry = hardware_registry
 
     # ── public API ─────────────────────────────────────────────────────
 
@@ -120,6 +130,34 @@ class PluginLoader:
                 f"Core version '{self.core_version}' does not satisfy "
                 f"constraint '{core_constraint}' for plugin '{name}'."
             )
+
+        # 1a. Hardware profile validation (optional)
+        for field_name in ("hardware_profile", "execution_profile"):
+            requested = manifest.get(field_name)
+            if requested is not None:
+                if self.hardware_registry is None:
+                    logger.warning(
+                        "Plugin '%s' declares '%s: %s' but no "
+                        "HardwareProfileRegistry configured — skipping "
+                        "validation.",
+                        name,
+                        field_name,
+                        requested,
+                    )
+                elif not self.hardware_registry.is_valid(requested):
+                    raise PluginValidationError(
+                        f"Plugin '{name}' declares unknown "
+                        f"'{field_name}: {requested}'. "
+                        f"Known profiles: "
+                        f"{', '.join(self.hardware_registry.profile_names)}"
+                    )
+                else:
+                    logger.info(
+                        "Plugin '%s' validated '%s: %s'",
+                        name,
+                        field_name,
+                        requested,
+                    )
 
         # 2. Dynamic import
         module_path, class_name = entry_point.split(":")
