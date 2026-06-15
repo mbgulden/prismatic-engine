@@ -288,8 +288,15 @@ class TelemetryCollector:
         credits_spent: int,
         model: str | None = None,
         operation: str = "",
+        client_id: str | None = None,
+        project_id: str | None = None,
     ) -> None:
-        """Record a credit expenditure in the ledger."""
+        """Record a credit expenditure in the ledger.
+
+        Args:
+            client_id: Optional client billing dimension (Phase 4.4).
+            project_id: Optional project billing dimension (Phase 4.4).
+        """
         event = {
             "run_id": run_id,
             "agent": agent,
@@ -298,6 +305,8 @@ class TelemetryCollector:
             "credits_spent": credits_spent,
             "operation": operation,
             "recorded_at": datetime.now(timezone.utc).isoformat(),
+            "client_id": client_id,
+            "project_id": project_id,
         }
         self._push("credit", event)
 
@@ -718,12 +727,13 @@ class TelemetryCollector:
                     conn.execute(
                         """INSERT INTO telemetry_credit_ledger
                            (run_id, agent, provider, model, credits_spent,
-                            operation, recorded_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                            operation, recorded_at, client_id, project_id)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
                             data["run_id"], data["agent"], data["provider"],
                             data.get("model"), data["credits_spent"],
                             data.get("operation", ""), data["recorded_at"],
+                            data.get("client_id"), data.get("project_id"),
                         ),
                     )
                 elif event_type == "agy_live_state":
@@ -860,6 +870,24 @@ class TelemetryCollector:
                 CREATE INDEX IF NOT EXISTS idx_agy_live_time
                     ON agy_live_state(recorded_at);
             """)
+            # ── Phase 4.4 migration: add client_id/project_id to credit_ledger ──
+            try:
+                cursor = conn.execute(
+                    "PRAGMA table_info(telemetry_credit_ledger)"
+                )
+                existing_cols = {row[1] for row in cursor.fetchall()}
+                if "client_id" not in existing_cols:
+                    conn.execute(
+                        "ALTER TABLE telemetry_credit_ledger "
+                        "ADD COLUMN client_id TEXT"
+                    )
+                if "project_id" not in existing_cols:
+                    conn.execute(
+                        "ALTER TABLE telemetry_credit_ledger "
+                        "ADD COLUMN project_id TEXT"
+                    )
+            except Exception:
+                pass  # Migration is best-effort
             conn.commit()
         finally:
             conn.close()

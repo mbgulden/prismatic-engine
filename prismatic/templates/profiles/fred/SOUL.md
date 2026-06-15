@@ -24,7 +24,7 @@ You are subject to the Prismatic Engine workspace lanes and centralized locking 
 - Example: `[Fred] Add pre-push hook for lane validation (#GRO-1215)`
 
 ### File Locking Protocol
-- Before editing any file: `node /home/ubuntu/.antigravity/swarm.js lock <repo-relative-path> fred`
-- After committing: `node /home/ubuntu/.antigravity/swarm.js unlock <repo-relative-path> fred`
-- Lock file: `/home/ubuntu/.antigravity/swarm_locks.json`
+- Before editing any file: `node $HOME/.antigravity/swarm.js lock <repo-relative-path> fred`
+- After committing: `node $HOME/.antigravity/swarm.js unlock <repo-relative-path> fred`
+- Lock file: `$HOME/.antigravity/swarm_locks.json`
 - Heartbeat: every 60 seconds. Stale TTL: 5 minutes.

@@ -29,6 +29,27 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+# ── Event Emission via IPC Bridge ─────────────────────
+try:
+    from prismatic.gateway.ipc_bridge import DEFAULT_SOCKET_PATH, send_event_via_socket
+    _HAS_IPC = True
+except ImportError:
+    _HAS_IPC = False
+
+
+def _emit_lock_event(event_type: str, filepath: str, agent_id: str, **extra: Any) -> None:
+    """Emit a lock event to the IPC bridge (best-effort, no-op if unavailable)."""
+    if not _HAS_IPC:
+        return
+    try:
+        send_event_via_socket(
+            event_type=event_type,
+            source=f"lock:{agent_id}",
+            payload={"file": filepath, "agent": agent_id, **extra},
+        )
+    except Exception:
+        pass  # Best-effort — don't let event emission break locking
+
 # ── Constants ──────────────────────────────────────────
 _PRISMATIC_HOME = Path(os.environ.get("PRISMATIC_HOME", "/home/ubuntu"))
 LOCK_FILE = _PRISMATIC_HOME / ".antigravity" / "swarm_locks.json"
@@ -165,6 +186,7 @@ def cmd_lock(filepath: str, agent_id: str) -> int:
         _write_locks(locks)
 
     print(f"🔒 Locked: {filepath} → {agent_id}")
+    _emit_lock_event("lock", filepath, agent_id)
     return 0
 
 
@@ -192,6 +214,7 @@ def cmd_unlock(filepath: str, agent_id: str) -> int:
                     f"🔓 Unlocked: {filepath} (was held by {agent_id} "
                     f"for {_duration_ms(removed_lock['timestamp'])})"
                 )
+                _emit_lock_event("unlock", filepath, agent_id, duration_ms=removed_lock["timestamp"])
                 return 0
 
     print(f"⚠️  Not locked: {filepath}")
@@ -244,6 +267,7 @@ def cmd_heartbeat(filepath: str, agent_id: str) -> int:
                 lock["lastHeartbeat"] = int(time.time() * 1000)
                 _write_locks(locks)
                 print(f"💓 Heartbeat: {filepath} ({agent_id})")
+                _emit_lock_event("heartbeat", filepath, agent_id)
                 if removed:
                     print(f"  Pruned {removed} stale lock(s)")
                 return 0
