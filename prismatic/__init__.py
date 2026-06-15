@@ -16,6 +16,7 @@ Core subsystems:
 from __future__ import annotations
 
 __version__ = "0.1.0"
-__all__ = ["__version__", "main"]
+__all__ = ["__version__", "main", "SandboxManager", "SandboxConfig", "Sandbox", "get_sandbox_manager"]
 
 from .dispatcher import main
+from .sandbox import SandboxManager, SandboxConfig, Sandbox, get_sandbox_manager
