@@ -68,6 +68,89 @@ def _emit_agent_event(event_type: str, agent_name: str, issue_id: str, **extra) 
         pass  # Best-effort — don't break dispatch over event emission
 
 
+def _count_agent_locks(agent_name: str) -> int:
+    """Return the number of active swarm locks held by an agent (best-effort)."""
+    try:
+        home = Path(os.environ.get("PRISMATIC_HOME", str(Path.home())))
+        lock_file = home / ".antigravity" / "swarm_locks.json"
+        if not lock_file.exists():
+            return 0
+        data = json.loads(lock_file.read_text())
+        locks = data.get("locks", data if isinstance(data, dict) else {})
+        if isinstance(locks, list):
+            return sum(1 for item in locks if item.get("agent") == agent_name)
+        if isinstance(locks, dict):
+            return sum(
+                1
+                for item in locks.values()
+                if isinstance(item, dict) and item.get("agent") == agent_name
+            )
+    except Exception:
+        return 0
+    return 0
+
+
+def _start_agent_heartbeat(
+    agent_name: str,
+    issue_id: str,
+    proc: subprocess.Popen,
+    session_id: str | None = None,
+    interval_s: int = 15,
+) -> None:
+    """Emit agent heartbeat events every ``interval_s`` while a subprocess runs.
+
+    Heartbeats follow ``context/state/telemetry_heartbeat_schema.json`` and flow
+    through the Port 9000 IPC bridge as ``agent_heartbeat`` events. Metric
+    collection is intentionally best-effort so telemetry never breaks dispatch.
+    """
+    session = session_id or f"{agent_name}-{issue_id}-{proc.pid}"
+    started_at = time.time()
+
+    def _loop() -> None:
+        ps_proc = None
+        try:
+            import psutil  # type: ignore
+
+            ps_proc = psutil.Process(proc.pid)
+        except Exception:
+            ps_proc = None
+
+        while proc.poll() is None:
+            cpu_percent = 0.0
+            if ps_proc is not None:
+                try:
+                    cpu_percent = float(ps_proc.cpu_percent(interval=None))
+                except Exception:
+                    cpu_percent = 0.0
+
+            _emit_agent_event(
+                "agent_heartbeat",
+                agent_name,
+                issue_id,
+                schema_version="1.0.0",
+                agent_id=agent_name,
+                session_id=session,
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                status="busy",
+                current_task=issue_id,
+                lock_count=_count_agent_locks(agent_name),
+                heartbeat_interval_ms=interval_s * 1000,
+                vram_usage_mb=0,
+                vram_total_mb=0,
+                token_count_last_minute=0,
+                cpu_percent=cpu_percent,
+                uptime_seconds=time.time() - started_at,
+                pid=proc.pid,
+            )
+            time.sleep(interval_s)
+
+    threading.Thread(
+        target=_loop,
+        name=f"{agent_name}-heartbeat-{proc.pid}",
+        daemon=True,
+    ).start()
+
+
 # ═══════════════════════════════════════════════════════════════
 # Constants
 # ═══════════════════════════════════════════════════════════════
@@ -623,6 +706,7 @@ def launch_agy(issue_id: str, task: str = "") -> subprocess.Popen | None:
         )
         print(f"[dispatcher] Launched AGY (pid={proc.pid}) for issue {issue_id}")
         _emit_agent_event("agent_launched", "agy", issue_id, pid=proc.pid)
+        _start_agent_heartbeat("agy", issue_id, proc)
         return proc
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"[dispatcher] Failed to launch AGY: {exc}")
@@ -656,6 +740,7 @@ def launch_jules(issue_id: str, task: str = "") -> subprocess.Popen | None:
         )
         print(f"[dispatcher] Launched Jules (pid={proc.pid}) for issue {issue_id}")
         _emit_agent_event("agent_launched", "jules", issue_id, pid=proc.pid)
+        _start_agent_heartbeat("jules", issue_id, proc)
         return proc
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"[dispatcher] Failed to launch Jules: {exc}")
@@ -689,6 +774,7 @@ def launch_codex(issue_id: str, task: str = "") -> subprocess.Popen | None:
         )
         print(f"[dispatcher] Launched Codex (pid={proc.pid}) for issue {issue_id}")
         _emit_agent_event("agent_launched", "codex", issue_id, pid=proc.pid)
+        _start_agent_heartbeat("codex", issue_id, proc)
         return proc
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"[dispatcher] Failed to launch Codex: {exc}")

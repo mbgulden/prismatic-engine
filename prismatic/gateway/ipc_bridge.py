@@ -46,6 +46,7 @@ REQUIRED_FIELDS = {"type", "source"}
 VALID_TYPES = {
     "lock", "unlock", "heartbeat", "telemetry",
     "agent_launched", "agent_completed", "agent_failed",
+    "agent_heartbeat",
     "governor_allocate", "governor_release",
     "circuit_breaker_trip", "circuit_breaker_reset",
 }
