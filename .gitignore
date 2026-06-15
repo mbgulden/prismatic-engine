@@ -16,6 +16,9 @@ env/
 .DS_Store
 Thumbs.db
 
+# Environment secrets
+.env
+
 # Config overrides
 config.local.yaml
 .gdocs_token.json
