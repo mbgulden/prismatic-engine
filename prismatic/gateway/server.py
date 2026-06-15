@@ -41,6 +41,7 @@ from prismatic.gateway.ws_broadcaster import (
     start_ws_broadcaster,
     stop_ws_broadcaster,
 )
+from prismatic.breaker.api import breaker_router
 from prismatic.lock import _read_locks as read_swarm_locks
 from prismatic.run_records import AgentRunRecordStore
 
@@ -67,6 +68,9 @@ app.add_middleware(
 # Mount the IPC bridge event ingest route (POST /events, GET /events/history)
 # The router's @router.post("/events") defines the full path — no prefix needed
 app.include_router(create_event_ingest_route())
+
+# Mount the breaker management routes (GET/POST /breaker/status, /breaker/correct, /breaker/clear)
+app.include_router(breaker_router)
 
 # ── Startup timestamp ──────────────────────────────────────────────
 _started_at: float = 0.0
