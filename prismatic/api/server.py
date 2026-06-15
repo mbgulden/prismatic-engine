@@ -16,9 +16,10 @@ import os
 import sys
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from prismatic.api.auth import verify_api_key
 from prismatic.api.routers import credits, jobs
 
 logger = logging.getLogger("prismatic.api")
@@ -46,7 +47,7 @@ app.add_middleware(
 
 
 @app.get(f"{API_PREFIX}/health")
-async def health():
+async def health(current_user: dict = Depends(verify_api_key)):  # noqa: B008
     from datetime import datetime, timezone
 
     return {
