@@ -137,7 +137,7 @@ class HermesAgent(BaseAgent):
             return context
 
         # Check common locations
-        prismatic_home = os.environ.get("PRISMATIC_HOME", "/home/ubuntu")
+        prismatic_home = os.environ.get("PRISMATIC_HOME", os.environ.get("HOME", "."))
         for candidate in [
             Path(prismatic_home) / "work",
             Path("/workspace"),
