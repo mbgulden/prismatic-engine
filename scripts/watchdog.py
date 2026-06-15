@@ -23,7 +23,7 @@ Exit codes:
   1 — Error (lock registry unreadable, etc.)
 
 Environment:
-  PRISMATIC_HOME — root path (default: /home/ubuntu)
+  PRISMATIC_HOME — root path (default: current user's home directory)
 """
 from __future__ import annotations
 
@@ -35,9 +35,17 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-PRISMATIC_HOME = Path(os.environ.get("PRISMATIC_HOME", "/home/ubuntu"))
+try:
+    from prismatic.gateway.ipc_bridge import DEFAULT_SOCKET_PATH
+except Exception:  # pragma: no cover - watchdog must remain standalone-safe
+    DEFAULT_SOCKET_PATH = os.path.join(
+        os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state"),
+        "ipc_bridge.sock",
+    )
+
+PRISMATIC_HOME = Path(os.environ.get("PRISMATIC_HOME", str(Path.home())))
 LOCK_FILE = PRISMATIC_HOME / ".antigravity" / "swarm_locks.json"
-STATE_DIR = Path("/tmp/prismatic")
+STATE_DIR = Path(os.environ.get("PRISMATIC_STATE_DIR", "/tmp/prismatic"))
 WATCHDOG_STATE = STATE_DIR / "watchdog_state.json"
 STALE_LOCK_TTL_MS = 300_000  # 5 minutes
 STALE_AGENT_TTL_S = 45       # 3 missed heartbeats @ 15s each
@@ -69,23 +77,23 @@ def _emit_ipc_event(event_type: str, source: str, payload: dict) -> bool:
     # Try Unix socket first
     socket_path = os.environ.get(
         "PRISMATIC_IPC_SOCKET",
-        "/tmp/ipc_bridge.sock",
+        DEFAULT_SOCKET_PATH,
     )
     sock_path = Path(socket_path)
 
-    event = json.dumps({
+    event = {
         "type": event_type,
         "source": source,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "payload": payload,
-    })
+    }
 
     if sock_path.exists():
         try:
             with sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_STREAM) as s:
                 s.settimeout(2)
                 s.connect(str(sock_path))
-                s.sendall((event + "\n").encode())
+                s.sendall((json.dumps(event) + "\n").encode())
             return True
         except Exception:
             pass  # Fall through to HTTP
@@ -94,7 +102,7 @@ def _emit_ipc_event(event_type: str, source: str, payload: dict) -> bool:
     import urllib.request as _req
     gateway_url = os.environ.get(
         "PRISMATIC_GATEWAY_URL",
-        "http://localhost:9000/api/gateway/events",
+        "http://localhost:9000/events",
     )
     try:
         data = json.dumps(event).encode()
@@ -214,8 +222,8 @@ def main() -> int:
         for lock in pruned:
             now_ms = int(time.time() * 1000)
             age_s = (now_ms - lock.get("lastHeartbeat", lock.get("timestamp", 0))) / 1000
-            agent = lock.get("agentId", "?")
-            filepath = lock.get("filePath", "?")
+            agent = lock.get("agentId", lock.get("agent", "?"))
+            filepath = lock.get("filePath", lock.get("path", lock.get("file", "?")))
             _log(f"  {filepath:50s}  agent={agent:12s}  stale {age_s:.0f}s")
             # Emit agent_failed for stale locks from known agents
             if agent in AGENT_PROCESS_NAMES:
@@ -265,7 +273,10 @@ def main() -> int:
 
         # Check if agent was holding locks but is now dead
         if not is_alive and prev_alive:
-            agent_locks = [l for l in kept for _ in [1] if l.get("agentId") == agent_name]
+            agent_locks = [
+                l for l in kept
+                if l.get("agentId", l.get("agent")) == agent_name
+            ]
             if agent_locks:
                 _log(f"Agent '{agent_name}' dead but holds {len(agent_locks)} lock(s)")
                 # Emit failed event so dispatcher can re-assign work
