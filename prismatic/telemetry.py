@@ -164,7 +164,7 @@ class TelemetryCollector:
         try:
             conn.execute("BEGIN IMMEDIATE")
             cursor = conn.execute(
-                "SELECT micro_count, macro_count, tripped "
+                "SELECT micro_count, macro_count, tripped, tripped_at "
                 "FROM telemetry_circuit_breakers WHERE issue_id = ?",
                 (issue_id,),
             )
@@ -197,7 +197,7 @@ class TelemetryCollector:
                     total_macro,
                     now,
                     1 if (already_tripped or tripped) else 0,
-                    now if tripped else (row[5] if row and row[5] else None),
+                    now if tripped else (row[3] if row and row[3] else None),
                 ),
             )
             conn.commit()
@@ -214,10 +214,48 @@ class TelemetryCollector:
                     "parent_id": None,
                     "created_at": now,
                 })
+                self._notify_circuit_breaker_tripped(
+                    issue_id=issue_id,
+                    agent=agent,
+                    micro_count=total_micro,
+                    macro_count=total_macro,
+                    tripped_at=now,
+                )
 
             return tripped
         finally:
             conn.close()
+
+    def _notify_circuit_breaker_tripped(
+        self,
+        *,
+        issue_id: str,
+        agent: str,
+        micro_count: int,
+        macro_count: int,
+        tripped_at: str,
+    ) -> None:
+        """Route a direct alert when a circuit breaker newly trips.
+
+        This is intentionally best-effort: telemetry persistence has already
+        committed, so notification failures must not block dispatcher flow.
+        """
+        alert = {
+            "name": "CircuitBreakerTrip",
+            "severity": "critical",
+            "summary": f"Circuit breaker tripped for {issue_id} ({agent})",
+            "details": (
+                f"issue_id={issue_id} agent={agent} cycle_count={{micro:{micro_count}, "
+                f"macro:{macro_count}}} tripped_at={tripped_at} "
+                "action_required=inspect_and_correct_or_clear"
+            ),
+        }
+        try:
+            from prismatic.gateway.alert_manager import AlertRouter
+            AlertRouter().route(alert)
+        except Exception:
+            # The collector must remain non-blocking and never fail dispatch.
+            pass
 
     def reset_breaker(self, issue_id: str) -> None:
         """Reset the circuit breaker for an issue (called after human intervention)."""

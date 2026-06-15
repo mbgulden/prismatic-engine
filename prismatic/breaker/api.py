@@ -5,7 +5,8 @@ Provides REST endpoints for the Prismatic Breaker system, exposed via
 the existing gateway server on Port 9000.
 
 Authentication: Bearer token from credentials.json (BREAKER_API_TOKEN).
-If no token is configured, auth is bypassed (development mode).
+If no token is configured, requests fail closed unless the explicit
+PRISMATIC_BREAKER_DEV_AUTH_BYPASS=true override is set for local development.
 
 Endpoints
 ---------
@@ -121,15 +122,22 @@ def _load_breaker_token() -> str | None:
 async def verify_bearer(request: Request) -> None:
     """Dependency: validate Bearer token from Authorization header.
 
-    If BREAKER_API_TOKEN is not configured (development mode), auth
-    is bypassed and a warning is logged.
+    The breaker control plane fails closed when BREAKER_API_TOKEN is missing.
+    Local development may opt into bypass with PRISMATIC_BREAKER_DEV_AUTH_BYPASS=true.
     """
     token = _load_breaker_token()
     if token is None:
-        logger.warning(
-            "BREAKER_API_TOKEN not configured — auth bypassed (development mode)"
+        if os.environ.get("PRISMATIC_BREAKER_DEV_AUTH_BYPASS", "").lower() in {
+            "1", "true", "yes",
+        }:
+            logger.warning(
+                "BREAKER_API_TOKEN not configured — explicit dev auth bypass enabled"
+            )
+            return
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="BREAKER_API_TOKEN is not configured; breaker API is fail-closed",
         )
-        return
 
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
@@ -163,6 +171,53 @@ def _get_db(db_path: str | None = None) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def _ensure_swarm_ledger(conn: sqlite3.Connection) -> None:
+    """Ensure a durable operator-action ledger exists."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS swarm_ledger (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            action TEXT NOT NULL,
+            issue_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            payload_json TEXT NOT NULL
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_swarm_ledger_issue ON swarm_ledger(issue_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_swarm_ledger_action ON swarm_ledger(action, created_at)"
+    )
+
+
+def _record_swarm_ledger(
+    conn: sqlite3.Connection,
+    *,
+    issue_id: str,
+    action: str,
+    source: str,
+    payload: dict[str, Any],
+    created_at: str,
+) -> None:
+    """Record a mutating breaker action in swarm_ledger."""
+    _ensure_swarm_ledger(conn)
+    conn.execute(
+        """INSERT INTO swarm_ledger
+           (created_at, actor, action, issue_id, source, payload_json)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (
+            created_at,
+            "human-operator",
+            action,
+            issue_id,
+            source,
+            json.dumps(payload, sort_keys=True),
+        ),
+    )
 
 
 def _row_to_state(row: sqlite3.Row) -> BreakerState:
@@ -288,6 +343,19 @@ async def correct_breaker(req: CorrectRequest) -> CorrectResponse:
                 now_iso,
             ),
         )
+        _record_swarm_ledger(
+            conn,
+            issue_id=req.issue_id,
+            action="breaker.correct",
+            source="api",
+            created_at=now_iso,
+            payload={
+                "message": req.message,
+                "was_tripped": was_tripped,
+                "micro_count": micro_count,
+                "macro_count": macro_count,
+            },
+        )
 
         # Delete breaker state if it exists
         if row:
@@ -369,6 +437,18 @@ async def clear_breaker(req: ClearRequest) -> ClearResponse:
                 f"(was_tripped={was_tripped}, micro={micro_count}, macro={macro_count})",
                 now_iso,
             ),
+        )
+        _record_swarm_ledger(
+            conn,
+            issue_id=req.issue_id,
+            action="breaker.clear",
+            source="api",
+            created_at=now_iso,
+            payload={
+                "was_tripped": was_tripped,
+                "micro_count": micro_count,
+                "macro_count": macro_count,
+            },
         )
 
         # Delete breaker state

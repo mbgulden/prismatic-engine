@@ -62,6 +62,52 @@ def _db_connect(db_path: str | None = None) -> sqlite3.Connection:
     return conn
 
 
+def _ensure_swarm_ledger(conn: sqlite3.Connection) -> None:
+    """Ensure a durable operator-action ledger exists."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS swarm_ledger (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            action TEXT NOT NULL,
+            issue_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            payload_json TEXT NOT NULL
+        )"""
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_swarm_ledger_issue ON swarm_ledger(issue_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_swarm_ledger_action ON swarm_ledger(action, created_at)"
+    )
+
+
+def _record_swarm_ledger(
+    conn: sqlite3.Connection,
+    *,
+    issue_id: str,
+    action: str,
+    payload: dict,
+    created_at: str,
+) -> None:
+    """Record a mutating CLI action in swarm_ledger."""
+    _ensure_swarm_ledger(conn)
+    conn.execute(
+        """INSERT INTO swarm_ledger
+           (created_at, actor, action, issue_id, source, payload_json)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (
+            created_at,
+            os.environ.get("USER", "human-operator"),
+            action,
+            issue_id,
+            "cli",
+            json.dumps(payload, sort_keys=True),
+        ),
+    )
+
+
 def _format_ts(iso_str: str | None) -> str:
     if not iso_str:
         return "-"
@@ -209,8 +255,8 @@ def cmd_inspect(args: argparse.Namespace) -> None:
             for rr in run_rows:
                 print(
                     f"  {rr['run_id']:<8} {rr['agent']:<12} {rr['status']:<10} "
-                    f"{_format_ts(rr['started_at']):<19} "
-                    f"{_format_ts(rr['completed_at']):<19}"
+                    f"{_format_ts(rr['start_time']):<19} "
+                    f"{_format_ts(rr['end_time']):<19}"
                 )
         else:
             print(f"\n  No agent runs recorded for {args.issue_id}.")
@@ -261,6 +307,18 @@ def cmd_correct(args: argparse.Namespace) -> None:
                 f"(was tripped={was_tripped}, micro={micro_count}, macro={macro_count})",
                 now_iso,
             ),
+        )
+        _record_swarm_ledger(
+            conn,
+            issue_id=args.issue_id,
+            action="breaker.correct",
+            created_at=now_iso,
+            payload={
+                "message": args.message,
+                "was_tripped": bool(was_tripped),
+                "micro_count": micro_count,
+                "macro_count": macro_count,
+            },
         )
 
         conn.commit()
@@ -327,6 +385,17 @@ def cmd_clear(args: argparse.Namespace) -> None:
                 f"(tripped={was_tripped}, micro={micro_count}, macro={macro_count})",
                 now_iso,
             ),
+        )
+        _record_swarm_ledger(
+            conn,
+            issue_id=args.issue_id,
+            action="breaker.clear",
+            created_at=now_iso,
+            payload={
+                "was_tripped": bool(was_tripped),
+                "micro_count": micro_count,
+                "macro_count": macro_count,
+            },
         )
 
         # Delete breaker state
