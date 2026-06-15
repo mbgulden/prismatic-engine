@@ -263,3 +263,268 @@ def format_pipeline_context(chain: list[dict[str, Any]]) -> str:
         )
 
     return "\n" + "\n".join(lines) + "\n"
+
+
+# ── Dynamic Fallback Router ──────────────────────────────────
+
+
+class DynamicFallbackRouter:
+    """Circuit-breaker-aware dynamic fallback router.
+
+    Wraps the TelemetryCollector circuit breaker to make routing decisions.
+    When a model/provider has a tripped breaker, the router selects the
+    next working fallback from a prioritized chain.
+
+    Fallback chains are defined as ordered lists — the first entry is the
+    primary model, subsequent entries are fallbacks tried in order.
+    """
+
+    # ── Default fallback chains ──────────────────────────────
+    # Format: {agent: {role_or_model: [fallback1, fallback2, ...]}}
+    DEFAULT_CHAINS: dict[str, dict[str, list[str]]] = {
+        "agy": {
+            "researcher": ["deepseek-v4-pro", "deepseek-v4-flash", "gpt-4o-mini"],
+            "builder":   ["deepseek-v4-flash", "gpt-4o-mini"],
+        },
+        "fred": {
+            "primary":   ["deepseek-v4-flash", "gpt-4o-mini"],
+        },
+        "kai": {
+            "developer": ["deepseek-v4-flash", "gpt-4o-mini"],
+            "css":       ["deepseek-v4-flash"],
+            "js":        ["deepseek-v4-flash"],
+            "content":   ["deepseek-v4-flash"],
+        },
+        "jules": {
+            "primary":   ["deepseek-v4-flash", "gpt-4o-mini"],
+        },
+        "codex": {
+            "primary":   ["gpt-4o", "gpt-4o-mini"],
+        },
+        "claude-code": {
+            "primary":   ["claude-sonnet-4-20250514", "claude-haiku-3-20250301"],
+        },
+    }
+
+    def __init__(
+        self,
+        telemetry_collector,
+        fallback_chains: dict[str, dict[str, list[str]]] | None = None,
+    ):
+        """Initialize the fallback router.
+
+        Args:
+            telemetry_collector: Instance of TelemetryCollector for
+                circuit breaker checks.
+            fallback_chains: Optional override of fallback chains.
+                Falls back to DEFAULT_CHAINS if not provided.
+        """
+        self._telemetry = telemetry_collector
+        if fallback_chains is None:
+            self._chains = dict(self.DEFAULT_CHAINS)
+        else:
+            self._chains = fallback_chains
+        self._fallback_count: int = 0
+        self._total_checks: int = 0
+
+    # ── Public routing API ───────────────────────────────────
+
+    def select_route(
+        self,
+        issue_id: str,
+        agent: str,
+        role: str = "primary",
+        *,
+        micro_cost: int = 1,
+        macro_cost: int = 0,
+    ) -> dict[str, str | None | bool]:
+        """Select a working route (agent + model) for an issue.
+
+        Checks the circuit breaker for the primary model of *agent*'s
+        *role*. If tripped, walks the fallback chain until a working
+        model is found or the chain is exhausted.
+
+        Args:
+            issue_id: Linear issue ID for breaker tracking.
+            agent: Agent name (e.g. ``"agy"``).
+            role: Role within the agent (e.g. ``"researcher"``,
+                ``"primary"``). Defaults to ``"primary"``.
+            micro_cost: Micro-failure increment (default 1 — one
+                dispatch attempt).
+            macro_cost: Macro-failure increment (default 0).
+
+        Returns:
+            A dict with keys ``"agent"``, ``"model"``, and
+            ``"fallback"`` (bool). ``"model"`` is ``None`` if all
+            fallbacks are exhausted.
+        """
+        chain = self._get_chain(agent, role)
+        if not chain:
+            return {"agent": agent, "model": None, "fallback": False}
+
+        for model in chain:
+            self._total_checks += 1
+            tripped = self._telemetry.check_circuit(
+                issue_id=issue_id,
+                agent=agent,
+                micro_count=micro_cost,
+                macro_count=macro_cost,
+            )
+            if not tripped:
+                is_fallback = model != chain[0]
+                if is_fallback:
+                    self._fallback_count += 1
+                return {
+                    "agent": agent,
+                    "model": model,
+                    "fallback": is_fallback,
+                }
+
+        # All fallbacks tripped — report exhausted
+        self._telemetry.record_loop(
+            run_id=f"exhausted-{issue_id}",
+            issue_id=issue_id,
+            agent=agent,
+            loop_type="fallback_exhausted",
+            trigger=f"all-fallbacks-exhausted-for-{role}",
+            resolved=False,
+        )
+        return {"agent": agent, "model": None, "fallback": False}
+
+    def report_success(
+        self,
+        issue_id: str,
+        agent: str,
+    ) -> None:
+        """Report a successful dispatch, resetting the circuit breaker.
+
+        Call this when an agent completes its work successfully for an
+        issue. It resets the breaker so future dispatches start clean.
+
+        Args:
+            issue_id: Linear issue ID.
+            agent: Agent name.
+        """
+        self._telemetry.reset_breaker(issue_id)
+        self._telemetry.record_loop(
+            run_id=f"reset-{issue_id}",
+            issue_id=issue_id,
+            agent=agent,
+            loop_type="breaker_reset",
+            trigger="dispatch_success",
+            resolved=True,
+        )
+
+    def report_failure(
+        self,
+        issue_id: str,
+        agent: str,
+        model: str,
+        *,
+        micro_cost: int = 1,
+        macro_cost: int = 0,
+    ) -> dict[str, str | None | bool]:
+        """Report a dispatch failure and attempt fallback.
+
+        Records the failure via the circuit breaker, then automatically
+        attempts fallback to the *next* model in the chain (skipping the
+        one that just failed).
+
+        Args:
+            issue_id: Linear issue ID.
+            agent: Agent name.
+            model: The model that failed.
+            micro_cost: Micro-failure increment.
+            macro_cost: Macro-failure increment (default 0 — use 1 for
+                catastrophic failures like 5xx errors).
+
+        Returns:
+            A fallback route dict (same shape as :meth:`select_route`),
+            or ``{"model": None}`` if no fallback is available.
+        """
+        # Record the failure via circuit breaker
+        self._total_checks += 1
+        tripped = self._telemetry.check_circuit(
+            issue_id=issue_id,
+            agent=agent,
+            micro_count=micro_cost,
+            macro_count=macro_cost,
+        )
+
+        chain = self._get_chain(agent, "primary")
+
+        if tripped and chain:
+            # Find the failed model's position and try the next one
+            for i, m in enumerate(chain):
+                if m == model:
+                    # Try remaining models in the chain
+                    for next_model in chain[i + 1:]:
+                        self._total_checks += 1
+                        next_tripped = self._telemetry.check_circuit(
+                            issue_id=issue_id,
+                            agent=agent,
+                            micro_count=0,  # already counted
+                            macro_count=0,
+                        )
+                        if not next_tripped:
+                            self._fallback_count += 1
+                            return {
+                                "agent": agent,
+                                "model": next_model,
+                                "fallback": True,
+                            }
+                    break
+
+            # No fallback found — report exhausted
+            self._telemetry.record_loop(
+                run_id=f"exhausted-{issue_id}",
+                issue_id=issue_id,
+                agent=agent,
+                loop_type="fallback_exhausted",
+                trigger=f"report_failure-no-fallback-after-{model}",
+                resolved=False,
+            )
+            return {"agent": agent, "model": None, "fallback": False}
+
+        # Model not yet tripped — retry is still safe
+        return {"agent": agent, "model": model, "fallback": False}
+
+    # ── Status / diagnostics ────────────────────────────────
+
+    @property
+    def stats(self) -> dict[str, int]:
+        """Return routing statistics."""
+        return {
+            "total_checks": self._total_checks,
+            "fallbacks_activated": self._fallback_count,
+        }
+
+    def get_chain(
+        self,
+        agent: str,
+        role: str = "primary",
+    ) -> list[str]:
+        """Get the fallback chain for an agent role.
+
+        Returns:
+            Ordered list of model names, or empty list if no chain
+            is configured.
+        """
+        return list(self._get_chain(agent, role))
+
+    # ── Private ──────────────────────────────────────────────
+
+    def _get_chain(self, agent: str, role: str) -> list[str]:
+        """Resolve the fallback chain for *agent* and *role*."""
+        agent_chains = self._chains.get(agent)
+        if not agent_chains:
+            return []
+        chain = agent_chains.get(role) or agent_chains.get("primary")
+        return chain or []
+
+    def __repr__(self) -> str:
+        return (
+            f"<DynamicFallbackRouter "
+            f"checks={self._total_checks} "
+            f"fallbacks={self._fallback_count}>"
+        )
