@@ -1,0 +1,21 @@
+# Prismatic Engine proxy rotation config.
+# Populate with procured proxy URLs before enabling Horizon 2 external lead-gen.
+# URLs may use http://, https://, socks4://, or socks5:// depending on client support.
+rotation: round_robin
+
+domain_rules:
+  linkedin.com: always_proxy
+  google.com: always_proxy
+  googleapis.com: always_proxy
+  yellowpages.com: optional_proxy
+  yelp.com: optional_proxy
+  manta.com: optional_proxy
+  bbb.org: optional_proxy
+  angi.com: optional_proxy
+
+proxies: []
+# Example after procurement:
+# - name: residential-us-1
+#   url: http://user:pass@proxy.example.com:8000
+#   healthy: true
+#   domains: ["*"]
