@@ -1,0 +1,19 @@
+[Unit]
+Description=Prismatic Engine — Agent Orchestration Hub (user-scoped)
+After=network.target
+
+[Service]
+Type=simple
+User=%u
+Group=%g
+Environment=PRISMATIC_HOME=%h
+Environment=LINEAR_API_KEY=%i
+Environment=LINEAR_TEAM_ID=GRO
+ExecStart=/usr/local/bin/prismatic-engine serve
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
