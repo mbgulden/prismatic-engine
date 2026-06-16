@@ -6,7 +6,12 @@ __pycache__/
 /build/
 *.egg
 .venv/
+.venv_dev/
 env/
+
+# Secrets
+.env
+.env.*
 
 # IDE
 .vscode/
