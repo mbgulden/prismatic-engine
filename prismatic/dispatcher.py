@@ -98,6 +98,75 @@ PIPELINE_METRICS_PATH: str = os.environ.get(
     "PRISMATIC_METRICS_PATH", "/tmp/pipeline_metrics.jsonl"
 )
 
+# AGY model routing configuration
+AGY_CONFIG_PATH: str = os.path.join(
+    os.environ.get("HOME", os.path.expanduser("~")),
+    ".antigravity",
+    "config.json",
+)
+
+# Default fallback chain for AGY model routing
+AGY_DEFAULT_FALLBACK: list[str] = ["agent:agy-flash-high", "agent:agy"]
+AGY_DEFAULT_MODEL: str = "gemini-3.5-flash-med"
+
+
+def _load_agy_model_config() -> dict[str, Any]:
+    """Load the AGY model routing configuration from disk.
+
+    Returns the config dict, or an empty dict if the file
+    doesn't exist or can't be parsed.
+    """
+    if not os.path.exists(AGY_CONFIG_PATH):
+        return {}
+    try:
+        with open(AGY_CONFIG_PATH) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def get_agy_model_from_labels(labels: list[str]) -> str | None:
+    """Map issue labels to an AGY ``--model`` CLI flag value.
+
+    Checks each label against the ``model_bindings`` in the AGY
+    config.  Returns the first matching model string, or ``None``
+    if no label matches (use AGY default).
+    """
+    config = _load_agy_model_config()
+    bindings = config.get("model_bindings", {})
+
+    for label in labels:
+        if label in bindings:
+            return bindings[label]
+
+    return None
+
+
+def _get_agy_fallback_model(labels: list[str]) -> str | None:
+    """Determine the fallback model for when a premium model fails.
+
+    Reads the ``fallback_chain`` from the config and returns the
+    first model that is NOT the currently-assigned one.  Falls
+    back to the built-in default chain.
+    """
+    config = _load_agy_model_config()
+    chain = config.get("fallback_chain", AGY_DEFAULT_FALLBACK)
+    bindings = config.get("model_bindings", {})
+
+    # Find the currently assigned model label
+    current_label = None
+    for label in labels:
+        if label in bindings:
+            current_label = label
+            break
+
+    # Walk the fallback chain, skipping the current label
+    for fb_label in chain:
+        if fb_label != current_label and fb_label in bindings:
+            return bindings[fb_label]
+
+    return AGY_DEFAULT_MODEL
+
 
 def log_completed_pipeline_metrics(
     issue_id: str,
@@ -570,11 +639,17 @@ def signal_kai(
     return result
 
 
-def launch_agy(issue_id: str, task: str = "") -> subprocess.Popen | None:
+def launch_agy(
+    issue_id: str,
+    task: str = "",
+    labels: list[str] | None = None,
+) -> subprocess.Popen | None:
     """Launch the AGY CLI in headless mode for the given issue.
 
     The AGY process is started as a background subprocess with the
-    issue ID passed via the ``--issue`` flag.
+    issue ID passed via the ``--issue`` flag.  If the issue has an
+    AGY model-specific label (e.g. ``agent:agy-sonnet``), the
+    corresponding ``--model`` flag is added automatically.
 
     Before launching, the :class:`CircuitBreakerRouter` checks live
     telemetry for cooldown timers and quota exhaustion signals.  If
@@ -584,6 +659,8 @@ def launch_agy(issue_id: str, task: str = "") -> subprocess.Popen | None:
     Args:
         issue_id: Linear issue UUID or identifier.
         task: Optional task description.
+        labels: Optional list of label names from the Linear issue.
+            If not provided, labels are fetched from the Linear API.
 
     Returns:
         ``subprocess.Popen`` handle, or ``None`` if launch failed.
@@ -600,6 +677,30 @@ def launch_agy(issue_id: str, task: str = "") -> subprocess.Popen | None:
         ]
         if task:
             cmd.extend(["--task", task])
+
+        # ── Resolve issue labels if not provided ────────────────
+        if labels is None:
+            try:
+                label_objs = get_issue_labels(issue_id)
+                labels = [lab["name"] for lab in label_objs]
+            except Exception:
+                labels = []
+
+        # ── AGY model routing: inject --model flag ──────────────
+        model = get_agy_model_from_labels(labels)
+        if model:
+            # Check for --model already in cmd (from circuit breaker or other)
+            existing_model = None
+            for i, arg in enumerate(cmd):
+                if arg == "--model" and i + 1 < len(cmd):
+                    existing_model = cmd[i + 1]
+                    break
+            if not existing_model:
+                cmd.extend(["--model", model])
+                print(
+                    f"[dispatcher] AGY model routing: {issue_id} → "
+                    f"model={model}"
+                )
 
         # ── Circuit breaker: check live telemetry for quota/cooldown ──
         try:

@@ -51,7 +51,7 @@ def _emit_lock_event(event_type: str, filepath: str, agent_id: str, **extra: Any
         pass  # Best-effort — don't let event emission break locking
 
 # ── Constants ──────────────────────────────────────────
-_PRISMATIC_HOME = Path(os.environ.get("PRISMATIC_HOME", "/home/ubuntu"))
+_PRISMATIC_HOME = Path(os.environ.get("PRISMATIC_HOME", "."))
 LOCK_FILE = _PRISMATIC_HOME / ".antigravity" / "swarm_locks.json"
 STALE_TTL_MS = 300_000  # 5 minutes
 
