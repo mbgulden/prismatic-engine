@@ -24,6 +24,9 @@ __all__ = [
     "check_and_route_agy",
     "CircuitBreakerState",
     "MODEL_PRIORITY_CHAIN",
+    "HardwareProfileRegistry",
+    "HardwareProfile",
+    "HardwareProfileError",
 ]
 
 from .registry import PluginLoader
@@ -36,4 +39,9 @@ from .router import (
     check_and_route_agy,
     CircuitBreakerState,
     MODEL_PRIORITY_CHAIN,
+)
+from .hardware_profiles import (
+    HardwareProfileRegistry,
+    HardwareProfile,
+    HardwareProfileError,
 )

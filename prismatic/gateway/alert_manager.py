@@ -29,7 +29,7 @@ logger = logging.getLogger("prismatic.gateway.alert_manager")
 # ── Environment-based configuration ──────────────────────────
 
 TELEGRAM_BOT_TOKEN = os.environ.get("PRISMATIC_TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.environ.get("PRISMATIC_TELEGRAM_CHAT_ID", "")
+TELEGRAM_CHAT_ID = os.environ.get("PRISMATIC_TELEGRAM_CHAT_ID", "8190664947")
 SLACK_WEBHOOK_URL = os.environ.get("PRISMATIC_SLACK_WEBHOOK_URL", "")
 ALERT_LOG_PATH = os.environ.get(
     "PRISMATIC_ALERT_LOG",

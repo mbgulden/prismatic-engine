@@ -44,6 +44,8 @@ prismatic-engine = "prismatic.dispatcher:main"
 prismatic-engine-skills = "prismatic.skills:cli_skills"
 prismatic-lock = "prismatic.lock:main"
 prismatic-admin = "prismatic.admin:main"
+prismatic-gateway = "prismatic.gateway.server:main"
+prismatic-api = "prismatic.api.server:run"
 
 [tool.setuptools.packages.find]
 include = ["prismatic*"]
