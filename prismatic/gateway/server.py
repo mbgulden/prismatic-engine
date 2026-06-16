@@ -44,6 +44,9 @@ from prismatic.gateway.ws_broadcaster import (
 from prismatic.lock import _read_locks as read_swarm_locks
 from prismatic.run_records import AgentRunRecordStore
 
+# ── Plugin Marketplace Routes ───────────────────────────────────────────────
+from prismatic.gateway.plugin_routes import create_plugin_router
+
 logger = logging.getLogger("prismatic.gateway.server")
 
 # ── FastAPI Application ──────────────────────────────────────────────
@@ -67,6 +70,13 @@ app.add_middleware(
 # Mount the IPC bridge event ingest route (POST /events, GET /events/history)
 # The router's @router.post("/events") defines the full path — no prefix needed
 app.include_router(create_event_ingest_route())
+
+# Mount the Plugin Marketplace Registry API
+_plugins_dir = os.environ.get(
+    "PRISMATIC_PLUGINS_DIR",
+    os.path.join(os.path.dirname(os.path.dirname(__file__)), "plugins"),
+)
+app.include_router(create_plugin_router(plugins_dir=_plugins_dir))
 
 # ── Startup timestamp ──────────────────────────────────────────────
 _started_at: float = 0.0
