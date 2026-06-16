@@ -338,11 +338,127 @@ class TelemetryCollector:
         self._push("agy_live_state", event)
 
 
+    def record_plugin_event(
+        self,
+        plugin_name: str,
+        event_type: str,
+        start_count: int = 0,
+        crash_count: int = 0,
+        execution_time_ms: float = 0.0,
+        memory_bytes: int = 0,
+        cpu_seconds: float = 0.0,
+        state: str = "",
+        error_message: str = "",
+    ) -> None:
+        """Record a plugin lifecycle metric event.
+
+        Args:
+            plugin_name: Name of the plugin.
+            event_type: 'start', 'stop', 'crash', 'reload', or 'heartbeat'.
+            start_count: Increment for plugin_start_count (cumulative).
+            crash_count: Increment for plugin_crash_count (cumulative).
+            execution_time_ms: Execution time for this session in ms.
+            memory_bytes: Memory usage in bytes.
+            cpu_seconds: CPU time in seconds.
+            state: Current plugin state (RUNNING, FAILED, etc.).
+            error_message: Error message if event_type is 'crash'.
+        """
+        event = {
+            "plugin_name": plugin_name,
+            "event_type": event_type,
+            "start_count": start_count,
+            "crash_count": crash_count,
+            "execution_time_ms": execution_time_ms,
+            "memory_bytes": memory_bytes,
+            "cpu_seconds": cpu_seconds,
+            "state": state,
+            "error_message": error_message,
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._push("plugin_event", event)
+
+    def report_plugin_metrics(self, plugin_name: str) -> dict[str, Any] | None:
+        """Return aggregated metrics for a single plugin.
+
+        Returns a dict with cumulative start_count, crash_count,
+        avg_execution_time_ms, current_state, last_error, uptime_seconds
+        or None if no data exists.
+        """
+        conn = sqlite3.connect(self._db_path)
+        try:
+            row = conn.execute(
+                """SELECT
+                    COALESCE(SUM(start_count), 0) as total_starts,
+                    COALESCE(SUM(crash_count), 0) as total_crashes,
+                    COALESCE(AVG(execution_time_ms), 0.0) as avg_exec_time,
+                    COALESCE(AVG(memory_bytes), 0) as avg_memory_bytes,
+                    COALESCE(AVG(cpu_seconds), 0.0) as avg_cpu_seconds,
+                    COUNT(*) as event_count
+                FROM telemetry_plugin_metrics
+                WHERE plugin_name = ?""",
+                (plugin_name,),
+            ).fetchone()
+            if not row or row[5] == 0:
+                return None
+
+            # Get latest state and error
+            latest = conn.execute(
+                "SELECT state, error_message, recorded_at "
+                "FROM telemetry_plugin_metrics "
+                "WHERE plugin_name = ? ORDER BY recorded_at DESC LIMIT 1",
+                (plugin_name,),
+            ).fetchone()
+            current_state = latest[0] if latest else ""
+            last_error = latest[1] if latest else ""
+            last_seen = latest[2] if latest else ""
+
+            uptime = 0.0
+            if current_state in ("RUNNING", "STARTING") and last_seen:
+                try:
+                    uptime = (datetime.now(timezone.utc) - datetime.fromisoformat(last_seen.replace("Z", "+00:00"))).total_seconds()
+                except (ValueError, TypeError):
+                    uptime = 0.0
+
+            return {
+                "plugin_name": plugin_name,
+                "total_starts": row[0],
+                "total_crashes": row[1],
+                "avg_execution_time_ms": round(row[2], 2),
+                "avg_memory_bytes": int(row[3]),
+                "avg_cpu_seconds": round(row[4], 4),
+                "current_state": current_state,
+                "last_error": last_error,
+                "last_seen": last_seen,
+                "uptime_seconds": round(uptime, 1),
+                "event_count": row[5],
+            }
+        finally:
+            conn.close()
+
+    def list_plugin_metrics(self) -> list[dict[str, Any]]:
+        """Return aggregated metrics for all known plugins.
+
+        Returns a list of dicts, one per plugin, with the same shape
+        as ``report_plugin_metrics()``.
+        """
+        conn = sqlite3.connect(self._db_path)
+        try:
+            rows = conn.execute(
+                "SELECT DISTINCT plugin_name FROM telemetry_plugin_metrics"
+            ).fetchall()
+        finally:
+            conn.close()
+
+        return [
+            m for name_row in rows
+            if (m := self.report_plugin_metrics(name_row[0])) is not None
+        ]
+
     def get_dashboard_data(self, hours: int = 24) -> dict[str, Any]:
         """Query recent telemetry for dashboard display.
 
         Returns a dict with loops, tokens, validation, breakers_tripped,
-        credit_burn_rate, failure_rate, and total_agent_runs.
+        credit_burn_rate, failure_rate, total_agent_runs, and plugin_metrics.
         """
         conn = sqlite3.connect(self._db_path)
         conn.row_factory = sqlite3.Row
@@ -410,6 +526,7 @@ class TelemetryCollector:
                 "failure_rate": round(failure_rate, 4),
                 "total_agent_runs": total_runs,
                 "failed_agent_runs": failed_runs,
+                "plugin_metrics": self.list_plugin_metrics(),
             }
         finally:
             conn.close()
@@ -596,6 +713,7 @@ class TelemetryCollector:
             "telemetry_credit_ledger": ("recorded_at", RETENTION_CREDIT_LEDGER),
             "telemetry_token_metrics": ("recorded_at", RETENTION_LOOP_EVENTS),
             "telemetry_validation_events": ("created_at", RETENTION_LOOP_EVENTS),
+            "telemetry_plugin_metrics": ("recorded_at", RETENTION_LOOP_EVENTS),
         }
 
         try:
@@ -753,6 +871,26 @@ class TelemetryCollector:
                             data["recorded_at"],
                         ),
                     )
+                elif event_type == "plugin_event":
+                    conn.execute(
+                        """INSERT INTO telemetry_plugin_metrics
+                           (plugin_name, event_type, start_count,
+                            crash_count, execution_time_ms,
+                            memory_bytes, cpu_seconds, state,
+                            error_message, recorded_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            data["plugin_name"], data["event_type"],
+                            data.get("start_count", 0),
+                            data.get("crash_count", 0),
+                            data.get("execution_time_ms", 0.0),
+                            data.get("memory_bytes", 0),
+                            data.get("cpu_seconds", 0.0),
+                            data.get("state", ""),
+                            data.get("error_message", ""),
+                            data["recorded_at"],
+                        ),
+                    )
 
                 conn.commit()
             except Exception:
@@ -870,6 +1008,30 @@ class TelemetryCollector:
                 CREATE INDEX IF NOT EXISTS idx_agy_live_time
                     ON agy_live_state(recorded_at);
             """)
+            # ── Plugin Metrics table ──────────────────────────────────────────
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS telemetry_plugin_metrics (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    plugin_name     TEXT NOT NULL,
+                    event_type      TEXT NOT NULL,
+                    start_count     INTEGER DEFAULT 0,
+                    crash_count     INTEGER DEFAULT 0,
+                    execution_time_ms REAL DEFAULT 0.0,
+                    memory_bytes    INTEGER DEFAULT 0,
+                    cpu_seconds     REAL DEFAULT 0.0,
+                    state           TEXT DEFAULT '',
+                    error_message   TEXT DEFAULT '',
+                    recorded_at     TEXT NOT NULL
+                )"""
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_plugin_metrics_name "
+                "ON telemetry_plugin_metrics(plugin_name)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_plugin_metrics_time "
+                "ON telemetry_plugin_metrics(recorded_at)"
+            )
             # ── Phase 4.4 migration: add client_id/project_id to credit_ledger ──
             try:
                 cursor = conn.execute(

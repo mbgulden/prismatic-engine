@@ -11,8 +11,8 @@ agents:
   fred:
     role: Orchestrator & Infrastructure
     lanes:
-      owner: ["src/", "infra/", "deploy/", ".github/", "specs/"]
-      read_only: ["content/", "active-oahu/"]
+      owner: ["*"]  # Orchestrator needs full cross-lane write access
+      read_only: []
     branch_prefix: "feature/"
     staging_governor: true  # Only Fred merges to staging
 
