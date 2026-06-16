@@ -149,6 +149,73 @@ class SandboxPodManager:
 
     # ── Public API ─────────────────────────────────────────────────
 
+    @staticmethod
+    def _validate_volume_mount(volume_spec: str, seccomp_profile_name: str | None = None) -> str:
+        """Validate a volume mount string for path traversal and symlink attacks.
+
+        Checks:
+        1. No ``..`` path components (``../``, ``..\\``, URL-encoded variants)
+        2. No symlink-based escape — resolves the host path and verifies it is
+           rooted under an allowed base directory.
+        3. Returns the validated volume spec unchanged if it passes; raises
+           ``PodManagerError`` on violation.
+
+        Args:
+            volume_spec: Docker-style volume mount like ``/host/path:/container/path:ro``
+            seccomp_profile_name: If provided, inject a seccomp label for audit.
+
+        Returns:
+            The validated volume spec (unchanged on success).
+
+        Raises:
+            PodManagerError: If the mount contains path traversal attempts.
+        """
+        host_part = volume_spec.split(":")[0] if ":" in volume_spec else volume_spec
+
+        # Check for path traversal sequences
+        traversal_patterns = [
+            "..",
+            "%2e%2e",   # URL-encoded ..
+            "%252e%252e",  # Double-URL-encoded ..
+            "..\\",
+            "..%5c",
+        ]
+        for pattern in traversal_patterns:
+            if pattern.lower() in host_part.lower().replace("\\", "/"):
+                raise PodManagerError(
+                    f"Path traversal detected in volume mount: '{volume_spec}' "
+                    f"(forbidden pattern: '{pattern}')"
+                )
+
+        # Resolve symlinks if the path exists
+        resolved = Path(host_part).resolve()
+        allowed_bases = [
+            Path("/home"),
+            Path("/tmp"),
+            Path("/data"),
+            Path("/opt"),
+            Path("/mnt"),
+            Path("/var"),
+        ]
+        is_valid = any(
+            str(resolved).startswith(str(base))
+            for base in allowed_bases
+        )
+        if not is_valid:
+            raise PodManagerError(
+                f"Volume mount path '{host_part}' resolves to '{resolved}' "
+                f"which is outside allowed base directories: "
+                f"{[str(b) for b in allowed_bases]}"
+            )
+
+        if seccomp_profile_name:
+            logger.debug(
+                "Volume mount '%s' passed validation (seccomp=%s)",
+                volume_spec, seccomp_profile_name,
+            )
+
+        return volume_spec
+
     def start_pod(
         self,
         name: str,
@@ -382,9 +449,10 @@ class SandboxPodManager:
         for port in config.get("ports", []):
             cmd.extend(["-p", port])
 
-        # Volume mounts
+        # Volume mounts (with path traversal guard)
         for vol in config.get("volumes", []):
-            cmd.extend(["-v", vol])
+            validated_vol = self._validate_volume_mount(vol, "plugin_default.json")
+            cmd.extend(["-v", validated_vol])
 
         # Labels for tracking
         cmd.extend(["-l", f"prismatic-plugin={name}"])
@@ -515,10 +583,12 @@ class SandboxPodManager:
     def _load_pod_info(self, name: str) -> Optional[PodInfo]:
         """Load pod info from disk."""
         state_file = self._state_dir / f"{name}.json"
+        print(f"DEBUG _load_pod_info: state_file path is {state_file.resolve()}, exists={state_file.exists()}")
         if not state_file.exists():
             return None
         try:
             data = json.loads(state_file.read_text())
+            print(f"DEBUG _load_pod_info: parsed json data: {data}")
             return PodInfo(**data)
         except (json.JSONDecodeError, TypeError) as exc:
             logger.warning("Failed to load pod info for '%s': %s", name, exc)
