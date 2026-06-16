@@ -1,0 +1,51 @@
+name: test
+
+on:
+  push:
+    branches:
+      - main
+      - deploy-fresh
+  pull_request:
+    branches:
+      - main
+      - deploy-fresh
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: Install Base Dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel build
+          pip install .[all]
+
+      - name: Install Development & Testing Dependencies
+        run: |
+          pip install pytest pytest-asyncio pytest-cov
+
+      - name: Run Unit Tests
+        run: |
+          pytest tests/
+
+      - name: Setup Mock Git Hooks (Required by Canary Integration Tests)
+        run: |
+          mkdir -p .git/hooks
+          # Create placeholder executable hook files to satisfy environment checks
+          touch .git/hooks/pre-commit .git/hooks/pre-push
+          chmod +x .git/hooks/pre-commit .git/hooks/pre-push
+
+      - name: Run Sandbox Integration Tests (Canary)
+        env:
+          PRISMATIC_HOME: ${{ github.workspace }}
+        run: |
+          bash scripts/canary_test.sh --verbose

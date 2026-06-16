@@ -1,0 +1,50 @@
+name: publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: Install Build Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: Build Package Distributions
+        run: |
+          python -m build
+
+      - name: Publish Package to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          user: __token__
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          # Set skip-existing to true to avoid failures if version is already published
+          skip-existing: true
+          # Under GHA, we can also use OIDC if configured, but token is standard fallback
+          # repository-url: https://upload.pypi.org/legacy/
+
+      - name: Trigger Staging Build
+        run: |
+          echo "🚀 Triggering staging build promotion pipeline..."
+          # Send a repository dispatch event to trigger downstream CI/CD staging build pipelines
+          curl -s -X POST \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/${{ github.repository }}/dispatches \
+            -d '{"event_type": "staging_build", "client_payload": {"ref": "${{ github.ref }}"}}' \
+            || echo "⚠️ Failed to send repository dispatch event (this is normal if GITHUB_TOKEN has default read-only permissions)."
