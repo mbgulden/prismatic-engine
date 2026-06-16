@@ -1822,6 +1822,82 @@ def cmd_billing_report(args: Any) -> None:
         print(f"{'='*70}\n")
 
 
+def _cmd_plugin(args) -> None:
+    """Handle the ``plugin`` subcommand tree.
+
+    Supports:
+        ``prismatic plugin metrics <name>`` — display plugin telemetry.
+        ``prismatic plugin health <name>`` — check plugin health.
+        ``prismatic plugin list-metrics`` — list all plugins' metrics.
+    """
+    from .telemetry import get_collector
+
+    if args.plugin_command == "metrics":
+        collector = get_collector()
+        metrics = collector.report_plugin_metrics(args.name)
+        if metrics is None:
+            print(f"No metrics found for plugin '{args.name}'")
+            return
+        if args.json:
+            import json
+            print(json.dumps(metrics, indent=2))
+            return
+        print(f"\n  Plugin Metrics: {args.name}")
+        print(f"  {'─' * 40}")
+        print(f"  Total Starts:       {metrics['total_starts']}")
+        print(f"  Total Crashes:      {metrics['total_crashes']}")
+        print(f"  Avg Exec Time (ms): {metrics['avg_execution_time_ms']}")
+        print(f"  Avg Memory (bytes): {metrics['avg_memory_bytes']}")
+        print(f"  Avg CPU (seconds):  {metrics['avg_cpu_seconds']}")
+        print(f"  Current State:      {metrics['current_state']}")
+        print(f"  Last Error:         {metrics['last_error'] or '(none)'}")
+        print(f"  Uptime (seconds):   {metrics['uptime_seconds']}")
+        print(f"  Last Seen:          {metrics['last_seen']}")
+        print()
+
+    elif args.plugin_command == "health":
+        from .plugin_health import get_plugin_health
+        result = get_plugin_health(args.name)
+        if args.json:
+            import json
+            print(json.dumps(result, indent=2))
+            return
+        status = result.get("status", "unknown")
+        print(f"\n  Plugin Health: {args.name}")
+        print(f"  {'─' * 40}")
+        print(f"  Status:      {status}")
+        print(f"  State:       {result.get('state', '?')}")
+        print(f"  Uptime (s):  {result.get('uptime_seconds', 0)}")
+        print(f"  Last Error:  {result.get('last_error') or '(none)'}")
+        metrics = result.get("metrics", {})
+        if metrics:
+            print(f"  Starts:      {metrics.get('total_starts', 0)}")
+            print(f"  Crashes:     {metrics.get('total_crashes', 0)}")
+        print()
+
+    elif args.plugin_command == "list-metrics":
+        collector = get_collector()
+        all_metrics = collector.list_plugin_metrics()
+        if not all_metrics:
+            print("No plugin metrics found.")
+            return
+        if args.json:
+            import json
+            print(json.dumps(all_metrics, indent=2))
+            return
+        print(f"\n  Plugin Metrics ({len(all_metrics)} plugins)")
+        print(f"  {'─' * 60}")
+        for m in all_metrics:
+            print(f"  {m['plugin_name']:20s}  starts={m['total_starts']:4d}  "
+                  f"crashes={m['total_crashes']:3d}  "
+                  f"state={m['current_state']:12s}  "
+                  f"uptime={m['uptime_seconds']:8.1f}s")
+        print()
+
+    else:
+        print("Unknown plugin command. Try: metrics, health, list-metrics")
+
+
 def main() -> None:
     """Entry point: parse CLI arguments and start the dispatcher.
 
@@ -1902,6 +1978,37 @@ def main() -> None:
     # ── Skills Subcommand ─────────────────────────────────────
     subparsers.add_parser("skills", help="Skill marketplace subcommands (run 'skills --help' for details)")
 
+    # ── Plugin Subcommand ─────────────────────────────────────
+    plugin_parser = subparsers.add_parser("plugin", help="Plugin management subcommands")
+    plugin_subparsers = plugin_parser.add_subparsers(dest="plugin_command", help="Plugin subcommand")
+
+    # ── plugin metrics ────────────────────────────────────────
+    plugin_metrics_parser = plugin_subparsers.add_parser(
+        "metrics", help="Display real-time telemetry for a plugin"
+    )
+    plugin_metrics_parser.add_argument(
+        "name", type=str, help="Plugin name to query"
+    )
+    plugin_metrics_parser.add_argument(
+        "--json", action="store_true", help="Output raw JSON instead of formatted table"
+    )
+
+    # ── plugin health ─────────────────────────────────────────
+    plugin_health_parser = plugin_subparsers.add_parser(
+        "health", help="Check plugin health status"
+    )
+    plugin_health_parser.add_argument(
+        "name", type=str, help="Plugin name to check"
+    )
+    plugin_health_parser.add_argument(
+        "--json", action="store_true", help="Output raw JSON"
+    )
+
+    # ── plugin list-metrics ───────────────────────────────────
+    plugin_subparsers.add_parser(
+        "list-metrics", help="List aggregated metrics for all plugins"
+    )
+
     # ── Help / No Command ─────────────────────────────────────
     if len(sys.argv) == 1:
         parser.print_help()
@@ -1924,6 +2031,8 @@ def main() -> None:
             print(f"Set up {len(issues)} pipeline issues")
             return
         main_loop(interval=args.interval, once=args.once)
+    elif args.command == "plugin":
+        _cmd_plugin(args)
     else:
         # Default fallback
         if args.command is None:
