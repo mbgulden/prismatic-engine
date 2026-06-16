@@ -53,7 +53,7 @@ from typing import Any
 # Constants (env-overridable)
 # ═══════════════════════════════════════════════════════════════
 
-PRISMATIC_HOME = Path(os.environ.get("PRISMATIC_HOME", "/home/ubuntu"))
+PRISMATIC_HOME = Path(os.environ.get("PRISMATIC_HOME", "."))
 STATE_DIR = Path(os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state"))
 
 # Where the swarm node roster lives (written by the orchestrator)
