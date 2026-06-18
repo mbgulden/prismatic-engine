@@ -608,7 +608,7 @@ The engine is now a **capability-registry-driven, mode-switch-gated, schedule-aw
 | Schedule observatory (records + owner-aware mutation) | `prismatic/schedules.py` | ✅ landed |
 | Gateway endpoints (`/schedules/*`) | `prismatic/gateway/server.py` | ✅ landed |
 | Event bus types | `prismatic/gateway/ipc_bridge.py` | ✅ landed |
-| `prismatic-engine doctor` | `prismatic/cli/doctor.py` | ✅ landed |
+| `prismatic-engine doctor` | `prismatic/cli/doctor.py` (extracted in GRO-1971) | ✅ landed |
 | GitHub-credentials gate in AGY/Jules launch | `prismatic/dispatcher.py` | ✅ landed |
 | Stall-tracker-aware escalation | `prismatic/dispatcher.py` | ✅ landed |
 
@@ -662,6 +662,8 @@ Result: `pytest tests/` → 146 passed, 0 failed.
 - **GRO-1957** — Add GitHub API connection layer for AGY + Jules CLI workflow
   (transformative: extract `cmd_doctor` into `prismatic/cli/doctor.py`; **landed in GRO-1971**)
 - **GRO-1968** — AGY review of the v0.1 land (audit gate; AGY runs `agy-research-strategist`)
+- **GRO-1972** — Codify Linear API rate-limit optimization into Prismatic Engine
+  (`LinearBudget` token-bucket + `LinearMetrics` observability + dispatcher integration; research complete, plan at `specs/implementation-plans/linear-rate-limit-codification.md`)
 
 ### Branch & PR state
 
