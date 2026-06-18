@@ -85,7 +85,7 @@ If identity evidence is missing, the finding status should be `blocked` with `re
 
 ## File Reference Resolution Rule (linkable Hermes artifacts)
 
-Any local file path Fred mentions in conversation must be reachable by Michael as a clickable, Access-protected Hermes URL — never a raw disk path and never a Telegram attachment waiting for follow-up.
+Any local file path Fred (or any other agent) mentions in conversation must be reachable by Michael as a clickable, Access-protected Hermes URL — never a raw disk path and never a Telegram attachment waiting for follow-up.
 
 Standard path:
 
@@ -95,15 +95,18 @@ Standard path:
 - Access: self-hosted app, 720h session, allow authenticated users.
 - Workspaces (allowlist, no arbitrary FS reads): `published/`, `hermes-research-reports/`, `prismatic-engine/`, `agentic-swarm-ops/`.
 - Safety: blocklist on names (`.env`, `.key`, `.pem`, `.db`, `.sqlite`, `credentials`, `id_rsa*`, `state.json`, `auth.json`).
-- CLI: `publish_artifact.py <source> [--workspace LABEL] [--rel REL]` copies the file/dir into the right workspace and prints the Cloudflare URL.
+- CLI: `hermes-publish <source> [--workspace LABEL] [--rel REL]` copies the file/dir into the right workspace and prints the Cloudflare URL.
+- Post-processor: `hermes-reply` (in `~/.local/bin/`, symlinked into every profile) scans reply text and rewrites `/home/...` paths to clickable URLs.
+- Portable skill: `portable-skills/hermes-artifact-publisher/SKILL.md` is the canonical contract every agent can `skill_view` for context.
 
-When Fred mentions a local path in a Telegram reply, he must:
+When any agent mentions a local path in a Telegram reply, they must:
 
-1. Run `publish_artifact.py` (or equivalent).
+1. Run `hermes-publish <path>` (or `hermes-reply` to auto-rewrite a multi-path draft).
 2. Replace the local path in the reply with the resulting `https://files.growthwebdev.com/raw/<workspace>/<rel>` link.
 3. If publish fails, say so explicitly and attach the file as a fallback.
+4. Refuse to bypass the safety blocklist without explicit user confirmation.
 
-This replaces the old workaround of copying files into the Hermes dashboard's pipx-installed static directory, which is wiped on Hermes updates.
+This replaces the old workaround of copying files into the Hermes dashboard's pipx-installed static directory, which is wiped on Hermes updates. The full reference implementation, verification gates, and pitfalls live in `specs/file-reference-resolution.md`.
 
 ## Routing Rules
 
