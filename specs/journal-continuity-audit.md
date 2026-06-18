@@ -83,30 +83,31 @@ Example distinction:
 
 If identity evidence is missing, the finding status should be `blocked` with `recommended_action: verify identity mapping` rather than silently merging properties.
 
-## File Reference Resolution Rule (linkable Hermes artifacts)
+## File Reference Resolution Rule (linkable artifacts)
 
-Any local file path Fred (or any other agent) mentions in conversation must be reachable by Michael as a clickable, Access-protected Hermes URL — never a raw disk path and never a Telegram attachment waiting for follow-up.
+Any local file path any agent mentions in conversation must be reachable by Michael as a clickable, Access-protected URL — never a raw disk path and never an attachment waiting for follow-up. This rule is a **Prismatic Engine standard** and is harness-agnostic: it works with Hermes, OpenClaw, or no agent harness at all.
 
 Standard path:
 
-- Sub-hostname: `https://files.growthwebdev.com`
+- Sub-hostname: `https://files.growthwebdev.com` (configurable per deployment)
 - Ingress: `files.growthwebdev.com -> http://127.0.0.1:9120` on tunnel `4a6097ff-dfcb-45f2-a856-3d967a9c798b`.
-- Service: a profile-safe FastAPI artifact publisher (NOT the pipx-managed Hermes dashboard static dir).
+- Service: a profile-safe FastAPI artifact publisher at `$PRISMATIC_HOME/bin/prismatic_artifact_publisher.py` (NOT under any harness's profile directory).
 - Access: self-hosted app, 720h session, allow authenticated users.
 - Workspaces (allowlist, no arbitrary FS reads): `published/`, `hermes-research-reports/`, `prismatic-engine/`, `agentic-swarm-ops/`.
 - Safety: blocklist on names (`.env`, `.key`, `.pem`, `.db`, `.sqlite`, `credentials`, `id_rsa*`, `state.json`, `auth.json`).
-- CLI: `hermes-publish <source> [--workspace LABEL] [--rel REL]` copies the file/dir into the right workspace and prints the Cloudflare URL.
-- Post-processor: `hermes-reply` (in `~/.local/bin/`, symlinked into every profile) scans reply text and rewrites `/home/...` paths to clickable URLs.
-- Portable skill: `portable-skills/hermes-artifact-publisher/SKILL.md` is the canonical contract every agent can `skill_view` for context.
+- CLI (canonical): `prismatic-publish <source> [--workspace LABEL] [--rel REL]` copies the file/dir into the right workspace and prints the Cloudflare URL.
+- Post-processor (canonical): `prismatic-reply` (in `~/.local/bin/`) scans reply text and rewrites `/home/...` paths to clickable URLs.
+- Harness shims: `hermes-publish` and `hermes-reply` (optional) are 1–3 line wrappers that exec the canonical Prismatic CLIs.
+- Portable skill: `portable-skills/prismatic-artifact-publisher/SKILL.md` is the canonical contract any agent can `skill_view` for context.
 
-When any agent mentions a local path in a Telegram reply, they must:
+When any agent mentions a local path in a reply, they must:
 
-1. Run `hermes-publish <path>` (or `hermes-reply` to auto-rewrite a multi-path draft).
-2. Replace the local path in the reply with the resulting `https://files.growthwebdev.com/raw/<workspace>/<rel>` link.
+1. Run `prismatic-publish <path>` (or `prismatic-reply` to auto-rewrite a multi-path draft).
+2. Replace the local path in the reply with the resulting URL.
 3. If publish fails, say so explicitly and attach the file as a fallback.
 4. Refuse to bypass the safety blocklist without explicit user confirmation.
 
-This replaces the old workaround of copying files into the Hermes dashboard's pipx-installed static directory, which is wiped on Hermes updates. The full reference implementation, verification gates, and pitfalls live in `specs/file-reference-resolution.md`.
+This replaces the old workaround of copying files into a harness's pipx-installed static directory, which is wiped on harness updates. The full reference implementation, verification gates, and pitfalls live in `specs/file-reference-resolution.md`.
 
 ## Routing Rules
 

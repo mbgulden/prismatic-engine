@@ -4,23 +4,45 @@
 
 The Prismatic Engine guarantees that any local file path an agent
 references in conversation is **immediately clickable for the user**
-through a stable, Access-protected Hermes URL — never a raw disk path,
+through a stable, Access-protected URL — never a raw disk path,
 never an attachment waiting for follow-up.
 
 This is the "File Reference Resolution Rule" of the Prismatic Engine.
-It applies to every agent (Fred, Kai, AGY, Ned, Jules CLI) and every
-interface (Telegram, Slack, dashboard, email).
+It applies to every interface (Telegram, Slack, dashboard, email) and
+is **harness-agnostic**: it works with Hermes, OpenClaw, or no agent
+harness at all.
+
+## Engine vs Harness (mandatory separation)
+
+The Prismatic Engine defines the contract. An agent harness (Hermes,
+OpenClaw, Claude Code, Cursor, etc.) provides plumbing on top.
+
+| Layer | Responsibility | Example |
+|---|---|---|
+| **Prismatic Engine** | Contract: URL shape, workspace allowlist, safety policy, CLI, post-processor, accept-test. Lives under `$PRISMATIC_HOME`. | `prismatic-publish`, `prismatic-reply`, `specs/file-reference-resolution.md` |
+| **Agent harness (optional)** | Plumbing: cron, dashboards, OAuth refresh, alert routing, profile isolation, login shims. | `hermes-publish` shim, `hermes-reply` shim, profile-level PATH |
+| **User** | The end consumer of the clickable link. | Michael |
+
+A user who only has the engine binary and the CLI gets a working pipeline. A user who adds a harness gets extra plumbing (cron, dashboards, profile isolation) but the URL contract, workspace map, and safety policy are unchanged.
+
+If you swap Hermes for OpenClaw:
+
+- The CLI names `prismatic-publish` and `prismatic-reply` keep working.
+- The skill stays valid; the harness just decides which agents can `skill_view` it.
+- The tunnel ingress, DNS, and Access policy on the Cloudflare side don't change.
+- Cron wiring is the only piece that needs to be re-done, and only because every harness has its own scheduler.
 
 ## The Standard
 
 A clickable file reference always has the shape:
 
 ```
-https://files.growthwebdev.com/<route>/<workspace>/<rel>
+https://<host>/<route>/<workspace>/<rel>
 ```
 
 Where:
 
+- `<host>` is the engine's configured artifact hostname (default: `files.growthwebdev.com`).
 - `<route>` is one of `raw` (default), `download`, `preview`, `tree`, `workspaces`, `health`.
 - `<workspace>` is a name from the publisher's allowlist.
 - `<rel>` is the file or directory path within that workspace.
@@ -29,13 +51,22 @@ Where:
 
 A working Prismatic Engine file-reference pipeline requires all of these:
 
-1. **Service** — a profile-safe FastAPI artifact publisher on `127.0.0.1:9120`. The publisher MUST live outside the pipx-managed Hermes directory tree so it survives Hermes updates.
-2. **Tunnel ingress** — a Cloudflare tunnel rule `files.growthwebdev.com -> http://127.0.0.1:9120` ahead of the 404 catch-all.
-3. **DNS** — a CNAME for `files.growthwebdev.com` in the `growthwebdev.com` zone (not `prismaticengine.com`) pointing at the tunnel UUID.
-4. **Access** — a Cloudflare Access self-hosted app for the hostname, locked to the user's verified email with a 720h session.
-5. **CLI** — `hermes-publish` in `~/.local/bin/`, symlinked into every profile's `~/.local/bin/`.
-6. **Post-processor** — `hermes-reply` in `~/.local/bin/`, symlinked into every profile, that scans reply text and rewrites local paths to URLs.
-7. **Portable skill** — a SKILL.md document available in both the orchestrator profile and the portable Prismatic Engine so any agent can find the contract.
+1. **Service** — a profile-safe FastAPI artifact publisher on `127.0.0.1:9120`. The publisher MUST live under `$PRISMATIC_HOME/bin/` (not under any agent harness's profile directory) so it survives both engine upgrades and harness changes.
+2. **CLI** — `prismatic-publish` in `~/.local/bin/`, symlinked into every profile's `~/.local/bin/`. The CLI MUST NOT import from any agent harness.
+3. **Post-processor** — `prismatic-reply` in `~/.local/bin/`, symlinked into every profile. Same constraint: no harness imports.
+4. **Tunnel ingress** — a Cloudflare tunnel rule `<host> -> http://127.0.0.1:9120` ahead of the 404 catch-all.
+5. **DNS** — a CNAME for the hostname in the appropriate zone (e.g. `growthwebdev.com`) pointing at the tunnel UUID.
+6. **Access** — a Cloudflare Access self-hosted app for the hostname, locked to the user's verified email with a 720h session.
+7. **Portable skill** — a SKILL.md document at `portable-skills/prismatic-artifact-publisher/SKILL.md` so any agent on any harness can find the contract.
+
+## Optional: Harness Shims
+
+A harness MAY provide thin shims that call the engine CLIs:
+
+- `hermes-publish` → `prismatic-publish`
+- `hermes-reply` → `prismatic-reply`
+
+This lets existing harness-specific scripts keep working when the engine CLI is renamed. The shims MUST be 1–3 line wrappers that exec the engine CLI; they MUST NOT reimplement the logic.
 
 ## Required Agent Behavior
 
@@ -78,14 +109,15 @@ A change to the file-reference pipeline is complete when ALL of the following ar
 - [ ] The URL returns 302 → Access login when accessed unauthenticated.
 - [ ] The CLI refuses `.env`, `.key`, `.pem`, etc. by default.
 - [ ] The HTTP publisher returns 403 for blocked files.
-- [ ] The skill directory is present at both:
-  - `/home/ubuntu/.hermes/profiles/orchestrator/skills/agent-orchestration/hermes-artifact-publisher/`
-  - `/home/ubuntu/work/prismatic-engine/portable-skills/hermes-artifact-publisher/`
-- [ ] Tunnel ingress contains `files.growthwebdev.com -> http://127.0.0.1:9120` ahead of the 404 catch-all.
-- [ ] DNS CNAME for `files.growthwebdev.com` lives in zone `growthwebdev.com`, not `prismaticengine.com`.
-- [ ] Access policy is locked to a specific email (e.g. `mbgulden@gmail.com`) with 720h session.
-- [ ] `hermes-publish` and `hermes-reply` are symlinked into kai, autobot, ned, and orchestrator profile `~/.local/bin/`.
-- [ ] `hermes-reply < reply.txt` rewrites `/home/...` paths to URLs while preserving sentence punctuation, backticks, and parens.
+- [ ] The portable skill is present at `portable-skills/prismatic-artifact-publisher/SKILL.md` and (optionally) mirrored into any harness-specific skill directories.
+- [ ] The engine binary lives at `$PRISMATIC_HOME/bin/`, not under any harness's profile directory.
+- [ ] The CLI and rewriter do not import from any agent harness (Hermes, OpenClaw, etc.).
+- [ ] Tunnel ingress contains the host rule ahead of the 404 catch-all.
+- [ ] DNS CNAME lives in the correct zone, not a sibling zone.
+- [ ] Access policy is locked to a specific email with 720h session.
+- [ ] `prismatic-publish` and `prismatic-reply` are the canonical CLI names.
+- [ ] Harness shims (e.g. `hermes-publish`, `hermes-reply`) are ≤ 3 lines and exec the engine CLIs.
+- [ ] `prismatic-reply < reply.txt` rewrites `/home/...` paths to URLs while preserving sentence punctuation, backticks, and parens.
 
 ## Pitfalls
 
@@ -100,8 +132,10 @@ A change to the file-reference pipeline is complete when ALL of the following ar
 
 ## Reference Implementation
 
-- **Service:** `/home/ubuntu/.hermes/profiles/orchestrator/artifact_publisher/hermes_artifact_publisher.py`
-- **CLI:** `/home/ubuntu/.local/bin/hermes-publish` (symlinked into all profiles)
-- **Post-processor:** `/home/ubuntu/.local/bin/hermes-reply` (symlinked into all profiles)
-- **Portable skill:** `/home/ubuntu/work/prismatic-engine/portable-skills/hermes-artifact-publisher/SKILL.md`
+- **Service:** `$PRISMATIC_HOME/bin/prismatic_artifact_publisher.py` (currently `/home/ubuntu/work/prismatic-engine/bin/prismatic_artifact_publisher.py`)
+- **Rewriter:** `$PRISMATIC_HOME/bin/prismatic_rewrite_paths.py`
+- **Reply wrapper:** `$PRISMATIC_HOME/bin/prismatic_reply_rewrite.py`
+- **CLI:** `/home/ubuntu/.local/bin/prismatic-publish` (canonical) and `/home/ubuntu/.local/bin/hermes-publish` (Hermes shim)
+- **Post-processor:** `/home/ubuntu/.local/bin/prismatic-reply` (canonical) and `/home/ubuntu/.local/bin/hermes-reply` (Hermes shim)
+- **Portable skill:** `/home/ubuntu/work/prismatic-engine/portable-skills/prismatic-artifact-publisher/SKILL.md` (also mirrored at `~/.hermes/profiles/orchestrator/skills/agent-orchestration/prismatic-artifact-publisher/SKILL.md`)
 - **Linear tracking issue:** GRO-1953

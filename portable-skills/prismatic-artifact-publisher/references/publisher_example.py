@@ -1,9 +1,9 @@
-"""Example workspace configuration for the Hermes Artifact Publisher.
+"""Example workspace configuration for the Prismatic Artifact Publisher.
 
-The published version lives in your orchestrator profile
-(see the `hermes-artifact-publisher` skill). This file is a minimal,
-portable example showing the structure of the ALLOWED_ROOTS workspace
-map.
+The engine binary lives at `$PRISMATIC_HOME/bin/prismatic_artifact_publisher.py`
+and is harness-agnostic (works with Hermes, OpenClaw, or no harness).
+This file is a minimal, portable example showing the structure of the
+ALLOWED_ROOTS workspace map.
 
 Replace the paths below with your deployment's actual directories.
 Run locally with:
