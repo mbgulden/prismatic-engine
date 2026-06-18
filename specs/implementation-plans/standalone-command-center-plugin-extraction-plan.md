@@ -198,6 +198,48 @@ prismatic workflow yield --run RUN_ID --status success --artifact decision_log.m
 
 ---
 
+### Task 7A: Add AGY chat surface for Google AI Ultra attach
+
+**Objective:** Make AGY feel like an immediately chat-capable provider, not only a background task runner. When a user connects AGY / Google AI Ultra, they can open Prismatic Command Center or a Telegram adapter and chat with the AGY CLI instance running on the same Prismatic host.
+
+**Linear:** GRO-1955 — Build AGY chat interface for Google AI Ultra capability attach.
+
+**Files:**
+- Create: `prismatic/chat.py`
+- Create: `prismatic/providers/agy_chat.py` or extend `prismatic/providers/agy_cli.py` with a separate chat mode
+- Create: `prismatic/api/chat.py` if API layer exists
+- Create: `docs/providers/agy-chat.md`
+- Test: `tests/test_agy_chat_provider.py`
+
+**Target UX:**
+```bash
+prismatic providers attach agy
+prismatic chat agy --workspace /path/to/workspace
+```
+
+Command Center target:
+```text
+Capability Map → Google / AGY attached → Open Chat → talk to AGY
+```
+
+Telegram adapter target:
+```text
+Telegram message → Prismatic chat gateway → AGY CLI session → Prismatic transcript/run record → Telegram reply
+```
+
+**Acceptance:**
+- `prismatic providers attach agy` verifies AGY CLI availability, Google auth, usable model/profile, and writable session/log paths.
+- A user can start a chat with AGY without creating a Linear issue or workflow task first.
+- Chat sessions are engine-owned records with transcript, selected workspace, model/profile, artifacts, and timestamps.
+- Command Center exposes new chat, continue chat, workspace/add-dir selection, model/profile selection, timeout/budget display, and artifact links.
+- Telegram/Hermes/Slack are adapters only; detaching them leaves the chat/run history intact.
+- Failure modes are human-readable in `prismatic doctor`: missing AGY, expired Google auth, invalid model, no writable session directory, headless AGY stall.
+- Interactive chat and background dispatch share provider configuration but have separate safety defaults.
+
+**Product note:** This closes the specific gap Michael hit when using only Google AI Ultra / Antigravity IDE: AGY power existed underneath the interface, but there was no clean chat-like surface. The Prismatic promise is: attach Google/AGY → immediately talk to AGY.
+
+---
+
 ### Task 8: Add Jules CLI provider adapter
 
 **Objective:** Treat Jules CLI (jules.google.com) as a first-class review/implementation provider with remote GitHub state awareness.
@@ -466,6 +508,8 @@ prismatic command-center serve --host 127.0.0.1 --port 9130
 - Hermes can embed/proxy command center without owning it.
 - Existing Hermes plugins are mapped to standalone Prismatic plugin targets.
 - Each major plugin has a separate repo/workspace plan.
+- AGY CLI can be attached as both a background task provider and an interactive chat provider.
+- Command Center and chat adapters can start AGY chat sessions without requiring a Linear issue first.
 - AGY CLI + Jules CLI loop is documented and represented as engine workflow template.
 - Jules persona/scope routing is explicit.
 - SovereignSentinel is modeled as a bolt-on plugin with safety policy gates.

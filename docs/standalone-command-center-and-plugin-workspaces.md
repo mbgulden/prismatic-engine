@@ -289,10 +289,34 @@ The first-class Google lane should work before adding the rest of the world.
 ### Required providers/capabilities
 
 - `agy-cli`: local Google Antigravity CLI task runner.
+- `agy-chat`: interactive chat surface backed by the local/server AGY CLI instance.
 - `jules-cli`: Jules CLI (jules.google.com) cloud review/implementation loop.
 - `google-antigravity-sdk`: media/asset/research layer where applicable.
 - `gcloud` / GCP / Vertex: optional cloud platform adapter.
 - GitHub: required for Jules cloud handoff because Jules sees remote repo state.
+
+### AGY chat capability after Google attach
+
+Michael's explicit product gap: when he only had Google AI Ultra / Antigravity IDE, the advanced Google tooling clearly used the AGY engine underneath, but there was no clean **chat-like interface** for talking to AGY as a connected agent. Prismatic must not repeat that gap.
+
+When a user connects AGY / Google AI Ultra, they should be able to immediately start chatting with AGY through either:
+
+- the standalone Prismatic Command Center, or
+- a chat adapter such as Telegram that routes to the AGY instance on the same server/computer running Prismatic Engine.
+
+Target flow:
+
+```text
+User message
+  → Prismatic chat gateway / command center
+  → provider session: agy
+  → AGY CLI on the Prismatic host
+  → streamed/recorded response
+  → Prismatic chat/run/session history
+  → reply back to UI or Telegram
+```
+
+This is distinct from background task dispatch. The expected first-run experience is: attach Google/AGY → open chat → talk to AGY. Session state, artifacts, selected workspace, model/profile, and transcript history belong to the engine. Telegram, Hermes, Slack, or another harness are adapters only.
 
 ### Minimum loop
 
@@ -432,14 +456,15 @@ Minimum standalone dashboard views:
 2. **Task Board** — local tasks, Linear/GitHub/Jules tasks, status, priority.
 3. **Workflow Graph** — DAG of current and historical workflows.
 4. **Activity Stream** — real-time events and logs.
-5. **Agent Control Deck** — start/pause/halt/resume/provider actions.
-6. **Run History** — run records, artifacts, decision logs, test evidence.
-7. **Skill Evolution** — skill proposals, patches, usage, outcome metrics.
-8. **Provider Health** — AGY/Jules/Claude/Codex/local models/GCP.
-9. **Locks & Lanes** — workspace governance and collision prevention.
-10. **Workspace Tree** — safe browsing and artifact publishing.
-11. **Compute / GPU** — VRAM, model endpoints, failover, local servers.
-12. **SovereignSentinel** — server network visualization add-on when installed.
+5. **AGY Chat** — interactive chat with attached AGY / Google AI Ultra provider, with workspace/model/session controls and transcript history.
+6. **Agent Control Deck** — start/pause/halt/resume/provider actions.
+7. **Run History** — run records, artifacts, decision logs, test evidence.
+8. **Skill Evolution** — skill proposals, patches, usage, outcome metrics.
+9. **Provider Health** — AGY/Jules/Claude/Codex/local models/GCP.
+10. **Locks & Lanes** — workspace governance and collision prevention.
+11. **Workspace Tree** — safe browsing and artifact publishing.
+12. **Compute / GPU** — VRAM, model endpoints, failover, local servers.
+13. **SovereignSentinel** — server network visualization add-on when installed.
 
 ---
 
