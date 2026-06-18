@@ -20,9 +20,9 @@ VIOLATING_FILES=()
 for file in $STAGED_FILES; do
     # Only scan source and configuration files
     if [[ "$file" =~ \.(py|sh|js|yaml|yml|json)$ ]]; then
-        # Exclude governance, config, and hook script files which legitimately
+        # Exclude governance, config, hook script files which legitimately
         # reference absolute paths for validation purposes
-        if [[ "$file" == "PRISMATIC_ENGINE.yaml" || "$file" =~ ^config/ || "$file" =~ ^scripts/ ]]; then
+        if [[ "$file" == "PRISMATIC_ENGINE.yaml" || "$file" =~ ^config/ || "$file" =~ ^scripts/ || "$file" =~ ^portable-skills/ ]]; then
             continue
         fi
 

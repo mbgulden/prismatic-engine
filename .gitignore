@@ -6,6 +6,7 @@ __pycache__/
 /build/
 *.egg
 .venv/
+.venv_dev/        # editable dev venv used for tests (see scripts/install-dev-venv.sh)
 env/
 
 # IDE
@@ -27,3 +28,8 @@ config.local.yaml
 scratch/
 .wrangler/
 node_modules/
+
+# Real env file (mirrors .env.template but with secrets) — never commit
+.env
+# Keep .env.template committed; it is the portable schema reference.
+
