@@ -378,6 +378,62 @@ prismatic command-center serve --host 127.0.0.1 --port 9130
 
 ---
 
+### Task 13A: Add Schedule Observatory / Schedule Control Plane
+
+**Objective:** Visualize scheduled work across Prismatic, AGY `/schedule`, Jules CLI (jules.google.com) scheduled work, and future task-manager/provider schedules in one real-time command-center surface.
+
+**Linear:** GRO-1956 — Build Schedule Observatory for Prismatic, AGY, and Jules scheduled work.
+
+**Files:**
+- Create: `schemas/schedule-record.schema.json`
+- Create: `schemas/schedule-event.schema.json`
+- Create: `prismatic/schedules.py`
+- Create: `prismatic/api/schedules.py` if API layer exists
+- Create: `docs/schedules.md`
+- Test: `tests/test_schedule_records.py`
+
+**Sources to normalize:**
+- Prismatic-owned scheduler jobs, cron, systemd timers, and Hermes cron when attached.
+- AGY `/schedule` entries and scheduled AGY jobs.
+- Jules scheduled work that lives on Jules.google.com.
+- Future recurring work from Linear/GitHub/Jira/Notion/task-manager adapters.
+
+**Target UX:**
+```text
+Command Center → Schedules
+  → unified calendar / timeline / table
+  → provider filter: Prismatic / AGY / Jules / task manager
+  → live states: next run, fired, running, completed, failed, changed
+  → action: edit local schedule OR ask owning provider to update
+  → watch normalized schedule record update in real time
+```
+
+**Control boundary:**
+- Prismatic-owned schedules can be edited directly through Prismatic contracts.
+- AGY-owned schedules should be changed by routing a request through AGY chat/control, then observing the imported `/schedule` state change.
+- Jules-owned schedules are read-only/deep-link first because source state lives on Jules.google.com; mutate only if Jules CLI/API exposes a safe mutation path.
+- The engine owns normalized observations/history/events; it does not claim source-of-truth ownership for remote provider schedules.
+
+**Events:**
+- `schedule.discovered`
+- `schedule.created`
+- `schedule.updated`
+- `schedule.deleted`
+- `schedule.fired`
+- `schedule.running`
+- `schedule.completed`
+- `schedule.failed`
+
+**Acceptance:**
+- Command Center has a Schedules view with timeline/table/filter/status.
+- Prismatic cron/systemd/Hermes cron schedules can be inventoried and displayed.
+- AGY `/schedule` entries can be listed/imported at minimum.
+- Jules scheduled work can be displayed with source/deep-link/sync status if direct mutation is not available.
+- User can say from chat/Telegram: “ask AGY to update that schedule” and watch observed schedule state adapt.
+- Mutations are owner-aware and policy-gated.
+
+---
+
 ## Phase 4: Plugin workspace extraction
 
 ### Task 14: Extract Activity Stream plugin workspace
@@ -514,6 +570,7 @@ prismatic command-center serve --host 127.0.0.1 --port 9130
 - Each major plugin has a separate repo/workspace plan.
 - AGY CLI can be attached as both a background task provider and an interactive chat provider.
 - Command Center and chat adapters can start AGY chat sessions without requiring a Linear issue first.
+- Schedule Observatory visualizes Prismatic cron/systemd/Hermes cron, AGY `/schedule`, and Jules scheduled work with owner-aware controls.
 - AGY CLI + Jules CLI loop is documented and represented as engine workflow template.
 - Jules persona/scope routing is explicit.
 - SovereignSentinel is modeled as a bolt-on plugin with safety policy gates.

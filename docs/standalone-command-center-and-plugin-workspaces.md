@@ -352,6 +352,47 @@ prismatic-plugin-task-manager
   → not required for first useful Prismatic install
 ```
 
+### Schedule Observatory / Schedule Control Plane
+
+Google AGY and Jules CLI (jules.google.com) have their own `/schedule` or scheduled-work systems. Prismatic should provide one real-time visibility surface for scheduled intelligence across all providers, not just local cron.
+
+The command center should visualize:
+
+- Prismatic-owned schedules: cron, systemd timers, native Prismatic scheduler jobs, Hermes cron when attached
+- AGY-owned schedules: AGY `/schedule` entries and scheduled AGY jobs
+- Jules-owned schedules: scheduled work that lives on Jules.google.com
+- task-manager-owned schedules: recurring Linear/GitHub/Jira/Notion/etc. work where adapters support it
+
+Target UX:
+
+```text
+Command Center → Schedules
+  → unified calendar / timeline / table
+  → provider filter: Prismatic / AGY / Jules / task manager
+  → live states: next run, fired, running, completed, failed, changed
+  → action: edit local schedule OR ask owning provider to update
+  → watch normalized schedule record update in real time
+```
+
+Control boundary:
+
+- **Prismatic-owned schedules:** edit directly through Prismatic contracts.
+- **AGY-owned schedules:** route change requests through AGY chat/control, e.g. “ask AGY to update this `/schedule`,” then observe the imported schedule state change.
+- **Jules-owned schedules:** likely read-only/deep-link first because schedule state lives on Jules.google.com; mutate only if Jules CLI/API exposes a safe path.
+
+The engine owns normalized schedule records and events, not necessarily the remote provider’s source of truth. This preserves visibility without lying about control.
+
+Events to model:
+
+- `schedule.discovered`
+- `schedule.created`
+- `schedule.updated`
+- `schedule.deleted`
+- `schedule.fired`
+- `schedule.running`
+- `schedule.completed`
+- `schedule.failed`
+
 ### Minimum loop
 
 ```text
@@ -491,14 +532,15 @@ Minimum standalone dashboard views:
 3. **Workflow Graph** — DAG of current and historical workflows.
 4. **Activity Stream** — real-time events and logs.
 5. **AGY Chat** — interactive chat with attached AGY / Google AI Ultra provider, with workspace/model/session controls and transcript history.
-6. **Agent Control Deck** — start/pause/halt/resume/provider actions.
-7. **Run History** — run records, artifacts, decision logs, test evidence.
-8. **Skill Evolution** — skill proposals, patches, usage, outcome metrics.
-9. **Provider Health** — AGY/Jules/Claude/Codex/local models/GCP.
-10. **Locks & Lanes** — workspace governance and collision prevention.
-11. **Workspace Tree** — safe browsing and artifact publishing.
-12. **Compute / GPU** — VRAM, model endpoints, failover, local servers.
-13. **SovereignSentinel** — server network visualization add-on when installed.
+6. **Schedules** — unified real-time view of Prismatic cron/systemd jobs, AGY `/schedule`, Jules scheduled work, and provider/task-manager recurring events, with owner-aware controls.
+7. **Agent Control Deck** — start/pause/halt/resume/provider actions.
+8. **Run History** — run records, artifacts, decision logs, test evidence.
+9. **Skill Evolution** — skill proposals, patches, usage, outcome metrics.
+10. **Provider Health** — AGY/Jules/Claude/Codex/local models/GCP.
+11. **Locks & Lanes** — workspace governance and collision prevention.
+12. **Workspace Tree** — safe browsing and artifact publishing.
+13. **Compute / GPU** — VRAM, model endpoints, failover, local servers.
+14. **SovereignSentinel** — server network visualization add-on when installed.
 
 ---
 
