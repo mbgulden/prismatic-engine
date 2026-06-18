@@ -587,3 +587,87 @@ get value
 attach capabilities as needed
 detach without losing state
 ```
+
+---
+
+## Engine v0.1 Land — Capability-Registry-Driven Foundation
+
+**Status (2026-06-18):** Landed on branch `feature/capability-vcs-github`.
+
+The engine is now a **capability-registry-driven, mode-switch-gated, schedule-aware, doctor-verifiable, GitHub-API-required** autonomous agent engine. v0.1 means: every contract referenced in this doc has a real implementation under `prismatic/`, every test passes (146+ green), and the dispatcher wires the gate stack end-to-end.
+
+### What v0.1 includes (concrete surface)
+
+| Component | Path | Status |
+|---|---|---|
+| Capability registry | `prismatic/capabilities/registry.py` | ✅ landed |
+| `vcs.github` capability | `prismatic/capabilities/vcs_github.py` | ✅ landed |
+| `vcs.github` provider | `prismatic/providers/github.py` | ✅ landed |
+| `agy` provider (Ollama as first sibling) | `prismatic/providers/ollama.py` | ✅ landed |
+| Mode switch (interactive/collaborative/autonomous) | `prismatic/mode_switch.py` | ✅ landed |
+| Schedule observatory (records + owner-aware mutation) | `prismatic/schedules.py` | ✅ landed |
+| Gateway endpoints (`/schedules/*`) | `prismatic/gateway/server.py` | ✅ landed |
+| Event bus types | `prismatic/gateway/ipc_bridge.py` | ✅ landed |
+| `prismatic-engine doctor` | `prismatic/dispatcher.py` (still inline; extraction in flight as GRO-1971) | ✅ landed |
+| GitHub-credentials gate in AGY/Jules launch | `prismatic/dispatcher.py` | ✅ landed |
+| Stall-tracker-aware escalation | `prismatic/dispatcher.py` | ✅ landed |
+
+### v0.1 contracts (the spine)
+
+```
+Provider (e.g., github, agy, ollama) — token discovery, API surface, stdlib only
+   ↓
+Capability (e.g., vcs.github, agy) — wraps provider with idempotency + event emission
+   ↓
+Registry — first-class slot for each capability, check_status() is a contract
+   ↓
+Gateway — read endpoints, owner-aware mutation, IPC bridge events
+   ↓
+ModeSwitch — gates every state transition (interactive/collaborative/autonomous)
+```
+
+### v0.1 tests
+
+- `tests/test_capability_registry.py` — registry contract
+- `tests/test_vcs_github_capability.py` — GitHub capability wrapper (idempotency, events)
+- `tests/test_github_provider.py` — provider token discovery, auth, repo access
+- `tests/test_mode_switch.py` — `is_major_transition`, pending approvals
+- `tests/test_dispatcher_mode_switch.py` — dispatcher integrates the mode switch
+- `tests/test_dispatcher_activation.py` — GRO-1957 GitHub-credentials gate
+- `tests/test_schedule_records.py` — schedule records, gateway endpoints
+- `tests/test_router_selection.py` — capability-aware task routing
+- `tests/test_ollama_provider.py` — sibling provider example
+- `tests/test_doctor_command.py` — `prismatic-engine doctor`
+- `tests/test_journal.py` — journal continuity kernel (Phase 1 from earlier work)
+
+Result: `pytest tests/` → 146 passed, 0 failed.
+
+### Provider-neutral naming posture (live contract)
+
+- The engine code uses **provider-specific class names** (`GitHubProvider`,
+  `GitHubCapability`) while only one provider exists per capability slot.
+- The **doc-level and registration-level** names are **provider-neutral**
+  (`vcs.github`, `vcs_provider`, `code_host_provider`).
+- The transition from provider-specific to provider-neutral class names is
+  deferred until a second adapter is actively being built. Adding a GitLab
+  or Bitbucket provider is the trigger to introduce a shared abstract
+  base. Until then, premature abstraction would create debt.
+
+### Open follow-ups (post-v0.1)
+
+- **GRO-1955** — Build AGY chat interface for Google AI Ultra capability attach
+  (additive: `chat.agy` capability + read-only gateway endpoints; in queue as **GRO-1969**)
+- **GRO-1956** — Build Schedule Observatory for Prismatic, AGY, and Jules scheduled work
+  (additive: real `agy` / `jules` schedule adapters with explicit fallback paths; in queue as **GRO-1970**)
+- **GRO-1957** — Add GitHub API connection layer for AGY + Jules CLI workflow
+  (transformative: extract `cmd_doctor` into `prismatic/cli/doctor.py`; in queue as **GRO-1971**)
+- **GRO-1968** — AGY review of the v0.1 land (audit gate; AGY runs `agy-research-strategist`)
+
+### Branch & PR state
+
+- Branch: `feature/capability-vcs-github`
+- Open PR: <https://github.com/mbgulden/prismatic-engine/pull/22> (still open; commits
+  `7ef0dbf` → `ee9a00b` → `7b2d2f8` → `61f2190` → `05e0a8d`)
+- Latest commit: `05e0a8d [Fred] Fix label alias in get_issues_with_label + harden test_comment_based_approval`
+- All 5 commits pushed; pre-push hook green; in-lane ownership verified.
+
