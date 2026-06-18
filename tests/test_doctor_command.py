@@ -1,12 +1,14 @@
 import unittest
 from unittest.mock import patch, MagicMock
 import argparse
+import os
 from prismatic.dispatcher import cmd_doctor
 
 
 class TestDoctorCommand(unittest.TestCase):
     """Test suite for the doctor subcommand diagnostics execution."""
 
+    @patch.dict(os.environ, {"LINEAR_API_KEY": "lin_api_test", "AGY_TOKEN": "agy_test", "TELEGRAM_BOT_TOKEN": "telegram_test"})
     @patch("prismatic.providers.github.GitHubProvider")
     @patch("subprocess.run")
     def test_cmd_doctor_run_all(self, mock_run, mock_github_provider_cls):
