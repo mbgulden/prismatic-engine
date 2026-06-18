@@ -7,6 +7,7 @@ swarm locking, and the event-loop dispatcher itself.
 
 Contents
 --------
+* **compat.py**    — ``VersionResolver`` — semantic-version conflict detection and compatibility matrix
 * **contracts.py**  — path-boundary validation (``validate_path``)
 * **dispatcher.py** — polling event loop and task router (see also root ``prismatic/dispatcher.py``)
 * **locking.py**    — ``SwarmLockManager`` workspace concurrency mutexes
@@ -24,6 +25,12 @@ __all__ = [
     "check_and_route_agy",
     "CircuitBreakerState",
     "MODEL_PRIORITY_CHAIN",
+    "VersionResolver",
+    "PluginVersionInfo",
+    "ResolutionReport",
+    "CompatibilityMatrix",
+    "ConflictInfo",
+    "ResolutionResult",
 ]
 
 from .registry import PluginLoader
@@ -36,4 +43,12 @@ from .router import (
     check_and_route_agy,
     CircuitBreakerState,
     MODEL_PRIORITY_CHAIN,
+)
+from .compat import (
+    VersionResolver,
+    PluginVersionInfo,
+    ResolutionReport,
+    CompatibilityMatrix,
+    ConflictInfo,
+    ResolutionResult,
 )

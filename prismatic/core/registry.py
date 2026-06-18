@@ -16,7 +16,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import yaml
 from packaging.specifiers import SpecifierSet
@@ -27,6 +27,11 @@ from prismatic.interface.plugin import (
     AgentContract,
     PrismaticPlugin,
     PluginValidationError,
+)
+from prismatic.core.compat import (
+    PluginVersionInfo,
+    ResolutionReport,
+    VersionResolver,
 )
 
 logger = logging.getLogger("prismatic.loader")
@@ -44,8 +49,32 @@ class PluginLoader:
         self.loaded_plugins: Dict[str, PrismaticPlugin] = {}
         self.registered_personas: Dict[str, Dict[str, Any]] = {}
         self.registered_tools: List[Dict[str, Any]] = []
+        self._resolver = VersionResolver()
 
     # ── public API ─────────────────────────────────────────────────────
+
+    def preflight_compatibility(
+        self, plugins_override: Optional[List[PluginVersionInfo]] = None
+    ) -> ResolutionReport:
+        """Scan all manifests and run a pre-flight compatibility check.
+
+        Runs *before* any plugin is loaded so the caller can inspect the
+        report and decide which plugins to activate.  Returns a
+        :class:`ResolutionReport` with the compatibility matrix.
+
+        When *plugins_override* is provided, use that instead of scanning
+        the filesystem — useful for testing and CLI verification.
+        """
+        if plugins_override is not None:
+            return self._resolver.resolve(plugins_override, self.core_version)
+
+        plugin_infos = self._collect_plugin_infos()
+        if not plugin_infos:
+            return ResolutionReport(
+                core_version=self.core_version,
+                summary="No plugins found to resolve.",
+            )
+        return self._resolver.resolve(plugin_infos, self.core_version)
 
     def scan_and_load_plugins(self, context: PluginContext) -> None:
         """
@@ -96,6 +125,56 @@ class PluginLoader:
                 )
 
     # ── internal ───────────────────────────────────────────────────────
+
+    def _collect_plugin_infos(self) -> List[PluginVersionInfo]:
+        """Walk the plugins directory and gather version metadata from each manifest.
+
+        Returns an empty list if the directory is missing or no valid
+        manifests are found.
+        """
+        infos: List[PluginVersionInfo] = []
+        if not os.path.exists(self.plugins_dir):
+            logger.warning(
+                "Plugin directory does not exist: %s", self.plugins_dir
+            )
+            return infos
+
+        for entry in os.scandir(self.plugins_dir):
+            if not entry.is_dir():
+                continue
+            manifest_path = Path(entry.path) / "plugin-manifest.yaml"
+            if not manifest_path.exists():
+                continue
+            try:
+                with open(manifest_path, "r") as fh:
+                    manifest = yaml.safe_load(fh)
+
+                name = manifest.get("name", entry.name)
+                version = manifest.get("version", "0.0.0")
+                core_constraint = manifest.get("core_version_constraint", "*")
+
+                # Read plugin-to-plugin dependencies from manifest
+                deps = manifest.get("dependencies", {})
+                if isinstance(deps, dict):
+                    plugin_deps = deps.get("plugins", {})
+                else:
+                    plugin_deps = {}
+
+                infos.append(
+                    PluginVersionInfo(
+                        name=name,
+                        version=version,
+                        core_version_constraint=core_constraint,
+                        plugin_dependencies=dict(plugin_deps),
+                    )
+                )
+            except Exception:
+                logger.error(
+                    "Failed to read manifest: %s",
+                    manifest_path,
+                    exc_info=True,
+                )
+        return infos
 
     def _load_plugin(
         self, manifest_path: Path, context: PluginContext

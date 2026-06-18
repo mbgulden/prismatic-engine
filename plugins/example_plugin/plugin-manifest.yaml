@@ -22,6 +22,8 @@ core_version_constraint: ">=1.0.0, <2.0.0"
 # External dependencies
 dependencies:
   pip: []
+  # plugins:   # (optional) plugin-to-plugin version constraints
+  #   other-plugin: ">=1.0.0"
 
 # Custom persona extensions (none — this is an example)
 personas: []
