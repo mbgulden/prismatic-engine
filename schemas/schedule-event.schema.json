@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mbgulden/prismatic-engine/schemas/schedule-event.schema.json",
+  "title": "Schedule Event Schema",
+  "description": "Validates a real-time event emitted due to a change or execution milestone in a scheduled job.",
+  "type": "object",
+  "required": [
+    "event_id",
+    "event_type",
+    "schedule_id",
+    "owner",
+    "timestamp"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "description": "Unique identifier for this event instance."
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "schedule.discovered",
+        "schedule.created",
+        "schedule.updated",
+        "schedule.deleted",
+        "schedule.fired",
+        "schedule.running",
+        "schedule.completed",
+        "schedule.failed"
+      ],
+      "description": "The type of state transition or action happening to the schedule."
+    },
+    "schedule_id": {
+      "type": "string",
+      "description": "The ID of the affected ScheduleRecord."
+    },
+    "owner": {
+      "type": "string",
+      "enum": ["prismatic", "agy", "jules", "task-manager"],
+      "description": "The owning provider of the schedule."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the event occurred."
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Contextual details associated with the event (e.g., run_id, error message, or configuration diff)."
+    }
+  }
+}

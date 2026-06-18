@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mbgulden/prismatic-engine/schemas/handoff-contracts/loopback-feedback-schema.json",
+  "title": "Loopback Feedback Schema",
+  "description": "Validates the feedback payload injected back into the worker's context during refinement (Step 5 of the 7-Step Loop). Delivered after a review rejection to guide the worker's rework iteration.",
+  "type": "object",
+  "required": [
+    "status",
+    "iteration",
+    "feedbackSource",
+    "message"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["LOOPBACK_PENDING", "LOOPBACK_RESOLVED", "LOOPBACK_ESCALATED"],
+      "description": "Current state of this loopback cycle. 'LOOPBACK_PENDING' = worker should refine. 'LOOPBACK_RESOLVED' = all issues addressed. 'LOOPBACK_ESCALATED' = human intervention needed."
+    },
+    "iteration": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10,
+      "description": "Which refinement iteration this is. Incremented each loop. After MAX_ITERATIONS the contract escalates to human."
+    },
+    "feedbackSource": {
+      "type": "string",
+      "maxLength": 64,
+      "description": "Name of the system or agent that generated this feedback (e.g. 'Jules', 'AGY Review', 'Human Reviewer')."
+    },
+    "message": {
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 3000,
+      "description": "Primary message to the worker — what failed and what needs to change. Direct, actionable, and specific."
+    },
+    "errorLog": {
+      "type": "string",
+      "maxLength": 5000,
+      "description": "Raw error log, compiler output, or stack trace relevant to the failure."
+    },
+    "resolvedItems": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 500
+      },
+      "description": "List of specific issues from the previous review that have been resolved. Included only when status='LOOPBACK_RESOLVED'."
+    },
+    "remainingItems": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 500
+      },
+      "description": "List of issues still unresolved. Shortens each iteration until empty."
+    },
+    "context": {
+      "type": "string",
+      "maxLength": 2000,
+      "description": "Additional context or hints to help the worker understand the feedback. May include references to documentation, examples, or related code."
+    }
+  }
+}

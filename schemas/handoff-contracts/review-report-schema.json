@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mbgulden/prismatic-engine/schemas/handoff-contracts/review-report-schema.json",
+  "title": "Review Report Schema",
+  "description": "Validates the output of automated code review systems (JulesExecutor, AGY designer, static analysis). Used in Step 4 of the 7-Step Loop. A review report determines whether the worker's branch is approved for integration or needs refinement.",
+  "type": "object",
+  "required": [
+    "threadId",
+    "reviewerId",
+    "status",
+    "summary"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "threadId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*$",
+      "description": "Must match the threadId of the AgentContract being reviewed."
+    },
+    "reviewerId": {
+      "type": "string",
+      "enum": ["jules", "agy", "hermes", "human", "static-analysis", "github-actions"],
+      "description": "Which system performed the review."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["approved", "rejected", "needs-changes"],
+      "description": "Review outcome. 'needs-changes' is a softer rejection — the worker should refine rather than restart."
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 2000,
+      "description": "Human-readable summary of the review outcome. Should state clearly what passed, what failed, and what needs to change."
+    },
+    "details": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["filePath", "severity", "message"],
+        "additionalProperties": false,
+        "properties": {
+          "filePath": {
+            "type": "string",
+            "description": "File path where the issue was found."
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Line number of the issue. Omit if the issue is file-wide."
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["error", "warning", "info", "suggestion"],
+            "description": "Severity of the finding."
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000,
+            "description": "Human-readable description of the issue."
+          },
+          "ruleId": {
+            "type": "string",
+            "description": "Optional linter/analyzer rule identifier (e.g. 'no-unused-vars', 'TS2339')."
+          }
+        }
+      },
+      "description": "Detailed list of issues found during review. Empty array means no issues found."
+    },
+    "recommendations": {
+      "type": "string",
+      "maxLength": 2000,
+      "description": "Recommended steps for the worker to address the issues. Specific guidance, not generic advice."
+    },
+    "score": {
+      "type": "object",
+      "properties": {
+        "overall": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Overall quality score (0-100). 80+ = approved, 50-79 = needs-changes, <50 = rejected."
+        },
+        "codeQuality": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Code quality sub-score."
+        },
+        "testCoverage": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Test coverage sub-score."
+        },
+        "security": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Security sub-score."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Optional numerical scoring for automated reviews."
+    }
+  }
+}
