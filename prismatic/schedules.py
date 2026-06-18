@@ -10,6 +10,8 @@ from __future__ import annotations
 import os
 import json
 import uuid
+import urllib.error
+import urllib.request
 import logging
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
@@ -198,10 +200,68 @@ def get_systemd_timer_schedules() -> List[ScheduleRecord]:
 
 
 def get_agy_schedules() -> List[ScheduleRecord]:
-    """Inventory AGY `/schedule` events and jobs. Mocked or read from agy local config."""
-    # AGY schedules live in the local AGY config directory.
-    # We will look for an agy schedule index or simulate it.
-    # Typical AGY schedules run daily code reviews or repository health syncs.
+    """Inventory AGY `/schedule` events and jobs.
+
+    Reads from the local AGY schedule index at
+    ``~/.gemini/schedules/*.json`` when it exists. Each file is
+    expected to be a JSON list of dicts with keys:
+    ``id, name, schedule, enabled, schedule_type? (default 'cron')``.
+
+    On a clean filesystem, falls back to the canonical mock
+    representation and emits a single warning log so the Schedule
+    Observatory can render an honest "data freshness" badge.
+    """
+    schedules_dir = Path(os.environ.get(
+        "AGY_SCHEDULES_DIR", str(Path.home() / ".gemini" / "schedules")
+    ))
+    if schedules_dir.exists() and schedules_dir.is_dir():
+        try:
+            json_files = sorted(schedules_dir.glob("*.json"))
+            records: List[ScheduleRecord] = []
+            for path in json_files:
+                try:
+                    data = json.loads(path.read_text())
+                except (OSError, json.JSONDecodeError) as exc:
+                    logger.warning(
+                        "agy schedule adapter: failed to parse %s: %s", path, exc
+                    )
+                    continue
+                # Each file may be a list of dicts or a single dict.
+                entries = data if isinstance(data, list) else [data]
+                for entry in entries:
+                    if not isinstance(entry, dict):
+                        continue
+                    rec = ScheduleRecord(
+                        id=f"agy:schedule:{entry['id']}",
+                        name=entry.get("name", entry["id"]),
+                        owner=OWNER_AGY,
+                        schedule_type=entry.get("schedule_type", TYPE_CRON),
+                        schedule_expr=str(entry.get("schedule", "* * * * *")),
+                        enabled=bool(entry.get("enabled", True)),
+                        next_run_at=entry.get("next_run_at"),
+                        last_run=None,
+                        deep_link=f"http://jules.google.com/agy/schedules/{entry['id']}",
+                        metadata={
+                            "adapter": "live",
+                            "source_file": str(path),
+                            "lane": entry.get("lane", "agy-default"),
+                            "workspace": entry.get("workspace", "prismatic-engine"),
+                        },
+                    )
+                    records.append(rec)
+            if records:
+                return records
+        except OSError as exc:
+            logger.warning(
+                "agy schedule adapter: read error from %s: %s; using fallback",
+                schedules_dir, exc,
+            )
+
+    # Fallback: mock data, with honest "adapter" metadata.
+    logger.warning(
+        "agy schedule adapter: no schedules found at %s, using fallback mock data",
+        schedules_dir,
+    )
     s1 = ScheduleRecord(
         id="agy:schedule:daily-repo-sync",
         name="AGY Repository Auto-Sync",
@@ -215,7 +275,12 @@ def get_agy_schedules() -> List[ScheduleRecord]:
             status=STATUS_SUCCESS
         ),
         deep_link="http://jules.google.com/agy/schedules/daily-repo-sync",
-        metadata={"lane": "agy-review-lane", "workspace": "prismatic-engine"}
+        metadata={
+            "adapter": "fallback-mock",
+            "reason": f"no files in {schedules_dir}",
+            "lane": "agy-review-lane",
+            "workspace": "prismatic-engine",
+        },
     )
     s2 = ScheduleRecord(
         id="agy:schedule:pr-watch",
@@ -227,15 +292,115 @@ def get_agy_schedules() -> List[ScheduleRecord]:
         next_run_at=None,
         last_run=None,
         deep_link="http://jules.google.com/agy/schedules/pr-watch",
-        metadata={"lane": "agy-triage-lane"}
+        metadata={
+            "adapter": "fallback-mock",
+            "reason": f"no files in {schedules_dir}",
+            "lane": "agy-triage-lane",
+        },
     )
     return [s1, s2]
 
 
 def get_jules_schedules() -> List[ScheduleRecord]:
-    """Inventory Jules schedules. Always read-only with deep links."""
-    # Jules scheduled work resides on Jules.google.com.
-    # We fetch it read-only and attach deep links.
+    """Inventory Jules schedules.
+
+    Three-tier read path:
+
+    1. Local config: ``~/.config/jules/schedules.json`` (list of dicts).
+    2. Remote API: if ``JULES_API_KEY`` is set, call
+       ``https://jules.google.com/api/v1/schedules`` (Bearer auth).
+    3. Fallback: canonical mock with ``metadata.adapter = "fallback-mock"``.
+
+    Each path emits a single warning log on fallback so the Schedule
+    Observatory can render an honest "data freshness" badge.
+    """
+    # Tier 1: local config
+    local_path = Path(os.environ.get(
+        "JULES_SCHEDULES_FILE", str(Path.home() / ".config" / "jules" / "schedules.json")
+    ))
+    if local_path.exists():
+        try:
+            data = json.loads(local_path.read_text())
+            entries = data if isinstance(data, list) else [data]
+            records: List[ScheduleRecord] = []
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                rec = ScheduleRecord(
+                    id=f"jules:schedule:{entry['id']}",
+                    name=entry.get("name", entry["id"]),
+                    owner=OWNER_JULES,
+                    schedule_type=TYPE_REMOTE,
+                    schedule_expr=str(entry.get("schedule", "0 0 * * 0")),
+                    enabled=bool(entry.get("enabled", True)),
+                    next_run_at=entry.get("next_run_at"),
+                    last_run=None,
+                    deep_link=f"https://jules.google.com/schedules/{entry['id']}",
+                    metadata={
+                        "adapter": "live",
+                        "source_file": str(local_path),
+                        "persona": entry.get("persona", "default"),
+                        "repo": entry.get("repo", ""),
+                    },
+                )
+                records.append(rec)
+            if records:
+                return records
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning(
+                "jules schedule adapter: failed to parse %s: %s; falling through",
+                local_path, exc,
+            )
+
+    # Tier 2: remote API (only if JULES_API_KEY is set)
+    api_key = os.environ.get("JULES_API_KEY", "").strip()
+    if api_key:
+        try:
+            req = urllib.request.Request(
+                "https://jules.google.com/api/v1/schedules",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Accept": "application/json",
+                    "User-Agent": "Prismatic-Engine",
+                },
+                method="GET",
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+            entries = payload if isinstance(payload, list) else payload.get("schedules", [])
+            records: List[ScheduleRecord] = []
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                rec = ScheduleRecord(
+                    id=f"jules:schedule:{entry['id']}",
+                    name=entry.get("name", entry["id"]),
+                    owner=OWNER_JULES,
+                    schedule_type=TYPE_REMOTE,
+                    schedule_expr=str(entry.get("schedule", "0 0 * * 0")),
+                    enabled=bool(entry.get("enabled", True)),
+                    next_run_at=entry.get("next_run_at"),
+                    last_run=None,
+                    deep_link=f"https://jules.google.com/schedules/{entry['id']}",
+                    metadata={
+                        "adapter": "live",
+                        "source": "jules.google.com/api/v1/schedules",
+                        "persona": entry.get("persona", "default"),
+                        "repo": entry.get("repo", ""),
+                    },
+                )
+                records.append(rec)
+            if records:
+                return records
+        except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, OSError) as exc:
+            logger.warning(
+                "jules schedule adapter: API call failed, using fallback; error=%s", exc
+            )
+
+    # Tier 3: fallback mock
+    logger.warning(
+        "jules schedule adapter: no live source available, using fallback mock data"
+    )
     j1 = ScheduleRecord(
         id="jules:schedule:dependency-scan",
         name="Jules Cloud Dependency Vulnerability Scanner",
@@ -249,7 +414,12 @@ def get_jules_schedules() -> List[ScheduleRecord]:
             status=STATUS_SUCCESS
         ),
         deep_link="https://jules.google.com/schedules/dependency-scan",
-        metadata={"persona": "security-reviewer", "repo": "github.com/mbgulden/prismatic-engine"}
+        metadata={
+            "adapter": "fallback-mock",
+            "reason": "no local file and no JULES_API_KEY",
+            "persona": "security-reviewer",
+            "repo": "github.com/mbgulden/prismatic-engine",
+        },
     )
     return [j1]
 
