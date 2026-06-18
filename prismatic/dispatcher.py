@@ -1600,9 +1600,78 @@ def detect_origin_completions(
 # ═══════════════════════════════════════════════════════════════
 
 
+def dispatch_local_tasks(
+    dedup: EventRouterDedup,
+    cycle_id: str,
+    *,
+    local_task_queue: Any | None = None,
+) -> int:
+    """Dispatch queued local tasks before polling external task providers.
+
+    Local tasks are the bare-metal path: they live in the engine's own
+    SQLite state and do not require Linear. The dispatcher still uses
+    the same configured agent launchers so execution stays additive.
+    """
+    try:
+        from .local_tasks import get_default_queue
+
+        queue = local_task_queue or get_default_queue()
+    except Exception as exc:
+        print(f"[dispatcher] Local task queue unavailable: {exc}")
+        return 0
+
+    dispatched = 0
+    for agent_name in AGENT_CONFIG:
+        launcher = AGENT_LAUNCHERS.get(agent_name)
+        if not launcher:
+            continue
+        try:
+            queued = queue.list_queued(agent=agent_name, limit=25)
+        except Exception as exc:
+            print(f"[dispatcher] Failed to list local tasks for {agent_name}: {exc}")
+            continue
+
+        label = f"local:{agent_name}"
+        for task in queued:
+            if dedup.is_processed(task.id, label, cycle_id):
+                continue
+            try:
+                result = launcher(
+                    task.id,
+                    title=task.title,
+                    task=task.title,
+                    workspace=task.workspace,
+                )
+                if result:
+                    queue.update_status(
+                        task.id,
+                        "dispatched",
+                        metadata_patch={"cycle_id": cycle_id},
+                    )
+                    dedup.mark_processed(task.id, label, cycle_id)
+                    dispatched += 1
+                    print(
+                        f"[dispatcher] 🚀 Dispatched local {agent_name} "
+                        f"task → {task.id}: {task.title}"
+                    )
+            except Exception as exc:
+                queue.update_status(
+                    task.id,
+                    "failed",
+                    metadata_patch={"error": str(exc), "cycle_id": cycle_id},
+                )
+                dedup.mark_processed(task.id, label, cycle_id)
+                print(
+                    f"[dispatcher] Error dispatching local {agent_name} "
+                    f"task {task.id}: {exc}"
+                )
+    return dispatched
+
+
 def dispatch_once(
     dedup: EventRouterDedup,
     pipelines: dict[str, Any] | None = None,
+    local_task_queue: Any | None = None,
 ) -> dict[str, int]:
     """Run a single dispatch cycle.
 
@@ -1625,6 +1694,7 @@ def dispatch_once(
     """
     counts: dict[str, int] = {
         "dispatched": 0,
+        "local_dispatched": 0,
         "pipeline_setup": 0,
         "stale_killed": 0,
         "errors": 0,
@@ -1637,7 +1707,18 @@ def dispatch_once(
         except (FileNotFoundError, ValueError):
             pipelines = {"pipelines": {}}
 
-    # 1. Set up new pipeline issues
+    # 1. Dispatch local tasks first — no Linear/task-provider dependency.
+    try:
+        counts["local_dispatched"] = dispatch_local_tasks(
+            dedup,
+            cycle_id,
+            local_task_queue=local_task_queue,
+        )
+    except Exception as exc:
+        print(f"[dispatcher] local task dispatch error: {exc}")
+        counts["errors"] += 1
+
+    # 2. Set up new pipeline issues
     try:
         os.environ["PRISMATIC_CURRENT_AGENT_NAME"] = "prismatic.dispatcher"
         setup_issues = setup_pipeline_issues()
@@ -1672,7 +1753,7 @@ def dispatch_once(
         print(f"[dispatcher] Credit tracking/alert error: {exc}")
     # ── End Credit Tracker ─────────────────────────────────
 
-    # 2. Dispatch to each agent
+    # 3. Dispatch Linear/task-provider issues to each agent
     for agent_name, config in AGENT_CONFIG.items():
         label = f"agent::{agent_name}"
         try:

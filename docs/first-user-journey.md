@@ -134,15 +134,16 @@ This section lists the exact subtasks required to build the gaps separating our 
 
 ### GRO-1980: Setup Unified CLI Wrapper (`prismatic`)
 * **Title:** Setup Unified CLI Wrapper (`prismatic`)
+* **Status:** Implemented in `prismatic.cli` with the `prismatic` console entry point.
 * **Priority:** High
 * **Estimate:** 3 Story Points
 * **Description:**
   Create a global python wrapper script/entrypoint named `prismatic` that unifies all command-line operations (e.g. `prismatic doctor`, `prismatic init`, `prismatic journal snapshot`) to replace the fragmented `prismatic-*` scripts in user-facing environments.
 * **Acceptance Criteria:**
-  - [ ] Add `prismatic` to entry points in `pyproject.toml`.
-  - [ ] Support redirecting subcommands: `prismatic status` maps to `prismatic-engine doctor`.
-  - [ ] Ensure arguments and flags are forwarded transparently.
-  - [ ] Write a smoke test validating command mapping.
+  - [x] Add `prismatic` to entry points in `pyproject.toml`.
+  - [x] Support redirecting subcommands: `prismatic status` maps to doctor diagnostics.
+  - [x] Ensure core arguments and flags are forwarded for status/doctor/init/serve.
+  - [x] Write a smoke test validating command mapping.
 
 ### GRO-1981: Implement Interactive `prismatic providers attach` Command
 * **Title:** Implement Interactive `prismatic providers attach` Command
@@ -158,14 +159,15 @@ This section lists the exact subtasks required to build the gaps separating our 
 
 ### GRO-1982: Support Local Tasks without Linear Integration
 * **Title:** Support Local Tasks without Linear Integration
+* **Status:** Implemented as `prismatic task create` backed by the local SQLite task queue.
 * **Priority:** Medium
 * **Estimate:** 5 Story Points
 * **Description:**
   Introduce a local task database provider so developers can test agent execution cycles without connecting to a remote Linear project.
 * **Acceptance Criteria:**
-  - [ ] Create `prismatic task create "task text" --agent <agent_name> --workspace <path>` command.
-  - [ ] Insert local tasks into SQLite event table.
-  - [ ] Modify the coordinator/dispatcher polling cycle to check for local queued tasks before polling remote trackers.
+  - [x] Create `prismatic task create "task text" --agent <agent_name> --workspace <path>` command.
+  - [x] Insert local tasks into the engine SQLite state database.
+  - [x] Modify the coordinator/dispatcher polling cycle to check for local queued tasks before polling remote trackers.
 
 ### GRO-1983: Telegram Bot Interactive State Commands
 * **Title:** Telegram Bot Interactive State Commands
