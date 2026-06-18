@@ -2014,157 +2014,16 @@ def cmd_billing_report(args: Any) -> None:
 
 
 def cmd_doctor(args: Any) -> int:
-    """Run capability status and connection check diagnostics."""
-    print("=========================================================")
-    print("Prismatic Engine — Capability Status & Diagnostics (Doctor)")
-    print("=========================================================\n")
+    """Run capability status and connection check diagnostics.
 
-    # 1. System Info
-    print(f"[System] Python version: {sys.version.split()[0]}")
-    try:
-        res = subprocess.run(["git", "--version"], capture_output=True, text=True, check=False)
-        git_ver = res.stdout.strip() if res.returncode == 0 else "Not found"
-    except Exception:
-        git_ver = "Error executing"
-    print(f"[System] Git version: {git_ver}")
+    Thin delegate to ``prismatic.cli.doctor.run``. The diagnostic logic
+    lives in ``prismatic.doctor`` (pure function) and the CLI
+    presentation in ``prismatic.cli.doctor``. This wrapper exists
+    only to keep the existing dispatch subcommand name stable.
+    """
+    from prismatic.cli.doctor import run as _doctor_run
 
-    try:
-        res = subprocess.run(["gh", "--version"], capture_output=True, text=True, check=False)
-        gh_ver = res.stdout.splitlines()[0] if (res.returncode == 0 and res.stdout) else "Not found"
-    except Exception:
-        gh_ver = "Not found"
-    print(f"[System] gh CLI version: {gh_ver}")
-    print()
-
-    # 2. Config & DB
-    prismatic_home = Path(os.environ.get("PRISMATIC_HOME", os.path.expanduser("~")))
-    config_dir = prismatic_home / ".prismatic"
-    user_config_path = config_dir / "config.yaml"
-    db_path = config_dir / "db" / "event_router.db"
-
-    print(f"[Config] PRISMATIC_HOME: {prismatic_home}")
-    print(f"[Config] User Config path: {user_config_path} ({'exists' if user_config_path.exists() else 'missing'})")
-    print(f"[Config] Database path: {db_path} ({'exists' if db_path.exists() else 'missing'})")
-    print()
-
-    # 3. Check specific provider or all
-    provider_to_check = getattr(args, "provider", None)
-
-    if not provider_to_check or provider_to_check.lower() == "github":
-        print("[GitHub] Verifying GitHub API Connection...")
-        from prismatic.providers.github import GitHubProvider
-        provider = GitHubProvider()
-
-        cred_source = "Not found"
-        if os.environ.get("GITHUB_TOKEN"):
-            cred_source = "GITHUB_TOKEN env var"
-        elif os.environ.get("GH_TOKEN"):
-            cred_source = "GH_TOKEN env var"
-        elif os.environ.get("PRISMATIC_GITHUB_TOKEN"):
-            cred_source = "PRISMATIC_GITHUB_TOKEN env var"
-        elif user_config_path.exists():
-            try:
-                import yaml
-                with open(user_config_path) as f:
-                    cfg = yaml.safe_load(f) or {}
-                    if cfg.get("github", {}).get("token"):
-                        cred_source = "config.yaml (github.token)"
-            except Exception:
-                pass
-        
-        if cred_source == "Not found":
-            try:
-                res = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True, check=False)
-                if res.returncode == 0 and res.stdout.strip():
-                    cred_source = "gh CLI authentication"
-            except Exception:
-                pass
-
-        print(f"  Credential Source: {cred_source}")
-        if not provider.has_credentials():
-            print("  Status: ✗ DISCONNECTED (No token discovered)")
-            print("  Remediation: Please export GITHUB_TOKEN or set github.token in config.yaml.")
-            print("  Workflow Impact: AGY/Jules CLI workflow is BLOCKED.")
-            if provider_to_check:
-                return 1
-        else:
-            success, user_info, scopes = provider.verify_auth()
-            if success:
-                print(f"  Status: ✓ CONNECTED")
-                print(f"  API User: @{user_info.get('login')} ({user_info.get('name') or 'N/A'})")
-                print(f"  Available Scopes: {', '.join(scopes) if scopes else 'none'}")
-                
-                required_scopes = {"repo"}
-                missing_scopes = required_scopes - set(scopes)
-                if missing_scopes:
-                    print(f"  Warning: Missing recommended scopes: {', '.join(missing_scopes)}")
-                    print("  Remediation: Update GITHUB_TOKEN to include 'repo' scope for PR read/write capabilities.")
-                else:
-                    print("  Token Scopes: ✓ SUFFICIENT for AGY + Jules workflow")
-            else:
-                print(f"  Status: ✗ API AUTHENTICATION FAILED")
-                print(f"  Error Detail: {user_info.get('error')}")
-                if "detail" in user_info:
-                    print(f"  API Message: {user_info['detail'].get('message')}")
-                print("  Workflow Impact: AGY/Jules CLI workflow is BLOCKED.")
-                if provider_to_check:
-                    return 1
-
-            # Target Repository Access
-            target_repo = provider.repo
-            print(f"  Target Repository: {target_repo or 'Not specified'}")
-            if not target_repo:
-                print("  Repo Access: ✗ NOT CONFIGURED (No repo target discovered)")
-                print("  Remediation: Set GITHUB_REPOSITORY env or run in a repository with remote origin configured.")
-            else:
-                ok_access, repo_info = provider.verify_repo_access(target_repo)
-                if ok_access:
-                    permissions = repo_info.get("permissions", {})
-                    p_str = f"push={permissions.get('push', False)}, pull={permissions.get('pull', False)}"
-                    print(f"  Repo Access: ✓ VERIFIED ({p_str})")
-                else:
-                    print(f"  Repo Access: ✗ FAILED to read repository info")
-                    print(f"  Error Detail: {repo_info.get('error')}")
-                    if "detail" in repo_info:
-                        print(f"  API Message: {repo_info['detail'].get('message')}")
-                    print("  Workflow Impact: Cannot target repository.")
-
-    if not provider_to_check or provider_to_check.lower() == "linear":
-        print("\n[Linear] Verifying Linear API Connection...")
-        linear_token = os.environ.get("LINEAR_API_KEY", "")
-        if not linear_token:
-            print("  Status: ✗ DISCONNECTED (LINEAR_API_KEY env var is missing)")
-        else:
-            from prismatic.providers.tasks.linear import LinearTaskProvider
-            try:
-                linear_p = LinearTaskProvider()
-                if linear_p._api_key:
-                    print("  Status: ✓ CONNECTED (LINEAR_API_KEY set)")
-                else:
-                    print("  Status: ✗ DISCONNECTED (Failed to initialize)")
-            except Exception as exc:
-                print(f"  Status: ✗ FAILED to connect: {exc}")
-
-    # 4. Capability Registry Status
-    print("\n[Capabilities] Verifying registered capabilities...")
-    from prismatic.capabilities import registry
-    reports = []
-    for cap_name in ["linear", "vcs.github", "agy", "jules", "telegram"]:
-        cap = registry.get(cap_name)
-        if cap:
-            ok, msg = cap.check_status()
-            status_str = "ok" if ok else f"error ({msg})"
-            print(f"  {cap_name}:{status_str}")
-            reports.append(f"{cap_name}:{status_str}")
-        else:
-            print(f"  {cap_name}:missing_registry")
-            reports.append(f"{cap_name}:missing_registry")
-    
-    # Comma-separated report line to strictly match the requested text format
-    print(f"\nReports: {', '.join(reports)}")
-
-    print("\nDiagnostics complete.")
-    return 0
+    return _doctor_run(args)
 
 
 def main() -> None:
