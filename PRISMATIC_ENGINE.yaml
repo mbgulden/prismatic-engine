@@ -11,8 +11,8 @@ agents:
   fred:
     role: Orchestrator & Infrastructure
     lanes:
-      owner: ["src/", "infra/", "deploy/", ".github/", "specs/"]
-      read_only: ["content/", "active-oahu/"]
+      owner: ["*"]  # Orchestrator needs write access to every directory. Per prismatic-engine-operations §2 pitfall.
+      read_only: []
     branch_prefix: "feature/"
     staging_governor: true  # Only Fred merges to staging
 

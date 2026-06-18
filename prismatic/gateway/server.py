@@ -307,6 +307,112 @@ async def complete_run(run_id: str, payload: dict[str, Any] | None = None) -> Re
     return {"status": "ok"}
 
 
+# ── Schedule Observatory API ──────────────────────────────────────────
+
+@app.get("/schedules")
+async def list_schedules() -> list[dict[str, Any]]:
+    """Return all observed schedules across providers."""
+    from prismatic.schedules import get_all_schedules
+    return [s.to_dict() for s in get_all_schedules()]
+
+
+@app.post("/schedules/{schedule_id:path}/mutate")
+async def mutate_schedule(schedule_id: str, payload: dict[str, Any] = None) -> Response:
+    """Mutate a schedule with owner-aware validation policy checks."""
+    from prismatic.schedules import request_schedule_mutation, UnauthorizedMutationError
+    
+    payload = payload or {}
+    enabled = payload.get("enabled")
+    schedule_expr = payload.get("schedule_expr")
+    
+    try:
+        result = request_schedule_mutation(
+            schedule_id=schedule_id,
+            enabled=enabled,
+            schedule_expr=schedule_expr
+        )
+        # Emit schedule.updated event
+        from prismatic.gateway.event_bus import get_event_bus
+        bus = get_event_bus()
+        event = {
+            "event_id": f"event-{int(time.time())}",
+            "event_type": "schedule.updated",
+            "schedule_id": schedule_id,
+            "owner": schedule_id.split(":")[0],
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "payload": {
+                "updates": {"enabled": enabled, "schedule_expr": schedule_expr},
+                "result": result
+            }
+        }
+        # Push event to EventBus if running
+        try:
+            bus.publish(event)
+        except Exception:
+            pass
+            
+        return Response(
+            content=json.dumps(result),
+            media_type="application/json"
+        )
+    except UnauthorizedMutationError as e:
+        return Response(
+            status_code=403,
+            content=json.dumps({"error": str(e)}),
+            media_type="application/json"
+        )
+    except FileNotFoundError as e:
+        return Response(
+            status_code=404,
+            content=json.dumps({"error": str(e)}),
+            media_type="application/json"
+        )
+    except Exception as e:
+        return Response(
+            status_code=500,
+            content=json.dumps({"error": str(e)}),
+            media_type="application/json"
+        )
+
+
+@app.post("/schedules/chat-command")
+async def handle_chat_schedule_command(payload: dict[str, Any]) -> Response:
+    """Process a natural language instruction to change a schedule."""
+    from prismatic.schedules import process_chat_schedule_request
+    message = payload.get("message", "")
+    res = process_chat_schedule_request(message)
+    if res["success"]:
+        # Emit schedule.updated event for simulation
+        try:
+            from prismatic.gateway.event_bus import get_event_bus
+            bus = get_event_bus()
+            event = {
+                "event_id": f"event-{int(time.time())}",
+                "event_type": "schedule.updated",
+                "schedule_id": res["schedule_id"],
+                "owner": res["schedule_id"].split(":")[0],
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "payload": {
+                    "updates": res["updates"],
+                    "note": "Triggered via conversational chat command"
+                }
+            }
+            bus.publish(event)
+        except Exception:
+            pass
+        return Response(
+            content=json.dumps(res),
+            media_type="application/json"
+        )
+    else:
+        return Response(
+            status_code=400,
+            content=json.dumps(res),
+            media_type="application/json"
+        )
+
+
+
 # ── Webhook Endpoints (stubs — full implementation in dedicated modules) ──
 
 
@@ -327,6 +433,52 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
 
 
 # ── CLI Entry Point ──────────────────────────────────────────────────
+
+
+# ── Chat Capability API (GRO-1955) ────────────────────────────────────
+# Read-only gateway endpoints for the chat.agy capability. The contract
+# is intentionally narrow: a list endpoint and a get-by-id endpoint.
+# Mutation paths (send, follow-up, transcript retrieval) are a
+# separate GRO-1955 follow-up issue. Adding a mutation endpoint here
+# would scope-creep; the additive half of GRO-1955 is read-only.
+
+@app.get("/chat/sessions")
+async def list_chat_sessions() -> list[dict[str, Any]]:
+    """Return the list of known AGY chat sessions.
+
+    v0.1 contract: returns an empty list until the AGY live data path
+    is wired. The wrapper uses the ``ChatAGYCapability`` so swapping
+    in the real adapter later requires no gateway change.
+    """
+    from prismatic.capabilities import ChatAGYCapability
+
+    cap = ChatAGYCapability()
+    return cap.list_sessions()
+
+
+@app.get("/chat/sessions/{session_id:path}")
+async def get_chat_session(session_id: str) -> dict[str, Any]:
+    """Return a single AGY chat session by id, or 404 if not found.
+
+    v0.1 contract: returns 404 for any id (no live data yet). When the
+    live path is wired, this endpoint will return the typed session
+    shape or a 404 with an honest "no live data" reason.
+    """
+    from fastapi import HTTPException
+    from prismatic.capabilities import ChatAGYCapability
+
+    cap = ChatAGYCapability()
+    session = cap.get_session(session_id)
+    if session is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "session_not_found",
+                "session_id": session_id,
+                "reason": "chat.agy live data path not yet wired (v0.1 returns empty list).",
+            },
+        )
+    return session
 
 
 def _create_run_store() -> AgentRunRecordStore | None:

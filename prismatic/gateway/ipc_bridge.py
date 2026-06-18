@@ -48,6 +48,12 @@ VALID_TYPES = {
     "agent_launched", "agent_completed", "agent_failed",
     "governor_allocate", "governor_release",
     "circuit_breaker_trip", "circuit_breaker_reset",
+    # Golden Flow event types
+    "session.started", "session.progress", "session.paused",
+    "session.killed", "session.summarized", "session.completed",
+    "vcs.branch_created", "vcs.pr_opened", "vcs.pr_status", "vcs.pr_comment",
+    "jules.handoff", "jules.review_started", "jules.review_completed",
+    "schedule.recorded", "golden_flow_completed",
 }
 
 

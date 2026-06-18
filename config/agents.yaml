@@ -1,0 +1,62 @@
+# ============================================================
+# Prismatic Engine — Agent Signal Configuration
+# ============================================================
+# How each agent receives work signals from the hub.
+# One config block per agent. Primary + optional fallback chain.
+
+# ── Fred (Hermes orchestrator, local) ────────────────────────
+fred:
+  signal:
+    primary:
+      type: file
+      directory: /tmp/prismatic
+    fallback:
+      type: http
+      endpoints:
+        fred: https://fred.internal:9001/signals
+      shared_secret: ${PRISMATIC_SECRET}
+    dead_letter:
+      type: telegram
+      chat_id: 8190664947      # Michael's DM
+      bot_token: ${TELEGRAM_BOT_TOKEN}
+
+# ── Kai (Active Oahu Tours bot, remote) ──────────────────────
+kai:
+  signal:
+    primary:
+      type: http
+      endpoints:
+        kai: https://kai.activeoahutours.com/signals
+      shared_secret: ${PRISMATIC_SECRET}
+    fallback:
+      type: redis
+      host: redis.internal
+      port: 6379
+      password: ${REDIS_PASSWORD}
+      prefix: prismatic:signal
+
+# ── AGY (Antigravity CLI, local) ─────────────────────────────
+agy:
+  signal:
+    primary:
+      type: file
+      directory: /tmp/prismatic
+    fallback:
+      type: linear_comment
+      project_id: b6fb2651-5a1f-4714-9bcd-9eb6e759ffef
+      api_key: ${LINEAR_API_KEY}
+
+# ── Autobot (Telegram bot, remote) ───────────────────────────
+autobot:
+  signal:
+    primary:
+      type: telegram
+      chat_id: 8190664947
+      bot_token: ${TELEGRAM_BOT_TOKEN}
+
+# ── Default (for unknown agents) ─────────────────────────────
+default:
+  signal:
+    primary:
+      type: file
+      directory: /tmp/prismatic

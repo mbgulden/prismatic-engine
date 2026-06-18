@@ -7,7 +7,6 @@ import json
 import os
 
 CREDS_PATH = "/home/ubuntu/mounts/synology-photo/Antigravity/credentials.json"
-TOKEN_PATH = "/home/ubuntu/work/prismatic-engine/.gdocs_token.json"
 
 SCOPES = [
     "https://www.googleapis.com/auth/documents",
@@ -46,11 +45,15 @@ code = input("Paste authorization code: ").strip()
 flow.fetch_token(code=code)
 
 creds = flow.credentials
+creds_json = creds.to_json()
 
-os.makedirs(os.path.dirname(TOKEN_PATH), exist_ok=True)
-with open(TOKEN_PATH, "w") as f:
-    f.write(creds.to_json())
-
-print(f"\n✅ Token saved to: {TOKEN_PATH}")
+print("\n" + "=" * 70)
+print("  GDOCS_TOKEN ENVIRONMENT VARIABLE VALUE:")
+print("=" * 70)
+print(creds_json)
+print("=" * 70)
+print("\n✅ Authentication successful!")
+print("Please save the above JSON block to your GDOCS_TOKEN environment variable.")
+print("Example: export GDOCS_TOKEN='<json_block_above>'")
 print(f"   Scopes: {creds.scopes}")
 print(f"   Has refresh token: {bool(creds.refresh_token)}")

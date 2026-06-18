@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mbgulden/prismatic-engine/schemas/schedule-record.schema.json",
+  "title": "Schedule Record Schema",
+  "description": "Validates a normalized schedule record representing scheduled work from Prismatic, AGY, Jules, or other provider task-managers.",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "owner",
+    "schedule_type",
+    "schedule_expr",
+    "enabled"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique identifier for the schedule, prefixed by owner (e.g., 'prismatic:cron:backup')."
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable name or description of the scheduled job."
+    },
+    "owner": {
+      "type": "string",
+      "enum": ["prismatic", "agy", "jules", "task-manager"],
+      "description": "The owning provider or service hosting the schedule."
+    },
+    "schedule_type": {
+      "type": "string",
+      "enum": ["cron", "systemd-timer", "one-shot", "interval", "remote-managed"],
+      "description": "The scheduling engine paradigm utilized."
+    },
+    "schedule_expr": {
+      "type": "string",
+      "description": "The raw schedule expression, such as a cron expression (* * * * *) or systemd timer spec."
+    },
+    "enabled": {
+      "type": "boolean",
+      "description": "Whether the schedule is currently active and will trigger future runs."
+    },
+    "next_run_at": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of the next expected execution time, if known."
+    },
+    "last_run": {
+      "type": ["object", "null"],
+      "required": ["fired_at", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "fired_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when the job last triggered."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["success", "failed", "running", "cancelled"],
+          "description": "Execution outcome of the last run."
+        },
+        "run_id": {
+          "type": ["string", "null"],
+          "description": "Reference to the Prismatic agent run/workflow ID, if applicable."
+        },
+        "duration_sec": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "description": "Execution duration in seconds, if known."
+        },
+        "error_message": {
+          "type": ["string", "null"],
+          "description": "Error details if the last execution failed."
+        }
+      },
+      "description": "Details about the most recent execution attempt."
+    },
+    "deep_link": {
+      "type": ["string", "null"],
+      "format": "uri",
+      "description": "Deep link URL to inspect or manage the schedule on the remote provider UI."
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Optional provider-specific metadata key-value pairs."
+    }
+  }
+}

@@ -1,0 +1,207 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mbgulden/prismatic-engine/schemas/handoff-contracts/agent-contract-schema.json",
+  "title": "Agent Contract Schema",
+  "description": "Validates the output of SwarmPlanner decomposition — the contract file written to .antigravity/contracts/<threadId>.json that defines a worker agent's scope, lane assignments, and execution bounds. This is the primary handoff artifact between the planner and the worker executor.",
+  "type": "object",
+  "required": [
+    "threadId",
+    "role",
+    "taskDescription",
+    "allowedDirectories",
+    "readOnlyDirectories",
+    "targetHead"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "threadId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*$",
+      "description": "Globally unique thread/run identifier. Convention: ISO-8601 timestamp with millis + optional suffix. Used as the contract filename: .antigravity/contracts/<threadId>.json"
+    },
+    "role": {
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 64,
+      "description": "Human-readable role label for this worker (e.g. 'Frontend Developer', 'SEO Content Writer', 'API Implementer'). Used for logging and display."
+    },
+    "taskDescription": {
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 2000,
+      "description": "Full natural-language task description passed to the worker as its primary directive. Should include acceptance criteria, context, and expected output format."
+    },
+    "allowedDirectories": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-zA-Z0-9_/-]+/?$"
+      },
+      "description": "Absolute or repo-relative directory paths the worker is permitted to write to. Lane assignment — the worker may create/modify files here. Paths should end with / to indicate directories."
+    },
+    "readOnlyDirectories": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-zA-Z0-9_/-]+/?$"
+      },
+      "default": [],
+      "description": "Directory paths the worker may READ but NOT modify. Used for context files, type definitions, shared configs that must remain unchanged."
+    },
+    "targetHead": {
+      "type": "string",
+      "enum": [
+        "Antigravity UI",
+        "Headless API",
+        "Local AI",
+        "GitHub Jules",
+        "Hermes Orchestrator",
+        "AGY Research"
+      ],
+      "description": "Which execution backend this contract targets. Determines how the dispatcher spawns the worker: UI queue, headless subprocess, local model, Jules CLI session, or Hermes agent."
+    },
+    "budgetLimit": {
+      "type": "number",
+      "minimum": 0,
+      "default": 5.0,
+      "description": "Maximum dollar budget for API/model costs for this task. If zero, no budget enforcement. Workers should check this before expensive LLM calls."
+    },
+    "localContextMax": {
+      "type": "integer",
+      "minimum": 4096,
+      "maximum": 131072,
+      "default": 16384,
+      "description": "Maximum context window tokens allocated for this worker. Prevents a single task from exhausting available context on local models."
+    },
+    "maxActions": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100,
+      "default": 25,
+      "description": "Maximum number of tool-call actions this agent may take before forced handoff. Prevents runaway agents."
+    },
+    "outputSpec": {
+      "type": "object",
+      "properties": {
+        "requiredArtifacts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "List of artifact types or file paths the worker MUST produce on completion (e.g. ['docs/report.md', 'src/output.json'])."
+        },
+        "schemaRef": {
+          "type": "string",
+          "pattern": "^https://github\\.com/mbgulden/.*schema.*\\.json$",
+          "description": "URL to a JSON Schema file that the worker's output must validate against. Enables structural contract enforcement at handoff."
+        },
+        "expectedFormat": {
+          "type": "string",
+          "description": "Free-text description of the expected output structure — used when a formal schema isn't available."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Defines what the worker is expected to produce. Enables the integrator to validate output before merging."
+    },
+    "sourceAgent": {
+      "type": "string",
+      "minLength": 2,
+      "description": "Name of the agent that produced this contract (e.g. 'AGY', 'Hermes', 'SwarmPlanner'). Enables traceability in multi-hop handoffs."
+    },
+    "parentThreadId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*$",
+      "description": "If this contract is a sub-task or refinement of a parent task, link to the parent threadId. Enables thread ancestry tracking via LineageManager."
+    },
+    "handoffContext": {
+      "type": "object",
+      "properties": {
+        "researchSummary": {
+          "type": "string",
+          "maxLength": 10000,
+          "description": "Summary of research performed by the upstream agent (e.g. AGY). Acts as the 'handoff document' — the knowledge the next agent needs but doesn't reprocess."
+        },
+        "keyFindings": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 1000
+          },
+          "description": "Key findings or decisions from the upstream agent. Bullet-point structured for the downstream agent to consume directly."
+        },
+        "artifactsProduced": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path", "type"],
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "Absolute or repo-relative path to the artifact file."
+              },
+              "type": {
+                "type": "string",
+                "enum": ["file", "report", "schema", "image", "data", "doc"],
+                "description": "Category of artifact."
+              },
+              "description": {
+                "type": "string",
+                "maxLength": 500,
+                "description": "Short note about what this artifact contains."
+              }
+            }
+          },
+          "description": "Artifacts the upstream agent produced that the downstream agent should read before starting."
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "description": "Warnings, known issues, or pitfalls the downstream agent should be aware of before starting."
+        }
+      },
+      "additionalProperties": false,
+      "description": "Context passed from the upstream agent (e.g. AGY) to the downstream implementation agent (e.g. Jules, Hermes). This is the core handoff payload that enables 'AGY researches → Jules implements' workflows."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "targetHead": {
+            "const": "AGY Research"
+          }
+        },
+        "required": ["targetHead"]
+      },
+      "then": {
+        "properties": {
+          "outputSpec": {
+            "required": ["schemaRef"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "targetHead": {
+            "const": "GitHub Jules"
+          }
+        },
+        "required": ["targetHead"]
+      },
+      "then": {
+        "properties": {
+          "handoffContext": {
+            "required": ["researchSummary", "keyFindings"]
+          }
+        }
+      }
+    }
+  ]
+}

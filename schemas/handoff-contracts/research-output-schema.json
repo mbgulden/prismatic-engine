@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mbgulden/prismatic-engine/schemas/handoff-contracts/research-output-schema.json",
+  "title": "AGY Research Output Schema",
+  "description": "Validates the structured output that AGY produces after completing a research task. This is the primary input to the Handoff Contract's handoffContext field when routing from AGY (research) to Jules/Hermes (implementation). Preventing malformed research contexts from causing implementation failures is the core use case described in GRO-1852.",
+  "type": "object",
+  "required": [
+    "researchSummary",
+    "keyFindings",
+    "sources",
+    "confidence"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "researchSummary": {
+      "type": "string",
+      "minLength": 50,
+      "maxLength": 15000,
+      "description": "Comprehensive natural-language summary of the research performed. Should contain enough detail for a downstream implementation agent to begin work without re-searching."
+    },
+    "keyFindings": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "required": ["finding", "evidence"],
+        "additionalProperties": false,
+        "properties": {
+          "finding": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 1000,
+            "description": "Single atomic finding or conclusion."
+          },
+          "evidence": {
+            "type": "string",
+            "maxLength": 2000,
+            "description": "Supporting evidence — quote, data point, reference. Empty string allowed if the finding is self-evident."
+          },
+          "priority": {
+            "type": "string",
+            "enum": ["critical", "high", "medium", "low", "informational"],
+            "default": "medium",
+            "description": "How critical this finding is for the downstream implementation."
+          },
+          "category": {
+            "type": "string",
+            "enum": ["architecture", "api", "content", "seo", "business", "technical", "competitive", "legal", "other"],
+            "default": "other",
+            "description": "Category tag for grouping and routing."
+          }
+        }
+      },
+      "description": "Structured list of atomic findings with evidence. Each finding should be independently actionable by the downstream agent."
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["url", "title"],
+        "additionalProperties": false,
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "URL to the source page or document."
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "Title of the source page."
+          },
+          "accessedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "ISO 8601 timestamp of when the source was accessed."
+          },
+          "relevance": {
+            "type": "string",
+            "enum": ["primary", "secondary", "background"],
+            "default": "secondary",
+            "description": "How directly relevant this source is to the task."
+          }
+        }
+      },
+      "description": "Sources consulted during research. At minimum, each entry must have a URL and title."
+    },
+    "confidence": {
+      "type": "object",
+      "required": ["overall", "methodology"],
+      "additionalProperties": false,
+      "properties": {
+        "overall": {
+          "type": "string",
+          "enum": ["high", "medium", "low", "uncertain"],
+          "description": "Overall confidence in the research findings. 'high' = multiple corroborating sources. 'uncertain' = conflicting information or insufficient data."
+        },
+        "methodology": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "Brief description of research methodology (e.g. 'Scraped 12 competitor pages, analyzed 3 API docs, reviewed 2 Reddit threads')."
+        },
+        "limitations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "description": "Known limitations of this research — stale data, biased sources, incomplete coverage."
+        }
+      },
+      "description": "Confidence assessment and methodology description. Helps the downstream agent calibrate trust in the findings."
+    },
+    "recommendedActions": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "required": ["action", "priority"],
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 1000,
+            "description": "Recommended implementation action."
+          },
+          "priority": {
+            "type": "string",
+            "enum": ["p0", "p1", "p2", "p3"],
+            "description": "P0 = must do, P1 = should do, P2 = nice to have, P3 = defer."
+          },
+          "rationale": {
+            "type": "string",
+            "maxLength": 1000,
+            "description": "Why this action is recommended, referencing specific findings."
+          },
+          "estimatedEffort": {
+            "type": "string",
+            "enum": ["minutes", "hours", "days", "weeks"],
+            "default": "hours",
+            "description": "Rough effort estimate."
+          }
+        }
+      },
+      "description": "Suggested implementation actions inferred from the research. Provides a direct bridge from research to execution."
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Extensible key-value store for agent-specific metadata (model used, duration, token count).",
+      "default": {}
+    },
+    "issueId": {
+      "type": "string",
+      "pattern": "^(GRO-\\d+|)$",
+      "description": "Optional Linear issue identifier this research was performed for. Enables traceability back to the originating task."
+    },
+    "agentVersion": {
+      "type": "string",
+      "default": "agy-1.0",
+      "description": "Version of the agent that produced this output. Helps detect schema changes across agent updates."
+    }
+  }
+}

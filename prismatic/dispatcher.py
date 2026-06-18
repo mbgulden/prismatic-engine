@@ -45,6 +45,11 @@ from .credit_policy_engine import (
     AGENT_PROVIDER_MAP,
 )
 from .telemetry import get_collector
+from .mode_switch import ModeSwitch, OrchestrationMode
+
+# ── Orchestration Mode Switch ─────────────────────────────────
+mode_switch = ModeSwitch(os.environ.get("PRISMATIC_ORCHESTRATION_MODE", "collaborative"))
+
 
 # ── IPC Bridge event emission (best-effort) ─────────────────────
 try:
@@ -314,7 +319,13 @@ def get_issues_with_label(
             lab["name"]
             for lab in issue.get("labels", {}).get("nodes", [])
         ]
-        if label_name in label_names:
+        # Accept both 'agent:<name>' and 'agent::<name>' label formats.
+        # The dispatcher's call sites historically used 'agent::<name>'
+        # (double colon) as a Python-side convention, but Linear labels
+        # have always been 'agent:<name>' (single colon). Match both
+        # so existing label assignments work without renaming.
+        aliases = {label_name, label_name.replace("::", ":")}
+        if aliases & set(label_names):
             results.append({
                 "id": issue["id"],
                 "identifier": issue.get("identifier", ""),
@@ -570,7 +581,7 @@ def signal_kai(
     return result
 
 
-def launch_agy(issue_id: str, task: str = "") -> subprocess.Popen | None:
+def launch_agy(issue_id: str, task: str = "", **kwargs: Any) -> subprocess.Popen | None:
     """Launch the AGY CLI in headless mode for the given issue.
 
     The AGY process is started as a background subprocess with the
@@ -588,6 +599,18 @@ def launch_agy(issue_id: str, task: str = "") -> subprocess.Popen | None:
     Returns:
         ``subprocess.Popen`` handle, or ``None`` if launch failed.
     """
+    # Verify GitHub API access is present for AGY workflow
+    from prismatic.providers.github import GitHubProvider
+    github_provider = GitHubProvider()
+    if not github_provider.has_credentials():
+        print(f"[dispatcher] ERROR: GitHub API connection missing. AGY workflow is BLOCKED for issue {issue_id}.")
+        print("  Remediation: Set GITHUB_TOKEN/GH_TOKEN or configure github.token in config.yaml.")
+        try:
+            add_comment(issue_id, "⚠️ **AGY workflow BLOCKED**: GitHub API connection is missing. Configure a token to resume.")
+        except Exception:
+            pass
+        return None
+
     if not os.path.exists(AGY_PATH):
         print(f"[dispatcher] AGY binary not found at {AGY_PATH}")
         return None
@@ -629,7 +652,7 @@ def launch_agy(issue_id: str, task: str = "") -> subprocess.Popen | None:
         return None
 
 
-def launch_jules(issue_id: str, task: str = "") -> subprocess.Popen | None:
+def launch_jules(issue_id: str, task: str = "", **kwargs: Any) -> subprocess.Popen | None:
     """Launch the Jules CLI for the given issue.
 
     Args:
@@ -639,6 +662,18 @@ def launch_jules(issue_id: str, task: str = "") -> subprocess.Popen | None:
     Returns:
         ``subprocess.Popen`` handle, or ``None`` if launch failed.
     """
+    # Verify GitHub API access is present for Jules workflow
+    from prismatic.providers.github import GitHubProvider
+    github_provider = GitHubProvider()
+    if not github_provider.has_credentials():
+        print(f"[dispatcher] ERROR: GitHub API connection missing. Jules workflow is BLOCKED for issue {issue_id}.")
+        print("  Remediation: Set GITHUB_TOKEN/GH_TOKEN or configure github.token in config.yaml.")
+        try:
+            add_comment(issue_id, "⚠️ **Jules workflow BLOCKED**: GitHub API connection is missing. Configure a token to resume.")
+        except Exception:
+            pass
+        return None
+
     if not os.path.exists(JULES_PATH):
         print(f"[dispatcher] Jules binary not found at {JULES_PATH}")
         return None
@@ -662,7 +697,7 @@ def launch_jules(issue_id: str, task: str = "") -> subprocess.Popen | None:
         return None
 
 
-def launch_codex(issue_id: str, task: str = "") -> subprocess.Popen | None:
+def launch_codex(issue_id: str, task: str = "", **kwargs: Any) -> subprocess.Popen | None:
     """Launch the Codex CLI for the given issue.
 
     Args:
@@ -937,6 +972,107 @@ def _parse_etime(etime_str: str) -> float | None:
         return None
 
 
+def _get_transition_states(agent_name: str) -> tuple[str, str]:
+    """Determine the from_state and to_state for a given agent launch."""
+    STATE_MAPPING = {
+        "fred": "decompose",
+        "kai": "dispatch",
+        "agy": "execute",
+        "jules": "review",
+        "codex": "integrate",
+    }
+    
+    # Target state
+    to_state = STATE_MAPPING.get(agent_name, agent_name)
+    
+    # Source state
+    from_agent = None
+    target_labels = {f"agent::{agent_name}", f"agent:{agent_name}"}
+    for name, cfg in AGENT_CONFIG.items():
+        nxt = cfg.get("next_label", "")
+        if nxt in target_labels:
+            from_agent = name
+            break
+            
+    from_state = STATE_MAPPING.get(from_agent, "decompose") if from_agent else "decompose"
+    return from_state, to_state
+
+
+def evaluate_transition_approval(
+    issue_id: str,
+    from_state: str,
+    to_state: str,
+    is_escalation: bool = False,
+    reason: str | None = None,
+) -> bool:
+    """Evaluate if a transition is approved by the mode switch or via user comments.
+    
+    Returns:
+        True if the transition is allowed to proceed, False if it is paused.
+    """
+    # 1. Check if the ModeSwitch allows it to auto-fire
+    if mode_switch.request_approval(from_state, to_state, is_escalation, reason):
+        return True
+        
+    # 2. If it requires approval, fetch the last 10 comments to check for approval or previous comments
+    query = """
+    query IssueComments($issueId: String!) {
+        issue(id: $issueId) {
+            comments(first: 10, orderBy: createdAt, includeArchived: false) {
+                nodes {
+                    body
+                }
+            }
+        }
+    }
+    """
+    comments = []
+    try:
+        data = gql(query, {"issueId": issue_id})
+        comments = data.get("issue", {}).get("comments", {}).get("nodes", [])
+    except Exception as exc:
+        print(f"[dispatcher] Error fetching comments: {exc}")
+        
+    # Check if any comment contains /approve
+    has_approval = False
+    for comment in comments:
+        body = comment.get("body", "")
+        if "/approve" in body.lower():
+            has_approval = True
+            break
+            
+    if has_approval:
+        # Clear/approve in the ModeSwitch instance too
+        mode_switch.approve_transition(from_state, to_state)
+        print(f"[dispatcher] Transition {from_state} -> {to_state} approved via comment for issue {issue_id}")
+        return True
+        
+    # Check if we already posted a pause comment
+    pause_msg = f"Transition paused from **{from_state}** to **{to_state}**"
+    already_commented = False
+    for comment in comments:
+        body = comment.get("body", "")
+        if pause_msg in body:
+            already_commented = True
+            break
+            
+    if not already_commented:
+        try:
+            mode_desc = mode_switch.mode.value
+            esc_str = " (Escalation)" if is_escalation else ""
+            add_comment(
+                issue_id,
+                f"⏸️ **Transition paused** from **{from_state}** to **{to_state}**{esc_str} "
+                f"in **{mode_desc}** mode.\n\n"
+                f"Please reply with `/approve` to resume orchestration."
+            )
+            print(f"[dispatcher] Posted transition pause comment for {from_state} -> {to_state} on issue {issue_id}")
+        except Exception as exc:
+            print(f"[dispatcher] Error posting pause comment: {exc}")
+            
+    return False
+
+
 def recover_stalled_agy(
     max_retries: int = 3,
     escalate_to: str = "fred",
@@ -982,13 +1118,18 @@ def recover_stalled_agy(
 
             # Update or increment cycle count
             cursor.execute(
-                "SELECT cycle_count FROM agy_stall_tracker WHERE issue_id = ?",
+                "SELECT cycle_count, escalated FROM agy_stall_tracker WHERE issue_id = ?",
                 (issue_id,),
             )
             row = cursor.fetchone()
 
+            is_already_escalated = False
             if row:
-                cycle_count = row[0] + 1
+                cycle_count = row[0]
+                if row[1]:
+                    is_already_escalated = True
+                else:
+                    cycle_count += 1
             else:
                 cycle_count = 1
 
@@ -996,13 +1137,32 @@ def recover_stalled_agy(
                 """
                 INSERT OR REPLACE INTO agy_stall_tracker
                     (issue_id, cycle_count, last_seen, escalated)
-                VALUES (?, ?, ?, 0)
+                VALUES (?, ?, ?, ?)
                 """,
-                (issue_id, cycle_count, datetime.now(timezone.utc).isoformat()),
+                (issue_id, cycle_count, datetime.now(timezone.utc).isoformat(), 1 if is_already_escalated else 0),
             )
             conn.commit()
 
             if cycle_count >= max_retries:
+                # Check approval for the escalation transition
+                from_state = "execute"
+                to_state = escalate_to
+                if not evaluate_transition_approval(
+                    issue_id=issue_id,
+                    from_state=from_state,
+                    to_state=to_state,
+                    is_escalation=True,
+                    reason=f"AGY stalled after {max_retries} cycles"
+                ):
+                    # Transition is paused, do not transition label yet!
+                    # Mark as escalated in DB to track it, but don't change label or signal launcher yet
+                    cursor.execute(
+                        "UPDATE agy_stall_tracker SET escalated = 1 WHERE issue_id = ?",
+                        (issue_id,),
+                    )
+                    conn.commit()
+                    continue
+
                 # Escalate — kill AGY and transition to escalate_to agent
                 cleanup_stale_agy(max_age_minutes=0)  # Kill all AGY processes
 
@@ -1020,7 +1180,7 @@ def recover_stalled_agy(
                     f"Escalating to **{escalate_to}**.",
                 )
 
-                # Mark as escalated
+                # Mark as escalated in DB
                 cursor.execute(
                     "UPDATE agy_stall_tracker SET escalated = 1 WHERE issue_id = ?",
                     (issue_id,),
@@ -1504,6 +1664,36 @@ def dispatch_once(
             if not launcher:
                 continue
 
+            # ── Orchestration Mode Switch Gate ─────────────────────
+            from_state, to_state = _get_transition_states(agent_name)
+            is_escalation = False
+            try:
+                # Check if this issue is flagged as escalated/stalled in database
+                cursor = dedup._conn.cursor()
+                cursor.execute(
+                    "SELECT escalated FROM agy_stall_tracker WHERE issue_id = ?",
+                    (issue_id,),
+                )
+                row = cursor.fetchone()
+                if isinstance(row, (tuple, list)) and row and row[0]:
+                    is_escalation = True
+            except Exception:
+                pass
+
+            # If AGY has stalled and is escalated/pending approval, do not relaunch it!
+            if agent_name == "agy" and is_escalation:
+                continue
+
+            if not evaluate_transition_approval(
+                issue_id=issue_id,
+                from_state=from_state,
+                to_state=to_state,
+                is_escalation=is_escalation,
+                reason="Agent launch transition"
+            ):
+                # Transition is paused, skip launching agent
+                continue
+
             # ── Credit policy enforcement ───────────────────────────
             label = f"agent:{agent_name}" if not agent_name.startswith("agent:") else agent_name
             decision = evaluate_agent_launch(
@@ -1654,6 +1844,7 @@ def main_loop(
     print(f"[dispatcher] TEAM_ID={TEAM_ID}")
     print(f"[dispatcher] Poll interval={interval}s")
     print(f"[dispatcher] State DB={DEFAULT_DB_PATH}")
+    print(f"[dispatcher] Orchestration Mode={mode_switch.mode.value}")
     print()
 
     dedup = EventRouterDedup()
@@ -1822,6 +2013,19 @@ def cmd_billing_report(args: Any) -> None:
         print(f"{'='*70}\n")
 
 
+def cmd_doctor(args: Any) -> int:
+    """Run capability status and connection check diagnostics.
+
+    Thin delegate to ``prismatic.cli.doctor.run``. The diagnostic logic
+    lives in ``prismatic.doctor`` (pure function) and the CLI
+    presentation in ``prismatic.cli.doctor``. This wrapper exists
+    only to keep the existing dispatch subcommand name stable.
+    """
+    from prismatic.cli.doctor import run as _doctor_run
+
+    return _doctor_run(args)
+
+
 def main() -> None:
     """Entry point: parse CLI arguments and start the dispatcher.
 
@@ -1902,6 +2106,15 @@ def main() -> None:
     # ── Skills Subcommand ─────────────────────────────────────
     subparsers.add_parser("skills", help="Skill marketplace subcommands (run 'skills --help' for details)")
 
+    # ── Doctor Subcommand ─────────────────────────────────────
+    doctor_parser = subparsers.add_parser("doctor", help="Verify system health, capabilities, and provider connections")
+    doctor_parser.add_argument(
+        "--provider",
+        type=str,
+        default=None,
+        help="Check a specific provider (e.g. 'github', 'linear')",
+    )
+
     # ── Help / No Command ─────────────────────────────────────
     if len(sys.argv) == 1:
         parser.print_help()
@@ -1918,6 +2131,8 @@ def main() -> None:
         init_config(force=args.force)
     elif args.command == "billing-report":
         cmd_billing_report(args)
+    elif args.command == "doctor":
+        sys.exit(cmd_doctor(args))
     elif args.command == "serve":
         if args.setup_pipelines:
             issues = setup_pipeline_issues()
@@ -1927,7 +2142,7 @@ def main() -> None:
     else:
         # Default fallback
         if args.command is None:
-            print("Please specify a command: serve, init, or skills.")
+            print("Please specify a command: serve, init, doctor, or skills.")
             parser.print_help()
 
 

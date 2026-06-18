@@ -12,15 +12,19 @@ import re
 import time
 
 FOLDER_ID = "1ZCPIAUIXg56iWRErRZSfI5WgfD1JcAKt"
-TOKEN_PATH = os.path.join(os.path.dirname(__file__), "..", ".gdocs_token.json")
 REPORTS_DIR = os.path.join(os.path.dirname(__file__), "..", "reports")
 
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
 def load_creds():
-    with open(TOKEN_PATH) as f:
-        return Credentials.from_authorized_user_info(json.load(f))
+    token_env = os.environ.get("GDOCS_TOKEN")
+    if not token_env:
+        raise ValueError("GDOCS_TOKEN environment variable is not set.")
+    try:
+        return Credentials.from_authorized_user_info(json.loads(token_env))
+    except Exception as e:
+        raise ValueError(f"Failed to load credentials from GDOCS_TOKEN env var: {e}")
 
 def md_to_doc_content(md_text):
     """Convert markdown to simple Docs API requests. Basic but functional."""

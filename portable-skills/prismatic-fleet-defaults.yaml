@@ -1,0 +1,320 @@
+# prismatic-fleet-defaults.yaml
+#
+# Single source of truth for fleet-wide Prismatic Engine settings.
+# All new profile creation MUST inherit from these defaults.
+# Apply via: hermes config set / her copy / template render
+#
+# Last updated: 2026-06-16
+# Owner: Fred (orchestrator)
+# Reviewer: AGY
+
+# ============================================================
+# MODEL TIER DEFINITIONS
+# ============================================================
+# Tier 1: MiniMax — flat-rate subscription, workhorse
+#   M3     = 1M context, heavy reasoning
+#   M2.7   = 204K context, ~100 tps, low-latency workers
+# Tier 2: Gemini 2.5 Flash — free tier, safety net
+# Tier 3: openai-codex OAuth — Fred primary ONLY, fragile
+# Tier 4: Local GPU (ollama/vllm) — zero-cost, often down
+# Tier 5: openrouter — paid, reserved for fallback only
+
+model_defaults:
+  model:
+    provider: minimax
+    default: MiniMax-M2.7-highspeed
+  fallback_providers:
+    - provider: gemini
+      model: gemini-2.5-flash
+  auxiliary:
+    web_extract:
+      provider: minimax
+      model: MiniMax-M2.7-highspeed
+      extra_body:
+        thinking: disabled
+    session_search:
+      provider: minimax
+      model: MiniMax-M3
+      extra_body: {}
+      max_concurrency: 3
+    compression:
+      provider: gemini
+      model: gemini-2.5-flash
+
+# Orchestrator override (Fred is the ONLY profile that uses openai-codex)
+orchestrator_override:
+  model:
+    provider: openai-codex
+    default: gpt-5.5
+  fallback_providers:
+    - provider: minimax
+      model: MiniMax-M3
+    - provider: gemini
+      model: gemini-2.5-flash
+
+# ============================================================
+# PROVIDER BLOCK TEMPLATE
+# ============================================================
+# Paste this into every new profile's config.yaml `providers:` block.
+# Hermes looks up the api_key via api_key_env, so secrets stay in .env.
+
+provider_block_template:
+  minimax:
+    name: MiniMax
+    api: https://api.minimax.io/v1
+    api_key_env: MINIMAX_API_KEY
+    default_model: MiniMax-M2.7-highspeed
+    models:
+      MiniMax-M3:
+        context_length: 1000000
+      MiniMax-M2.7-highspeed:
+        context_length: 204800
+    context_length: 1000000
+    request_timeout_seconds: 120
+  gemini:
+    name: Google Gemini
+    api: https://generativelanguage.googleapis.com/v1beta
+    api_key_env: GEMINI_API_KEY
+    default_model: gemini-2.5-flash
+    context_length: 1048576
+    request_timeout_seconds: 120
+
+# ============================================================
+# API KEYS (.env propagation)
+# ============================================================
+# Every profile's .env must include these for Tier 1 + Tier 2.
+
+required_env_keys:
+  - MINIMAX_API_KEY    # Tier 1 workhorse
+  - GEMINI_API_KEY     # Tier 2 free fallback
+  - LINEAR_API_KEY     # if profile touches Linear
+  - VM_SSH_KEY         # if profile SSHes to remote VMs (must be quoted in .env)
+
+# ============================================================
+# CRON FLEET DEFAULTS
+# ============================================================
+# Standard intervals. All no_agent=true (zero LLM cost).
+
+cron_defaults:
+  unified_agent_dispatcher:
+    schedule: every 2m
+    deliver: local
+    note: "Routes Linear agent:* issues to AGY/Jules/Hermes"
+  comment_trigger_monitor:
+    schedule: every 1m
+    deliver: telegram:8190664947
+    note: "Auto-creates AGY tasks from follow-up comments"
+  agy_oauth_refresh:
+    schedule: every 45m
+    deliver: local
+    note: "Symlink-based single-path token refresh (see agy-oauth-authentication skill)"
+  linear_oauth_refresh:
+    schedule: every 45m
+    deliver: local
+  nudge_detection:
+    schedule: every 1m
+    deliver: local
+    note: "Deduped alerts, Fred auto-triggered"
+  gpu_health_monitor:
+    schedule: every 5m
+    deliver: telegram:8190664947
+    note: "TCP-only — supplements pulse.py for granular endpoint checks"
+  watchdog_agy:
+    schedule: every 5m
+    deliver: local
+  stale_lock_watcher:
+    schedule: every 2m
+    deliver: local
+  memory_grooming:
+    schedule: "15 0 * * *"
+    deliver: local
+  morning_briefing:
+    schedule: "0 8 * * *"
+    deliver: origin
+  end_of_day_recap:
+    schedule: "59 23 * * *"
+    deliver: origin
+
+# Pulse architecture (Layer 1 health monitor)
+# Defined separately — see fred_pulse.py
+fred_pulse:
+  schedule: every 1m
+  deliver: local
+  activation_file: /tmp/fred_activate
+  note: "Cheap no-LLM pulse; only writes activation file when conditions warrant"
+
+# ============================================================
+# ACTIVATION CONTRACT
+# ============================================================
+# Layer 1 (pulse.py) writes trigger JSON to /tmp/fred_activate.
+# Layer 2 (bot-delegation-watchdog) reads it and spawns Fred.
+
+activation_file_format:
+  path: /tmp/fred_activate
+  schema:
+    trigger: string         # gpu_recovered, oauth_near_expiry, linear_issue_stale, etc.
+    context: string         # human-readable what happened
+    priority: enum          # high | medium | low
+    next_action: string     # what Fred should do
+    timestamp: ISO-8601     # when pulse detected
+
+activation_rules:
+  - condition: gpu_endpoint_transitions_up
+    trigger: gpu_recovered
+    priority: high
+  - condition: gpu_endpoint_down_2_cycles
+    trigger: gpu_persistent_failure
+    priority: high
+  - condition: agy_oauth_expires_within_10min
+    trigger: oauth_agy_near_expiry
+    priority: medium
+  - condition: agy_oauth_expired
+    trigger: oauth_agy_expired
+    priority: high
+  - condition: linear_oauth_expires_within_10min
+    trigger: oauth_linear_near_expiry
+    priority: medium
+  - condition: linear_oauth_expired
+    trigger: oauth_linear_expired
+    priority: high
+  - condition: high_priority_issue_in_agent_fred_queue
+    trigger: linear_issue_high_priority
+    priority: high
+  - condition: issue_stuck_in_agent_fred_2hr
+    trigger: linear_issue_stale
+    priority: medium
+  - condition: cron_failed_3_consecutive_cycles
+    trigger: cron_health_degraded
+    priority: medium
+  - condition: agy_session_no_progress_30min
+    trigger: agy_session_stalled
+    priority: medium
+  - condition: time_8am_local
+    trigger: morning_briefing
+    priority: medium
+  - condition: time_9pm_local_and_work_in_progress
+    trigger: end_of_day_recap
+    priority: low
+  - condition: fleet_profile_unexpectedly_stopped
+    trigger: fleet_profile_down
+    priority: high
+  - condition: banned_command_attempted
+    trigger: security_alert
+    priority: high
+  - condition: worker_session_no_progress_30min
+    trigger: worker_session_stalled
+    priority: medium
+  - condition: disk_space_above_90_percent
+    trigger: system_disk_space_critical
+    priority: high
+  - condition: lock_file_held_above_10min
+    trigger: stale_lock_detected
+    priority: medium
+
+# ============================================================
+# PROFILE INITIALIZATION
+# ============================================================
+# Required steps for every new profile (in order).
+
+profile_init_steps:
+  - step: 1
+    name: "Create profile directory"
+    command: "hermes profile create <name>"
+  - step: 2
+    name: "Copy provider block template"
+    source: "this file: provider_block_template"
+    target: "~/.hermes/profiles/<name>/config.yaml"
+  - step: 3
+    name: "Set model.primary and fallback chain"
+    note: "Use model_defaults for workers, orchestrator_override for Fred"
+  - step: 4
+    name: "Propagate API keys to .env"
+    note: "Append required_env_keys; quote SSH keys properly"
+  - step: 5
+    name: "AGY symlink (if profile runs AGY)"
+    command: |
+      REAL_HOME="${REAL_HOME:-$HOME}"
+      PROFILE_HOME=~/.hermes/profiles/<name>/home
+      mkdir -p "$PROFILE_HOME"
+      if [ -d "$REAL_HOME/.gemini" ]; then
+        if [ -d "$PROFILE_HOME/.gemini" ] && [ ! -L "$PROFILE_HOME/.gemini" ]; then
+          mv "$PROFILE_HOME/.gemini" "$PROFILE_HOME/.gemini.bak.$(date +%s)"
+        fi
+        ln -sfn "$REAL_HOME/.gemini" "$PROFILE_HOME/.gemini"
+      fi
+  - step: 6
+    name: "Install cron defaults"
+    note: "Schedule, deliver, no_agent settings from cron_defaults"
+  - step: 7
+    name: "Verify"
+    command: "hermes auth list && curl -s $MINIMAX_TEST_URL"
+
+# ============================================================
+# OXIDATION RULES (preventing $10/day burns)
+# ============================================================
+# These are hard rules enforced by the factory. Any config that
+# violates them should be flagged by AGY review.
+
+forbidden_patterns:
+  - pattern: "openai-codex.*in auxiliary"
+    why: "OAuth credentials cycling causes lockouts; aux tools must use flat-rate"
+    exception: "orchestrator only"
+  - pattern: "openrouter as primary"
+    why: "Pay-per-token at $0.15/1k adds up; use MiniMax flat-rate instead"
+    exception: "deepseek fallback chain when primary is openai-codex"
+  - pattern: "deepseek-v4-pro as primary"
+    why: "v4-pro costs more than v4-flash; v4-flash is sufficient for workers"
+    exception: "orchestrator only (Fred's preferred reasoning model)"
+  - pattern: "duplicate provider in fallback chain"
+    why: "Same provider twice doesn't add resilience; need different tier"
+    exception: "none"
+  - pattern: "provider name not in providers block"
+    why: "Reference to undefined provider; will fail at runtime"
+    exception: "none — fix immediately"
+  - pattern: "api_key: .* (hardcoded credentials)"
+    why: "Credentials leakage risk; config files are checked into git. Always use api_key_env."
+    exception: "none"
+  - pattern: "paid primary provider without fallback"
+    why: "Low resilience; paid credentials can expire or exceed rate limits. Always provide a flat-rate/free fallback."
+    exception: "none"
+  - pattern: "cron worker missing aot-agent-coordination"
+    why: "Worker runs without AOT brand voice, workspace layout, or navigation rules."
+    exception: "non-AOT profiles"
+  - pattern: "gemini-.*-pro as worker primary/default"
+    why: "Gemini Pro models are rate-limited or expensive; use MiniMax-M2.7-highspeed or Gemini Flash instead."
+    exception: "none"
+  - pattern: "/home/ubuntu/.* in profile config"
+    why: "Hardcoded home directory prevents portability to other hosts. Use relative paths or home-relative path ~/ or environment variables."
+    exception: "none"
+  - pattern: "no timeout in network/http requests"
+    why: "Network requests without a timeout parameter can hang indefinitely, deadlocking workers."
+    exception: "none"
+  - pattern: "direct sys.exit() in imported module"
+    why: "Calling exit directly inside library or helper modules causes the parent task or CLI process to unexpectedly terminate. Only main entrypoints should exit."
+    exception: "none"
+
+# ============================================================
+# REVISION HISTORY
+# ============================================================
+revisions:
+  - version: 1.0.1
+    date: 2026-06-17
+    changes:
+      - "Aligned model config and auxiliary config keys with actual Hermes schema (fallback_providers, provider, default, extra_body)"
+      - "Added activation rules for security alerts (banned commands) and worker stalls"
+      - "Added forbidden patterns for hardcoded API keys, paid models without fallbacks, and missing brand voice coordination"
+      - "Resolved init script profile home directory creation bug, replaced rm -rf with a safe mv backup in Step 5"
+      - "Added activation rules for expired/missing AGY and Linear OAuth tokens"
+      - "Added forbidden patterns for Gemini Pro worker defaults and hardcoded home directory paths"
+    author: "AGY (reviewer)"
+    reviewer: "AGY (GRO-1892 review & approval)"
+  - version: 1.0.0
+    date: 2026-06-16
+    changes:
+      - "Initial fleet defaults after MiniMax migration"
+      - "Symlink pattern for AGY OAuth unification"
+      - "Auxiliary model routing (no more OAuth bleed)"
+      - "Cron cadence bumped: dispatcher 30m→2m, comment 5m→1m"
+      - "Activation contract for pulse + watchdog"
+    author: "Fred (orchestrator)"
+    reviewer: "AGY (pending GRO-1892)"

@@ -1,0 +1,23 @@
+# OCI-compatible sandbox image for Prismatic Engine plugin isolation
+FROM python:3.12-alpine
+
+LABEL org.opencontainers.image.source="https://github.com/mbgulden/prismatic-engine"
+LABEL org.opencontainers.image.description="Prismatic Sandbox Image — OCI compliant runner"
+LABEL org.opencontainers.image.licenses="AGPL-3.0-only"
+
+# Create a secure non-root user/group with explicit IDs
+RUN addgroup -g 10001 -S sandbox && \
+    adduser -u 10001 -S -G sandbox -h /home/sandbox -s /bin/sh sandbox
+
+# Install certificates and basic dependencies for python package managers
+RUN apk add --no-cache ca-certificates
+
+# Setup workspace
+WORKDIR /workspace
+RUN chown sandbox:sandbox /workspace
+
+# Switch to non-root user
+USER sandbox
+
+# Default execution
+CMD ["python", "-c", "import sys; print(f'Sandbox active. Python version: {sys.version}')"]
