@@ -307,6 +307,112 @@ async def complete_run(run_id: str, payload: dict[str, Any] | None = None) -> Re
     return {"status": "ok"}
 
 
+# ── Schedule Observatory API ──────────────────────────────────────────
+
+@app.get("/schedules")
+async def list_schedules() -> list[dict[str, Any]]:
+    """Return all observed schedules across providers."""
+    from prismatic.schedules import get_all_schedules
+    return [s.to_dict() for s in get_all_schedules()]
+
+
+@app.post("/schedules/{schedule_id:path}/mutate")
+async def mutate_schedule(schedule_id: str, payload: dict[str, Any] = None) -> Response:
+    """Mutate a schedule with owner-aware validation policy checks."""
+    from prismatic.schedules import request_schedule_mutation, UnauthorizedMutationError
+    
+    payload = payload or {}
+    enabled = payload.get("enabled")
+    schedule_expr = payload.get("schedule_expr")
+    
+    try:
+        result = request_schedule_mutation(
+            schedule_id=schedule_id,
+            enabled=enabled,
+            schedule_expr=schedule_expr
+        )
+        # Emit schedule.updated event
+        from prismatic.gateway.event_bus import get_event_bus
+        bus = get_event_bus()
+        event = {
+            "event_id": f"event-{int(time.time())}",
+            "event_type": "schedule.updated",
+            "schedule_id": schedule_id,
+            "owner": schedule_id.split(":")[0],
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "payload": {
+                "updates": {"enabled": enabled, "schedule_expr": schedule_expr},
+                "result": result
+            }
+        }
+        # Push event to EventBus if running
+        try:
+            bus.publish(event)
+        except Exception:
+            pass
+            
+        return Response(
+            content=json.dumps(result),
+            media_type="application/json"
+        )
+    except UnauthorizedMutationError as e:
+        return Response(
+            status_code=403,
+            content=json.dumps({"error": str(e)}),
+            media_type="application/json"
+        )
+    except FileNotFoundError as e:
+        return Response(
+            status_code=404,
+            content=json.dumps({"error": str(e)}),
+            media_type="application/json"
+        )
+    except Exception as e:
+        return Response(
+            status_code=500,
+            content=json.dumps({"error": str(e)}),
+            media_type="application/json"
+        )
+
+
+@app.post("/schedules/chat-command")
+async def handle_chat_schedule_command(payload: dict[str, Any]) -> Response:
+    """Process a natural language instruction to change a schedule."""
+    from prismatic.schedules import process_chat_schedule_request
+    message = payload.get("message", "")
+    res = process_chat_schedule_request(message)
+    if res["success"]:
+        # Emit schedule.updated event for simulation
+        try:
+            from prismatic.gateway.event_bus import get_event_bus
+            bus = get_event_bus()
+            event = {
+                "event_id": f"event-{int(time.time())}",
+                "event_type": "schedule.updated",
+                "schedule_id": res["schedule_id"],
+                "owner": res["schedule_id"].split(":")[0],
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "payload": {
+                    "updates": res["updates"],
+                    "note": "Triggered via conversational chat command"
+                }
+            }
+            bus.publish(event)
+        except Exception:
+            pass
+        return Response(
+            content=json.dumps(res),
+            media_type="application/json"
+        )
+    else:
+        return Response(
+            status_code=400,
+            content=json.dumps(res),
+            media_type="application/json"
+        )
+
+
+
 # ── Webhook Endpoints (stubs — full implementation in dedicated modules) ──
 
 

@@ -293,7 +293,7 @@ The first-class Google lane should work before adding the rest of the world.
 - `jules-cli`: Jules CLI (jules.google.com) cloud review/implementation loop.
 - `google-antigravity-sdk`: media/asset/research layer where applicable.
 - `gcloud` / GCP / Vertex: optional cloud platform adapter.
-- GitHub: required for Jules cloud handoff because Jules sees remote repo state.
+- GitHub API: Programmatic connection via the GitHub API (verified via `prismatic doctor`) is a required first-class capability for the AGY + Jules workflow. It ensures that the autonomous implementation and review loops can create branches, open pull requests, retrieve diffs, fetch check statuses, and post review comments/decisions programmatically.
 
 ### AGY chat capability after Google attach
 

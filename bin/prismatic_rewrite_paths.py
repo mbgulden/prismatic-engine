@@ -15,7 +15,7 @@ For each detected path:
     link wasn't generated.
 
 Usage:
-  echo "See /home/ubuntu/work/foo.md" | prismatic-rewrite-paths
+  echo "See \$PRISMATIC_HOME/foo.md" | prismatic-rewrite-paths
   prismatic-rewrite-paths --in draft.md --out draft.rewrite.md
   cat reply.txt | prismatic-rewrite-paths --emit-links
   cat reply.txt | prismatic-rewrite-paths --json   # for testing

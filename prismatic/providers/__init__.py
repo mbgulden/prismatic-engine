@@ -9,8 +9,11 @@ from __future__ import annotations
 
 from . import signals
 from . import tasks
+from .github import GitHubProvider
 
 __all__ = [
     "signals",
     "tasks",
+    "GitHubProvider",
 ]
+

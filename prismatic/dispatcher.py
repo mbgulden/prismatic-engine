@@ -45,6 +45,11 @@ from .credit_policy_engine import (
     AGENT_PROVIDER_MAP,
 )
 from .telemetry import get_collector
+from .mode_switch import ModeSwitch, OrchestrationMode
+
+# ── Orchestration Mode Switch ─────────────────────────────────
+mode_switch = ModeSwitch(os.environ.get("PRISMATIC_ORCHESTRATION_MODE", "collaborative"))
+
 
 # ── IPC Bridge event emission (best-effort) ─────────────────────
 try:
@@ -588,6 +593,18 @@ def launch_agy(issue_id: str, task: str = "") -> subprocess.Popen | None:
     Returns:
         ``subprocess.Popen`` handle, or ``None`` if launch failed.
     """
+    # Verify GitHub API access is present for AGY workflow
+    from prismatic.providers.github import GitHubProvider
+    github_provider = GitHubProvider()
+    if not github_provider.has_credentials():
+        print(f"[dispatcher] ERROR: GitHub API connection missing. AGY workflow is BLOCKED for issue {issue_id}.")
+        print("  Remediation: Set GITHUB_TOKEN/GH_TOKEN or configure github.token in config.yaml.")
+        try:
+            add_comment(issue_id, "⚠️ **AGY workflow BLOCKED**: GitHub API connection is missing. Configure a token to resume.")
+        except Exception:
+            pass
+        return None
+
     if not os.path.exists(AGY_PATH):
         print(f"[dispatcher] AGY binary not found at {AGY_PATH}")
         return None
@@ -639,6 +656,18 @@ def launch_jules(issue_id: str, task: str = "") -> subprocess.Popen | None:
     Returns:
         ``subprocess.Popen`` handle, or ``None`` if launch failed.
     """
+    # Verify GitHub API access is present for Jules workflow
+    from prismatic.providers.github import GitHubProvider
+    github_provider = GitHubProvider()
+    if not github_provider.has_credentials():
+        print(f"[dispatcher] ERROR: GitHub API connection missing. Jules workflow is BLOCKED for issue {issue_id}.")
+        print("  Remediation: Set GITHUB_TOKEN/GH_TOKEN or configure github.token in config.yaml.")
+        try:
+            add_comment(issue_id, "⚠️ **Jules workflow BLOCKED**: GitHub API connection is missing. Configure a token to resume.")
+        except Exception:
+            pass
+        return None
+
     if not os.path.exists(JULES_PATH):
         print(f"[dispatcher] Jules binary not found at {JULES_PATH}")
         return None
@@ -937,6 +966,107 @@ def _parse_etime(etime_str: str) -> float | None:
         return None
 
 
+def _get_transition_states(agent_name: str) -> tuple[str, str]:
+    """Determine the from_state and to_state for a given agent launch."""
+    STATE_MAPPING = {
+        "fred": "decompose",
+        "kai": "dispatch",
+        "agy": "execute",
+        "jules": "review",
+        "codex": "integrate",
+    }
+    
+    # Target state
+    to_state = STATE_MAPPING.get(agent_name, agent_name)
+    
+    # Source state
+    from_agent = None
+    target_labels = {f"agent::{agent_name}", f"agent:{agent_name}"}
+    for name, cfg in AGENT_CONFIG.items():
+        nxt = cfg.get("next_label", "")
+        if nxt in target_labels:
+            from_agent = name
+            break
+            
+    from_state = STATE_MAPPING.get(from_agent, "decompose") if from_agent else "decompose"
+    return from_state, to_state
+
+
+def evaluate_transition_approval(
+    issue_id: str,
+    from_state: str,
+    to_state: str,
+    is_escalation: bool = False,
+    reason: str | None = None,
+) -> bool:
+    """Evaluate if a transition is approved by the mode switch or via user comments.
+    
+    Returns:
+        True if the transition is allowed to proceed, False if it is paused.
+    """
+    # 1. Check if the ModeSwitch allows it to auto-fire
+    if mode_switch.request_approval(from_state, to_state, is_escalation, reason):
+        return True
+        
+    # 2. If it requires approval, fetch the last 10 comments to check for approval or previous comments
+    query = """
+    query IssueComments($issueId: String!) {
+        issue(id: $issueId) {
+            comments(first: 10, orderBy: createdAt, includeArchived: false) {
+                nodes {
+                    body
+                }
+            }
+        }
+    }
+    """
+    comments = []
+    try:
+        data = gql(query, {"issueId": issue_id})
+        comments = data.get("issue", {}).get("comments", {}).get("nodes", [])
+    except Exception as exc:
+        print(f"[dispatcher] Error fetching comments: {exc}")
+        
+    # Check if any comment contains /approve
+    has_approval = False
+    for comment in comments:
+        body = comment.get("body", "")
+        if "/approve" in body.lower():
+            has_approval = True
+            break
+            
+    if has_approval:
+        # Clear/approve in the ModeSwitch instance too
+        mode_switch.approve_transition(from_state, to_state)
+        print(f"[dispatcher] Transition {from_state} -> {to_state} approved via comment for issue {issue_id}")
+        return True
+        
+    # Check if we already posted a pause comment
+    pause_msg = f"Transition paused from **{from_state}** to **{to_state}**"
+    already_commented = False
+    for comment in comments:
+        body = comment.get("body", "")
+        if pause_msg in body:
+            already_commented = True
+            break
+            
+    if not already_commented:
+        try:
+            mode_desc = mode_switch.mode.value
+            esc_str = " (Escalation)" if is_escalation else ""
+            add_comment(
+                issue_id,
+                f"⏸️ **Transition paused** from **{from_state}** to **{to_state}**{esc_str} "
+                f"in **{mode_desc}** mode.\n\n"
+                f"Please reply with `/approve` to resume orchestration."
+            )
+            print(f"[dispatcher] Posted transition pause comment for {from_state} -> {to_state} on issue {issue_id}")
+        except Exception as exc:
+            print(f"[dispatcher] Error posting pause comment: {exc}")
+            
+    return False
+
+
 def recover_stalled_agy(
     max_retries: int = 3,
     escalate_to: str = "fred",
@@ -982,13 +1112,18 @@ def recover_stalled_agy(
 
             # Update or increment cycle count
             cursor.execute(
-                "SELECT cycle_count FROM agy_stall_tracker WHERE issue_id = ?",
+                "SELECT cycle_count, escalated FROM agy_stall_tracker WHERE issue_id = ?",
                 (issue_id,),
             )
             row = cursor.fetchone()
 
+            is_already_escalated = False
             if row:
-                cycle_count = row[0] + 1
+                cycle_count = row[0]
+                if row[1]:
+                    is_already_escalated = True
+                else:
+                    cycle_count += 1
             else:
                 cycle_count = 1
 
@@ -996,13 +1131,32 @@ def recover_stalled_agy(
                 """
                 INSERT OR REPLACE INTO agy_stall_tracker
                     (issue_id, cycle_count, last_seen, escalated)
-                VALUES (?, ?, ?, 0)
+                VALUES (?, ?, ?, ?)
                 """,
-                (issue_id, cycle_count, datetime.now(timezone.utc).isoformat()),
+                (issue_id, cycle_count, datetime.now(timezone.utc).isoformat(), 1 if is_already_escalated else 0),
             )
             conn.commit()
 
             if cycle_count >= max_retries:
+                # Check approval for the escalation transition
+                from_state = "execute"
+                to_state = escalate_to
+                if not evaluate_transition_approval(
+                    issue_id=issue_id,
+                    from_state=from_state,
+                    to_state=to_state,
+                    is_escalation=True,
+                    reason=f"AGY stalled after {max_retries} cycles"
+                ):
+                    # Transition is paused, do not transition label yet!
+                    # Mark as escalated in DB to track it, but don't change label or signal launcher yet
+                    cursor.execute(
+                        "UPDATE agy_stall_tracker SET escalated = 1 WHERE issue_id = ?",
+                        (issue_id,),
+                    )
+                    conn.commit()
+                    continue
+
                 # Escalate — kill AGY and transition to escalate_to agent
                 cleanup_stale_agy(max_age_minutes=0)  # Kill all AGY processes
 
@@ -1020,7 +1174,7 @@ def recover_stalled_agy(
                     f"Escalating to **{escalate_to}**.",
                 )
 
-                # Mark as escalated
+                # Mark as escalated in DB
                 cursor.execute(
                     "UPDATE agy_stall_tracker SET escalated = 1 WHERE issue_id = ?",
                     (issue_id,),
@@ -1504,6 +1658,36 @@ def dispatch_once(
             if not launcher:
                 continue
 
+            # ── Orchestration Mode Switch Gate ─────────────────────
+            from_state, to_state = _get_transition_states(agent_name)
+            is_escalation = False
+            try:
+                # Check if this issue is flagged as escalated/stalled in database
+                cursor = dedup._conn.cursor()
+                cursor.execute(
+                    "SELECT escalated FROM agy_stall_tracker WHERE issue_id = ?",
+                    (issue_id,),
+                )
+                row = cursor.fetchone()
+                if isinstance(row, (tuple, list)) and row and row[0]:
+                    is_escalation = True
+            except Exception:
+                pass
+
+            # If AGY has stalled and is escalated/pending approval, do not relaunch it!
+            if agent_name == "agy" and is_escalation:
+                continue
+
+            if not evaluate_transition_approval(
+                issue_id=issue_id,
+                from_state=from_state,
+                to_state=to_state,
+                is_escalation=is_escalation,
+                reason="Agent launch transition"
+            ):
+                # Transition is paused, skip launching agent
+                continue
+
             # ── Credit policy enforcement ───────────────────────────
             label = f"agent:{agent_name}" if not agent_name.startswith("agent:") else agent_name
             decision = evaluate_agent_launch(
@@ -1654,6 +1838,7 @@ def main_loop(
     print(f"[dispatcher] TEAM_ID={TEAM_ID}")
     print(f"[dispatcher] Poll interval={interval}s")
     print(f"[dispatcher] State DB={DEFAULT_DB_PATH}")
+    print(f"[dispatcher] Orchestration Mode={mode_switch.mode.value}")
     print()
 
     dedup = EventRouterDedup()
@@ -1822,6 +2007,160 @@ def cmd_billing_report(args: Any) -> None:
         print(f"{'='*70}\n")
 
 
+def cmd_doctor(args: Any) -> int:
+    """Run capability status and connection check diagnostics."""
+    print("=========================================================")
+    print("Prismatic Engine — Capability Status & Diagnostics (Doctor)")
+    print("=========================================================\n")
+
+    # 1. System Info
+    print(f"[System] Python version: {sys.version.split()[0]}")
+    try:
+        res = subprocess.run(["git", "--version"], capture_output=True, text=True, check=False)
+        git_ver = res.stdout.strip() if res.returncode == 0 else "Not found"
+    except Exception:
+        git_ver = "Error executing"
+    print(f"[System] Git version: {git_ver}")
+
+    try:
+        res = subprocess.run(["gh", "--version"], capture_output=True, text=True, check=False)
+        gh_ver = res.stdout.splitlines()[0] if (res.returncode == 0 and res.stdout) else "Not found"
+    except Exception:
+        gh_ver = "Not found"
+    print(f"[System] gh CLI version: {gh_ver}")
+    print()
+
+    # 2. Config & DB
+    prismatic_home = Path(os.environ.get("PRISMATIC_HOME", os.path.expanduser("~")))
+    config_dir = prismatic_home / ".prismatic"
+    user_config_path = config_dir / "config.yaml"
+    db_path = config_dir / "db" / "event_router.db"
+
+    print(f"[Config] PRISMATIC_HOME: {prismatic_home}")
+    print(f"[Config] User Config path: {user_config_path} ({'exists' if user_config_path.exists() else 'missing'})")
+    print(f"[Config] Database path: {db_path} ({'exists' if db_path.exists() else 'missing'})")
+    print()
+
+    # 3. Check specific provider or all
+    provider_to_check = getattr(args, "provider", None)
+
+    if not provider_to_check or provider_to_check.lower() == "github":
+        print("[GitHub] Verifying GitHub API Connection...")
+        from prismatic.providers.github import GitHubProvider
+        provider = GitHubProvider()
+
+        cred_source = "Not found"
+        if os.environ.get("GITHUB_TOKEN"):
+            cred_source = "GITHUB_TOKEN env var"
+        elif os.environ.get("GH_TOKEN"):
+            cred_source = "GH_TOKEN env var"
+        elif os.environ.get("PRISMATIC_GITHUB_TOKEN"):
+            cred_source = "PRISMATIC_GITHUB_TOKEN env var"
+        elif user_config_path.exists():
+            try:
+                import yaml
+                with open(user_config_path) as f:
+                    cfg = yaml.safe_load(f) or {}
+                    if cfg.get("github", {}).get("token"):
+                        cred_source = "config.yaml (github.token)"
+            except Exception:
+                pass
+        
+        if cred_source == "Not found":
+            try:
+                res = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True, check=False)
+                if res.returncode == 0 and res.stdout.strip():
+                    cred_source = "gh CLI authentication"
+            except Exception:
+                pass
+
+        print(f"  Credential Source: {cred_source}")
+        if not provider.has_credentials():
+            print("  Status: ✗ DISCONNECTED (No token discovered)")
+            print("  Remediation: Please export GITHUB_TOKEN or set github.token in config.yaml.")
+            print("  Workflow Impact: AGY/Jules CLI workflow is BLOCKED.")
+            if provider_to_check:
+                return 1
+        else:
+            success, user_info, scopes = provider.verify_auth()
+            if success:
+                print(f"  Status: ✓ CONNECTED")
+                print(f"  API User: @{user_info.get('login')} ({user_info.get('name') or 'N/A'})")
+                print(f"  Available Scopes: {', '.join(scopes) if scopes else 'none'}")
+                
+                required_scopes = {"repo"}
+                missing_scopes = required_scopes - set(scopes)
+                if missing_scopes:
+                    print(f"  Warning: Missing recommended scopes: {', '.join(missing_scopes)}")
+                    print("  Remediation: Update GITHUB_TOKEN to include 'repo' scope for PR read/write capabilities.")
+                else:
+                    print("  Token Scopes: ✓ SUFFICIENT for AGY + Jules workflow")
+            else:
+                print(f"  Status: ✗ API AUTHENTICATION FAILED")
+                print(f"  Error Detail: {user_info.get('error')}")
+                if "detail" in user_info:
+                    print(f"  API Message: {user_info['detail'].get('message')}")
+                print("  Workflow Impact: AGY/Jules CLI workflow is BLOCKED.")
+                if provider_to_check:
+                    return 1
+
+            # Target Repository Access
+            target_repo = provider.repo
+            print(f"  Target Repository: {target_repo or 'Not specified'}")
+            if not target_repo:
+                print("  Repo Access: ✗ NOT CONFIGURED (No repo target discovered)")
+                print("  Remediation: Set GITHUB_REPOSITORY env or run in a repository with remote origin configured.")
+            else:
+                ok_access, repo_info = provider.verify_repo_access(target_repo)
+                if ok_access:
+                    permissions = repo_info.get("permissions", {})
+                    p_str = f"push={permissions.get('push', False)}, pull={permissions.get('pull', False)}"
+                    print(f"  Repo Access: ✓ VERIFIED ({p_str})")
+                else:
+                    print(f"  Repo Access: ✗ FAILED to read repository info")
+                    print(f"  Error Detail: {repo_info.get('error')}")
+                    if "detail" in repo_info:
+                        print(f"  API Message: {repo_info['detail'].get('message')}")
+                    print("  Workflow Impact: Cannot target repository.")
+
+    if not provider_to_check or provider_to_check.lower() == "linear":
+        print("\n[Linear] Verifying Linear API Connection...")
+        linear_token = os.environ.get("LINEAR_API_KEY", "")
+        if not linear_token:
+            print("  Status: ✗ DISCONNECTED (LINEAR_API_KEY env var is missing)")
+        else:
+            from prismatic.providers.tasks.linear import LinearTaskProvider
+            try:
+                linear_p = LinearTaskProvider()
+                if linear_p._api_key:
+                    print("  Status: ✓ CONNECTED (LINEAR_API_KEY set)")
+                else:
+                    print("  Status: ✗ DISCONNECTED (Failed to initialize)")
+            except Exception as exc:
+                print(f"  Status: ✗ FAILED to connect: {exc}")
+
+    # 4. Capability Registry Status
+    print("\n[Capabilities] Verifying registered capabilities...")
+    from prismatic.capabilities import registry
+    reports = []
+    for cap_name in ["linear", "vcs.github", "agy", "jules", "telegram"]:
+        cap = registry.get(cap_name)
+        if cap:
+            ok, msg = cap.check_status()
+            status_str = "ok" if ok else f"error ({msg})"
+            print(f"  {cap_name}:{status_str}")
+            reports.append(f"{cap_name}:{status_str}")
+        else:
+            print(f"  {cap_name}:missing_registry")
+            reports.append(f"{cap_name}:missing_registry")
+    
+    # Comma-separated report line to strictly match the requested text format
+    print(f"\nReports: {', '.join(reports)}")
+
+    print("\nDiagnostics complete.")
+    return 0
+
+
 def main() -> None:
     """Entry point: parse CLI arguments and start the dispatcher.
 
@@ -1902,6 +2241,15 @@ def main() -> None:
     # ── Skills Subcommand ─────────────────────────────────────
     subparsers.add_parser("skills", help="Skill marketplace subcommands (run 'skills --help' for details)")
 
+    # ── Doctor Subcommand ─────────────────────────────────────
+    doctor_parser = subparsers.add_parser("doctor", help="Verify system health, capabilities, and provider connections")
+    doctor_parser.add_argument(
+        "--provider",
+        type=str,
+        default=None,
+        help="Check a specific provider (e.g. 'github', 'linear')",
+    )
+
     # ── Help / No Command ─────────────────────────────────────
     if len(sys.argv) == 1:
         parser.print_help()
@@ -1918,6 +2266,8 @@ def main() -> None:
         init_config(force=args.force)
     elif args.command == "billing-report":
         cmd_billing_report(args)
+    elif args.command == "doctor":
+        sys.exit(cmd_doctor(args))
     elif args.command == "serve":
         if args.setup_pipelines:
             issues = setup_pipeline_issues()
@@ -1927,7 +2277,7 @@ def main() -> None:
     else:
         # Default fallback
         if args.command is None:
-            print("Please specify a command: serve, init, or skills.")
+            print("Please specify a command: serve, init, doctor, or skills.")
             parser.print_help()
 
 

@@ -263,3 +263,73 @@ def format_pipeline_context(chain: list[dict[str, Any]]) -> str:
         )
 
     return "\n" + "\n".join(lines) + "\n"
+
+
+def score_agent(
+    agent_name: str,
+    agent_config: dict[str, Any],
+    task_metadata: dict[str, Any],
+) -> float:
+    """Evaluate if an agent is eligible for a task and return a float score.
+
+    Args:
+        agent_name: Name of the agent.
+        agent_config: Dict of agent capabilities and requirements.
+        task_metadata: Dict describing the task constraints.
+
+    Returns:
+        Float score >= 0.0. 0.0 indicates the agent is ineligible.
+    """
+    # 1. Modality eligibility check
+    required_modalities = task_metadata.get("required_modalities", [])
+    supported_modalities = agent_config.get("supported_modalities", [])
+    supported_set = set(supported_modalities)
+    for modality in required_modalities:
+        if modality not in supported_set:
+            return 0.0
+
+    # 2. Base weight based on capability
+    capability = task_metadata.get("capability", "")
+    specialization_weights = agent_config.get("specialization_weights", {})
+    spec_weights_lower = {k.lower(): v for k, v in specialization_weights.items()}
+    base_score = spec_weights_lower.get(capability.lower(), 0.5)
+
+    # 3. Model preload bonus
+    required_model = task_metadata.get("required_model")
+    if required_model:
+        preloaded_models = [m.lower() for m in agent_config.get("vram_preload", [])]
+        if required_model.lower() in preloaded_models:
+            base_score += 0.3
+
+    return base_score
+
+
+def select_agent(
+    task_metadata: dict[str, Any],
+    registry: dict[str, Any],
+) -> tuple[str | None, dict[str, float]]:
+    """Select the best agent from a registry for a given task.
+
+    Args:
+        task_metadata: Dict describing the task constraints.
+        registry: Agent registry config.
+
+    Returns:
+        A tuple of (best_agent_name, scores_dict).
+        best_agent_name is None if no agent is eligible.
+        scores_dict maps agent names to their float scores (>0.0).
+    """
+    agents = registry.get("agents", {})
+    scores = {}
+    for name, config in agents.items():
+        score = score_agent(name, config, task_metadata)
+        if score > 0.0:
+            scores[name] = score
+
+    if not scores:
+        return None, {}
+
+    # Tie-breaking: sort by score descending, then by name ascending (alphabetically)
+    best_agent = min(scores.keys(), key=lambda name: (-scores[name], name))
+    return best_agent, scores
+
