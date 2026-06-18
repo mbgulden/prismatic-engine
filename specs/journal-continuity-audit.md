@@ -83,6 +83,28 @@ Example distinction:
 
 If identity evidence is missing, the finding status should be `blocked` with `recommended_action: verify identity mapping` rather than silently merging properties.
 
+## File Reference Resolution Rule (linkable Hermes artifacts)
+
+Any local file path Fred mentions in conversation must be reachable by Michael as a clickable, Access-protected Hermes URL — never a raw disk path and never a Telegram attachment waiting for follow-up.
+
+Standard path:
+
+- Sub-hostname: `https://files.growthwebdev.com`
+- Ingress: `files.growthwebdev.com -> http://127.0.0.1:9120` on tunnel `4a6097ff-dfcb-45f2-a856-3d967a9c798b`.
+- Service: a profile-safe FastAPI artifact publisher (NOT the pipx-managed Hermes dashboard static dir).
+- Access: self-hosted app, 720h session, allow authenticated users.
+- Workspaces (allowlist, no arbitrary FS reads): `published/`, `hermes-research-reports/`, `prismatic-engine/`, `agentic-swarm-ops/`.
+- Safety: blocklist on names (`.env`, `.key`, `.pem`, `.db`, `.sqlite`, `credentials`, `id_rsa*`, `state.json`, `auth.json`).
+- CLI: `publish_artifact.py <source> [--workspace LABEL] [--rel REL]` copies the file/dir into the right workspace and prints the Cloudflare URL.
+
+When Fred mentions a local path in a Telegram reply, he must:
+
+1. Run `publish_artifact.py` (or equivalent).
+2. Replace the local path in the reply with the resulting `https://files.growthwebdev.com/raw/<workspace>/<rel>` link.
+3. If publish fails, say so explicitly and attach the file as a fallback.
+
+This replaces the old workaround of copying files into the Hermes dashboard's pipx-installed static directory, which is wiped on Hermes updates.
+
 ## Routing Rules
 
 - Machine-generated reports, recurring monitor outputs, and agent boilerplate go to Autobot or local logs.
