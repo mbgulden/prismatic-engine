@@ -332,6 +332,8 @@ The chat surface should preserve the useful capabilities of the AGY TUI rather t
 
 The differentiated product is not only “chat with AGY.” It is **chat with and control many AGY instances from your phone while they work autonomously from your task management system of choice**.
 
+For a detailed strategy and implementation roadmap on this phone-first control surface, see the [phone-first-command-surface.md](phone-first-command-surface.md) strategy document.
+
 ### Task management integration boundary
 
 Linear is the current task manager, but the engine should not hardcode Linear as the spine. Task management belongs behind adapter/plugin contracts:

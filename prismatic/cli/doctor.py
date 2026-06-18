@@ -129,6 +129,15 @@ def _print_linear_provider(provider: ProviderReport) -> None:
         print(f"  Status: ✗ FAILED to connect: {provider.error_detail}")
         return
     print("  Status: ✓ CONNECTED (LINEAR_API_KEY set)")
+    rate_info = getattr(provider, "rate_limit_info", None)
+    if rate_info:
+        remaining = rate_info.get("remaining", 2500.0)
+        limit = rate_info.get("limit", 2500)
+        consumed = rate_info.get("consumed", 0)
+        pct = rate_info.get("utilization_pct", 0.0)
+        print(f"  Rate Limit: {remaining:.1f}/{limit} tokens remaining ({consumed} consumed last hour, {pct:.2f}% utilization)")
+    else:
+        print("  Rate Limit: Unknown / not initialized")
 
 
 def _print_capabilities(report: DoctorReport) -> None:

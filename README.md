@@ -12,7 +12,7 @@
 4. [Portable Agent Skills (`portable-skills/`)](#portable-agent-skills-portable-skills)
 5. [Swarm Dashboard Plugins (`plugins/`)](#swarm-dashboard-plugins-plugins)
 6. [Governance, Reports & Research](#governance-reports--research)
-7. [Getting Started & Installation](#getting-started--installation)
+7. [Getting Started & Installation](#getting-started--installation) (Walkthrough: [First-User Journey](docs/first-user-journey.md))
 8. [License](#license)
 
 ---
@@ -133,6 +133,8 @@ To prevent agents from overwriting each other's work or pushing conflicts:
 ├── research/                         # Coordination landscape & research notes
 ├── specs/                            # Written architecture specifications
 ├── test-plans/                       # Quality assurance test plans and scripts
+├── docs/                             # Walkthroughs and onboarding documentation
+│   └── first-user-journey.md         # First-User Journey & Linear implementation trail
 └── scripts/                          # Development and sync helpers
 ```
 
@@ -142,8 +144,8 @@ To prevent agents from overwriting each other's work or pushing conflicts:
 
 These directories contain modular, reusable rule systems and markdown runbooks injected into agents' system prompts to enforce professional disciplines:
 
-* **[INSTALL.md](file:///home/ubuntu/work/prismatic-engine/portable-skills/INSTALL.md)**: Details how to copy/link these skills into live Hermes agent profile directories.
-* **[export.py](file:///home/ubuntu/work/prismatic-engine/portable-skills/export.py) / [export.sh](file:///home/ubuntu/work/prismatic-engine/portable-skills/export.sh)**: Automates bundling, checking, and exporting these directories.
+* **[INSTALL.md](portable-skills/INSTALL.md)**: Details how to copy/link these skills into live Hermes agent profile directories.
+* **[export.py](portable-skills/export.py) / [export.sh](portable-skills/export.sh)**: Automates bundling, checking, and exporting these directories.
 * **`autonomous-execution-discipline/`**: Guidelines for runner agents (like Ned) to independently parse errors, test code, and verify builds without prompting for human approval.
 * **`github-pr-workflow/`**: Git review, automated staging tests, PR audits, and conflict resolution protocols.
 * **`golden-thread/`**: Step-by-step verification methodology to ensure code does not just compile but solves the root problem.
@@ -181,8 +183,8 @@ A consolidated collection of 8 React/Webpack-based plugin extensions built for t
 
 The governance and research documents represent the engineering constraints and history behind the Prismatic Engine:
 
-* **[PRISMATIC_ENGINE.yaml](file:///home/ubuntu/work/prismatic-engine/PRISMATIC_ENGINE.yaml)**: Enforces agent profiles (Fred, Kai, AGY, Jules, Ned), their branch name prefixes (e.g. `execution/`, `design/`), and their read/write folder lanes.
-* **[SOUL.md](file:///home/ubuntu/work/prismatic-engine/SOUL.md)**: Describes the "manifestation of idea in reality" mantra. A strict guide on avoiding placeholders, completing tasks fully, and building features to be production-ready.
+* **[PRISMATIC_ENGINE.yaml](PRISMATIC_ENGINE.yaml)**: Enforces agent profiles (Fred, Kai, AGY, Jules, Ned), their branch name prefixes (e.g. `execution/`, `design/`), and their read/write folder lanes.
+* **[SOUL.md](SOUL.md)**: Describes the "manifestation of idea in reality" mantra. A strict guide on avoiding placeholders, completing tasks fully, and building features to be production-ready.
 * **`reports/agy-core-boundary-validation.md`**: Architectural audit outlining core dispatch mechanisms vs plugin structures.
 * **`reports/rubric-assessment-2026-06-11.md`**: Core evaluation score sheet checking swarm resilience, security, and performance.
 * **`specs/prismatic-engine-architecture-v1.md`**: The initial architecture specification covering coordinator loops, git hooks, and lock interfaces.
@@ -190,6 +192,8 @@ The governance and research documents represent the engineering constraints and 
 ---
 
 ## 🚀 Getting Started & Installation
+
+> 💡 **New to Prismatic Engine?** Follow our step-by-step **[First-User Journey Walkthrough](docs/first-user-journey.md)** to install, bootstrap, and run your first autonomous task in under five minutes.
 
 ### 1. Engine CLI Setup
 ```bash

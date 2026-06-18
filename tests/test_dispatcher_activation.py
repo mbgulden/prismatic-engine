@@ -177,6 +177,52 @@ class TestDispatcherActivation(unittest.TestCase):
         )
         self.assertTrue(any_remediation, "Expected a GitHub-related remediation comment")
 
+    @patch('prismatic.dispatcher.recover_stalled_agy')
+    @patch('prismatic.dispatcher.gql')
+    @patch('prismatic.providers.github.GitHubProvider')
+    @patch('prismatic.dispatcher.get_issues_with_label')
+    @patch('prismatic.dispatcher.AGENT_LAUNCHERS')
+    @patch('prismatic.dispatcher.EventRouterDedup')
+    @patch('prismatic.dispatcher.evaluate_agent_launch')
+    def test_dispatch_once_skips_when_linear_budget_exhausted(
+        self,
+        mock_evaluate,
+        mock_dedup_cls,
+        mock_launchers,
+        mock_get_issues,
+        mock_github_provider_cls,
+        mock_gql,
+        mock_recover_stalled,
+    ):
+        """Dispatcher skips dispatching if the linear budget is exhausted."""
+        mock_gql.side_effect = dispatcher.LinearBudgetExhaustedError("exceeded")
+
+        mock_dedup = mock_dedup_cls.return_value
+        mock_dedup.is_processed.return_value = False
+        mock_dedup._conn.cursor.return_value.fetchone.return_value = None
+
+        mock_evaluate.return_value.action = dispatcher.PolicyAction.ALLOW
+        mock_github_provider_cls.return_value.has_credentials.return_value = True
+
+        # When get_issues_with_label is called, it will call mock_gql which raises error,
+        # or we can mock get_issues_with_label to raise it directly. Let's do both by making
+        # mock_get_issues raise it.
+        mock_get_issues.side_effect = dispatcher.LinearBudgetExhaustedError("exceeded")
+
+        called_agents = []
+        def make_launcher(name):
+            def launcher(issue_id, title, **kwargs):
+                called_agents.append(name)
+                return True
+            return launcher
+        mock_launchers.get.side_effect = lambda name: make_launcher(name)
+
+        dispatcher.dispatch_once(mock_dedup, pipelines={"pipelines": {}})
+
+        # Since LinearBudgetExhaustedError is raised, the loop skips.
+        # It should NOT call the launcher for any agent.
+        self.assertEqual(len(called_agents), 0, "No agents should be dispatched when budget is exhausted")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -68,6 +68,7 @@ class ProviderReport:
     error_detail: str = ""
     api_message: str = ""
     remediation: str = ""
+    rate_limit_info: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -84,6 +85,7 @@ class ProviderReport:
             "error_detail": self.error_detail,
             "api_message": self.api_message,
             "remediation": self.remediation,
+            "rate_limit_info": self.rate_limit_info,
         }
 
 
@@ -266,6 +268,17 @@ def _probe_linear() -> ProviderReport:
         linear_p = LinearTaskProvider()
         if getattr(linear_p, "_api_key", None):
             report.status = "connected"
+            try:
+                from prismatic.linear.budget import linear_budget
+                util = linear_budget.get_current_utilization("prismatic.dispatcher")
+                report.rate_limit_info = {
+                    "remaining": util["current_tokens"],
+                    "limit": util["hourly_rate_limit"],
+                    "consumed": util["consumed_last_hour"],
+                    "utilization_pct": util["utilization_percentage"],
+                }
+            except Exception:
+                pass
         else:
             report.status = "disconnected"
             report.remediation = "LinearTaskProvider failed to initialize; check LINEAR_API_KEY."
