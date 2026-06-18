@@ -656,7 +656,7 @@ Result: `pytest tests/` → 146 passed, 0 failed.
 ### Open follow-ups (post-v0.1)
 
 - **GRO-1955** — Build AGY chat interface for Google AI Ultra capability attach
-  (additive: `chat.agy` capability + read-only gateway endpoints; in queue as **GRO-1969**)
+  (additive: `chat.agy` capability + read-only gateway endpoints; **landed in GRO-1969** with empty list contract in v0.1; mutation paths deferred to a separate GRO-1955 follow-up)
 - **GRO-1956** — Build Schedule Observatory for Prismatic, AGY, and Jules scheduled work
   (additive: real `agy` / `jules` schedule adapters with explicit fallback paths; in queue as **GRO-1970**)
 - **GRO-1957** — Add GitHub API connection layer for AGY + Jules CLI workflow

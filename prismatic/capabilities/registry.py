@@ -83,6 +83,20 @@ def check_schedule() -> Tuple[bool, str]:
     # SQLite/JSON schedule tracking is engine-local, default to ok
     return True, "ok"
 
+def check_chat_agy() -> Tuple[bool, str]:
+    """Check whether the AGY chat capability is reachable.
+
+    Delegates to ``ChatAGYCapability.check_status()`` so the registry
+    contract stays consistent with the live probe. We lazy-import the
+    capability module here to avoid an import cycle: chat_agy.py does
+    not import from registry, so this is the safe direction.
+    """
+    try:
+        from prismatic.capabilities.chat_agy import ChatAGYCapability
+        cap = ChatAGYCapability()
+        return cap.check_status()
+    except Exception as exc:
+        return False, f"chat.agy probe failed: {exc}"
 
 def check_artifact() -> Tuple[bool, str]:
     # Artifact publishing capability, default to ok
@@ -96,4 +110,5 @@ registry.register("agy", check_agy)
 registry.register("jules", check_jules)
 registry.register("telegram", check_telegram)
 registry.register("schedule", check_schedule)
+registry.register("chat.agy", check_chat_agy)
 registry.register("artifact", check_artifact)

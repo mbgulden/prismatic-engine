@@ -435,6 +435,52 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
 # ── CLI Entry Point ──────────────────────────────────────────────────
 
 
+# ── Chat Capability API (GRO-1955) ────────────────────────────────────
+# Read-only gateway endpoints for the chat.agy capability. The contract
+# is intentionally narrow: a list endpoint and a get-by-id endpoint.
+# Mutation paths (send, follow-up, transcript retrieval) are a
+# separate GRO-1955 follow-up issue. Adding a mutation endpoint here
+# would scope-creep; the additive half of GRO-1955 is read-only.
+
+@app.get("/chat/sessions")
+async def list_chat_sessions() -> list[dict[str, Any]]:
+    """Return the list of known AGY chat sessions.
+
+    v0.1 contract: returns an empty list until the AGY live data path
+    is wired. The wrapper uses the ``ChatAGYCapability`` so swapping
+    in the real adapter later requires no gateway change.
+    """
+    from prismatic.capabilities import ChatAGYCapability
+
+    cap = ChatAGYCapability()
+    return cap.list_sessions()
+
+
+@app.get("/chat/sessions/{session_id:path}")
+async def get_chat_session(session_id: str) -> dict[str, Any]:
+    """Return a single AGY chat session by id, or 404 if not found.
+
+    v0.1 contract: returns 404 for any id (no live data yet). When the
+    live path is wired, this endpoint will return the typed session
+    shape or a 404 with an honest "no live data" reason.
+    """
+    from fastapi import HTTPException
+    from prismatic.capabilities import ChatAGYCapability
+
+    cap = ChatAGYCapability()
+    session = cap.get_session(session_id)
+    if session is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "session_not_found",
+                "session_id": session_id,
+                "reason": "chat.agy live data path not yet wired (v0.1 returns empty list).",
+            },
+        )
+    return session
+
+
 def _create_run_store() -> AgentRunRecordStore | None:
     """Initialize run store (used by gRPC server)."""
     state_dir = os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state/")
