@@ -9,7 +9,7 @@ Contents
 --------
 * **contracts.py**  — path-boundary validation (``validate_path``)
 * **dispatcher.py** — polling event loop and task router (see also root ``prismatic/dispatcher.py``)
-* **locking.py**    — ``SwarmLockManager`` workspace concurrency mutexes
+* **locking.py**    — ``SwarmLockManager`` workspace concurrency mutexes (fully wired)
 * **registry.py**   — ``PluginLoader`` — scans, validates, loads plugins
 """
 
