@@ -137,9 +137,25 @@ Before marking a continuity audit complete:
 
 ## Portable Engine Integration Notes
 
-The current orchestrator implementation is profile-specific. To port into the public Prismatic Engine package later:
+Phase 1 kernel extraction is intentionally mechanical: preserve behavior, expose canonical `prismatic-*` CLIs, and leave any harness-specific scheduler/profile work as thin shims.
 
-- Extract the inventory builder into a config-driven module.
-- Keep Hermes paths, Telegram tokens, and Linear project IDs out of engine core.
-- Represent source roots, domain identity maps, and routing targets as config.
-- Keep cron registration outside core; engine code should expose runnable commands/functions.
+Canonical engine CLIs:
+
+- `prismatic-journal inventory --period YYYY-MM` — deterministic bounded source inventory.
+- `prismatic-journal monthly --period YYYY-MM` — create or reuse monthly control/audit Linear issues after writing inventory.
+- `prismatic-journal-snapshot [--force]` — structured journal event capture and compact inbox/index update.
+- `prismatic-linear-import --period <period>` — Linear import readiness check for a synthesis/import plan. Phase 1 is conservative and does not blindly create issues.
+- `prismatic-second-witness --issue GRO-NNNN --artifact /path/file` — process/artifact validator for agent output; validates disk artifacts, not just agent exit codes.
+
+Harness integration rules:
+
+- Cron registration, profile secrets, Telegram/Slack/Autobot routing, OAuth refresh, and dashboards stay in the harness layer.
+- Harness wrappers such as `monthly_journal_continuity_audit.py`, `journal_snapshot.py`, or `import_journal_continuity_plan.py` should be ≤3-line shims that `exec` the canonical Prismatic CLI.
+- Engine defaults use `PRISMATIC_*` environment variables. Harness-specific env vars may be read only as compatibility fallbacks at the boundary.
+- The validator must check required artifact existence (`test -s` semantics for files) before marking agent work Done. Exit code 0 alone is insufficient.
+
+Phase 2 candidates discovered by the canary:
+
+- Add `prismatic-inventory` for deterministic bulk enumeration before LLM classification.
+- Promote Linear issue creation/update into a provider interface so `prismatic-linear-import --execute` can safely dedupe and mutate.
+- Generalize journal source config into a portable `PRISMATIC_ENGINE.yaml` section for non-Hermes harnesses.

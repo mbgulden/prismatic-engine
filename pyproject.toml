@@ -44,6 +44,10 @@ prismatic-engine = "prismatic.dispatcher:main"
 prismatic-engine-skills = "prismatic.skills:cli_skills"
 prismatic-lock = "prismatic.lock:main"
 prismatic-admin = "prismatic.admin:main"
+prismatic-journal = "prismatic.journal:cli_journal"
+prismatic-journal-snapshot = "prismatic.journal:cli_journal_snapshot"
+prismatic-linear-import = "prismatic.journal:cli_linear_import"
+prismatic-second-witness = "prismatic.journal:cli_second_witness"
 
 [tool.setuptools.packages.find]
 include = ["prismatic*"]
