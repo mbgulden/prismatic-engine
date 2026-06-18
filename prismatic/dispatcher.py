@@ -575,7 +575,7 @@ def signal_kai(
     return result
 
 
-def launch_agy(issue_id: str, task: str = "") -> subprocess.Popen | None:
+def launch_agy(issue_id: str, task: str = "", **kwargs: Any) -> subprocess.Popen | None:
     """Launch the AGY CLI in headless mode for the given issue.
 
     The AGY process is started as a background subprocess with the
@@ -646,7 +646,7 @@ def launch_agy(issue_id: str, task: str = "") -> subprocess.Popen | None:
         return None
 
 
-def launch_jules(issue_id: str, task: str = "") -> subprocess.Popen | None:
+def launch_jules(issue_id: str, task: str = "", **kwargs: Any) -> subprocess.Popen | None:
     """Launch the Jules CLI for the given issue.
 
     Args:
@@ -691,7 +691,7 @@ def launch_jules(issue_id: str, task: str = "") -> subprocess.Popen | None:
         return None
 
 
-def launch_codex(issue_id: str, task: str = "") -> subprocess.Popen | None:
+def launch_codex(issue_id: str, task: str = "", **kwargs: Any) -> subprocess.Popen | None:
     """Launch the Codex CLI for the given issue.
 
     Args:
