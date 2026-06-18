@@ -136,7 +136,7 @@ This section lists the exact subtasks required to build the gaps separating our 
 * **Title:** Setup Unified CLI Wrapper (`prismatic`)
 * **Priority:** High
 * **Estimate:** 3 Story Points
-* **Description:** 
+* **Description:**
   Create a global python wrapper script/entrypoint named `prismatic` that unifies all command-line operations (e.g. `prismatic doctor`, `prismatic init`, `prismatic journal snapshot`) to replace the fragmented `prismatic-*` scripts in user-facing environments.
 * **Acceptance Criteria:**
   - [ ] Add `prismatic` to entry points in `pyproject.toml`.
