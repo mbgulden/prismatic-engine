@@ -252,7 +252,7 @@ python3 -c "from prismatic.providers.tasks.linear import LinearTaskProvider; p =
 **Goal:** Consolidate Linear API access and reduce queries in the main dispatcher.
 
 **Files:**
-*   `/home/ubuntu/.hermes/profiles/orchestrator/scripts/agent_dispatcher.py` (eventually decommissioned/replaced by `prismatic/dispatcher.py`)
+*   `<orchestrator-profile>/scripts/agent_dispatcher.py` (eventually decommissioned/replaced by `prismatic/dispatcher.py`)
 *   `prismatic/dispatcher.py`
 
 **Steps:**
@@ -307,7 +307,7 @@ for agent_name, config in AGENT_CONFIG.items():
 ```bash
 # Run the prismatic dispatcher, check logs for "Rate limit exceeded" or "Skipping" messages.
 # Observe the Linear API request count decrease significantly.
-/home/ubuntu/work/prismatic-engine/bin/prismatic-engine --once # (or in a loop for multiple cycles)
+./bin/prismatic-engine --once # (or in a loop for multiple cycles)
 sqlite3 ./prismatic_state/linear_metrics.db "SELECT agent_name, SUM(cost) FROM linear_requests WHERE agent_name LIKE 'dispatcher.%' GROUP BY agent_name"
 ```
 
@@ -318,8 +318,8 @@ sqlite3 ./prismatic_state/linear_metrics.db "SELECT agent_name, SUM(cost) FROM l
 **Goal:** Centralize dispatch and rate limit enforcement under the Prismatic Engine.
 
 **Files:**
-*   `/home/ubuntu/.hermes/profiles/orchestrator/cron/jobs.json`
-*   Various scripts in `/home/ubuntu/.hermes/profiles/orchestrator/scripts/`
+*   `<orchestrator-profile>/cron/jobs.json`
+*   Various scripts in `<orchestrator-profile>/scripts/`
 
 **Steps:**
 1.  **Decommission `agent_dispatcher.py`:** Remove the cron entry for `e2f1a3b4c5d6 Unified Agent Dispatcher` from `jobs.json`.
@@ -332,14 +332,14 @@ sqlite3 ./prismatic_state/linear_metrics.db "SELECT agent_name, SUM(cost) FROM l
 
 **Code Snippets (example for decommissioning):**
 ```json
-// In /home/ubuntu/.hermes/profiles/orchestrator/cron/jobs.json
+// In <orchestrator-profile>/cron/jobs.json
 // Remove the entire job entry for ID "e2f1a3b4c5d6"
 ```
 
 **Verification:**
 ```bash
 # After modifying jobs.json:
-cat /home/ubuntu/.hermes/profiles/orchestrator/cron/jobs.json | grep "e2f1a3b4c5d6"
+grep "e2f1a3b4c5d6" <orchestrator-profile>/cron/jobs.json
 # This should return nothing
 
 # For each integrated script, verify its Linear API calls now pass through `linear_budget.check_and_consume`.
@@ -394,6 +394,25 @@ def run_linear_budget_doctor(args):
 
 **Verification:**
 ```bash
-/home/ubuntu/work/prismatic-engine/bin/prismatic-engine doctor linear-budget
+./bin/prismatic-engine doctor linear-budget
 # Expected output: a formatted table showing current Linear API budget status per agent.
 ```
+
+---
+
+## Rollout & Landing Status (GRO-1974 Update)
+
+The following components have successfully landed in the current commit:
+
+1. **LinearBudget Module:** Implemented `LinearBudget` class in `prismatic/linear/budget.py` to enforce a token-bucket rate limiter backed by SQLite.
+2. **Dispatcher Integration:** Integrated `LinearBudget.check_and_consume()` checks inside the core GraphQL `gql()` transport in `prismatic/dispatcher.py`. Any exhausted budget triggers a deduped warning (at most once every 5 minutes per agent context) and raises a `LinearBudgetExhaustedError`, allowing the dispatcher loop to gracefully skip processing for that agent.
+3. **Doctor CLI Updates:** Extended the Pure doctor module (`prismatic/doctor.py`) and presentation layer (`prismatic/cli/doctor.py`) to output Linear rate limit utilization details when the Linear API is queried. Added corresponding test coverage to verify this output.
+
+### Remaining Work for Green/Blue Rollout
+
+To complete the optimization plan, the following tasks are scheduled for the next phase of rollout:
+
+* **Task 2 & 4 (LinearMetrics):** Centralized request metrics database creation and integration for granular observability.
+* **Task 5 & 6 (Batched Provider Integration):** Migrate all legacy inline `gql()` calls in `prismatic/dispatcher.py` to `LinearTaskProvider` using the new batched `get_issues_by_labels` method to reduce primary Linear API overhead.
+* **Task 7 (Cron Decommissioning):** Clean up the legacy orchestrator cron jobs (e.g. `agent_dispatcher.py`) and replace them with native, rate-limited Prismatic Engine schedulers.
+* **Task 8 (Linear-Budget subcommand):** Implement detailed `doctor linear-budget` CLI reporting.

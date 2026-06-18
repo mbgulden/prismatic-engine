@@ -238,7 +238,11 @@ class TestDoctorCliHandler(unittest.TestCase):
             ),
             providers=[
                 ProviderReport(name="github", status="connected", user="alice"),
-                ProviderReport(name="linear", status="connected"),
+                ProviderReport(
+                    name="linear",
+                    status="connected",
+                    rate_limit_info={"remaining": 2490.0, "limit": 2500, "consumed": 10, "utilization_pct": 0.40}
+                ),
             ],
             capabilities=[
                 CapabilityReport(name="linear", status="ok"),
@@ -261,6 +265,7 @@ class TestDoctorCliHandler(unittest.TestCase):
             self.assertIn("[Config]", output)
             self.assertIn("[GitHub]", output)
             self.assertIn("[Linear]", output)
+            self.assertIn("Rate Limit:", output)
             self.assertIn("[Capabilities]", output)
             self.assertIn("Reports:", output)
             self.assertIn("Diagnostics complete.", output)

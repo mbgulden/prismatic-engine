@@ -154,6 +154,13 @@ def _linear_api_key() -> str:
     return key
 
 
+_EXHAUSTED_WARNINGS: dict[str, float] = {}
+
+class LinearBudgetExhaustedError(RuntimeError):
+    """Raised when Linear API rate limit budget is exhausted."""
+    pass
+
+
 def gql(query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
     """Execute a Linear GraphQL query or mutation.
 
@@ -169,10 +176,20 @@ def gql(query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
         The ``data`` dict from the response.
 
     Raises:
+        LinearBudgetExhaustedError: If rate limit budget is exhausted.
         RuntimeError: On HTTP or GraphQL errors.
     """
     import urllib.request
     import urllib.error
+    from .linear.budget import linear_budget
+
+    agent_name = os.environ.get("PRISMATIC_CURRENT_AGENT_NAME", "prismatic.dispatcher")
+    if not linear_budget.check_and_consume(agent_name, cost=1):
+        now = time.time()
+        if agent_name not in _EXHAUSTED_WARNINGS or now - _EXHAUSTED_WARNINGS[agent_name] > 300:
+            _EXHAUSTED_WARNINGS[agent_name] = now
+            print(f"[dispatcher] 🚫 Linear API rate limit budget exhausted for {agent_name}. Skipping/warning.")
+        raise LinearBudgetExhaustedError(f"Linear API rate limit budget exhausted for {agent_name}")
 
     api_key = _linear_api_key()
     payload = json.dumps({
@@ -1110,6 +1127,7 @@ def recover_stalled_agy(
     )
 
     try:
+        os.environ["PRISMATIC_CURRENT_AGENT_NAME"] = "prismatic.dispatcher"
         # Find issues with agent::agy label that have been seen multiple cycles
         issues = get_issues_with_label("agent::agy")
 
@@ -1207,6 +1225,8 @@ def recover_stalled_agy(
                     f"stalled (cycle {cycle_count}/{max_retries})"
                 )
 
+    except LinearBudgetExhaustedError as exc:
+        print(f"[dispatcher] Stalled AGY recovery aborted: {exc}")
     except Exception as exc:
         print(f"[dispatcher] recover_stalled_agy failed: {exc}")
     finally:
@@ -1454,117 +1474,123 @@ def detect_origin_completions(
     Returns:
         Number of origin signals sent.
     """
-    signalled = 0
-
-    # 1. Snapshot: record current labels for issues the dispatcher
-    #    has seen (builds label history over cycles)
-    agent_labels = [
-        f"agent::{name}" for name in AGENT_CONFIG
-    ] + [
-        # Also track single-colon variants (actual Linear label names)
-        f"agent:{name}" for name in AGENT_CONFIG
-    ]
-    for label_name in agent_labels:
-        try:
-            issues = get_issues_with_label(label_name, max_issues=50)
-        except Exception:
-            continue
-        for issue in issues:
-            try:
-                dedup.snapshot_labels(
-                    issue["id"],
-                    issue.get("labels", []),
-                    cycle_id,
-                )
-            except Exception:
-                pass
-
-    # 2. Query agent:fred issues (the ACTUAL Linear label format)
     try:
-        fred_issues = get_issues_with_label("agent:fred", max_issues=100)
-    except Exception:
-        return 0
-
-    # 3. Detect origin→reviewer→fred transitions
-    for issue in fred_issues:
-        issue_id = issue["id"]
-        identifier = issue.get("identifier", issue_id)
-        current_labels = issue.get("labels", [])
-
-        # Skip if still has agent:agy (transition not complete)
-        if "agent:agy" in current_labels:
-            continue
-
-        # Build the dedup key for this specific detection
-        dedup_key = f"origin_complete:{identifier}"
-
-        # Skip if already signalled this cycle
-        if dedup.is_processed(issue_id, dedup_key, cycle_id):
-            continue
-
-        # Determine the origin agent: look through all configured agents
-        # for one that both (a) previously appeared on this issue and
-        # (b) is NOT the current reviewer (agy) or the terminal (fred)
-        origin_agent = None
-        for agent_name in AGENT_CONFIG:
-            label = f"agent:{agent_name}"
-            if label in ("agent:agy", "agent:fred", "agent:done"):
+        os.environ["PRISMATIC_CURRENT_AGENT_NAME"] = "prismatic.dispatcher"
+        # 1. Snapshot: record current labels for issues the dispatcher
+        #    has seen (builds label history over cycles)
+        agent_labels = [
+            f"agent::{name}" for name in AGENT_CONFIG
+        ] + [
+            # Also track single-colon variants (actual Linear label names)
+            f"agent:{name}" for name in AGENT_CONFIG
+        ]
+        for label_name in agent_labels:
+            try:
+                issues = get_issues_with_label(label_name, max_issues=50)
+            except LinearBudgetExhaustedError:
+                raise
+            except Exception:
                 continue
-            if dedup.had_label(issue_id, label):
-                # Also require that agent:agy was in the history
-                # (confirms this was a review, not a direct dispatch)
-                if dedup.had_label(issue_id, "agent:agy"):
-                    origin_agent = agent_name
-                    break
+            for issue in issues:
+                try:
+                    dedup.snapshot_labels(
+                        issue["id"],
+                        issue.get("labels", []),
+                        cycle_id,
+                    )
+                except Exception:
+                    pass
 
-        if not origin_agent:
-            continue
+        # 2. Query agent:fred issues (the ACTUAL Linear label format)
+        try:
+            fred_issues = get_issues_with_label("agent:fred", max_issues=100)
+        except LinearBudgetExhaustedError:
+            raise
+        except Exception:
+            return 0
 
-        # Record snapshot for current labels
-        dedup.snapshot_labels(issue_id, current_labels, cycle_id)
+        # 3. Detect origin→reviewer→fred transitions
+        for issue in fred_issues:
+            issue_id = issue["id"]
+            identifier = issue.get("identifier", issue_id)
+            current_labels = issue.get("labels", [])
 
-        # 4. Signal the origin agent
-        provider = _get_signal_provider()
-        ok = provider.send_work(
-            target=origin_agent,
-            issue_id=identifier,
-            title=(
-                f"Review complete: {issue.get('title', identifier)}"
-            ),
-            priority=2,  # High priority — origin should act on this
-            signal_type="review_complete",
-            origin_agent=origin_agent,
-        )
-        if ok:
-            dedup.mark_processed(issue_id, dedup_key, cycle_id)
-            signalled += 1
-            print(
-                f"[dispatcher] 🔔 {origin_agent.capitalize()} signalled "
-                f"(review complete): {identifier}"
+            # Skip if still has agent:agy (transition not complete)
+            if "agent:agy" in current_labels:
+                continue
+
+            # Build the dedup key for this specific detection
+            dedup_key = f"origin_complete:{identifier}"
+
+            # Skip if already signalled this cycle
+            if dedup.is_processed(issue_id, dedup_key, cycle_id):
+                continue
+
+            # Determine the origin agent: look through all configured agents
+            # for one that both (a) previously appeared on this issue and
+            # (b) is NOT the current reviewer (agy) or the terminal (fred)
+            origin_agent = None
+            for agent_name in AGENT_CONFIG:
+                label = f"agent:{agent_name}"
+                if label in ("agent:agy", "agent:fred", "agent:done"):
+                    continue
+                if dedup.had_label(issue_id, label):
+                    # Also require that agent:agy was in the history
+                    # (confirms this was a review, not a direct dispatch)
+                    if dedup.had_label(issue_id, "agent:agy"):
+                        origin_agent = agent_name
+                        break
+
+            if not origin_agent:
+                continue
+
+            # Record snapshot for current labels
+            dedup.snapshot_labels(issue_id, current_labels, cycle_id)
+
+            # 4. Signal the origin agent
+            provider = _get_signal_provider()
+            ok = provider.send_work(
+                target=origin_agent,
+                issue_id=identifier,
+                title=(
+                    f"Review complete: {issue.get('title', identifier)}"
+                ),
+                priority=2,  # High priority — origin should act on this
+                signal_type="review_complete",
+                origin_agent=origin_agent,
             )
-            # ── Telemetry: record validation (review verdict) ──────
-            try:
-                collector = get_collector()
-                collector.record_validation(
-                    run_id=f"review-{origin_agent}-{identifier}",
-                    agent="agy",
-                    event_type="review_verdict",
-                    total=1,
-                    passed=1,
-                    failed=0,
+            if ok:
+                dedup.mark_processed(issue_id, dedup_key, cycle_id)
+                signalled += 1
+                print(
+                    f"[dispatcher] 🔔 {origin_agent.capitalize()} signalled "
+                    f"(review complete): {identifier}"
                 )
-            except Exception:
-                pass  # Telemetry is best-effort
-            # ── End telemetry ───────────────────────────────────────
-            # Post a brief comment
-            try:
-                add_comment(
-                    issue_id,
-                    f"🔔 **Review complete** — **{origin_agent}** has been "
-                    f"notified to review the results.",
-                )
-            except Exception:
-                pass
+                # ── Telemetry: record validation (review verdict) ──────
+                try:
+                    collector = get_collector()
+                    collector.record_validation(
+                        run_id=f"review-{origin_agent}-{identifier}",
+                        agent="agy",
+                        event_type="review_verdict",
+                        total=1,
+                        passed=1,
+                        failed=0,
+                    )
+                except Exception:
+                    pass  # Telemetry is best-effort
+                # ── End telemetry ───────────────────────────────────────
+                # Post a brief comment
+                try:
+                    add_comment(
+                        issue_id,
+                        f"🔔 **Review complete** — **{origin_agent}** has been "
+                        f"notified to review the results.",
+                    )
+                except Exception:
+                    pass
+    except LinearBudgetExhaustedError as exc:
+        print(f"[dispatcher] Origin completions detection aborted: {exc}")
 
     return signalled
 
@@ -1613,8 +1639,11 @@ def dispatch_once(
 
     # 1. Set up new pipeline issues
     try:
+        os.environ["PRISMATIC_CURRENT_AGENT_NAME"] = "prismatic.dispatcher"
         setup_issues = setup_pipeline_issues()
         counts["pipeline_setup"] = len(setup_issues)
+    except LinearBudgetExhaustedError as exc:
+        print(f"[dispatcher] Pipeline setup skipped: {exc}")
     except Exception as exc:
         print(f"[dispatcher] setup_pipeline_issues error: {exc}")
         counts["errors"] += 1
@@ -1647,7 +1676,11 @@ def dispatch_once(
     for agent_name, config in AGENT_CONFIG.items():
         label = f"agent::{agent_name}"
         try:
+            os.environ["PRISMATIC_CURRENT_AGENT_NAME"] = f"dispatcher.agent_{agent_name}"
             issues = get_issues_with_label(label)
+        except LinearBudgetExhaustedError as exc:
+            print(f"[dispatcher] 🚫 Skipping agent {agent_name} dispatch loop: {exc}")
+            continue
         except Exception as exc:
             print(f"[dispatcher] Error fetching issues for {label}: {exc}")
             counts["errors"] += 1
@@ -1664,98 +1697,100 @@ def dispatch_once(
             if not launcher:
                 continue
 
-            # ── Orchestration Mode Switch Gate ─────────────────────
-            from_state, to_state = _get_transition_states(agent_name)
-            is_escalation = False
             try:
-                # Check if this issue is flagged as escalated/stalled in database
-                cursor = dedup._conn.cursor()
-                cursor.execute(
-                    "SELECT escalated FROM agy_stall_tracker WHERE issue_id = ?",
-                    (issue_id,),
-                )
-                row = cursor.fetchone()
-                if isinstance(row, (tuple, list)) and row and row[0]:
-                    is_escalation = True
-            except Exception:
-                pass
+                os.environ["PRISMATIC_CURRENT_AGENT_NAME"] = f"dispatcher.agent_{agent_name}"
 
-            # If AGY has stalled and is escalated/pending approval, do not relaunch it!
-            if agent_name == "agy" and is_escalation:
-                continue
-
-            if not evaluate_transition_approval(
-                issue_id=issue_id,
-                from_state=from_state,
-                to_state=to_state,
-                is_escalation=is_escalation,
-                reason="Agent launch transition"
-            ):
-                # Transition is paused, skip launching agent
-                continue
-
-            # ── Credit policy enforcement ───────────────────────────
-            label = f"agent:{agent_name}" if not agent_name.startswith("agent:") else agent_name
-            decision = evaluate_agent_launch(
-                label, issue_id, operation="code_generation"
-            )
-            if decision.action == PolicyAction.DENY:
-                identifier = issue.get("identifier", issue_id)
-                print(
-                    f"[dispatcher] 🚫 BLOCKED {agent_name} → {identifier}: "
-                    f"{decision.reason}"
-                )
+                # ── Orchestration Mode Switch Gate ─────────────────────
+                from_state, to_state = _get_transition_states(agent_name)
+                is_escalation = False
                 try:
-                    add_comment(
-                        issue_id,
-                        f"🚫 **Credit policy blocked**: {decision.reason}\n"
-                        f"Estimated cost: {decision.estimated_cost} credits.",
+                    # Check if this issue is flagged as escalated/stalled in database
+                    cursor = dedup._conn.cursor()
+                    cursor.execute(
+                        "SELECT escalated FROM agy_stall_tracker WHERE issue_id = ?",
+                        (issue_id,),
                     )
+                    row = cursor.fetchone()
+                    if isinstance(row, (tuple, list)) and row and row[0]:
+                        is_escalation = True
                 except Exception:
                     pass
-                # Log to metrics
-                log_completed_pipeline_metrics(
-                    issue_id=issue_id,
-                    agent=agent_name,
-                    status="blocked",
-                    reason=decision.reason,
-                    cost=decision.estimated_cost,
-                )
-                counts["blocked"] = counts.get("blocked", 0) + 1
-                dedup.mark_processed(issue_id, label, cycle_id)
-                continue
-            elif decision.action == PolicyAction.WARN:
-                identifier = issue.get("identifier", issue_id)
-                print(
-                    f"[dispatcher] ⚠️  WARN {agent_name} → {identifier}: "
-                    f"{decision.reason}"
-                )
-            elif decision.action == PolicyAction.ASK_USER:
-                # Headless dispatcher cannot ask user — log and skip
-                identifier = issue.get("identifier", issue_id)
-                print(
-                    f"[dispatcher] ❓ ASK_USER {agent_name} → {identifier}: "
-                    f"{decision.reason}"
-                )
-                counts["pending_approval"] = counts.get("pending_approval", 0) + 1
-                dedup.mark_processed(issue_id, label, cycle_id)
-                continue
-            # ── Telemetry: record credit evaluation ──────────────
-            try:
-                collector = get_collector()
-                collector.record_credit(
-                    run_id=f"{cycle_id}-{agent_name}-{issue.get('identifier', issue_id)}",
-                    agent=agent_name,
-                    provider=AGENT_PROVIDER_MAP.get(agent_name, ""),
-                    credits_spent=decision.estimated_cost,
-                    operation="code_generation",
-                )
-            except Exception:
-                pass  # Telemetry is best-effort
-            # ── End credit telemetry ───────────────────────────────
-            # ── End credit policy ──────────────────────────────────
 
-            try:
+                # If AGY has stalled and is escalated/pending approval, do not relaunch it!
+                if agent_name == "agy" and is_escalation:
+                    continue
+
+                if not evaluate_transition_approval(
+                    issue_id=issue_id,
+                    from_state=from_state,
+                    to_state=to_state,
+                    is_escalation=is_escalation,
+                    reason="Agent launch transition"
+                ):
+                    # Transition is paused, skip launching agent
+                    continue
+
+                # ── Credit policy enforcement ───────────────────────────
+                label_p = f"agent:{agent_name}" if not agent_name.startswith("agent:") else agent_name
+                decision = evaluate_agent_launch(
+                    label_p, issue_id, operation="code_generation"
+                )
+                if decision.action == PolicyAction.DENY:
+                    identifier = issue.get("identifier", issue_id)
+                    print(
+                        f"[dispatcher] 🚫 BLOCKED {agent_name} → {identifier}: "
+                        f"{decision.reason}"
+                    )
+                    try:
+                        add_comment(
+                            issue_id,
+                            f"🚫 **Credit policy blocked**: {decision.reason}\n"
+                            f"Estimated cost: {decision.estimated_cost} credits.",
+                        )
+                    except Exception:
+                        pass
+                    # Log to metrics
+                    log_completed_pipeline_metrics(
+                        issue_id=issue_id,
+                        agent=agent_name,
+                        status="blocked",
+                        reason=decision.reason,
+                        cost=decision.estimated_cost,
+                    )
+                    counts["blocked"] = counts.get("blocked", 0) + 1
+                    dedup.mark_processed(issue_id, label, cycle_id)
+                    continue
+                elif decision.action == PolicyAction.WARN:
+                    identifier = issue.get("identifier", issue_id)
+                    print(
+                        f"[dispatcher] ⚠️  WARN {agent_name} → {identifier}: "
+                        f"{decision.reason}"
+                    )
+                elif decision.action == PolicyAction.ASK_USER:
+                    # Headless dispatcher cannot ask user — log and skip
+                    identifier = issue.get("identifier", issue_id)
+                    print(
+                        f"[dispatcher] ❓ ASK_USER {agent_name} → {identifier}: "
+                        f"{decision.reason}"
+                    )
+                    counts["pending_approval"] = counts.get("pending_approval", 0) + 1
+                    dedup.mark_processed(issue_id, label, cycle_id)
+                    continue
+                # ── Telemetry: record credit evaluation ──────────────
+                try:
+                    collector = get_collector()
+                    collector.record_credit(
+                        run_id=f"{cycle_id}-{agent_name}-{issue.get('identifier', issue_id)}",
+                        agent=agent_name,
+                        provider=AGENT_PROVIDER_MAP.get(agent_name, ""),
+                        credits_spent=decision.estimated_cost,
+                        operation="code_generation",
+                    )
+                except Exception:
+                    pass  # Telemetry is best-effort
+                # ── End credit telemetry ───────────────────────────────
+                # ── End credit policy ──────────────────────────────────
+
                 if throttle_dispatch:
                     print(f"[dispatcher] ⚠️ Throttling dispatch of {agent_name} (5s delay) due to high credit burn velocity.")
                     time.sleep(5)
@@ -1792,6 +1827,9 @@ def dispatch_once(
                         )
                     except Exception:
                         pass  # Non-critical
+            except LinearBudgetExhaustedError as exc:
+                print(f"[dispatcher] 🚫 Aborting {agent_name} loop: {exc}")
+                break
             except Exception as exc:
                 print(
                     f"[dispatcher] Error dispatching {agent_name} "
