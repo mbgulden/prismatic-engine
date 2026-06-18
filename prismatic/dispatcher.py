@@ -319,7 +319,13 @@ def get_issues_with_label(
             lab["name"]
             for lab in issue.get("labels", {}).get("nodes", [])
         ]
-        if label_name in label_names:
+        # Accept both 'agent:<name>' and 'agent::<name>' label formats.
+        # The dispatcher's call sites historically used 'agent::<name>'
+        # (double colon) as a Python-side convention, but Linear labels
+        # have always been 'agent:<name>' (single colon). Match both
+        # so existing label assignments work without renaming.
+        aliases = {label_name, label_name.replace("::", ":")}
+        if aliases & set(label_names):
             results.append({
                 "id": issue["id"],
                 "identifier": issue.get("identifier", ""),

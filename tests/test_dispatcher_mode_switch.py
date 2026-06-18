@@ -198,15 +198,21 @@ class TestDispatcherModeSwitchIntegration(unittest.TestCase):
 
     # ── COMMENT-BASED APPROVAL ─────────────────────────────────
 
+    @patch('prismatic.dispatcher.recover_stalled_agy')
     @patch('prismatic.dispatcher.gql')
     @patch('prismatic.providers.github.GitHubProvider')
     @patch('prismatic.dispatcher.get_issues_with_label')
     @patch('prismatic.dispatcher.evaluate_agent_launch')
     @patch('prismatic.dispatcher.add_comment')
     def test_comment_based_approval(
-        self, mock_comment, mock_evaluate, mock_get_issues, mock_github_provider_cls, mock_gql
+        self, mock_comment, mock_evaluate, mock_get_issues,
+        mock_github_provider_cls, mock_gql, mock_recover_stalled,
     ):
-        """A transition that is paused fires when /approve is found in Linear comments."""
+        """A transition that is paused fires when /approve is found in Linear comments.
+
+        recover_stalled_agy is patched out because the post-dispatch stall
+        recovery sweep is exercised in test_escalation_gating below.
+        """
         dispatcher.mode_switch.set_mode(OrchestrationMode.COLLABORATIVE)
         mock_evaluate.return_value.action = dispatcher.PolicyAction.ALLOW
 
