@@ -318,6 +318,40 @@ User message
 
 This is distinct from background task dispatch. The expected first-run experience is: attach Google/AGY → open chat → talk to AGY. Session state, artifacts, selected workspace, model/profile, and transcript history belong to the engine. Telegram, Hermes, Slack, or another harness are adapters only.
 
+### AGY TUI parity and multi-instance phone control
+
+The chat surface should preserve the useful capabilities of the AGY TUI rather than becoming a thin prompt box. The implementation may be a re-styled/remote-safe TUI surface, but the product requirement is capability parity where practical:
+
+- create, name, pause/resume, and stop multiple AGY instances/sessions
+- route each instance to a workspace, branch, model/profile, and task scope
+- inspect live output, transcript, tool/activity stream, logs, artifacts, and pending approvals
+- send follow-up messages to a specific AGY session from phone or web
+- promote a chat into a durable task/run, or attach a task/run to an existing chat
+- hand off between autonomous mode and interactive steering without losing context
+- expose safe controls from mobile: continue, summarize, checkpoint, push, ask reviewer, stop, archive
+
+The differentiated product is not only “chat with AGY.” It is **chat with and control many AGY instances from your phone while they work autonomously from your task management system of choice**.
+
+### Task management integration boundary
+
+Linear is the current task manager, but the engine should not hardcode Linear as the spine. Task management belongs behind adapter/plugin contracts:
+
+- Linear adapter: current default because it is working and cheap.
+- GitHub Issues / Projects adapter: likely common open-source path.
+- Jira / Asana / Trello / Notion / ClickUp adapters: future integrations if demand appears.
+- AI-focused task managers: future provider/plugin category.
+
+A “Linear clone” is worth noting, but **not as core spine work**. It should be a future optional plugin/workspace only if external task tools become a bottleneck, pricing risk, offline need, or distribution constraint. Until then, Prismatic should define the task/run contract and let existing task software plug in.
+
+Potential future plugin/workspace:
+
+```text
+prismatic-plugin-task-manager
+  → local-first task board over Prismatic task/run records
+  → optional sync adapters to Linear/GitHub/Jira/etc.
+  → not required for first useful Prismatic install
+```
+
 ### Minimum loop
 
 ```text

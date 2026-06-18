@@ -232,6 +232,10 @@ Telegram message → Prismatic chat gateway → AGY CLI session → Prismatic tr
 - A user can start a chat with AGY without creating a Linear issue or workflow task first.
 - Chat sessions are engine-owned records with transcript, selected workspace, model/profile, artifacts, and timestamps.
 - Command Center exposes new chat, continue chat, workspace/add-dir selection, model/profile selection, timeout/budget display, and artifact links.
+- The chat surface preserves practical AGY TUI capabilities: live output, transcript, activity/tools/logs, artifact inspection, approvals, checkpoint/push/review controls, and session switching.
+- A user can create, name, pause/resume, stop, and steer multiple AGY instances/sessions from phone or web.
+- AGY sessions can work autonomously from the task management software of choice via adapter contracts; Linear is the current default, not hardcoded spine.
+- A potential `prismatic-plugin-task-manager` / “Linear clone” remains a future optional plugin/workspace, not a core dependency.
 - Telegram/Hermes/Slack are adapters only; detaching them leaves the chat/run history intact.
 - Failure modes are human-readable in `prismatic doctor`: missing AGY, expired Google auth, invalid model, no writable session directory, headless AGY stall.
 - Interactive chat and background dispatch share provider configuration but have separate safety defaults.
