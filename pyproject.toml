@@ -41,6 +41,7 @@ Homepage = "https://github.com/mbgulden/prismatic-engine"
 Documentation = "https://github.com/mbgulden/prismatic-engine"
 
 [project.scripts]
+prismatic = "prismatic.cli:main"
 prismatic-engine = "prismatic.dispatcher:main"
 prismatic-engine-skills = "prismatic.skills:cli_skills"
 prismatic-lock = "prismatic.lock:main"

@@ -205,11 +205,21 @@ cd prismatic-engine
 pip install -e .
 
 # Initialize the configuration files
-prismatic-engine init
+prismatic init
+
+# Confirm local engine health without attaching providers
+prismatic status
+
+# Create a local task without Linear
+prismatic task create "Audit this repository for linting errors" --agent agy --workspace .
 
 # Serve the coordinator
-prismatic-engine serve
+prismatic serve --once
 ```
+
+The legacy `prismatic-engine`, `prismatic-admin`, and `prismatic-*` entry points
+remain available, but `prismatic` is the user-facing command surface for the
+first-user journey.
 
 ### 2. Lock & Lane Git Validation Hook Setup
 Link the pre-push hook to check agent lanes before pushes:
