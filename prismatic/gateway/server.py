@@ -271,6 +271,15 @@ async def health() -> dict[str, Any]:
 
 
 # ── WebSocket Endpoint ──────────────────────────────────────────────
+# SECURITY NOTE: /ws accepts any client that passes the IP allowlist
+# middleware (default localhost). There is no per-client authentication —
+# any connected client receives ALL broadcast events (lock/unlock, agent
+# lifecycle, etc.). For multi-instance or externally-reachable gateways,
+# this is an information disclosure risk. Mitigation options:
+#   - require a bearer token in the WebSocket upgrade headers
+#   - require a per-session HMAC challenge
+#   - rate-limit connections per IP
+# Tracked as Tier 7 follow-up (GRO-2058).
 
 
 @app.websocket("/ws")

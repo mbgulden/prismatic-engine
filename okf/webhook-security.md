@@ -177,6 +177,25 @@ All exceptions are logged server-side via `logger.exception(...)` so operators c
 | `PRISMATIC_ALLOWED_IPS` | 127.0.0.1,::1,testclient | Optional (defaults to localhost) |
 | `PRISMATIC_CORS_ORIGINS` | unset | Only if browser clients need access |
 
+## Endpoint auth catalog
+
+| Endpoint | Auth | Sensitive data | Risk |
+|---|---|---|---|
+| `/health` | None (public) | Status only | Low |
+| `/api/gateway/linear` | HMAC + replay + rate-limit | Triggers dispatch | High (mitigated) |
+| `/api/gateway/github` | HMAC + dual-secret | PR/review state | Medium (mitigated) |
+| `/locks/*` | IP allowlist | Lock state | Low (internal) |
+| `/runs/*` | IP allowlist | Run records | Low (internal) |
+| `/schedules/*` | IP allowlist | Schedule state | Low (internal) |
+| `/chat/sessions/*` | IP allowlist | Chat history | Low (internal) |
+| `/ws` | IP allowlist only — **no per-client auth** | Event stream (lock/unlock, agent lifecycle) | **Medium** — anyone with reach receives broadcast |
+
+**Open gap (Tier 7 follow-up, GRO-2058):** `/ws` WebSocket has no per-client authentication. Any client that passes the IP allowlist middleware receives ALL broadcast events. For external gateways, this is an information disclosure risk. Mitigation options:
+
+- Bearer token in WebSocket upgrade headers
+- Per-session HMAC challenge
+- Per-IP rate-limit on new connections
+
 ## Secret rotation
 
 The HMAC secrets are loaded per-request via `os.environ`. Rotation is **zero-downtime** via dual-secret support.
