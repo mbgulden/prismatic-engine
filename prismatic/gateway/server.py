@@ -286,13 +286,87 @@ async def health() -> dict[str, Any]:
 async def websocket_endpoint(websocket: WebSocket) -> None:
     """WebSocket endpoint for real-time swarm event streaming.
 
-    Clients connect to receive live telemetry: lock/unlock events,
-    agent lifecycle transitions, governor allocations, and circuit
-    breaker state changes.
+    Per-client authentication (GRO-2058): clients must present a Bearer token
+    in the upgrade request headers, or HMAC-signed headers (X-WS-Signature +
+    X-WS-Timestamp). Bearer is the simpler path; HMAC is the same-secret
+    pattern as the webhook handlers (single-secret for now, dual-secret
+    rotation tracked as follow-up).
 
-    The connection stays open until the client disconnects.
-    Events are broadcast to all connected clients.
+    Auth flow:
+      1. Validate origin (must match PRISMATIC_WS_ALLOWED_ORIGINS or be empty).
+      2. Validate auth header (Bearer token OR HMAC signature).
+      3. If valid, accept. Otherwise reject with 1008 (policy violation).
+
+    Configuration:
+    - PRISMATIC_WS_TOKEN: shared bearer token. If unset, auth disabled (dev only).
+    - PRISMATIC_WS_SECRET: HMAC secret (same as webhook if you want).
+    - PRISMATIC_WS_ALLOWED_ORIGINS: comma-separated origin list (CORS for WS).
+    - PRISMATIC_WS_REPLAY_WINDOW: timestamp tolerance in seconds (default 60).
     """
+    import hmac
+    import hashlib
+    from datetime import datetime, timezone
+
+    ws_token = os.environ.get("PRISMATIC_WS_TOKEN", "")
+    ws_secret = os.environ.get("PRISMATIC_WS_SECRET", "")
+    ws_origins = [
+        o.strip() for o in os.environ.get("PRISMATIC_WS_ALLOWED_ORIGINS", "").split(",")
+        if o.strip()
+    ]
+    ws_replay_window = int(os.environ.get("PRISMATIC_WS_REPLAY_WINDOW", "60"))
+
+    # If neither token nor secret is configured, fall back to localhost-only mode.
+    # (IP allowlist middleware already handles this for HTTP; for WS upgrade
+    # requests the IP must be in PRISMATIC_ALLOWED_IPS via the middleware.)
+    auth_required = bool(ws_token or ws_secret)
+
+    if auth_required:
+        headers = dict(websocket.headers or {})
+        auth_header = headers.get("authorization", "")
+        sig_header = headers.get("x-ws-signature", "")
+        ts_header = headers.get("x-ws-timestamp", "")
+        origin = headers.get("origin", "")
+
+        # Origin check
+        if ws_origins and origin and origin not in ws_origins:
+            logger.warning("WebSocket rejected: origin %r not in allowlist", origin)
+            await websocket.close(code=1008, reason="origin not allowed")
+            return
+
+        authenticated = False
+
+        # Bearer token path
+        if ws_token and auth_header.startswith("Bearer "):
+            presented = auth_header[len("Bearer "):].strip()
+            if hmac.compare_digest(presented, ws_token):
+                authenticated = True
+
+        # HMAC signature path (same pattern as webhook)
+        if not authenticated and ws_secret and sig_header and ts_header:
+            # Validate timestamp freshness
+            try:
+                ts = int(ts_header)
+                now = int(time.time())
+                if abs(now - ts) > ws_replay_window:
+                    raise ValueError(f"timestamp drift {now - ts}s")
+                # Sign: method + path + timestamp + nonce (here empty)
+                payload = f"GET\n/ws\n{ts}".encode("utf-8")
+                expected = hmac.new(
+                    ws_secret.encode("utf-8"), payload, hashlib.sha256
+                ).hexdigest()
+                if hmac.compare_digest(sig_header, expected):
+                    authenticated = True
+            except ValueError:
+                pass
+
+        if not authenticated:
+            logger.warning(
+                "WebSocket rejected: missing or invalid auth (origin=%r, sig_present=%s)",
+                origin, bool(sig_header),
+            )
+            await websocket.close(code=1008, reason="unauthorized")
+            return
+
     await websocket.accept()
     _ws_clients.add(websocket)
     logger.info("WebSocket client connected (total=%d)", len(_ws_clients))
