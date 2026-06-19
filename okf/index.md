@@ -54,6 +54,14 @@ This index points to OKF docs for the `prismatic-engine` repo. **The hub (`mbgul
 |---|---|
 | [tier-7-journey.md](./tier-7-journey.md) | Chronological narrative of Tier 7 production-grade work |
 | [tier-7-architecture.md](./tier-7-architecture.md) | Architecture diagram + data flow |
+| [agy-activation-investigation.md](./agy-activation-investigation.md) | Why AGY isn't running, full IPC chain, activation sequence (GRO-2085) |
+
+## Operations (mirrored from hub)
+
+| Doc | Description |
+|---|---|
+| [prismatic-engine-tasks.md](./prismatic-engine-tasks.md) | Where everything is, how to do common tasks (deploy, debug, rotate secrets) |
+| [session-state-2026-06-19.md](./session-state-2026-06-19.md) | End-of-session state snapshot — what's done, what's broken, what to do next |
 
 ## Tier status
 
@@ -69,9 +77,10 @@ This index points to OKF docs for the `prismatic-engine` repo. **The hub (`mbgul
 
 ## Related Linear issues
 
-GRO-2008, GRO-2010, GRO-2020, GRO-2024, GRO-2030, GRO-2031, GRO-2032, GRO-2034, GRO-2037, GRO-2039, GRO-2042, GRO-2047, GRO-2048, GRO-2050, GRO-2057..2062, GRO-2077, GRO-2078, GRO-2082
+GRO-2008, GRO-2010, GRO-2020, GRO-2024, GRO-2030, GRO-2031, GRO-2032, GRO-2034, GRO-2037, GRO-2039, GRO-2042, GRO-2047, GRO-2048, GRO-2050, GRO-2057..2062, GRO-2077, GRO-2078, GRO-2082, **GRO-2085** (AGY activation)
 
 See [tier-7-journey.md](./tier-7-journey.md) for the chronological narrative.
+See [session-state-2026-06-19.md](./session-state-2026-06-19.md) for current state.
 
 ## How to update these docs
 
