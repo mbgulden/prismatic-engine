@@ -4,12 +4,12 @@ title: prismatic-engine — OKF Bundle
 description: Master index of OKF concepts in the prismatic-engine repository.
 resource: okf/index.md
 tags: [index, prismatic-engine, okf]
-timestamp: 2026-06-19T10:30:00Z
+timestamp: 2026-06-19T17:00:00Z
 linear_issue: GRO-2039
 git_repo: mbgulden/prismatic-engine
 git_path: okf/index.md
 last_verified: 2026-06-19
-verified_by: fred
+verified_by: ned
 status: current
 ---
 
@@ -23,6 +23,8 @@ This bundle is the spoke for the prismatic-engine. The hub lives at
 - [`architecture.md`](./architecture.md) — Module map, public API surface, two-dispatcher model
 - [`review-loop-canonical.md`](./review-loop-canonical.md) — Self-review + peer review loop codification (GRO-2024)
 - [`linear-rate-limit.md`](./linear-rate-limit.md) — Linear API rate-limit codification (GRO-2008/2010/2020/2034)
+- [`linear-budget-lint-ci.md`](./linear-budget-lint-ci.md) — Lint script + CI workflow that enforces LinearBudget gating at PR time (GRO-2037/2053..2057/2062)
+- [`production-readiness-infrastructure.md`](./production-readiness-infrastructure.md) — 4-cron sweep: log rotation, SQLite VACUUM, retention, state-DB health alerts (GRO-2058/2059/2060/2061/2063)
 - [`dispatch-architecture.md`](./dispatch-architecture.md) — Event-driven dispatch architecture (GRO-2047/2048/2050)
 - [`webhook-handler-test-pattern.md`](./webhook-handler-test-pattern.md) — Webhook test pattern (9 tests, all pass)
 
@@ -49,4 +51,4 @@ are convenience copies with project-specific context.
 
 ## Related Linear issues
 
-GRO-2008, GRO-2010, GRO-2020, GRO-2024, GRO-2030, GRO-2031, GRO-2032, GRO-2034, GRO-2037, GRO-2039, GRO-2042..2050
+GRO-2008, GRO-2010, GRO-2020, GRO-2024, GRO-2030, GRO-2031, GRO-2032, GRO-2034, GRO-2037, GRO-2039, GRO-2042..2050, GRO-2053..2063, GRO-2069..2076 (BHAG filed, waiting on GRO-2042)
