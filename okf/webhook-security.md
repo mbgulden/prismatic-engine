@@ -2,7 +2,7 @@
 type: Standard
 title: Webhook Security Model
 description: Production-grade security model for the Prismatic Engine webhook receivers (Linear, GitHub). Covers HMAC, body size, IP allowlist, audit logging, and sanitized errors.
-resource: okf/webhook-security.md
+resource: okf/standards/webhook-security.md
 tags: [standard, security, webhook, hmac, linear, github, audit, prismatic-engine]
 timestamp: 2026-06-19T13:30:00Z
 linear_issue: GRO-2057
@@ -75,7 +75,7 @@ GitHub webhook does **not** apply replay protection because GitHub includes a ti
 
 ### 2. Body size limit (DoS)
 
-Middleware `limit_body_size` rejects any POST/PUT/PATCH with `content-length > MAX_BODY_BYTES`.
+Middleware `limit_body_size` rejects any POST/PUT/PATCH with `content-length > MAX_BODY_BYTES`. Also rejects requests with `Transfer-Encoding: chunked` (no reliable size bound) or missing `Content-Length` header (unknown size).
 
 | Env var | Default | Purpose |
 |---|---|---|
@@ -83,7 +83,9 @@ Middleware `limit_body_size` rejects any POST/PUT/PATCH with `content-length > M
 
 Linear events are typically <10KB. 1MB allows batched events but rejects abusive payloads.
 
-**Failure mode:** 413 `{"status": "rejected", "reason": "payload too large"}`.
+**Failure modes (AGY GRO-2078 review):**
+- 413 `{"status": "rejected", "reason": "payload too large or unknown size"}` — body declared >1MB or Content-Length missing
+- 411 `{"status": "rejected", "reason": "chunked transfer not allowed"}` — chunked Transfer-Encoding (AGY GRO-2078 MEDIUM #1 hardening)
 
 ### 2b. Per-IP rate limit (flood protection)
 
@@ -107,6 +109,9 @@ Middleware `ip_allowlist` restricts non-webhook endpoints to a configurable IP s
 | Env var | Default | Purpose |
 |---|---|---|
 | `PRISMATIC_ALLOWED_IPS` | `127.0.0.1,::1,testclient` | Comma-separated allowlist |
+| `PRISMATIC_TRUSTED_PROXIES` | `127.0.0.1,::1` | IPs allowed to set X-Forwarded-For |
+
+**AGY GRO-2078 LOW #1 hardening:** When the immediate client IP is in `PRISMATIC_TRUSTED_PROXIES`, the middleware respects `X-Forwarded-For` (leftmost IP). This lets the engine sit behind a reverse proxy (Nginx, ALB) without bypassing auth.
 
 Webhook endpoints (`/api/gateway/*`) are exempt — they're HMAC-authenticated. `/health` is intentionally public.
 
@@ -124,7 +129,19 @@ When unset, **no CORS middleware is added**. When set, only the listed origins a
 
 ### 5. Single-issue dispatch (amplification limit)
 
-The webhook handler calls `dispatch_issue_by_identifier(identifier)` — a new helper that fetches only the one issue that triggered the webhook, applies dedup + credit-policy + mode-switch gates, and launches the matching agent. **Cost: 1-2 Linear API calls per webhook event.** Prior implementation called `dispatch_once()` (full cycle) which triggered ~20 API calls per event.
+The webhook handler calls `dispatch_issue_by_identifier(identifier)` — a helper that fetches only the one issue that triggered the webhook, applies **all** the same gates as the full cycle, and launches the matching agent. **Cost: 1-2 Linear API calls per webhook event.** Prior implementation called `dispatch_once()` (full cycle) which triggered ~20 API calls per event.
+
+**Gates applied (same as `dispatch_once` cycle, AGY GRO-2078 review):**
+
+1. Dedup check (in-cycle)
+2. AGY stall/escalation tracker check (prevents re-launching escalated stalled AGY)
+3. Mode-switch transition approval (`evaluate_transition_approval`)
+4. Credit-policy gate (DENY → block + comment, WARN → log, ASK_USER → skip + mark processed)
+5. Telemetry (`collector.record_credit`, `collector.record_agent_run`)
+6. IPC bridge `agent_launched` event
+7. Linear dispatch comment
+
+The AGY peer review (GRO-2078) caught that the initial single-issue path was missing gates 2-7; those were added in this update.
 
 ### 6. Audit logging
 
