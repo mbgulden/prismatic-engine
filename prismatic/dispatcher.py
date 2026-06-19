@@ -1474,6 +1474,7 @@ def detect_origin_completions(
     Returns:
         Number of origin signals sent.
     """
+    signalled = 0
     try:
         os.environ["PRISMATIC_CURRENT_AGENT_NAME"] = "prismatic.dispatcher"
         # 1. Snapshot: record current labels for issues the dispatcher
