@@ -793,6 +793,26 @@ async def github_webhook(request: Request) -> dict[str, Any]:
     return {"status": "ok", "message": "webhook received", "event_type": event_type}
 
 
+# Path-aliases so external webhook senders (which historically use
+# /webhooks/{service}) hit the same handler as the canonical
+# /api/gateway/{service} route. Both POST to the same handler.
+@app.post("/webhooks/linear")
+async def webhooks_linear_alias(request: Request) -> dict[str, Any]:
+    """Path-alias for /api/gateway/linear.
+
+    Linear's webhook URL convention (used in old config) was
+    https://.../webhooks/linear. We keep that path working so existing
+    Linear-side webhook registrations continue to function.
+    """
+    return await linear_webhook(request)
+
+
+@app.post("/webhooks/github")
+async def webhooks_github_alias(request: Request) -> dict[str, Any]:
+    """Path-alias for /api/gateway/github."""
+    return await github_webhook(request)
+
+
 @app.post("/api/gateway/linear")
 async def linear_webhook(request: Request) -> dict[str, Any]:
     """Receive Linear webhook events (issue status changes, comments).
