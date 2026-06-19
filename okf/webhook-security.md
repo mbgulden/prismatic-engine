@@ -196,6 +196,46 @@ All exceptions are logged server-side via `logger.exception(...)` so operators c
 - Per-session HMAC challenge
 - Per-IP rate-limit on new connections
 
+## Cron reduction
+
+The dispatcher cron (formerly every 5 minutes) was demoted to **daily at 08:00 UTC**. The webhook handler is now the primary dispatch path.
+
+### Before Tier 7
+- Cron `agent_dispatcher.py` ran every 5 minutes
+- 288 cron ticks/day × ~20 Linear API calls = ~5760 calls/day from cron alone
+- Plus webhook handler calls (additive)
+
+### After Tier 7 (Tier 6 webhook + Tier 7 cron reduction)
+- Cron `agent_dispatcher.py` runs **once daily** as a safety-net sweep
+- Webhook handler fires per event (~1-2 Linear API calls per webhook)
+- Cron-driven API consumption: ~20 calls/day (down from 5760)
+- Total reduction: **~99.6%** of cron-driven Linear API consumption
+
+### Why a daily safety-net sweep?
+
+The cron still exists for two reasons:
+
+1. **Catch missed webhooks.** If the engine is down when Linear sends an event, Linear retries for ~24h. After that, the event is lost. The daily cron catches any events that fell through.
+
+2. **Sanity check.** Each morning, the dispatcher runs once to confirm the system is healthy and any backlog issues are dispatched.
+
+### Configuration
+
+The cron job ID is `e2f1a3b4c5d6`. Schedule is `0 8 * * *` (08:00 UTC daily). To revert to higher frequency:
+
+```python
+# In jobs.json: e2f1a3b4c5d6
+"schedule": {"kind": "interval", "minutes": 5, "display": "every 5m"}
+```
+
+Not recommended — defeats the Tier 7 budget reduction.
+
+### Related cron changes
+
+The `prismatic_event_trigger.py` cron (every 2 minutes) was fixed in Tier 7 (was erroring every 2 min due to `linear_call` import bug). The 2-minute cron still fires for Autobot alerts on AGY milestones — that's distinct from dispatch and stays.
+
+Other broken cron scripts (`kai_callback_monitor`, `prismatic_port_progress`, `comment_trigger_monitor`, `github_pr_monitor`) were fixed via the `linear_api_compat` shim — they now route through `prismatic.dispatcher.gql()` (which is LinearBudget-gated).
+
 ## Secret rotation
 
 The HMAC secrets are loaded per-request via `os.environ`. Rotation is **zero-downtime** via dual-secret support.
