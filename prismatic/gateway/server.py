@@ -627,6 +627,52 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
             status_code=400,
         )
 
+    # ── 2b. Replay protection (Tier 7 hardening, GRO-2062) ─────────
+    # Linear's HMAC signature doesn't include a timestamp, so a captured
+    # payload+signature could be replayed indefinitely. We use the
+    # event's `createdAt` field (set by Linear at event-generation time)
+    # to enforce a freshness window. This catches:
+    #   - replay attacks where someone captures a valid payload and POSTs it later
+    #   - stale events from replayed infrastructure
+    # Configurable via PRISMATIC_WEBHOOK_REPLAY_WINDOW (default 300s = 5min).
+    created_at_str = event.get("createdAt", "")
+    if created_at_str:
+        from datetime import datetime, timezone
+        try:
+            # Linear uses ISO 8601 with 'Z' suffix
+            created_at = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
+            now = datetime.now(timezone.utc)
+            age_seconds = (now - created_at).total_seconds()
+            if age_seconds > WEBHOOK_REPLAY_WINDOW_SECONDS:
+                _audit_webhook(
+                    "linear", "rejected",
+                    reason=f"stale: {int(age_seconds)}s old (max {WEBHOOK_REPLAY_WINDOW_SECONDS}s)",
+                )
+                return JSONResponse(
+                    {
+                        "status": "rejected",
+                        "reason": f"event too old: {int(age_seconds)}s (max {WEBHOOK_REPLAY_WINDOW_SECONDS}s)",
+                    },
+                    status_code=401,
+                )
+            # Also reject events from the future (clock skew attacks).
+            if age_seconds < -60:  # allow 60s skew
+                _audit_webhook(
+                    "linear", "rejected",
+                    reason=f"future event: {-int(age_seconds)}s in future",
+                )
+                return JSONResponse(
+                    {"status": "rejected", "reason": "event timestamp in the future"},
+                    status_code=401,
+                )
+        except ValueError:
+            # If createdAt is unparseable, log and continue. Don't reject
+            # since older Linear events might not have createdAt.
+            logger.warning("could not parse createdAt: %r", created_at_str)
+    else:
+        # No createdAt in payload — likely an older Linear event. Log warning.
+        logger.warning("webhook payload missing createdAt — replay protection not enforced")
+
     # ── 3. Extract event metadata ───────────────────────────────────
     event_type = event.get("type", "")
     action = event.get("action", "")

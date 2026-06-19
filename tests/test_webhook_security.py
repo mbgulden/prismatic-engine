@@ -187,6 +187,75 @@ class TestWebhookSecurity(unittest.TestCase):
         self.assertEqual(rec["source"], "linear")
         self.assertEqual(rec["outcome"], "queued")
 
+    # ── Replay protection ──────────────────────────────────────────
+
+    def test_replay_protection_rejects_old_event(self):
+        """401 when event.createdAt is older than replay window."""
+        from datetime import datetime, timezone, timedelta
+        old = (datetime.now(timezone.utc) - timedelta(seconds=600)).isoformat().replace("+00:00", "Z")
+        event = _linear_event(labels=["agent:agy"])
+        event["createdAt"] = old
+        body = json.dumps(event).encode()
+        sig = _sign_linear(body, "test_linear_secret")
+        resp = self.client.post(
+            "/api/gateway/linear",
+            content=body,
+            headers={"Linear-Signature": sig},
+        )
+        self.assertEqual(resp.status_code, 401, resp.text)
+        self.assertIn("too old", resp.json()["reason"])
+        # Audit log records the rejection
+        rec = json.loads(
+            (self.state_dir / "webhook_audit.log").read_text().strip().splitlines()[-1]
+        )
+        self.assertEqual(rec["outcome"], "rejected")
+        self.assertIn("stale", rec["reason"])
+
+    def test_replay_protection_rejects_future_event(self):
+        """401 when event.createdAt is in the future (clock-skew attack)."""
+        from datetime import datetime, timezone, timedelta
+        future = (datetime.now(timezone.utc) + timedelta(seconds=300)).isoformat().replace("+00:00", "Z")
+        event = _linear_event(labels=["agent:agy"])
+        event["createdAt"] = future
+        body = json.dumps(event).encode()
+        sig = _sign_linear(body, "test_linear_secret")
+        resp = self.client.post(
+            "/api/gateway/linear",
+            content=body,
+            headers={"Linear-Signature": sig},
+        )
+        self.assertEqual(resp.status_code, 401, resp.text)
+        self.assertIn("future", resp.json()["reason"])
+
+    def test_replay_protection_accepts_recent_event(self):
+        """200 when event.createdAt is within the replay window."""
+        from datetime import datetime, timezone, timedelta
+        recent = (datetime.now(timezone.utc) - timedelta(seconds=10)).isoformat().replace("+00:00", "Z")
+        event = _linear_event(labels=["agent:agy"])
+        event["createdAt"] = recent
+        body = json.dumps(event).encode()
+        sig = _sign_linear(body, "test_linear_secret")
+        resp = self.client.post(
+            "/api/gateway/linear",
+            content=body,
+            headers={"Linear-Signature": sig},
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+
+    def test_replay_protection_allows_missing_createdat(self):
+        """No rejection when createdAt is absent (older Linear events)."""
+        # Don't add createdAt to the event
+        event = _linear_event(labels=["agent:agy"])
+        body = json.dumps(event).encode()
+        sig = _sign_linear(body, "test_linear_secret")
+        resp = self.client.post(
+            "/api/gateway/linear",
+            content=body,
+            headers={"Linear-Signature": sig},
+        )
+        # 200 because we accept missing createdAt for backward compat
+        self.assertEqual(resp.status_code, 200, resp.text)
+
     # ── Single-issue dispatch (no full-cycle amplification) ──────
 
     def test_dispatch_calls_single_issue_helper(self):
