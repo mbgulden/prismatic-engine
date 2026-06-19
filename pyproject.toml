@@ -56,3 +56,14 @@ include = ["prismatic*"]
 
 [tool.setuptools.package-data]
 prismatic = ["skills/**/*", "templates/**/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["scratch", ".venv_dev", "node_modules", ".git"]
+# Test scripts import from the orchestrator profile's scripts/ dir (where
+# linear_api_compat.py and the broken cron scripts live). Add it to PYTHONPATH
+# so tests can `import linear_api_compat` directly.
+pythonpath = [
+    "/home/ubuntu/work/prismatic-engine",
+    "/home/ubuntu/.hermes/profiles/orchestrator/scripts",
+]

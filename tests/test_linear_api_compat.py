@@ -17,8 +17,15 @@ from unittest.mock import patch, MagicMock
 
 class TestLinearApiCompat(unittest.TestCase):
     def setUp(self):
-        # Reset module-level cache so each test gets a fresh gql import.
-        sys.modules.pop("linear_api_compat", None)
+        # Ensure a clean import each test. The shim caches the engine's gql
+        # in module-level state — pop BOTH the shim and the engine dispatcher
+        # so each test re-imports fresh.
+        for mod in ("linear_api_compat", "prismatic.dispatcher"):
+            sys.modules.pop(mod, None)
+
+    def tearDown(self):
+        for mod in ("linear_api_compat", "prismatic.dispatcher"):
+            sys.modules.pop(mod, None)
 
     def test_linear_call_routes_through_engine_gql(self):
         """linear_call should call prismatic.dispatcher.gql, not bypass it."""
