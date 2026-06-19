@@ -256,6 +256,69 @@ class TestWebhookSecurity(unittest.TestCase):
         # 200 because we accept missing createdAt for backward compat
         self.assertEqual(resp.status_code, 200, resp.text)
 
+    # ── Dual-secret rotation (zero-downtime secret rotation) ─────
+
+    def test_dual_secret_accepts_primary(self):
+        """When NEXT secret is set, primary secret still works."""
+        with patch.dict(os.environ, {
+            "PRISMATIC_LINEAR_WEBHOOK_SECRET": "test_linear_secret",
+            "PRISMATIC_LINEAR_WEBHOOK_SECRET_NEXT": "next_secret",
+        }):
+            body = json.dumps(_linear_event(labels=["agent:agy"])).encode()
+            sig = _sign_linear(body, "test_linear_secret")
+            resp = self.client.post(
+                "/api/gateway/linear",
+                content=body,
+                headers={"Linear-Signature": sig},
+            )
+            self.assertEqual(resp.status_code, 200, resp.text)
+
+    def test_dual_secret_accepts_next(self):
+        """When NEXT secret is set, signatures signed with NEXT also work."""
+        with patch.dict(os.environ, {
+            "PRISMATIC_LINEAR_WEBHOOK_SECRET": "test_linear_secret",
+            "PRISMATIC_LINEAR_WEBHOOK_SECRET_NEXT": "next_secret",
+        }):
+            body = json.dumps(_linear_event(labels=["agent:agy"])).encode()
+            # Sign with the NEXT secret (simulating Linear after rotation)
+            sig = _sign_linear(body, "next_secret")
+            resp = self.client.post(
+                "/api/gateway/linear",
+                content=body,
+                headers={"Linear-Signature": sig},
+            )
+            self.assertEqual(resp.status_code, 200, resp.text)
+
+    def test_dual_secret_rejects_unknown(self):
+        """A signature from neither primary nor NEXT is rejected."""
+        with patch.dict(os.environ, {
+            "PRISMATIC_LINEAR_WEBHOOK_SECRET": "test_linear_secret",
+            "PRISMATIC_LINEAR_WEBHOOK_SECRET_NEXT": "next_secret",
+        }):
+            body = json.dumps(_linear_event(labels=["agent:agy"])).encode()
+            sig = _sign_linear(body, "totally_wrong_secret")
+            resp = self.client.post(
+                "/api/gateway/linear",
+                content=body,
+                headers={"Linear-Signature": sig},
+            )
+            self.assertEqual(resp.status_code, 401, resp.text)
+
+    def test_dual_secret_github(self):
+        """GitHub webhook also supports dual-secret rotation."""
+        with patch.dict(os.environ, {
+            "PRISMATIC_GITHUB_WEBHOOK_SECRET": "test_github_secret",
+            "PRISMATIC_GITHUB_WEBHOOK_SECRET_NEXT": "next_github_secret",
+        }):
+            body = json.dumps(_github_event()).encode()
+            sig = _sign_github(body, "next_github_secret")
+            resp = self.client.post(
+                "/api/gateway/github",
+                content=body,
+                headers={"X-Hub-Signature-256": sig},
+            )
+            self.assertEqual(resp.status_code, 200, resp.text)
+
     # ── Single-issue dispatch (no full-cycle amplification) ──────
 
     def test_dispatch_calls_single_issue_helper(self):

@@ -497,8 +497,9 @@ async def github_webhook(request: Request) -> dict[str, Any]:
     import hashlib
 
     body = await request.body()
-    secret = os.environ.get("PRISMATIC_GITHUB_WEBHOOK_SECRET")
-    if secret:
+    primary_secret = os.environ.get("PRISMATIC_GITHUB_WEBHOOK_SECRET", "")
+    next_secret = os.environ.get("PRISMATIC_GITHUB_WEBHOOK_SECRET_NEXT", "")
+    if primary_secret:
         sig_header = request.headers.get("X-Hub-Signature-256", "")
         if not sig_header.startswith("sha256="):
             _audit_webhook("github", "rejected", reason="missing signature header")
@@ -507,10 +508,18 @@ async def github_webhook(request: Request) -> dict[str, Any]:
                 status_code=401,
             )
         sig = sig_header[len("sha256="):]
-        expected = hmac.new(
-            secret.encode("utf-8"), body, hashlib.sha256
+        # Compute expected for primary and (if set) next secret.
+        expected_primary = hmac.new(
+            primary_secret.encode("utf-8"), body, hashlib.sha256
         ).hexdigest()
-        if not hmac.compare_digest(sig, expected):
+        matches_primary = hmac.compare_digest(sig, expected_primary)
+        matches_next = False
+        if next_secret:
+            expected_next = hmac.new(
+                next_secret.encode("utf-8"), body, hashlib.sha256
+            ).hexdigest()
+            matches_next = hmac.compare_digest(sig, expected_next)
+        if not (matches_primary or matches_next):
             _audit_webhook("github", "rejected", reason="bad signature")
             return JSONResponse(
                 {"status": "rejected", "reason": "bad signature"},
@@ -597,9 +606,14 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
     body = await request.body()
     body_size = len(body)
 
-    # ── 1. HMAC validation ──────────────────────────────────────────
-    secret = os.environ.get("PRISMATIC_LINEAR_WEBHOOK_SECRET")
-    if secret:
+    # ── 1. HMAC validation (with dual-secret rotation support) ─────
+    # Supports zero-downtime rotation: PRISMATIC_LINEAR_WEBHOOK_SECRET
+    # is the primary, _NEXT is a candidate during rotation. Both are
+    # accepted during the rotation window. After Linear is confirmed to
+    # use the new secret, swap roles (rename _NEXT → primary).
+    primary_secret = os.environ.get("PRISMATIC_LINEAR_WEBHOOK_SECRET", "")
+    next_secret = os.environ.get("PRISMATIC_LINEAR_WEBHOOK_SECRET_NEXT", "")
+    if primary_secret:
         sig = request.headers.get("Linear-Signature", "")
         if not sig:
             _audit_webhook("linear", "rejected", reason="missing signature header")
@@ -607,10 +621,19 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
                 {"status": "rejected", "reason": "missing Linear-Signature header"},
                 status_code=401,
             )
-        expected = hmac.new(
-            secret.encode("utf-8"), body, hashlib.sha256
+        # Compute expected signatures for primary and (if set) next secret.
+        # Compare against each. Accept if either matches.
+        expected_primary = hmac.new(
+            primary_secret.encode("utf-8"), body, hashlib.sha256
         ).hexdigest()
-        if not hmac.compare_digest(sig, expected):
+        matches_primary = hmac.compare_digest(sig, expected_primary)
+        matches_next = False
+        if next_secret:
+            expected_next = hmac.new(
+                next_secret.encode("utf-8"), body, hashlib.sha256
+            ).hexdigest()
+            matches_next = hmac.compare_digest(sig, expected_next)
+        if not (matches_primary or matches_next):
             _audit_webhook("linear", "rejected", reason="bad signature")
             return JSONResponse(
                 {"status": "rejected", "reason": "bad signature"},
