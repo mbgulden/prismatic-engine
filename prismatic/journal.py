@@ -266,6 +266,17 @@ def gql(query: str, variables: dict[str, Any] | None = None, config: JournalConf
     key = _load_key(config)
     if not key:
         return {"errors": [{"message": "LINEAR_API_KEY missing"}]}
+    # GRO-2054: gate every Linear API call through LinearBudget so journal.py
+    # can't silently burn the 2500/hr budget (e.g., during a hot loop of issue
+    # creation). Pattern from GRO-2034 in agent_dispatcher.py::_linear_gql.
+    try:
+        from prismatic.linear.budget import linear_budget
+        if not linear_budget.check_and_consume("prismatic.journal"):
+            return {"errors": [{"message": "Linear API budget exceeded — call refused"}]}
+    except ImportError:
+        # LinearBudget not importable (e.g., partial install) — proceed but warn
+        import sys
+        print("[journal] WARNING: LinearBudget not importable — proceeding without gate", file=sys.stderr)
     req = urllib.request.Request(
         config.linear_url,
         data=json.dumps({"query": query, "variables": variables or {}}).encode(),
