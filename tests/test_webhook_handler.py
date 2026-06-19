@@ -64,15 +64,12 @@ class TestLinearWebhook(unittest.TestCase):
         for p in self.env_patches:
             p.start()
 
-        # Mock the dispatcher.dispatch_once so we don't hit Linear API
-        self.dispatch_patcher = patch("prismatic.dispatcher.dispatch_once")
-        self.mock_dispatch_once = self.dispatch_patcher.start()
-        self.mock_dispatch_once.return_value = {
-            "dispatched": 1,
-            "pipeline_setup": 0,
-            "stale_killed": 0,
-            "errors": 0,
-        }
+        # Mock the dispatcher's single-issue path so we don't hit Linear API.
+        # (Tier 7 hardening: webhook now calls dispatch_issue_by_identifier
+        # instead of dispatch_once to avoid full-cycle amplification.)
+        self.dispatch_patcher = patch("prismatic.dispatcher.dispatch_issue_by_identifier")
+        self.mock_dispatch_issue = self.dispatch_patcher.start()
+        self.mock_dispatch_issue.return_value = True
 
         # Mock EventRouterDedup
         self.dedup_patcher = patch("prismatic.dispatcher.EventRouterDedup")
@@ -108,7 +105,7 @@ class TestLinearWebhook(unittest.TestCase):
         self.assertEqual(body["status"], "dispatched")
         self.assertEqual(body["identifier"], "GRO-2051")
         # dispatch_once was invoked
-        self.mock_dispatch_once.assert_called_once()
+        self.mock_dispatch_issue.assert_called_once()
 
     def test_queues_without_agent_label(self):
         """GRO-2050: events without agent:* labels go to SQLite queue."""
@@ -117,7 +114,7 @@ class TestLinearWebhook(unittest.TestCase):
         body = resp.json()
         self.assertEqual(body["status"], "queued")
         # dispatch was NOT invoked
-        self.mock_dispatch_once.assert_not_called()
+        self.mock_dispatch_issue.assert_not_called()
         # Queue entry exists
         db = self.state_dir / "linear_webhook_queue.db"
         self.assertTrue(db.exists())
@@ -136,7 +133,7 @@ class TestLinearWebhook(unittest.TestCase):
         self.assertEqual(resp.status_code, 401, resp.text)
         self.assertEqual(resp.json()["status"], "rejected")
         # No dispatch, no queue write
-        self.mock_dispatch_once.assert_not_called()
+        self.mock_dispatch_issue.assert_not_called()
 
     def test_rejects_missing_signature(self):
         """401 when Linear-Signature header is missing."""
@@ -156,7 +153,7 @@ class TestLinearWebhook(unittest.TestCase):
 
     def test_queues_on_dispatch_failure(self):
         """If dispatch_once raises, the event is queued (don't lose it)."""
-        self.mock_dispatch_once.side_effect = RuntimeError("linear rate limit")
+        self.mock_dispatch_issue.side_effect = RuntimeError("linear rate limit")
         resp = self._post(_make_event(labels=["agent:agy"]))
         self.assertEqual(resp.status_code, 200, resp.text)
         body = resp.json()
@@ -173,7 +170,7 @@ class TestLinearWebhook(unittest.TestCase):
         self.assertEqual(resp.status_code, 200, resp.text)
         body = resp.json()
         self.assertEqual(body["status"], "queued")
-        self.mock_dispatch_once.assert_not_called()
+        self.mock_dispatch_issue.assert_not_called()
 
     def test_no_secret_skips_hmac_validation(self):
         """If PRISMATIC_LINEAR_WEBHOOK_SECRET is unset, validation is skipped."""

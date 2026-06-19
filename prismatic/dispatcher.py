@@ -23,6 +23,7 @@ Entry-point (after ``pip install``)::
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import signal
@@ -78,6 +79,8 @@ def _emit_agent_event(event_type: str, agent_name: str, issue_id: str, **extra) 
 # ═══════════════════════════════════════════════════════════════
 
 TEAM_ID: str = os.environ.get("PRISMATIC_TEAM_ID", "")
+
+logger = logging.getLogger("prismatic.dispatcher")
 
 DEFAULT_DB_PATH: str = os.path.join(
     os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state"),
@@ -355,6 +358,42 @@ def get_issues_with_label(
             })
 
     return results
+
+
+def get_issue_by_identifier(identifier: str) -> dict[str, Any] | None:
+    """Fetch a single issue by its Linear identifier (e.g. ``"GRO-2051"``).
+
+    Returns the full issue dict with id, identifier, title, labels, state, etc.
+    Returns None if not found or if the Linear call fails.
+
+    Cost: 1 Linear API call. Used by the webhook single-issue dispatch path.
+    """
+    if not TEAM_ID:
+        raise RuntimeError("TEAM_ID is not set (PRISMATIC_TEAM_ID env var)")
+    query = """
+    query IssueByIdentifier($teamId: String!, $filter: IssueFilter!) {
+        team(id: $teamId) {
+            issues(filter: $filter, first: 1) {
+                nodes {
+                    id
+                    identifier
+                    title
+                    description
+                    state { name type }
+                    assignee { id name }
+                    labels { nodes { id name } }
+                    url
+                }
+            }
+        }
+    }
+    """
+    data = gql(query, {
+        "teamId": TEAM_ID,
+        "filter": {"identifier": {"eq": identifier}},
+    })
+    issues = data.get("team", {}).get("issues", {}).get("nodes", [])
+    return issues[0] if issues else None
 
 
 def get_issue_labels(issue_id: str) -> list[dict[str, str]]:
@@ -1667,6 +1706,87 @@ def dispatch_local_tasks(
                     f"task {task.id}: {exc}"
                 )
     return dispatched
+
+
+def dispatch_issue_by_identifier(identifier: str) -> bool:
+    """Dispatch a single Linear issue by its identifier (GRO-2048 single-issue path).
+
+    This is the webhook-driven fast path. Unlike ``dispatch_once`` (which iterates
+    every configured agent and pulls all issues with their labels), this helper
+    only acts on the one issue that triggered the webhook.
+
+    Cost: ~1-2 Linear API calls (fetch + maybe transition), vs ~20 for full cycle.
+    Idempotency: dedup DB prevents double-dispatch within TTL.
+
+    Args:
+        identifier: e.g. ``"GRO-2051"``.
+
+    Returns:
+        ``True`` if the issue was dispatched to an agent, ``False`` if it had no
+        matching agent label or was already in the dedup window.
+    """
+    cycle_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    dedup = EventRouterDedup()
+
+    # 1. Fetch the single issue
+    issue = get_issue_by_identifier(identifier)
+    if not issue:
+        logger.warning("dispatch_issue_by_identifier: %s not found", identifier)
+        return False
+
+    issue_id = issue.get("id", "")
+    labels = issue.get("labels", {}).get("nodes", [])
+    label_names = [l.get("name", "") for l in labels if isinstance(l, dict)]
+
+    # 2. Find the matching agent label
+    agent_name = None
+    for ln in label_names:
+        # Accept both 'agent:name' and 'agent::name' for legacy compatibility.
+        canonical = ln.replace("::", ":")
+        if canonical.startswith("agent:"):
+            candidate = canonical.split(":", 1)[1]
+            if candidate in AGENT_CONFIG:
+                agent_name = candidate
+                break
+
+    if not agent_name:
+        return False
+
+    # 3. Dedup check
+    label = f"agent:{agent_name}"
+    if dedup.is_processed(issue_id, label, cycle_id):
+        return False
+
+    # 4. Credit-policy gate
+    decision = evaluate_agent_launch(label, issue_id, operation="code_generation")
+    if decision.action == PolicyAction.DENY:
+        identifier_str = issue.get("identifier", issue_id)
+        print(f"[dispatcher] 🚫 BLOCKED {agent_name} → {identifier_str}: {decision.reason}")
+        try:
+            add_comment(
+                issue_id,
+                f"🚫 **Credit policy blocked**: {decision.reason}\n"
+                f"Estimated cost: {decision.estimated_cost} credits.",
+            )
+        except Exception:
+            pass
+        return False
+
+    # 5. Launch
+    launcher = AGENT_LAUNCHERS.get(agent_name)
+    if not launcher:
+        return False
+
+    try:
+        os.environ["PRISMATIC_CURRENT_AGENT_NAME"] = f"dispatcher.agent_{agent_name}"
+        result = launcher(issue_id, title=issue.get("title", ""))
+        if result:
+            dedup.mark_processed(issue_id, label, cycle_id)
+            return True
+        return False
+    except Exception as exc:
+        logger.exception("dispatch_issue_by_identifier failed: %s", exc)
+        return False
 
 
 def dispatch_once(
