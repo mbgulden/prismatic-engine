@@ -188,13 +188,19 @@ All exceptions are logged server-side via `logger.exception(...)` so operators c
 | `/runs/*` | IP allowlist | Run records | Low (internal) |
 | `/schedules/*` | IP allowlist | Schedule state | Low (internal) |
 | `/chat/sessions/*` | IP allowlist | Chat history | Low (internal) |
-| `/ws` | IP allowlist only — **no per-client auth** | Event stream (lock/unlock, agent lifecycle) | **Medium** — anyone with reach receives broadcast |
+| `/ws` | IP allowlist + Bearer/HMAC + origin allowlist | Event stream | **Closed** (GRO-2058) |
 
-**Open gap (Tier 7 follow-up, GRO-2058):** `/ws` WebSocket has no per-client authentication. Any client that passes the IP allowlist middleware receives ALL broadcast events. For external gateways, this is an information disclosure risk. Mitigation options:
+**Open gap (Tier 7 follow-up, GRO-2058):** ~~`/ws` WebSocket has no per-client authentication.~~ **Closed in Tier 7 (GRO-2058)**.
 
-- Bearer token in WebSocket upgrade headers
-- Per-session HMAC challenge
-- Per-IP rate-limit on new connections
+The WebSocket endpoint now supports three auth paths:
+
+1. **Bearer token**: `Authorization: Bearer <token>` where token matches `PRISMATIC_WS_TOKEN`. Constant-time compare.
+2. **HMAC signature**: `X-WS-Signature: <hex>` + `X-WS-Timestamp: <unix>` where signature = `HMAC-SHA256(secret, "GET\n/ws\n<timestamp>")`. Replay window is `PRISMATIC_WS_REPLAY_WINDOW` (default 60s).
+3. **No-auth mode**: if neither token nor secret is set, WS accepts all (dev mode; relies on IP allowlist middleware).
+
+Origin allowlist via `PRISMATIC_WS_ALLOWED_ORIGINS` (comma-separated). When configured, requests from origins not in the list are rejected with 1008.
+
+Failure: 1008 close code with sanitized reason. Never 500.
 
 ## Cron reduction
 
@@ -316,6 +322,17 @@ Before deploying to production:
 | `test_request_id_generated_when_absent` | `tests/test_webhook_security.py` | UUID4 generated when X-Request-ID absent |
 | `test_request_id_echoed_when_provided` | `tests/test_webhook_security.py` | Caller's X-Request-ID echoed in response |
 | `test_request_id_in_audit_log` | `tests/test_webhook_security.py` | Audit log entry includes request_id |
+| `test_bearer_token_accepts_valid_token` | `tests/test_websocket_auth.py` | WS accepts valid bearer |
+| `test_bearer_token_rejects_invalid_token` | `tests/test_websocket_auth.py` | WS rejects invalid bearer |
+| `test_bearer_token_rejects_missing_token` | `tests/test_websocket_auth.py` | WS rejects missing auth header |
+| `test_hmac_signature_accepts_valid` | `tests/test_websocket_auth.py` | WS accepts valid HMAC |
+| `test_hmac_signature_rejects_stale_timestamp` | `tests/test_websocket_auth.py` | WS rejects stale timestamp (replay protection) |
+| `test_hmac_signature_rejects_future_timestamp` | `tests/test_websocket_auth.py` | WS rejects future timestamp |
+| `test_hmac_signature_rejects_wrong_secret` | `tests/test_websocket_auth.py` | WS rejects HMAC signed with wrong secret |
+| `test_hmac_with_non_numeric_timestamp_rejected` | `tests/test_websocket_auth.py` | WS rejects malformed timestamp |
+| `test_origin_allowlist_rejects_unknown_origin` | `tests/test_websocket_auth.py` | WS rejects unknown origin |
+| `test_origin_allowlist_accepts_allowed_origin` | `tests/test_websocket_auth.py` | WS accepts allowed origin |
+| `test_no_auth_configured_accepts_all` | `tests/test_websocket_auth.py` | WS accepts all in dev mode (no auth) |
 | `test_dual_secret_accepts_primary` | `tests/test_webhook_security.py` | Primary secret works during rotation |
 | `test_dual_secret_accepts_next` | `tests/test_webhook_security.py` | Next secret works during rotation |
 | `test_dual_secret_rejects_unknown` | `tests/test_webhook_security.py` | Unknown signature rejected |
