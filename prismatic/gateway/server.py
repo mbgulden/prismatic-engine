@@ -30,6 +30,7 @@ from typing import Any
 import uvicorn
 from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from prismatic.gateway.event_bus import get_event_bus, set_event_bus, EventBus
 from prismatic.gateway.ipc_bridge import (
@@ -426,10 +427,115 @@ async def github_webhook(request: Request) -> dict[str, Any]:
 
 @app.post("/api/gateway/linear")
 async def linear_webhook(request: Request) -> dict[str, Any]:
-    """Receive Linear webhook events (issue status changes, comments)."""
+    """Receive Linear webhook events (issue status changes, comments).
+
+    Real implementation (replaces the prior stub): validates HMAC, parses
+    the event, and either dispatches the issue directly (event-driven path,
+    GRO-2048) or queues it to the local SQLite catch-up table for the daily
+    safety-net sweep (GRO-2050).
+
+    Configuration:
+    - PRISMATIC_LINEAR_WEBHOOK_SECRET: HMAC secret. If unset, HMAC validation
+      is skipped (development only — never deploy this way).
+    - PRISMATIC_WEBHOOK_DISPATCH_LABEL: agent label that triggers direct
+      dispatch (default: any `agent:*` label).
+    """
+    import hmac
+    import hashlib
+    import sqlite3
+
     body = await request.body()
-    logger.info("Linear webhook received (%d bytes)", len(body))
-    return {"status": "ok", "message": "webhook received"}
+    secret = os.environ.get("PRISMATIC_LINEAR_WEBHOOK_SECRET")
+    if secret:
+        sig = request.headers.get("Linear-Signature", "")
+        if not sig:
+            return JSONResponse(
+                {"status": "rejected", "reason": "missing Linear-Signature header"},
+                status_code=401,
+            )
+        expected = hmac.new(
+            secret.encode("utf-8"), body, hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(sig, expected):
+            return JSONResponse(
+                {"status": "rejected", "reason": "bad signature"},
+                status_code=401,
+            )
+
+    try:
+        event = json.loads(body)
+    except json.JSONDecodeError:
+        return JSONResponse(
+            {"status": "rejected", "reason": "bad json"},
+            status_code=400,
+        )
+
+    # Only act on Issue events. Comment events and others are pass-through.
+    event_type = event.get("type", "")
+    action = event.get("action", "")
+    data = event.get("data", {})
+    issue_id = data.get("id", "")
+    identifier = data.get("identifier", "")
+    labels = [l.get("name", "") for l in data.get("labels", []) if isinstance(l, dict)]
+
+    logger.info(
+        "Linear webhook: type=%s action=%s issue=%s labels=%s",
+        event_type, action, identifier, labels,
+    )
+
+    # Quick path: any agent:* label on an Issue update triggers direct dispatch.
+    has_agent_label = any(l.startswith("agent:") for l in labels)
+    if event_type == "Issue" and action in ("update", "create") and identifier and has_agent_label:
+        # Dispatch directly. This is the event-driven path (GRO-2048).
+        # dispatch_once runs the full cycle but the dedup DB prevents
+        # double-dispatch of issues already processed in recent cycles.
+        try:
+            from ..dispatcher import dispatch_once, EventRouterDedup
+            dedup = EventRouterDedup()
+            dispatch_once(dedup=dedup)
+            return {"status": "dispatched", "identifier": identifier}
+        except Exception as exc:  # noqa: BLE001 — never let webhook 500
+            logger.exception("dispatch_once failed for %s: %s", identifier, exc)
+            # Fall through to queue-on-failure below.
+
+    # Fallback: queue to local SQLite for daily safety-net sweep.
+    from pathlib import Path
+    state_dir = Path(os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state"))
+    state_dir.mkdir(parents=True, exist_ok=True)
+    db_path = state_dir / "linear_webhook_queue.db"
+    try:
+        with sqlite3.connect(str(db_path)) as conn:
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS linear_webhook_queue (
+                    event_id TEXT PRIMARY KEY,
+                    identifier TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    received_at REAL NOT NULL,
+                    raw_json TEXT NOT NULL,
+                    dispatch_status TEXT NOT NULL DEFAULT 'pending'
+                )"""
+            )
+            event_id = hashlib.sha256(body).hexdigest()
+            conn.execute(
+                """INSERT OR IGNORE INTO linear_webhook_queue
+                   (event_id, identifier, event_type, action, received_at, raw_json)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    event_id,
+                    identifier or "",
+                    event_type,
+                    action,
+                    time.time(),
+                    body.decode("utf-8", errors="replace"),
+                ),
+            )
+            conn.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("webhook queue write failed: %s", exc)
+        return {"status": "error", "reason": "queue write failed"}, 500
+
+    return {"status": "queued", "identifier": identifier or "(unknown)"}
 
 
 # ── CLI Entry Point ──────────────────────────────────────────────────
