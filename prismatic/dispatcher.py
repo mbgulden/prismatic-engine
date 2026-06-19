@@ -1718,12 +1718,22 @@ def dispatch_issue_by_identifier(identifier: str) -> bool:
     Cost: ~1-2 Linear API calls (fetch + maybe transition), vs ~20 for full cycle.
     Idempotency: dedup DB prevents double-dispatch within TTL.
 
+    Gates applied (same as dispatch_once cycle, AGY GRO-2078 review):
+    1. Dedup check (in-cycle)
+    2. Mode-switch transition approval (evaluate_transition_approval)
+    3. AGY stall/escalation tracker check (prevents re-launching escalated AGY)
+    4. Credit-policy gate (DENY / WARN / ASK_USER all handled)
+    5. Telemetry (record_credit, record_agent_run)
+    6. IPC bridge agent_launched event
+    7. Linear dispatch comment
+
     Args:
         identifier: e.g. ``"GRO-2051"``.
 
     Returns:
         ``True`` if the issue was dispatched to an agent, ``False`` if it had no
-        matching agent label or was already in the dedup window.
+        matching agent label or was already in the dedup window or any gate
+        failed (returns False for safety; callers check Linear for status).
     """
     cycle_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     dedup = EventRouterDedup()
@@ -1752,15 +1762,53 @@ def dispatch_issue_by_identifier(identifier: str) -> bool:
     if not agent_name:
         return False
 
-    # 3. Dedup check
     label = f"agent:{agent_name}"
+
+    # 3. Dedup check
     if dedup.is_processed(issue_id, label, cycle_id):
         return False
 
-    # 4. Credit-policy gate
+    # 4. AGY stall/escalation gate (prevent re-launching escalated stalled AGY)
+    #    Mirrors dispatch_once:1908-1923.
+    is_escalation = False
+    try:
+        cursor = dedup._conn.cursor()
+        cursor.execute(
+            "SELECT escalated FROM agy_stall_tracker WHERE issue_id = ?",
+            (issue_id,),
+        )
+        row = cursor.fetchone()
+        if isinstance(row, (tuple, list)) and row and row[0]:
+            is_escalation = True
+    except Exception:
+        pass
+
+    if agent_name == "agy" and is_escalation:
+        print(
+            f"[dispatcher] 🚫 AGY issue {identifier} is escalated/stalled; "
+            f"not relaunching (single-issue path)"
+        )
+        return False
+
+    # 5. Mode-switch transition approval (mirrors dispatch_once:1905-1933)
+    from_state, to_state = _get_transition_states(agent_name)
+    if not evaluate_transition_approval(
+        issue_id=issue_id,
+        from_state=from_state,
+        to_state=to_state,
+        is_escalation=is_escalation,
+        reason="Agent launch transition (single-issue path)",
+    ):
+        print(
+            f"[dispatcher] 🚫 Transition paused for {agent_name} → {identifier}"
+        )
+        return False
+
+    # 6. Credit-policy gate (DENY, WARN, ASK_USER all handled)
     decision = evaluate_agent_launch(label, issue_id, operation="code_generation")
+    identifier_str = issue.get("identifier", issue_id)
+
     if decision.action == PolicyAction.DENY:
-        identifier_str = issue.get("identifier", issue_id)
         print(f"[dispatcher] 🚫 BLOCKED {agent_name} → {identifier_str}: {decision.reason}")
         try:
             add_comment(
@@ -1772,7 +1820,29 @@ def dispatch_issue_by_identifier(identifier: str) -> bool:
             pass
         return False
 
-    # 5. Launch
+    if decision.action == PolicyAction.ASK_USER:
+        # Headless dispatcher cannot ask user — log and skip (matches dispatch_once).
+        print(f"[dispatcher] ❓ ASK_USER {agent_name} → {identifier_str}: {decision.reason}")
+        dedup.mark_processed(issue_id, label, cycle_id)
+        return False
+
+    if decision.action == PolicyAction.WARN:
+        print(f"[dispatcher] ⚠️  WARN {agent_name} → {identifier_str}: {decision.reason}")
+
+    # 7. Telemetry: record credit evaluation (matches dispatch_once:1982-1992)
+    try:
+        collector = get_collector()
+        collector.record_credit(
+            run_id=f"{cycle_id}-{agent_name}-{identifier_str}",
+            agent=agent_name,
+            provider=AGENT_PROVIDER_MAP.get(agent_name, ""),
+            credits_spent=decision.estimated_cost,
+            operation="code_generation",
+        )
+    except Exception:
+        pass  # Telemetry is best-effort
+
+    # 8. Launch
     launcher = AGENT_LAUNCHERS.get(agent_name)
     if not launcher:
         return False
@@ -1782,6 +1852,40 @@ def dispatch_issue_by_identifier(identifier: str) -> bool:
         result = launcher(issue_id, title=issue.get("title", ""))
         if result:
             dedup.mark_processed(issue_id, label, cycle_id)
+            print(f"[dispatcher] 🚀 Dispatched {agent_name.capitalize()} → {identifier_str}")
+
+            # 9. Telemetry: record agent run (matches dispatch_once:2009-2019)
+            try:
+                collector = get_collector()
+                collector.record_agent_run(
+                    run_id=f"{cycle_id}-{agent_name}-{identifier_str}",
+                    agent=agent_name,
+                    issue_id=identifier_str,
+                    provider=AGENT_PROVIDER_MAP.get(agent_name, ""),
+                    status="dispatched",
+                    credits_spent=decision.estimated_cost,
+                )
+            except Exception:
+                pass
+
+            # 10. Emit agent_launched IPC event (matches dispatch_once:2021-2022)
+            try:
+                _emit_agent_event(
+                    "agent_launched", agent_name, identifier_str, cycle_id=cycle_id,
+                )
+            except Exception:
+                pass
+
+            # 11. Post a comment tracking the dispatch (matches dispatch_once:2023-2031)
+            try:
+                add_comment(
+                    issue_id,
+                    f"🤖 **{agent_name.capitalize()}** picked up this issue "
+                    f"(cycle {cycle_id})",
+                )
+            except Exception:
+                pass
+
             return True
         return False
     except Exception as exc:

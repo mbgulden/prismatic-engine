@@ -2,7 +2,7 @@
 type: Standard
 title: Webhook Security Model
 description: Production-grade security model for the Prismatic Engine webhook receivers (Linear, GitHub). Covers HMAC, body size, IP allowlist, audit logging, and sanitized errors.
-resource: okf/standards/webhook-security.md
+resource: okf/webhook-security.md
 tags: [standard, security, webhook, hmac, linear, github, audit, prismatic-engine]
 timestamp: 2026-06-19T13:30:00Z
 linear_issue: GRO-2057

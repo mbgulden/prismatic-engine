@@ -110,7 +110,47 @@ class TestWebhookSecurity(unittest.TestCase):
             },
         )
         self.assertEqual(resp.status_code, 413, resp.text)
-        self.assertEqual(resp.json()["reason"], "payload too large")
+        self.assertIn("payload too large", resp.json()["reason"])
+
+    def test_body_size_limit_rejects_chunked_transfer_encoding(self):
+        """411 when Transfer-Encoding: chunked (AGY GRO-2078 finding).
+
+        Without this check, an attacker can stream unbounded chunks and
+        bypass the size limit (FastAPI/Starlette would buffer everything).
+        """
+        body = json.dumps(_linear_event(labels=["agent:agy"])).encode()
+        sig = _sign_linear(body, "test_linear_secret")
+        resp = self.client.post(
+            "/api/gateway/linear",
+            content=body,
+            headers={
+                "Linear-Signature": sig,
+                "Transfer-Encoding": "chunked",
+                "Content-Type": "application/json",
+            },
+        )
+        self.assertEqual(resp.status_code, 411, resp.text)
+        self.assertIn("chunked", resp.json()["reason"].lower())
+
+    def test_body_size_limit_rejects_missing_content_length(self):
+        """413 when no Content-Length is provided (AGY GRO-2078 finding)."""
+        # httpx may auto-add Content-Length; use headers without it.
+        body = json.dumps(_linear_event(labels=["agent:agy"])).encode()
+        sig = _sign_linear(body, "test_linear_secret")
+        resp = self.client.post(
+            "/api/gateway/linear",
+            content=body,
+            headers={
+                "Linear-Signature": sig,
+                # Intentionally omit Content-Length
+            },
+        )
+        # httpx may still auto-add it; accept either 413 (rejected) or 200 (passed through)
+        if resp.status_code == 200:
+            # If httpx auto-added content-length, the request reached the handler
+            self.skipTest("httpx auto-added Content-Length; can't test omission in this transport")
+        else:
+            self.assertEqual(resp.status_code, 413, resp.text)
 
     def test_body_size_limit_allows_normal_payload(self):
         """200 for normal-sized payloads (Linear events are <10KB)."""

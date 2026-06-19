@@ -147,18 +147,42 @@ async def limit_body_size(request: Request, call_next):
 
     Linear webhook events are typically <10KB. We cap at 1MB to allow batched
     events but reject abusive payloads.
+
+    AGY GRO-2078 hardening: also rejects requests with chunked
+    Transfer-Encoding (no Content-Length header on POST/PUT/PATCH).
+    Without this check, an attacker could bypass the size limit by
+    streaming chunks without declaring Content-Length. FastAPI/Starlette
+    would buffer the entire chunked payload into memory, defeating the cap.
     """
     if request.method in {"POST", "PUT", "PATCH"}:
         cl = request.headers.get("content-length")
-        if cl and cl.isdigit() and int(cl) > MAX_BODY_BYTES:
+        te = request.headers.get("transfer-encoding", "")
+        # Reject chunked transfer (no reliable size bound).
+        if "chunked" in te.lower():
             return JSONResponse(
-                {"status": "rejected", "reason": "payload too large"},
+                {"status": "rejected", "reason": "chunked transfer not allowed"},
+                status_code=411,
+            )
+        # Reject when no Content-Length is provided and not chunked
+        # (can't bound the body size).
+        if not cl or not cl.isdigit() or int(cl) > MAX_BODY_BYTES:
+            return JSONResponse(
+                {"status": "rejected", "reason": "payload too large or unknown size"},
                 status_code=413,
             )
     return await call_next(request)
 
 
 # ── IP allowlist middleware (defense-in-depth for non-webhook endpoints) ──
+# Comma-separated list of trusted proxy IPs that are allowed to set
+# X-Forwarded-For. Default: only localhost. Behind a reverse proxy,
+# set this to the proxy's IP(s).
+PRISMATIC_TRUSTED_PROXIES = frozenset(
+    ip.strip() for ip in os.environ.get("PRISMATIC_TRUSTED_PROXIES", "127.0.0.1,::1").split(",")
+    if ip.strip()
+)
+
+
 @app.middleware("http")
 async def ip_allowlist(request: Request, call_next):
     """Restrict non-webhook endpoints to localhost (or PRISMATIC_ALLOWED_IPS).
@@ -166,12 +190,28 @@ async def ip_allowlist(request: Request, call_next):
     Webhook endpoints (paths starting with /api/gateway/) authenticate via HMAC
     and are exempt from IP filtering. Everything else (locks, runs, schedules,
     chat, websocket) requires the connection to come from a trusted IP.
+
+    AGY GRO-2078 hardening: when behind a reverse proxy, respect
+    X-Forwarded-For only if the immediate client IP is in the trusted-proxy
+    allowlist (PRISMATIC_TRUSTED_PROXIES). This prevents header-spoofing
+    attacks where an external attacker sets X-Forwarded-For to a trusted IP.
     """
     path = request.url.path
     if path.startswith("/api/gateway/") or path == "/health":
         # Webhook endpoints use HMAC; health is intentionally public.
         return await call_next(request)
+
+    # Determine effective client IP
     client_ip = request.client.host if request.client else ""
+    xff = request.headers.get("x-forwarded-for", "")
+
+    if xff and client_ip in PRISMATIC_TRUSTED_PROXIES:
+        # Trust X-Forwarded-For only when the immediate client is a known proxy.
+        # Take the leftmost (original client) IP from the chain.
+        forwarded_ip = xff.split(",")[0].strip()
+        if forwarded_ip:
+            client_ip = forwarded_ip
+
     if client_ip not in PRISMATIC_ALLOWED_IPS:
         return JSONResponse(
             {"status": "rejected", "reason": "ip not allowed"},

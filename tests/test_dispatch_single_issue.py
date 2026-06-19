@@ -5,8 +5,10 @@ tests/test_dispatch_single_issue.py
 Verifies the new ``dispatch_issue_by_identifier`` helper used by the
 webhook handler for single-issue fast-path dispatch (Tier 7 hardening).
 
-Ref: GRO-2048 + Tier 7. Cost: ~1-2 Linear API calls per webhook event,
-vs ~20 for the full dispatch_once cycle.
+Ref: GRO-2048 + Tier 7 + AGY review GRO-2078 (single-issue dispatch now
+applies the same gates as the full dispatch_once cycle).
+
+Cost: ~1-2 Linear API calls per webhook event, vs ~20 for the full cycle.
 """
 
 import unittest
@@ -16,8 +18,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-sys.modules["prismatic.providers.signals"] = MagicMock()
-sys.modules["prismatic.credit_policy_engine"] = MagicMock()
+# AGY GRO-2078 review fix: instead of replacing sys.modules at import time
+# (which pollutes global state across the test suite), use patch.object
+# inside each test that needs to mock the credit policy engine.
+# This preserves the real PolicyAction enum and avoids cross-test pollution.
 
 
 def _make_issue(identifier, agent_label):
@@ -37,17 +41,22 @@ class TestDispatchSingleIssue(unittest.TestCase):
 
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
+        self.state_dir = Path(self._tmp.name)
         self.env = patch.dict(os.environ, {
-            "PRISMATIC_STATE_DIR": self._tmp.name,
+            "PRISMATIC_STATE_DIR": str(self.state_dir),
             "PRISMATIC_TEAM_ID": "test-team",
         })
         self.env.start()
-
+        # AGY GRO-2078 fix: ensure AUTONOMOUS mode so transition approval
+        # auto-fires (otherwise single-issue dispatch is blocked at the
+        # mode-switch gate).
+        import prismatic.dispatcher as dispatcher
+        self.dispatcher = dispatcher
+        from prismatic.mode_switch import OrchestrationMode
+        dispatcher.mode_switch.set_mode(OrchestrationMode.AUTONOMOUS)
         # Patch AGENT_CONFIG and AGENT_LAUNCHERS to one test lane.
         # dispatch_issue_by_identifier strips the 'agent:' prefix when looking up
         # AGENT_LAUNCHERS, so the dict key here is just the agent short name.
-        import prismatic.dispatcher as dispatcher
-        self.dispatcher = dispatcher
         self.agy_config_patcher = patch.object(
             dispatcher, "AGENT_CONFIG",
             {"agy": {"next_label": "agent:fred"}},  # short name, no prefix
@@ -58,11 +67,31 @@ class TestDispatchSingleIssue(unittest.TestCase):
             {"agy": MagicMock(return_value=True)},  # short name
         )
         self.launcher_patcher.start()
+        # Use the real PolicyAction.ALLOW enum (not a MagicMock with
+        # value="ALLOW"). The dispatcher code compares decision.action
+        # against the real enum values, so a MagicMock would fail the
+        # equality check. AGY GRO-2078 review fix.
+        from prismatic.credit_policy_engine import PolicyAction
         self.eval_patcher = patch.object(
             dispatcher, "evaluate_agent_launch",
-            return_value=MagicMock(action=MagicMock(value="ALLOW"), reason="ok"),
+            return_value=MagicMock(
+                action=PolicyAction.ALLOW,
+                reason="ok",
+                estimated_cost=1,
+            ),
         )
         self.eval_patcher.start()
+        # AGY GRO-2078: also mock the transition-approval gate so the
+        # test doesn't hit Linear via gql().
+        self.transition_patcher = patch.object(
+            dispatcher, "evaluate_transition_approval", return_value=True,
+        )
+        self.transition_patcher.start()
+        # And the _get_transition_states helper.
+        self.get_transition_patcher = patch.object(
+            dispatcher, "_get_transition_states", return_value=("from_state", "to_state"),
+        )
+        self.get_transition_patcher.start()
         self.dedup_init_patcher = patch.object(
             dispatcher.EventRouterDedup, "__init__", return_value=None,
         )
@@ -78,6 +107,8 @@ class TestDispatchSingleIssue(unittest.TestCase):
         self.dedup_mark_patcher.start()
 
     def tearDown(self):
+        self.get_transition_patcher.stop()
+        self.transition_patcher.stop()
         self.dedup_mark_patcher.stop()
         self.dedup_is_patcher.stop()
         self.dedup_init_patcher.stop()
@@ -131,7 +162,7 @@ class TestDispatchSingleIssue(unittest.TestCase):
 
     def test_returns_false_when_credit_policy_denies(self):
         """Returns False when credit-policy gate denies."""
-        from prismatic.credit_policy_engine import PolicyAction
+        PolicyAction = self.dispatcher.PolicyAction
         deny_decision = MagicMock()
         deny_decision.action = PolicyAction.DENY
         deny_decision.reason = "rate limit exceeded"
