@@ -317,8 +317,13 @@ Before deploying to production:
 - [ ] Linear webhook configured to use the secret
 - [ ] GitHub webhook configured to use the secret
 - [ ] `PRISMATIC_ALLOWED_IPS` includes only trusted operator IPs (not `*`)
+- [ ] `PRISMATIC_TRUSTED_PROXIES` configured if running behind reverse proxy
 - [ ] `PRISMATIC_MAX_BODY_BYTES` left at 1MB unless specific reason to change
 - [ ] `PRISMATIC_CORS_ORIGINS` set only if browser dashboard needs access
+- [ ] `PRISMATIC_WS_TOKEN` set to a strong bearer token (or `PRISMATIC_WS_SECRET` for HMAC) — AGY GRO-2082
+- [ ] `PRISMATIC_WS_ALLOWED_ORIGINS` configured to explicitly allow trusted web dashboard origins — AGY GRO-2082
+- [ ] `PRISMATIC_WS_REPLAY_WINDOW` left at 60 unless specific reason to change (must be numeric)
+- [ ] `PRISMATIC_RATE_LIMIT_MAX` left at 60 unless specific reason to change
 - [ ] Audit log directory (default `./prismatic_state/`) on a persistent volume
 - [ ] Alert wired for `webhook_audit.log` entries with outcome=rejected (suspicious traffic)
 

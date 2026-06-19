@@ -353,7 +353,16 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         o.strip() for o in os.environ.get("PRISMATIC_WS_ALLOWED_ORIGINS", "").split(",")
         if o.strip()
     ]
-    ws_replay_window = int(os.environ.get("PRISMATIC_WS_REPLAY_WINDOW", "60"))
+    try:
+        ws_replay_window = int(os.environ.get("PRISMATIC_WS_REPLAY_WINDOW", "60"))
+    except ValueError:
+        # AGY GRO-2082 advisory: log and fall back to default rather than
+        # crashing every connection with a 500. Operators can fix the env var
+        # without taking down the WebSocket service.
+        logger.warning(
+            "PRISMATIC_WS_REPLAY_WINDOW is non-numeric; falling back to 60s"
+        )
+        ws_replay_window = 60
 
     # If neither token nor secret is configured, fall back to localhost-only mode.
     # (IP allowlist middleware already handles this for HTTP; for WS upgrade
