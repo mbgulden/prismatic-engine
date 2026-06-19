@@ -85,6 +85,21 @@ Linear events are typically <10KB. 1MB allows batched events but rejects abusive
 
 **Failure mode:** 413 `{"status": "rejected", "reason": "payload too large"}`.
 
+### 2b. Per-IP rate limit (flood protection)
+
+Sliding-window per-IP rate limit at the gateway. Default: 60 requests per 60s per IP.
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `PRISMATIC_RATE_LIMIT_WINDOW` | `60` (seconds) | Sliding window size |
+| `PRISMATIC_RATE_LIMIT_MAX` | `60` (requests) | Max requests per IP per window |
+
+State is in-memory (single-instance). Multi-instance deployments need a shared store (Redis, etc.).
+
+**Failure mode:** 429 `{"status": "rejected", "reason": "rate limit exceeded"}` with `Retry-After` header.
+
+Limits should be tuned per deployment. The defaults (60/60s = ~1 req/s sustained) match expected Linear webhook traffic (Linear typically sends <1 event/second even during heavy activity).
+
 ### 3. IP allowlist (internal endpoints)
 
 Middleware `ip_allowlist` restricts non-webhook endpoints to a configurable IP set.
@@ -220,6 +235,11 @@ Before deploying to production:
 | `test_replay_protection_rejects_future_event` | `tests/test_webhook_security.py` | 401 on future event (clock-skew attack) |
 | `test_replay_protection_accepts_recent_event` | `tests/test_webhook_security.py` | 200 on event within window |
 | `test_replay_protection_allows_missing_createdat` | `tests/test_webhook_security.py` | 200 when createdAt absent (backward compat) |
+| `test_rate_limit_returns_429_after_threshold` | `tests/test_webhook_security.py` | 429 when IP exceeds rate limit |
+| `test_dual_secret_accepts_primary` | `tests/test_webhook_security.py` | Primary secret works during rotation |
+| `test_dual_secret_accepts_next` | `tests/test_webhook_security.py` | Next secret works during rotation |
+| `test_dual_secret_rejects_unknown` | `tests/test_webhook_security.py` | Unknown signature rejected |
+| `test_dual_secret_github` | `tests/test_webhook_security.py` | GitHub dual-secret rotation |
 | `test_dispatch_calls_single_issue_helper` | `tests/test_webhook_security.py` | Verifies single-issue path |
 | `test_sanitized_error_no_stack_trace` | `tests/test_webhook_security.py` | No internal info leak |
 | `test_github_webhook_rejects_missing_signature` | `tests/test_webhook_security.py` | 401 on missing GitHub sig |
