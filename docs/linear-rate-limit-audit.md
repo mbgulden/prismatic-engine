@@ -89,3 +89,73 @@ This document audits Linear API consumption within the `/home/ubuntu/.hermes/pro
     *   **Optimizing `comment_trigger_monitor.py` query:** The current `get_recent_comments` is broad. Narrowing it might miss certain comment triggers if the filter is too aggressive. Careful testing is needed to ensure no triggers are missed. Increasing the interval delays responsiveness.
 
 ---
+
+
+---
+
+## Update Jun 19 2026 — Lint script & engine-side gaps
+
+The 2026 audit above identified high-frequency Linear API consumers in the **orchestrator** profile. This update adds:
+
+1. The canonical codification (`LinearBudget.check_and_consume()`)
+2. A CI lint that detects bypass regressions
+3. Engine-side files that were missed in the original audit
+
+### LinearBudget codification (GRO-2034)
+
+The canonical fix for the silent-loophole bug: any script that calls the Linear API must go through `LinearBudget.check_and_consume()`. Implemented in `prismatic/linear/budget.py`.
+
+Example pattern (from GRO-2034's `agent_dispatcher.py` fix):
+
+```python
+from prismatic.linear.budget import linear_budget
+
+def _linear_gql(query, variables=None):
+    budget = linear_budget()
+    if budget is not None:
+        if not budget.check_and_consume("cron.agent_dispatcher"):
+            raise Exception("Linear API rate limit exceeded ...")
+    # ... actual request ...
+```
+
+### Lint script (GRO-2037) — `scripts/check_linear_cron_rate.sh`
+
+Catches the same class of silent-loophole bug at PR time. Scans `prismatic/` for Python files that:
+- Import HTTP clients (requests, httpx, urllib.request, http.client, aiohttp, subprocess curl/wget)
+- Reference Linear (URLs or symbols)
+- Do NOT import LinearBudget
+
+**Fails CI** on any ungated file. Estimated hourly usage also checked against 2000/hr safety threshold.
+
+Initial run (Jun 19 2026) found **5 ungated files** — none in the orchestrator profile (already covered by GRO-2034's fix) but in the engine itself:
+
+| File | Call type | Issue |
+|------|-----------|-------|
+| `prismatic/credit_tracker.py` | subprocess curl to api.linear.app/graphql | `post_linear_comment()` not gated |
+| `prismatic/journal.py` | urllib to LINEAR_URL | Issue creation/comment not gated |
+| `prismatic/providers/tasks/linear.py` | LinearTaskProvider base class | Foundation for all Linear task providers |
+| `prismatic/security/credential_rotator.py` | urllib to LINEAR_ROTATION_URL | Token rotation is admin op, infrequent, but should still gate |
+| `prismatic/telemetry.py` | subprocess curl to api.linear.app/graphql | Alert comment posting not gated |
+
+Follow-ups filed: **GRO-2053 through GRO-2057** (one per file).
+
+### Wire-up checklist
+
+To enable the lint in CI:
+
+1. Create `.github/workflows/prismatic-lint.yml` (tracked in **GRO-2062**)
+2. The lint can also be run locally: `bash scripts/check_linear_cron_rate.sh`
+3. Engine repo needs GitHub Actions infrastructure first (out of scope for this audit)
+
+### Combined risk picture (orchestrator + engine)
+
+After GRO-2034 (orchestrator fix) + GRO-2037 (lint) + GRO-2053..2057 (engine gates), the **silent bypass class of bug** is closed:
+- Existing files: all gated or have filed follow-ups
+- New files: caught at PR time by lint
+- Rate-limit semantics: codified in `LinearBudget` with 80% safety threshold
+
+The original 2026 audit's risk picture (orchestrator at 900-1000 req/hr unmitigated) is now bounded by `LinearBudget.check_and_consume()`, which raises on exhaustion rather than burning through.
+
+---
+
+*Document updated by Ned as part of GRO-2037 follow-up (Jun 19 2026).*

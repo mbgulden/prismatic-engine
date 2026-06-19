@@ -1,6 +1,6 @@
 ---
 name: agent-ned
-description: "Set up, configure, and operate Ned — Michael's primary executor (deepseek-v4-pro). Ned handles heavy lifting (code, fixes, builds) so Fred can focus on orchestration and review. Covers Linear label setup, cron job configuration, model selection, lane split with Fred, delivery routing, dispatcher registration, production-only deployment, and task assignment patterns."
+description: "Set up, configure, and operate Ned — Michael's primary executor (deepseek-v4-pro). Ned handles heavy lifting (code, fixes, builds) so Fred can focus on orchestration and review. Covers Linear label setup, cron job configuration, model selection, lane split with Fred, delivery routing, dispatcher registration, production-only deployment, task assignment patterns, and **production-readiness sweeps** (silent-failure audits, infrastructure reliability, observability gaps, boring-but-essential plumbing). See `references/infra-watchdog-pattern.md`."
 ---
 
 # Agent Ned — Setup & Operations
@@ -658,3 +658,43 @@ span 3 files. Missing any one silently breaks the screen. Full checklist + worke
   4. **Screen transition trigger:** In the `if (currentScreen === SCREENS.PLAYING)` transition block, call `tick()` immediately after `stopMenuMusic()` to force a music state refresh on gameplay start.
   5. **All references use `typeof` guards** — the module may not exist in older deployments or if the script tag fails to load. The guards prevent crashes.
   **Real example:** GRO-869 — `audio_manager.js` wired into the 8297-line monolith with 4 insertion points.
+
+
+## Production-Readiness Sweeps
+
+Ned's secondary lane: bring Hermes + prismatic-engine infrastructure to production-grade reliability, observability, and boring-but-essential plumbing that might have otherwise gone forgotten or broken silently.
+
+### When to do a sweep
+
+- **After a major incident** that revealed a silent-failure gap (the typical trigger)
+- **Quarterly**, as a hygiene check (combine with Linear API rate-limit audit)
+- **When Michael says "what is Ned working on?"** — that's the cue
+
+### The pattern (see `references/infra-watchdog-pattern.md` for full checklist)
+
+1. **Survey** — list every cron, every script that touches infra, every DB
+2. **Audit** for silent-failure modes:
+   - Missing log rotation? Logs grow unbounded or get wiped on reboot
+   - No VACUUM cron? SQLite DBs fragment over months
+   - No retention policy? Tables grow unbounded
+   - No health check? Silent growth invisible
+   - No CI integration? Lint doesn't catch regressions
+   - No HMAC? Webhook can be spoofed
+   - No rate-limit gate? API calls burn budget silently
+3. **File** each finding as a separate Linear issue with priority tied to blast radius
+4. **Ship** mechanical fixes (VACUUM, retention) first; defer design (dashboards, custom analytics)
+5. **Verify** by simulating the failure mode post-fix
+
+### Examples shipped (Jun 2026)
+
+- **GRO-2037**: Linear API rate-limit lint — catches silent bypass of `LinearBudget.check_and_consume()`. Detected 5 ungated engine files on first run (GRO-2053..2057).
+- **GRO-2058..2062**: Production-readiness sweep findings — log rotation, VACUUM, retention, health checks, CI integration. All filed under GRO-2063 (parent).
+- **GRO-2033**: Documentation hub Tier 1 docs (Ned contributed 4 of 5).
+
+### Tools Ned uses
+
+- `bash scripts/check_linear_cron_rate.sh` — lint for LinearBudget bypass
+- `sqlite3 <db> "PRAGMA freelist_count"` — fragmentation check
+- `du -b ~/.prismatic/logs/*.log` — log growth detection
+- `hermes cron list --profile orchestrator` — verify cron health
+- AGY for verification recipes (post-change smoke tests)
