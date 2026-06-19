@@ -194,6 +194,22 @@ class LinearTaskProvider(TaskProvider):
             print("[LinearTaskProvider] No API key — skipping request")
             return None
 
+        # GRO-2055: gate every Linear API call through LinearBudget. This is
+        # the TaskProvider base class — every other provider that extends it
+        # goes through this gate, so a single check covers the whole subtree.
+        # Pattern from GRO-2034 in agent_dispatcher.py::_linear_gql.
+        try:
+            from prismatic.linear.budget import linear_budget
+            if not linear_budget.check_and_consume("prismatic.providers.tasks.linear"):
+                print("[LinearTaskProvider] Linear API budget exceeded — refusing request")
+                return None
+        except ImportError:
+            # LinearBudget not importable (partial install) — proceed but warn
+            print(
+                "[LinearTaskProvider] WARNING: LinearBudget not importable — proceeding without gate",
+                file=__import__("sys").stderr,
+            )
+
         payload = {"query": query}
         if variables:
             payload["variables"] = variables
