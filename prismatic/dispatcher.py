@@ -147,12 +147,21 @@ def log_completed_pipeline_metrics(
 def _linear_api_key() -> str:
     """Get the Linear API key from the environment.
 
-    Raises RuntimeError if ``LINEAR_API_KEY`` is not set.
+    Prefers ``LINEAR_OAUTH_TOKEN`` (rotated every 45 min by cron).
+    Falls back to ``LINEAR_API_KEY`` (long-lived personal token) if OAuth
+    isn't set. Raises RuntimeError if neither is set.
+
+    Refs: GRO-2084 — OAuth compatibility (the gateway now reads whichever
+    token is current; the cron rotates OAuth every 45 min so we don't need
+    to track expiry here).
     """
+    oauth = os.environ.get("LINEAR_OAUTH_TOKEN")
+    if oauth:
+        return oauth
     key = os.environ.get("LINEAR_API_KEY")
     if not key:
         raise RuntimeError(
-            "LINEAR_API_KEY environment variable is required"
+            "LINEAR_OAUTH_TOKEN or LINEAR_API_KEY environment variable is required"
         )
     return key
 
