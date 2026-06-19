@@ -84,6 +84,14 @@ bash scripts/check_linear_cron_rate.sh 2>&1 | grep test_bypass
 # Should show: ❌ test_bypass.py: makes Linear API calls without LinearBudget gate
 ```
 
+### Worked scripts shipped
+
+| Script | Purpose | Cron | Issue |
+|--------|---------|------|-------|
+| `scripts/check_linear_cron_rate.sh` | Detects LinearBudget bypass regressions | None (run on PR) | GRO-2037 |
+| `scripts/vacuum-state-dbs.sh` | SQLite VACUUM on `prismatic_state/*.db` | Weekly Sun 03:00 UTC | GRO-2059 |
+| `scripts/purge-retention.py` | Retention policy (drop dedup_log > 14d, etc.) | Daily 03:30 UTC | GRO-2060 |
+
 ## Worked example: GRO-2037 sweep
 
 The full sweep that produced GRO-2037 + GRO-2053..2057 + GRO-2058..2062:
