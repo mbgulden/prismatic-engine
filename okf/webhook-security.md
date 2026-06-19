@@ -146,16 +146,52 @@ All exceptions are logged server-side via `logger.exception(...)` so operators c
 
 ## Secret rotation
 
-The HMAC secrets are loaded per-request via `os.environ`. Rotation procedure:
+The HMAC secrets are loaded per-request via `os.environ`. Rotation is **zero-downtime** via dual-secret support.
 
-1. Generate new 32-byte secret: `python3 -c "import secrets; print(secrets.token_hex(32))"`
-2. Set `PRISMATIC_LINEAR_WEBHOOK_SECRET_NEW=<new>` in vault (Linear still using old).
-3. Update Linear webhook config to use new secret.
-4. Wait 5 minutes (Linear retry window).
-5. Switch env to `PRISMATIC_LINEAR_WEBHOOK_SECRET=<new>`, remove `_NEW`.
-6. Restart engine.
+### Environment variables
 
-Zero-downtime rotation requires dual-secret support — **not yet implemented**. Tracked as Tier 7 follow-up.
+| Variable | Role |
+|---|---|
+| `PRISMATIC_LINEAR_WEBHOOK_SECRET` | Primary secret — accepts signatures from Linear configured with this value |
+| `PRISMATIC_LINEAR_WEBHOOK_SECRET_NEXT` | Optional rotation candidate — accepts signatures during rotation window |
+
+Same for GitHub: `PRISMATIC_GITHUB_WEBHOOK_SECRET` and `PRISMATIC_GITHUB_WEBHOOK_SECRET_NEXT`.
+
+### Rotation procedure (zero-downtime)
+
+1. **Generate new secret**: `python3 -c "import secrets; print(secrets.token_hex(32))"`
+2. **Set rotation candidate**: `PRISMATIC_LINEAR_WEBHOOK_SECRET_NEXT=<new>` in vault, restart engine.
+3. **Configure Linear** to use the new secret (in Linear's webhook settings).
+4. **Verify rotation**: monitor `webhook_audit.log` — both `matches_primary` and `matches_next` should appear in traffic (or just the new one once Linear is fully switched).
+5. **Promote**: rename `PRISMATIC_LINEAR_WEBHOOK_SECRET_NEXT` → primary, remove the old one. Restart engine.
+
+Throughout the rotation window, both signatures are accepted. No service interruption.
+
+### Diagram
+
+```text
+Before rotation:
+  Linear → HMAC(SECRET_A) → engine accepts SECRET_A
+  Engine env: SECRET only
+
+During rotation (after step 2):
+  Linear → HMAC(SECRET_A) OR HMAC(SECRET_B) → engine accepts either
+  Engine env: SECRET_A + SECRET_B (NEXT)
+
+After rotation (step 5):
+  Linear → HMAC(SECRET_B) → engine accepts SECRET_B
+  Engine env: SECRET_B only
+```
+
+### Failure modes
+
+| Condition | Behavior |
+|---|---|
+| `PRISMATIC_LINEAR_WEBHOOK_SECRET` unset | HMAC validation skipped (dev only) |
+| Both primary and next set, signature matches neither | 401, audited |
+| Only primary set, signature matches | 200, processed |
+| Both set, signature matches primary | 200, processed (legacy linear still using old secret) |
+| Both set, signature matches next | 200, processed (linear already rotated to new secret) |
 
 ## Adoption checklist
 
