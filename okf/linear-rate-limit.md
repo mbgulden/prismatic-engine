@@ -33,8 +33,8 @@ a clear error rather than silently exhausting the API quota.
 
 | Path | Role | GRO |
 |---|---|---|
-| `prismatic/linear_budget.py` | Canonical engine module. Defines `LinearBudget.check_and_consume()`. | GRO-2008/2020 |
-| `prismatic/linear/budget.py` | Legacy shim (re-exports from canonical). Kept for backward compat. | GRO-2020 |
+| `prismatic/linear/budget.py` | Canonical engine module. Defines `LinearBudget.check_and_consume()`. | GRO-2008/2020 |
+| `prismatic/linear_budget.py` | **NOT YET PRESENT** — referenced in earlier docs as canonical. The GRO-2020 module-move landed in branch `feature/linear-budget-engine-module` (commit `13de03d`) but never merged into `main` or `feature/rate-limit-runbook`. Until merge, `prismatic/linear/budget.py` is the only path. | (pending merge) |
 | `~/.hermes/profiles/orchestrator/scripts/agent_dispatcher.py::_linear_gql()` | Wraps direct GraphQL with `LinearBudget.check_and_consume()`. | GRO-2034 |
 | `agent_dispatcher.py::gql()` | Top-level dispatch helper. Calls `linear_call` (canonical) or `_linear_gql` (fallback). Both gated. | GRO-2034 |
 | `scripts/check_linear_cron_rate.sh` | Lint script: fails CI if total expected cron usage > 2000 req/hour. | GRO-2008 |
