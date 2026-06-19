@@ -78,6 +78,46 @@ app = FastAPI(
 
 
 # ── Body-size middleware (DoS protection) ────────────────────────────
+# Per-IP rate limit (sliding window). In-memory only — sufficient for a single
+# instance. Multi-instance deployments would need Redis or similar.
+# Default: 60 requests / 60s / IP. Configurable.
+import time as _time
+_RATE_LIMIT_WINDOW = int(os.environ.get("PRISMATIC_RATE_LIMIT_WINDOW", "60"))
+_RATE_LIMIT_MAX = int(os.environ.get("PRISMATIC_RATE_LIMIT_MAX", "60"))
+_rate_limit_buckets: dict[str, list[float]] = {}
+
+
+@app.middleware("http")
+async def rate_limit_per_ip(request: Request, call_next):
+    """Sliding-window per-IP rate limit.
+
+    Returns 429 with Retry-After header when an IP exceeds RATE_LIMIT_MAX
+    requests in the last RATE_LIMIT_WINDOW seconds.
+
+    State is in-memory; multi-instance gateways would need a shared store.
+    """
+    client_ip = request.client.host if request.client else "unknown"
+    now = _time.time()
+    bucket = _rate_limit_buckets.setdefault(client_ip, [])
+    # Drop entries older than the window
+    while bucket and bucket[0] < now - _RATE_LIMIT_WINDOW:
+        bucket.pop(0)
+    if len(bucket) >= _RATE_LIMIT_MAX:
+        retry_after = int(bucket[0] + _RATE_LIMIT_WINDOW - now) + 1
+        return JSONResponse(
+            {"status": "rejected", "reason": "rate limit exceeded"},
+            status_code=429,
+            headers={"Retry-After": str(retry_after)},
+        )
+    bucket.append(now)
+    # Periodically clean up empty buckets to prevent unbounded growth.
+    if len(_rate_limit_buckets) > 1000 and now % 100 < 1:
+        empty = [k for k, v in _rate_limit_buckets.items() if not v]
+        for k in empty:
+            _rate_limit_buckets.pop(k, None)
+    return await call_next(request)
+
+
 @app.middleware("http")
 async def limit_body_size(request: Request, call_next):
     """Reject requests with bodies larger than MAX_BODY_BYTES.

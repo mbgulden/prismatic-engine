@@ -319,6 +319,51 @@ class TestWebhookSecurity(unittest.TestCase):
             )
             self.assertEqual(resp.status_code, 200, resp.text)
 
+    # ── Rate limit ──────────────────────────────────────────────────
+
+    def test_rate_limit_returns_429_after_threshold(self):
+        """429 when an IP exceeds PRISMATIC_RATE_LIMIT_MAX requests in the window."""
+        # Set low limits for the test
+        with patch.dict(os.environ, {
+            "PRISMATIC_RATE_LIMIT_WINDOW": "60",
+            "PRISMATIC_RATE_LIMIT_MAX": "3",
+        }):
+            # Reload module to pick up new env vars
+            import importlib
+            import prismatic.gateway.server as srv_module
+            importlib.reload(srv_module)
+            try:
+                from fastapi.testclient import TestClient
+                client = TestClient(srv_module.app)
+                # Make 3 requests (at the limit)
+                for i in range(3):
+                    body = json.dumps(_linear_event(labels=["type:docs"])).encode()
+                    sig = _sign_linear(body, "test_linear_secret")
+                    resp = client.post(
+                        "/api/gateway/linear",
+                        content=body,
+                        headers={"Linear-Signature": sig},
+                    )
+                    self.assertEqual(resp.status_code, 200, f"req {i}: {resp.text}")
+                # 4th request should be rate-limited
+                body = json.dumps(_linear_event(labels=["type:docs"])).encode()
+                sig = _sign_linear(body, "test_linear_secret")
+                resp = client.post(
+                    "/api/gateway/linear",
+                    content=body,
+                    headers={"Linear-Signature": sig},
+                )
+                self.assertEqual(resp.status_code, 429, resp.text)
+                self.assertEqual(resp.json()["reason"], "rate limit exceeded")
+                self.assertIn("Retry-After", resp.headers)
+            finally:
+                # Restore original env and reload
+                with patch.dict(os.environ, {
+                    "PRISMATIC_RATE_LIMIT_WINDOW": "60",
+                    "PRISMATIC_RATE_LIMIT_MAX": "60",
+                }):
+                    importlib.reload(srv_module)
+
     # ── Single-issue dispatch (no full-cycle amplification) ──────
 
     def test_dispatch_calls_single_issue_helper(self):
