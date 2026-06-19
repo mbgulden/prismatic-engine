@@ -388,9 +388,21 @@ def get_issue_by_identifier(identifier: str) -> dict[str, Any] | None:
         }
     }
     """
+    # Linear's IssueFilter uses `number` (int), not `identifier` (string).
+    # We have "GRO-2051"; extract the numeric part for the filter.
+    issue_number = None
+    if "-" in identifier:
+        try:
+            issue_number = int(identifier.split("-", 1)[1])
+        except (ValueError, IndexError):
+            pass
+    if issue_number is None:
+        filter_value: dict[str, Any] = {"identifier": {"eq": identifier}}
+    else:
+        filter_value = {"number": {"eq": issue_number}}
     data = gql(query, {
         "teamId": TEAM_ID,
-        "filter": {"identifier": {"eq": identifier}},
+        "filter": filter_value,
     })
     issues = data.get("team", {}).get("issues", {}).get("nodes", [])
     return issues[0] if issues else None
