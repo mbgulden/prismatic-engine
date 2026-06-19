@@ -131,14 +131,32 @@ The webhook handler calls `dispatch_issue_by_identifier(identifier)` — a new h
 Every webhook outcome is appended to `$PRISMATIC_STATE_DIR/webhook_audit.log` as JSONL (one JSON record per line).
 
 ```json
-{"ts": 1718794400.123, "source": "linear", "outcome": "dispatched", "identifier": "GRO-2051", "event_type": "Issue"}
-{"ts": 1718794401.456, "source": "linear", "outcome": "rejected", "reason": "bad signature"}
-{"ts": 1718794402.789, "source": "github", "outcome": "received", "repo": "growthwebdev/prismatic-engine", "event_type": "opened"}
+{"ts": 1718794400.123, "source": "linear", "outcome": "dispatched", "identifier": "GRO-2051", "event_type": "Issue", "request_id": "550e8400-e29b-41d4-a716-446655440000"}
+{"ts": 1718794401.456, "source": "linear", "outcome": "rejected", "reason": "bad signature", "request_id": "550e8400-e29b-41d4-a716-446655440001"}
+{"ts": 1718794402.789, "source": "github", "outcome": "received", "repo": "growthwebdev/prismatic-engine", "event_type": "opened", "request_id": "550e8400-e29b-41d4-a716-446655440002"}
 ```
 
 Outcomes: `dispatched`, `dispatch_no_op`, `queued`, `rejected`, `received`, `dispatch_failed`, `queue_failed`.
 
 Audit log writes **never** block the webhook path — failures are logged via `logger.warning` but the request continues.
+
+### 6b. Request-ID propagation
+
+Every inbound request gets a `X-Request-ID` header. If the caller provides one, it's echoed back. If absent, a UUID4 is generated. The same `request_id` is included in the audit log entry for that request, so operators can correlate multiple audit entries (HMAC check, dispatch attempt, queue write) from a single inbound webhook call.
+
+The response always carries the `X-Request-ID` header so callers can correlate the response with their own tracing infrastructure.
+
+```text
+Inbound:  X-Request-ID: trace-abc-12345  (caller provides)
+Outbound: X-Request-ID: trace-abc-12345  (echoed)
+Audit:    {"outcome": "dispatched", "request_id": "trace-abc-12345", ...}
+```
+
+```text
+Inbound:  (no X-Request-ID header)
+Outbound: X-Request-ID: 550e8400-e29b-41d4-a716-446655440000  (generated UUID4)
+Audit:    {"outcome": "queued", "request_id": "550e8400-e29b-41d4-a716-446655440000", ...}
+```
 
 ### 7. Sanitized error responses
 
@@ -236,6 +254,9 @@ Before deploying to production:
 | `test_replay_protection_accepts_recent_event` | `tests/test_webhook_security.py` | 200 on event within window |
 | `test_replay_protection_allows_missing_createdat` | `tests/test_webhook_security.py` | 200 when createdAt absent (backward compat) |
 | `test_rate_limit_returns_429_after_threshold` | `tests/test_webhook_security.py` | 429 when IP exceeds rate limit |
+| `test_request_id_generated_when_absent` | `tests/test_webhook_security.py` | UUID4 generated when X-Request-ID absent |
+| `test_request_id_echoed_when_provided` | `tests/test_webhook_security.py` | Caller's X-Request-ID echoed in response |
+| `test_request_id_in_audit_log` | `tests/test_webhook_security.py` | Audit log entry includes request_id |
 | `test_dual_secret_accepts_primary` | `tests/test_webhook_security.py` | Primary secret works during rotation |
 | `test_dual_secret_accepts_next` | `tests/test_webhook_security.py` | Next secret works during rotation |
 | `test_dual_secret_rejects_unknown` | `tests/test_webhook_security.py` | Unknown signature rejected |
