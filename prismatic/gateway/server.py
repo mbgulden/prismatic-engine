@@ -78,6 +78,29 @@ app = FastAPI(
 
 
 # ── Body-size middleware (DoS protection) ────────────────────────────
+# Request-ID propagation. Generates a UUID4 if X-Request-ID is absent,
+# echoes it back in the response. Used by audit logs to correlate entries
+# from a single inbound request.
+import uuid as _uuid
+
+
+@app.middleware("http")
+async def request_id_propagation(request: Request, call_next):
+    """Read X-Request-ID from headers or generate one; echo back in response.
+
+    Allows callers to pass their own request ID for cross-system tracing.
+    Default fallback: UUID4 (16 bytes of randomness).
+    """
+    request_id = request.headers.get("X-Request-ID", "")
+    if not request_id:
+        request_id = str(_uuid.uuid4())
+    # Stash on request.state so handlers can access via request.state.request_id
+    request.state.request_id = request_id
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+
 # Per-IP rate limit (sliding window). In-memory only — sufficient for a single
 # instance. Multi-instance deployments would need Redis or similar.
 # Default: 60 requests / 60s / IP. Configurable.
@@ -521,7 +544,52 @@ async def handle_chat_schedule_command(payload: dict[str, Any]) -> Response:
 
 
 
-# ── Webhook Endpoints (stubs — full implementation in dedicated modules) ──
+
+
+def _audit_webhook(
+    source: str,
+    outcome: str,
+    *,
+    reason: str | None = None,
+    identifier: str | None = None,
+    event_type: str | None = None,
+    repo: str | None = None,
+    request_id: str | None = None,
+) -> None:
+    """Append a row to the webhook audit log.
+
+    Schema (one JSON record per line):
+      {ts, source, outcome, reason?, identifier?, event_type?, repo?,
+       request_id?}
+
+    Lives at $PRISMATIC_STATE_DIR/webhook_audit.log. Append-only.
+    Used for forensics and rate-of-anomaly detection.
+
+    request_id correlates all audit entries from a single inbound request.
+    """
+    state_dir = Path(os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state"))
+    state_dir.mkdir(parents=True, exist_ok=True)
+    record = {
+        "ts": time.time(),
+        "source": source,
+        "outcome": outcome,
+    }
+    if reason is not None:
+        record["reason"] = reason
+    if identifier is not None:
+        record["identifier"] = identifier
+    if event_type is not None:
+        record["event_type"] = event_type
+    if repo is not None:
+        record["repo"] = repo
+    if request_id is not None:
+        record["request_id"] = request_id
+    try:
+        with (state_dir / "webhook_audit.log").open("a") as f:
+            f.write(json.dumps(record) + "\n")
+    except Exception as exc:  # noqa: BLE001
+        # Audit must never break the webhook path. Log and continue.
+        logger.warning("audit log write failed: %s", exc)
 
 
 @app.post("/api/gateway/github")
@@ -531,18 +599,24 @@ async def github_webhook(request: Request) -> dict[str, Any]:
     HMAC validation against PRISMATIC_GITHUB_WEBHOOK_SECRET. Header is
     X-Hub-Signature-256 (sha256=<hex>) per GitHub's spec.
 
+    Dual-secret rotation supported (PRISMATIC_GITHUB_WEBHOOK_SECRET_NEXT).
+
     If the secret is unset, HMAC is skipped (dev only — never deploy this way).
     """
     import hmac
     import hashlib
 
     body = await request.body()
+    request_id = getattr(request.state, "request_id", None)
     primary_secret = os.environ.get("PRISMATIC_GITHUB_WEBHOOK_SECRET", "")
     next_secret = os.environ.get("PRISMATIC_GITHUB_WEBHOOK_SECRET_NEXT", "")
     if primary_secret:
         sig_header = request.headers.get("X-Hub-Signature-256", "")
         if not sig_header.startswith("sha256="):
-            _audit_webhook("github", "rejected", reason="missing signature header")
+            _audit_webhook(
+                "github", "rejected", reason="missing signature header",
+                request_id=request_id,
+            )
             return JSONResponse(
                 {"status": "rejected", "reason": "missing X-Hub-Signature-256"},
                 status_code=401,
@@ -560,7 +634,10 @@ async def github_webhook(request: Request) -> dict[str, Any]:
             ).hexdigest()
             matches_next = hmac.compare_digest(sig, expected_next)
         if not (matches_primary or matches_next):
-            _audit_webhook("github", "rejected", reason="bad signature")
+            _audit_webhook(
+                "github", "rejected", reason="bad signature",
+                request_id=request_id,
+            )
             return JSONResponse(
                 {"status": "rejected", "reason": "bad signature"},
                 status_code=401,
@@ -570,53 +647,18 @@ async def github_webhook(request: Request) -> dict[str, Any]:
     try:
         event = json.loads(body)
     except json.JSONDecodeError:
-        _audit_webhook("github", "rejected", reason="bad json")
+        _audit_webhook(
+            "github", "rejected", reason="bad json", request_id=request_id,
+        )
         return JSONResponse({"status": "rejected", "reason": "bad json"}, status_code=400)
 
     event_type = event.get("action", "") or event.get("ref", "")
     repo = (event.get("repository") or {}).get("full_name", "unknown")
-    _audit_webhook("github", "received", repo=repo, event_type=str(event_type)[:64])
+    _audit_webhook(
+        "github", "received", repo=repo, event_type=str(event_type)[:64],
+        request_id=request_id,
+    )
     return {"status": "ok", "message": "webhook received", "event_type": event_type}
-
-
-def _audit_webhook(
-    source: str,
-    outcome: str,
-    *,
-    reason: str | None = None,
-    identifier: str | None = None,
-    event_type: str | None = None,
-    repo: str | None = None,
-) -> None:
-    """Append a row to the webhook audit log.
-
-    Schema (one JSON record per line):
-      {ts, source, outcome, reason?, identifier?, event_type?, repo?, body_size?}
-
-    Lives at $PRISMATIC_STATE_DIR/webhook_audit.log. Append-only.
-    Used for forensics and rate-of-anomaly detection.
-    """
-    state_dir = Path(os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state"))
-    state_dir.mkdir(parents=True, exist_ok=True)
-    record = {
-        "ts": time.time(),
-        "source": source,
-        "outcome": outcome,
-    }
-    if reason is not None:
-        record["reason"] = reason
-    if identifier is not None:
-        record["identifier"] = identifier
-    if event_type is not None:
-        record["event_type"] = event_type
-    if repo is not None:
-        record["repo"] = repo
-    try:
-        with (state_dir / "webhook_audit.log").open("a") as f:
-            f.write(json.dumps(record) + "\n")
-    except Exception as exc:  # noqa: BLE001
-        # Audit must never break the webhook path. Log and continue.
-        logger.warning("audit log write failed: %s", exc)
 
 
 @app.post("/api/gateway/linear")
@@ -651,12 +693,16 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
     # is the primary, _NEXT is a candidate during rotation. Both are
     # accepted during the rotation window. After Linear is confirmed to
     # use the new secret, swap roles (rename _NEXT → primary).
+    request_id = getattr(request.state, "request_id", None)
     primary_secret = os.environ.get("PRISMATIC_LINEAR_WEBHOOK_SECRET", "")
     next_secret = os.environ.get("PRISMATIC_LINEAR_WEBHOOK_SECRET_NEXT", "")
     if primary_secret:
         sig = request.headers.get("Linear-Signature", "")
         if not sig:
-            _audit_webhook("linear", "rejected", reason="missing signature header")
+            _audit_webhook(
+                "linear", "rejected", reason="missing signature header",
+                request_id=request_id,
+            )
             return JSONResponse(
                 {"status": "rejected", "reason": "missing Linear-Signature header"},
                 status_code=401,
@@ -674,7 +720,7 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
             ).hexdigest()
             matches_next = hmac.compare_digest(sig, expected_next)
         if not (matches_primary or matches_next):
-            _audit_webhook("linear", "rejected", reason="bad signature")
+            _audit_webhook("linear", "rejected", reason="bad signature", request_id=request_id)
             return JSONResponse(
                 {"status": "rejected", "reason": "bad signature"},
                 status_code=401,
@@ -684,7 +730,7 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
     try:
         event = json.loads(body)
     except json.JSONDecodeError:
-        _audit_webhook("linear", "rejected", reason="bad json")
+        _audit_webhook("linear", "rejected", reason="bad json", request_id=request_id)
         return JSONResponse(
             {"status": "rejected", "reason": "bad json"},
             status_code=400,
@@ -710,6 +756,7 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
                 _audit_webhook(
                     "linear", "rejected",
                     reason=f"stale: {int(age_seconds)}s old (max {WEBHOOK_REPLAY_WINDOW_SECONDS}s)",
+                    request_id=request_id,
                 )
                 return JSONResponse(
                     {
@@ -723,6 +770,7 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
                 _audit_webhook(
                     "linear", "rejected",
                     reason=f"future event: {-int(age_seconds)}s in future",
+                    request_id=request_id,
                 )
                 return JSONResponse(
                     {"status": "rejected", "reason": "event timestamp in the future"},
@@ -760,6 +808,7 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
             outcome = "dispatched" if result else "dispatch_no_op"
             _audit_webhook(
                 "linear", outcome, identifier=identifier, event_type=event_type,
+                request_id=request_id,
             )
             return {
                 "status": outcome,
@@ -772,7 +821,7 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
             _audit_webhook(
                 "linear", "dispatch_failed",
                 identifier=identifier, event_type=event_type,
-                reason=str(exc)[:200],
+                reason=str(exc)[:200], request_id=request_id,
             )
             # Fall through to queue-on-failure below.
 
@@ -825,6 +874,7 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
     # ── 6. Audit log + response ─────────────────────────────────────
     _audit_webhook(
         "linear", "queued", identifier=identifier, event_type=event_type,
+        request_id=request_id,
     )
     return {"status": "queued", "identifier": identifier or "(unknown)"}
 

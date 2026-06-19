@@ -321,6 +321,49 @@ class TestWebhookSecurity(unittest.TestCase):
 
     # ── Rate limit ──────────────────────────────────────────────────
 
+    def test_request_id_generated_when_absent(self):
+        """X-Request-ID is generated and returned in response headers."""
+        body = json.dumps(_linear_event(labels=["type:docs"])).encode()
+        sig = _sign_linear(body, "test_linear_secret")
+        resp = self.client.post(
+            "/api/gateway/linear",
+            content=body,
+            headers={"Linear-Signature": sig},
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertIn("X-Request-ID", resp.headers)
+        request_id = resp.headers["X-Request-ID"]
+        # UUID4 is 36 chars (32 hex + 4 hyphens)
+        self.assertEqual(len(request_id), 36)
+
+    def test_request_id_echoed_when_provided(self):
+        """X-Request-ID is echoed back when caller provides one."""
+        custom_id = "trace-abc-12345"
+        body = json.dumps(_linear_event(labels=["type:docs"])).encode()
+        sig = _sign_linear(body, "test_linear_secret")
+        resp = self.client.post(
+            "/api/gateway/linear",
+            content=body,
+            headers={"Linear-Signature": sig, "X-Request-ID": custom_id},
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(resp.headers["X-Request-ID"], custom_id)
+
+    def test_request_id_in_audit_log(self):
+        """Audit log entry includes the request_id from the inbound request."""
+        custom_id = "audit-test-xyz"
+        body = json.dumps(_linear_event(labels=["type:docs"])).encode()
+        sig = _sign_linear(body, "test_linear_secret")
+        self.client.post(
+            "/api/gateway/linear",
+            content=body,
+            headers={"Linear-Signature": sig, "X-Request-ID": custom_id},
+        )
+        rec = json.loads(
+            (self.state_dir / "webhook_audit.log").read_text().strip().splitlines()[-1]
+        )
+        self.assertEqual(rec.get("request_id"), custom_id)
+
     def test_rate_limit_returns_429_after_threshold(self):
         """429 when an IP exceeds PRISMATIC_RATE_LIMIT_MAX requests in the window."""
         # Set low limits for the test
