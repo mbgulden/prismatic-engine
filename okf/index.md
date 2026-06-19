@@ -44,6 +44,9 @@ This index points to OKF docs for the `prismatic-engine` repo. **The hub (`mbgul
 ## Concepts (engine-specific, no hub mirror)
 
 - [architecture.md](./architecture.md) — Module map, public API surface, two-dispatcher model
+- [linear-budget-lint-ci.md](./linear-budget-lint-ci.md) — LinearBudget lint script + CI workflow (GRO-2037/2053..2057/2062)
+- [production-readiness-infrastructure.md](./production-readiness-infrastructure.md) — 4-cron sweep: log rotation, SQLite VACUUM, retention, state-DB health alerts (GRO-2058/2059/2060/2061/2063)
+- [memory-grooming.md](./memory-grooming.md) — Hermes memory cap enforcement (weekly prune + 12-hour capacity check, GRO-2021/2022/2035)
 
 ## Tier 7 Journey (mirrored from hub)
 
