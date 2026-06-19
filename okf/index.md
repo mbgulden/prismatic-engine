@@ -25,6 +25,7 @@ This bundle is the spoke for the prismatic-engine. The hub lives at
 - [`linear-rate-limit.md`](./linear-rate-limit.md) — Linear API rate-limit codification (GRO-2008/2010/2020/2034)
 - [`linear-budget-lint-ci.md`](./linear-budget-lint-ci.md) — Lint script + CI workflow that enforces LinearBudget gating at PR time (GRO-2037/2053..2057/2062)
 - [`production-readiness-infrastructure.md`](./production-readiness-infrastructure.md) — 4-cron sweep: log rotation, SQLite VACUUM, retention, state-DB health alerts (GRO-2058/2059/2060/2061/2063)
+- [`memory-grooming.md`](./memory-grooming.md) — Hermes memory cap enforcement (weekly prune + 12-hour capacity check, GRO-2021/2022/2035)
 - [`dispatch-architecture.md`](./dispatch-architecture.md) — Event-driven dispatch architecture (GRO-2047/2048/2050)
 - [`webhook-handler-test-pattern.md`](./webhook-handler-test-pattern.md) — Webhook test pattern (9 tests, all pass)
 
