@@ -41,13 +41,14 @@ PUBLISH_BIN = os.environ.get("PRISMATIC_PUBLISH_BIN", "prismatic-publish")
 HOSTNAME = os.environ.get("PRISMATIC_ARTIFACTS_HOSTNAME", "files.growthwebdev.com")
 WORKSPACE = os.environ.get("PRISMATIC_PUBLISH_WORKSPACE", "published")
 MAX_PARALLEL = int(os.environ.get("PRISMATIC_PUBLISH_MAX_PARALLEL", "4"))
+REL_FROM = None
 
 # Match absolute paths under /home, /tmp, /mnt, /var/*, or /root. We allow dots in
 # the middle of the path so filenames like "foo.md" or "tarball.tar.gz" stay intact.
 # We stop only at whitespace and a small set of sentence punctuation that is
 # almost never part of a filename.
 PATH_RE = re.compile(
-    r"""(?P<path>/(?:home|tmp|mnt|root|var/[a-z]+)/(?:[^\s`'"\)\]\}\,\?!\:;]+))""",
+    r"""(?:file://)?(?P<path>/(?:home|tmp|mnt|root|var/[a-z]+)/(?:[^\s`'"\)\]\}\,\?!\:;]+))""",
     re.VERBOSE,
 )
 
@@ -76,8 +77,11 @@ def _is_under_excluded(p: str) -> bool:
 def _publish_one(path: str) -> dict:
     """Call prismatic-publish; return {path, url, ok, error}."""
     try:
+        cmd = [PUBLISH_BIN, path, "--workspace", WORKSPACE, "--skip-health-check", "--json"]
+        if REL_FROM:
+            cmd.extend(["--rel-from", REL_FROM])
         proc = subprocess.run(
-            [PUBLISH_BIN, path, "--workspace", WORKSPACE, "--skip-health-check", "--json"],
+            cmd,
             capture_output=True, text=True, timeout=30,
         )
     except subprocess.TimeoutExpired:
@@ -140,13 +144,18 @@ def _rewrite_text(text: str, parallel: int) -> tuple[str, list[dict]]:
 
 
 def main() -> int:
+    global REL_FROM
     ap = argparse.ArgumentParser(description="Rewrite local paths in text to files.growthwebdev.com URLs.")
     ap.add_argument("--in", dest="inp", help="Input file (default: stdin)")
     ap.add_argument("--out", dest="outp", help="Output file (default: stdout)")
     ap.add_argument("--emit-links", action="store_true", help="Also write a list of generated links to stdout after the rewritten text")
     ap.add_argument("--json", action="store_true", help="Emit JSON {rewritten, links} instead of plain text")
     ap.add_argument("--parallel", type=int, default=MAX_PARALLEL, help="Max parallel publish calls")
+    ap.add_argument("--rel-from", help="Compute relative paths relative to this directory")
     args = ap.parse_args()
+
+    if args.rel_from:
+        REL_FROM = args.rel_from
 
     text = Path(args.inp).read_text() if args.inp else sys.stdin.read()
     rewritten, summary = _rewrite_text(text, args.parallel)
