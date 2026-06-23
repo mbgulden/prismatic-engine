@@ -133,3 +133,84 @@ class PrismaticPlugin(ABC):
         outputs in response to workflow transitions.
         """
         return
+
+    # ── GRO-1497 dispatcher hooks (optional) ────────────────────────────
+
+    def on_issue_dispatch(
+        self, issue_id: str, agent_name: str, payload: Dict[str, Any]
+    ) -> None:
+        """Called immediately after an issue is dispatched to a provider."""
+        return
+
+    def on_review_complete(
+        self,
+        issue_id: str,
+        origin_agent: str,
+        reviewer_agent: str,
+        results: Dict[str, Any],
+    ) -> None:
+        """Called when a reviewer agent completes and signals the origin agent."""
+        return
+
+    def on_pipeline_stage(
+        self,
+        issue_id: str,
+        stage_name: str,
+        status: str,
+        metadata: Dict[str, Any],
+    ) -> None:
+        """Called when a pipeline stage starts, fails, or completes."""
+        return
+
+    def on_credit_threshold(
+        self,
+        thread_id: str,
+        provider: str,
+        current_spend: int,
+        limit: int,
+        op: str,
+    ) -> None:
+        """Called when credit policy checks trigger warnings or denials."""
+        return
+
+    # ── GRO-2228 PWP pipeline hooks (optional) ──────────────────────────
+
+    def on_pre_pipeline(
+        self, pipeline_id: str, context: Dict[str, Any]
+    ) -> None:
+        """
+        Fired exactly once, *before* any pipeline stage runs.
+
+        See :data:`prismatic.interface.hooks.HOOK_ON_PRE_PIPELINE` for the
+        full PWP contract.  Default no-op.
+        """
+        return
+
+    def on_post_pipeline(
+        self, pipeline_id: str, result: Dict[str, Any]
+    ) -> None:
+        """
+        Fired exactly once, *after* all pipeline stages complete
+        successfully.  Default no-op.
+        """
+        return
+
+    def on_error(
+        self, pipeline_id: str, exc: BaseException, stage: str
+    ) -> None:
+        """
+        Fired when a pipeline stage raises an unhandled exception.
+
+        Default no-op.  See :data:`prismatic.interface.hooks.HOOK_ON_ERROR`.
+        """
+        return
+
+    def on_deploy(
+        self, pipeline_id: str, target: str, artifact: Dict[str, Any]
+    ) -> None:
+        """
+        Fired after the post-pipeline publish step pushes artifacts.
+
+        Default no-op.  See :data:`prismatic.interface.hooks.HOOK_ON_DEPLOY`.
+        """
+        return

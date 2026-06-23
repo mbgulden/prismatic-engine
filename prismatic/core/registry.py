@@ -16,7 +16,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import yaml
 from packaging.specifiers import SpecifierSet
@@ -172,3 +172,133 @@ class PluginLoader:
             )
 
         logger.info("Successfully loaded plugin '%s' (v%s)", name, version)
+
+
+# ── GRO-2228: PWP pipeline hook orchestrator ───────────────────────────────
+
+from prismatic.interface.hooks import (  # noqa: E402
+    HOOK_ON_PRE_PIPELINE,
+    HOOK_ON_POST_PIPELINE,
+    HOOK_ON_ERROR,
+    HOOK_ON_DEPLOY,
+)
+
+# A PWP pipeline stage is a ``(name, callable)`` pair.  The callable
+# receives the pipeline context dict and returns any JSON-serializable
+# value that will be stored under ``result["stages"][i]["output"]``.
+Stage = Tuple[str, Callable[[Dict[str, Any]], Any]]
+
+
+class PWPPluginRunner:
+    """
+    Orchestrates a PWP (Prismatic Web Plugin) pipeline run.
+
+    Wraps a list of stage callables with the 4 PWP hooks:
+
+    1. ``on_pre_pipeline``  — fires *once* before any stage runs
+    2. ``on_post_pipeline`` — fires *once* if every stage succeeded
+    3. ``on_error``         — fires *once* if any stage raises (the
+                              exception is re-raised after the hook
+                              returns so callers can still see it)
+    4. ``on_deploy``        — fires *once* after a successful
+                              post-pipeline, if a ``deploy_target`` is
+                              provided to :meth:`run`
+
+    All hook dispatches go through :meth:`PluginLoader.execute_hook`,
+    so a crashing plugin can never abort the run.
+
+    Example::
+
+        runner = PWPPluginRunner(loader)
+        result = runner.run(
+            pipeline_id="GRO-2228-abc",
+            context={"issue_id": "GRO-2228", "branch": "ned/GRO-2228"},
+            stages=[
+                ("build",  build_site),
+                ("test",   run_tests),
+            ],
+            deploy_target="cloudflare-pages",
+        )
+
+    Args:
+        loader: A :class:`PluginLoader` instance whose ``loaded_plugins``
+            will be notified at each hook.
+    """
+
+    def __init__(self, loader: "PluginLoader") -> None:
+        self.loader = loader
+
+    def run(
+        self,
+        pipeline_id: str,
+        context: Dict[str, Any],
+        stages: Iterable[Stage],
+        deploy_target: Optional[str] = None,
+        deploy_artifact_provider: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Run a PWP pipeline.
+
+        Args:
+            pipeline_id: Unique identifier for the run; threaded through
+                every hook invocation.
+            context: Read-only metadata describing the pipeline.
+            stages: Iterable of ``(stage_name, callable)`` pairs.  Each
+                callable is invoked with the post-pipeline ``context``
+                dict (mutations are visible to later stages).
+            deploy_target: If provided, ``on_deploy`` fires after
+                ``on_post_pipeline`` with this target name.
+            deploy_artifact_provider: Optional callable that, given the
+                aggregated ``result`` dict, returns the artifact dict
+                forwarded to ``on_deploy``.  Required when
+                ``deploy_target`` is set.
+
+        Returns:
+            The aggregated ``result`` dict.  Contains at minimum::
+
+                {
+                    "status": "succeeded",
+                    "stages": [{"name": ..., "ok": True, "output": ...}, ...],
+                }
+
+        Raises:
+            BaseException: Re-raises the first exception any stage
+                raised, *after* firing the ``on_error`` hook.
+        """
+        self.loader.execute_hook(HOOK_ON_PRE_PIPELINE, pipeline_id, context)
+
+        result: Dict[str, Any] = {"status": "running", "stages": []}
+        try:
+            for stage_name, stage_fn in stages:
+                try:
+                    output = stage_fn(context)
+                except BaseException as exc:
+                    result["status"] = "failed"
+                    result["failed_stage"] = stage_name
+                    self.loader.execute_hook(
+                        HOOK_ON_ERROR, pipeline_id, exc, stage_name
+                    )
+                    raise
+                result["stages"].append(
+                    {"name": stage_name, "ok": True, "output": output}
+                )
+        finally:
+            # No-op finally block — kept for symmetry with the
+            # orchestrator's future resource-cleanup hook.
+            pass
+
+        result["status"] = "succeeded"
+        self.loader.execute_hook(HOOK_ON_POST_PIPELINE, pipeline_id, result)
+
+        if deploy_target is not None:
+            if deploy_artifact_provider is None:
+                raise ValueError(
+                    "deploy_artifact_provider is required when "
+                    "deploy_target is set"
+                )
+            artifact = deploy_artifact_provider(result)
+            self.loader.execute_hook(
+                HOOK_ON_DEPLOY, pipeline_id, deploy_target, artifact
+            )
+
+        return result
