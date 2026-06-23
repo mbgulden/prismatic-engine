@@ -1,0 +1,28 @@
+schema_version: "1.0.0"
+
+name: "pwp-hook-test-plugin"
+
+version: "1.0.0"
+
+description: >-
+  Test fixture for GRO-2228.  Subscribes to all 4 PWP hooks
+  (on_pre_pipeline, on_post_pipeline, on_error, on_deploy) and records
+  their invocation order on a class-level list.  Not for production use.
+
+author: "Ned (agent:ned)"
+
+entry_point: "pwp_hook_test_plugin.plugin:PWPHookTestPlugin"
+
+core_version_constraint: ">=1.0.0, <2.0.0"
+
+dependencies:
+  pip: []
+
+personas: []
+
+hooks:
+  - "on_init"
+  - "on_pre_pipeline"
+  - "on_post_pipeline"
+  - "on_error"
+  - "on_deploy"
