@@ -52,6 +52,19 @@ def _build_parser() -> argparse.ArgumentParser:
     journal_subparsers = journal.add_subparsers(dest="journal_command")
     journal_subparsers.add_parser("snapshot", help="Create a journal snapshot")
 
+    fw = subparsers.add_parser(
+        "fleet-watchdog",
+        help="Run the standalone engine fleet health watchdog (checks + auto-actions)",
+    )
+    fw.add_argument(
+        "--dry-run", action="store_true",
+        help="Don't take auto-actions, just report"
+    )
+    fw.add_argument(
+        "--json", action="store_true",
+        help="Machine-readable JSON output (no actions)"
+    )
+
     return parser
 
 
@@ -108,6 +121,21 @@ def run(argv: Sequence[str] | None = None) -> int:
         from prismatic.journal import cli_journal_snapshot
 
         return int(cli_journal_snapshot() or 0)
+
+    if args.command == "fleet-watchdog":
+        from prismatic.fleet_watchdog import main as fw_main
+        # Re-invoke with our args by patching argv
+        original = sys.argv[:]
+        try:
+            forwarded = ["prismatic-fleet-watchdog"]
+            if args.dry_run:
+                forwarded.append("--dry-run")
+            if args.json:
+                forwarded.append("--json")
+            sys.argv = forwarded
+            return int(fw_main() or 0)
+        finally:
+            sys.argv = original
 
     parser.print_help()
     return 0
