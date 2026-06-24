@@ -162,18 +162,21 @@ DEFAULT_POLICY_RULES: list[PolicyRule] = [
         message="High-cost operation ({estimated_cost} credits).",
     ),
     PolicyRule(
-        name="warn_local_context_80pct",
-        provider="local-llm",
-        condition="state.local_context_filled >= state.local_context_max * 0.8",
-        action=PolicyAction.WARN,
-        message="Local model context at 80%. Risk of silent truncation.",
-    ),
-    PolicyRule(
+        # GRO-2402 fix: must come BEFORE the 80% WARN rule. The policy engine
+        # is first-match-wins, so if 80% comes first, the 95% hard stop is
+        # unreachable. Put the more-severe action first.
         name="hard_stop_local_context_95pct",
         provider="local-llm",
         condition="state.local_context_filled >= state.local_context_max * 0.95",
         action=PolicyAction.DENY,
         message="Local model context at 95%. Hard stop to prevent corrupted output.",
+    ),
+    PolicyRule(
+        name="warn_local_context_80pct",
+        provider="local-llm",
+        condition="state.local_context_filled >= state.local_context_max * 0.8",
+        action=PolicyAction.WARN,
+        message="Local model context at 80%. Risk of silent truncation.",
     ),
     PolicyRule(
         name="default_allow",
@@ -189,6 +192,10 @@ AGENT_PROVIDER_MAP: dict[str, str] = {
     "agent:jules": "claude-code",
     "agent:codex": "github-copilot",
     "agent:ned": "local-llm",
+    "agent:ned-code": "local-llm",
+    "agent:ned-infra": "local-llm",
+    "agent:ned-audit": "local-llm",
+    "agent:ned-review": "local-llm",
     "agent:fred": "local-llm",
     "agent:kai": "local-llm",
 }
