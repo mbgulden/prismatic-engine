@@ -93,9 +93,36 @@ When an orchestration job fails, follow this triage flow:
     node .antigravity/swarm.js clear-locks
     ```
 
+### Failure Mode 5: Google Drive MCP Connection Failure
+* **Description**: The `gdrive` MCP server fails to connect. Gateway logs show `unhandled errors in a TaskGroup (1 sub-exception) -> Connection closed` or `Connection closed`.
+* **Diagnosis**:
+  1. The Google Drive API credentials file (`/home/ubuntu/.config/mcp-gdrive/.gdrive-server-credentials.json`) contains an expired access token, or the `refresh_token` has been invalidated/revoked.
+  2. The OAuth client config uses unverified API scopes (such as explicit Google Docs/Sheets scopes: `documents` or `spreadsheets`) which result in `invalid_scope` or `400 Bad Request` errors.
+* **Remediation**:
+  - Run the diagnostic script to check the credentials status:
+    ```bash
+    node /home/ubuntu/work/local-gdrive-mcp/test_auth.mjs
+    ```
+  - If authentication fails, run the re-authentication flow with verified scopes (`drive.readonly` and `drive.file` are verified and allow reading Docs/Sheets via the Drive export endpoints):
+    1. Generate the authorization URL:
+       ```bash
+       node /home/ubuntu/work/local-gdrive-mcp/get_auth_url_fixed.js
+       ```
+    2. Open the URL in a browser, authenticate as Michael, and grant permissions.
+    3. Google redirects to `http://localhost/?code=...`. Copy this URL.
+    4. Exchange the authorization code for valid server tokens:
+       ```bash
+       node /home/ubuntu/work/local-gdrive-mcp/exchange_gdrive_code_fixed.js "<redirect_url_with_code>"
+       ```
+  - Verify the connection by listing or searching Google Drive files using the test client:
+    ```bash
+    node /home/ubuntu/work/local-gdrive-mcp/test_mcp_client.js
+    ```
+
 ---
 
 ## 3. Useful Debugging Commands
+
 
 Use these commands to diagnose dispatcher and state machine issues:
 
