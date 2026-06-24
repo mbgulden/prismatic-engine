@@ -7,6 +7,7 @@ from prismatic.journal import (
     JournalConfig,
     build_inventory,
     cron_inventory,
+    extract_golden_thread_summary,
     run_snapshot,
     validate_agent_output,
 )
@@ -99,3 +100,85 @@ def test_second_witness_requires_log_and_artifacts(tmp_path: Path) -> None:
     assert passed["passed"] is True
     assert missing["passed"] is False
     assert str(tmp_path / "missing.md") in missing["artifacts"]["missing"]
+
+
+# ── Golden Thread summary (GRO-XXXX: schema-drift regression) ──────────
+def test_golden_thread_summary_handles_current_schema(tmp_path: Path) -> None:
+    """_last_sync is now a timestamp string; the dict moved to _last_sync_previous."""
+    config = make_config(tmp_path)
+    config.project_registry.parent.mkdir(parents=True)
+    config.project_registry.write_text(json.dumps({
+        "_last_sync": "2026-06-24T17:11:30.862085+00:00",  # timestamp string
+        "_last_sync_previous": {
+            "timestamp": "2026-06-24T15:19:37.273584+00:00",
+            "linear_total_active": 600,
+            "linear_in_progress": 218,
+            "linear_unstarted": 30,
+            "stale_gt7d": 292,
+            "agent_done_stuck": 0,
+            "cron_errors": 17,
+            "cron_silent_fails": 14,
+        },
+        "ventures": {},
+        "standalone_projects": {},
+    }))
+
+    out = extract_golden_thread_summary(config)
+
+    # Must NOT crash, must show current numbers, must not show linear_todo:0
+    assert "218 In Progress" in out
+    assert "30 Todo" in out
+    assert "600 active" in out
+    assert "292 stale" in out
+    assert "17 errors" in out
+    assert "0 open PRs" in out  # github fields absent → default 0
+
+
+def test_golden_thread_summary_handles_legacy_schema(tmp_path: Path) -> None:
+    """_last_sync as a dict (pre-drift registry) still works."""
+    config = make_config(tmp_path)
+    config.project_registry.parent.mkdir(parents=True)
+    config.project_registry.write_text(json.dumps({
+        "_last_sync": {
+            "linear_in_progress": 5,
+            "linear_in_review": 2,
+            "linear_todo": 3,
+            "github_prs_open": 10,
+            "github_issues_open": 4,
+        },
+        "ventures": {},
+        "standalone_projects": {},
+    }))
+
+    out = extract_golden_thread_summary(config)
+
+    assert "5 In Progress" in out
+    assert "2 In Review" in out
+    assert "3 Todo" in out
+    assert "10 open PRs" in out
+    assert "4 issues" in out
+
+
+def test_golden_thread_summary_handles_missing_registry(tmp_path: Path) -> None:
+    """When project-registry.json doesn't exist, return a graceful warning."""
+    config = make_config(tmp_path)
+    # Don't create the registry file
+    out = extract_golden_thread_summary(config)
+    assert "not found" in out
+
+
+def test_golden_thread_summary_handles_empty_registry(tmp_path: Path) -> None:
+    """When registry has no sync metadata, return just the section header."""
+    config = make_config(tmp_path)
+    config.project_registry.parent.mkdir(parents=True)
+    config.project_registry.write_text(json.dumps({
+        "_last_sync": "2026-06-24T17:11:30+00:00",
+        # no _last_sync_previous
+        "ventures": {},
+        "standalone_projects": {},
+    }))
+    out = extract_golden_thread_summary(config)
+    # Should not crash; section header should appear
+    assert "Golden Thread" in out
+    # No Linear line when no sync data
+    assert "In Progress" not in out
