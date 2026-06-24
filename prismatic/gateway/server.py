@@ -941,7 +941,25 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
     action = event.get("action", "")
     data = event.get("data", {})
     identifier = data.get("identifier", "")
-    labels = [l.get("name", "") for l in data.get("labels", []) if isinstance(l, dict)]
+
+    # Label extraction: Linear webhooks can ship labels in either shape:
+    #   (A) Flat list:  data.labels = [{"name": "agent:fred"}, ...]
+    #       (used by some webhook payload versions / proxies)
+    #   (B) Paginated:  data.labels = {"nodes": [{"name": "agent:fred"}, ...]}
+    #       (the standard Linear GraphQL shape — most webhooks)
+    # Try (B) first, fall back to (A). This was the silent break that kept
+    # dispatch from firing for 22+ hours — the labels field was always empty
+    # because the iteration expected a list of dicts, not a connection object.
+    raw_labels = data.get("labels", [])
+    if isinstance(raw_labels, dict):
+        # Paginated shape (Linear GraphQL standard)
+        label_nodes = raw_labels.get("nodes", [])
+    elif isinstance(raw_labels, list):
+        # Flat shape (older webhook format or proxies)
+        label_nodes = raw_labels
+    else:
+        label_nodes = []
+    labels = [l.get("name", "") for l in label_nodes if isinstance(l, dict)]
 
     logger.info(
         "Linear webhook: type=%s action=%s issue=%s labels=%s body_size=%d",
