@@ -1392,6 +1392,13 @@ class EventRouterDedup:
         if db_dir and not os.path.exists(db_dir):
             os.makedirs(db_dir, exist_ok=True)
         self._conn = sqlite3.connect(self._db_path)
+        # Set busy timeout + WAL mode so concurrent dispatches don't fail
+        # with "database is locked". GRO-2400 follow-up.
+        try:
+            self._conn.execute("PRAGMA busy_timeout = 5000")
+            self._conn.execute("PRAGMA journal_mode = WAL")
+        except Exception:
+            pass
         self._init_db()
 
     def _init_db(self) -> None:
