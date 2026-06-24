@@ -2,23 +2,20 @@
 Prismatic Engine Core — runtime services layer.
 
 This package contains the concrete implementations that the dispatcher
-daemon relies on at run time:  plugin loading, contract enforcement,
-swarm locking, and the event-loop dispatcher itself.
+daemon relies on at run time: plugin loading and the AGY circuit breaker
+router. Dead-code placeholders (formerly core/dispatcher.py, core/locking.py,
+and core/contracts.py) were removed in GRO-XXXX — the legacy dispatcher
+in prismatic/dispatcher.py and the lock CLI in prismatic/lock.py are the
+real implementations.
 
 Contents
 --------
-* **contracts.py**  — path-boundary validation (``validate_path``)
-* **dispatcher.py** — polling event loop and task router (see also root ``prismatic/dispatcher.py``)
-* **locking.py**    — ``SwarmLockManager`` workspace concurrency mutexes
-* **registry.py**   — ``PluginLoader`` — scans, validates, loads plugins
+* **registry.py** — ``PluginLoader`` — scans, validates, loads plugins
+* **router.py**  — ``CircuitBreakerRouter`` — AGY model fallback chain
 """
 
 __all__ = [
     "PluginLoader",
-    "validate_path",
-    "SecurityException",
-    "SwarmLockManager",
-    "Dispatcher",
     "CircuitBreakerRouter",
     "get_router",
     "check_and_route_agy",
@@ -27,9 +24,6 @@ __all__ = [
 ]
 
 from .registry import PluginLoader
-from .contracts import validate_path, SecurityException
-from .locking import SwarmLockManager
-from .dispatcher import Dispatcher
 from .router import (
     CircuitBreakerRouter,
     get_router,

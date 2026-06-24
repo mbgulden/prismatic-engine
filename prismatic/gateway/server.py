@@ -28,6 +28,13 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
+
+from prismatic.gateway.hmac_verify import (  # GRO-2402: unified HMAC
+    verify_linear,
+    verify_github,
+    verify_ws_signature,
+    hmac_self_test,
+)
 from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -392,21 +399,13 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
         # HMAC signature path (same pattern as webhook)
         if not authenticated and ws_secret and sig_header and ts_header:
-            # Validate timestamp freshness
-            try:
-                ts = int(ts_header)
-                now = int(time.time())
-                if abs(now - ts) > ws_replay_window:
-                    raise ValueError(f"timestamp drift {now - ts}s")
-                # Sign: method + path + timestamp + nonce (here empty)
-                payload = f"GET\n/ws\n{ts}".encode("utf-8")
-                expected = hmac.new(
-                    ws_secret.encode("utf-8"), payload, hashlib.sha256
-                ).hexdigest()
-                if hmac.compare_digest(sig_header, expected):
-                    authenticated = True
-            except ValueError:
-                pass
+            verdict = verify_ws_signature(
+                sig_header, ts_header, "GET", "/ws", ws_secret,
+                max_drift_seconds=ws_replay_window,
+            )
+            if verdict.passed:
+                authenticated = True
+            # else: silently fall through to "not authenticated" below
 
         if not authenticated:
             logger.warning(
@@ -744,34 +743,13 @@ async def github_webhook(request: Request) -> dict[str, Any]:
     next_secret = os.environ.get("PRISMATIC_GITHUB_WEBHOOK_SECRET_NEXT", "")
     if primary_secret:
         sig_header = request.headers.get("X-Hub-Signature-256", "")
-        if not sig_header.startswith("sha256="):
+        verdict = verify_github(body, sig_header, primary_secret, next_secret)
+        if not verdict:
             _audit_webhook(
-                "github", "rejected", reason="missing signature header",
-                request_id=request_id,
+                "github", "rejected", reason=verdict.reason, request_id=request_id,
             )
             return JSONResponse(
-                {"status": "rejected", "reason": "missing X-Hub-Signature-256"},
-                status_code=401,
-            )
-        sig = sig_header[len("sha256="):]
-        # Compute expected for primary and (if set) next secret.
-        expected_primary = hmac.new(
-            primary_secret.encode("utf-8"), body, hashlib.sha256
-        ).hexdigest()
-        matches_primary = hmac.compare_digest(sig, expected_primary)
-        matches_next = False
-        if next_secret:
-            expected_next = hmac.new(
-                next_secret.encode("utf-8"), body, hashlib.sha256
-            ).hexdigest()
-            matches_next = hmac.compare_digest(sig, expected_next)
-        if not (matches_primary or matches_next):
-            _audit_webhook(
-                "github", "rejected", reason="bad signature",
-                request_id=request_id,
-            )
-            return JSONResponse(
-                {"status": "rejected", "reason": "bad signature"},
+                {"status": "rejected", "reason": verdict.reason},
                 status_code=401,
             )
 
@@ -850,31 +828,13 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
     next_secret = os.environ.get("PRISMATIC_LINEAR_WEBHOOK_SECRET_NEXT", "")
     if primary_secret:
         sig = request.headers.get("Linear-Signature", "")
-        if not sig:
+        verdict = verify_linear(body, sig, primary_secret, next_secret)
+        if not verdict:
             _audit_webhook(
-                "linear", "rejected", reason="missing signature header",
-                request_id=request_id,
+                "linear", "rejected", reason=verdict.reason, request_id=request_id,
             )
             return JSONResponse(
-                {"status": "rejected", "reason": "missing Linear-Signature header"},
-                status_code=401,
-            )
-        # Compute expected signatures for primary and (if set) next secret.
-        # Compare against each. Accept if either matches.
-        expected_primary = hmac.new(
-            primary_secret.encode("utf-8"), body, hashlib.sha256
-        ).hexdigest()
-        matches_primary = hmac.compare_digest(sig, expected_primary)
-        matches_next = False
-        if next_secret:
-            expected_next = hmac.new(
-                next_secret.encode("utf-8"), body, hashlib.sha256
-            ).hexdigest()
-            matches_next = hmac.compare_digest(sig, expected_next)
-        if not (matches_primary or matches_next):
-            _audit_webhook("linear", "rejected", reason="bad signature", request_id=request_id)
-            return JSONResponse(
-                {"status": "rejected", "reason": "bad signature"},
+                {"status": "rejected", "reason": verdict.reason},
                 status_code=401,
             )
 

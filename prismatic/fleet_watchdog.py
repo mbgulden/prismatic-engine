@@ -463,24 +463,23 @@ def check_webhook_signature_self_test() -> CheckResult:
     """
     import hmac as _hmac
     import hashlib as _hashlib
+    from prismatic.gateway.hmac_verify import hmac_self_test
     secret = os.environ.get("PRISMATIC_LINEAR_WEBHOOK_SECRET", "")
     if not secret:
         return CheckResult("webhook:signature_self_test", "ok",
                            "no secret configured (HMAC disabled in dev)", False)
     try:
         body = b'{"action":"update","type":"Issue","createdAt":"2026-01-01T00:00:00Z"}'
-        expected = _hmac.new(secret.encode(), body, _hashlib.sha256).hexdigest()
-        # Verify with itself (sanity check — catches env var corruption)
-        actual = _hmac.new(secret.encode(), body, _hashlib.sha256).hexdigest()
-        if not _hmac.compare_digest(expected, actual):
+        verdict = hmac_self_test(secret, body)
+        if not verdict.passed:
             return CheckResult(
                 "webhook:signature_self_test", "fail",
-                "HMAC self-verification failed (env var may be corrupted)",
+                f"HMAC self-verification failed: {verdict.reason}",
                 True,
             )
         return CheckResult(
             "webhook:signature_self_test", "ok",
-            f"HMAC self-test passed (sig: {expected[:12]}...)",
+            f"HMAC self-test passed ({verdict.reason})",
             False,
         )
     except Exception as exc:
