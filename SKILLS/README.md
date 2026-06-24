@@ -13,6 +13,7 @@ Each skill is a self-contained SKILL.md with Hermes frontmatter.
 | [lane-governance](lane-governance/SKILL.md) | Lane ownership, file locking, pre-push hooks, PRISMATIC_ENGINE.yaml | `PRISMATIC_ENGINE.yaml` + `reports/agy-implementation-plan.md` |
 | [agent-soul-template](agent-soul-template/SKILL.md) | Agent SOUL.md schema, profile templates, bootstrap checklist | `SOUL.md` + `prismatic/templates/profiles/` |
 | [prismatic-plugin-development](prismatic-plugin-development/SKILL.md) | Plugin anatomy, manifest format, widget patterns, build pipeline | `plugins/` ecosystem |
+| [agy-research-metabolizer](agy-research-metabolizer/SKILL.md) | Multi-source research metabolizer: source mapping, evidence ledger, confidence labeling, report bundles | `docs/agy-research-metabolizer.md` |
 
 ## When to Load Each Skill
 
@@ -24,6 +25,7 @@ Each skill is a self-contained SKILL.md with Hermes frontmatter.
 | Setting up a new repo or agent | `lane-governance` |
 | Creating or updating an agent | `agent-soul-template` |
 | Building a dashboard plugin | `prismatic-plugin-development` |
+| Multi-source research or technical discovery | `agy-research-metabolizer` |
 
 ## Templates
 
