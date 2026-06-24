@@ -202,7 +202,7 @@ fi
 banner "Step 5/6: Restart Daemon"
 
 if $DRY_RUN; then
-    log "  [DRY RUN] Would restart $SERVICE_NAME"
+    log "  [DRY RUN] Would restart $SERVICE_NAME and PM2 publisher"
 else
     log "  Restarting $SERVICE_NAME..."
     if systemctl --user restart "$SERVICE_NAME" 2>/dev/null; then
@@ -216,6 +216,19 @@ else
         fail "Failed to restart $SERVICE_NAME"
     fi
 
+    # PM2 artifact publisher reload
+    if command -v pm2 &>/dev/null; then
+        log "  Reloading/Starting PM2 service: prismatic-artifact-publisher"
+        if pm2 startOrReload "$ACTIVE_LINK/prismatic-artifact-publisher.config.js" --update-env 2>&1 | tail -10 | while read -r line; do log "  $line"; done; then
+            pm2 save --force 2>/dev/null || pm2 save || true
+            log "  ✅ PM2 service reloaded/started successfully"
+        else
+            fail "Failed to reload/start PM2 service: prismatic-artifact-publisher"
+        fi
+    else
+        log "  ⚠️ PM2 command not found — skipping publisher reload"
+    fi
+
     # Write heartbeat
     bash "$HEARTBEAT_SCRIPT" 2>/dev/null || true
     log "  Heartbeat written"
@@ -225,24 +238,48 @@ fi
 banner "Step 6/6: Watchdog Health Verification"
 
 if $DRY_RUN; then
-    log "  [DRY RUN] Would verify health endpoint for 30s"
+    log "  [DRY RUN] Would verify health endpoints for 30s"
 else
     # Quick health check loop (30s)
     HEALTHY=false
+    PUBLISHER_HEALTHY=false
+    
+    # Check dispatcher health
     for i in $(seq 1 6); do
         if curl -s -o /dev/null -w "%{http_code}" --max-time 5 "http://localhost:${PRISMATIC_PORT:-9000}/health" 2>/dev/null | grep -q "200"; then
-            log "  ✅ Health check passed (attempt $i)"
+            log "  ✅ Dispatcher health check passed (attempt $i)"
             HEALTHY=true
             break
         fi
-        log "  ⏳ Health check attempt $i/6 — waiting..."
+        log "  ⏳ Dispatcher health check attempt $i/6 — waiting..."
         sleep 5
     done
 
-    if $HEALTHY; then
-        log "  ✅ Service healthy after promotion"
+    # Check publisher health
+    if command -v pm2 &>/dev/null; then
+        for i in $(seq 1 6); do
+            if curl -s -o /dev/null -w "%{http_code}" --max-time 5 "http://127.0.0.1:9120/health" 2>/dev/null | grep -q "200"; then
+                log "  ✅ Publisher health check passed (attempt $i)"
+                PUBLISHER_HEALTHY=true
+                break
+            fi
+            log "  ⏳ Publisher health check attempt $i/6 — waiting..."
+            sleep 5
+        done
     else
-        log "  ⚠️  Service did not become healthy within 30s"
+        log "  ⚠️ PM2/Publisher not running/configured on this VM — skipping publisher health check"
+        PUBLISHER_HEALTHY=true
+    fi
+
+    if $HEALTHY && $PUBLISHER_HEALTHY; then
+        log "  ✅ Services healthy after promotion"
+    else
+        if ! $HEALTHY; then
+            log "  ⚠️  Dispatcher did not become healthy within 30s"
+        fi
+        if ! $PUBLISHER_HEALTHY; then
+            log "  ⚠️  Publisher did not become healthy within 30s"
+        fi
         log "  ⚠️  Watchdog will trigger rollback if it stabilizes in failure"
     fi
 fi
