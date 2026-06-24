@@ -65,12 +65,29 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Machine-readable JSON output (no actions)"
     )
 
+    # lock — central file-lock registry (multi-agent coordination)
+    lock = subparsers.add_parser(
+        "lock", help="Manage the centralized file-lock registry",
+    )
+    lock_subparsers = lock.add_subparsers(dest="lock_command", required=True)
+    p_lock = lock_subparsers.add_parser("lock", help="Claim a file for an agent")
+    p_lock.add_argument("file", help="File path (repo-relative or absolute)")
+    p_lock.add_argument("agent", help="Agent identifier (e.g., fred, kai, ned)")
+    p_unlock = lock_subparsers.add_parser("unlock", help="Release a file lock")
+    p_unlock.add_argument("file", help="File path")
+    p_unlock.add_argument("agent", help="Agent identifier")
+    lock_subparsers.add_parser("status", help="Show all active locks")
+    p_hb = lock_subparsers.add_parser("heartbeat", help="Refresh lock heartbeat")
+    p_hb.add_argument("file", help="File path")
+    p_hb.add_argument("agent", help="Agent identifier")
+
     return parser
 
 
 def run(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
-    args = parser.parse_args(list(argv) if argv is not None else None)
+    argv_list = list(argv) if argv is not None else None
+    args = parser.parse_args(argv_list)
 
     if args.command in {"status", "doctor"}:
         return doctor_cli_run(args)
@@ -136,6 +153,30 @@ def run(argv: Sequence[str] | None = None) -> int:
             return int(fw_main() or 0)
         finally:
             sys.argv = original
+
+    if args.command == "lock":
+        # Forward to prismatic.lock.main() — it has its own argparse for the
+        # subcommands (lock/unlock/status/heartbeat). We strip our outer "lock"
+        # and pass the subcommand + args through.
+        from prismatic.lock import main as lock_main
+        original_argv = sys.argv[:]
+        try:
+            # Build forwarded argv from argv_list (what was passed to run()).
+            # When invoked as `prismatic lock status`, argv_list = ["lock", "status"].
+            # When invoked as `prismatic lock lock foo.py fred`,
+            # argv_list = ["lock", "lock", "foo.py", "fred"].
+            # We strip the outer "lock" (first element) and keep the rest.
+            if argv_list is None:
+                # Fall back to sys.argv for tests/programs that didn't pass argv
+                argv_list = sys.argv[1:]
+            forwarded = ["prismatic-lock"] + argv_list[1:]
+            sys.argv = forwarded
+            lock_main()  # calls sys.exit() with cmd_* return code
+            return 0  # unreachable — lock_main sys.exits
+        except SystemExit as exc:
+            return int(exc.code) if exc.code is not None else 0
+        finally:
+            sys.argv = original_argv
 
     parser.print_help()
     return 0
