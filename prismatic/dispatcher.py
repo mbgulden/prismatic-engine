@@ -769,6 +769,10 @@ AGENT_LAUNCHERS: dict[str, Callable[..., Any]] = {
     "ned-infra": signal_ned,
     "ned-audit": signal_ned,
     "ned-review": signal_ned,
+    "agent:ned-code": signal_ned,
+    "agent:ned-infra": signal_ned,
+    "agent:ned-audit": signal_ned,
+    "agent:ned-review": signal_ned,
 }
 
 
