@@ -22,6 +22,13 @@ status: current
 
 ## Status & Fixes
 
+### GRO-2089: [INFRA] PVE6 local-zfs mirror DEGRADED repair
+
+On 2026-06-24, we repaired the degraded `local-zfs` pool on `pve6` (100.90.63.4).
+- **Problem:** The mirror vdev was UNAVAIL (GUID `2559546818398938226`, "was /dev/sdg1"). It was discovered that the drive serial `3SE0YJT8` (previously `/dev/sdg`) had been dynamically renumbered to `/dev/sde` following a CPU/RAM upgrade on `pve6`.
+- **Fix:** Wiped the obsolete ZFS labels on `/dev/sde1` using `zpool labelclear -f /dev/sde1` and initiated a rebuild using `zpool replace local-zfs 2559546818398938226 /dev/sde1`.
+- **Verification:** Verified using `zpool status -v local-zfs` that resilvering is actively in progress and the pool is rebuilding.
+
 ### GRO-2234: [INFRA] Fix prismatic-engine linear_project_id
 
 On 2026-06-24, we resolved a configuration issue where the `linear_project_id` for `prismatic-engine` was aliased to the `agentic-swarm-ops` project.
