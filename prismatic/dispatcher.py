@@ -482,6 +482,41 @@ AGENT_CONFIG: dict[str, dict[str, Any]] = {
         "next_label": "",  # terminal — pipeline complete
         "description": "Codex CLI — final polish & PR",
     },
+    "ned": {
+        "executable": None,
+        "mode": "signal",
+        "timeout": 0,
+        "next_label": "agent::agy",
+        "description": "Ned main developer agent",
+    },
+    "ned-code": {
+        "executable": None,
+        "mode": "signal",
+        "timeout": 0,
+        "next_label": "agent::ned",
+        "description": "Ned coding specialist",
+    },
+    "ned-infra": {
+        "executable": None,
+        "mode": "signal",
+        "timeout": 0,
+        "next_label": "agent::ned",
+        "description": "Ned infrastructure specialist",
+    },
+    "ned-audit": {
+        "executable": None,
+        "mode": "signal",
+        "timeout": 0,
+        "next_label": "agent::ned",
+        "description": "Ned security audit specialist",
+    },
+    "ned-review": {
+        "executable": None,
+        "mode": "signal",
+        "timeout": 0,
+        "next_label": "agent::ned",
+        "description": "Ned code review specialist",
+    },
 }
 
 
@@ -568,6 +603,33 @@ def signal_kai(
             pass  # Telemetry is best-effort
     # ── End telemetry ─────────────────────────────────────────
     return result
+
+
+def signal_ned(
+    issue_id: str,
+    title: str = "",
+    priority: int = 3,
+    signal_type: str = "",
+) -> bool:
+    """Signal agent:ned by writing a nudge file.
+
+    Args:
+        issue_id: Linear issue identifier/ID.
+        title: Human-readable summary.
+        priority: Signal priority (0-5).
+        signal_type: Optional signal classification.
+
+    Returns:
+        ``True`` if the signal was written.
+    """
+    provider = _get_signal_provider()
+    return provider.send_work(
+        target="ned",
+        issue_id=issue_id,
+        title=title or f"Work on {issue_id}",
+        priority=priority,
+        signal_type=signal_type,
+    )
 
 
 def launch_agy(issue_id: str, task: str = "") -> subprocess.Popen | None:
@@ -702,6 +764,11 @@ AGENT_LAUNCHERS: dict[str, Callable[..., Any]] = {
     "agy": launch_agy,
     "jules": launch_jules,
     "codex": launch_codex,
+    "ned": signal_ned,
+    "ned-code": signal_ned,
+    "ned-infra": signal_ned,
+    "ned-audit": signal_ned,
+    "ned-review": signal_ned,
 }
 
 

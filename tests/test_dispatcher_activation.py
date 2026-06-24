@@ -51,7 +51,10 @@ class TestDispatcherActivation(unittest.TestCase):
         dispatcher.dispatch_once(mock_dedup, pipelines={"pipelines": {}})
         
         # Check if all agents were called
-        expected_agents = ["fred", "kai", "agy", "jules", "codex"]
+        expected_agents = [
+            "fred", "kai", "agy", "jules", "codex",
+            "ned", "ned-code", "ned-infra", "ned-audit", "ned-review"
+        ]
         for agent in expected_agents:
             with self.subTest(agent=agent):
                 self.assertIn(agent, called_agents, f"Agent {agent} was not dispatched!")

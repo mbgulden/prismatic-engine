@@ -189,6 +189,10 @@ AGENT_PROVIDER_MAP: dict[str, str] = {
     "agent:jules": "claude-code",
     "agent:codex": "github-copilot",
     "agent:ned": "local-llm",
+    "agent:ned-code": "local-llm",
+    "agent:ned-infra": "local-llm",
+    "agent:ned-audit": "local-llm",
+    "agent:ned-review": "local-llm",
     "agent:fred": "local-llm",
     "agent:kai": "local-llm",
 }
