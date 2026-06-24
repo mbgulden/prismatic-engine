@@ -15,6 +15,7 @@ import subprocess
 import sys
 import urllib.request
 import uuid
+from typing import Any
 
 # Telegram configuration from env
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -124,7 +125,11 @@ def publish_path(path: str) -> tuple[str | None, str | None]:
             return None, f"error during publication ({e}) and Telegram upload failed ({tg_err})"
 
 
-def rewrite_paths_in_text(text: str, emit_links_only: bool = False) -> str:
+def rewrite_paths_in_text(
+    text: str,
+    emit_links_only: bool = False,
+    processed_paths: list[dict[str, Any]] | None = None,
+) -> str:
     """Scan text, detect local file paths, publish them, and replace paths with links."""
     # Pattern matching absolute paths or relative paths with extension or containing slash
     pattern = re.compile(r"/[a-zA-Z0-9_\-\./]+|[a-zA-Z0-9_\-\.]+/[a-zA-Z0-9_\-\./]+")
@@ -160,6 +165,14 @@ def rewrite_paths_in_text(text: str, emit_links_only: bool = False) -> str:
         if url:
             published_urls.append(url)
 
+        if processed_paths is not None:
+            processed_paths.append({
+                "path": path,
+                "url": url,
+                "error_msg": error_msg,
+                "fallback_uploaded": (url is None and error_msg is not None and "uploaded to Telegram" in error_msg)
+            })
+
         if emit_links_only:
             continue
 
@@ -193,6 +206,47 @@ def rewrite_paths_in_text(text: str, emit_links_only: bool = False) -> str:
     return text
 
 
+class FredTelegramHelper:
+    """Helper class for Fred to process replies and handle local file references for Telegram."""
+
+    @staticmethod
+    def prepare_reply(text: str) -> dict[str, Any]:
+        """
+        Process the message text, publishing any files.
+        If a file is published successfully, it replaces the path with the Cloudflare URL as a Markdown link.
+        If a file fails to publish, it uploads the file to Telegram as a fallback and explicitly notes this in the text.
+        
+        Returns:
+            A dictionary containing:
+              - "text": The processed/rewritten text.
+              - "uploads": A list of dicts with details of uploaded/fallback files:
+                [{"path": str, "success": bool, "error": str | None}]
+        """
+        processed_paths = []
+        rewritten_text = rewrite_paths_in_text(text, processed_paths=processed_paths)
+        
+        uploads = []
+        for item in processed_paths:
+            if item["url"] is None:
+                # Publishing failed, check if fallback upload was attempted
+                success = item["fallback_uploaded"]
+                uploads.append({
+                    "path": item["path"],
+                    "success": success,
+                    "error": item["error_msg"]
+                })
+        
+        return {
+            "text": rewritten_text,
+            "uploads": uploads
+        }
+
+
+def fred_prepare_reply(text: str) -> dict[str, Any]:
+    """Convenience wrapper function for FredTelegramHelper.prepare_reply."""
+    return FredTelegramHelper.prepare_reply(text)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Rewrite local file references in text to clickable Cloudflare Access URLs."
@@ -224,6 +278,7 @@ def main() -> int:
     rewritten = rewrite_paths_in_text(content, emit_links_only=args.emit_links)
     print(rewritten, end="")
     return 0
+
 
 
 if __name__ == "__main__":

@@ -94,3 +94,40 @@ class TestPrismaticRewritePaths(unittest.TestCase):
 
         output = rewrite_paths_in_text(input_text)
         self.assertEqual(output, expected)
+
+    @patch("prismatic_rewrite_paths.publish_path")
+    def test_fred_prepare_reply_success(self, mock_publish):
+        mock_publish.return_value = ("https://hermes.growthwebdev.com/artifacts/raw/published/test_dummy_report.md", None)
+        
+        from prismatic_rewrite_paths import fred_prepare_reply
+        result = fred_prepare_reply(f"Please find the report at {self.dummy_file}")
+        
+        self.assertIn("[test_dummy_report.md](https://hermes.growthwebdev.com/artifacts/raw/published/test_dummy_report.md)", result["text"])
+        self.assertEqual(len(result["uploads"]), 0)
+
+    @patch("prismatic_rewrite_paths.publish_path")
+    def test_fred_prepare_reply_fallback(self, mock_publish):
+        mock_publish.return_value = (None, "failed to publish (Permission denied), uploaded to Telegram")
+        
+        from prismatic_rewrite_paths import fred_prepare_reply
+        result = fred_prepare_reply(f"Please find the report at {self.dummy_file}")
+        
+        self.assertIn("[test_dummy_report.md (failed to publish (Permission denied), uploaded to Telegram)]", result["text"])
+        self.assertEqual(len(result["uploads"]), 1)
+        self.assertEqual(result["uploads"][0]["path"], self.dummy_file)
+        self.assertTrue(result["uploads"][0]["success"])
+        self.assertEqual(result["uploads"][0]["error"], "failed to publish (Permission denied), uploaded to Telegram")
+
+    @patch("prismatic_rewrite_paths.publish_path")
+    def test_fred_prepare_reply_double_failure(self, mock_publish):
+        mock_publish.return_value = (None, "failed to publish (Permission denied) and Telegram upload failed (Network error)")
+        
+        from prismatic_rewrite_paths import fred_prepare_reply
+        result = fred_prepare_reply(f"Please find the report at {self.dummy_file}")
+        
+        self.assertIn("[test_dummy_report.md (failed to publish (Permission denied) and Telegram upload failed (Network error))]", result["text"])
+        self.assertEqual(len(result["uploads"]), 1)
+        self.assertEqual(result["uploads"][0]["path"], self.dummy_file)
+        self.assertFalse(result["uploads"][0]["success"])
+        self.assertEqual(result["uploads"][0]["error"], "failed to publish (Permission denied) and Telegram upload failed (Network error)")
+
