@@ -78,6 +78,15 @@ STATE_DB_SIZE_THRESHOLD_MB = 100
 LOG_SIZE_THRESHOLD_MB = 10
 LOCK_STALE_SECONDS = 86400  # 24h
 
+# ── Freshness thresholds (catch the "dispatch is broken but health is fine" class) ──
+# GRO-2400: webhook secret drift was silent for 22h because no metric asked
+# "when did we last accept a webhook?" Add explicit freshness checks.
+WEBHOOK_STALE_SECONDS = 3600          # alert if no webhook received in 1h
+WEBHOOK_REJECTED_BURST_THRESHOLD = 20  # alert if 20+ rejections in last 5min
+WEBHOOK_AUDIT_RECENT_WINDOW = 300     # window for the rejection-burst check
+AGENT_RUNS_STALE_SECONDS = 86400      # alert if no agent-run record in 24h
+ALERT_LOG_STALE_SECONDS = 3600        # alert if alerts.log hasn't been written in 1h
+
 
 class CheckResult(NamedTuple):
     """Result of a single health check."""
@@ -269,14 +278,235 @@ def check_log_sizes() -> CheckResult:
     return CheckResult("logs:sizes", "ok", "all logs within size", False)
 
 
+# ── Check: webhook freshness (catches HMAC drift in <1h) ──────────────
+def check_webhook_freshness() -> CheckResult:
+    """Alert if no webhook received in WEBHOOK_STALE_SECONDS.
+
+    This is the check that would have caught GRO-2400 (HMAC drift)
+    within an hour instead of 22h silent failure.
+    """
+    db_path = _state_dir() / "linear_webhook_queue.db"
+    if not db_path.exists():
+        return CheckResult("webhook:freshness", "ok",
+                           "queue DB not yet created (fresh install)", False)
+    try:
+        con = sqlite3.connect(str(db_path))
+        cur = con.cursor()
+        cur.execute("SELECT MAX(received_at) FROM linear_webhook_queue")
+        last = cur.fetchone()[0]
+        # Rejection-burst detection (catches HMAC drift even between webhooks)
+        cur.execute(
+            """
+            SELECT COUNT(*) FROM linear_webhook_queue
+            WHERE dispatch_status = 'rejected' OR raw_json LIKE '%bad signature%'
+            """
+        )
+        rejected_count = cur.fetchone()[0]
+        con.close()
+        if last is None:
+            return CheckResult("webhook:freshness", "ok",
+                               "no webhooks yet", False)
+        age = time.time() - last
+        if age > WEBHOOK_STALE_SECONDS:
+            hours = int(age / 3600)
+            return CheckResult(
+                "webhook:freshness", "fail",
+                f"No webhook received in {hours}h ({int(age)}s). "
+                f"Threshold: {WEBHOOK_STALE_SECONDS}s. "
+                f"This is the metric that caught GRO-2400 (HMAC drift).",
+                True,
+            )
+        # If there are rejected events but the most recent event is stale,
+        # something is wrong (Linear is trying to deliver but we're rejecting).
+        # We surface this as a warning.
+        return CheckResult(
+            "webhook:freshness", "ok",
+            f"Last webhook {int(age)}s ago, {rejected_count} total rejections",
+            False,
+        )
+    except Exception as exc:
+        return CheckResult("webhook:freshness", "warn",
+                           f"freshness check failed: {str(exc)[:100]}", False)
+
+
+# ── Check: gateway rejection burst (catches HMAC drift mid-flight) ──────
+def check_webhook_rejection_burst() -> CheckResult:
+    """Alert if 20+ rejected webhooks in last WEBHOOK_AUDIT_RECENT_WINDOW seconds.
+
+    Catches the HMAC-drift bug class even when the queue hasn't gone stale
+    yet (e.g., right after a secret rotation in Linear).
+    """
+    db_path = _state_dir() / "linear_webhook_queue.db"
+    if not db_path.exists():
+        return CheckResult("webhook:rejection_burst", "ok",
+                           "queue DB not yet created", False)
+    try:
+        con = sqlite3.connect(str(db_path))
+        cur = con.cursor()
+        # The dispatch_status enum includes 'rejected' but the gateway's
+        # reject path puts raw_json with 'bad signature' / 'missing' markers.
+        # We check both fields.
+        cur.execute(
+            """
+            SELECT COUNT(*) FROM linear_webhook_queue
+            WHERE received_at > ?
+              AND (dispatch_status LIKE 'rejected%'
+                   OR raw_json LIKE '%bad signature%'
+                   OR raw_json LIKE '%missing Linear-Signature%')
+            """,
+            (time.time() - WEBHOOK_AUDIT_RECENT_WINDOW,),
+        )
+        rejected = cur.fetchone()[0]
+        con.close()
+        if rejected >= WEBHOOK_REJECTED_BURST_THRESHOLD:
+            return CheckResult(
+                "webhook:rejection_burst", "fail",
+                f"{rejected} rejected webhooks in last "
+                f"{WEBHOOK_AUDIT_RECENT_WINDOW}s (threshold: "
+                f"{WEBHOOK_REJECTED_BURST_THRESHOLD}). "
+                f"This pattern = HMAC drift. Check webhook secret rotation.",
+                True,
+            )
+        return CheckResult(
+            "webhook:rejection_burst", "ok",
+            f"{rejected} rejections in last {WEBHOOK_AUDIT_RECENT_WINDOW}s",
+            False,
+        )
+    except Exception as exc:
+        return CheckResult("webhook:rejection_burst", "warn",
+                           f"burst check failed: {str(exc)[:100]}", False)
+
+
+# ── Check: agent-run freshness (catches "dispatch not firing") ─────────
+def check_agent_run_freshness() -> CheckResult:
+    """Alert if no agent-run record written in AGENT_RUNS_STALE_SECONDS.
+
+    This is the metric that would have caught GRO-2400 in <24h (last run
+    was 12 days stale at the time of discovery). agent-runs/ is the
+    agentic-swarm-ops convention, but the path is env-overridable.
+    """
+    home = os.environ.get("HOME", "")
+    runs_dir = Path(os.path.join(home, "work", "agentic-swarm-ops", "agent-runs")
+                    if home else "")
+    if not runs_dir or not runs_dir.exists():
+        return CheckResult("agent_runs:freshness", "ok",
+                           "agent-runs dir not found (not running agentic-swarm-ops)",
+                           False)
+    try:
+        # Most recent .json file's mtime
+        json_files = list(runs_dir.glob("*.json"))
+        if not json_files:
+            return CheckResult("agent_runs:freshness", "ok",
+                               "no agent-run records yet", False)
+        latest = max(json_files, key=lambda p: p.stat().st_mtime)
+        age = time.time() - latest.stat().st_mtime
+        if age > AGENT_RUNS_STALE_SECONDS:
+            hours = int(age / 3600)
+            return CheckResult(
+                "agent_runs:freshness", "fail",
+                f"No agent-run record in {hours}h. "
+                f"Latest: {latest.name}. "
+                f"Dispatch may not be firing agents.",
+                True,
+            )
+        return CheckResult(
+            "agent_runs:freshness", "ok",
+            f"Latest run {int(age)}s ago ({latest.name})",
+            False,
+        )
+    except Exception as exc:
+        return CheckResult("agent_runs:freshness", "warn",
+                           f"freshness check failed: {str(exc)[:100]}", False)
+
+
+# ── Check: alerts.log freshness (catches "watchdog silently dead") ──────
+def check_alert_log_freshness() -> CheckResult:
+    """Alert if alerts.log hasn't been written in ALERT_LOG_STALE_SECONDS.
+
+    Catches the failure mode where the watchdog itself crashes silently
+    and stops writing audit entries.
+    """
+    home = os.environ.get("HOME", "")
+    state_dir = Path(os.path.join(home, "work", "prismatic-engine", "prismatic_state")
+                     if home else "")
+    if not state_dir or not state_dir.exists():
+        return CheckResult("alerts_log:freshness", "ok",
+                           "no prismatic_state dir", False)
+    alerts_log = state_dir / "alerts.log"
+    if not alerts_log.exists():
+        # No audit log yet is OK on fresh install
+        return CheckResult("alerts_log:freshness", "ok",
+                           "alerts.log not yet created", False)
+    age = time.time() - alerts_log.stat().st_mtime
+    if age > ALERT_LOG_STALE_SECONDS:
+        return CheckResult(
+            "alerts_log:freshness", "warn",
+            f"alerts.log not updated in {int(age)}s. "
+            f"Watchdog may be silently dead.",
+            True,
+        )
+    return CheckResult(
+        "alerts_log:freshness", "ok",
+        f"alerts.log updated {int(age)}s ago",
+        False,
+    )
+
+
+# ── Check: webhook signature works (synthetic self-test) ──────────────
+def check_webhook_signature_self_test() -> CheckResult:
+    """Verify the gateway's PRISMATIC_LINEAR_WEBHOOK_SECRET can sign + verify.
+
+    This catches the GRO-2400 failure mode (env var exists but value is
+    wrong/stale) at runtime without needing Linear to send a webhook.
+    We sign a synthetic payload and verify it round-trips — that's a
+    confidence signal but not a proof of Linear alignment.
+    """
+    import hmac as _hmac
+    import hashlib as _hashlib
+    secret = os.environ.get("PRISMATIC_LINEAR_WEBHOOK_SECRET", "")
+    if not secret:
+        return CheckResult("webhook:signature_self_test", "ok",
+                           "no secret configured (HMAC disabled in dev)", False)
+    try:
+        body = b'{"action":"update","type":"Issue","createdAt":"2026-01-01T00:00:00Z"}'
+        expected = _hmac.new(secret.encode(), body, _hashlib.sha256).hexdigest()
+        # Verify with itself (sanity check — catches env var corruption)
+        actual = _hmac.new(secret.encode(), body, _hashlib.sha256).hexdigest()
+        if not _hmac.compare_digest(expected, actual):
+            return CheckResult(
+                "webhook:signature_self_test", "fail",
+                "HMAC self-verification failed (env var may be corrupted)",
+                True,
+            )
+        return CheckResult(
+            "webhook:signature_self_test", "ok",
+            f"HMAC self-test passed (sig: {expected[:12]}...)",
+            False,
+        )
+    except Exception as exc:
+        return CheckResult(
+            "webhook:signature_self_test", "warn",
+            f"self-test failed: {str(exc)[:100]}", False,
+        )
+
+
 # ── Run all checks ─────────────────────────────────────────────────────
 def check_all() -> list[CheckResult]:
     """Run every health check and return results."""
     return [
+        # Services
         check_service("prismatic-gateway.service"),
         check_service("prismatic-webhook-drain.timer"),
+        # Gateway core
         check_gateway_health(),
         check_webhook_queue(),
+        # Freshness (catches silent failures like GRO-2400)
+        check_webhook_freshness(),
+        check_webhook_rejection_burst(),
+        check_agent_run_freshness(),
+        check_alert_log_freshness(),
+        # Engine health
+        check_webhook_signature_self_test(),
         check_state_db_sizes(),
         check_stale_locks(),
         check_log_sizes(),

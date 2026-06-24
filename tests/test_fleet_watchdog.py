@@ -26,9 +26,16 @@ sys.path.insert(0, str(_PE_ROOT / ".venv_dev" / "lib" / "python3.12" / "site-pac
 from prismatic.fleet_watchdog import (  # noqa: E402
     CheckResult,
     check_all,
+    check_webhook_freshness,
+    check_webhook_rejection_burst,
+    check_agent_run_freshness,
+    check_alert_log_freshness,
+    check_webhook_signature_self_test,
     render_report,
     render_json,
     _extract_ctx,
+    WEBHOOK_STALE_SECONDS,
+    AGENT_RUNS_STALE_SECONDS,
 )
 from prismatic.fleet_actions import (  # noqa: E402
     run_action_for_alert,
@@ -196,3 +203,69 @@ def test_render_report_full_integration():
         assert "Alerts:" in report
     # failed is int (could be 0)
     assert isinstance(failed, int)
+
+# ── Freshness check tests (GRO-2400 prevention) ──────────────────────
+def test_webhook_freshness_returns_check_result():
+    """Webhook freshness check returns a CheckResult (smoke test)."""
+    result = check_webhook_freshness()
+    assert isinstance(result, CheckResult)
+    assert result.status in ("ok", "warn", "fail")
+    # Should have a name and message
+    assert result.name == "webhook:freshness"
+    assert result.message
+
+
+def test_webhook_rejection_burst_returns_check_result():
+    """Rejection burst check returns a CheckResult."""
+    result = check_webhook_rejection_burst()
+    assert isinstance(result, CheckResult)
+    assert result.status in ("ok", "warn", "fail")
+
+
+def test_agent_run_freshness_returns_check_result():
+    """Agent-run freshness check returns a CheckResult."""
+    result = check_agent_run_freshness()
+    assert isinstance(result, CheckResult)
+    # Will be "fail" since latest agent-run is 12+ days old
+    assert result.status in ("ok", "warn", "fail")
+
+
+def test_alert_log_freshness_returns_check_result():
+    """Alert log freshness check returns a CheckResult."""
+    result = check_alert_log_freshness()
+    assert isinstance(result, CheckResult)
+    assert result.status in ("ok", "warn", "fail")
+
+
+def test_webhook_signature_self_test_with_secret(monkeypatch):
+    """HMAC self-test passes when secret is set."""
+    monkeypatch.setenv("PRISMATIC_LINEAR_WEBHOOK_SECRET", "test-secret-12345")
+    result = check_webhook_signature_self_test()
+    assert isinstance(result, CheckResult)
+    assert result.status == "ok"
+    assert "HMAC self-test passed" in result.message
+
+
+def test_webhook_signature_self_test_without_secret(monkeypatch):
+    """HMAC self-test skipped when no secret configured."""
+    monkeypatch.delenv("PRISMATIC_LINEAR_WEBHOOK_SECRET", raising=False)
+    result = check_webhook_signature_self_test()
+    assert result.status == "ok"
+    assert "no secret" in result.message.lower() or "disabled" in result.message.lower()
+
+
+def test_check_all_includes_freshness_checks():
+    """check_all() now includes the new freshness checks (GRO-2400 prevention)."""
+    results = check_all()
+    names = {r.name for r in results}
+    assert "webhook:freshness" in names
+    assert "webhook:rejection_burst" in names
+    assert "agent_runs:freshness" in names
+    assert "alerts_log:freshness" in names
+    assert "webhook:signature_self_test" in names
+
+
+def test_agent_run_freshness_threshold_constant():
+    """24h threshold is exported and reasonable."""
+    assert AGENT_RUNS_STALE_SECONDS == 86400
+    assert WEBHOOK_STALE_SECONDS == 3600

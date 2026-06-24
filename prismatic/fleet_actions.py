@@ -257,6 +257,123 @@ def action_probe_gateway_health(ctx: dict) -> tuple[str, str]:
         return ("failed", f"gateway probe failed: {str(exc)[:200]}")
 
 
+# ── Action: post Linear comment when watchdog detects webhook drift ────
+def action_post_webhook_drift_alert(ctx: dict) -> tuple[str, str]:
+    """Post a Linear comment to the alerting issue about webhook drift.
+
+    For GRO-2400-style failures (HMAC drift), this puts a system-generated
+    breadcrumb in Linear so the operator can see the watchdog noticed.
+    Note: this only works if the Linear OAuth token is valid AND the
+    operator has set WATCHDOG_ALERT_ISSUE env var (e.g. GRO-2400).
+    """
+    issue_id = os.environ.get("WATCHDOG_ALERT_ISSUE", "").strip()
+    if not issue_id:
+        return ("skipped", "WATCHDOG_ALERT_ISSUE not configured")
+    linear_token = os.environ.get("LINEAR_OAUTH_TOKEN", "") or os.environ.get(
+        "LINEAR_API_KEY", ""
+    )
+    if not linear_token:
+        return ("skipped", "no Linear OAuth token in env")
+    try:
+        import json as _json
+        import urllib.request as _ur
+        message = ctx.get("message", "watchdog alert")
+        mutation = (
+            'mutation AddComment($input: CommentCreateInput!) { '
+            "commentCreate(input: $input) { success } }"
+        )
+        body = _json.dumps({
+            "query": mutation,
+            "variables": {"input": {"issueId": issue_id, "body": f"🤖 Watchdog: {message}"}},
+        }).encode()
+        req = _ur.Request(
+            "https://api.linear.app/graphql",
+            data=body,
+            headers={
+                "Authorization": linear_token,
+                "Content-Type": "application/json",
+            },
+        )
+        with _ur.urlopen(req, timeout=10) as r:
+            data = _json.loads(r.read())
+        if data.get("data", {}).get("commentCreate", {}).get("success"):
+            return ("ok", f"Posted comment to {issue_id}")
+        return ("failed", f"commentCreate returned: {data}")
+    except Exception as exc:
+        return ("failed", f"post failed: {str(exc)[:200]}")
+
+
+# ── Action: probe gateway with a synthetic webhook ─────────────────────
+def action_probe_webhook_endpoint(ctx: dict) -> tuple[str, str]:
+    """Send a synthetic POST to /api/gateway/linear with no signature.
+
+    This catches the GRO-2400 failure mode (401s piling up) — if the
+    gateway responds with 401 (HMAC enabled), that's correct dev
+    behavior. If it responds with 200, HMAC is misconfigured.
+    """
+    try:
+        import json as _json
+        import urllib.request as _ur
+        body = _json.dumps({
+            "action": "update", "type": "Issue",
+            "createdAt": "2026-01-01T00:00:00Z",
+            "data": {"identifier": "PROBE", "labels": {"nodes": []}},
+        }).encode()
+        req = _ur.Request(
+            "http://localhost:9000/api/gateway/linear",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with _ur.urlopen(req, timeout=5) as r:
+                status = r.status
+        except Exception as exc:
+            # urllib raises HTTPError for 4xx — that's expected here
+            response = getattr(exc, "code", None)
+            if response == 401:
+                return ("ok", "endpoint reachable, HMAC enforced (401 — correct)")
+            return ("failed", f"unexpected response: {exc}")
+        if status == 401:
+            return ("ok", "endpoint reachable, HMAC enforced (401 — correct)")
+        return ("warn", f"endpoint returned 200 without signature (HMAC may be off)")
+    except Exception as exc:
+        return ("failed", f"probe failed: {str(exc)[:200]}")
+
+
+# ── Action: dump recent webhook rejections for diagnostic context ────────
+def action_diagnostic_webhook_dump(ctx: dict) -> tuple[str, str]:
+    """Print the last 5 webhook entries to logs for diagnostic context."""
+    home = os.environ.get("HOME", "")
+    db_path = Path(os.path.join(
+        home, "work", "prismatic-engine", "prismatic_state",
+        "linear_webhook_queue.db",
+    ) if home else "")
+    if not db_path or not db_path.exists():
+        return ("skipped", "queue DB not found")
+    try:
+        import sqlite3 as _sq
+        import datetime as _dt
+        con = _sq.connect(str(db_path))
+        cur = con.cursor()
+        cur.execute(
+            """
+            SELECT identifier, event_type, action, received_at, dispatch_status
+            FROM linear_webhook_queue ORDER BY received_at DESC LIMIT 5
+            """
+        )
+        lines = []
+        for row in cur.fetchall():
+            ts = _dt.datetime.fromtimestamp(row[3]).strftime("%H:%M:%S")
+            lines.append(f"{ts} {row[1]:10} {row[2]:8} {row[0] or '(no id)':10} {row[4]}")
+        con.close()
+        if not lines:
+            return ("skipped", "queue is empty")
+        return ("ok", "last 5 events:\n" + "\n".join(lines))
+    except Exception as exc:
+        return ("failed", f"dump failed: {str(exc)[:200]}")
+
+
 # ── Dispatch table ─────────────────────────────────────────────────────
 ACTIONS_BY_ALERT_PREFIX: list[tuple[str, Callable]] = [
     ("prismatic-gateway.service", action_restart_gateway),
@@ -266,6 +383,12 @@ ACTIONS_BY_ALERT_PREFIX: list[tuple[str, Callable]] = [
     ("Stale lock", action_clear_stale_locks),
     ("Engine log", action_rotate_logs),
     ("Gateway /health", action_probe_gateway_health),
+    # Freshness alerts (GRO-2400 prevention)
+    ("webhook:freshness", action_probe_webhook_endpoint),
+    ("webhook:rejection_burst", action_diagnostic_webhook_dump),
+    ("agent_runs:freshness", action_post_webhook_drift_alert),
+    ("alerts_log:freshness", action_probe_gateway_health),
+    ("webhook:signature_self_test", action_diagnostic_webhook_dump),
 ]
 
 
