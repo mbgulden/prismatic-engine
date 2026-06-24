@@ -63,3 +63,10 @@ This error effectively made the Google Drive integration down for the swarm/agen
   - `drive_about` returned: Michael Gulden (mbgulden@gmail.com)
   - `drive_search` for query "Sentinel" returned file lists successfully.
 
+### Re-verification (June 24, 2026)
+- Checked Google Drive MCP connection state and confirmed it is **operational**.
+- Executed `test_auth.mjs` and verified that credentials are valid and access/refresh tokens are working correctly.
+- Ran `test_mcp_client.js` standalone client and confirmed `drive_about` and `drive_search` function perfectly.
+- Ran the Hermes test suite using `hermes mcp test gdrive` with successful connection and tool discovery.
+
+
