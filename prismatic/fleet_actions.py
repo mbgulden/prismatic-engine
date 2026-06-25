@@ -192,15 +192,39 @@ def action_clear_stale_locks(ctx: dict) -> tuple[str, str]:
         with locks_path.open() as f:
             import json as _json
             data = _json.load(f)
-        # Heartbeat-based eviction
+        # Heartbeat-based eviction. Support both historical shapes:
+        #   {"locks": {path: {"last_heartbeat": seconds}}}
+        #   [{"path": path, "heartbeat": millis, "agent": name}]
         now = time.time()
         evicted = []
-        for lock_key, lock_info in list(data.get("locks", {}).items()):
-            last_heartbeat = lock_info.get("last_heartbeat", 0)
-            if now - last_heartbeat > threshold_seconds:
-                del data["locks"][lock_key]
-                evicted.append(lock_key)
-        if evicted:
+        changed = False
+        if isinstance(data, dict):
+            locks = data.get("locks", {})
+            for lock_key, lock_info in list(locks.items()):
+                last_heartbeat = lock_info.get("last_heartbeat", lock_info.get("heartbeat", 0))
+                if last_heartbeat and last_heartbeat > 10_000_000_000:  # milliseconds
+                    last_heartbeat = last_heartbeat / 1000
+                if now - float(last_heartbeat or 0) > threshold_seconds:
+                    del locks[lock_key]
+                    evicted.append(lock_key)
+                    changed = True
+        elif isinstance(data, list):
+            kept = []
+            for lock_info in data:
+                last_heartbeat = lock_info.get("last_heartbeat", lock_info.get("heartbeat", 0))
+                if last_heartbeat and last_heartbeat > 10_000_000_000:  # milliseconds
+                    last_heartbeat = last_heartbeat / 1000
+                lock_key = lock_info.get("path", "<unknown>")
+                if now - float(last_heartbeat or 0) > threshold_seconds:
+                    evicted.append(lock_key)
+                    changed = True
+                else:
+                    kept.append(lock_info)
+            data = kept
+        else:
+            return ("failed", f"Unsupported lock file shape: {type(data).__name__}")
+
+        if changed:
             with locks_path.open("w") as f:
                 _json.dump(data, f, indent=2)
             return ("ok", f"Evicted {len(evicted)} stale locks: {evicted[:3]}")

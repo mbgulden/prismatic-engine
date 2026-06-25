@@ -52,7 +52,9 @@ if [[ "${1:-}" == "--check" ]]; then
 fi
 
 # Write mode
-PID=$(systemctl --user show prismatic-dispatcher.service -p MainPID --value 2>/dev/null || echo "unknown")
+# Production service is the system-level prismatic-gateway.service.
+# Older deployments wrote the short-lived watchdog/dispatcher PID, creating false DEAD heartbeat alerts.
+PID=$(systemctl show prismatic-gateway.service -p MainPID --value 2>/dev/null || echo "unknown")
 TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 echo "$PID $TIMESTAMP" > "$HEARTBEAT_FILE"
 echo "Heartbeat written: PID=$PID at $TIMESTAMP"

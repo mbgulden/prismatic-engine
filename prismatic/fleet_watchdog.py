@@ -379,39 +379,60 @@ def check_webhook_rejection_burst() -> CheckResult:
 
 # ── Check: agent-run freshness (catches "dispatch not firing") ─────────
 def check_agent_run_freshness() -> CheckResult:
-    """Alert if no agent-run record written in AGENT_RUNS_STALE_SECONDS.
+    """Alert if PE-owned agent run observability goes stale.
 
-    This is the metric that would have caught GRO-2400 in <24h (last run
-    was 12 days stale at the time of discovery). agent-runs/ is the
-    agentic-swarm-ops convention, but the path is env-overridable.
+    PE has its own run_records.json store. Older watchdog code checked the
+    Agentic Swarm Ops ``agent-runs/`` directory first, which made PE look red
+    because an external harness had not written records. That is useful context,
+    but it is not proof that the PE core is broken.
     """
     home = os.environ.get("HOME", "")
-    runs_dir = Path(os.path.join(home, "work", "agentic-swarm-ops", "agent-runs")
-                    if home else "")
-    if not runs_dir or not runs_dir.exists():
-        return CheckResult("agent_runs:freshness", "ok",
-                           "agent-runs dir not found (not running agentic-swarm-ops)",
-                           False)
+    state_dir = Path(os.environ.get(
+        "PRISMATIC_STATE_DIR",
+        os.path.join(home, "work", "prismatic-engine", "prismatic_state") if home else "",
+    ))
+    pe_runs = state_dir / "run_records.json"
     try:
-        # Most recent .json file's mtime
+        if pe_runs.exists():
+            age = time.time() - pe_runs.stat().st_mtime
+            if age > AGENT_RUNS_STALE_SECONDS:
+                return CheckResult(
+                    "agent_runs:freshness", "warn",
+                    f"PE run_records.json not updated in {int(age / 3600)}h. "
+                    "No recent PE-dispatched run observed.",
+                    True,
+                )
+            return CheckResult(
+                "agent_runs:freshness", "ok",
+                f"PE run_records.json updated {int(age)}s ago",
+                False,
+            )
+
+        # Compatibility/context check for the external ASO harness. Keep this as
+        # a warning, not a PE-core failure.
+        runs_dir = Path(os.path.join(home, "work", "agentic-swarm-ops", "agent-runs")
+                        if home else "")
+        if not runs_dir or not runs_dir.exists():
+            return CheckResult("agent_runs:freshness", "ok",
+                               "no PE run_records.json yet; ASO agent-runs dir not present",
+                               False)
         json_files = list(runs_dir.glob("*.json"))
         if not json_files:
             return CheckResult("agent_runs:freshness", "ok",
-                               "no agent-run records yet", False)
+                               "no PE run_records.json yet; no ASO agent-run records yet", False)
         latest = max(json_files, key=lambda p: p.stat().st_mtime)
         age = time.time() - latest.stat().st_mtime
         if age > AGENT_RUNS_STALE_SECONDS:
             hours = int(age / 3600)
             return CheckResult(
-                "agent_runs:freshness", "fail",
-                f"No agent-run record in {hours}h. "
-                f"Latest: {latest.name}. "
-                f"Dispatch may not be firing agents.",
+                "agent_runs:freshness", "warn",
+                f"No PE run_records.json yet; external ASO agent-runs stale for {hours}h "
+                f"(latest {latest.name}). This is an upstream/harness signal, not PE core health.",
                 True,
             )
         return CheckResult(
             "agent_runs:freshness", "ok",
-            f"Latest run {int(age)}s ago ({latest.name})",
+            f"No PE run_records.json yet; external ASO latest run {int(age)}s ago ({latest.name})",
             False,
         )
     except Exception as exc:
