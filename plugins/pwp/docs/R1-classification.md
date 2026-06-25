@@ -52,9 +52,9 @@ This classification feeds R4 (Core API definition) and R5 (migration script).
 | 22 | `pwp_webhook.py` (WebhookHandler, handle_linear_event, trigger_deploy, trigger_sync) | **Both** | `prismatic/core/webhook.py` (Core) — already exists, plus PWP handler registration in `plugins/pwp/pwp/webhook.py` | Generic webhook receiver (HMAC + handler registration) is Core. PWP registers handlers for "label changed → rebuild" / "deploy approved → sync prod". |
 | 23 | `test_pwp.py` (8 test classes covering slugify, profile normalization, site build, SEO, a11y, CSS, image gen, end-to-end) | **PWP** | `plugins/pwp/tests/test_pwp.py` | All tests target PWP-specific behavior; keep in plugin. (Core capability tests live in `tests/` for the engine itself.) |
 | 24 | `SETUP.md` | **PWP** | `plugins/pwp/SETUP.md` | PWP install + usage guide; plugin-scoped. |
-| 25 | `.wrangler/cache/pages.json` | **(delete)** | n/a | Local Wrangler cache; not source code, regenerate. |
+| 25 | `.wrangler/cache/pages.json` | **Delete** | n/a | Local Wrangler cache; not source code, regenerate. |
 
-**Total: 25 entries** (the original scan also returned `.wrangler/cache/pages.json` — left here as entry 25 to make the count match the 32-file scan above; the other 7 are nested `.pyc` files inside `__pycache__/` and are not source.)
+**Total: 25 entries.** The other 7 files in the original scan are nested `.pyc` files inside `__pycache__/` (regenerated on import) and are not source. |
 
 ---
 
@@ -63,13 +63,13 @@ This classification feeds R4 (Core API definition) and R5 (migration script).
 | Classification | Count | Action |
 |---|---|---|
 | **Core** | 0 | (none — every file is either PWP-specific or already-shared-via-Both) |
-| **PWP** | 15 | Keep in `plugins/pwp/`. |
-| **Both** | 9 | Move the generic primitive into `prismatic/capabilities/` or `prismatic/core/`; keep a thin PWP wrapper inside `plugins/pwp/`. |
+| **PWP** | 17 | Keep in `plugins/pwp/`. |
+| **Both** | 7 | Move the generic primitive into `prismatic/capabilities/` or `prismatic/core/`; keep a thin PWP wrapper inside `plugins/pwp/`. |
 | **Delete** | 1 | `.wrangler/cache/pages.json` is a regenerable cache. |
 
 ### What moves to Core (from "Both" entries)
 
-These nine files have a Core-capable primitive that other plugins can also use. The new home in `prismatic/` is mostly *already* provided by commit `0c957f2` — this R1 classification mostly *confirms* that the Fred-laid skeleton is correct. Specifically:
+These seven files have a Core-capable primitive that other plugins can also use. The new home in `prismatic/` is mostly *already* provided by commit `0c957f2` — this R1 classification mostly *confirms* that the Fred-laid skeleton is correct. Specifically:
 
 1. **`pwp/pwp_version_control.py`** → `prismatic/capabilities/version_control.py` (new — Core needs a file-snapshot/restore primitive that any plugin can call).
 2. **`deploy_cf_pages.py`** → wraps existing `prismatic/capabilities/adapters/cloudflare.py` (Core already exists).
@@ -87,7 +87,7 @@ All file builders, template rendering, image generation, page templates, version
 
 ## Impact on R2–R5
 
-- **R2 (Audit what prismatic-engine already provides):** This R1 doc shows that 5 of the 7 Core primitives referenced by the PWP manifest *already exist* in `prismatic/capabilities/` and `prismatic/core/` (commit 0c957f2). The only gap is `version_control.py` under `prismatic/capabilities/`.
+- **R2 (Audit what prismatic-engine already provides):** This R1 doc shows that all 6 of the 7 Core primitives referenced by the PWP manifest *already exist* in `prismatic/capabilities/` and `prismatic/core/` (commit 0c957f2). The only gap is `version_control.py` under `prismatic/capabilities/`.
 - **R4 (Define the Core capability API):** Use the "Both" rows above as the API contract surface. The Core side is small (file-snapshot/restore is the only net-new primitive).
 - **R5 (Migration script):** A `pwp_migrate.py` script that:
   1. Reads the "Target" column above.
