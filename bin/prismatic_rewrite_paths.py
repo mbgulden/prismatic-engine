@@ -34,6 +34,7 @@ import os
 import re
 import subprocess
 import sys
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -41,6 +42,12 @@ PUBLISH_BIN = os.environ.get("PRISMATIC_PUBLISH_BIN", "prismatic-publish")
 HOSTNAME = os.environ.get("PRISMATIC_ARTIFACTS_HOSTNAME", "files.growthwebdev.com")
 WORKSPACE = os.environ.get("PRISMATIC_PUBLISH_WORKSPACE", "published")
 MAX_PARALLEL = int(os.environ.get("PRISMATIC_PUBLISH_MAX_PARALLEL", "4"))
+
+# Backward-compatible public API used by older tests/callers. Direct Telegram
+# fallback is retained only as an explicit fallback helper; the default CLI path
+# publishes to the artifact host and does not notify Michael.
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_HOME_CHANNEL = os.environ.get("TELEGRAM_HOME_CHANNEL") or os.environ.get("TELEGRAM_HOME_CHAT_ID", "")
 
 # Match absolute paths under /home, /tmp, /mnt, /var/*, or /root. We allow dots in
 # the middle of the path so filenames like "foo.md" or "tarball.tar.gz" stay intact.
@@ -90,10 +97,92 @@ def _publish_one(path: str) -> dict:
     try:
         out = json.loads(proc.stdout)
     except json.JSONDecodeError:
+        # Backward compatibility: older publisher invocations returned a plain URL.
+        url = proc.stdout.strip()
+        if url.startswith("http://") or url.startswith("https://"):
+            return {"path": path, "ok": True, "url": url, "url_download": url}
         return {"path": path, "ok": False, "error": "bad json from publisher"}
     if isinstance(out, list) and out:
         out = out[0]
     return {"path": path, "ok": True, "url": out.get("url_raw", ""), "url_download": out.get("url_download", "")}
+
+
+def upload_to_telegram(path: str) -> tuple[bool, str | None]:
+    """Legacy fallback helper for callers that explicitly request Telegram upload."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_HOME_CHANNEL:
+        return False, "Telegram credentials not configured"
+    body = json.dumps({
+        "chat_id": TELEGRAM_HOME_CHANNEL,
+        "text": f"Artifact fallback: {path}",
+        "disable_web_page_preview": True,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+        data=body,
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode() or "{}")
+        if data.get("ok") is False:
+            return False, data.get("description", "Telegram API returned ok=false")
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
+def publish_path(path: str) -> tuple[str | None, str | None]:
+    """Legacy public wrapper returning (url, error)."""
+    result = _publish_one(path)
+    if result.get("ok") and result.get("url"):
+        return result["url"], None
+    err = result.get("error", "unknown error")
+    tg_ok, tg_err = upload_to_telegram(path)
+    if tg_ok:
+        return None, f"failed to publish ({err}), uploaded to Telegram"
+    return None, f"failed to publish ({err}) and Telegram upload failed ({tg_err})"
+
+
+def rewrite_paths_in_text(text: str) -> str:
+    """Legacy public wrapper that rewrites paths as Markdown links."""
+    out: list[str] = []
+    last_end = 0
+    for m in PATH_RE.finditer(text):
+        path = _strip_trailing_punct(m.group("path"))
+        if _is_under_excluded(path):
+            continue
+        out.append(text[last_end:m.start()])
+        url, err = publish_path(path)
+        name = Path(path).name
+        if url:
+            out.append(f"[{name}]({url})")
+        else:
+            out.append(f"[{name} ({err})]")
+        last_end = m.end()
+    out.append(text[last_end:])
+    return "".join(out)
+
+
+def fred_prepare_reply(text: str) -> dict:
+    """Legacy reply-prep helper: returns rewritten text plus fallback upload metadata."""
+    uploads: list[dict] = []
+    out: list[str] = []
+    last_end = 0
+    for m in PATH_RE.finditer(text):
+        path = _strip_trailing_punct(m.group("path"))
+        if _is_under_excluded(path):
+            continue
+        out.append(text[last_end:m.start()])
+        url, err = publish_path(path)
+        name = Path(path).name
+        if url:
+            out.append(f"[{name}]({url})")
+        else:
+            out.append(f"[{name} ({err})]")
+            uploads.append({"path": path, "success": "uploaded to Telegram" in (err or ""), "error": err})
+        last_end = m.end()
+    out.append(text[last_end:])
+    return {"text": "".join(out), "uploads": uploads}
 
 
 def _rewrite_text(text: str, parallel: int) -> tuple[str, list[dict]]:
