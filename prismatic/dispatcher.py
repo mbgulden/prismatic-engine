@@ -406,9 +406,11 @@ def get_issue_by_identifier(identifier: str) -> dict[str, Any] | None:
         except (ValueError, IndexError):
             pass
     if issue_number is None:
-        filter_value: dict[str, Any] = {"identifier": {"eq": identifier}}
-    else:
-        filter_value = {"number": {"eq": issue_number}}
+        # Linear IssueFilter has no `identifier` field. For synthetic/nonstandard
+        # identifiers (e.g. GRO-HMAC-1), do not call Linear with an invalid
+        # filter that would poison the drainer logs; treat as not found.
+        return None
+    filter_value = {"number": {"eq": issue_number}}
     data = gql(query, {
         "teamId": TEAM_ID,
         "filter": filter_value,
