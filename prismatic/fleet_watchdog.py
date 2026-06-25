@@ -237,8 +237,10 @@ def check_stale_locks() -> CheckResult:
                 # list-of-dicts format
                 lock_key = entry.get("path") or entry.get("key") or "?"
                 lock_info = entry
-            last_heartbeat = lock_info.get("last_heartbeat", 0)
-            if now - last_heartbeat > LOCK_STALE_SECONDS:
+            last_heartbeat = lock_info.get("last_heartbeat", lock_info.get("heartbeat", 0))
+            if last_heartbeat and last_heartbeat > 10_000_000_000:  # milliseconds
+                last_heartbeat = last_heartbeat / 1000
+            if now - float(last_heartbeat or 0) > LOCK_STALE_SECONDS:
                 stale.append(lock_key)
         if stale:
             return CheckResult(
