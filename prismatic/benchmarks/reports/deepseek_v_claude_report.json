@@ -1,0 +1,38 @@
+{
+  "issue_id": "GRO-573",
+  "generated_at": "2026-06-25T23:00:41.804732+00:00",
+  "models": [
+    {
+      "model": "deepseek-v4",
+      "tool_call_accuracy": 0.91,
+      "multi_step_reasoning": 0.84,
+      "context_utilization": 0.79,
+      "avg_latency_seconds": 2.4,
+      "cost_per_task_usd": 0.0031,
+      "sample_size": 50,
+      "notes": [
+        "Strong tool-call accuracy at low cost.",
+        "Context utilization drops beyond 64k tokens."
+      ]
+    },
+    {
+      "model": "claude-4-sonnet",
+      "tool_call_accuracy": 0.93,
+      "multi_step_reasoning": 0.9,
+      "context_utilization": 0.88,
+      "avg_latency_seconds": 3.1,
+      "cost_per_task_usd": 0.0148,
+      "sample_size": 50,
+      "notes": [
+        "Best-in-class multi-step reasoning.",
+        "Cost ~5x deepseek-v4 at list price."
+      ]
+    }
+  ],
+  "methodology": "Synthetic placeholder numbers (--dry-run). Live runs will populate real values by invoking each model against the prismatic/benchmarks/task_suite.json corpus (50 mixed tool-call, planning, and long-context tasks).",
+  "caveats": [
+    "Numbers below are SYNTHETIC until live runs are executed.",
+    "Cost figures use list price as of 2026-Q2; check vendor pages for current rates.",
+    "Sample size N=50 per model \u2014 increase for production-grade decisions."
+  ]
+}
