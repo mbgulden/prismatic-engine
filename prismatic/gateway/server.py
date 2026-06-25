@@ -28,8 +28,16 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
+
+from prismatic.gateway.hmac_verify import (  # GRO-2402: unified HMAC
+    verify_linear,
+    verify_github,
+    verify_ws_signature,
+    hmac_self_test,
+)
 from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from prismatic.gateway.event_bus import get_event_bus, set_event_bus, EventBus
 from prismatic.gateway.ipc_bridge import (
@@ -48,6 +56,26 @@ logger = logging.getLogger("prismatic.gateway.server")
 
 # ── FastAPI Application ──────────────────────────────────────────────
 
+# Body size limit (DoS protection). Linear webhook events are typically <10KB.
+# Cap at 1MB to allow for batched events but reject truly abusive payloads.
+MAX_BODY_BYTES = int(os.environ.get("PRISMATIC_MAX_BODY_BYTES", str(1024 * 1024)))
+
+# IP allowlist for non-webhook endpoints. The webhook endpoints (Linear, GitHub)
+# authenticate via HMAC; everything else should only accept connections from
+# localhost or explicitly allowed IPs. Comma-separated CIDR list, default
+# localhost-only. Also includes 'testclient' for in-process TestClient runs.
+PRISMATIC_ALLOWED_IPS = frozenset(
+    ip.strip() for ip in os.environ.get(
+        "PRISMATIC_ALLOWED_IPS", "127.0.0.1,::1,testclient"
+    ).split(",")
+    if ip.strip()
+)
+
+# Replay protection window (seconds). Linear webhook signatures don't include
+# a timestamp by default, so we accept a window relative to a server-side
+# "epoch" — fresh enough to allow clock skew between Linear and us.
+WEBHOOK_REPLAY_WINDOW_SECONDS = int(os.environ.get("PRISMATIC_WEBHOOK_REPLAY_WINDOW", "300"))
+
 app = FastAPI(
     title="Prismatic Engine Gateway",
     description="HTTP/gRPC gateway for the Prismatic Engine orchestration hub",
@@ -55,14 +83,164 @@ app = FastAPI(
     openapi_url=None,  # Disable OpenAPI schema generation — internal gateway
 )
 
-# CORS — allow all origins (internal orchestration gateway)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+
+# ── Body-size middleware (DoS protection) ────────────────────────────
+# Request-ID propagation. Generates a UUID4 if X-Request-ID is absent,
+# echoes it back in the response. Used by audit logs to correlate entries
+# from a single inbound request.
+import uuid as _uuid
+
+
+@app.middleware("http")
+async def request_id_propagation(request: Request, call_next):
+    """Read X-Request-ID from headers or generate one; echo back in response.
+
+    Allows callers to pass their own request ID for cross-system tracing.
+    Default fallback: UUID4 (16 bytes of randomness).
+    """
+    request_id = request.headers.get("X-Request-ID", "")
+    if not request_id:
+        request_id = str(_uuid.uuid4())
+    # Stash on request.state so handlers can access via request.state.request_id
+    request.state.request_id = request_id
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+
+# Per-IP rate limit (sliding window). In-memory only — sufficient for a single
+# instance. Multi-instance deployments would need Redis or similar.
+# Default: 60 requests / 60s / IP. Configurable.
+import time as _time
+_RATE_LIMIT_WINDOW = int(os.environ.get("PRISMATIC_RATE_LIMIT_WINDOW", "60"))
+_RATE_LIMIT_MAX = int(os.environ.get("PRISMATIC_RATE_LIMIT_MAX", "60"))
+_rate_limit_buckets: dict[str, list[float]] = {}
+
+
+@app.middleware("http")
+async def rate_limit_per_ip(request: Request, call_next):
+    """Sliding-window per-IP rate limit.
+
+    Returns 429 with Retry-After header when an IP exceeds RATE_LIMIT_MAX
+    requests in the last RATE_LIMIT_WINDOW seconds.
+
+    State is in-memory; multi-instance gateways would need a shared store.
+    """
+    client_ip = request.client.host if request.client else "unknown"
+    now = _time.time()
+    bucket = _rate_limit_buckets.setdefault(client_ip, [])
+    # Drop entries older than the window
+    while bucket and bucket[0] < now - _RATE_LIMIT_WINDOW:
+        bucket.pop(0)
+    if len(bucket) >= _RATE_LIMIT_MAX:
+        retry_after = int(bucket[0] + _RATE_LIMIT_WINDOW - now) + 1
+        return JSONResponse(
+            {"status": "rejected", "reason": "rate limit exceeded"},
+            status_code=429,
+            headers={"Retry-After": str(retry_after)},
+        )
+    bucket.append(now)
+    # Periodically clean up empty buckets to prevent unbounded growth.
+    if len(_rate_limit_buckets) > 1000 and now % 100 < 1:
+        empty = [k for k, v in _rate_limit_buckets.items() if not v]
+        for k in empty:
+            _rate_limit_buckets.pop(k, None)
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def limit_body_size(request: Request, call_next):
+    """Reject requests with bodies larger than MAX_BODY_BYTES.
+
+    Linear webhook events are typically <10KB. We cap at 1MB to allow batched
+    events but reject abusive payloads.
+
+    AGY GRO-2078 hardening: also rejects requests with chunked
+    Transfer-Encoding (no Content-Length header on POST/PUT/PATCH).
+    Without this check, an attacker could bypass the size limit by
+    streaming chunks without declaring Content-Length. FastAPI/Starlette
+    would buffer the entire chunked payload into memory, defeating the cap.
+    """
+    if request.method in {"POST", "PUT", "PATCH"}:
+        cl = request.headers.get("content-length")
+        te = request.headers.get("transfer-encoding", "")
+        # Reject chunked transfer (no reliable size bound).
+        if "chunked" in te.lower():
+            return JSONResponse(
+                {"status": "rejected", "reason": "chunked transfer not allowed"},
+                status_code=411,
+            )
+        # Reject when no Content-Length is provided and not chunked
+        # (can't bound the body size).
+        if not cl or not cl.isdigit() or int(cl) > MAX_BODY_BYTES:
+            return JSONResponse(
+                {"status": "rejected", "reason": "payload too large or unknown size"},
+                status_code=413,
+            )
+    return await call_next(request)
+
+
+# ── IP allowlist middleware (defense-in-depth for non-webhook endpoints) ──
+# Comma-separated list of trusted proxy IPs that are allowed to set
+# X-Forwarded-For. Default: only localhost. Behind a reverse proxy,
+# set this to the proxy's IP(s).
+PRISMATIC_TRUSTED_PROXIES = frozenset(
+    ip.strip() for ip in os.environ.get("PRISMATIC_TRUSTED_PROXIES", "127.0.0.1,::1").split(",")
+    if ip.strip()
 )
+
+
+@app.middleware("http")
+async def ip_allowlist(request: Request, call_next):
+    """Restrict non-webhook endpoints to localhost (or PRISMATIC_ALLOWED_IPS).
+
+    Webhook endpoints (paths starting with /api/gateway/) authenticate via HMAC
+    and are exempt from IP filtering. Everything else (locks, runs, schedules,
+    chat, websocket) requires the connection to come from a trusted IP.
+
+    AGY GRO-2078 hardening: when behind a reverse proxy, respect
+    X-Forwarded-For only if the immediate client IP is in the trusted-proxy
+    allowlist (PRISMATIC_TRUSTED_PROXIES). This prevents header-spoofing
+    attacks where an external attacker sets X-Forwarded-For to a trusted IP.
+    """
+    path = request.url.path
+    if path.startswith("/api/gateway/") or path == "/health":
+        # Webhook endpoints use HMAC; health is intentionally public.
+        return await call_next(request)
+
+    # Determine effective client IP
+    client_ip = request.client.host if request.client else ""
+    xff = request.headers.get("x-forwarded-for", "")
+
+    if xff and client_ip in PRISMATIC_TRUSTED_PROXIES:
+        # Trust X-Forwarded-For only when the immediate client is a known proxy.
+        # Take the leftmost (original client) IP from the chain.
+        forwarded_ip = xff.split(",")[0].strip()
+        if forwarded_ip:
+            client_ip = forwarded_ip
+
+    if client_ip not in PRISMATIC_ALLOWED_IPS:
+        return JSONResponse(
+            {"status": "rejected", "reason": "ip not allowed"},
+            status_code=403,
+        )
+    return await call_next(request)
+
+# CORS — explicit origins only. Default is none (no browser clients). Set
+# PRISMATIC_CORS_ORIGINS to a comma-separated list when browser dashboards
+# need to access the gateway (e.g. "https://app.growthwebdev.com").
+_prismatic_origins = [
+    o.strip() for o in os.environ.get("PRISMATIC_CORS_ORIGINS", "").split(",")
+    if o.strip()
+]
+if _prismatic_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_prismatic_origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+        allow_headers=["Authorization", "Content-Type", "Linear-Signature", "X-Hub-Signature-256"],
+    )
 
 # Mount the IPC bridge event ingest route (POST /events, GET /events/history)
 # The router's @router.post("/events") defines the full path — no prefix needed
@@ -140,19 +318,103 @@ async def health() -> dict[str, Any]:
 
 
 # ── WebSocket Endpoint ──────────────────────────────────────────────
+# SECURITY NOTE: /ws accepts any client that passes the IP allowlist
+# middleware (default localhost). There is no per-client authentication —
+# any connected client receives ALL broadcast events (lock/unlock, agent
+# lifecycle, etc.). For multi-instance or externally-reachable gateways,
+# this is an information disclosure risk. Mitigation options:
+#   - require a bearer token in the WebSocket upgrade headers
+#   - require a per-session HMAC challenge
+#   - rate-limit connections per IP
+# Tracked as Tier 7 follow-up (GRO-2058).
 
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
     """WebSocket endpoint for real-time swarm event streaming.
 
-    Clients connect to receive live telemetry: lock/unlock events,
-    agent lifecycle transitions, governor allocations, and circuit
-    breaker state changes.
+    Per-client authentication (GRO-2058): clients must present a Bearer token
+    in the upgrade request headers, or HMAC-signed headers (X-WS-Signature +
+    X-WS-Timestamp). Bearer is the simpler path; HMAC is the same-secret
+    pattern as the webhook handlers (single-secret for now, dual-secret
+    rotation tracked as follow-up).
 
-    The connection stays open until the client disconnects.
-    Events are broadcast to all connected clients.
+    Auth flow:
+      1. Validate origin (must match PRISMATIC_WS_ALLOWED_ORIGINS or be empty).
+      2. Validate auth header (Bearer token OR HMAC signature).
+      3. If valid, accept. Otherwise reject with 1008 (policy violation).
+
+    Configuration:
+    - PRISMATIC_WS_TOKEN: shared bearer token. If unset, auth disabled (dev only).
+    - PRISMATIC_WS_SECRET: HMAC secret (same as webhook if you want).
+    - PRISMATIC_WS_ALLOWED_ORIGINS: comma-separated origin list (CORS for WS).
+    - PRISMATIC_WS_REPLAY_WINDOW: timestamp tolerance in seconds (default 60).
     """
+    import hmac
+    import hashlib
+    from datetime import datetime, timezone
+
+    ws_token = os.environ.get("PRISMATIC_WS_TOKEN", "")
+    ws_secret = os.environ.get("PRISMATIC_WS_SECRET", "")
+    ws_origins = [
+        o.strip() for o in os.environ.get("PRISMATIC_WS_ALLOWED_ORIGINS", "").split(",")
+        if o.strip()
+    ]
+    try:
+        ws_replay_window = int(os.environ.get("PRISMATIC_WS_REPLAY_WINDOW", "60"))
+    except ValueError:
+        # AGY GRO-2082 advisory: log and fall back to default rather than
+        # crashing every connection with a 500. Operators can fix the env var
+        # without taking down the WebSocket service.
+        logger.warning(
+            "PRISMATIC_WS_REPLAY_WINDOW is non-numeric; falling back to 60s"
+        )
+        ws_replay_window = 60
+
+    # If neither token nor secret is configured, fall back to localhost-only mode.
+    # (IP allowlist middleware already handles this for HTTP; for WS upgrade
+    # requests the IP must be in PRISMATIC_ALLOWED_IPS via the middleware.)
+    auth_required = bool(ws_token or ws_secret)
+
+    if auth_required:
+        headers = dict(websocket.headers or {})
+        auth_header = headers.get("authorization", "")
+        sig_header = headers.get("x-ws-signature", "")
+        ts_header = headers.get("x-ws-timestamp", "")
+        origin = headers.get("origin", "")
+
+        # Origin check
+        if ws_origins and origin and origin not in ws_origins:
+            logger.warning("WebSocket rejected: origin %r not in allowlist", origin)
+            await websocket.close(code=1008, reason="origin not allowed")
+            return
+
+        authenticated = False
+
+        # Bearer token path
+        if ws_token and auth_header.startswith("Bearer "):
+            presented = auth_header[len("Bearer "):].strip()
+            if hmac.compare_digest(presented, ws_token):
+                authenticated = True
+
+        # HMAC signature path (same pattern as webhook)
+        if not authenticated and ws_secret and sig_header and ts_header:
+            verdict = verify_ws_signature(
+                sig_header, ts_header, "GET", "/ws", ws_secret,
+                max_drift_seconds=ws_replay_window,
+            )
+            if verdict.passed:
+                authenticated = True
+            # else: silently fall through to "not authenticated" below
+
+        if not authenticated:
+            logger.warning(
+                "WebSocket rejected: missing or invalid auth (origin=%r, sig_present=%s)",
+                origin, bool(sig_header),
+            )
+            await websocket.close(code=1008, reason="unauthorized")
+            return
+
     await websocket.accept()
     _ws_clients.add(websocket)
     logger.info("WebSocket client connected (total=%d)", len(_ws_clients))
@@ -413,23 +675,338 @@ async def handle_chat_schedule_command(payload: dict[str, Any]) -> Response:
 
 
 
-# ── Webhook Endpoints (stubs — full implementation in dedicated modules) ──
+
+
+def _audit_webhook(
+    source: str,
+    outcome: str,
+    *,
+    reason: str | None = None,
+    identifier: str | None = None,
+    event_type: str | None = None,
+    repo: str | None = None,
+    request_id: str | None = None,
+) -> None:
+    """Append a row to the webhook audit log.
+
+    Schema (one JSON record per line):
+      {ts, source, outcome, reason?, identifier?, event_type?, repo?,
+       request_id?}
+
+    Lives at $PRISMATIC_STATE_DIR/webhook_audit.log. Append-only.
+    Used for forensics and rate-of-anomaly detection.
+
+    request_id correlates all audit entries from a single inbound request.
+    """
+    state_dir = Path(os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state"))
+    state_dir.mkdir(parents=True, exist_ok=True)
+    record = {
+        "ts": time.time(),
+        "source": source,
+        "outcome": outcome,
+    }
+    if reason is not None:
+        record["reason"] = reason
+    if identifier is not None:
+        record["identifier"] = identifier
+    if event_type is not None:
+        record["event_type"] = event_type
+    if repo is not None:
+        record["repo"] = repo
+    if request_id is not None:
+        record["request_id"] = request_id
+    try:
+        with (state_dir / "webhook_audit.log").open("a") as f:
+            f.write(json.dumps(record) + "\n")
+    except Exception as exc:  # noqa: BLE001
+        # Audit must never break the webhook path. Log and continue.
+        logger.warning("audit log write failed: %s", exc)
 
 
 @app.post("/api/gateway/github")
 async def github_webhook(request: Request) -> dict[str, Any]:
-    """Receive GitHub webhook events (PR opened, synchronized, review submitted)."""
+    """Receive GitHub webhook events (PR opened, synchronized, review submitted).
+
+    HMAC validation against PRISMATIC_GITHUB_WEBHOOK_SECRET. Header is
+    X-Hub-Signature-256 (sha256=<hex>) per GitHub's spec.
+
+    Dual-secret rotation supported (PRISMATIC_GITHUB_WEBHOOK_SECRET_NEXT).
+
+    If the secret is unset, HMAC is skipped (dev only — never deploy this way).
+    """
+    import hmac
+    import hashlib
+
     body = await request.body()
-    logger.info("GitHub webhook received (%d bytes)", len(body))
-    return {"status": "ok", "message": "webhook received"}
+    request_id = getattr(request.state, "request_id", None)
+    primary_secret = os.environ.get("PRISMATIC_GITHUB_WEBHOOK_SECRET", "")
+    next_secret = os.environ.get("PRISMATIC_GITHUB_WEBHOOK_SECRET_NEXT", "")
+    if primary_secret:
+        sig_header = request.headers.get("X-Hub-Signature-256", "")
+        verdict = verify_github(body, sig_header, primary_secret, next_secret)
+        if not verdict:
+            _audit_webhook(
+                "github", "rejected", reason=verdict.reason, request_id=request_id,
+            )
+            return JSONResponse(
+                {"status": "rejected", "reason": verdict.reason},
+                status_code=401,
+            )
+
+    # Parse + log + queue (mirror of Linear handler).
+    try:
+        event = json.loads(body)
+    except json.JSONDecodeError:
+        _audit_webhook(
+            "github", "rejected", reason="bad json", request_id=request_id,
+        )
+        return JSONResponse({"status": "rejected", "reason": "bad json"}, status_code=400)
+
+    event_type = event.get("action", "") or event.get("ref", "")
+    repo = (event.get("repository") or {}).get("full_name", "unknown")
+    _audit_webhook(
+        "github", "received", repo=repo, event_type=str(event_type)[:64],
+        request_id=request_id,
+    )
+    return {"status": "ok", "message": "webhook received", "event_type": event_type}
+
+
+# Path-aliases so external webhook senders (which historically use
+# /webhooks/{service}) hit the same handler as the canonical
+# /api/gateway/{service} route. Both POST to the same handler.
+@app.post("/webhooks/linear")
+async def webhooks_linear_alias(request: Request) -> dict[str, Any]:
+    """Path-alias for /api/gateway/linear.
+
+    Linear's webhook URL convention (used in old config) was
+    https://.../webhooks/linear. We keep that path working so existing
+    Linear-side webhook registrations continue to function.
+    """
+    return await linear_webhook(request)
+
+
+@app.post("/webhooks/github")
+async def webhooks_github_alias(request: Request) -> dict[str, Any]:
+    """Path-alias for /api/gateway/github."""
+    return await github_webhook(request)
 
 
 @app.post("/api/gateway/linear")
 async def linear_webhook(request: Request) -> dict[str, Any]:
-    """Receive Linear webhook events (issue status changes, comments)."""
+    """Receive Linear webhook events (issue status changes, comments).
+
+    Production-grade handler (Tier 6 + Tier 7 hardening):
+
+    1. HMAC validation against PRISMATIC_LINEAR_WEBHOOK_SECRET (constant-time compare).
+    2. Body size capped at MAX_BODY_BYTES (DoS protection, enforced upstream).
+    3. JSON parse with explicit error.
+    4. Event-driven dispatch for Issue events with agent:* labels (GRO-2048).
+       Uses single-issue dispatch helper to avoid full-cycle amplification
+       (each webhook event was triggering ~20 Linear API calls).
+    5. SQLite catch-up queue for non-matching events (GRO-2050).
+    6. Audit log appended for every outcome (success, rejection, queued, error).
+    7. No stack traces leak in responses (all errors return sanitized JSON).
+
+    Configuration:
+    - PRISMATIC_LINEAR_WEBHOOK_SECRET: HMAC secret. If unset, HMAC is
+      skipped (dev only — never deploy this way).
+    """
+    import hmac
+    import hashlib
+    import sqlite3
+
     body = await request.body()
-    logger.info("Linear webhook received (%d bytes)", len(body))
-    return {"status": "ok", "message": "webhook received"}
+    body_size = len(body)
+
+    # ── 1. HMAC validation (with dual-secret rotation support) ─────
+    # Supports zero-downtime rotation: PRISMATIC_LINEAR_WEBHOOK_SECRET
+    # is the primary, _NEXT is a candidate during rotation. Both are
+    # accepted during the rotation window. After Linear is confirmed to
+    # use the new secret, swap roles (rename _NEXT → primary).
+    request_id = getattr(request.state, "request_id", None)
+    primary_secret = os.environ.get("PRISMATIC_LINEAR_WEBHOOK_SECRET", "")
+    next_secret = os.environ.get("PRISMATIC_LINEAR_WEBHOOK_SECRET_NEXT", "")
+    if primary_secret:
+        sig = request.headers.get("Linear-Signature", "")
+        verdict = verify_linear(body, sig, primary_secret, next_secret)
+        if not verdict:
+            _audit_webhook(
+                "linear", "rejected", reason=verdict.reason, request_id=request_id,
+            )
+            return JSONResponse(
+                {"status": "rejected", "reason": verdict.reason},
+                status_code=401,
+            )
+
+    # ── 2. JSON parse ────────────────────────────────────────────────
+    try:
+        event = json.loads(body)
+    except json.JSONDecodeError:
+        _audit_webhook("linear", "rejected", reason="bad json", request_id=request_id)
+        return JSONResponse(
+            {"status": "rejected", "reason": "bad json"},
+            status_code=400,
+        )
+
+    # ── 2b. Replay protection (Tier 7 hardening, GRO-2062) ─────────
+    # Linear's HMAC signature doesn't include a timestamp, so a captured
+    # payload+signature could be replayed indefinitely. We use the
+    # event's `createdAt` field (set by Linear at event-generation time)
+    # to enforce a freshness window. This catches:
+    #   - replay attacks where someone captures a valid payload and POSTs it later
+    #   - stale events from replayed infrastructure
+    # Configurable via PRISMATIC_WEBHOOK_REPLAY_WINDOW (default 300s = 5min).
+    created_at_str = event.get("createdAt", "")
+    if created_at_str:
+        from datetime import datetime, timezone
+        try:
+            # Linear uses ISO 8601 with 'Z' suffix
+            created_at = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
+            now = datetime.now(timezone.utc)
+            age_seconds = (now - created_at).total_seconds()
+            if age_seconds > WEBHOOK_REPLAY_WINDOW_SECONDS:
+                _audit_webhook(
+                    "linear", "rejected",
+                    reason=f"stale: {int(age_seconds)}s old (max {WEBHOOK_REPLAY_WINDOW_SECONDS}s)",
+                    request_id=request_id,
+                )
+                return JSONResponse(
+                    {
+                        "status": "rejected",
+                        "reason": f"event too old: {int(age_seconds)}s (max {WEBHOOK_REPLAY_WINDOW_SECONDS}s)",
+                    },
+                    status_code=401,
+                )
+            # Also reject events from the future (clock skew attacks).
+            if age_seconds < -60:  # allow 60s skew
+                _audit_webhook(
+                    "linear", "rejected",
+                    reason=f"future event: {-int(age_seconds)}s in future",
+                    request_id=request_id,
+                )
+                return JSONResponse(
+                    {"status": "rejected", "reason": "event timestamp in the future"},
+                    status_code=401,
+                )
+        except ValueError:
+            # If createdAt is unparseable, log and continue. Don't reject
+            # since older Linear events might not have createdAt.
+            logger.warning("could not parse createdAt: %r", created_at_str)
+    else:
+        # No createdAt in payload — likely an older Linear event. Log warning.
+        logger.warning("webhook payload missing createdAt — replay protection not enforced")
+
+    # ── 3. Extract event metadata ───────────────────────────────────
+    event_type = event.get("type", "")
+    action = event.get("action", "")
+    data = event.get("data", {})
+    identifier = data.get("identifier", "")
+
+    # Label extraction: Linear webhooks can ship labels in either shape:
+    #   (A) Flat list:  data.labels = [{"name": "agent:fred"}, ...]
+    #       (used by some webhook payload versions / proxies)
+    #   (B) Paginated:  data.labels = {"nodes": [{"name": "agent:fred"}, ...]}
+    #       (the standard Linear GraphQL shape — most webhooks)
+    # Try (B) first, fall back to (A). This was the silent break that kept
+    # dispatch from firing for 22+ hours — the labels field was always empty
+    # because the iteration expected a list of dicts, not a connection object.
+    raw_labels = data.get("labels", [])
+    if isinstance(raw_labels, dict):
+        # Paginated shape (Linear GraphQL standard)
+        label_nodes = raw_labels.get("nodes", [])
+    elif isinstance(raw_labels, list):
+        # Flat shape (older webhook format or proxies)
+        label_nodes = raw_labels
+    else:
+        label_nodes = []
+    labels = [l.get("name", "") for l in label_nodes if isinstance(l, dict)]
+
+    logger.info(
+        "Linear webhook: type=%s action=%s issue=%s labels=%s body_size=%d",
+        event_type, action, identifier, labels, body_size,
+    )
+
+    # ── 4. Event-driven dispatch (single-issue) ─────────────────────
+    has_agent_label = any(l.startswith("agent:") for l in labels)
+    if event_type == "Issue" and action in ("update", "create") and identifier and has_agent_label:
+        # Single-issue dispatch (replaces dispatch_once full cycle).
+        # The full cycle was wasteful: a single webhook event was triggering
+        # ~20 Linear API calls. Single-issue dispatch uses ~1-2 calls.
+        try:
+            from ..dispatcher import dispatch_issue_by_identifier
+            result = dispatch_issue_by_identifier(identifier=identifier)
+            outcome = "dispatched" if result else "dispatch_no_op"
+            _audit_webhook(
+                "linear", outcome, identifier=identifier, event_type=event_type,
+                request_id=request_id,
+            )
+            return {
+                "status": outcome,
+                "identifier": identifier,
+                "result": result,
+            }
+        except Exception as exc:  # noqa: BLE001 — never let webhook 500
+            # Sanitized: no stack trace in response.
+            logger.exception("dispatch failed for %s: %s", identifier, exc)
+            _audit_webhook(
+                "linear", "dispatch_failed",
+                identifier=identifier, event_type=event_type,
+                reason=str(exc)[:200], request_id=request_id,
+            )
+            # Fall through to queue-on-failure below.
+
+    # ── 5. Queue to SQLite catch-up table ────────────────────────────
+    state_dir = Path(os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state"))
+    state_dir.mkdir(parents=True, exist_ok=True)
+    db_path = state_dir / "linear_webhook_queue.db"
+    try:
+        with sqlite3.connect(str(db_path)) as conn:
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS linear_webhook_queue (
+                    event_id TEXT PRIMARY KEY,
+                    identifier TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    received_at REAL NOT NULL,
+                    raw_json TEXT NOT NULL,
+                    dispatch_status TEXT NOT NULL DEFAULT 'pending'
+                )"""
+            )
+            event_id = hashlib.sha256(body).hexdigest()
+            # INSERT OR IGNORE — same body twice still only one queue row.
+            conn.execute(
+                """INSERT OR IGNORE INTO linear_webhook_queue
+                   (event_id, identifier, event_type, action, received_at, raw_json)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    event_id,
+                    identifier or "",
+                    event_type,
+                    action,
+                    time.time(),
+                    body.decode("utf-8", errors="replace"),
+                ),
+            )
+            conn.commit()
+    except Exception as exc:  # noqa: BLE001
+        # Sanitized: don't leak filesystem paths in response.
+        logger.exception("webhook queue write failed: %s", exc)
+        _audit_webhook(
+            "linear", "queue_failed",
+            identifier=identifier, event_type=event_type,
+            reason="queue write failed",
+        )
+        return JSONResponse(
+            {"status": "error", "reason": "queue write failed"},
+            status_code=500,
+        )
+
+    # ── 6. Audit log + response ─────────────────────────────────────
+    _audit_webhook(
+        "linear", "queued", identifier=identifier, event_type=event_type,
+        request_id=request_id,
+    )
+    return {"status": "queued", "identifier": identifier or "(unknown)"}
 
 
 # ── CLI Entry Point ──────────────────────────────────────────────────

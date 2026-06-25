@@ -1,16 +1,12 @@
 #!/usr/bin/env python3
-"""Hermes Artifact Publisher — small FastAPI service that exposes
-explicitly published files (and previews) on a stable, durable root
-unrelated to the pipx-managed Hermes dashboard.
+"""Hermes Artifact Publisher — FastAPI service that exposes explicitly published files (and previews)
+on a stable, durable root.
 
-Rules:
-- Only files/directories under an explicit ARTIFACT_ROOT are visible.
-- Reads are READ-ONLY by default.
-- Safety filter: refuses to serve any path matching BLOCKED_PATTERNS.
-- /workspace-tree endpoint re-exports the existing Workspace Tree
-  plugin's tree + preview + download behavior, but limited to the
-  ARTIFACT_ROOT plus a small allowlist of additional safe read-only
-  paths (so we can host journal reports, spec docs, AGY crack audits).
+Workspace Allowlist:
+- published/
+- hermes-research-reports/
+- prismatic-engine/
+- agentic-swarm-ops/
 """
 from __future__ import annotations
 
@@ -26,38 +22,72 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 
-# ── Configuration ──────────────────────────────────────────
 HOST = os.environ.get("PRISMATIC_ARTIFACT_HOST", "127.0.0.1")
 PORT = int(os.environ.get("PRISMATIC_ARTIFACT_PORT", "9120"))
 BASE_DIR = Path(__file__).resolve().parent
 
-# Where published artifacts live. Anything outside these roots is invisible.
-# All paths are anchored at $PRISMATIC_HOME (default: ~/work) so the engine
-# binary is portable to any deployment.
 PRISMATIC_HOME = os.environ.get("PRISMATIC_HOME", str(Path.home() / "work"))
 
+def get_active_profile() -> str:
+    active_profile_path = Path.home() / ".hermes" / "active_profile"
+    if active_profile_path.exists():
+        try:
+            profile = active_profile_path.read_text().strip()
+            if profile:
+                return profile
+        except Exception:
+            pass
+    return "default"
+
+def get_published_root() -> Path:
+    env_published = os.environ.get("PRISMATIC_ARTIFACTS_PUBLISHED")
+    if env_published:
+        return Path(env_published).expanduser().resolve()
+        
+    profile = get_active_profile()
+    published_root = Path.home() / ".prismatic" / "published"
+    if profile and profile != "default":
+        root = published_root / profile
+    else:
+        root = published_root / "default"
+        
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+# Workspace allowlist
 ALLOWED_ROOTS: dict[str, str] = {
-    "published": str(BASE_DIR / "published"),
-    "hermes-research-reports": f"{PRISMATIC_HOME}/Hermes-Research/reports",
+    "published": str(get_published_root()),
+    "hermes-research-reports": f"{PRISMATIC_HOME}/Hermes-Research/reports" if (Path(PRISMATIC_HOME) / "Hermes-Research").exists() else f"{PRISMATIC_HOME}/hermes-research-reports",
     "prismatic-engine": f"{PRISMATIC_HOME}/prismatic-engine",
     "agentic-swarm-ops": f"{PRISMATIC_HOME}/agentic-swarm-ops",
+    "growthwebdev-knowledge": f"{PRISMATIC_HOME}/growthwebdev-knowledge",
+    "beyondsaas-site": f"{PRISMATIC_HOME}/beyondsaas-site",
+    "active-oahu-tours-mirror": f"{PRISMATIC_HOME}/active-oahu-tours-mirror",
+    "active-oahu-static": f"{PRISMATIC_HOME}/active-oahu-static",
 }
 
-# Blocklists (lowercased). Refuse to serve any path whose name matches.
+# Blocklist patterns (lowercased names)
 BLOCKED_NAME_PATTERNS = [
     re.compile(r"^\.env($|\.)", re.IGNORECASE),
-    re.compile(r"id_(rsa|dsa|ecdsa|ed25519)$", re.IGNORECASE),
+    re.compile(r"id_(rsa|dsa|ecdsa|ed25519)($|\.)", re.IGNORECASE),
     re.compile(r"\.pem$", re.IGNORECASE),
     re.compile(r"\.key$", re.IGNORECASE),
+    re.compile(r"\.p12$", re.IGNORECASE),
+    re.compile(r"\.pfx$", re.IGNORECASE),
     re.compile(r"credentials", re.IGNORECASE),
+    re.compile(r"token", re.IGNORECASE),
+    re.compile(r"secret", re.IGNORECASE),
     re.compile(r"\.db$", re.IGNORECASE),
     re.compile(r"\.sqlite($|-)", re.IGNORECASE),
     re.compile(r"state\.json$", re.IGNORECASE),
     re.compile(r"auth\.json$", re.IGNORECASE),
+    re.compile(r"session\.db$", re.IGNORECASE),
+    re.compile(r"session\.json$", re.IGNORECASE),
+    re.compile(r"swarm_locks\.json$", re.IGNORECASE),
     re.compile(r"\.htpasswd$", re.IGNORECASE),
+    re.compile(r"\.passwd$", re.IGNORECASE),
 ]
 
-# Previews are text-only and bounded in size.
 PREVIEWABLE_EXTENSIONS = {
     ".json", ".md", ".txt", ".yaml", ".yml",
     ".py", ".js", ".ts", ".tsx", ".jsx",
@@ -71,7 +101,6 @@ MAX_DOWNLOAD_SIZE = int(os.environ.get("PRISMATIC_ARTIFACT_MAX_DOWNLOAD", str(50
 app = FastAPI(title="Hermes Artifact Publisher", version="0.1.0")
 
 
-# ── Helpers ────────────────────────────────────────────────
 def _human_bytes(n: int) -> str:
     value = float(n)
     for unit in ("B", "KiB", "MiB", "GiB"):
@@ -86,7 +115,12 @@ def _resolve(label: str) -> Path:
         raise HTTPException(status_code=404, detail=f"Workspace '{label}' not found")
     p = Path(ALLOWED_ROOTS[label]).expanduser().resolve()
     if not p.exists():
-        raise HTTPException(status_code=404, detail=f"Workspace path missing: {p}")
+        # Ensure we create target directory for published if it's missing,
+        # but for others raise 404.
+        if label == "published":
+            p.mkdir(parents=True, exist_ok=True)
+        else:
+            raise HTTPException(status_code=404, detail=f"Workspace path missing: {p}")
     return p
 
 
@@ -147,7 +181,6 @@ def _build_tree(root: Path, rel: str = "") -> dict[str, Any]:
     }
 
 
-# ── Routes ─────────────────────────────────────────────────
 @app.get("/")
 def index() -> dict[str, Any]:
     return {
@@ -160,6 +193,7 @@ def index() -> dict[str, Any]:
             "/tree/{workspace}",
             "/tree/{workspace}/{path:path}",
             "/preview/{workspace}/{path:path}",
+            "/raw/{workspace}/{path:path}",
             "/download/{workspace}/{path:path}",
             "/download-all/{workspace}",
         ],
@@ -169,32 +203,21 @@ def index() -> dict[str, Any]:
 @app.get("/health")
 def health() -> dict[str, Any]:
     return {
-        "ok": True,
-        "service": "hermes-artifact-publisher",
+        "status": "healthy",
         "workspaces": {
-            label: {
-                "path": str(Path(p).expanduser().resolve()),
-                "exists": Path(p).expanduser().exists(),
-            }
+            label: str(Path(p).expanduser().resolve())
             for label, p in ALLOWED_ROOTS.items()
-        },
-        "max_preview_size": MAX_PREVIEW_SIZE,
-        "max_download_size": MAX_DOWNLOAD_SIZE,
+        }
     }
 
 
 @app.get("/workspaces")
 def workspaces() -> dict[str, Any]:
     return {
-        "ok": True,
-        "workspaces": [
-            {
-                "label": label,
-                "path": str(Path(p).expanduser().resolve()),
-                "exists": Path(p).expanduser().exists(),
-            }
+        "workspaces": {
+            label: str(Path(p).expanduser().resolve())
             for label, p in ALLOWED_ROOTS.items()
-        ],
+        }
     }
 
 
@@ -247,10 +270,6 @@ def preview(workspace: str, path: str) -> dict[str, Any]:
 
 @app.get("/raw/{workspace}/{path:path}")
 def raw(workspace: str, path: str) -> Any:
-    """Serve a file with its real content type, read-only.
-
-    Useful for viewing in a browser (e.g. markdown rendered as text/plain).
-    """
     root = _resolve(workspace)
     target = _safe_join(root, path)
     if not target.is_file():
@@ -304,17 +323,6 @@ def download_all(workspace: str) -> Any:
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{safe_name}-all.zip"'},
     )
-
-
-@app.get("/publish")
-def publish_help() -> dict[str, Any]:
-    return {
-        "ok": True,
-        "instructions": "Use the publish CLI helper, not this HTTP endpoint.",
-        "cli": "python3 publish_artifact.py <local_source_path> [--workspace <label>] [--rel <rel/path>]",
-        "default_workspace": "published",
-        "root": str(BASE_DIR / "published"),
-    }
 
 
 if __name__ == "__main__":

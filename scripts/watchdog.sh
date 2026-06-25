@@ -55,10 +55,12 @@ fi
 HEALTHY=false
 
 # Check 1: systemd service status
-if systemctl --user is-active --quiet prismatic-dispatcher.service 2>/dev/null; then
-    log "CHECK 1/3: systemd service is active — PASS"
+# Production service is a system-level unit, not the old user-level prismatic-dispatcher.service.
+# The old check created constant false FAIL lines even when /health was green.
+if systemctl is-active --quiet prismatic-gateway.service 2>/dev/null; then
+    log "CHECK 1/3: prismatic-gateway.service is active — PASS"
 else
-    log "CHECK 1/3: systemd service is NOT active — FAIL"
+    log "CHECK 1/3: prismatic-gateway.service is NOT active — FAIL"
 fi
 
 # Check 2: heartbeat file freshness
@@ -68,9 +70,9 @@ else
     hb_result=$(bash "$HEARTBEAT_SCRIPT" --check 2>&1 || true)
     log "CHECK 2/3: heartbeat check failed: $hb_result — FAIL"
 
-    # Also try systemd as fallback
-    if systemctl --user is-active --quiet prismatic-dispatcher.service 2>/dev/null; then
-        log "  (systemd says active, updating heartbeat)"
+    # Also refresh heartbeat if the gateway itself is healthy
+    if systemctl is-active --quiet prismatic-gateway.service 2>/dev/null; then
+        log "  (prismatic-gateway.service active, updating heartbeat)"
         bash "$HEARTBEAT_SCRIPT" 2>/dev/null || true
     fi
 fi
@@ -87,8 +89,8 @@ fi
 
 # Check 4: systemd only (if health endpoint unavailable)
 if ! $HEALTHY; then
-    if systemctl --user is-active --quiet prismatic-dispatcher.service 2>/dev/null; then
-        log "CHECK (fallback): systemd says active despite health endpoint failure"
+    if systemctl is-active --quiet prismatic-gateway.service 2>/dev/null; then
+        log "CHECK (fallback): prismatic-gateway.service active despite health endpoint failure"
         HEALTHY=true
     fi
 fi

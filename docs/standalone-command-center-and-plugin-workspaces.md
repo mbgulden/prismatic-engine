@@ -675,3 +675,43 @@ Result: `pytest tests/` → 146 passed, 0 failed.
 - Latest commit: `05e0a8d [Fred] Fix label alias in get_issues_with_label + harden test_comment_based_approval`
 - All 5 commits pushed; pre-push hook green; in-lane ownership verified.
 
+
+
+## Publisher Persistence and Lifecycle
+
+The `prismatic-artifact-publisher` service runs as a durable background process managed by **PM2** to ensure it auto-starts on VM boot and auto-restarts on crash.
+
+### Supervisor Configuration
+The PM2 supervisor configuration is located at the root of the active release:
+`/home/ubuntu/.prismatic/active/prismatic-artifact-publisher.config.js`
+
+PM2 App Name: `prismatic-artifact-publisher`
+
+### Boot Order
+1. VM starts systemd-resolved and networking.
+2. PM2 daemon starts on boot (restoring saved processes via systemd user/system service).
+3. PM2 starts the `prismatic-artifact-publisher` service.
+4. The Cloudflare tunnel daemon starts and forwards `files.growthwebdev.com` traffic to `127.0.0.1:9120`.
+
+### Recovery Recipe
+If the publisher stops responding or checking `http://127.0.0.1:9120/health` fails:
+1. Inspect process status:
+   ```bash
+   pm2 status
+   ```
+2. Read publisher logs:
+   ```bash
+   pm2 logs prismatic-artifact-publisher
+   ```
+3. Reload/restart the service:
+   ```bash
+   pm2 startOrReload /home/ubuntu/.prismatic/active/prismatic-artifact-publisher.config.js --update-env
+   ```
+4. Save process list to persist across VM reboots:
+   ```bash
+   pm2 save
+   ```
+5. Verify health:
+   ```bash
+   curl -s http://127.0.0.1:9120/health
+   ```

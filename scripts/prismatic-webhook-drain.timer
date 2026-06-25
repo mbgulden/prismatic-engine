@@ -1,0 +1,13 @@
+[Unit]
+Description=Prismatic Engine — Webhook Queue Drain Timer (30s)
+Documentation=https://github.com/mbgulden/prismatic-engine
+Requires=prismatic-gateway.service
+
+[Timer]
+OnBootSec=120
+OnUnitActiveSec=30
+AccuracySec=5
+Persistent=true
+
+[Install]
+WantedBy=timers.target

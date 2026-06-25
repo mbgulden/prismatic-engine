@@ -1,0 +1,22 @@
+[Unit]
+Description=Prismatic Engine — Webhook Queue Drainer
+Documentation=https://github.com/mbgulden/prismatic-engine
+After=prismatic-gateway.service
+BindsTo=prismatic-gateway.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/work/prismatic-engine
+ExecStart=/home/ubuntu/.prismatic/venv_stable/bin/python3 /home/ubuntu/work/prismatic-engine/scripts/drain_webhook_queue.py
+EnvironmentFile=/home/ubuntu/.prismatic/env.d/linear_oauth.env
+Environment=PRISMATIC_STATE_DIR=/home/ubuntu/work/prismatic-engine/prismatic_state
+Environment=PRISMATIC_HOME=/home/ubuntu
+Environment=DRAIN_BATCH_SIZE=25
+Environment=DRAIN_STALE_AFTER_SECONDS=86400
+Environment=PYTHONPATH=/home/ubuntu/.prismatic/venv_stable/lib/python3.12/site-packages
+Environment=PATH=/home/ubuntu/.local/bin:/usr/local/bin:/usr/bin:/bin
+StandardOutput=append:/home/ubuntu/.prismatic/logs/webhook-drain.log
+StandardError=append:/home/ubuntu/.prismatic/logs/webhook-drain.log
+TimeoutStartSec=120
+Nice=10

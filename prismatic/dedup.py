@@ -77,6 +77,16 @@ class EventRouterDedup:
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
 
         self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
+        # Set busy timeout so concurrent webhook dispatches don't fail with
+        # "database is locked". 5s is enough for typical write contention.
+        # GRO-2400 follow-up: every webhook handler creates a fresh
+        # EventRouterDedup, so multiple in-flight dispatches can race on the
+        # SQLite WAL. Without a timeout, the loser fails immediately.
+        try:
+            self._conn.execute("PRAGMA busy_timeout = 5000")
+            self._conn.execute("PRAGMA journal_mode = WAL")
+        except Exception:
+            pass
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")

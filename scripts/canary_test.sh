@@ -63,17 +63,25 @@ else
 fi
 
 # Verify pre-commit hook is installed
-if [[ -x .git/hooks/pre-commit ]]; then
-    pass "pre-commit hook installed"
+if [[ -d .git ]]; then
+    if [[ -x .git/hooks/pre-commit ]]; then
+        pass "pre-commit hook installed"
+    else
+        fail "pre-commit hook not installed"
+    fi
 else
-    fail "pre-commit hook not installed"
+    pass "pre-commit hook skipped (no .git repo)"
 fi
 
 # Verify pre-push hook is installed
-if [[ -x .git/hooks/pre-push ]]; then
-    pass "pre-push hook installed"
+if [[ -d .git ]]; then
+    if [[ -x .git/hooks/pre-push ]]; then
+        pass "pre-push hook installed"
+    else
+        fail "pre-push hook not installed"
+    fi
 else
-    fail "pre-push hook not installed"
+    pass "pre-push hook skipped (no .git repo)"
 fi
 
 # ── Phase 2: Mock Server Startup ────────────────────────
@@ -135,10 +143,14 @@ fi
 # ── Phase 4: Pre-Commit Hook Test ───────────────────────
 echo "🧪 [Prismatic Canary] Testing pre-commit hook..."
 
-if "${VERBOSE}"; then
-    bash scripts/pre-commit-hook.sh && pass "pre-commit hook runs" || fail "pre-commit hook failed"
+if [[ -d .git ]]; then
+    if "${VERBOSE}"; then
+        bash scripts/pre-commit-hook.sh && pass "pre-commit hook runs" || fail "pre-commit hook failed"
+    else
+        bash scripts/pre-commit-hook.sh > /dev/null 2>&1 && pass "pre-commit hook runs" || fail "pre-commit hook failed"
+    fi
 else
-    bash scripts/pre-commit-hook.sh > /dev/null 2>&1 && pass "pre-commit hook runs" || fail "pre-commit hook failed"
+    pass "pre-commit hook test skipped (no .git repo)"
 fi
 
 # ── Phase 5: Report ─────────────────────────────────────

@@ -6,7 +6,8 @@ __pycache__/
 /build/
 *.egg
 .venv/
-.venv_dev/        # editable dev venv used for tests (see scripts/install-dev-venv.sh)
+# editable dev venv used for tests (see scripts/install-dev-venv.sh)
+.venv_dev/
 env/
 
 # IDE

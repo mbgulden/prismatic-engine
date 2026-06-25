@@ -1,0 +1,56 @@
+name: lint
+
+# Wires check_linear_cron_rate.sh (GRO-2037) into CI.
+# Detects LinearBudget bypass regressions at PR time so the same
+# silent-loophole bug that GRO-2034 fixed for agent_dispatcher.py
+# can't reappear in new engine code.
+#
+# Required check: any new ungated Linear-calling file fails this
+# workflow, blocking the merge until wrapped with
+# `linear_budget.check_and_consume()`.
+
+on:
+  push:
+    branches:
+      - main
+      - deploy-fresh
+  pull_request:
+    branches:
+      - main
+      - deploy-fresh
+
+jobs:
+  linear-api-rate-limit-lint:
+    name: Linear API rate-limit lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Run Linear API rate-limit lint
+        # The lint script:
+        #   - Scans prismatic/ for files with HTTP imports + Linear references
+        #   - Checks each for LinearBudget gate (LinearBudget.check_and_consume)
+        #   - Fails on any ungated file (silent-loophole class of bug)
+        #   - Also fails if estimated hourly Linear API usage > 2000/hr
+        # Exit code 0 = clean, 1 = lint failure
+        run: |
+          echo "🔍 Running Linear API rate-limit lint (GRO-2037)..."
+          bash scripts/check_linear_cron_rate.sh
+          echo "✅ Linear API rate-limit lint passed."
+
+      - name: Verify pre-commit hook lints (best-effort)
+        # The pre-commit hook validates path portability, Python lint,
+        # YAML validation, and shellcheck. Run as a soft check here so
+        # PRs that pass locally but fail hook lints still get flagged.
+        # Tools may not be installed in CI; this is best-effort.
+        continue-on-error: true
+        run: |
+          echo "🔍 Running pre-commit validation..."
+          bash scripts/pre-commit-hook.sh || echo "⚠️  pre-commit hook reported warnings (non-blocking)"

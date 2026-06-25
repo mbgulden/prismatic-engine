@@ -266,6 +266,17 @@ def gql(query: str, variables: dict[str, Any] | None = None, config: JournalConf
     key = _load_key(config)
     if not key:
         return {"errors": [{"message": "LINEAR_API_KEY missing"}]}
+    # GRO-2054: gate every Linear API call through LinearBudget so journal.py
+    # can't silently burn the 2500/hr budget (e.g., during a hot loop of issue
+    # creation). Pattern from GRO-2034 in agent_dispatcher.py::_linear_gql.
+    try:
+        from prismatic.linear.budget import linear_budget
+        if not linear_budget.check_and_consume("prismatic.journal"):
+            return {"errors": [{"message": "Linear API budget exceeded — call refused"}]}
+    except ImportError:
+        # LinearBudget not importable (e.g., partial install) — proceed but warn
+        import sys
+        print("[journal] WARNING: LinearBudget not importable — proceeding without gate", file=sys.stderr)
     req = urllib.request.Request(
         config.linear_url,
         data=json.dumps({"query": query, "variables": variables or {}}).encode(),
@@ -469,10 +480,46 @@ def extract_golden_thread_summary(config: JournalConfig) -> str:
     except Exception:
         return "> ⚠️ project-registry.json unreadable\n"
     lines = ["### 🔗 Golden Thread (project-registry.json)"]
-    sync = reg.get("_last_sync", {})
+
+    # Schema drift note (Jun 24): `_last_sync` was originally a dict of sync
+    # metadata (linear_in_progress, etc.) but is now a timestamp string. The
+    # actual dict moved to `_last_sync_previous`. We read the dict from
+    # `_last_sync_previous` first, falling back to `_last_sync` if it's still
+    # a dict (older registries), then {}.
+    sync = reg.get("_last_sync_previous")
+    if not isinstance(sync, dict):
+        # Fall back: if _last_sync itself is a dict (legacy), use it
+        legacy = reg.get("_last_sync")
+        sync = legacy if isinstance(legacy, dict) else {}
+
+    # Map current-schema keys to the lines we emit.
+    # Old code expected: linear_in_progress, linear_in_review, linear_todo
+    # Current schema:   linear_in_progress, linear_in_review, linear_unstarted
+    # (linear_todo and linear_unstarted are aliases — same state type)
     if sync:
-        lines.append(f"- Linear: {sync.get('linear_in_progress', 0)} In Progress, {sync.get('linear_in_review', 0)} In Review, {sync.get('linear_todo', 0)} Todo")
-        lines.append(f"- GitHub: {sync.get('github_prs_open', 0)} open PRs, {sync.get('github_issues_open', 0)} issues")
+        in_progress = sync.get("linear_in_progress", 0)
+        in_review = sync.get("linear_in_review", 0)
+        todo = sync.get("linear_todo", sync.get("linear_unstarted", 0))
+        github_prs = sync.get("github_prs_open", 0)
+        github_issues = sync.get("github_issues_open", 0)
+        lines.append(
+            f"- Linear: {in_progress} In Progress, {in_review} In Review, {todo} Todo"
+        )
+        lines.append(
+            f"- GitHub: {github_prs} open PRs, {github_issues} issues"
+        )
+        # If the new schema has additional fields, surface them too
+        if "linear_total_active" in sync:
+            lines.append(
+                f"- Linear totals: {sync['linear_total_active']} active, "
+                f"{sync.get('stale_gt7d', 0)} stale >7d, "
+                f"{sync.get('agent_done_stuck', 0)} agent:done stuck"
+            )
+        if "cron_errors" in sync:
+            lines.append(
+                f"- Crons: {sync['cron_errors']} errors, "
+                f"{sync.get('cron_silent_fails', 0)} silent fails"
+            )
         lines.append("")
     ventures = reg.get("ventures", {})
     standalone = reg.get("standalone_projects", {})
@@ -732,4 +779,10 @@ def cli_second_witness(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(cli_journal())
+    # Default to snapshot for backward compat with `python -m prismatic.journal`
+    # (without subcommand). For other subcommands, the caller passes argv via
+    # the installed CLI bin (prismatic-journal-snapshot).
+    import sys as _sys
+    if not _sys.argv[1:] or _sys.argv[1] in {"snapshot", "-h", "--help"}:
+        raise SystemExit(cli_journal_snapshot(_sys.argv[1:]))
+    raise SystemExit(cli_journal(_sys.argv[1:]))

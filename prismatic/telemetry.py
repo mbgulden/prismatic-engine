@@ -503,6 +503,24 @@ class TelemetryCollector:
         """
         import subprocess as _sp
 
+        # GRO-2057: gate every Linear API call through LinearBudget. Telemetry
+        # can fire many alerts in a short window (especially during incident
+        # response) — without this gate, an alert storm could exhaust the
+        # 2500/hr budget. Pattern from GRO-2034.
+        try:
+            from prismatic.linear.budget import linear_budget
+            if not linear_budget.check_and_consume("prismatic.telemetry"):
+                print(
+                    "prismatic.telemetry: Linear API budget exceeded — skipping alert comments",
+                    file=__import__("sys").stderr,
+                )
+                return
+        except ImportError:
+            print(
+                "prismatic.telemetry: WARNING: LinearBudget not importable — proceeding without gate",
+                file=__import__("sys").stderr,
+            )
+
         conn = sqlite3.connect(self._db_path)
         try:
             for alert in alerts:

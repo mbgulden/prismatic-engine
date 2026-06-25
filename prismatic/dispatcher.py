@@ -23,6 +23,7 @@ Entry-point (after ``pip install``)::
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import signal
@@ -78,6 +79,8 @@ def _emit_agent_event(event_type: str, agent_name: str, issue_id: str, **extra) 
 # ═══════════════════════════════════════════════════════════════
 
 TEAM_ID: str = os.environ.get("PRISMATIC_TEAM_ID", "")
+
+logger = logging.getLogger("prismatic.dispatcher")
 
 DEFAULT_DB_PATH: str = os.path.join(
     os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state"),
@@ -144,12 +147,21 @@ def log_completed_pipeline_metrics(
 def _linear_api_key() -> str:
     """Get the Linear API key from the environment.
 
-    Raises RuntimeError if ``LINEAR_API_KEY`` is not set.
+    Prefers ``LINEAR_OAUTH_TOKEN`` (rotated every 45 min by cron).
+    Falls back to ``LINEAR_API_KEY`` (long-lived personal token) if OAuth
+    isn't set. Raises RuntimeError if neither is set.
+
+    Refs: GRO-2084 — OAuth compatibility (the gateway now reads whichever
+    token is current; the cron rotates OAuth every 45 min so we don't need
+    to track expiry here).
     """
+    oauth = os.environ.get("LINEAR_OAUTH_TOKEN")
+    if oauth:
+        return oauth
     key = os.environ.get("LINEAR_API_KEY")
     if not key:
         raise RuntimeError(
-            "LINEAR_API_KEY environment variable is required"
+            "LINEAR_OAUTH_TOKEN or LINEAR_API_KEY environment variable is required"
         )
     return key
 
@@ -355,6 +367,56 @@ def get_issues_with_label(
             })
 
     return results
+
+
+def get_issue_by_identifier(identifier: str) -> dict[str, Any] | None:
+    """Fetch a single issue by its Linear identifier (e.g. ``"GRO-2051"``).
+
+    Returns the full issue dict with id, identifier, title, labels, state, etc.
+    Returns None if not found or if the Linear call fails.
+
+    Cost: 1 Linear API call. Used by the webhook single-issue dispatch path.
+    """
+    if not TEAM_ID:
+        raise RuntimeError("TEAM_ID is not set (PRISMATIC_TEAM_ID env var)")
+    query = """
+    query IssueByIdentifier($teamId: String!, $filter: IssueFilter!) {
+        team(id: $teamId) {
+            issues(filter: $filter, first: 1) {
+                nodes {
+                    id
+                    identifier
+                    title
+                    description
+                    state { name type }
+                    assignee { id name }
+                    labels { nodes { id name } }
+                    url
+                }
+            }
+        }
+    }
+    """
+    # Linear's IssueFilter uses `number` (int), not `identifier` (string).
+    # We have "GRO-2051"; extract the numeric part for the filter.
+    issue_number = None
+    if "-" in identifier:
+        try:
+            issue_number = int(identifier.split("-", 1)[1])
+        except (ValueError, IndexError):
+            pass
+    if issue_number is None:
+        # Linear IssueFilter has no `identifier` field. For synthetic/nonstandard
+        # identifiers (e.g. GRO-HMAC-1), do not call Linear with an invalid
+        # filter that would poison the drainer logs; treat as not found.
+        return None
+    filter_value = {"number": {"eq": issue_number}}
+    data = gql(query, {
+        "teamId": TEAM_ID,
+        "filter": filter_value,
+    })
+    issues = data.get("team", {}).get("issues", {}).get("nodes", [])
+    return issues[0] if issues else None
 
 
 def get_issue_labels(issue_id: str) -> list[dict[str, str]]:
@@ -1332,6 +1394,13 @@ class EventRouterDedup:
         if db_dir and not os.path.exists(db_dir):
             os.makedirs(db_dir, exist_ok=True)
         self._conn = sqlite3.connect(self._db_path)
+        # Set busy timeout + WAL mode so concurrent dispatches don't fail
+        # with "database is locked". GRO-2400 follow-up.
+        try:
+            self._conn.execute("PRAGMA busy_timeout = 5000")
+            self._conn.execute("PRAGMA journal_mode = WAL")
+        except Exception:
+            pass
         self._init_db()
 
     def _init_db(self) -> None:
@@ -1474,6 +1543,7 @@ def detect_origin_completions(
     Returns:
         Number of origin signals sent.
     """
+    signalled = 0
     try:
         os.environ["PRISMATIC_CURRENT_AGENT_NAME"] = "prismatic.dispatcher"
         # 1. Snapshot: record current labels for issues the dispatcher
@@ -1666,6 +1736,191 @@ def dispatch_local_tasks(
                     f"task {task.id}: {exc}"
                 )
     return dispatched
+
+
+def dispatch_issue_by_identifier(identifier: str) -> bool:
+    """Dispatch a single Linear issue by its identifier (GRO-2048 single-issue path).
+
+    This is the webhook-driven fast path. Unlike ``dispatch_once`` (which iterates
+    every configured agent and pulls all issues with their labels), this helper
+    only acts on the one issue that triggered the webhook.
+
+    Cost: ~1-2 Linear API calls (fetch + maybe transition), vs ~20 for full cycle.
+    Idempotency: dedup DB prevents double-dispatch within TTL.
+
+    Gates applied (same as dispatch_once cycle, AGY GRO-2078 review):
+    1. Dedup check (in-cycle)
+    2. Mode-switch transition approval (evaluate_transition_approval)
+    3. AGY stall/escalation tracker check (prevents re-launching escalated AGY)
+    4. Credit-policy gate (DENY / WARN / ASK_USER all handled)
+    5. Telemetry (record_credit, record_agent_run)
+    6. IPC bridge agent_launched event
+    7. Linear dispatch comment
+
+    Args:
+        identifier: e.g. ``"GRO-2051"``.
+
+    Returns:
+        ``True`` if the issue was dispatched to an agent, ``False`` if it had no
+        matching agent label or was already in the dedup window or any gate
+        failed (returns False for safety; callers check Linear for status).
+    """
+    cycle_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    dedup = EventRouterDedup()
+
+    # 1. Fetch the single issue
+    issue = get_issue_by_identifier(identifier)
+    if not issue:
+        logger.warning("dispatch_issue_by_identifier: %s not found", identifier)
+        return False
+
+    issue_id = issue.get("id", "")
+    labels = issue.get("labels", {}).get("nodes", [])
+    label_names = [l.get("name", "") for l in labels if isinstance(l, dict)]
+
+    # 2. Find the matching agent label
+    agent_name = None
+    for ln in label_names:
+        # Accept both 'agent:name' and 'agent::name' for legacy compatibility.
+        canonical = ln.replace("::", ":")
+        if canonical.startswith("agent:"):
+            candidate = canonical.split(":", 1)[1]
+            if candidate in AGENT_CONFIG:
+                agent_name = candidate
+                break
+
+    if not agent_name:
+        return False
+
+    label = f"agent:{agent_name}"
+
+    # 3. Dedup check
+    if dedup.is_processed(issue_id, label, cycle_id):
+        return False
+
+    # 4. AGY stall/escalation gate (prevent re-launching escalated stalled AGY)
+    #    Mirrors dispatch_once:1908-1923.
+    is_escalation = False
+    try:
+        cursor = dedup._conn.cursor()
+        cursor.execute(
+            "SELECT escalated FROM agy_stall_tracker WHERE issue_id = ?",
+            (issue_id,),
+        )
+        row = cursor.fetchone()
+        if isinstance(row, (tuple, list)) and row and row[0]:
+            is_escalation = True
+    except Exception:
+        pass
+
+    if agent_name == "agy" and is_escalation:
+        print(
+            f"[dispatcher] 🚫 AGY issue {identifier} is escalated/stalled; "
+            f"not relaunching (single-issue path)"
+        )
+        return False
+
+    # 5. Mode-switch transition approval (mirrors dispatch_once:1905-1933)
+    from_state, to_state = _get_transition_states(agent_name)
+    if not evaluate_transition_approval(
+        issue_id=issue_id,
+        from_state=from_state,
+        to_state=to_state,
+        is_escalation=is_escalation,
+        reason="Agent launch transition (single-issue path)",
+    ):
+        print(
+            f"[dispatcher] 🚫 Transition paused for {agent_name} → {identifier}"
+        )
+        return False
+
+    # 6. Credit-policy gate (DENY, WARN, ASK_USER all handled)
+    decision = evaluate_agent_launch(label, issue_id, operation="code_generation")
+    identifier_str = issue.get("identifier", issue_id)
+
+    if decision.action == PolicyAction.DENY:
+        print(f"[dispatcher] 🚫 BLOCKED {agent_name} → {identifier_str}: {decision.reason}")
+        try:
+            add_comment(
+                issue_id,
+                f"🚫 **Credit policy blocked**: {decision.reason}\n"
+                f"Estimated cost: {decision.estimated_cost} credits.",
+            )
+        except Exception:
+            pass
+        return False
+
+    if decision.action == PolicyAction.ASK_USER:
+        # Headless dispatcher cannot ask user — log and skip (matches dispatch_once).
+        print(f"[dispatcher] ❓ ASK_USER {agent_name} → {identifier_str}: {decision.reason}")
+        dedup.mark_processed(issue_id, label, cycle_id)
+        return False
+
+    if decision.action == PolicyAction.WARN:
+        print(f"[dispatcher] ⚠️  WARN {agent_name} → {identifier_str}: {decision.reason}")
+
+    # 7. Telemetry: record credit evaluation (matches dispatch_once:1982-1992)
+    try:
+        collector = get_collector()
+        collector.record_credit(
+            run_id=f"{cycle_id}-{agent_name}-{identifier_str}",
+            agent=agent_name,
+            provider=AGENT_PROVIDER_MAP.get(agent_name, ""),
+            credits_spent=decision.estimated_cost,
+            operation="code_generation",
+        )
+    except Exception:
+        pass  # Telemetry is best-effort
+
+    # 8. Launch
+    launcher = AGENT_LAUNCHERS.get(agent_name)
+    if not launcher:
+        return False
+
+    try:
+        os.environ["PRISMATIC_CURRENT_AGENT_NAME"] = f"dispatcher.agent_{agent_name}"
+        result = launcher(issue_id, title=issue.get("title", ""))
+        if result:
+            dedup.mark_processed(issue_id, label, cycle_id)
+            print(f"[dispatcher] 🚀 Dispatched {agent_name.capitalize()} → {identifier_str}")
+
+            # 9. Telemetry: record agent run (matches dispatch_once:2009-2019)
+            try:
+                collector = get_collector()
+                collector.record_agent_run(
+                    run_id=f"{cycle_id}-{agent_name}-{identifier_str}",
+                    agent=agent_name,
+                    issue_id=identifier_str,
+                    provider=AGENT_PROVIDER_MAP.get(agent_name, ""),
+                    status="dispatched",
+                    credits_spent=decision.estimated_cost,
+                )
+            except Exception:
+                pass
+
+            # 10. Emit agent_launched IPC event (matches dispatch_once:2021-2022)
+            try:
+                _emit_agent_event(
+                    "agent_launched", agent_name, identifier_str, cycle_id=cycle_id,
+                )
+            except Exception:
+                pass
+
+            # 11. Post a comment tracking the dispatch (matches dispatch_once:2023-2031)
+            try:
+                add_comment(
+                    issue_id,
+                    f"🤖 **{agent_name.capitalize()}** picked up this issue "
+                    f"(cycle {cycle_id})",
+                )
+            except Exception:
+                pass
+
+            return True
+        return False
+    except Exception as exc:
+        logger.exception("dispatch_issue_by_identifier failed: %s", exc)
+        return False
 
 
 def dispatch_once(

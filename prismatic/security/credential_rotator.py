@@ -216,9 +216,22 @@ class CredentialRotator:
             path = self.secrets_dir / "linear_key.txt"
             if path.exists():
                 current_key = path.read_text(encoding="utf-8").strip()
-            
+
         if not current_key:
             raise ValueError("LINEAR_API_KEY environment variable or linear_key.txt must be available to rotate")
+
+        # GRO-2056: gate this Linear API call through LinearBudget. This is an
+        # admin op (key rotation), infrequent, but still consumes a token from
+        # the 2500/hr budget. Pattern from GRO-2034.
+        try:
+            from prismatic.linear.budget import linear_budget
+            if not linear_budget.check_and_consume("prismatic.security.credential_rotator"):
+                raise RuntimeError("Linear API budget exceeded — refusing key rotation")
+        except ImportError:
+            print(
+                "[CredentialRotator] WARNING: LinearBudget not importable — proceeding without gate",
+                file=__import__("sys").stderr,
+            )
 
         url = os.environ.get("LINEAR_ROTATION_URL", "https://api.linear.app/v1/keys/rotate")
         headers = {

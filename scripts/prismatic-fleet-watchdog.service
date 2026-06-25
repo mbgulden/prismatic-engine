@@ -1,0 +1,20 @@
+[Unit]
+Description=Prismatic Engine — Fleet Watchdog (checks + auto-actions)
+Documentation=https://github.com/mbgulden/prismatic-engine
+After=prismatic-gateway.service
+BindsTo=prismatic-gateway.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/work/prismatic-engine
+ExecStart=/home/ubuntu/.prismatic/venv_stable/bin/python3 -m prismatic.fleet_watchdog
+Environment=PRISMATIC_HOME=/home/ubuntu/work/prismatic-engine
+Environment=PRISMATIC_STATE_DIR=/home/ubuntu/work/prismatic-engine/prismatic_state
+Environment=PRISMATIC_LOG_DIR=/home/ubuntu/.prismatic/logs
+Environment=PYTHONPATH=/home/ubuntu/.prismatic/venv_stable/lib/python3.12/site-packages
+Environment=PATH=/home/ubuntu/.local/bin:/usr/local/bin:/usr/bin:/bin
+StandardOutput=append:/home/ubuntu/.prismatic/logs/fleet-watchdog.log
+StandardError=append:/home/ubuntu/.prismatic/logs/fleet-watchdog.log
+TimeoutStartSec=60
+Nice=10

@@ -13,6 +13,7 @@ import json
 import os
 import sqlite3
 import subprocess
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -290,6 +291,25 @@ class AIUltraCreditTracker:
 
         if not api_key:
             return False
+
+        # GRO-2053: gate the Linear API call through LinearBudget so the
+        # dispatcher (or any consumer) can't silently burn the 2500/hr budget.
+        # Pattern from GRO-2034 fix in agent_dispatcher.py::_linear_gql.
+        try:
+            from prismatic.linear.budget import linear_budget
+            if not linear_budget.check_and_consume("prismatic.credit_tracker"):
+                print(
+                    "[credit_tracker] Linear API budget exceeded — skipping comment post",
+                    file=sys.stderr,
+                )
+                return False
+        except ImportError:
+            # LinearBudget not importable (e.g., tests, partial install) — log
+            # warning and proceed so we don't break unrelated code paths.
+            print(
+                "[credit_tracker] WARNING: LinearBudget not importable — proceeding without budget gate",
+                file=sys.stderr,
+            )
 
         payload = json.dumps({
             "query": (
