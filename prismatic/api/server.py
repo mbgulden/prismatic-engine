@@ -20,7 +20,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from prismatic.api.auth import verify_api_key
-from prismatic.api.routers import credits, jobs
+from prismatic.api.routers import credits, intake, jobs
 
 logger = logging.getLogger("prismatic.api")
 
@@ -70,6 +70,7 @@ async def root():
 
 app.include_router(credits.router, prefix=API_PREFIX, tags=["credits"])
 app.include_router(jobs.router, prefix=API_PREFIX, tags=["jobs"])
+app.include_router(intake.router, prefix=API_PREFIX, tags=["intake"])
 
 
 # ── CLI ───────────────────────────────────────────────────
