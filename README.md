@@ -105,6 +105,13 @@ To prevent agents from overwriting each other's work or pushing conflicts:
 │   │   ├── __init__.py
 │   │   ├── base.py                   # BaseAgent abstract definition
 │   │   └── hermes.py                 # Hermes agent signal wrapper
+│   ├── social/                       # GRO-572 social-post pipeline (selector, captioner, queue, Meta API)
+│   │   ├── selector.py               # PhotoSelector (recency + freshness + tag scoring)
+│   │   ├── captioner.py              # CaptionGenerator (hook bank + tag/seed composer)
+│   │   ├── meta_client.py            # MetaGraphClient + DryRunMetaClient
+│   │   ├── queue_store.py            # JSON-backed queue with state machine
+│   │   ├── pipeline.py               # SocialPipeline orchestrator
+│   │   └── ...                       # (config, models, exceptions)
 │   └── providers/                    # Transport and tracker bridges
 │       ├── __init__.py
 │       ├── signals/                  # Signal adapters (File, HTTP, Redis, Telegram)
@@ -183,6 +190,7 @@ The governance and research documents represent the engineering constraints and 
 
 * **[PRISMATIC_ENGINE.yaml](file:///home/ubuntu/work/prismatic-engine/PRISMATIC_ENGINE.yaml)**: Enforces agent profiles (Fred, Kai, AGY, Jules, Ned), their branch name prefixes (e.g. `execution/`, `design/`), and their read/write folder lanes.
 * **[SOUL.md](file:///home/ubuntu/work/prismatic-engine/SOUL.md)**: Describes the "manifestation of idea in reality" mantra. A strict guide on avoiding placeholders, completing tasks fully, and building features to be production-ready.
+* **[docs/social-pipeline.md](file:///home/ubuntu/work/prismatic-engine/docs/social-pipeline.md)**: GRO-572 social-post pipeline — selector scoring, caption generation, Meta Graph API integration, dry-run mode, queue state machine, and the path from cron to live Instagram.
 * **`reports/agy-core-boundary-validation.md`**: Architectural audit outlining core dispatch mechanisms vs plugin structures.
 * **`reports/rubric-assessment-2026-06-11.md`**: Core evaluation score sheet checking swarm resilience, security, and performance.
 * **`specs/prismatic-engine-architecture-v1.md`**: The initial architecture specification covering coordinator loops, git hooks, and lock interfaces.
