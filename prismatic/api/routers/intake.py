@@ -11,7 +11,6 @@ Run from server.py alongside the other routers.
 from __future__ import annotations
 
 import hashlib
-import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -94,7 +93,8 @@ def _hash_payload(payload: dict[str, Any]) -> str:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    # Microsecond precision so same-second inserts still sort correctly.
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
 def _enrich(record: dict[str, Any]) -> dict[str, Any]:

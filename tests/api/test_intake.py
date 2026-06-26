@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import os
 
-import pytest
 from fastapi.testclient import TestClient
 
 # Point auth at a known test key BEFORE importing the app
@@ -212,19 +211,21 @@ def test_get_unknown_task_returns_404():
 
 
 def test_list_tasks_returns_recent_first():
+    # Use a unique source tag so we only see our own tasks (store is module-scoped).
+    source = "recent-first-test"
     for i in range(3):
         client.post(
             "/api/v1/intake",
-            json={"source": "cli", "title": f"task-{i}", "payload": {}},
+            json={"source": source, "title": f"task-{i}", "payload": {}},
             headers=AUTH,
         )
-    response = client.get("/api/v1/intake", headers=AUTH)
+    response = client.get(f"/api/v1/intake?source={source}", headers=AUTH)
     assert response.status_code == 200
     body = response.json()
-    assert body["count"] >= 3
+    assert body["count"] == 3
     titles = [t["title"] for t in body["tasks"]]
-    # Newest first (last inserted comes first because of reverse sort)
-    assert titles[0] == "task-2"
+    # Newest first (last inserted comes first because of reverse sort on received_at)
+    assert titles == ["task-2", "task-1", "task-0"]
 
 
 def test_list_tasks_filter_by_source():
