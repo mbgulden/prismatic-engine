@@ -94,7 +94,6 @@ Design constraints
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
@@ -225,6 +224,11 @@ def load_rules(config_path: str | Path) -> list[Rule]:
     Raises:
         FileNotFoundError: if *config_path* does not exist.
         RuleValidationError: if any rule is malformed.
+
+    Note:
+        For callers that need to extract both the rules AND the engine's
+        default fallback target, use :func:`parse_rules` directly with
+        the raw parsed payload — it returns ``(rules, default_target)``.
     """
     path = Path(config_path)
     if not path.exists():
@@ -246,18 +250,23 @@ def load_rules(config_path: str | Path) -> list[Rule]:
             f"Unsupported rules config format: {path.suffix} (use .yaml/.yml/.json)"
         )
 
-    return parse_rules(parsed, source_path=str(path))
+    rules, _default = parse_rules(parsed, source_path=str(path))
+    return rules
 
 
-def parse_rules(parsed: Any, source_path: str = "") -> list[Rule]:
-    """Parse a dict/list of rules (as loaded from YAML/JSON) into :class:`Rule` objects.
+def parse_rules(
+    parsed: Any,
+    source_path: str = "",
+) -> tuple[list[Rule], dict[str, Any]]:
+    """Parse a dict/list of rules into ``(rules, default_target)``.
 
-    Split out from :func:`load_rules` so callers can construct rules from
-    an in-memory dict (tests, programmatic config) without writing a file.
+    The top-level dict may contain a ``default`` key (engine fallback
+    target) and a ``rules`` key (list of rule dicts). The ``rules`` key
+    can also be a bare list — that's the common programmatic shape.
 
-    The top-level dict may contain a ``default`` key (engine fallback)
-    and a ``rules`` key (list of rule dicts). The ``rules`` key can also
-    be a bare list — that's the common programmatic shape.
+    Returns:
+        ``(rules, default_target)`` where ``default_target`` is the dict
+        from the config's ``default:`` block (or ``{}`` when absent).
     """
     default_block: dict[str, Any] = {}
     rules_list: list[dict[str, Any]]
@@ -267,11 +276,10 @@ def parse_rules(parsed: Any, source_path: str = "") -> list[Rule]:
     elif isinstance(parsed, dict):
         default_block = parsed.get("default", {}) or {}
         rules_list = parsed.get("rules", []) or []
-        if not rules_list and any(
-            isinstance(v, dict) and ("when" in v or "target" in v)
-            for v in parsed.values()
+        if not rules_list and (
+            "when" in parsed or "target" in parsed
         ):
-            # Top-level dict IS the rules list (no "rules" wrapper).
+            # Top-level dict IS a single rule (no "rules" wrapper).
             rules_list = [parsed]
     else:
         raise RuleValidationError(
@@ -305,17 +313,7 @@ def parse_rules(parsed: Any, source_path: str = "") -> list[Rule]:
                 f"rule {rid!r}: {exc}"
             ) from exc
 
-    return rules
-
-
-def parse_default(parsed: Any) -> dict[str, Any]:
-    """Extract the optional ``default`` block from a parsed rules file.
-
-    Returns an empty dict if no default is configured.
-    """
-    if isinstance(parsed, dict):
-        return dict(parsed.get("default", {}) or {})
-    return {}
+    return rules, default_block
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -476,8 +474,12 @@ class RulesEngine:
                 )
 
         # Target-agent availability + load (read from agents snapshot)
+        # Only enforced when the caller supplied a non-empty agents snapshot.
+        # An empty snapshot means "I'm just testing predicates — assume the
+        # agent exists." This matches the behavior of `rule_matches` and the
+        # engine's predicate-test path.
         target_agent = rule.target.get("agent", "")
-        if target_agent:
+        if target_agent and agents:
             state = agents.get(target_agent)
             if state is None:
                 # Unknown agent — skip unless caller opted out of the gate.
@@ -529,7 +531,6 @@ __all__ = [
     "RulesEngine",
     "TaskContext",
     "load_rules",
-    "parse_default",
     "parse_rules",
     "rule_matches",
 ]

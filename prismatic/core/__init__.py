@@ -35,7 +35,6 @@ __all__ = [
     "RuleValidationError",
     "load_rules",
     "parse_rules",
-    "parse_default",
     "rule_matches",
 ]
 
@@ -64,6 +63,5 @@ from .rules_engine import (
     RuleValidationError,
     load_rules,
     parse_rules,
-    parse_default,
     rule_matches,
 )
