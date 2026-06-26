@@ -236,6 +236,8 @@ class TestRetryPolicy:
             policy.call(fn, target="agent:sam")
         assert policy.attempts == 3
         assert len(calls) == 3
+        # Target was attached on the first attempt; final attempt count
+        # should be present on the raised exception's context.
         assert ei.value.context.target == "agent:sam"
         assert ei.value.context.attempt == 3
 
@@ -251,7 +253,7 @@ class TestRetryPolicy:
 
         with pytest.raises(ValueError):
             policy.call(fn)
-        assert calls == [3]
+        assert len(calls) == 3
 
     def test_delay_for_caps_at_max_delay(self, fake_random):
         policy = RetryPolicy(

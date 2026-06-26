@@ -301,12 +301,15 @@ class RetryPolicy:
                 raise
             except PrismaticError as exc:
                 last_exc = exc
+                # Attach context on the first failure so DLQ records
+                # carry the originating target/lane even when the call
+                # exhausts its budget on the first try.
+                self._attach_attempt(exc, attempt + 1, target, lane, task_id, correlation_id)
                 if not isinstance(exc, RetryableError):
                     # Treat unknown PrismaticErrors as non-retryable.
                     raise
                 if attempt + 1 >= self.max_attempts:
                     raise
-                self._attach_attempt(exc, attempt + 1, target, lane, task_id, correlation_id)
                 delay = self.delay_for(attempt)
                 self.total_delay_seconds += delay
                 if on_retry is not None:
@@ -341,15 +344,29 @@ class RetryPolicy:
         task_id: str,
         correlation_id: str,
     ) -> None:
-        if not exc.context.target and target:
-            exc.context.target = target
-        if not exc.context.lane and lane:
-            exc.context.lane = lane
+        # Caller-supplied context always wins on the FIRST retry attempt
+        # so DLQ records carry the originating target. On subsequent
+        # attempts we only fill blanks — the exception's own context
+        # takes priority over the policy's defaults.
+        if attempt <= 1:
+            if target:
+                exc.context.target = target
+            if lane:
+                exc.context.lane = lane
+            if task_id and not exc.context.task_id:
+                exc.context.task_id = task_id
+            if correlation_id and not exc.context.correlation_id:
+                exc.context.correlation_id = correlation_id
+        else:
+            if not exc.context.target and target:
+                exc.context.target = target
+            if not exc.context.lane and lane:
+                exc.context.lane = lane
+            if task_id and not exc.context.task_id:
+                exc.context.task_id = task_id
+            if correlation_id and not exc.context.correlation_id:
+                exc.context.correlation_id = correlation_id
         exc.context.attempt = attempt
-        if task_id and not exc.context.task_id:
-            exc.context.task_id = task_id
-        if correlation_id and not exc.context.correlation_id:
-            exc.context.correlation_id = correlation_id
 
 
 # ── Circuit breaker ─────────────────────────────────────────────
@@ -371,6 +388,11 @@ class CircuitBreaker:
     :class:`CircuitOpenError` immediately. After the cool-down a single
     probe is allowed through in ``HALF_OPEN`` state; success closes the
     breaker, failure re-opens it.
+
+    Half-open probe serialization: while a probe is in flight, additional
+    callers are short-circuited with :class:`CircuitOpenError`. The probe
+    is tracked via ``_probe_in_flight`` rather than via state to keep
+    the state machine simple and the snapshot honest.
     """
 
     def __init__(
@@ -401,6 +423,7 @@ class CircuitBreaker:
         self._outcomes: Deque[bool] = deque(maxlen=window_size)
         self._state: CircuitState = CircuitState.CLOSED
         self._opened_at: float = 0.0
+        self._probe_in_flight: bool = False
         self._trips = 0
         self._short_circuits = 0
         self._last_transition: dict[str, Any] = {
@@ -463,6 +486,7 @@ class CircuitBreaker:
             self._outcomes.clear()
             self._state = CircuitState.CLOSED
             self._opened_at = 0.0
+            self._probe_in_flight = False
             self._trips = 0
             self._short_circuits = 0
 
@@ -481,28 +505,36 @@ class CircuitBreaker:
                     ),
                 )
             if state is CircuitState.HALF_OPEN:
-                # While in HALF_OPEN, only the first caller is allowed
-                # through; everyone else sees OPEN-equivalent behavior
-                # until the probe resolves.
-                self._short_circuits += 1
-                raise CircuitOpenError(
-                    f"circuit half-open probe in flight for target={target!r}",
-                    context=ErrorContext(
-                        target=target,
-                        correlation_id=uuid.uuid4().hex,
-                    ),
-                )
+                # In HALF_OPEN, exactly ONE probe is allowed through.
+                # If a probe is already in flight, short-circuit.
+                if self._probe_in_flight:
+                    self._short_circuits += 1
+                    raise CircuitOpenError(
+                        f"circuit half-open probe in flight for target={target!r}",
+                        context=ErrorContext(
+                            target=target,
+                            correlation_id=uuid.uuid4().hex,
+                        ),
+                    )
+                self._probe_in_flight = True
             return state
 
     def _record_success(self, target: str) -> None:
         with self._lock:
-            self._outcomes.append(True)
-            if self._state is CircuitState.HALF_OPEN:
+            if self._state is CircuitState.HALF_OPEN and self._probe_in_flight:
+                self._probe_in_flight = False
                 self._transition(CircuitState.CLOSED, "probe_succeeded")
                 self._outcomes.clear()
+            else:
+                self._outcomes.append(True)
 
     def _record_failure(self, target: str, exc: BaseException) -> None:
         with self._lock:
+            if self._state is CircuitState.HALF_OPEN and self._probe_in_flight:
+                # Probe failed: re-open the breaker, release the flag.
+                self._probe_in_flight = False
+                self._open_locked(reason="probe_failed")
+                return
             self._outcomes.append(False)
             failures = sum(1 for ok in self._outcomes if not ok)
             calls = len(self._outcomes)
@@ -511,8 +543,6 @@ class CircuitBreaker:
                 and (failures / calls) >= self.failure_threshold
             ):
                 self._open_locked(reason=f"failure_ratio={failures}/{calls}")
-            elif self._state is CircuitState.HALF_OPEN:
-                self._open_locked(reason="probe_failed")
 
     def _open_locked(self, *, reason: str) -> None:
         if self._state is CircuitState.OPEN:
