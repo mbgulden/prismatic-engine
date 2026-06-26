@@ -1,0 +1,5 @@
+# PWP plugin runtime dependencies
+# Kept minimal — the plugin only needs what the health check + manifest
+# reader require.  The actual PWP pipeline lives in its own repo.
+pyyaml>=6.0
+requests>=2.31

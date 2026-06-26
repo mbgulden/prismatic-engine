@@ -1,0 +1,99 @@
+# Schema version meta-information
+schema_version: "1.0.0"
+
+# Unique identifier (alphanumeric, lowercase, dashes/underscores)
+name: "pwp"
+
+# Semantic version of the plugin
+version: "0.1.0"
+
+# Short summary of capabilities
+description: "Prismatic Web Plugin — durable website-production system. Turns client inputs into editable, deployable Astro+EmDash sites via ingest → synthesize → distill → scaffold → staging → approval → production → OKF handoff."
+
+# Author identity
+author: "Prismatic Engine team"
+
+# Fully qualified Python class path acting as the entry point
+entry_point: "pwp.plugin:PwpPlugin"
+
+# SemVer range for supported core engine versions
+core_version_constraint: ">=1.0.0, <2.0.0"
+
+# External dependencies
+dependencies:
+  pip:
+    - "pyyaml>=6.0"
+    - "requests>=2.31"
+
+# Custom persona extensions (none at this stage — added by capability manifest task)
+personas: []
+
+# Lifecycle hooks subscribed to
+hooks:
+  - "on_init"
+  - "before_task_execution"
+  - "after_task_execution"
+  - "on_state_transition"
+
+# Plugin-required capabilities (consumer-style contract — explains what the plugin
+# needs from the host environment). The PluginLoader / install command surfaces
+# these to the operator.
+capabilities:
+  required:
+    - id: "cloudflare.api"
+      kind: "credential"
+      description: "Cloudflare API token with Pages/D1/R2/KV edit scope."
+      env:
+        - "CLOUDFLARE_GROWTHWEB_API_KEY"
+        - "CLOUDFLARE_PAGES_API_TOKEN"
+    - id: "cloudflare.account"
+      kind: "credential"
+      description: "Cloudflare account ID for Pages/D1/R2/KV operations."
+      env:
+        - "CLOUDFLARE_PAGES_ACCOUNT_ID"
+    - id: "filesystem.workspace"
+      kind: "resource"
+      description: "Local workspace directory for client-site scaffolds (writes sites/)."
+      path: "${PRISMATIC_HOME}/workspace/sites"
+    - id: "okf.read"
+      kind: "resource"
+      description: "Read access to the OKF (operational knowledge fabric) for standards, ADRs, and the project index."
+      path: "${PRISMATIC_HOME}/../growthwebdev-knowledge/okf"
+    - id: "linear.api"
+      kind: "credential"
+      description: "Linear API key for issue comments and state transitions."
+      env:
+        - "LINEAR_API_KEY"
+  optional:
+    - id: "github.api"
+      kind: "credential"
+      description: "GitHub token for opening PRs against the client-site repo."
+      env:
+        - "GITHUB_TOKEN"
+
+# Health check contract — the install/setup command and PluginLoader use this
+# to verify the plugin is wired correctly. health_check.health() returns a list
+# of HealthCheckResult rows; missing items are listed with the missing fields.
+health_check:
+  script: "pwp.health:check"
+  description: "Verifies Cloudflare credentials, OKF read access, workspace writability, and Linear API key."
+
+# Install contract — what `prismatic plugin install pwp` would run.
+install:
+  steps:
+    - "pip install -r plugins/pwp/requirements.txt"
+    - "mkdir -p ${PRISMATIC_HOME}/workspace/sites"
+    - "python -m pwp.cli.init  # writes default config if absent"
+
+# Provider-agnostic execution hooks — the plugin does NOT depend on any single
+# LLM provider. Tasks dispatched through PluginLoader can use any registered
+# agent persona.
+execution_hooks:
+  agent_discovery: true   # Plugins may publish additional agent personas
+  tool_registration: true  # Plugin.register_tools() returns tools to add to agent contexts
+
+# Compatibility / lineage
+metadata:
+  linear_issue: "GRO-2506"
+  parent_project: "Prismatic Web Plugin (GRO-2491)"
+  upstream_decision: "okf/projects/prismatic-web-plugin/decisions/2026-06-26-astro-emdash-pwp-standard.md"
