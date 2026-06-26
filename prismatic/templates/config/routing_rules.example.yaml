@@ -1,0 +1,75 @@
+# Example routing rules for the Prismatic Engine.
+#
+# This file is a starter config — copy it to `prismatic_state/routing_rules.yaml`
+# (or wherever your dispatcher reads from) and edit to match your fleet.
+#
+# Schema reference: prismatic.core.rules_engine
+#
+# Each rule has:
+#   id       — unique identifier (used in trace + Linear comments)
+#   priority — higher wins on ties (ties break by file order)
+#   when     — predicates; ALL must match (AND-combined)
+#   target   — {agent, queue, reason} when the rule fires
+#
+# The optional top-level `default:` block is the fallback target when no rule
+# matches. If absent, the engine returns an empty RoutingDecision.
+
+default:
+  agent: gpt-oss-120b
+  queue: default
+  reason: "Cost-capped fallback for un-routed tasks"
+
+rules:
+  # ── High-priority code work → premium agent ───────────────────
+  - id: high-priority-code
+    priority: 100
+    when:
+      capabilities_any: [code, refactor]
+      priority_min: 4
+    target:
+      agent: codex
+      queue: fast
+      reason: "Premium codex for urgent code work"
+
+  # ── Urgent design tasks → AGY (design lane) ───────────────────
+  - id: urgent-design
+    priority: 90
+    when:
+      capabilities_any: [design, illustration]
+      priority_min: 3
+    target:
+      agent: agy
+      queue: design-urgent
+      reason: "AGY handles time-sensitive design work"
+
+  # ── Cost-capped budget routing ────────────────────────────────
+  - id: budget-routing
+    priority: 50
+    when:
+      estimated_cost_usd_max: 0.05
+    target:
+      agent: gpt-oss-120b
+      queue: budget
+      reason: "Below the cost cap — local/free model is fine"
+
+  # ── Source-specific: github issues → kai (content lane) ──────
+  - id: github-content
+    priority: 30
+    when:
+      source_any: [github]
+      tag_any: [content, blog]
+    target:
+      agent: kai
+      queue: content
+      reason: "Kai writes GitHub-sourced blog drafts"
+
+  # ── Saturated-agent guard: avoid codex when load > 80% ────────
+  - id: codex-low-load-only
+    priority: 80
+    when:
+      capabilities_any: [code]
+      load_factor_max: 0.8
+    target:
+      agent: codex
+      queue: fast
+      reason: "Codex is healthy enough for this task"
