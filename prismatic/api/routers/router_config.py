@@ -42,7 +42,7 @@ from prismatic.core.router_config import (
 
 logger = logging.getLogger("prismatic.api.routers.router_config")
 
-router = APIRouter(prefix="/api/router", tags=["router-config"])
+router = APIRouter(prefix="/router", tags=["router-config"])
 
 
 # ── Scope helpers ─────────────────────────────────────────────
