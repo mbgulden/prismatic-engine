@@ -43,6 +43,10 @@ def _resolve_okf_path() -> str:
 # Capability table mirrors plugin-manifest.yaml so the runtime can detect
 # drift between the declared contract and the actual environment.  When you
 # add a row to the manifest, add it here too.
+#
+# NOTE: Path-bearing rows store the path-resolver function, not a resolved
+# string.  ``check()`` calls the function at call time so monkeypatching
+# ``PRISMATIC_HOME`` in tests actually takes effect.
 _REQUIRED: List[Dict[str, Any]] = [
     {
         "id": "cloudflare.api",
@@ -60,13 +64,13 @@ _REQUIRED: List[Dict[str, Any]] = [
         "id": "filesystem.workspace",
         "kind": "resource",
         "description": "Local workspace directory for client-site scaffolds.",
-        "path": _resolve_workspace_path(),
+        "path": _resolve_workspace_path,  # resolved at check() time
     },
     {
         "id": "okf.read",
         "kind": "resource",
         "description": "Read access to the OKF (operational knowledge fabric).",
-        "path": _resolve_okf_path(),
+        "path": _resolve_okf_path,  # resolved at check() time
     },
     {
         "id": "linear.api",
@@ -101,8 +105,17 @@ def _check_credential(row: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _check_resource(row: Dict[str, Any]) -> Dict[str, Any]:
-    """Verify a filesystem path capability exists (and is readable)."""
-    path = row.get("path", "")
+    """Verify a filesystem path capability exists (and is readable).
+
+    Accepts either a string path or a zero-arg resolver callable so that
+    monkeypatching ``PRISMATIC_HOME`` in tests actually takes effect.
+    """
+    raw = row.get("path", "")
+    if callable(raw):
+        path: str = str(raw())
+    else:
+        path = str(raw) if raw else ""
+
     missing: List[str] = []
     status = "ok"
 

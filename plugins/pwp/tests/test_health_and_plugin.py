@@ -104,10 +104,12 @@ def test_summarize_no_failures_when_env_clean(monkeypatch):
     monkeypatch.setenv("CLOUDFLARE_PAGES_ACCOUNT_ID", "test")
     monkeypatch.setenv("LINEAR_API_KEY", "test")
 
-    # Create the workspace and a fake OKF.
+    # Create the workspace inside the fake PRISMATIC_HOME and a sibling
+    # OKF (the resolver treats ``PRISMATIC_HOME`` as the engine repo and
+    # the OKF as ``../growthwebdev-knowledge/okf``).
     base = Path("/tmp/pwp-test-prismatic")
     workspace = base / "workspace" / "sites"
-    okf = base / "growthwebdev-knowledge" / "okf"
+    okf = base.parent / "growthwebdev-knowledge" / "okf"
     workspace.mkdir(parents=True, exist_ok=True)
     okf.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("PRISMATIC_HOME", str(base))
