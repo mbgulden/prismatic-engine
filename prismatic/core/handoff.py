@@ -33,7 +33,6 @@ GRO-549 — Define and implement Handoff Contracts specification.
 
 from __future__ import annotations
 
-import math
 import re
 from dataclasses import dataclass, field, asdict
 from enum import Enum
@@ -61,9 +60,9 @@ class FieldType(str, Enum):
     ARRAY = "array"
     NULL = "null"
     # Prismatic extensions
-    ISSUE_ID = "issue_id"        # "GRO-1234" pattern
+    ISSUE_ID = "issue_id"  # "GRO-1234" pattern
     AGENT_LABEL = "agent_label"  # "agent:fred" pattern
-    LABEL_SET = "label_set"      # list[str] of label names
+    LABEL_SET = "label_set"  # list[str] of label names
 
 
 class FieldSpec:
@@ -93,9 +92,7 @@ class FieldSpec:
         if not name or not isinstance(name, str):
             raise ValueError("FieldSpec.name must be a non-empty string")
         if not isinstance(type, FieldType):
-            raise TypeError(
-                f"FieldSpec.type must be a FieldType enum, got {type!r}"
-            )
+            raise TypeError(f"FieldSpec.type must be a FieldType enum, got {type!r}")
         if required and default is not ...:
             # Required fields with defaults are contradictory; refuse loudly.
             raise ValueError(
@@ -144,9 +141,9 @@ class SLASpec:
     Negative values are rejected at construction.
     """
 
-    max_latency_ms: int | None = None     # wall-clock budget per handoff
+    max_latency_ms: int | None = None  # wall-clock budget per handoff
     min_throughput_per_min: int | None = None  # steady-state floor
-    availability_target: float | None = None   # 0.0–1.0, e.g. 0.999
+    availability_target: float | None = None  # 0.0–1.0, e.g. 0.999
 
     def __post_init__(self) -> None:
         for label, value in (
@@ -166,9 +163,9 @@ class SLASpec:
 class BackoffStrategy(str, Enum):
     """Retry-wait-curve selector for RetryPolicy."""
 
-    NONE = "none"            # no retries
-    CONSTANT = "constant"    # same delay every attempt
-    LINEAR = "linear"        # delay = base * attempt_number
+    NONE = "none"  # no retries
+    CONSTANT = "constant"  # same delay every attempt
+    LINEAR = "linear"  # delay = base * attempt_number
     EXPONENTIAL = "exponential"  # delay = base * (2 ** (attempt-1))
     EXPONENTIAL_JITTER = "exponential_jitter"  # exp + uniform jitter in [0, base)
 
@@ -261,9 +258,7 @@ class CapabilityRequirement:
                 "CapabilityRequirement.name must follow 'domain:verb' "
                 f"format (lowercase identifiers), got {self.name!r}"
             )
-        if self.min_version and not re.match(
-            r"^\d+\.\d+\.\d+$", self.min_version
-        ):
+        if self.min_version and not re.match(r"^\d+\.\d+\.\d+$", self.min_version):
             raise ValueError(
                 "CapabilityRequirement.min_version must be semver "
                 f"(X.Y.Z), got {self.min_version!r}"
@@ -312,9 +307,7 @@ class HandoffContract:
         seen: set[str] = set()
         for f in fields:
             if f.name in seen:
-                raise ValueError(
-                    f"Duplicate field name {f.name!r} in {side}"
-                )
+                raise ValueError(f"Duplicate field name {f.name!r} in {side}")
             seen.add(f.name)
 
     # ── Serialisation ────────────────────────────────────────────
@@ -327,9 +320,7 @@ class HandoffContract:
             "description": self.description,
             "input_fields": [f.to_dict() for f in self.input_fields],
             "output_fields": [f.to_dict() for f in self.output_fields],
-            "required_capabilities": [
-                asdict(c) for c in self.required_capabilities
-            ],
+            "required_capabilities": [asdict(c) for c in self.required_capabilities],
             "sla": asdict(self.sla),
             "retry_policy": {
                 **asdict(self.retry_policy),
@@ -347,9 +338,7 @@ class ValidationFailure(Exception):
 
     def __init__(self, failures: list[str]) -> None:
         self.failures = list(failures)
-        super().__init__(
-            "Handoff contract validation failed: " + "; ".join(failures)
-        )
+        super().__init__("Handoff contract validation failed: " + "; ".join(failures))
 
 
 @dataclass
@@ -379,11 +368,17 @@ def _check_value(field_spec: FieldSpec, value: Any) -> str | None:
     """Return None if value matches the field type, else an error string."""
     t = field_spec.type
     if value is None:
-        return None if t is FieldType.NULL else f"field {field_spec.name!r} expected {t.value}, got null"
+        return (
+            None
+            if t is FieldType.NULL
+            else f"field {field_spec.name!r} expected {t.value}, got null"
+        )
     if t is FieldType.STRING and not isinstance(value, str):
         return f"field {field_spec.name!r} expected string, got {type(value).__name__}"
     # bool is a subclass of int — exclude explicitly for numeric types.
-    if t is FieldType.INTEGER and (not isinstance(value, int) or isinstance(value, bool)):
+    if t is FieldType.INTEGER and (
+        not isinstance(value, int) or isinstance(value, bool)
+    ):
         return f"field {field_spec.name!r} expected integer, got {type(value).__name__}"
     if t is FieldType.NUMBER and (
         not isinstance(value, (int, float)) or isinstance(value, bool)
@@ -408,9 +403,7 @@ def _check_value(field_spec: FieldSpec, value: Any) -> str | None:
                 f"(e.g. 'agent:fred'), got {value!r}"
             )
     if t is FieldType.LABEL_SET:
-        if not isinstance(value, list) or not all(
-            isinstance(v, str) for v in value
-        ):
+        if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
             return (
                 f"field {field_spec.name!r} expected label_set "
                 f"(list[str]), got {value!r}"
@@ -618,8 +611,7 @@ def get_contract(name: str) -> HandoffContract:
     """Look up a built-in contract by name; raises ``KeyError`` if unknown."""
     if name not in BUILTIN_CONTRACTS:
         raise KeyError(
-            f"Unknown handoff contract {name!r}. "
-            f"Known: {sorted(BUILTIN_CONTRACTS)}"
+            f"Unknown handoff contract {name!r}. Known: {sorted(BUILTIN_CONTRACTS)}"
         )
     return BUILTIN_CONTRACTS[name]
 

@@ -270,9 +270,7 @@ class ValidatePayloadTests(unittest.TestCase):
 
     def test_unexpected_field_warns(self) -> None:
         fields = [FieldSpec("issue_id", FieldType.ISSUE_ID)]
-        result = validate_payload(
-            {"issue_id": "GRO-549", "sneaky": "value"}, fields
-        )
+        result = validate_payload({"issue_id": "GRO-549", "sneaky": "value"}, fields)
         self.assertTrue(result.ok)
         self.assertTrue(any("unexpected" in w for w in result.warnings))
 
@@ -299,15 +297,11 @@ class ValidatePayloadTests(unittest.TestCase):
     def test_agent_label_format_enforced(self) -> None:
         fields = [FieldSpec("label", FieldType.AGENT_LABEL)]
         # Bad prefix
-        self.assertFalse(
-            validate_payload({"label": "AGENT:FRED"}, fields).ok
-        )
+        self.assertFalse(validate_payload({"label": "AGENT:FRED"}, fields).ok)
         # Missing colon
         self.assertFalse(validate_payload({"label": "fred"}, fields).ok)
         # Valid
-        self.assertTrue(
-            validate_payload({"label": "agent:fred"}, fields).ok
-        )
+        self.assertTrue(validate_payload({"label": "agent:fred"}, fields).ok)
 
 
 # ═══════════════════════════════════════════════════════════════════
