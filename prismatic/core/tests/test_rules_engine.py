@@ -44,7 +44,9 @@ def healthy_agents() -> dict[str, AgentState]:
     return {
         "codex": AgentState(agent="codex", available=True, load_factor=0.2),
         "agy": AgentState(agent="agy", available=True, load_factor=0.5),
-        "gpt-oss-120b": AgentState(agent="gpt-oss-120b", available=True, load_factor=0.7),
+        "gpt-oss-120b": AgentState(
+            agent="gpt-oss-120b", available=True, load_factor=0.7
+        ),
     }
 
 
@@ -168,12 +170,19 @@ class TestMatchers:
             when={"capabilities_all": ["code", "review"]},
             target=base_rule.target,
         )
-        assert rule_matches(
-            rule, TaskContext(task_id="t", capabilities=frozenset({"code", "review"}))
-        ) is True
-        assert rule_matches(
-            rule, TaskContext(task_id="t", capabilities=frozenset({"code"}))
-        ) is False
+        assert (
+            rule_matches(
+                rule,
+                TaskContext(task_id="t", capabilities=frozenset({"code", "review"})),
+            )
+            is True
+        )
+        assert (
+            rule_matches(
+                rule, TaskContext(task_id="t", capabilities=frozenset({"code"}))
+            )
+            is False
+        )
 
     def test_priority_min_boundary(self, base_rule: Rule) -> None:
         rule = Rule(
@@ -214,12 +223,14 @@ class TestMatchers:
             when={"tag_any": ["backend"]},
             target=base_rule.target,
         )
-        assert rule_matches(
-            rule, TaskContext(task_id="t", tags=frozenset({"Backend"}))
-        ) is True
-        assert rule_matches(
-            rule, TaskContext(task_id="t", tags=frozenset({"frontend"}))
-        ) is False
+        assert (
+            rule_matches(rule, TaskContext(task_id="t", tags=frozenset({"Backend"})))
+            is True
+        )
+        assert (
+            rule_matches(rule, TaskContext(task_id="t", tags=frozenset({"frontend"})))
+            is False
+        )
 
     def test_cost_max(self, base_rule: Rule) -> None:
         rule = Rule(
@@ -228,12 +239,14 @@ class TestMatchers:
             when={"estimated_cost_usd_max": 0.10},
             target=base_rule.target,
         )
-        assert rule_matches(
-            rule, TaskContext(task_id="t", estimated_cost_usd=0.05)
-        ) is True
-        assert rule_matches(
-            rule, TaskContext(task_id="t", estimated_cost_usd=0.50)
-        ) is False
+        assert (
+            rule_matches(rule, TaskContext(task_id="t", estimated_cost_usd=0.05))
+            is True
+        )
+        assert (
+            rule_matches(rule, TaskContext(task_id="t", estimated_cost_usd=0.50))
+            is False
+        )
 
     def test_load_factor_max_skips_saturated_agent(
         self, healthy_agents: dict[str, AgentState], base_rule: Rule
@@ -245,11 +258,14 @@ class TestMatchers:
             target={"agent": "codex"},
         )
         # codex has load 0.2 → matches
-        assert rule_matches(
-            rule,
-            TaskContext(task_id="t"),
-            healthy_agents,
-        ) is True
+        assert (
+            rule_matches(
+                rule,
+                TaskContext(task_id="t"),
+                healthy_agents,
+            )
+            is True
+        )
         # Switch target to agy (load 0.5) → no longer matches
         rule_agy = Rule(
             id="r",
@@ -257,11 +273,14 @@ class TestMatchers:
             when={"load_factor_max": 0.3},
             target={"agent": "agy"},
         )
-        assert rule_matches(
-            rule_agy,
-            TaskContext(task_id="t"),
-            healthy_agents,
-        ) is False
+        assert (
+            rule_matches(
+                rule_agy,
+                TaskContext(task_id="t"),
+                healthy_agents,
+            )
+            is False
+        )
 
     def test_unavailable_agent_rejected_by_default(
         self, healthy_agents: dict[str, AgentState], base_rule: Rule
@@ -314,25 +333,31 @@ class TestMatchers:
             target={"agent": "codex"},
         )
         # All three satisfied
-        assert rule_matches(
-            rule,
-            TaskContext(
-                task_id="t",
-                capabilities=frozenset({"code"}),
-                priority=4,
-                estimated_cost_usd=0.05,
-            ),
-        ) is True
+        assert (
+            rule_matches(
+                rule,
+                TaskContext(
+                    task_id="t",
+                    capabilities=frozenset({"code"}),
+                    priority=4,
+                    estimated_cost_usd=0.05,
+                ),
+            )
+            is True
+        )
         # Priority too low
-        assert rule_matches(
-            rule,
-            TaskContext(
-                task_id="t",
-                capabilities=frozenset({"code"}),
-                priority=2,
-                estimated_cost_usd=0.05,
-            ),
-        ) is False
+        assert (
+            rule_matches(
+                rule,
+                TaskContext(
+                    task_id="t",
+                    capabilities=frozenset({"code"}),
+                    priority=2,
+                    estimated_cost_usd=0.05,
+                ),
+            )
+            is False
+        )
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -341,7 +366,9 @@ class TestMatchers:
 
 
 class TestEngineEvaluate:
-    def test_first_matching_rule_wins(self, healthy_agents: dict[str, AgentState]) -> None:
+    def test_first_matching_rule_wins(
+        self, healthy_agents: dict[str, AgentState]
+    ) -> None:
         rules = [
             Rule(
                 id="low",
@@ -362,7 +389,9 @@ class TestEngineEvaluate:
         assert decision.matched_rule == "high"
         assert decision.target_queue == "fast"
 
-    def test_priority_descending_order(self, healthy_agents: dict[str, AgentState]) -> None:
+    def test_priority_descending_order(
+        self, healthy_agents: dict[str, AgentState]
+    ) -> None:
         # Insert in wrong order; engine should still pick highest priority first.
         rules = [
             Rule(id="low", priority=1, when={}, target={"agent": "agy"}),
@@ -458,9 +487,7 @@ class TestEngineEvaluate:
     def test_empty_rules_uses_default(
         self, healthy_agents: dict[str, AgentState]
     ) -> None:
-        engine = RulesEngine(
-            [], default_target={"agent": "codex", "queue": "default"}
-        )
+        engine = RulesEngine([], default_target={"agent": "codex", "queue": "default"})
         decision = engine.evaluate(TaskContext(task_id="t"), healthy_agents.values())
         assert decision.target_agent == "codex"
 
