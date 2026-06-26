@@ -46,9 +46,21 @@ from .credit_policy_engine import (
 )
 from .telemetry import get_collector
 
+# ── Priority Queue (GRO-550) ────────────────────────────────────
+from .core.priority_queue import (
+    ClientTier,
+    JobItem,
+    Priority,
+    PriorityQueue,
+    PriorityQueueConfig,
+)
+
+_HAS_PRIORITY_QUEUE = True
+
 # ── IPC Bridge event emission (best-effort) ─────────────────────
 try:
     from .gateway.ipc_bridge import send_event_via_socket
+
     _HAS_IPC_BRIDGE = True
 except ImportError:
     _HAS_IPC_BRIDGE = False
@@ -89,6 +101,15 @@ POLL_INTERVAL: int = int(os.environ.get("PRISMATIC_POLL_INTERVAL", "30"))
 MAX_CYCLES_BEFORE_RECOVER: int = int(
     os.environ.get("PRISMATIC_MAX_CYCLES_BEFORE_RECOVER", "6")
 )
+
+# ── Priority Queue toggle (GRO-550) ──────────────────────────────
+# When enabled, the dispatcher sorts each agent's backlog through the
+# PriorityQueue (priority band + client tier + effort + aging) before
+# launching workers. Default ON — this is the new canonical behavior.
+USE_PRIORITY_QUEUE: bool = os.environ.get("PRISMATIC_USE_PRIORITY_QUEUE", "1") == "1"
+PRIORITY_QUEUE_PROFILE: str = os.environ.get(
+    "PRISMATIC_PRIORITY_QUEUE_PROFILE", "balanced"
+)  # "balanced" | "latency_critical" | "cold_start"
 
 # Nudge directory for file-based signal providers
 NUDGE_DIR: str = os.environ.get("PRISMATIC_NUDGE_DIR", "/tmp/prismatic")
@@ -212,9 +233,7 @@ def _linear_api_key() -> str:
     """
     key = os.environ.get("LINEAR_API_KEY")
     if not key:
-        raise RuntimeError(
-            "LINEAR_API_KEY environment variable is required"
-        )
+        raise RuntimeError("LINEAR_API_KEY environment variable is required")
     return key
 
 
@@ -239,10 +258,12 @@ def gql(query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
     import urllib.error
 
     api_key = _linear_api_key()
-    payload = json.dumps({
-        "query": query,
-        "variables": variables or {},
-    }).encode("utf-8")
+    payload = json.dumps(
+        {
+            "query": query,
+            "variables": variables or {},
+        }
+    ).encode("utf-8")
 
     req = urllib.request.Request(
         "https://api.linear.app/graphql",
@@ -259,9 +280,7 @@ def gql(query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
             body = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body = exc.read().decode(errors="replace")
-        raise RuntimeError(
-            f"Linear API HTTP {exc.code}: {body[:500]}"
-        ) from exc
+        raise RuntimeError(f"Linear API HTTP {exc.code}: {body[:500]}") from exc
     except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"Linear API request failed: {exc}") from exc
 
@@ -293,7 +312,9 @@ def get_label_id(label_name: str, *, team_id: str | None = None) -> str | None:
     """
     tid = team_id or TEAM_ID
     if not tid:
-        raise RuntimeError("TEAM_ID is not set — provide team_id or set PRISMATIC_TEAM_ID")
+        raise RuntimeError(
+            "TEAM_ID is not set — provide team_id or set PRISMATIC_TEAM_ID"
+        )
 
     # Look up existing label
     query = """
@@ -379,21 +400,20 @@ def get_issues_with_label(
 
     results = []
     for issue in issues:
-        label_names = [
-            lab["name"]
-            for lab in issue.get("labels", {}).get("nodes", [])
-        ]
+        label_names = [lab["name"] for lab in issue.get("labels", {}).get("nodes", [])]
         if label_name in label_names:
-            results.append({
-                "id": issue["id"],
-                "identifier": issue.get("identifier", ""),
-                "title": issue.get("title", ""),
-                "description": issue.get("description", ""),
-                "state": issue.get("state", {}),
-                "assignee": issue.get("assignee"),
-                "labels": label_names,
-                "url": issue.get("url", ""),
-            })
+            results.append(
+                {
+                    "id": issue["id"],
+                    "identifier": issue.get("identifier", ""),
+                    "title": issue.get("title", ""),
+                    "description": issue.get("description", ""),
+                    "state": issue.get("state", {}),
+                    "assignee": issue.get("assignee"),
+                    "labels": label_names,
+                    "url": issue.get("url", ""),
+                }
+            )
 
     return results
 
@@ -415,11 +435,7 @@ def get_issue_labels(issue_id: str) -> list[dict[str, str]]:
     }
     """
     data = gql(query, {"issueId": issue_id})
-    return (
-        data.get("issue", {})
-        .get("labels", {})
-        .get("nodes", [])
-    )
+    return data.get("issue", {}).get("labels", {}).get("nodes", [])
 
 
 def set_labels(issue_id: str, label_ids: list[str]) -> bool:
@@ -470,11 +486,7 @@ def transition_label(
     current_names = [lab["name"] for lab in current]
 
     # Remove the old label
-    new_ids = [
-        lab["id"]
-        for lab in current
-        if lab["name"] != remove_label
-    ]
+    new_ids = [lab["id"] for lab in current if lab["name"] != remove_label]
 
     # Add the new label if not already present
     if add_label and add_label not in current_names:
@@ -566,10 +578,12 @@ def _get_signal_provider():
     """Lazy-init the default file-based signal provider."""
     global _signal_provider
     if _signal_provider is None:
-        _signal_provider = create_signal_provider({
-            "type": "file",
-            "directory": NUDGE_DIR,
-        })
+        _signal_provider = create_signal_provider(
+            {
+                "type": "file",
+                "directory": NUDGE_DIR,
+            }
+        )
     return _signal_provider
 
 
@@ -623,6 +637,7 @@ def signal_kai(
     if result:
         try:
             import uuid
+
             collector = get_collector()
             status = "dispatched" if signal_type != "agy_review_complete" else "review"
             collector.record_agent_run(
@@ -673,7 +688,8 @@ def launch_agy(
         cmd = [
             AGY_PATH,
             "--headless",
-            "--issue", issue_id,
+            "--issue",
+            issue_id,
         ]
         if task:
             cmd.extend(["--task", task])
@@ -697,14 +713,12 @@ def launch_agy(
                     break
             if not existing_model:
                 cmd.extend(["--model", model])
-                print(
-                    f"[dispatcher] AGY model routing: {issue_id} → "
-                    f"model={model}"
-                )
+                print(f"[dispatcher] AGY model routing: {issue_id} → model={model}")
 
         # ── Circuit breaker: check live telemetry for quota/cooldown ──
         try:
             from prismatic.core.router import check_and_route_agy
+
             cmd, cb_state = check_and_route_agy(issue_id, cmd)
             if cb_state.fallback_applied:
                 print(
@@ -810,18 +824,23 @@ AGENT_LAUNCHERS: dict[str, Callable[..., Any]] = {
 # Pipeline Router (thin wrapper around prismatic.router)
 # ═══════════════════════════════════════════════════════════════
 
+
 def load_pipeline_templates(config_path: str = "") -> dict[str, Any]:
     """Load pipeline definitions from a YAML/JSON config file.
 
-    The default config path is ``~/.config/prismatic/pipelines.yaml``, 
+    The default config path is ``~/.config/prismatic/pipelines.yaml``,
     overridable via the ``PRISMATIC_PIPELINE_CONFIG`` env var.
 
     Delegates to :func:`prismatic.router.load_pipeline_templates`.
     """
     from .router import load_pipeline_templates as _load
 
-    default_config = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "prismatic" / "pipelines.yaml"
-    
+    default_config = (
+        Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+        / "prismatic"
+        / "pipelines.yaml"
+    )
+
     path = (
         config_path
         or os.environ.get("PRISMATIC_PIPELINE_CONFIG")
@@ -919,10 +938,7 @@ def setup_pipeline_issues(max_issues: int = 20) -> list[dict[str, Any]]:
             "identifier": issue.get("identifier", ""),
             "title": issue.get("title", ""),
             "description": issue.get("description", ""),
-            "labels": [
-                lab["name"]
-                for lab in issue.get("labels", {}).get("nodes", [])
-            ],
+            "labels": [lab["name"] for lab in issue.get("labels", {}).get("nodes", [])],
         }
 
         # Skip if already has an agent label
@@ -994,13 +1010,10 @@ def cleanup_stale_agy(max_age_minutes: int = 5) -> int:
                     os.kill(int(pid_str), signal.SIGTERM)
                     killed += 1
                     print(
-                        f"[dispatcher] Killed stale AGY pid={pid_str} "
-                        f"(age={etime_str})"
+                        f"[dispatcher] Killed stale AGY pid={pid_str} (age={etime_str})"
                     )
                 except (OSError, ValueError) as exc:
-                    print(
-                        f"[dispatcher] Failed to kill AGY pid={pid_str}: {exc}"
-                    )
+                    print(f"[dispatcher] Failed to kill AGY pid={pid_str}: {exc}")
 
     except (subprocess.SubprocessError, FileNotFoundError, OSError) as exc:
         print(f"[dispatcher] cleanup_stale_agy failed: {exc}")
@@ -1238,6 +1251,7 @@ def process_agent_commands(
 # Deduplication (stub)
 # ═══════════════════════════════════════════════════════════════
 
+
 class EventRouterDedup:
     """Deduplication tracker for event router cycles.
 
@@ -1399,11 +1413,10 @@ def detect_origin_completions(
 
     # 1. Snapshot: record current labels for issues the dispatcher
     #    has seen (builds label history over cycles)
-    agent_labels = [
-        f"agent::{name}" for name in AGENT_CONFIG
-    ] + [
+    agent_labels = [f"agent::{name}" for name in AGENT_CONFIG] + [
         # Also track single-colon variants (actual Linear label names)
-        f"agent:{name}" for name in AGENT_CONFIG
+        f"agent:{name}"
+        for name in AGENT_CONFIG
     ]
     for label_name in agent_labels:
         try:
@@ -1469,9 +1482,7 @@ def detect_origin_completions(
         ok = provider.send_work(
             target=origin_agent,
             issue_id=identifier,
-            title=(
-                f"Review complete: {issue.get('title', identifier)}"
-            ),
+            title=(f"Review complete: {issue.get('title', identifier)}"),
             priority=2,  # High priority — origin should act on this
             signal_type="review_complete",
             origin_agent=origin_agent,
@@ -1513,6 +1524,101 @@ def detect_origin_completions(
 # ═══════════════════════════════════════════════════════════════
 # Main Dispatch Loop
 # ═══════════════════════════════════════════════════════════════
+
+
+def _linear_priority_to_band(linear_priority: Any) -> Priority:
+    """Map a Linear priority int (0..4) to our Priority band.
+
+    Linear convention:
+        0 = No priority
+        1 = Urgent
+        2 = High
+        3 = Medium
+        4 = Low
+
+    Our convention: URGENT (0) is highest. We collapse "No priority"
+    to NORMAL so unranked work still flows.
+    """
+
+    try:
+        v = int(linear_priority) if linear_priority is not None else 0
+    except (TypeError, ValueError):
+        return Priority.NORMAL
+    return {
+        1: Priority.URGENT,
+        2: Priority.HIGH,
+        3: Priority.NORMAL,
+        4: Priority.LOW,
+    }.get(v, Priority.NORMAL)
+
+
+def _tier_from_labels(label_names: list[str]) -> ClientTier:
+    """Infer ClientTier from issue labels.
+
+    Recognized hints (case-insensitive, prefix-matched):
+        flagship/strategic  → FLAGSHIP
+        enterprise          → ENTERPRISE
+        internal            → INTERNAL
+        anything else       → STANDARD
+    """
+
+    names = {n.lower() for n in label_names}
+    if any("flagship" in n or "strategic" in n for n in names):
+        return ClientTier.FLAGSHIP
+    if any("enterprise" in n for n in names):
+        return ClientTier.ENTERPRISE
+    if any("internal" in n for n in names):
+        return ClientTier.INTERNAL
+    return ClientTier.STANDARD
+
+
+def _effort_from_estimate(estimate: Any) -> int:
+    """Map a Linear estimate value to an effort integer (1..10)."""
+
+    try:
+        v = int(estimate) if estimate is not None else 5
+    except (TypeError, ValueError):
+        return 5
+    return max(1, min(10, v))
+
+
+def build_priority_queue(
+    issues: list[dict[str, Any]],
+    *,
+    config: PriorityQueueConfig | None = None,
+) -> PriorityQueue:
+    """Build a PriorityQueue from a list of Linear issues.
+
+    Each issue is expected to be a dict as returned by
+    ``get_issues_with_label`` with at least ``id`` / ``identifier``,
+    ``title``, ``priority`` (int), ``estimate`` (int|None), and
+    ``labels`` (list of name strings).
+    """
+
+    if not _HAS_PRIORITY_QUEUE:
+        raise RuntimeError(
+            "PriorityQueue unavailable — install/find prismatic.core.priority_queue"
+        )
+    queue: PriorityQueue = PriorityQueue(config or PriorityQueueConfig.balanced())
+    for issue in issues:
+        labels = issue.get("labels") or []
+        label_names = [
+            lab.get("name", "") if isinstance(lab, dict) else str(lab) for lab in labels
+        ]
+        item_id = str(issue.get("identifier") or issue.get("id") or "")
+        # Skip issues with no usable identifier — the queue can't
+        # de-duplicate or report on them safely.
+        if not item_id or item_id == "None":
+            continue
+        item = JobItem(
+            item_id=item_id,
+            priority=_linear_priority_to_band(issue.get("priority")),
+            client_tier=_tier_from_labels(label_names),
+            estimated_effort=_effort_from_estimate(issue.get("estimate")),
+            payload=issue,
+        )
+        queue.push(item)
+    return queue
 
 
 def dispatch_once(
@@ -1564,21 +1670,30 @@ def dispatch_once(
     throttle_dispatch = False
     try:
         from .credit_tracker import AIUltraCreditTracker
+
         tracker = AIUltraCreditTracker()
-        
+
         # Scan workspace assets/designs/research for new media artifacts
         # (also scan /tmp for any temporary media generated during current run)
         workspace_root = os.getcwd()
         for media_dir in ["assets", "designs", "research", "/tmp"]:
-            full_path = os.path.join(workspace_root, media_dir) if media_dir != "/tmp" else "/tmp"
+            full_path = (
+                os.path.join(workspace_root, media_dir)
+                if media_dir != "/tmp"
+                else "/tmp"
+            )
             if os.path.exists(full_path):
-                tracker.parse_media_artifacts(full_path, run_id_prefix=f"cycle-{cycle_id}")
+                tracker.parse_media_artifacts(
+                    full_path, run_id_prefix=f"cycle-{cycle_id}"
+                )
 
         # Check burn velocity and exhaustion warning
         alert = tracker.evaluate_exhaustion_warning(lookback_hours=1.0)
         if alert:
             throttle_dispatch = True
-            print(f"[dispatcher] ⚠️ Credit exhaustion warning alert! Throttling active. Message: {alert['message']}")
+            print(
+                f"[dispatcher] ⚠️ Credit exhaustion warning alert! Throttling active. Message: {alert['message']}"
+            )
             # Post comment to Linear if any issues are active
     except Exception as exc:
         print(f"[dispatcher] Credit tracking/alert error: {exc}")
@@ -1594,6 +1709,34 @@ def dispatch_once(
             counts["errors"] += 1
             continue
 
+        # ── Priority Queue (GRO-550) ────────────────────────────────
+        # Sort the backlog through PriorityQueue when enabled so the
+        # highest-priority work is launched first. Aging prevents old
+        # LOW items from being permanently starved.
+        if USE_PRIORITY_QUEUE and _HAS_PRIORITY_QUEUE and issues:
+            try:
+                profile_map = {
+                    "balanced": PriorityQueueConfig.balanced,
+                    "latency_critical": PriorityQueueConfig.latency_critical,
+                    "cold_start": PriorityQueueConfig.cold_start,
+                }
+                factory = profile_map.get(
+                    PRIORITY_QUEUE_PROFILE, PriorityQueueConfig.balanced
+                )
+                pq = build_priority_queue(issues, config=factory())
+                # Replace the raw list with priority-ordered items. The
+                # downstream loop expects dicts, so map back via .payload.
+                issues = [it.payload for it in pq.items() if it.payload is not None]
+                stats = pq.stats()
+                print(
+                    f"[dispatcher] 🎯 PriorityQueue [{PRIORITY_QUEUE_PROFILE}]: "
+                    f"{stats['pending']} pending for {agent_name} "
+                    f"(by_priority={stats['by_priority']})"
+                )
+            except Exception as exc:
+                print(f"[dispatcher] PriorityQueue sort failed for {agent_name}: {exc}")
+                # Fall through with the original unsorted list.
+
         for issue in issues:
             issue_id = issue["id"]
 
@@ -1606,7 +1749,11 @@ def dispatch_once(
                 continue
 
             # ── Credit policy enforcement ───────────────────────────
-            label = f"agent:{agent_name}" if not agent_name.startswith("agent:") else agent_name
+            label = (
+                f"agent:{agent_name}"
+                if not agent_name.startswith("agent:")
+                else agent_name
+            )
             decision = evaluate_agent_launch(
                 label, issue_id, operation="code_generation"
             )
@@ -1668,7 +1815,9 @@ def dispatch_once(
 
             try:
                 if throttle_dispatch:
-                    print(f"[dispatcher] ⚠️ Throttling dispatch of {agent_name} (5s delay) due to high credit burn velocity.")
+                    print(
+                        f"[dispatcher] ⚠️ Throttling dispatch of {agent_name} (5s delay) due to high credit burn velocity."
+                    )
                     time.sleep(5)
                 result = launcher(issue_id, title=issue.get("title", ""))
                 if result:
@@ -1693,7 +1842,9 @@ def dispatch_once(
                     )
                     # ── End telemetry ──────────────────────────────────
                     # Emit agent_launched event to IPC bridge
-                    _emit_agent_event("agent_launched", agent_name, identifier, cycle_id=cycle_id)
+                    _emit_agent_event(
+                        "agent_launched", agent_name, identifier, cycle_id=cycle_id
+                    )
                     # Post a comment tracking the dispatch
                     try:
                         add_comment(
@@ -1776,9 +1927,9 @@ def main_loop(
     while True:
         cycle += 1
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"[dispatcher] Cycle {cycle} — {now}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         try:
             counts = dispatch_once(dedup, pipelines)
@@ -1805,8 +1956,12 @@ def main_loop(
             break
         except Exception as exc:
             print(f"[dispatcher] Fatal error in cycle {cycle}: {exc}")
-            counts = {"dispatched": 0, "pipeline_setup": 0,
-                       "stale_killed": 0, "errors": 1}
+            counts = {
+                "dispatched": 0,
+                "pipeline_setup": 0,
+                "stale_killed": 0,
+                "errors": 1,
+            }
 
         if once:
             break
@@ -1819,7 +1974,9 @@ def main_loop(
 
 def init_config(force: bool = False) -> None:
     """Initialize default configuration files in the user's config directory."""
-    config_dir = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "prismatic"
+    config_dir = (
+        Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "prismatic"
+    )
     config_dir.mkdir(parents=True, exist_ok=True)
 
     template_dir = Path(__file__).parent / "templates" / "config"
@@ -1835,16 +1992,19 @@ def init_config(force: bool = False) -> None:
             print(f"[dispatcher] Skipping existing config: {target_file}")
             skipped += 1
             continue
-        
+
         try:
             import shutil
+
             shutil.copy2(template_file, target_file)
             print(f"[dispatcher] Initialized {target_file}")
             copied += 1
         except OSError as exc:
             print(f"[dispatcher] Error copying {template_file.name}: {exc}")
 
-    print(f"\n[dispatcher] Initialization complete: {copied} copied, {skipped} skipped.")
+    print(
+        f"\n[dispatcher] Initialization complete: {copied} copied, {skipped} skipped."
+    )
     print(f"[dispatcher] Config directory: {config_dir}")
 
 
@@ -1863,64 +2023,75 @@ def cmd_billing_report(args: Any) -> None:
 
     # ── Report mode ──
     if args.projection:
-        proj = engine.project_costs(
-            client_id=args.client, project_id=args.project
-        )
-        print(f"\n{'='*60}")
+        proj = engine.project_costs(client_id=args.client, project_id=args.project)
+        print(f"\n{'=' * 60}")
         print(f"  Cost Projection (7-day rolling average)")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         print(f"  Client:      {args.client or 'all'}")
         print(f"  Project:     {args.project or 'all'}")
-        print(f"  Days of data: {len([c for c in proj.daily_costs if c > 0])}/{len(proj.daily_costs)}")
+        print(
+            f"  Days of data: {len([c for c in proj.daily_costs if c > 0])}/{len(proj.daily_costs)}"
+        )
         print(f"  Avg daily:   ${proj.average_daily:.4f}")
         print(f"  Projected/mo: ${proj.projected_monthly:.4f}")
         print(f"  Trend:       {proj.trend} (confidence: {proj.confidence})")
-        print(f"{'='*60}\n")
+        print(f"{'=' * 60}\n")
         if proj.daily_costs:
             print("  Daily costs:")
             for i, cost in enumerate(proj.daily_costs):
-                day = (datetime.now(timezone.utc) - timedelta(days=len(proj.daily_costs) - 1 - i)).strftime("%Y-%m-%d")
+                day = (
+                    datetime.now(timezone.utc)
+                    - timedelta(days=len(proj.daily_costs) - 1 - i)
+                ).strftime("%Y-%m-%d")
                 bar = "█" * min(int(cost * 50), 50) if cost > 0 else ""
                 print(f"    {day}: ${cost:8.4f} {bar}")
             print()
 
     # ── Billing report ──
     if args.format == "json":
-        print(engine.generate_report_json(
-            client_id=args.client, project_id=args.project
-        ))
-    elif args.format == "csv":
-        print(engine.generate_report_csv(
-            client_id=args.client, project_id=args.project
-        ))
-    else:
-        reports = engine.generate_report(
-            client_id=args.client, project_id=args.project
+        print(
+            engine.generate_report_json(client_id=args.client, project_id=args.project)
         )
+    elif args.format == "csv":
+        print(
+            engine.generate_report_csv(client_id=args.client, project_id=args.project)
+        )
+    else:
+        reports = engine.generate_report(client_id=args.client, project_id=args.project)
         if not reports:
             print("\n  No billing data found for the specified period.")
             return
 
-        print(f"\n{'='*70}")
+        print(f"\n{'=' * 70}")
         print(f"  Client Cost Attribution Report")
-        print(f"{'='*70}")
+        print(f"{'=' * 70}")
         for report in reports:
             print(f"\n  Client:  {report.client_id}")
             print(f"  Project: {report.project_id}")
             print(f"  Total:   ${report.total_cost_usd:.6f}")
             print(f"  Period:  {report.period_start[:10]} → {report.period_end[:10]}")
-            print(f"  {'─'*50}")
+            print(f"  {'─' * 50}")
             if report.agent_breakdown:
                 print(f"  Agent Breakdown:")
-                for agent, adata in sorted(report.agent_breakdown.items(),
-                                           key=lambda x: x[1]["cost_usd"], reverse=True):
-                    print(f"    {agent:30s} ${adata['cost_usd']:10.6f}  ({adata['entries']} entries)")
+                for agent, adata in sorted(
+                    report.agent_breakdown.items(),
+                    key=lambda x: x[1]["cost_usd"],
+                    reverse=True,
+                ):
+                    print(
+                        f"    {agent:30s} ${adata['cost_usd']:10.6f}  ({adata['entries']} entries)"
+                    )
             if report.model_breakdown:
                 print(f"  Model Breakdown:")
-                for model, mdata in sorted(report.model_breakdown.items(),
-                                           key=lambda x: x[1]["cost_usd"], reverse=True):
-                    print(f"    {model:30s} ${mdata['cost_usd']:10.6f}  ({mdata['entries']} entries)")
-        print(f"{'='*70}\n")
+                for model, mdata in sorted(
+                    report.model_breakdown.items(),
+                    key=lambda x: x[1]["cost_usd"],
+                    reverse=True,
+                ):
+                    print(
+                        f"    {model:30s} ${mdata['cost_usd']:10.6f}  ({mdata['entries']} entries)"
+                    )
+        print(f"{'=' * 70}\n")
 
 
 def main() -> None:
@@ -1949,7 +2120,9 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command", help="Subcommand to run")
 
     # ── Serve Subcommand ──────────────────────────────────────
-    serve_parser = subparsers.add_parser("serve", help="Start the dispatcher event loop")
+    serve_parser = subparsers.add_parser(
+        "serve", help="Start the dispatcher event loop"
+    )
     serve_parser.add_argument(
         "--once",
         action="store_true",
@@ -1968,7 +2141,9 @@ def main() -> None:
     )
 
     # ── Init Subcommand ───────────────────────────────────────
-    init_parser = subparsers.add_parser("init", help="Initialize default configuration files")
+    init_parser = subparsers.add_parser(
+        "init", help="Initialize default configuration files"
+    )
     init_parser.add_argument(
         "--force",
         action="store_true",
@@ -1986,22 +2161,26 @@ def main() -> None:
         "--project", type=str, default=None, help="Filter by project ID"
     )
     billing_parser.add_argument(
-        "--format", type=str, default="table",
+        "--format",
+        type=str,
+        default="table",
         choices=["table", "json", "csv"],
-        help="Output format (default: table)"
+        help="Output format (default: table)",
     )
     billing_parser.add_argument(
-        "--projection", action="store_true",
-        help="Show rolling 7-day cost projection"
+        "--projection", action="store_true", help="Show rolling 7-day cost projection"
     )
     billing_parser.add_argument(
-        "--set-attribution", nargs=3,
+        "--set-attribution",
+        nargs=3,
         metavar=("ISSUE_ID", "CLIENT_ID", "PROJECT_ID"),
-        help="Map an issue to client/project for billing"
+        help="Map an issue to client/project for billing",
     )
 
     # ── Skills Subcommand ─────────────────────────────────────
-    subparsers.add_parser("skills", help="Skill marketplace subcommands (run 'skills --help' for details)")
+    subparsers.add_parser(
+        "skills", help="Skill marketplace subcommands (run 'skills --help' for details)"
+    )
 
     # ── Help / No Command ─────────────────────────────────────
     if len(sys.argv) == 1:
@@ -2011,6 +2190,7 @@ def main() -> None:
     # Handle 'skills' early to delegate to skills.py
     if sys.argv[1] == "skills":
         from .skills import cli_skills
+
         sys.exit(cli_skills(sys.argv[2:]))
 
     args = parser.parse_args()
