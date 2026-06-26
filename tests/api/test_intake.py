@@ -136,8 +136,12 @@ def test_submit_with_explicit_priority_and_agent():
 
 def test_payload_hash_is_stable_for_same_payload():
     payload = {"b": 2, "a": 1, "nested": {"y": 9, "x": 8}}
-    r1 = client.post("/api/v1/intake", json={"source": "s", "payload": payload}, headers=AUTH)
-    r2 = client.post("/api/v1/intake", json={"source": "s", "payload": payload}, headers=AUTH)
+    r1 = client.post(
+        "/api/v1/intake", json={"source": "s", "payload": payload}, headers=AUTH
+    )
+    r2 = client.post(
+        "/api/v1/intake", json={"source": "s", "payload": payload}, headers=AUTH
+    )
     assert r1.status_code == 201
     assert r2.status_code == 201
     # Hashes must match regardless of dict insertion order
@@ -224,8 +228,12 @@ def test_list_tasks_returns_recent_first():
 
 
 def test_list_tasks_filter_by_source():
-    client.post("/api/v1/intake", json={"source": "filter-A", "payload": {}}, headers=AUTH)
-    client.post("/api/v1/intake", json={"source": "filter-B", "payload": {}}, headers=AUTH)
+    client.post(
+        "/api/v1/intake", json={"source": "filter-A", "payload": {}}, headers=AUTH
+    )
+    client.post(
+        "/api/v1/intake", json={"source": "filter-B", "payload": {}}, headers=AUTH
+    )
     response = client.get("/api/v1/intake?source=filter-A", headers=AUTH)
     assert response.status_code == 200
     sources = {t["source"] for t in response.json()["tasks"]}

@@ -78,9 +78,15 @@ app.include_router(intake.router, prefix=API_PREFIX, tags=["intake"])
 
 def run() -> None:
     parser = argparse.ArgumentParser(description="Prismatic Engine API Gateway")
-    parser.add_argument("--port", type=int, default=8000, help="Port to bind (default: 8000)")
-    parser.add_argument("--reload", action="store_true", help="Enable auto-reload for development")
-    parser.add_argument("--host", default="0.0.0.0", help="Host to bind (default: 0.0.0.0)")
+    parser.add_argument(
+        "--port", type=int, default=8000, help="Port to bind (default: 8000)"
+    )
+    parser.add_argument(
+        "--reload", action="store_true", help="Enable auto-reload for development"
+    )
+    parser.add_argument(
+        "--host", default="0.0.0.0", help="Host to bind (default: 0.0.0.0)"
+    )
     args, _ = parser.parse_known_args()
 
     # Load .env from env/ directory relative to project root
@@ -95,7 +101,9 @@ def run() -> None:
         except ImportError:
             logger.warning("python-dotenv not installed, skipping .env load")
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    )
 
     logger.info("Starting Prismatic API Gateway on %s:%d", args.host, args.port)
     uvicorn.run(
