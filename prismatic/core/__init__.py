@@ -27,6 +27,16 @@ __all__ = [
     "HardwareProfileRegistry",
     "HardwareProfile",
     "HardwareProfileError",
+    "RulesEngine",
+    "Rule",
+    "TaskContext",
+    "AgentState",
+    "RoutingDecision",
+    "RuleValidationError",
+    "load_rules",
+    "parse_rules",
+    "parse_default",
+    "rule_matches",
 ]
 
 from .registry import PluginLoader
@@ -44,4 +54,16 @@ from .hardware_profiles import (
     HardwareProfileRegistry,
     HardwareProfile,
     HardwareProfileError,
+)
+from .rules_engine import (
+    RulesEngine,
+    Rule,
+    TaskContext,
+    AgentState,
+    RoutingDecision,
+    RuleValidationError,
+    load_rules,
+    parse_rules,
+    parse_default,
+    rule_matches,
 )
