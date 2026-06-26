@@ -1,7 +1,7 @@
 # DeepSeek v4 vs Claude 4 — Agent Orchestration Benchmark
 
 **Issue:** GRO-573  
-**Generated:** 2026-06-25T23:00:41.804732+00:00  
+**Generated:** 2026-06-25T23:15:12.702412+00:00  
 **Methodology:** Synthetic placeholder numbers (--dry-run). Live runs will populate real values by invoking each model against the prismatic/benchmarks/task_suite.json corpus (50 mixed tool-call, planning, and long-context tasks).
 
 ## Results
