@@ -53,8 +53,13 @@ This classification feeds R4 (Core API definition) and R5 (migration script).
 | 23 | `test_pwp.py` (8 test classes covering slugify, profile normalization, site build, SEO, a11y, CSS, image gen, end-to-end) | **PWP** | `plugins/pwp/tests/test_pwp.py` | All tests target PWP-specific behavior; keep in plugin. (Core capability tests live in `tests/` for the engine itself.) |
 | 24 | `SETUP.md` | **PWP** | `plugins/pwp/SETUP.md` | PWP install + usage guide; plugin-scoped. |
 | 25 | `.wrangler/cache/pages.json` | **Delete** | n/a | Local Wrangler cache; not source code, regenerate. |
+| 26 | `generate_placeholder_images.py` (build_hero, build_card, build_favicon, write_placeholder_set) | **PWP** | `plugins/pwp/pwp/placeholder_images.py` | Generates WebP placeholder images sized for PWP page contexts (hero/card/favicon); PIL-based, only used during PWP site builds. Will be replaced by AGY SDK image gen (GRO-2325 R9) — for now, PWP-only. |
+| 27 | `static/mock-site-v7.html`, `static/mock-site-v8.html` | **PWP** | `plugins/pwp/pwp/static/mock/mock-site-v7.html`, `mock-site-v8.html` | Fixtures used by `preview-pane-ui.html` (row 28) for the diff/preview UI; only consumed by PWP's preview tooling. |
+| 28 | `static/preview-pane-ui.html` | **PWP** | `plugins/pwp/pwp/static/preview-pane-ui.html` | Browser UI for previewing PWP sites side-by-side and in diff mode. References mock-site-v7/v8 (row 27); not a Core concern. |
+| 29 | `static/style.css` (top-level `static/`, **duplicate** of `pwp/static/style.css`) | **PWP** | `plugins/pwp/pwp/static/style.css` (consolidate with the existing `pwp/static/style.css`) | Identical content to row 7's `pwp/static/style.css`. After refactor, the duplicate is removed and only the `plugins/pwp/pwp/static/` copy is kept. |
+| 30 | `test_pwp_extended.py` (TestPwpAdapters, TestPwpScheduler, TestPwpDistillParser, TestPwpIngest, TestPwpWebhook) | **PWP** | `plugins/pwp/tests/test_pwp_extended.py` | Extended coverage for PWP modules (adapter fallback, scheduler, distill parser, ingest, webhook HMAC). All targets are PWP-only. |
 
-**Total: 25 entries.** The other 7 files in the original scan are nested `.pyc` files inside `__pycache__/` (regenerated on import) and are not source. |
+**Total: 30 entries.** The 8 ignored files are nested `.pyc` files inside `__pycache__/` directories (regenerated on import) — not source. |
 
 ---
 
@@ -63,7 +68,7 @@ This classification feeds R4 (Core API definition) and R5 (migration script).
 | Classification | Count | Action |
 |---|---|---|
 | **Core** | 0 | (none — every file is either PWP-specific or already-shared-via-Both) |
-| **PWP** | 17 | Keep in `plugins/pwp/`. |
+| **PWP** | 22 | Keep in `plugins/pwp/`. |
 | **Both** | 7 | Move the generic primitive into `prismatic/capabilities/` or `prismatic/core/`; keep a thin PWP wrapper inside `plugins/pwp/`. |
 | **Delete** | 1 | `.wrangler/cache/pages.json` is a regenerable cache. |
 
@@ -79,9 +84,9 @@ These seven files have a Core-capable primitive that other plugins can also use.
 6. **`pwp_scheduler.py`** → wraps existing `prismatic/core/scheduler.py` (Core) for tick/daemon mechanics; PWP registers its own task set.
 7. **`pwp_webhook.py`** → wraps existing `prismatic/core/webhook.py` (Core) for HMAC + handler registration; PWP registers its label/deploy handlers.
 
-### What stays PWP (15 files)
+### What stays PWP (22 files)
 
-All file builders, template rendering, image generation, page templates, version-control UI, the build CLI, the distill/ingest/synthesize pipelines, and the test suite are PWP-specific — they only make sense for a plugin that turns content into websites.
+All file builders, template rendering, image generation, page templates, mock fixtures, preview-pane UI, the build CLI, the distill/ingest/synthesize pipelines, and the test suite are PWP-specific — they only make sense for a plugin that turns content into websites.
 
 ---
 
@@ -116,3 +121,4 @@ This document is the deliverable. No tests to run. Verification = human review b
 **git_path: plugins/pwp/docs/R1-classification.md**
 **status: complete**
 **verified_by: ned**
+**revision_note:** Re-verified inventory against `find ~/.hermes/profiles/orchestrator/scripts/pwp/ -type f` on 2026-06-27. Added 5 missing entries (rows 26–30) covering `generate_placeholder_images.py`, the top-level `static/` preview fixtures and duplicate CSS, the preview-pane UI, and `test_pwp_extended.py`. Updated summary counts (PWP: 17 → 22, total: 25 → 30 entries) and the "What stays PWP" heading. No new Core or Both classifications surfaced — every newly-classified file is PWP-only.
