@@ -15,9 +15,7 @@ import os
 import queue
 import sqlite3
 import threading
-import time
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 # ── Default paths ──────────────────────────────────────────
@@ -47,7 +45,9 @@ ALERT_WINDOW_HOURS = int(os.environ.get("PRISMATIC_ALERT_WINDOW_HOURS", "1"))
 RETENTION_AGENT_RUNS = int(os.environ.get("PRISMATIC_RETENTION_AGENT_RUNS", "30"))
 RETENTION_TOOL_CALLS = int(os.environ.get("PRISMATIC_RETENTION_TOOL_CALLS", "7"))
 RETENTION_LOOP_EVENTS = int(os.environ.get("PRISMATIC_RETENTION_LOOP_EVENTS", "90"))
-RETENTION_RESOURCE_SNAPSHOTS = int(os.environ.get("PRISMATIC_RETENTION_RESOURCE_SNAPSHOTS", "1"))
+RETENTION_RESOURCE_SNAPSHOTS = int(
+    os.environ.get("PRISMATIC_RETENTION_RESOURCE_SNAPSHOTS", "1")
+)
 RETENTION_CREDIT_LEDGER = int(os.environ.get("PRISMATIC_RETENTION_CREDIT_LEDGER", "90"))
 
 
@@ -178,12 +178,8 @@ class TelemetryCollector:
             total_macro = prev_macro + macro_count
 
             now = datetime.now(timezone.utc).isoformat()
-            tripped = (
-                not already_tripped
-                and (
-                    total_micro >= BREAKER_MICRO_MAX
-                    or total_macro >= BREAKER_MACRO_MAX
-                )
+            tripped = not already_tripped and (
+                total_micro >= BREAKER_MICRO_MAX or total_macro >= BREAKER_MACRO_MAX
             )
 
             conn.execute(
@@ -203,17 +199,20 @@ class TelemetryCollector:
             conn.commit()
 
             if tripped:
-                self._push("loop", {
-                    "run_id": f"breaker-{issue_id}",
-                    "issue_id": issue_id,
-                    "agent": agent,
-                    "loop_type": "circuit_breaker",
-                    "trigger": f"micro={total_micro} macro={total_macro}",
-                    "resolved": 0,
-                    "depth": 0,
-                    "parent_id": None,
-                    "created_at": now,
-                })
+                self._push(
+                    "loop",
+                    {
+                        "run_id": f"breaker-{issue_id}",
+                        "issue_id": issue_id,
+                        "agent": agent,
+                        "loop_type": "circuit_breaker",
+                        "trigger": f"micro={total_micro} macro={total_macro}",
+                        "resolved": 0,
+                        "depth": 0,
+                        "parent_id": None,
+                        "created_at": now,
+                    },
+                )
 
             return tripped
         finally:
@@ -337,16 +336,102 @@ class TelemetryCollector:
         }
         self._push("agy_live_state", event)
 
+    # ── Gap 12: Review-pipeline observability ───────────────
+
+    def record_review_completed(
+        self,
+        run_id: str,
+        issue_id: str,
+        reviewer: str,
+        verdict: str,
+        impact: str,
+        rework_attempt: int = 0,
+        duration_sec: float = 0.0,
+    ) -> None:
+        """Push a review.completed event to telemetry_review_completed table."""
+        event = {
+            "run_id": run_id,
+            "issue_id": issue_id,
+            "reviewer": reviewer,
+            "verdict": verdict,
+            "impact": impact,
+            "rework_attempt": rework_attempt,
+            "duration_sec": duration_sec,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._push("review_completed", event)
+
+    def record_plugin_registered(
+        self,
+        plugin_name: str,
+        plugin_version: str = "",
+        source: str = "",
+        success: bool = True,
+        error: str | None = None,
+    ) -> None:
+        """Push a plugin.registered/plugin.register_failed event."""
+        event = {
+            "plugin_name": plugin_name,
+            "plugin_version": plugin_version,
+            "source": source,
+            "success": 1 if success else 0,
+            "error": error,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._push("plugin_registered", event)
+
+    def record_hook_fired(
+        self,
+        hook_name: str,
+        event_type: str,
+        run_id: str | None = None,
+        issue_id: str | None = None,
+        success: bool = True,
+        error: str | None = None,
+        duration_ms: float = 0.0,
+    ) -> None:
+        """Push a hook.fired/hook.failed event."""
+        event = {
+            "hook_name": hook_name,
+            "event_type": event_type,
+            "run_id": run_id,
+            "issue_id": issue_id,
+            "success": 1 if success else 0,
+            "error": error,
+            "duration_ms": duration_ms,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._push("hook_fired", event)
+
+    def record_pipeline_action(
+        self,
+        action: str,
+        run_id: str,
+        issue_id: str,
+        actor: str = "review-orchestrator",
+        details: str | None = None,
+    ) -> None:
+        """Push a pipeline.action event (ACTION_ADVANCE/HOLD/REWORK/GIVE_UP)."""
+        event = {
+            "action": action,
+            "run_id": run_id,
+            "issue_id": issue_id,
+            "actor": actor,
+            "details": details,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._push("pipeline_action", event)
 
     def get_dashboard_data(self, hours: int = 24) -> dict[str, Any]:
         """Query recent telemetry for dashboard display.
 
         Returns a dict with loops, tokens, validation, breakers_tripped,
-        credit_burn_rate, failure_rate, and total_agent_runs.
+        credit_burn_rate, failure_rate, total_agent_runs, review, hooks,
+        and plugins blocks.
         """
         conn = sqlite3.connect(self._db_path)
         conn.row_factory = sqlite3.Row
-        cutoff = (datetime.now(timezone.utc).timestamp() - hours * 3600)
+        cutoff = datetime.now(timezone.utc).timestamp() - hours * 3600
         cutoff_str = datetime.fromtimestamp(cutoff, tz=timezone.utc).isoformat()
         try:
             # Loop stats
@@ -399,6 +484,32 @@ class TelemetryCollector:
             failed_runs = agent_runs["failed"] if agent_runs else 0
             failure_rate = (failed_runs / total_runs) if total_runs > 0 else 0.0
 
+            # ── Gap 12: Review block ────────────────────────────
+            review_rows = conn.execute(
+                "SELECT verdict, COUNT(*) as cnt "
+                "FROM telemetry_review_completed "
+                "WHERE created_at >= ? GROUP BY verdict",
+                (cutoff_str,),
+            ).fetchall()
+
+            # ── Gap 12: Hooks block ─────────────────────────────
+            hooks_row = conn.execute(
+                "SELECT "
+                "  SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as succeeded, "
+                "  SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as failed "
+                "FROM telemetry_hook_fired WHERE created_at >= ?",
+                (cutoff_str,),
+            ).fetchone()
+
+            # ── Gap 12: Plugins block ───────────────────────────
+            plugins_row = conn.execute(
+                "SELECT "
+                "  SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) as registered, "
+                "  SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) as register_failed "
+                "FROM telemetry_plugin_registered WHERE created_at >= ?",
+                (cutoff_str,),
+            ).fetchone()
+
             return {
                 "loops": [dict(r) for r in loops],
                 "tokens": [dict(r) for r in tokens],
@@ -410,6 +521,20 @@ class TelemetryCollector:
                 "failure_rate": round(failure_rate, 4),
                 "total_agent_runs": total_runs,
                 "failed_agent_runs": failed_runs,
+                # Gap 12 blocks
+                "review": [dict(r) for r in review_rows],
+                "hooks": {
+                    "succeeded": (hooks_row["succeeded"] or 0) if hooks_row else 0,
+                    "failed": (hooks_row["failed"] or 0) if hooks_row else 0,
+                },
+                "plugins": {
+                    "registered": (plugins_row["registered"] or 0)
+                    if plugins_row
+                    else 0,
+                    "register_failed": (plugins_row["register_failed"] or 0)
+                    if plugins_row
+                    else 0,
+                },
             }
         finally:
             conn.close()
@@ -436,55 +561,59 @@ class TelemetryCollector:
         # ── Rule 1: Credit burn rate ────────────────────────
         burn_rate = data.get("credit_burn_rate", 0)
         if burn_rate > ALERT_CREDIT_BURN_RATE:
-            alerts.append({
-                "rule": "credit_burn",
-                "current_value": burn_rate,
-                "threshold": ALERT_CREDIT_BURN_RATE,
-                "message": (
-                    f"Credit burn rate {burn_rate:.0f}/hr exceeds "
-                    f"threshold {ALERT_CREDIT_BURN_RATE}/hr "
-                    f"(total: {data.get('total_credits', 0)} credits "
-                    f"in {window}h)"
-                ),
-                "severity": "high",
-            })
+            alerts.append(
+                {
+                    "rule": "credit_burn",
+                    "current_value": burn_rate,
+                    "threshold": ALERT_CREDIT_BURN_RATE,
+                    "message": (
+                        f"Credit burn rate {burn_rate:.0f}/hr exceeds "
+                        f"threshold {ALERT_CREDIT_BURN_RATE}/hr "
+                        f"(total: {data.get('total_credits', 0)} credits "
+                        f"in {window}h)"
+                    ),
+                    "severity": "high",
+                }
+            )
 
         # ── Rule 2: Loop count ──────────────────────────────
-        total_loops = sum(
-            r.get("cnt", 0) for r in data.get("loops", [])
-        )
+        total_loops = sum(r.get("cnt", 0) for r in data.get("loops", []))
         if total_loops > ALERT_LOOP_COUNT:
             loop_detail = ", ".join(
                 f"{r.get('loop_type', '?')}={r.get('cnt', 0)}"
                 for r in data.get("loops", [])
             )
-            alerts.append({
-                "rule": "loop_count",
-                "current_value": total_loops,
-                "threshold": ALERT_LOOP_COUNT,
-                "message": (
-                    f"Loop count {total_loops} in {window}h exceeds "
-                    f"threshold {ALERT_LOOP_COUNT} "
-                    f"({loop_detail})"
-                ),
-                "severity": "high",
-            })
+            alerts.append(
+                {
+                    "rule": "loop_count",
+                    "current_value": total_loops,
+                    "threshold": ALERT_LOOP_COUNT,
+                    "message": (
+                        f"Loop count {total_loops} in {window}h exceeds "
+                        f"threshold {ALERT_LOOP_COUNT} "
+                        f"({loop_detail})"
+                    ),
+                    "severity": "high",
+                }
+            )
 
         # ── Rule 3: Failure rate ────────────────────────────
         failure_rate = data.get("failure_rate", 0)
         total_runs = data.get("total_agent_runs", 0)
         if total_runs > 0 and failure_rate > ALERT_FAILURE_RATE:
-            alerts.append({
-                "rule": "failure_rate",
-                "current_value": failure_rate,
-                "threshold": ALERT_FAILURE_RATE,
-                "message": (
-                    f"Agent failure rate {failure_rate:.1%} exceeds "
-                    f"threshold {ALERT_FAILURE_RATE:.0%} "
-                    f"({data.get('failed_agent_runs', 0)}/{total_runs} runs)"
-                ),
-                "severity": "high",
-            })
+            alerts.append(
+                {
+                    "rule": "failure_rate",
+                    "current_value": failure_rate,
+                    "threshold": ALERT_FAILURE_RATE,
+                    "message": (
+                        f"Agent failure rate {failure_rate:.1%} exceeds "
+                        f"threshold {ALERT_FAILURE_RATE:.0%} "
+                        f"({data.get('failed_agent_runs', 0)}/{total_runs} runs)"
+                    ),
+                    "severity": "high",
+                }
+            )
 
         # ── Post alerts to Linear if credentials available ──
         if alerts and linear_api_key:
@@ -492,9 +621,7 @@ class TelemetryCollector:
 
         return alerts
 
-    def _post_alert_comments(
-        self, alerts: list[dict[str, Any]], api_key: str
-    ) -> None:
+    def _post_alert_comments(self, alerts: list[dict[str, Any]], api_key: str) -> None:
         """Post alert comments to the most-recently-affected Linear issues.
 
         For each alert, finds the issue that generated the most related
@@ -543,21 +670,34 @@ class TelemetryCollector:
                 )
 
                 # Post via Linear API (curl subprocess for reliability)
-                payload = json.dumps({
-                    "query": (
-                        "mutation { commentCreate(input: "
-                        f'{{ issueId: "{issue_id}", body: "{body}" }}'
-                        ") { success } }"
-                    ),
-                })
+                payload = json.dumps(
+                    {
+                        "query": (
+                            "mutation { commentCreate(input: "
+                            f'{{ issueId: "{issue_id}", body: "{body}" }}'
+                            ") { success } }"
+                        ),
+                    }
+                )
                 try:
-                    result = _sp.run([
-                        "curl", "-s", "-X", "POST",
-                        "https://api.linear.app/graphql",
-                        "-H", f"Authorization: {api_key}",
-                        "-H", "Content-Type: application/json",
-                        "-d", payload,
-                    ], capture_output=True, text=True, timeout=15)
+                    result = _sp.run(
+                        [
+                            "curl",
+                            "-s",
+                            "-X",
+                            "POST",
+                            "https://api.linear.app/graphql",
+                            "-H",
+                            f"Authorization: {api_key}",
+                            "-H",
+                            "Content-Type: application/json",
+                            "-d",
+                            payload,
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=15,
+                    )
                     resp = json.loads(result.stdout)
                     ok = resp.get("data", {}).get("commentCreate", {}).get("success")
                     if not ok:
@@ -596,6 +736,11 @@ class TelemetryCollector:
             "telemetry_credit_ledger": ("recorded_at", RETENTION_CREDIT_LEDGER),
             "telemetry_token_metrics": ("recorded_at", RETENTION_LOOP_EVENTS),
             "telemetry_validation_events": ("created_at", RETENTION_LOOP_EVENTS),
+            # Gap 12 tables
+            "telemetry_review_completed": ("created_at", RETENTION_LOOP_EVENTS),
+            "telemetry_plugin_registered": ("created_at", RETENTION_LOOP_EVENTS),
+            "telemetry_hook_fired": ("created_at", RETENTION_LOOP_EVENTS),
+            "telemetry_pipeline_action": ("created_at", RETENTION_LOOP_EVENTS),
         }
 
         try:
@@ -658,10 +803,15 @@ class TelemetryCollector:
                             resolved, depth, parent_id, created_at)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
-                            data["run_id"], data["issue_id"], data["agent"],
-                            data["loop_type"], data.get("trigger"),
-                            data.get("resolved", 0), data.get("depth", 0),
-                            data.get("parent_id"), data["created_at"],
+                            data["run_id"],
+                            data["issue_id"],
+                            data["agent"],
+                            data["loop_type"],
+                            data.get("trigger"),
+                            data.get("resolved", 0),
+                            data.get("depth", 0),
+                            data.get("parent_id"),
+                            data["created_at"],
                         ),
                     )
                 elif event_type == "tokens":
@@ -672,11 +822,17 @@ class TelemetryCollector:
                             vram_mb, recorded_at)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
-                            data["run_id"], data["agent"], data["provider"],
-                            data.get("model"), data.get("prompt_tokens", 0),
-                            data.get("completion_tokens", 0), data.get("ttft_ms", 0.0),
-                            data.get("tps", 0.0), data.get("context_pct", 0.0),
-                            data.get("vram_mb", 0), data["recorded_at"],
+                            data["run_id"],
+                            data["agent"],
+                            data["provider"],
+                            data.get("model"),
+                            data.get("prompt_tokens", 0),
+                            data.get("completion_tokens", 0),
+                            data.get("ttft_ms", 0.0),
+                            data.get("tps", 0.0),
+                            data.get("context_pct", 0.0),
+                            data.get("vram_mb", 0),
+                            data["recorded_at"],
                         ),
                     )
                 elif event_type == "validation":
@@ -687,10 +843,15 @@ class TelemetryCollector:
                             watch_sec, created_at)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
-                            data["run_id"], data["agent"], data["event_type"],
-                            data.get("total_tests", 0), data.get("passed", 0),
-                            data.get("failed", 0), data.get("sandbox_id"),
-                            data.get("rollback", 0), data.get("watch_sec", 0.0),
+                            data["run_id"],
+                            data["agent"],
+                            data["event_type"],
+                            data.get("total_tests", 0),
+                            data.get("passed", 0),
+                            data.get("failed", 0),
+                            data.get("sandbox_id"),
+                            data.get("rollback", 0),
+                            data.get("watch_sec", 0.0),
                             data["created_at"],
                         ),
                     )
@@ -702,11 +863,16 @@ class TelemetryCollector:
                             credits_spent, error_message)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
-                            data["run_id"], data["agent"],
-                            data.get("provider", ""), data.get("model"),
-                            data.get("issue_id", ""), data.get("status", "dispatched"),
-                            data["start_time"], data.get("end_time"),
-                            data.get("exit_code"), data.get("credits_spent", 0),
+                            data["run_id"],
+                            data["agent"],
+                            data.get("provider", ""),
+                            data.get("model"),
+                            data.get("issue_id", ""),
+                            data.get("status", "dispatched"),
+                            data["start_time"],
+                            data.get("end_time"),
+                            data.get("exit_code"),
+                            data.get("credits_spent", 0),
                             data.get("error_message"),
                         ),
                     )
@@ -718,9 +884,12 @@ class TelemetryCollector:
                                error_message = ?
                            WHERE run_id = ?""",
                         (
-                            data["status"], data["end_time"],
-                            data.get("exit_code"), data.get("credits_spent", 0),
-                            data.get("error_message"), data["run_id"],
+                            data["status"],
+                            data["end_time"],
+                            data.get("exit_code"),
+                            data.get("credits_spent", 0),
+                            data.get("error_message"),
+                            data["run_id"],
                         ),
                     )
                 elif event_type == "credit":
@@ -730,10 +899,15 @@ class TelemetryCollector:
                             operation, recorded_at, client_id, project_id)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
-                            data["run_id"], data["agent"], data["provider"],
-                            data.get("model"), data["credits_spent"],
-                            data.get("operation", ""), data["recorded_at"],
-                            data.get("client_id"), data.get("project_id"),
+                            data["run_id"],
+                            data["agent"],
+                            data["provider"],
+                            data.get("model"),
+                            data["credits_spent"],
+                            data.get("operation", ""),
+                            data["recorded_at"],
+                            data.get("client_id"),
+                            data.get("project_id"),
                         ),
                     )
                 elif event_type == "agy_live_state":
@@ -744,13 +918,79 @@ class TelemetryCollector:
                             rate_limits, raw_payload, recorded_at)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
-                            data["run_id"], data.get("active_model"),
+                            data["run_id"],
+                            data.get("active_model"),
                             data.get("prompt_tokens", 0),
                             data.get("completion_tokens", 0),
                             data.get("context_usage_pct", 0.0),
                             data.get("rate_limits"),
                             data.get("raw_payload"),
                             data["recorded_at"],
+                        ),
+                    )
+                # ── Gap 12: Review-pipeline event branches ──────
+                elif event_type == "review_completed":
+                    conn.execute(
+                        """INSERT INTO telemetry_review_completed
+                           (run_id, issue_id, reviewer, verdict, impact,
+                            rework_attempt, duration_sec, created_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            data.get("run_id", ""),
+                            data.get("issue_id", ""),
+                            data.get("reviewer", ""),
+                            data.get("verdict", ""),
+                            data.get("impact", ""),
+                            data.get("rework_attempt", 0),
+                            data.get("duration_sec", 0.0),
+                            data.get("created_at", ""),
+                        ),
+                    )
+                elif event_type == "plugin_registered":
+                    conn.execute(
+                        """INSERT INTO telemetry_plugin_registered
+                           (plugin_name, plugin_version, source, success,
+                            error, created_at)
+                           VALUES (?, ?, ?, ?, ?, ?)""",
+                        (
+                            data.get("plugin_name", ""),
+                            data.get("plugin_version", ""),
+                            data.get("source", ""),
+                            data.get("success", 1),
+                            data.get("error"),
+                            data.get("created_at", ""),
+                        ),
+                    )
+                elif event_type == "hook_fired":
+                    conn.execute(
+                        """INSERT INTO telemetry_hook_fired
+                           (hook_name, event_type, run_id, issue_id,
+                            success, error, duration_ms, created_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            data.get("hook_name", ""),
+                            data.get("event_type", ""),
+                            data.get("run_id"),
+                            data.get("issue_id"),
+                            data.get("success", 1),
+                            data.get("error"),
+                            data.get("duration_ms", 0.0),
+                            data.get("created_at", ""),
+                        ),
+                    )
+                elif event_type == "pipeline_action":
+                    conn.execute(
+                        """INSERT INTO telemetry_pipeline_action
+                           (action, run_id, issue_id, actor, details,
+                            created_at)
+                           VALUES (?, ?, ?, ?, ?, ?)""",
+                        (
+                            data.get("action", ""),
+                            data.get("run_id", ""),
+                            data.get("issue_id", ""),
+                            data.get("actor", "review-orchestrator"),
+                            data.get("details"),
+                            data.get("created_at", ""),
                         ),
                     )
 
@@ -869,22 +1109,74 @@ class TelemetryCollector:
                     ON agy_live_state(run_id);
                 CREATE INDEX IF NOT EXISTS idx_agy_live_time
                     ON agy_live_state(recorded_at);
+
+                CREATE TABLE IF NOT EXISTS telemetry_review_completed (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    run_id          TEXT NOT NULL,
+                    issue_id        TEXT NOT NULL,
+                    reviewer        TEXT NOT NULL,
+                    verdict         TEXT NOT NULL,
+                    impact          TEXT NOT NULL,
+                    rework_attempt  INTEGER DEFAULT 0,
+                    duration_sec    REAL DEFAULT 0.0,
+                    created_at      TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_review_completed_issue
+                    ON telemetry_review_completed(issue_id, created_at);
+                CREATE INDEX IF NOT EXISTS idx_review_completed_verdict
+                    ON telemetry_review_completed(verdict, created_at);
+
+                CREATE TABLE IF NOT EXISTS telemetry_plugin_registered (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    plugin_name     TEXT NOT NULL,
+                    plugin_version  TEXT,
+                    source          TEXT,
+                    success         INTEGER DEFAULT 0,
+                    error           TEXT,
+                    created_at      TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_plugin_name
+                    ON telemetry_plugin_registered(plugin_name, created_at);
+
+                CREATE TABLE IF NOT EXISTS telemetry_hook_fired (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    hook_name       TEXT NOT NULL,
+                    event_type      TEXT NOT NULL,
+                    run_id          TEXT,
+                    issue_id        TEXT,
+                    success         INTEGER DEFAULT 0,
+                    error           TEXT,
+                    duration_ms     REAL DEFAULT 0.0,
+                    created_at      TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_hook_name
+                    ON telemetry_hook_fired(hook_name, created_at);
+                CREATE INDEX IF NOT EXISTS idx_hook_issue
+                    ON telemetry_hook_fired(issue_id, created_at);
+
+                CREATE TABLE IF NOT EXISTS telemetry_pipeline_action (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    action          TEXT NOT NULL,
+                    run_id          TEXT NOT NULL,
+                    issue_id        TEXT NOT NULL,
+                    actor           TEXT,
+                    details         TEXT,
+                    created_at      TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_pipeline_action_issue
+                    ON telemetry_pipeline_action(issue_id, created_at);
             """)
             # ── Phase 4.4 migration: add client_id/project_id to credit_ledger ──
             try:
-                cursor = conn.execute(
-                    "PRAGMA table_info(telemetry_credit_ledger)"
-                )
+                cursor = conn.execute("PRAGMA table_info(telemetry_credit_ledger)")
                 existing_cols = {row[1] for row in cursor.fetchall()}
                 if "client_id" not in existing_cols:
                     conn.execute(
-                        "ALTER TABLE telemetry_credit_ledger "
-                        "ADD COLUMN client_id TEXT"
+                        "ALTER TABLE telemetry_credit_ledger ADD COLUMN client_id TEXT"
                     )
                 if "project_id" not in existing_cols:
                     conn.execute(
-                        "ALTER TABLE telemetry_credit_ledger "
-                        "ADD COLUMN project_id TEXT"
+                        "ALTER TABLE telemetry_credit_ledger ADD COLUMN project_id TEXT"
                     )
             except Exception:
                 pass  # Migration is best-effort
