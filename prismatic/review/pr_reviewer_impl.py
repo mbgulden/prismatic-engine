@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from typing import Any
 
 # Re-use the stub's contract
+from .apply_impact_rules import fire_hook
+from .hooks import HOOK_BEFORE_QUALITY_CHECKS, HOOK_BEFORE_SECRET_SCAN
 from .pr_reviewer import (
     APPROVE,
     NEEDS_DISCUSSION,
@@ -503,7 +505,15 @@ class RealPRReviewer:
 
         # Run all checks -- built-in first, then registry-added checks.
         findings: list[QualityFinding] = []
+
+        # Gap 11: fire HOOK_BEFORE_SECRET_SCAN (side-effect only; return ignored).
+        fire_hook(HOOK_BEFORE_SECRET_SCAN, args=(diff,), spec=spec)
+
         findings.extend(self._detect_secrets_with_registry(diff, spec))
+
+        # Gap 11: fire HOOK_BEFORE_QUALITY_CHECKS (side-effect only; return ignored).
+        fire_hook(HOOK_BEFORE_QUALITY_CHECKS, args=(diff,), spec=spec)
+
         findings.extend(check_function_length(diff))
         findings.extend(check_file_length(diff))
         findings.extend(check_test_coverage_heuristic(diff))

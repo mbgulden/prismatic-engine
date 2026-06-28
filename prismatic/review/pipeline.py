@@ -24,14 +24,18 @@ from __future__ import annotations
 import re
 import threading
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from .apply_impact_rules import apply_impact_rules
 from .pr_reviewer import (
     APPROVE,
     NEEDS_DISCUSSION,
     PRReviewResult,
     REQUEST_CHANGES,
 )
+
+if TYPE_CHECKING:
+    from .registry import ReviewerRegistry
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -288,10 +292,16 @@ class PipelineOrchestrator:
             factory.dispatch(decision.rework_payload)
     """
 
-    def __init__(self, max_rework_attempts: int = DEFAULT_MAX_REWORK_ATTEMPTS) -> None:
+    def __init__(
+        self,
+        max_rework_attempts: int = DEFAULT_MAX_REWORK_ATTEMPTS,
+        *,
+        registry: ReviewerRegistry | None = None,
+    ) -> None:
         self.max_rework_attempts = max_rework_attempts
         self._attempt_counts: dict[str, int] = {}
         self._lock = threading.Lock()
+        self._registry = registry  # Gap 11: impact/action rule dispatch
 
     def attempts_for(self, identifier: str) -> int:
         """How many rework attempts have been issued for this issue?
@@ -329,13 +339,34 @@ class PipelineOrchestrator:
         # process() calls with the same identifier cannot both dispatch
         # at the same counter snapshot.
         with self._lock:
+            # Gap 11: compose spec ONCE at the top of process() — O(N) over
+            # registered items; reused for both impact and action rule passes.
+            spec = self._registry.compose() if self._registry is not None else None
+
             impact = classify_impact(result)
             attempts = self._attempt_counts.get(identifier, 0)
+
+            # Gap 11: apply registered impact rules (first non-None wins).
+            if spec is not None:
+                impact = apply_impact_rules(
+                    result, impact, spec.impact_rules, channel="impact"
+                )
+
             action = decide_next_action(
                 result,
                 rework_attempts=attempts,
                 max_rework_attempts=self.max_rework_attempts,
             )
+
+            # Gap 11: apply registered action rules (separate pool from impact).
+            # A plugin author can register an action-only override without
+            # affecting impact classification. The channel guard in
+            # apply_impact_rules() ensures a rule returning an invalid value
+            # for the target channel is silently ignored.
+            if spec is not None:
+                action = apply_impact_rules(
+                    result, action, spec.action_rules, channel="action"
+                )
 
             rationale = (
                 f"verdict={result.verdict} impact={impact} "

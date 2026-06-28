@@ -15,6 +15,7 @@ verdict to be PASS.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import subprocess
@@ -1025,6 +1026,23 @@ def trigger_ned_review(
         )
 
     reviewer = reviewer or RealPRReviewer()
+
+    # Gap 11: fire HOOK_BEFORE_NED_REVIEW before the reviewer runs.
+    # Dispatch to checks registered on the reviewer's registry (if any).
+    # Each check is called with the issue dict; return values are ignored
+    # (side-effect-only hook). Exceptions are caught, logged, and skipped.
+    if hasattr(reviewer, "registry") and reviewer.registry is not None:
+        _ned_spec = reviewer.registry.compose()
+        for _ned_hook_fn in _ned_spec.checks:
+            try:
+                _ned_hook_fn(issue)
+            except Exception as _ned_exc:  # noqa: BLE001
+                logging.getLogger(__name__).warning(
+                    "HOOK_BEFORE_NED_REVIEW: handler %r raised %s — skipping",
+                    _ned_hook_fn,
+                    _ned_exc,
+                )
+
     result = reviewer.review_pr(pr_url)
 
     # Optional pipeline (Gap 8): classify impact, decide next action,
