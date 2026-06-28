@@ -5,6 +5,7 @@ Covers:
   - DriftGate and its variants
   - ShapeRouter label routing decisions
 """
+
 from __future__ import annotations
 
 import json
@@ -207,6 +208,7 @@ class TestCheckLinkedPr:
     def test_pr_found(self):
         def fake_check(lookup):
             return {"number": 42, "url": "https://github.com/x/y/pull/42"}
+
         result = check_linked_pr(
             "GRO-1",
             commit_sha="abc123",
@@ -219,6 +221,7 @@ class TestCheckLinkedPr:
     def test_pr_not_found(self):
         def fake_check(lookup):
             return None
+
         result = check_linked_pr(
             "GRO-1",
             commit_sha="abc123",
@@ -281,7 +284,9 @@ class TestCheckGoalMatch:
     """Layer 7: agent's output addresses the task's stated goal."""
 
     def test_keyword_overlap_passes(self):
-        task = "Refactor the dispatcher module to add retry logic with exponential backoff"
+        task = (
+            "Refactor the dispatcher module to add retry logic with exponential backoff"
+        )
         output = "I refactored the dispatcher to retry with exponential backoff. Added new logic."
         result = check_goal_match(task, output)
         assert result.passed is True
@@ -358,7 +363,9 @@ class TestRunVerification:
             pr_check_fn=lambda x: {"number": 1, "url": "x"},
         )
 
-        assert verdict.passed is True, f"Verdict failed: {[l.reason for l in verdict.failed_layers]}"
+        assert verdict.passed is True, (
+            f"Verdict failed: {[l.reason for l in verdict.failed_layers]}"
+        )
         assert len(verdict.failed_layers) == 0
 
     def test_drift_task_fails_workdir_and_files(self):
@@ -436,7 +443,10 @@ class TestRunVerification:
         path = save_verdict(verdict, base_dir=str(tmp_path))
         assert os.path.exists(path)
         # Filename should have underscores, not slashes
-        assert "/" not in os.path.basename(path).replace(".json", "") or "GRO-99_path_with_slashes" in path
+        assert (
+            "/" not in os.path.basename(path).replace(".json", "")
+            or "GRO-99_path_with_slashes" in path
+        )
 
     def test_path_traversal_in_workdir_fails(self, tmp_path, monkeypatch):
         """Regression: ../escape attempts must NOT pass workdir check.
@@ -630,3 +640,170 @@ def test_label_constants():
     assert TASK_SHAPE_VIOLATION == "task:shape-violation"
     assert OUTPUT_REQUIRES_VERIFICATION == "output:requires-verification"
     assert MAX_FILES_CHANGED == 50
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Gap 9: trigger_ned_review (factory wiring tests)
+# ─────────────────────────────────────────────────────────────────────
+
+
+class TestTriggerNedReview:
+    """Gap 9 / Part A: factory defaults to RealPRReviewer + PipelineOrchestrator.
+
+    These tests guard against regression of the default wiring. The
+    factory must:
+    - Default to RealPRReviewer (not StubPRReviewer)
+    - Accept an optional PipelineOrchestrator and invoke process()
+    - Leave the existing label-missing + pr-url-missing paths unchanged
+    """
+
+    def _make_issue(self, **overrides) -> dict:
+        """Build a minimal valid issue payload for trigger_ned_review."""
+        base = {
+            "identifier": "GRO-9999",
+            "labels": [{"name": "agent:ned-review"}],
+            "pr_url": "https://github.com/owner/repo/pull/1",
+        }
+        base.update(overrides)
+        return base
+
+    def test_default_reviewer_is_real_not_stub(self, monkeypatch):
+        """Without an injected reviewer, the factory must use RealPRReviewer.
+
+        Without this guard, the factory would silently fall back to the
+        stub (APPROVE always), defeating the point of Phase 2.
+        """
+        from prismatic.review import RealPRReviewer
+        from prismatic.quality.gates import trigger_ned_review
+
+        constructed: list[RealPRReviewer] = []
+
+        # Track when RealPRReviewer is constructed and short-circuit
+        # review_pr so the test doesn't hit the network.
+        original_init = RealPRReviewer.__init__
+
+        def tracking_init(self, *args, **kwargs):
+            original_init(self, *args, **kwargs)
+            constructed.append(self)
+
+        monkeypatch.setattr(RealPRReviewer, "__init__", tracking_init)
+        monkeypatch.setattr(
+            RealPRReviewer,
+            "review_pr",
+            lambda self, pr_url: _stub_result("APPROVE"),
+        )
+
+        result = trigger_ned_review(self._make_issue())
+
+        assert len(constructed) == 1, (
+            "Factory did not construct RealPRReviewer as default; "
+            f"regression detected. Got {len(constructed)} constructions."
+        )
+        assert result.verdict == "APPROVE"
+
+    def test_explicit_stub_reviewer_overrides_default(self):
+        """Tests can still inject StubPRReviewer for determinism."""
+        from prismatic.quality.gates import trigger_ned_review
+        from prismatic.review import StubPRReviewer
+
+        result = trigger_ned_review(self._make_issue(), reviewer=StubPRReviewer())
+        assert result.verdict == "APPROVE"
+
+    def test_pipeline_invoked_when_provided(self):
+        """When a PipelineOrchestrator is injected, process() is called."""
+        from prismatic.quality.gates import trigger_ned_review
+        from prismatic.review import StubPRReviewer
+        from prismatic.review.pipeline import (
+            IMPACT_TRIVIAL,
+            ACTION_ADVANCE,
+        )
+
+        captured: list[dict] = []
+
+        class TrackingOrchestrator:
+            def process(self, *, identifier, pr_url, result):
+                captured.append(
+                    {"identifier": identifier, "pr_url": pr_url, "result": result}
+                )
+                # Mimic real return shape.
+                from dataclasses import dataclass
+
+                @dataclass
+                class StubDecision:
+                    impact: str
+                    action: str
+                    rationale: str = "tracked"
+                    rework_payload: object = None
+                    metadata: dict | None = None
+
+                return StubDecision(IMPACT_TRIVIAL, ACTION_ADVANCE)
+
+        result = trigger_ned_review(
+            self._make_issue(),
+            reviewer=StubPRReviewer(),
+            pipeline=TrackingOrchestrator(),
+        )
+
+        assert len(captured) == 1
+        assert captured[0]["identifier"] == "GRO-9999"
+        assert captured[0]["pr_url"] == "https://github.com/owner/repo/pull/1"
+        assert "pipeline" in result.metadata
+        assert result.metadata["pipeline"]["action"] == "advance"
+
+    def test_pipeline_not_invoked_when_omitted(self):
+        """When no pipeline is passed, the metadata stays clean."""
+        from prismatic.quality.gates import trigger_ned_review
+        from prismatic.review import StubPRReviewer
+
+        result = trigger_ned_review(
+            self._make_issue(),
+            reviewer=StubPRReviewer(),
+        )
+        assert "pipeline" not in result.metadata
+
+    def test_real_reviewer_failure_does_not_crash_trigger(self, monkeypatch):
+        """If RealPRReviewer.review_pr raises, the trigger must surface the
+        exception (or wrap it) rather than silently APPROVE."""
+        from prismatic.quality.gates import trigger_ned_review
+        from prismatic.review import RealPRReviewer
+
+        def boom(self, pr_url):
+            raise RuntimeError("gh CLI not found")
+
+        monkeypatch.setattr(RealPRReviewer, "review_pr", boom)
+
+        with pytest.raises(RuntimeError, match="gh CLI not found"):
+            trigger_ned_review(self._make_issue())
+
+    def test_label_missing_short_circuits(self):
+        """Label missing → triggered=False, no reviewer call."""
+        from prismatic.quality.gates import trigger_ned_review
+
+        result = trigger_ned_review(self._make_issue(labels=[{"name": "unrelated"}]))
+        assert result.triggered is False
+        assert result.metadata.get("reason") == "label_missing"
+
+    def test_pr_url_missing_returns_needs_discussion(self):
+        """No PR URL → NEEDS_DISCUSSION + In Review state."""
+        from prismatic.quality.gates import trigger_ned_review
+
+        result = trigger_ned_review(self._make_issue(pr_url=""))
+        assert result.triggered is True
+        assert result.verdict == "NEEDS_DISCUSSION"
+
+
+def _stub_result(verdict: str) -> "PRReviewResult":
+    """Build a minimal PRReviewResult for testing without network."""
+    from prismatic.review import PRReviewResult
+
+    return PRReviewResult(
+        verdict=verdict,
+        summary="test stub",
+        inline_comments=[],
+        metadata={
+            "critical_count": 0,
+            "high_count": 0,
+            "warning_count": 0,
+            "reviewer": "test",
+        },
+    )
