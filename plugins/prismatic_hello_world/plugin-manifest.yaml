@@ -1,0 +1,94 @@
+# prismatic-hello-world — canonical reference plugin manifest
+#
+# This file is the canonical example of a fully populated plugin-manifest.yaml
+# per GRO-1497 §1.1. Every field is filled in with a working value so new
+# plugin authors can copy this directory and adapt it to their own needs.
+#
+# Naming convention:
+#   - `name`         — display name (dashes OK; this is what humans read)
+#   - `entry_point`  — Python import path (underscores ONLY; dashes break imports)
+#
+# See plugins/prismatic_hello_world/README.md for the full walkthrough.
+
+# Schema version meta-information
+schema_version: "1.0.0"
+
+# Unique identifier (alphanumeric, lowercase, dashes/underscores).
+# Used as the key in PluginLoader.loaded_plugins; surfaces in logs/telemetry.
+name: "prismatic-hello-world"
+
+# Semantic version of the plugin
+version: "1.0.0"
+
+# Short summary of capabilities (one-line; surfaces in `prismatic plugins list`)
+description: "Canonical reference plugin — registers one of each Sprint 1 contribution pattern (secret_pattern, check, impact_rule, action_rule) so plugin authors can copy this directory and adapt."
+
+# Author identity (free-form; surfaced in plugin catalog UI)
+author: "Ned (agent:ned)"
+
+# License — keep explicit; downstream users need to know redistribution terms
+license: "MIT"
+
+# Fully qualified Python class path acting as the entry point.
+# IMPORTANT: module path uses UNDERSCORES — Python cannot import dashed names.
+#   module_path = prismatic_hello_world.plugin  (underscores)
+#   class_name  = HelloWorldPlugin
+entry_point: "prismatic_hello_world.plugin:HelloWorldPlugin"
+
+# SemVer range for supported core engine versions.
+# This plugin targets the same range as the engine itself (currently 0.2.0);
+# tighten for plugins that depend on newer API surfaces. We use a permissive
+# `>=0.1.0` lower bound so this canonical reference works across the whole
+# 0.x → 1.0 development arc.
+core_version_constraint: ">=0.1.0, <2.0.0"
+
+# External dependencies — installed by the host at plugin load time.
+# Empty here (the plugin uses only stdlib + prismatic internals).
+dependencies:
+  pip: []
+  system: []
+
+# Capabilities the plugin requires from the host environment.
+# The PluginLoader cross-checks these against an environment capability set
+# at load time (see tests/test_plugin_loader_capability_validation.py).
+#   - secret-scan-engine:   uses ReviewerRegistry.register_secret_pattern
+#   - quality-check-engine: uses ReviewerRegistry.register_check
+#   - impact-rule-engine:   uses ReviewerRegistry.register_impact_rule
+#   - action-rule-engine:   uses ReviewerRegistry.register_action_rule
+required_capabilities:
+  - "secret-scan-engine"
+  - "quality-check-engine"
+  - "impact-rule-engine"
+  - "action-rule-engine"
+
+# Provider constraints — list of providers this plugin is blocked from running
+# under. Useful for plugins that conflict with a specific vendor's runtime
+# (e.g. "this plugin only works under direct GHA, not self-hosted runners").
+# Empty here; the canonical example doesn't exclude any provider.
+blocked_providers: []
+
+# Custom persona extensions contributed by this plugin.
+# Empty here — HelloWorldPlugin doesn't ship a persona, only review patterns.
+personas: []
+
+# Lifecycle hooks subscribed to. PluginLoader.execute_hook() fans these out
+# to every loaded plugin in try-catch isolation.
+hooks:
+  - "on_init"
+  - "before_task_execution"
+  - "after_task_execution"
+  - "on_state_transition"
+
+# Tags for plugin catalog filtering (free-form strings).
+tags:
+  - "reference"
+  - "sprint-1"
+  - "example"
+
+# Documentation URL — surfaced in plugin catalog UI.
+documentation_url: "https://github.com/your-org/prismatic-engine/blob/main/plugins/prismatic_hello_world/README.md"
+
+# Minimum core API version the plugin depends on.
+# Distinct from core_version_constraint: that constrains the engine semver;
+# this is a coarse-grained API-level gate (Sprint 2 will add real semantics).
+min_core_api_version: "1.0.0"
