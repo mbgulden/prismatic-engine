@@ -60,6 +60,16 @@ from .failure import (
     OUTPUT_REQUIRES_ATTENTION,
     COUNTER_PATH,
 )
+from .smoke import (
+    # Smoke test (Gap 5)
+    SmokeFinding,
+    SmokeTestResult,
+    extract_claimed_paths,
+    is_path_traversal,
+    file_exists,
+    file_has_substantive_content,
+    smoke_test,
+)
 
 __all__ = [
     # Verdict
@@ -103,4 +113,12 @@ __all__ = [
     "get_failure_count",
     "OUTPUT_REQUIRES_ATTENTION",
     "COUNTER_PATH",
+    # Smoke test (Gap 5)
+    "SmokeFinding",
+    "SmokeTestResult",
+    "extract_claimed_paths",
+    "is_path_traversal",
+    "file_exists",
+    "file_has_substantive_content",
+    "smoke_test",
 ]
