@@ -29,7 +29,16 @@ class FailureMode(Enum):
     IMPOSSIBLE = "impossible"         # Task cannot be completed — don't retry, escalate
 
 
+# Linear label constants (referenced by policies below)
+TASK_SHAPE_VIOLATION = "task:shape-violation"
+OUTPUT_REQUIRES_ATTENTION = "output:requires-attention"
+AGENT_FRED_LABEL = "agent:fred"
+
+
 # Pattern → FailureMode mapping (order matters: first match wins)
+# Notes:
+#   - Use word boundaries (\\b) to avoid matching substrings like 'retry_handler'
+#   - Match standard POSIX error messages verbatim
 FAILURE_PATTERNS: list[tuple[str, FailureMode, str]] = [
     # RATE_LIMIT patterns — API throttling
     (r"rate.?limit|429.*too many|quota.*exhaust|RESOURCE_EXHAUSTED", FailureMode.RATE_LIMIT, "rate_limit_hit"),
@@ -41,7 +50,7 @@ FAILURE_PATTERNS: list[tuple[str, FailureMode, str]] = [
 
     # IMPOSSIBLE patterns — task cannot succeed
     (r"permission denied|EACCES|EPERM|access denied", FailureMode.IMPOSSIBLE, "permission_denied"),
-    (r"does not exist|no such file.*cannot", FailureMode.IMPOSSIBLE, "missing_dependency"),
+    (r"does not exist|no such file or directory", FailureMode.IMPOSSIBLE, "missing_dependency"),
     (r"not implemented|unsupported feature|TODO.*implement", FailureMode.IMPOSSIBLE, "feature_missing"),
 
     # LOGIC_ERROR patterns — code bugs in agent output
@@ -50,11 +59,17 @@ FAILURE_PATTERNS: list[tuple[str, FailureMode, str]] = [
     (r"AssertionError|assert.*failed|expected.*got", FailureMode.LOGIC_ERROR, "assertion_failure"),
 
     # TRANSIENT patterns — network/blip/I/O
+    # Word boundary on \bretry\b to avoid matching 'retry_handler', 'should_retry'
     (r"timed?.?out|timeout|connection refused|ECONNREFUSED", FailureMode.TRANSIENT, "network_timeout"),
     (r"connection reset|ECONNRESET|ETIMEDOUT|EPIPE", FailureMode.TRANSIENT, "connection_reset"),
     (r"503.*service unavailable|502.*bad gateway|504.*gateway timeout", FailureMode.TRANSIENT, "http_5xx"),
-    (r"temporary failure|try again|retry", FailureMode.TRANSIENT, "transient_signal"),
+    (r"\btemporary failure|\btry again\b|\bretry\b", FailureMode.TRANSIENT, "transient_signal"),
 ]
+
+
+# Maximum log size we'll classify. Larger logs get truncated to avoid
+# pathological performance on multi-MB error logs.
+MAX_LOG_SIZE = 16_384  # 16 KB
 
 
 @dataclass
@@ -69,12 +84,16 @@ class RetryPolicy:
 
 
 # Mode → Policy mapping (the heart of smart retry)
+# NOTE: TRANSIENT and RATE_LIMIT escalate to OUTPUT_REQUIRES_ATTENTION on
+# exhaustion, NOT back to dispatch:ready. Per PR #35 review, re-adding
+# dispatch:ready creates an unbounded retry loop because the factory would
+# immediately re-pick the task.
 POLICIES: dict[FailureMode, RetryPolicy] = {
-    FailureMode.TRANSIENT:       RetryPolicy(max_attempts=3, backoff_seconds=5.0,  escalate_to="dispatch:ready"),
-    FailureMode.RATE_LIMIT:      RetryPolicy(max_attempts=5, backoff_seconds=60.0, escalate_to="dispatch:ready"),
-    FailureMode.SHAPE_VIOLATION: RetryPolicy(max_attempts=0, backoff_seconds=0.0,  escalate_to="task:shape-violation"),
-    FailureMode.LOGIC_ERROR:     RetryPolicy(max_attempts=1, backoff_seconds=30.0, escalate_to="agent:fred"),
-    FailureMode.IMPOSSIBLE:      RetryPolicy(max_attempts=0, backoff_seconds=0.0,  escalate_to="output:requires-attention"),
+    FailureMode.TRANSIENT:       RetryPolicy(max_attempts=3, backoff_seconds=5.0,  escalate_to=OUTPUT_REQUIRES_ATTENTION),
+    FailureMode.RATE_LIMIT:      RetryPolicy(max_attempts=5, backoff_seconds=60.0, escalate_to=OUTPUT_REQUIRES_ATTENTION),
+    FailureMode.SHAPE_VIOLATION: RetryPolicy(max_attempts=0, backoff_seconds=0.0,  escalate_to=TASK_SHAPE_VIOLATION),
+    FailureMode.LOGIC_ERROR:     RetryPolicy(max_attempts=1, backoff_seconds=30.0, escalate_to=AGENT_FRED_LABEL),
+    FailureMode.IMPOSSIBLE:      RetryPolicy(max_attempts=0, backoff_seconds=0.0,  escalate_to=OUTPUT_REQUIRES_ATTENTION),
 }
 
 
@@ -101,16 +120,37 @@ class ClassificationResult:
         }
 
 
-def classify_failure(error_log: str, attempt_count: int = 0) -> ClassificationResult:
+def classify_failure(error_log: "str | None", attempt_count: int = 0) -> ClassificationResult:
     """Inspect an error log + current attempt count and return a ClassificationResult.
 
     Args:
-        error_log: The agent's error log / stderr / transcript tail
+        error_log: The agent's error log / stderr / transcript tail. None is tolerated.
         attempt_count: How many times this task has been attempted (0 = first try)
 
     Returns:
         ClassificationResult with mode, policy, and retry decision
+
+    Notes:
+        - error_log is truncated to MAX_LOG_SIZE (16 KB) for performance
+        - None is treated as empty log (caller bug, but we don't crash)
     """
+    # Type guard: None or non-string → empty log
+    if error_log is None or not isinstance(error_log, str):
+        policy = POLICIES[FailureMode.TRANSIENT]
+        return ClassificationResult(
+            mode=FailureMode.TRANSIENT,
+            matched_pattern="",
+            matched_label="invalid_log_type",
+            policy=policy,
+            attempt=attempt_count,
+            should_retry=(attempt_count < policy.max_attempts),
+            reason=f"Invalid log type ({type(error_log).__name__}) — treating as transient",
+        )
+
+    # Truncate huge logs (performance)
+    if len(error_log) > MAX_LOG_SIZE:
+        error_log = error_log[-MAX_LOG_SIZE:]  # Keep the most recent (where errors usually are)
+
     if not error_log:
         # Empty log = unknown failure mode — treat as transient (cheap to retry)
         policy = POLICIES[FailureMode.TRANSIENT]
@@ -191,21 +231,42 @@ COUNTER_PATH = "/tmp/failure_counter.json"
 
 
 def _load_counter() -> dict[str, int]:
-    """Load failure counter from disk."""
+    """Load failure counter from disk with file locking to prevent races."""
     if not os.path.exists(COUNTER_PATH):
         return {}
     try:
         with open(COUNTER_PATH) as f:
-            return json.load(f)
+            # Try shared lock (non-blocking on Linux)
+            try:
+                import fcntl
+                fcntl.flock(f.fileno(), fcntl.LOCK_SH)
+                try:
+                    return json.load(f)
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            except (ImportError, OSError):
+                # No fcntl (Windows) or lock unavailable — best-effort read
+                return json.load(f)
     except (json.JSONDecodeError, OSError):
         return {}
 
 
 def _save_counter(counter: dict[str, int]) -> None:
-    """Save failure counter to disk."""
+    """Save failure counter to disk with exclusive lock."""
     Path(COUNTER_PATH).parent.mkdir(parents=True, exist_ok=True)
     with open(COUNTER_PATH, "w") as f:
-        json.dump(counter, f, indent=2)
+        try:
+            import fcntl
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                json.dump(counter, f, indent=2)
+                f.flush()
+                return
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        except (ImportError, OSError):
+            # No fcntl — best-effort write
+            json.dump(counter, f, indent=2)
 
 
 def increment_failure(issue_id: str) -> int:
@@ -232,9 +293,6 @@ def get_failure_count(issue_id: str) -> int:
 # ─────────────────────────────────────────────────────────────────────
 # Linear integration — apply classification to a Linear issue
 # ─────────────────────────────────────────────────────────────────────
-
-# Failure label for impossible tasks (Phase 2 adds this label)
-OUTPUT_REQUIRES_ATTENTION = "output:requires-attention"
 
 
 def apply_failure_classification(
@@ -279,7 +337,9 @@ def apply_failure_classification(
 def reset_after_success(issue_id: str, linear_api_fn: Any | None = None) -> None:
     """Reset failure counter after a task succeeds.
 
-    Also clears the escalate_to label if it was applied during retries.
+    NOTE: Linear label cleanup is the caller's responsibility — this function
+    does NOT remove any escalation labels that were applied during retries.
+    To clean up labels, pass a linear_api_fn that handles label removal.
     """
     reset_failure(issue_id)
     # Note: Linear label cleanup is the caller's responsibility
@@ -300,8 +360,14 @@ def should_retry(error_log: str, attempt_count: int = 0) -> tuple[bool, FailureM
     return result.should_retry, result.mode, result.policy.backoff_seconds
 
 
-def wait_for_retry(error_log: str, attempt_count: int = 0) -> bool:
+def wait_for_retry(error_log: str, attempt_count: int = 0, max_sleep: float = 30.0) -> bool:
     """Sleep for the appropriate backoff, return True if should retry.
+
+    Args:
+        error_log: The agent's error log
+        attempt_count: Current retry count
+        max_sleep: Cap on sleep time (default 30s). Prevents blocking on
+                   rate-limit backoffs that exceed this threshold.
 
     Usage:
         if wait_for_retry(error_log, attempt):
@@ -311,5 +377,5 @@ def wait_for_retry(error_log: str, attempt_count: int = 0) -> bool:
     """
     should, mode, backoff = should_retry(error_log, attempt_count)
     if should and backoff > 0:
-        time.sleep(backoff)
+        time.sleep(min(backoff, max_sleep))
     return should
