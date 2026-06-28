@@ -24,7 +24,8 @@ from .pr_reviewer import (
     REQUEST_CHANGES,
     NEEDS_DISCUSSION,
 )
-from .pr_reviewer_impl import RealPRReviewer
+from .apply_impact_rules import apply_impact_rules, fire_hook
+from .pr_reviewer_impl import QualityFinding, RealPRReviewer
 from .pipeline import (
     ACTIONS,
     ACTION_ADVANCE,
@@ -66,6 +67,9 @@ __all__ = [
     "PRReviewer",
     "StubPRReviewer",
     "RealPRReviewer",
+    "QualityFinding",
+    "apply_impact_rules",
+    "fire_hook",
     "PipelineDecision",
     "PipelineOrchestrator",
     "ReworkPayload",

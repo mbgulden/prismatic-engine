@@ -368,20 +368,30 @@ class TestHooksModule:
         assert QualityCheck is not None
 
     def test_register_impact_rule_docstring_warns(self):
-        """P0 fix from meta-review 2026-06-28: register_impact_rule docstring
-        must disclose that the channel is currently inert.
+        """Gap 11 update: register_impact_rule docstring must describe the
+        now-active (wired) channel, NOT the old inert status.
 
-        A plugin author registering a safety-critical escalation rule
-        must see the warning before they ship a false-safe system.
+        The channel was wired in Gap 11 / PR #XX. Plugin authors should
+        see that their impact rules will take effect in production reviews
+        via PipelineOrchestrator.process().
         """
         from prismatic.review import ReviewerRegistry
 
         doc = ReviewerRegistry.register_impact_rule.__doc__ or ""
-        assert "Currently inert" in doc, (
-            "register_impact_rule() docstring must warn that the channel "
-            "is currently inert (Gap 9 / Part C wires it)."
+        assert "Currently inert" not in doc, (
+            "register_impact_rule() docstring must NOT say 'Currently inert' "
+            "after Gap 11 wires the channel."
         )
-        assert "TODO Gap 9 / Part C" in doc, (
-            "register_impact_rule() docstring must point to Gap 9 / Part C "
-            "as the wiring PR."
+        assert "TODO Gap 9 / Part C" not in doc, (
+            "register_impact_rule() docstring must NOT still reference the old TODO "
+            "after Gap 11 lands."
+        )
+        # Positive contract: docstring references where the wiring lives.
+        assert "Wired" in doc, (
+            "register_impact_rule() docstring must confirm the channel is wired "
+            "(mention 'Wired' and point to PipelineOrchestrator.process())."
+        )
+        assert "PipelineOrchestrator" in doc, (
+            "register_impact_rule() docstring must reference PipelineOrchestrator "
+            "so plugin authors know where their rules fire."
         )
