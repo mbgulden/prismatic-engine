@@ -18,6 +18,7 @@ The stub returns ``APPROVE`` with an empty comment list. Tests and the
 trigger rely on these values; the real reviewer (tasks #1–5) plugs in
 without changing the trigger contract.
 """
+
 from __future__ import annotations
 
 import os
@@ -110,8 +111,7 @@ class PRReviewer(Protocol):
     GitHub-API-backed reviewer built in tasks #1–5.
     """
 
-    def review_pr(self, pr_url: str) -> PRReviewResult:
-        ...
+    def review_pr(self, pr_url: str) -> PRReviewResult: ...
 
 
 # ─────────────────────────────────────────────────────────────────────

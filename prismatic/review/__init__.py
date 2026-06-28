@@ -12,6 +12,7 @@ decisions. The heavy lifting (diff fetch, secret scan, lint, complexity,
 coverage heuristics, GitHub API) lives in tasks #1–5 and plugs in here
 without changing the trigger contract.
 """
+
 from __future__ import annotations
 
 from .pr_reviewer import (
