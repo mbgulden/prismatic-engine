@@ -133,6 +133,10 @@ def extract_claimed_paths(agent_output: str) -> list[str]:
             # Skip if it looks like a version string or pure number
             if re.match(r"^\d+\.\d+", path):
                 continue
+            # Skip git commit SHAs (40 hex chars in backticks is common in agent logs)
+            # Per PR #36 review: hashes like 6c6ee9526abc123... were being extracted as paths
+            if re.match(r"^[0-9a-f]{20,}$", path, re.IGNORECASE):
+                continue
             claimed.add(path)
 
     return sorted(claimed)
@@ -185,9 +189,9 @@ def file_has_substantive_content(path: str, workdir: str = ".") -> tuple[bool, s
         except OSError as e:
             return False, f"error reading file: {e}"
 
-        # Detect binary: if more than 1% of bytes are null bytes, it's binary
+        # Detect binary: if 1% or more of bytes are null bytes, it's binary
         null_count = raw_bytes.count(b"\x00")
-        if size > 0 and null_count / size > 0.01:
+        if size > 0 and null_count / size >= 0.01:
             return True, f"binary file ({size} bytes, {null_count} null bytes)"
 
         # Try to decode as text
@@ -227,6 +231,10 @@ def smoke_test(agent_output: str, workdir: str = ".") -> SmokeTestResult:
 
     Args:
         agent_output: The agent's narrative output ("I created X...")
+                       NOTE: This should be the agent's RESULT/WALKTHROUGH section,
+                       not the launcher log file. Launcher logs contain only
+                       `[launcher] ...` metadata, which produces vacuous passes.
+                       See okf/operations/pr36-review-feedback.md for details.
         workdir: Repository root for resolving relative paths
 
     Returns:

@@ -85,6 +85,41 @@ class TestExtractClaimedPaths:
         # foo.py appears multiple times — should be deduplicated
         assert claimed.count("foo.py") <= 1
 
+    def test_git_sha_filtered_out(self):
+        """Per PR #36 review: 40-hex-char SHA in backticks should NOT be a path."""
+        output = "Committed at `6c6ee9526abc123def456789012345678901234`"
+        claimed = extract_claimed_paths(output)
+        assert "6c6ee9526abc123def456789012345678901234" not in claimed
+
+    def test_short_hex_not_filtered(self):
+        """Short hex strings (not SHAs) should still be considered as paths"""
+        output = "See `abc123` for details"
+        claimed = extract_claimed_paths(output)
+        # "abc123" is 6 chars — doesn't match SHA pattern (needs 20+), so it's still a path
+        assert "abc123" in claimed  # short hex IS treated as a path
+
+
+class TestBinaryDetectionBoundary:
+    """Per PR #36 review: off-by-one at exactly 1% null bytes."""
+
+    def test_exactly_1_percent_nulls_is_binary(self, tmp_path):
+        # 100 bytes, 1 null = exactly 1% — should be binary
+        f = tmp_path / "boundary.dat"
+        f.write_bytes(b"\x00" + b"x" * 99)
+        has_content, detail = file_has_substantive_content(str(f))
+        assert has_content is True
+        assert "binary" in detail.lower()
+
+    def test_just_under_1_percent_is_text(self, tmp_path):
+        # 200 bytes, 1 null = 0.5% — should NOT be binary
+        f = tmp_path / "mostly_text.dat"
+        content = b"\x00" + b"x" * 199
+        f.write_bytes(content)
+        has_content, detail = file_has_substantive_content(str(f))
+        # Will be classified as text since null ratio < 1%
+        # (Note: content is "x" repeated, so it'll be flagged as having substantive content)
+        assert "binary" not in detail.lower()
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Path traversal tests
