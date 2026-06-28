@@ -853,8 +853,9 @@ from prismatic.review.pr_reviewer import (  # noqa: E402  (placed after the gate
     PRReviewResult,
     PRReviewer,
     REQUEST_CHANGES,
-    StubPRReviewer,
 )
+from prismatic.review.pr_reviewer_impl import RealPRReviewer  # noqa: E402
+from prismatic.review.pipeline import PipelineOrchestrator  # noqa: E402
 
 
 # Linear state targets produced by the trigger.
@@ -956,6 +957,7 @@ def trigger_ned_review(
     issue: dict[str, Any],
     reviewer: PRReviewer | None = None,
     *,
+    pipeline: PipelineOrchestrator | None = None,
     post_comment: Callable[[str, str], None] | None = None,
     transition_state: Callable[[str, str], None] | None = None,
 ) -> NedReviewDecision:
@@ -968,9 +970,14 @@ def trigger_ned_review(
 
     1. Checks for the ``agent:ned-review`` label.
     2. Calls ``reviewer.review_pr(pr_url)`` to get a :class:`PRReviewResult`.
-    3. Builds the Linear comment body via :func:`_format_linear_comment`.
-    4. Calls ``post_comment(identifier, body)`` if provided.
-    5. Calls ``transition_state(identifier, target_state)`` if provided.
+    3. If a ``pipeline`` is provided, calls ``pipeline.process(...)`` to
+       classify impact + decide next action (advance / hold / rework / give_up).
+    4. Builds the Linear comment body via :func:`_format_linear_comment`.
+    5. Calls ``post_comment(identifier, body)`` if provided.
+    6. Calls ``transition_state(identifier, target_state)`` if provided.
+
+    Defaults: ``reviewer`` defaults to :class:`RealPRReviewer` (Gap 4).
+    Pass an explicit ``reviewer`` (e.g. ``StubPRReviewer()``) to override.
 
     The two I/O callbacks are dependency-injected so the trigger stays
     unit-testable without a real Linear client. Production callers wire
@@ -1017,8 +1024,41 @@ def trigger_ned_review(
             metadata={"reason": "pr_url_missing"},
         )
 
-    reviewer = reviewer or StubPRReviewer()
+    reviewer = reviewer or RealPRReviewer()
     result = reviewer.review_pr(pr_url)
+
+    # Optional pipeline (Gap 8): classify impact, decide next action,
+    # optionally build a rework payload. The pipeline decision is
+    # attached to metadata so downstream tooling (the factory's
+    # dispatcher) can route accordingly.
+    pipeline_decision: dict[str, Any] | None = None
+    if pipeline is not None:
+        decision = pipeline.process(
+            identifier=identifier,
+            pr_url=pr_url,
+            result=result,
+        )
+        pipeline_decision = {
+            "impact": decision.impact,
+            "action": decision.action,
+            "rationale": decision.rationale,
+            "rework_payload": (
+                {
+                    "issue_identifier": decision.rework_payload.issue_identifier,
+                    "pr_url": decision.rework_payload.pr_url,
+                    "verdict": decision.rework_payload.verdict,
+                    "summary": decision.rework_payload.summary,
+                    "findings": decision.rework_payload.findings,
+                    "rework_attempt": decision.rework_payload.rework_attempt,
+                    "max_rework_attempts": decision.rework_payload.max_rework_attempts,
+                    "rework_label": decision.rework_payload.rework_label,
+                }
+                if decision.rework_payload is not None
+                else None
+            ),
+            "metadata": decision.metadata,
+        }
+
     target_state = NED_REVIEW_TARGET_STATE[result.verdict]
     comment = _format_linear_comment(result, pr_url)
 
@@ -1034,6 +1074,10 @@ def trigger_ned_review(
             transition_state(identifier, target_state)
         except Exception as exc:  # pragma: no cover - I/O failure path
             result.metadata.setdefault("transition_error", str(exc))
+
+    # Attach pipeline decision to metadata if it ran.
+    if pipeline_decision is not None:
+        result.metadata["pipeline"] = pipeline_decision
 
     return NedReviewDecision(
         identifier=identifier,
