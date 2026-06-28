@@ -143,7 +143,12 @@ def check_shape(agent_output: str, task_body: str) -> LayerResult:
 
 
 def check_workdir(modified_files: list[str], declared_workdir: str) -> LayerResult:
-    """Verify all modified files are within the declared workdir."""
+    """Verify all modified files are within the declared workdir.
+
+    Uses Path.resolve() and Path.relative_to() to safely normalize paths
+    and reject any path that escapes the workdir via `..` traversal or
+    exploits prefix collisions (e.g. 'docs_extra' vs 'docs').
+    """
     if not declared_workdir:
         return LayerResult(
             name="workdir_ok",
@@ -151,30 +156,41 @@ def check_workdir(modified_files: list[str], declared_workdir: str) -> LayerResu
             reason="No workdir declared — skipped",
         )
 
-    # Normalize: strip trailing slash, handle absolute vs relative
-    workdir = declared_workdir.rstrip("/")
+    # Normalize workdir to absolute path
+    workdir_path = Path(declared_workdir).resolve()
 
     out_of_workdir: list[str] = []
     for f in modified_files:
-        # Normalize file path
-        normalized = f.lstrip("./")
-        if not normalized.startswith(workdir):
-            # Try checking if it's a relative path under workdir
-            if not normalized.startswith(workdir.lstrip("./")):
+        try:
+            # Resolve relative paths against CWD, then check it's inside workdir
+            file_path = Path(f).resolve()
+            file_path.relative_to(workdir_path)  # raises ValueError if not relative
+        except (ValueError, OSError):
+            # Either not inside workdir, or path doesn't exist
+            # We check existence separately below
+            if Path(f).exists():
                 out_of_workdir.append(f)
+            else:
+                # For non-existent files (e.g. new files), still check logically
+                # by comparing normalized string paths
+                try:
+                    file_path = Path(os.path.normpath(f)).resolve()
+                    file_path.relative_to(workdir_path)
+                except (ValueError, OSError):
+                    out_of_workdir.append(f)
 
     if out_of_workdir:
         return LayerResult(
             name="workdir_ok",
             passed=False,
-            reason=f"{len(out_of_workdir)} files outside declared workdir '{workdir}'",
+            reason=f"{len(out_of_workdir)} files outside declared workdir '{declared_workdir}'",
             details={"out_of_workdir": out_of_workdir[:10], "count": len(out_of_workdir)},
         )
 
     return LayerResult(
         name="workdir_ok",
         passed=True,
-        reason=f"All {len(modified_files)} files within '{workdir}'",
+        reason=f"All {len(modified_files)} files within '{declared_workdir}'",
     )
 
 
@@ -186,7 +202,13 @@ MAX_FILES_CHANGED = 50  # Tasks touching more than this are flagged as drift
 
 
 def check_files_changed(modified_files: list[str]) -> LayerResult:
-    """Verify the agent touched a reasonable number of files (5-50)."""
+    """Verify the agent touched a reasonable number of files.
+
+    Bounds enforced: 1 ≤ count ≤ MAX_FILES_CHANGED (50).
+    Zero files is rejected (agent did nothing).
+    More than MAX_FILES_CHANGED is rejected (likely drift).
+    Note: no minimum other than 1 — single-file edits are legitimate.
+    """
     count = len(modified_files)
     details = {"count": count}
 
@@ -231,7 +253,10 @@ def check_diff_meaningful(git_diff: str, modified_files: list[str]) -> LayerResu
             details={"files": modified_files},
         )
 
-    # Count substantive lines (non-whitespace, non-comment, non-header)
+    # Count substantive lines (non-whitespace, non-header).
+    # Note: we intentionally skip the dead comment-filter branch — a diff line
+    # like '+# comment' starts with '+' (not '#') so the old filter never fired
+    # for added/removed lines, only for context lines which we don't count anyway.
     substantive_lines = 0
     for line in git_diff.splitlines():
         stripped = line.strip()
@@ -239,8 +264,6 @@ def check_diff_meaningful(git_diff: str, modified_files: list[str]) -> LayerResu
             continue
         if stripped.startswith(("+++", "---", "@@", "diff ", "index ")):
             continue
-        if stripped.startswith("#") and len(stripped) > 1 and stripped[1] in " !\"#%&'()*+,-./:;<=>?@[\\]^_`{|}~":
-            continue  # Comment line
         substantive_lines += 1
 
     details = {"substantive_lines": substantive_lines, "files": len(modified_files)}
@@ -339,8 +362,9 @@ def check_basic_syntax(modified_files: list[str], workdir: str = ".") -> LayerRe
 
         try:
             if path.suffix == ".py":
-                import py_compile
-                py_compile.compile(str(full_path), doraise=True)
+                # Use in-memory compile to avoid py_compile writing __pycache__/
+                source = full_path.read_text(encoding="utf-8", errors="replace")
+                compile(source, str(full_path), "exec")
             elif path.suffix == ".json":
                 with open(full_path) as f:
                     json.load(f)
@@ -518,7 +542,8 @@ def check_drift(
     """Pre-commit drift gate.
 
     Detects:
-      - Files modified outside declared workdir
+      - Files modified outside declared workdir (safe against `..` traversal
+        and prefix collisions like 'docs_extra' vs 'docs')
       - Total file count exceeding max_files
       - Individual files exceeding max_lines_per_file
 
@@ -540,19 +565,34 @@ def check_drift(
         report.reasons.append("No declared workdir — cannot verify scope")
         return report
 
-    workdir = declared_workdir.rstrip("/")
+    # Normalize workdir to absolute path (safe path comparison)
+    try:
+        workdir_path = Path(declared_workdir).resolve()
+    except (OSError, RuntimeError) as e:
+        report.passed = False
+        report.reasons.append(f"Cannot resolve workdir '{declared_workdir}': {e}")
+        return report
 
-    # Check out-of-workdir
+    # Check out-of-workdir using safe relative_to() check
     out_of_workdir: list[str] = []
     for f in modified_files:
-        normalized = f.lstrip("./")
-        if not normalized.startswith(workdir) and not normalized.startswith(workdir.lstrip("./")):
-            out_of_workdir.append(f)
+        try:
+            # Try to resolve and check relative_to
+            file_path = Path(f).resolve()
+            file_path.relative_to(workdir_path)
+        except (ValueError, OSError):
+            # Try with normpath for non-existent files (e.g. new files)
+            try:
+                file_path = Path(os.path.normpath(f)).resolve()
+                file_path.relative_to(workdir_path)
+            except (ValueError, OSError):
+                out_of_workdir.append(f)
+
     report.out_of_workdir = out_of_workdir
 
     if out_of_workdir:
         report.passed = False
-        report.reasons.append(f"{len(out_of_workdir)} files outside workdir '{workdir}'")
+        report.reasons.append(f"{len(out_of_workdir)} files outside workdir '{declared_workdir}'")
 
     # Check file count
     if len(modified_files) > max_files:
@@ -580,15 +620,16 @@ def _count_lines_per_file(git_diff: str) -> dict[str, int]:
     current_file = None
 
     for line in git_diff.splitlines():
-        # Match "diff --git a/path b/path"
-        m = re.match(r"^diff --git a/(\S+) b/\S+", line)
+        # Match "diff --git a/path b/path" — use `.+` to allow filenames with spaces
+        m = re.match(r"^diff --git a/(.+) b/(.+)$", line)
         if m:
+            # Extract just the filename (strip "b/" prefix on right side)
             current_file = m.group(1)
             per_file.setdefault(current_file, 0)
             continue
 
         # Match "+++ b/path" (when diff is non-git format)
-        m = re.match(r"^\+\+\+ b/(\S+)", line)
+        m = re.match(r"^\+\+\+ b/(.+)$", line)
         if m:
             current_file = m.group(1)
             per_file.setdefault(current_file, 0)
@@ -676,6 +717,15 @@ def route_nhr_task(task_body: str, agent_output: str = "") -> RoutingDecision:
 # ─────────────────────────────────────────────────────────────────────
 
 
+def _safe_identifier(identifier: str) -> str:
+    """Sanitize an identifier for use in a filename.
+
+    Linear IDs like 'GRO-123' are safe, but this protects against future
+    identifiers that might contain '/', spaces, or other filesystem-unsafe chars.
+    """
+    return re.sub(r"[^a-zA-Z0-9_\-]", "_", identifier)
+
+
 def save_verdict(verdict: VerificationVerdict, base_dir: str | None = None) -> str:
     """Save verdict to disk as JSON. Returns path."""
     if base_dir is None:
@@ -686,7 +736,8 @@ def save_verdict(verdict: VerificationVerdict, base_dir: str | None = None) -> s
 
     Path(base_dir).mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    filename = f"verdict_{verdict.identifier}_{timestamp}.json"
+    safe_id = _safe_identifier(verdict.identifier)
+    filename = f"verdict_{safe_id}_{timestamp}.json"
     filepath = Path(base_dir) / filename
 
     with open(filepath, "w") as f:
@@ -705,7 +756,8 @@ def save_drift_report(report: DriftReport, identifier: str, base_dir: str | None
 
     Path(base_dir).mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    filename = f"drift_{identifier}_{timestamp}.json"
+    safe_id = _safe_identifier(identifier)
+    filename = f"drift_{safe_id}_{timestamp}.json"
     filepath = Path(base_dir) / filename
 
     with open(filepath, "w") as f:

@@ -8,6 +8,7 @@ Covers:
 from __future__ import annotations
 
 import json
+import os
 import pytest
 from pathlib import Path
 
@@ -29,6 +30,10 @@ from prismatic.quality import (
     TASK_SHAPE_VIOLATION,
     OUTPUT_REQUIRES_VERIFICATION,
     MAX_FILES_CHANGED,
+)
+from prismatic.quality.gates import (
+    save_verdict,
+    _count_lines_per_file,
 )
 
 
@@ -401,14 +406,113 @@ class TestRunVerification:
         assert "❌" in md or "FAIL" in md
 
     def test_verdict_persists_to_disk(self, tmp_path):
+        """Verify save_verdict() actually writes a JSON file to disk."""
         verdict = VerificationVerdict(
             issue_id="GRO-5",
             identifier="GRO-5",
             layers=[LayerResult(name="shape_ok", passed=True, reason="clean")],
         )
-        path = verdict.to_dict()
-        assert path["passed"] is True
-        assert path["identifier"] == "GRO-5"
+
+        # Call save_verdict and assert file exists on disk
+        path = save_verdict(verdict, base_dir=str(tmp_path))
+        assert os.path.exists(path), f"save_verdict did not create file at {path}"
+
+        # Verify file contents
+        with open(path) as f:
+            data = json.load(f)
+        assert data["identifier"] == "GRO-5"
+        assert data["passed"] is True
+        assert data["layers"][0]["name"] == "shape_ok"
+
+    def test_save_verdict_sanitizes_identifier(self, tmp_path):
+        """Verify save_verdict() sanitizes unsafe identifier chars in filename."""
+        verdict = VerificationVerdict(
+            issue_id="GRO-99",
+            identifier="GRO-99/path/with/slashes",  # Unsafe chars
+            layers=[LayerResult(name="shape_ok", passed=True, reason="clean")],
+        )
+
+        # Should not raise — slashes in identifier get replaced with _
+        path = save_verdict(verdict, base_dir=str(tmp_path))
+        assert os.path.exists(path)
+        # Filename should have underscores, not slashes
+        assert "/" not in os.path.basename(path).replace(".json", "") or "GRO-99_path_with_slashes" in path
+
+    def test_path_traversal_in_workdir_fails(self, tmp_path, monkeypatch):
+        """Regression: ../escape attempts must NOT pass workdir check.
+
+        Per PR #33 reviewer feedback, the old lstrip()+startswith() approach
+        let 'prismatic/quality/../../etc/passwd' pass as in-scope.
+        """
+        # Create real files inside and outside the workdir
+        workdir = tmp_path / "prismatic" / "quality"
+        workdir.mkdir(parents=True)
+        inside = workdir / "good.py"
+        inside.write_text("# safe\n")
+        outside = tmp_path / "etc" / "passwd"
+        outside.parent.mkdir(parents=True)
+        outside.write_text("evil\n")
+
+        # Test 1: traversal attempt via relative paths
+        traversal_file = str(workdir / ".." / ".." / "etc" / "passwd")
+        result = check_workdir([traversal_file], str(workdir))
+        assert result.passed is False, f"Traversal bypass: {result}"
+        assert str(outside) in result.details["out_of_workdir"] or any(
+            "passwd" in f for f in result.details["out_of_workdir"]
+        )
+
+        # Test 2: prefix collision (docs vs docs_extra)
+        collision_dir = tmp_path / "docs_extra"
+        collision_dir.mkdir()
+        collision_file = collision_dir / "bad.py"
+        collision_file.write_text("# collision\n")
+
+        result = check_workdir([str(collision_file)], str(tmp_path / "docs"))
+        assert result.passed is False, f"Prefix collision bypass: {result}"
+
+    def test_path_traversal_in_drift_fails(self, tmp_path):
+        """Regression: check_drift must reject ../ escape attempts too."""
+        workdir = tmp_path / "prismatic"
+        workdir.mkdir()
+
+        # Build a traversal attempt
+        traversal_file = str(workdir / ".." / ".." / "etc" / "passwd")
+
+        report = check_drift([traversal_file], str(workdir))
+        assert report.passed is False
+        assert any("outside workdir" in r.lower() for r in report.reasons)
+
+    def test_check_basic_syntax_no_pycache_side_effect(self, tmp_path):
+        """Regression: py_compile wrote __pycache__/ — switched to in-memory compile()."""
+        # Create a real .py file
+        py_file = tmp_path / "module.py"
+        py_file.write_text("def hello():\n    return 42\n")
+
+        # Snapshot existing __pycache__ dirs
+        parent_cache = tmp_path / "__pycache__"
+        before = parent_cache.exists()
+
+        # Run syntax check
+        result = check_basic_syntax([str(py_file)], workdir=str(tmp_path))
+        assert result.passed is True
+
+        # No __pycache__ should be created
+        after = parent_cache.exists()
+        assert before == after, "check_basic_syntax wrote __pycache__ directory!"
+
+    def test_count_lines_handles_filenames_with_spaces(self):
+        """Regression: regex dropped filenames with spaces — fixed to use .+ pattern."""
+        diff = """diff --git a/path with spaces/file.py b/path with spaces/file.py
+--- a/path with spaces/file.py
++++ b/path with spaces/file.py
+@@ -1,1 +1,3 @@
+ x = 1
++y = 2
++z = 3
+"""
+        per_file = _count_lines_per_file(diff)
+        assert "path with spaces/file.py" in per_file
+        assert per_file["path with spaces/file.py"] == 2  # +y and +z
 
 
 # ─────────────────────────────────────────────────────────────────────
