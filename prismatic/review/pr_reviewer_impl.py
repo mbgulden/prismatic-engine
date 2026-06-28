@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 import subprocess
 from dataclasses import dataclass
+from typing import Any
 
 # Re-use the stub's contract
 from .pr_reviewer import (
@@ -459,10 +460,22 @@ class RealPRReviewer:
 
     Uses the `gh` CLI to fetch the PR diff. Falls back to empty diff if gh fails
     (returns NEEDS_DISCUSSION with a note explaining the failure).
+
+    Optional ``registry`` (Gap 9 / Part B): a :class:`ReviewerRegistry`
+    holding plugin contributions. The reviewer composes the registry
+    once per ``review_pr()`` call and merges contributions into the
+    built-in checks. Subclasses can still override ``SECRET_PATTERNS``
+    or individual check functions for full-replacement customization;
+    the registry composes with (does not replace) subclassing.
     """
 
-    def __init__(self, timeout_seconds: int = 30) -> None:
+    def __init__(
+        self,
+        timeout_seconds: int = 30,
+        registry: Any | None = None,
+    ) -> None:
         self.timeout_seconds = timeout_seconds
+        self.registry = registry
 
     def review_pr(self, pr_url: str) -> PRReviewResult:
         """Review the PR and return a structured result."""
@@ -485,12 +498,32 @@ class RealPRReviewer:
                 metadata={"reviewer": "real", "error": "diff_fetch_failed"},
             )
 
-        # Run all checks
+        # Compose registry contributions once per review (Gap 9 / Part B).
+        spec = self.registry.compose() if self.registry is not None else None
+
+        # Run all checks -- built-in first, then registry-added checks.
         findings: list[QualityFinding] = []
-        findings.extend(detect_secrets(diff))
+        findings.extend(self._detect_secrets_with_registry(diff, spec))
         findings.extend(check_function_length(diff))
         findings.extend(check_file_length(diff))
         findings.extend(check_test_coverage_heuristic(diff))
+
+        # Run registry-added custom checks (post built-ins).
+        if spec is not None:
+            for check in spec.checks:
+                try:
+                    extra = check(diff)
+                    if extra:
+                        findings.extend(extra)
+                except Exception as exc:  # plugin crash isolation
+                    findings.append(
+                        QualityFinding(
+                            path="<plugin-error>",
+                            line=0,
+                            severity="warning",
+                            message=f"Plugin check failed: {exc}",
+                        )
+                    )
 
         # Compute verdict
         verdict, summary = compute_verdict(findings)
@@ -505,18 +538,66 @@ class RealPRReviewer:
             for f in findings
         ]
 
+        metadata: dict[str, Any] = {
+            "reviewer": "real",
+            "pr_url": pr_url,
+            "findings_count": len(findings),
+            "critical_count": len([f for f in findings if f.severity == "critical"]),
+            "high_count": len([f for f in findings if f.severity == "high"]),
+            "warning_count": len([f for f in findings if f.severity == "warning"]),
+        }
+        # Only emit registry metadata when a registry is attached
+        # (avoids "0 patterns" ambiguity for the no-registry case).
+        if spec is not None:
+            metadata["registry_pattern_count"] = len(spec.secret_patterns)
+            metadata["registry_check_count"] = len(spec.checks)
+
         return PRReviewResult(
             verdict=verdict,
             summary=summary,
             inline_comments=inline_comments,
-            metadata={
-                "reviewer": "real",
-                "pr_url": pr_url,
-                "findings_count": len(findings),
-                "critical_count": len(
-                    [f for f in findings if f.severity == "critical"]
-                ),
-                "high_count": len([f for f in findings if f.severity == "high"]),
-                "warning_count": len([f for f in findings if f.severity == "warning"]),
-            },
+            metadata=metadata,
         )
+
+    def _detect_secrets_with_registry(
+        self, diff: str, spec: Any | None
+    ) -> list[QualityFinding]:
+        """Run built-in secret detection + registry-added patterns.
+
+        When a registry is attached, its extra patterns are merged with
+        the built-in patterns for this call. Registry patterns are
+        scanned AFTER built-in patterns (so built-ins still catch
+        common cases first).
+        """
+        findings = detect_secrets(diff)
+        if spec is None:
+            return findings
+
+        current_file: str | None = None
+        for i, line in enumerate(diff.splitlines()):
+            if line.startswith("+++ b/"):
+                current_file = line[6:]
+                continue
+            if (
+                line.startswith("---")
+                or line.startswith("+++")
+                or line.startswith("diff ")
+            ):
+                continue
+            if not current_file:
+                continue
+            if not line.startswith("+"):
+                continue
+            content = line[1:]
+            for pattern, secret_type, severity in spec.secret_patterns:
+                if re.search(pattern, content):
+                    findings.append(
+                        QualityFinding(
+                            path=current_file,
+                            line=i,
+                            severity=severity,
+                            message=f"Potential {secret_type} detected (plugin) — DO NOT COMMIT",
+                        )
+                    )
+                    break
+        return findings
