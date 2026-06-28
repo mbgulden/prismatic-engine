@@ -24,11 +24,13 @@ from .pr_reviewer import (
     REQUEST_CHANGES,
     NEEDS_DISCUSSION,
 )
+from .pr_reviewer_impl import RealPRReviewer
 
 __all__ = [
     "PRReviewResult",
     "PRReviewer",
     "StubPRReviewer",
+    "RealPRReviewer",
     "NED_REVIEW_LABEL",
     "APPROVE",
     "REQUEST_CHANGES",
