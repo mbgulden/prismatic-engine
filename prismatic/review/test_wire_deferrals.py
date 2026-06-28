@@ -363,13 +363,19 @@ class TestEndToEnd:
     # ------------------------------------------------------------------
 
     def test_pipeline_orchestrator_action_rule_changes_decision_action(self):
-        """Test 14: registered action rule overrides decision.action."""
+        """Test 14: registered action rule overrides decision.action.
+
+        Updated for Gap 11 architectural fix: action rules now register
+        via register_action_rule() (not register_impact_rule). This
+        proves the SEPARATION: impact rules can no longer accidentally
+        change action decisions.
+        """
         reg = ReviewerRegistry()
 
         def force_give_up(result, current):
             return ACTION_GIVE_UP
 
-        reg.register_impact_rule(force_give_up)
+        reg.register_action_rule(force_give_up)
         po = PipelineOrchestrator(registry=reg)
 
         # Without the rule, REQUEST_CHANGES + 0 attempts → ACTION_REWORK
@@ -581,3 +587,161 @@ class TestChannelValidation:
             f"expected one of {sorted(IMPACT_LEVELS)}"
         )
         print("PASS: pipeline decision.impact remains valid IMPACT_LEVEL")
+
+
+# ─────────────────────────────────────────────────────────────────────
+# TestActionRuleSeparation — verifies action_rules are separate from
+# impact_rules (Gap 11 architectural fix). A plugin author must be able
+# to register an action-only override without affecting impact, and
+# vice versa. Before this fix, both passes consumed spec.impact_rules.
+# ─────────────────────────────────────────────────────────────────────
+
+
+class TestActionRuleSeparation:
+    """Action rules live in a separate pool from impact rules."""
+
+    def test_register_action_rule_adds_to_separate_pool(self):
+        """register_action_rule() must not appear in impact_rules."""
+        reg = ReviewerRegistry()
+
+        def my_action_rule(r, current):
+            return "advance"
+
+        reg.register_action_rule(my_action_rule)
+
+        spec = reg.compose()
+        assert len(spec.action_rules) == 1, "expected 1 action rule"
+        assert len(spec.impact_rules) == 0, "action rule leaked into impact pool"
+        assert spec.action_rules[0] is my_action_rule
+        # Confirm the registration methods are distinct (separate channels)
+        assert hasattr(reg, "register_action_rule")
+        assert hasattr(reg, "register_impact_rule")
+        assert reg.action_rule_count == 1
+        assert reg.impact_rule_count == 0
+        print("PASS: register_action_rule adds to separate pool")
+
+    def test_pipeline_uses_spec_action_rules_not_impact_rules(self):
+        """PipelineOrchestrator.process() must consume spec.action_rules for action pass.
+
+        Regression: before this fix, pipeline.py:364 passed spec.impact_rules
+        to the action pass, meaning impact rules fired twice and action rules
+        had no separate registration path.
+        """
+        from prismatic.review.pipeline import IMPACT_LEVELS
+
+        reg = ReviewerRegistry()
+
+        # Impact rule: tries to set impact=blocker (a valid IMPACT_LEVEL).
+        impact_calls = []
+
+        def force_blocker_impact(r, current):
+            impact_calls.append(("impact", current))
+            return "blocker"
+
+        reg.register_impact_rule(force_blocker_impact)
+
+        # Action rule: tries to set action=advance (only valid action).
+        action_calls = []
+
+        def force_advance_action(r, current):
+            action_calls.append(("action", current))
+            return "advance"
+
+        reg.register_action_rule(force_advance_action)
+
+        mock_result = PRReviewResult(
+            verdict="REQUEST_CHANGES",
+            summary="separation test",
+            inline_comments=[],
+            metadata={"critical_count": 0, "high_count": 0, "warning_count": 0},
+        )
+
+        po = PipelineOrchestrator(registry=reg)
+        decision = po.process(
+            identifier="separation-test",
+            pr_url="https://github.com/x/y/pull/1",
+            result=mock_result,
+        )
+
+        # Both rules fired exactly once on their correct channels
+        assert len(impact_calls) == 1, (
+            f"impact rule should fire 1x, got {len(impact_calls)}"
+        )
+        assert len(action_calls) == 1, (
+            f"action rule should fire 1x, got {len(action_calls)}"
+        )
+
+        # Impact channel got impact rule, action channel got action rule
+        assert decision.impact == "blocker", f"expected blocker, got {decision.impact}"
+        assert decision.impact in IMPACT_LEVELS
+        assert decision.action == "advance", f"expected advance, got {decision.action}"
+        print("PASS: pipeline uses spec.action_rules for action pass")
+
+    def test_action_rule_does_not_affect_impact_channel(self):
+        """An action-only rule must NOT change decision.impact."""
+        from prismatic.review.pipeline import IMPACT_LEVELS
+
+        reg = ReviewerRegistry()
+
+        def force_give_up(r, current):
+            return "give_up"  # valid ACTION but invalid IMPACT_LEVEL
+
+        reg.register_action_rule(force_give_up)
+
+        mock_result = PRReviewResult(
+            verdict="APPROVE",
+            summary="clean",
+            inline_comments=[],
+            metadata={"critical_count": 0, "high_count": 0, "warning_count": 0},
+        )
+
+        po = PipelineOrchestrator(registry=reg)
+        decision = po.process(
+            identifier="isolated-action",
+            pr_url="https://github.com/x/y/pull/2",
+            result=mock_result,
+        )
+
+        # Impact must remain a valid IMPACT_LEVEL (channel guard rejects give_up)
+        assert decision.impact in IMPACT_LEVELS, (
+            f"action rule leaked into impact channel: decision.impact={decision.impact!r}"
+        )
+        # Action was overridden to give_up (valid action)
+        assert decision.action == "give_up", f"expected give_up, got {decision.action}"
+        print("PASS: action rule does not affect impact channel")
+
+    def test_impact_rule_does_not_affect_action_channel(self):
+        """An impact-only rule must NOT change decision.action."""
+        from prismatic.review.pipeline import IMPACT_LEVELS
+
+        reg = ReviewerRegistry()
+
+        def force_blocker(r, current):
+            return "blocker"  # valid IMPACT_LEVEL but invalid action
+
+        reg.register_impact_rule(force_blocker)
+
+        mock_result = PRReviewResult(
+            verdict="APPROVE",
+            summary="clean",
+            inline_comments=[],
+            metadata={"critical_count": 0, "high_count": 0, "warning_count": 0},
+        )
+
+        po = PipelineOrchestrator(registry=reg)
+        decision = po.process(
+            identifier="isolated-impact",
+            pr_url="https://github.com/x/y/pull/3",
+            result=mock_result,
+        )
+
+        # Impact was overridden to blocker (valid)
+        assert decision.impact == "blocker", f"expected blocker, got {decision.impact}"
+        assert decision.impact in IMPACT_LEVELS
+        # Action must remain a valid action (not "blocker")
+        from prismatic.review.pipeline import ACTIONS
+
+        assert decision.action in ACTIONS, (
+            f"impact rule leaked into action channel: decision.action={decision.action!r}"
+        )
+        print("PASS: impact rule does not affect action channel")

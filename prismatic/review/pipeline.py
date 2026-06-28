@@ -358,10 +358,14 @@ class PipelineOrchestrator:
                 max_rework_attempts=self.max_rework_attempts,
             )
 
-            # Gap 11: apply registered action rules (reuse spec, same shape).
+            # Gap 11: apply registered action rules (separate pool from impact).
+            # A plugin author can register an action-only override without
+            # affecting impact classification. The channel guard in
+            # apply_impact_rules() ensures a rule returning an invalid value
+            # for the target channel is silently ignored.
             if spec is not None:
                 action = apply_impact_rules(
-                    result, action, spec.impact_rules, channel="action"
+                    result, action, spec.action_rules, channel="action"
                 )
 
             rationale = (

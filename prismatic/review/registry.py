@@ -23,6 +23,11 @@ Three contribution channels:
    (e.g. "in safety-critical paths, treat all warning-severity findings
    as major").
 
+4. Action rules -- callables that take (PRReviewResult, current_action)
+   and return a new action string (or None to keep the current one).
+   First non-None wins. Separate from impact rules so a plugin can
+   register action overrides without affecting impact classification.
+
 The :class:`ComposedReviewerSpec` is a frozen dataclass that holds the
 composed contributions. RealPRReviewer calls compose() once at the
 start of each review_pr() to get a consistent view.
@@ -69,6 +74,24 @@ Returns: new impact string (overrides), or None to keep current.
 First non-None rule wins (registration order).
 """
 
+ActionRule = Callable[[Any, str], str | None]
+"""An action-override rule callable.
+
+Args:
+  - result: PRReviewResult
+  - current: the action string computed by decide_next_action()
+
+Returns: new action string (overrides), or None to keep current.
+First non-None rule wins (registration order).
+
+Action rules are SEPARATE from impact rules. A plugin can register an
+action-only override (e.g. "always escalate to NEEDS_HUMAN_REVIEW when
+a security-severity finding exists") without affecting impact
+classification. The channel guard in apply_impact_rules() ensures
+action rules returning an invalid impact value (or vice versa) are
+silently ignored rather than corrupting the wrong channel.
+"""
+
 
 @dataclass(frozen=True)
 class ComposedReviewerSpec:
@@ -82,6 +105,7 @@ class ComposedReviewerSpec:
     secret_patterns: tuple[SecretPattern, ...] = ()
     checks: tuple[QualityCheck, ...] = ()
     impact_rules: tuple[ImpactRule, ...] = ()
+    action_rules: tuple[ActionRule, ...] = ()
 
 
 class ReviewerRegistry:
@@ -106,6 +130,7 @@ class ReviewerRegistry:
         self._checks_by_name: dict[str, QualityCheck] = {}
         self._unnamed_checks: list[QualityCheck] = []
         self._impact_rules: list[ImpactRule] = []
+        self._action_rules: list[ActionRule] = []
         self._seen_secret_keys: set[tuple[str, str]] = set()
 
     # Secret patterns
@@ -163,6 +188,22 @@ class ReviewerRegistry:
         """
         self._impact_rules.append(fn)
 
+    # Action rules
+
+    def register_action_rule(self, fn: ActionRule) -> None:
+        """Register one action-override rule.
+
+        Rules fire in registration order; first non-None wins.
+
+        Wired: see PipelineOrchestrator.process() (Gap 11). Action
+        rules are separate from impact rules -- a plugin author can
+        register an action-only override without affecting impact
+        classification. Use this for rules like "always escalate to
+        NEEDS_HUMAN_REVIEW when security findings exist" or "force
+        GIVE_UP on contracts with broken tests".
+        """
+        self._action_rules.append(fn)
+
     # Compose
 
     def compose(self) -> ComposedReviewerSpec:
@@ -182,6 +223,7 @@ class ReviewerRegistry:
             secret_patterns=tuple(self._secret_patterns),
             checks=tuple(all_checks),
             impact_rules=tuple(self._impact_rules),
+            action_rules=tuple(self._action_rules),
         )
 
     # Introspection
@@ -198,8 +240,13 @@ class ReviewerRegistry:
     def impact_rule_count(self) -> int:
         return len(self._impact_rules)
 
+    @property
+    def action_rule_count(self) -> int:
+        return len(self._action_rules)
+
 
 __all__ = [
+    "ActionRule",
     "ComposedReviewerSpec",
     "ImpactRule",
     "QualityCheck",

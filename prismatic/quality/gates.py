@@ -857,7 +857,6 @@ from prismatic.review.pr_reviewer import (  # noqa: E402  (placed after the gate
 )
 from prismatic.review.pr_reviewer_impl import RealPRReviewer  # noqa: E402
 from prismatic.review.pipeline import PipelineOrchestrator  # noqa: E402
-from prismatic.review.hooks import HOOK_BEFORE_NED_REVIEW  # noqa: E402
 
 
 # Linear state targets produced by the trigger.
