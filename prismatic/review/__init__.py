@@ -48,6 +48,7 @@ from .pipeline import (
 from .registry import (
     ComposedReviewerSpec,
     ImpactRule,
+    QualityCheck,
     ReviewerRegistry,
     SecretPattern,
 )
@@ -74,6 +75,7 @@ __all__ = [
     "ReviewerRegistry",
     "ComposedReviewerSpec",
     "SecretPattern",
+    "QualityCheck",
     "ImpactRule",
     "HOOK_BEFORE_SECRET_SCAN",
     "HOOK_BEFORE_QUALITY_CHECKS",

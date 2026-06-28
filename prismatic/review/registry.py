@@ -151,6 +151,22 @@ class ReviewerRegistry:
         """Register one impact-override rule.
 
         Rules fire in registration order; first non-None wins.
+
+        .. warning::
+            **Currently inert.** Rules are stored and exposed via
+            ``compose()``, but no production code reads
+            ``spec.impact_rules`` yet. This ships as part of Gap 9 / Part C
+            alongside hook dispatch.
+
+            Plugin authors registering safety-critical escalation rules
+            (e.g. "in safety-critical paths, treat all warning-severity
+            findings as major") will observe their rules silently ignored
+            in production today. Wiring lands in Part C; until then, this
+            is a stable API surface with deferred consumer logic.
+
+        TODO Gap 9 / Part C: wire into classify_impact() and
+        PipelineOrchestrator.process() so registered rules actually
+        override impact classification.
         """
         self._impact_rules.append(fn)
 

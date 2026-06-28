@@ -350,3 +350,38 @@ class TestHooksModule:
 
         assert HOOK_BEFORE_SECRET_SCAN in ALL_HOOKS
         assert HOOK_BEFORE_NED_REVIEW in ALL_HOOKS
+
+    def test_quality_check_importable_from_package(self):
+        """P0 fix from meta-review 2026-06-28: QualityCheck must be importable.
+
+        Plugin authors following prismatic-distribution-checklist.md will
+        try `from prismatic.review import QualityCheck` as their first
+        line. This test guards against the missing export regressing.
+        """
+        from prismatic.review import QualityCheck
+        from prismatic.review import __all__ as all_exports
+
+        assert "QualityCheck" in all_exports
+        # Use the alias to satisfy the linter and prove it works.
+        # QualityCheck is Callable[[str], list[Any]] -- check the alias
+        # origin exists (it's a TypeAlias, so __class__ check is meaningful).
+        assert QualityCheck is not None
+
+    def test_register_impact_rule_docstring_warns(self):
+        """P0 fix from meta-review 2026-06-28: register_impact_rule docstring
+        must disclose that the channel is currently inert.
+
+        A plugin author registering a safety-critical escalation rule
+        must see the warning before they ship a false-safe system.
+        """
+        from prismatic.review import ReviewerRegistry
+
+        doc = ReviewerRegistry.register_impact_rule.__doc__ or ""
+        assert "Currently inert" in doc, (
+            "register_impact_rule() docstring must warn that the channel "
+            "is currently inert (Gap 9 / Part C wires it)."
+        )
+        assert "TODO Gap 9 / Part C" in doc, (
+            "register_impact_rule() docstring must point to Gap 9 / Part C "
+            "as the wiring PR."
+        )
