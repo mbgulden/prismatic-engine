@@ -21,6 +21,8 @@ Reference: okf/operations/phase2-quality-gates-plan.md (Gap 8)
 
 from __future__ import annotations
 
+import re
+import threading
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -89,6 +91,7 @@ def classify_impact(result: PRReviewResult) -> str:
     | NEEDS_DISCUSSION | 0        | 0    | 0       | 1+     | minor   |
     | REQUEST_CHANGES  | 0        | 1+   | *       | *      | major   |
     | REQUEST_CHANGES  | 1+       | *    | *       | *      | blocker |
+    | REQUEST_CHANGES  | 0        | 0    | 1+      | *      | major   |  # defensive fallback
     | NEEDS_DISCUSSION | 0        | 1+   | *       | *      | major   |
     """
     critical = result.metadata.get("critical_count", 0)
@@ -135,8 +138,6 @@ def _count_medium(result: PRReviewResult) -> int:
     summary = result.summary.lower()
     if "medium" in summary:
         # Best-effort: extract a count from the "N medium-severity" header.
-        import re
-
         m = re.search(r"(\d+)\s+medium", summary)
         if m:
             return int(m.group(1))
@@ -270,6 +271,14 @@ class PipelineOrchestrator:
     State is held in instance attributes so the same orchestrator can
     process multiple issues sequentially (the factory's normal pattern).
 
+    Thread safety:
+        The orchestrator is thread-safe. ``process()`` holds an internal
+        ``threading.Lock`` while reading-and-updating per-issue attempt
+        counters, so concurrent calls with the same ``identifier`` from
+        different threads will not double-dispatch. (CPython's GIL would
+        prevent dict corruption without the lock, but the lock prevents
+        the read-modify-write race that double-dispatches would cause.)
+
     Example::
 
         orch = PipelineOrchestrator()
@@ -281,18 +290,27 @@ class PipelineOrchestrator:
     def __init__(self, max_rework_attempts: int = DEFAULT_MAX_REWORK_ATTEMPTS) -> None:
         self.max_rework_attempts = max_rework_attempts
         self._attempt_counts: dict[str, int] = {}
+        self._lock = threading.Lock()
 
     def attempts_for(self, identifier: str) -> int:
-        """How many rework attempts have been issued for this issue?"""
-        return self._attempt_counts.get(identifier, 0)
+        """How many rework attempts have been issued for this issue?
+
+        Returns 0 if the issue has never been processed.
+        """
+        with self._lock:
+            return self._attempt_counts.get(identifier, 0)
 
     def record_rework(self, identifier: str) -> None:
         """Bump the attempt counter after dispatching rework."""
-        self._attempt_counts[identifier] = self.attempts_for(identifier) + 1
+        with self._lock:
+            self._attempt_counts[identifier] = (
+                self._attempt_counts.get(identifier, 0) + 1
+            )
 
     def reset(self, identifier: str) -> None:
         """Clear the attempt counter (e.g. after APPROVE)."""
-        self._attempt_counts.pop(identifier, None)
+        with self._lock:
+            self._attempt_counts.pop(identifier, None)
 
     def process(
         self,

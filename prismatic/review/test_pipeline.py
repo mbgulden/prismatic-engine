@@ -13,6 +13,7 @@ from prismatic.review.pipeline import (
     IMPACT_MINOR,
     IMPACT_TRIVIAL,
     IMPACT_RANK,
+    PipelineDecision,
     PipelineOrchestrator,
     build_rework_payload,
     classify_impact,
@@ -327,6 +328,56 @@ class TestPipelineOrchestrator:
         assert orch.attempts_for("GRO-1") == 0
         # Resetting a non-existent key is a no-op.
         orch.reset("GRO-NONEXISTENT")
+
+    def test_thread_safety_no_double_dispatch(self):
+        """Concurrent process() calls with the same identifier must not double-dispatch.
+
+        Without the threading.Lock, two threads calling process() with the
+        same identifier could both see attempts=0, both decide ACTION_REWORK,
+        both dispatch a payload, and both call record_rework — resulting in
+        two spurious dispatches at the same attempt counter value.
+
+        With the lock, exactly max_rework_attempts dispatches happen, and
+        each one carries a unique rework_attempt value (1, 2, ..., N).
+        """
+        import threading
+
+        orch = PipelineOrchestrator(max_rework_attempts=2)
+        results: list[PipelineDecision] = []
+        results_lock = threading.Lock()
+
+        def worker() -> None:
+            d = orch.process(
+                identifier="GRO-RACE",
+                pr_url="url",
+                result=_make_result(REQUEST_CHANGES, high=1),
+            )
+            with results_lock:
+                results.append(d)
+
+        threads = [threading.Thread(target=worker) for _ in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # All 10 calls completed and produced a decision.
+        assert len(results) == 10
+
+        # Exactly 2 dispatches (matches max_rework_attempts).
+        rework_decisions = [r for r in results if r.action == ACTION_REWORK]
+        give_up_decisions = [r for r in results if r.action == ACTION_GIVE_UP]
+        assert len(rework_decisions) == 2
+        assert len(give_up_decisions) == 8
+
+        # Each rework decision has a unique rework_attempt value.
+        attempt_numbers = sorted(
+            r.rework_payload.rework_attempt for r in rework_decisions
+        )
+        assert attempt_numbers == [1, 2]
+
+        # Final counter matches the number of record_rework() calls (2).
+        assert orch.attempts_for("GRO-RACE") == 2
 
 
 # ─────────────────────────────────────────────────────────────────────
