@@ -385,3 +385,23 @@ class TestHooksModule:
             "register_impact_rule() docstring must point to Gap 9 / Part C "
             "as the wiring PR."
         )
+
+    def test_quality_finding_importable_from_package(self):
+        """P0 fix from meta-review follow-up: QualityFinding must be importable.
+
+        Plugin authors writing custom check callables need to construct
+        QualityFinding instances to return from their checks. The class
+        must be accessible from the top-level prismatic.review namespace.
+        """
+        from prismatic.review import QualityFinding
+        from prismatic.review import __all__ as all_exports
+
+        assert "QualityFinding" in all_exports
+        # QualityFinding must be instantiable with the documented signature.
+        finding = QualityFinding(
+            path="test.py", line=10, severity="warning", message="test"
+        )
+        assert finding.path == "test.py"
+        assert finding.line == 10
+        assert finding.severity == "warning"
+        assert finding.message == "test"

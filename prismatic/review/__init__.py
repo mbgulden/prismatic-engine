@@ -24,7 +24,7 @@ from .pr_reviewer import (
     REQUEST_CHANGES,
     NEEDS_DISCUSSION,
 )
-from .pr_reviewer_impl import RealPRReviewer
+from .pr_reviewer_impl import QualityFinding, RealPRReviewer
 from .pipeline import (
     ACTIONS,
     ACTION_ADVANCE,
@@ -66,6 +66,7 @@ __all__ = [
     "PRReviewer",
     "StubPRReviewer",
     "RealPRReviewer",
+    "QualityFinding",
     "PipelineDecision",
     "PipelineOrchestrator",
     "ReworkPayload",
