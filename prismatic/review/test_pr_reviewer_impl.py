@@ -373,6 +373,71 @@ class TestComputeVerdict:
         verdict, summary = compute_verdict(findings)
         assert verdict == NEEDS_DISCUSSION
 
+    def test_medium_only_needs_discussion(self):
+        """Bug 1 regression: medium severity must not silently APPROVE.
+
+        Without the medium branch, a credential leak detected with
+        severity='medium' (e.g. generic 'secret = ...' pattern) would
+        pass review unchecked — a false-safe in a security path.
+        """
+        findings = [
+            QualityFinding(
+                path="config.py",
+                line=1,
+                severity="medium",
+                message="Potential secret detected",
+            )
+        ]
+        verdict, summary = compute_verdict(findings)
+        assert verdict == NEEDS_DISCUSSION
+        assert "medium" in summary.lower()
+
+    def test_high_with_warning_includes_warning_details(self):
+        """Bug 2 regression: warning details must appear in high-severity summary.
+
+        Previously the high branch appended a '### Warnings' header but
+        emitted no per-finding detail lines, leaving Linear comments with
+        a dangling section header and no content.
+        """
+        findings = [
+            QualityFinding(
+                path="config.py",
+                line=1,
+                severity="high",
+                message="Potential db_url_with_password",
+            ),
+            QualityFinding(
+                path="file.py",
+                line=10,
+                severity="warning",
+                message="Function too long",
+            ),
+        ]
+        verdict, summary = compute_verdict(findings)
+        assert verdict == REQUEST_CHANGES
+        assert "Function too long" in summary
+        assert "Warnings" in summary
+
+    def test_critical_with_warning_includes_warning_details(self):
+        """Symmetric regression: critical branch must also include warning details."""
+        findings = [
+            QualityFinding(
+                path="config.py",
+                line=1,
+                severity="critical",
+                message="Potential aws_access_key",
+            ),
+            QualityFinding(
+                path="file.py",
+                line=10,
+                severity="warning",
+                message="Function too long",
+            ),
+        ]
+        verdict, summary = compute_verdict(findings)
+        assert verdict == REQUEST_CHANGES
+        assert "Function too long" in summary
+
 
 # ─────────────────────────────────────────────────────────────────────
 # RealPRReviewer integration tests

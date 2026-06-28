@@ -394,6 +394,11 @@ def compute_verdict(findings: list[QualityFinding]) -> tuple[str, str]:
             summary_lines.append(f"### High severity ({len(high)})")
             for f in high[:5]:
                 summary_lines.append(f"- `{f.path}:{f.line}` — {f.message}")
+        if warnings:
+            summary_lines.append("")
+            summary_lines.append(f"### Warnings ({len(warnings)})")
+            for f in warnings[:5]:
+                summary_lines.append(f"- `{f.path}:{f.line}` — {f.message}")
         return verdict, "\n".join(summary_lines)
 
     if high:
@@ -407,6 +412,28 @@ def compute_verdict(findings: list[QualityFinding]) -> tuple[str, str]:
         if warnings:
             summary_lines.append("")
             summary_lines.append(f"### Warnings ({len(warnings)})")
+            for f in warnings[:5]:
+                summary_lines.append(f"- `{f.path}:{f.line}` — {f.message}")
+        return verdict, "\n".join(summary_lines)
+
+    # Treat medium as warning-equivalent: it does not block the merge
+    # (unlike critical/high) but should never silently disappear into APPROVE.
+    # Without this branch, a credential leak detected with severity="medium"
+    # (e.g. generic "secret = ..." pattern) would pass review unchecked.
+    if any(f.severity == "medium" for f in findings):
+        mediums = [f for f in findings if f.severity == "medium"]
+        verdict = NEEDS_DISCUSSION
+        summary_lines = [
+            f"## 💬 {len(mediums)} medium-severity issue(s) — review recommended",
+            "",
+        ]
+        for f in mediums[:10]:
+            summary_lines.append(f"- `{f.path}:{f.line}` — {f.message}")
+        if warnings:
+            summary_lines.append("")
+            summary_lines.append(f"### Warnings ({len(warnings)})")
+            for f in warnings[:5]:
+                summary_lines.append(f"- `{f.path}:{f.line}` — {f.message}")
         return verdict, "\n".join(summary_lines)
 
     if warnings:
