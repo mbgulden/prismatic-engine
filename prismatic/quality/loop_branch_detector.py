@@ -2,17 +2,18 @@
 
 Classifies a git branch as a "loop-noise" branch when its commits are
 infrastructure/triage notes rather than feature work intended for the default
-branch. Lets `post_publish_audit_v2.py` exclude these branches from its
+branch. Lets ``post_publish_audit_v2.py`` exclude these branches from its
 "unintegrated work" denominator.
 
 A branch is classified as loop-noise if ANY of these are true:
   1. ALL commits on the branch match the loop-noise regex
-     `^\[(?P<agent>\w+)\] (?P<issue>GRO-\d+): (triage note|infra findings|witness|status)`
+     ``[agent] GRO-NNN: (triage note|infra findings|witness|status)``
   2. The diff vs the merge-base contains ZERO source files (only .md / .txt)
   3. Three or more commits have identical first 50 chars of message
      (signature of a sweeper loop)
 
-Usage:
+Usage::
+
     from prismatic.quality.loop_branch_detector import (
         is_loop_branch,
         LoopBranchVerdict,
