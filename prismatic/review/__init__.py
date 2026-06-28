@@ -45,6 +45,20 @@ from .pipeline import (
     classify_impact,
     decide_next_action,
 )
+from .registry import (
+    ComposedReviewerSpec,
+    ImpactRule,
+    ReviewerRegistry,
+    SecretPattern,
+)
+from .hooks import (
+    ALL_HOOKS,
+    HOOK_BEFORE_CLASSIFY_IMPACT,
+    HOOK_BEFORE_DECIDE_ACTION,
+    HOOK_BEFORE_NED_REVIEW,
+    HOOK_BEFORE_QUALITY_CHECKS,
+    HOOK_BEFORE_SECRET_SCAN,
+)
 
 __all__ = [
     "PRReviewResult",
@@ -57,6 +71,16 @@ __all__ = [
     "build_rework_payload",
     "classify_impact",
     "decide_next_action",
+    "ReviewerRegistry",
+    "ComposedReviewerSpec",
+    "SecretPattern",
+    "ImpactRule",
+    "HOOK_BEFORE_SECRET_SCAN",
+    "HOOK_BEFORE_QUALITY_CHECKS",
+    "HOOK_BEFORE_CLASSIFY_IMPACT",
+    "HOOK_BEFORE_DECIDE_ACTION",
+    "HOOK_BEFORE_NED_REVIEW",
+    "ALL_HOOKS",
     "NED_REVIEW_LABEL",
     "APPROVE",
     "REQUEST_CHANGES",
