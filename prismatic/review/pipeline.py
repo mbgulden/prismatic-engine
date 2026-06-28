@@ -273,11 +273,12 @@ class PipelineOrchestrator:
 
     Thread safety:
         The orchestrator is thread-safe. ``process()`` holds an internal
-        ``threading.Lock`` while reading-and-updating per-issue attempt
-        counters, so concurrent calls with the same ``identifier`` from
-        different threads will not double-dispatch. (CPython's GIL would
-        prevent dict corruption without the lock, but the lock prevents
-        the read-modify-write race that double-dispatches would cause.)
+        ``threading.Lock`` across the full read-modify-write sequence
+        (read counter → decide → conditionally bump counter), so
+        concurrent calls with the same identifier cannot both dispatch
+        rework at the same counter snapshot. The ``attempts_for``,
+        ``record_rework``, and ``reset`` helpers are also independently
+        thread-safe for callers that bypass ``process()``.
 
     Example::
 
@@ -324,32 +325,36 @@ class PipelineOrchestrator:
         Returns a :class:`PipelineDecision`. If ``action == ACTION_REWORK``,
         the ``rework_payload`` field is populated and ready to dispatch.
         """
-        impact = classify_impact(result)
-        attempts = self.attempts_for(identifier)
-        action = decide_next_action(
-            result,
-            rework_attempts=attempts,
-            max_rework_attempts=self.max_rework_attempts,
-        )
-
-        rationale = (
-            f"verdict={result.verdict} impact={impact} "
-            f"attempts={attempts}/{self.max_rework_attempts} → action={action}"
-        )
-
-        rework_payload: ReworkPayload | None = None
-        if action == ACTION_REWORK:
-            rework_payload = build_rework_payload(
-                identifier,
-                pr_url,
+        # Hold the lock across the full read-modify-write so concurrent
+        # process() calls with the same identifier cannot both dispatch
+        # at the same counter snapshot.
+        with self._lock:
+            impact = classify_impact(result)
+            attempts = self._attempt_counts.get(identifier, 0)
+            action = decide_next_action(
                 result,
-                rework_attempt=attempts + 1,
+                rework_attempts=attempts,
                 max_rework_attempts=self.max_rework_attempts,
             )
-            self.record_rework(identifier)
 
-        if action == ACTION_ADVANCE:
-            self.reset(identifier)
+            rationale = (
+                f"verdict={result.verdict} impact={impact} "
+                f"attempts={attempts}/{self.max_rework_attempts} → action={action}"
+            )
+
+            rework_payload: ReworkPayload | None = None
+            if action == ACTION_REWORK:
+                rework_payload = build_rework_payload(
+                    identifier,
+                    pr_url,
+                    result,
+                    rework_attempt=attempts + 1,
+                    max_rework_attempts=self.max_rework_attempts,
+                )
+                self._attempt_counts[identifier] = attempts + 1
+
+            if action == ACTION_ADVANCE:
+                self._attempt_counts.pop(identifier, None)
 
         return PipelineDecision(
             identifier=identifier,
