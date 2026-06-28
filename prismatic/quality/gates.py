@@ -11,6 +11,7 @@ Each layer is a separate function that returns a boolean pass/fail and
 a human-readable reason string. All layers must pass for the overall
 verdict to be PASS.
 """
+
 from __future__ import annotations
 
 import json
@@ -31,6 +32,7 @@ from typing import Any, Callable
 @dataclass
 class LayerResult:
     """One verification layer's result."""
+
     name: str
     passed: bool
     reason: str = ""
@@ -40,10 +42,13 @@ class LayerResult:
 @dataclass
 class VerificationVerdict:
     """Verdict from running all 7 verification layers against a completed task."""
+
     issue_id: str
     identifier: str
     layers: list[LayerResult] = field(default_factory=list)
-    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
 
     @property
     def passed(self) -> bool:
@@ -78,22 +83,28 @@ class VerificationVerdict:
         ]
         for layer in self.layers:
             li = "✅" if layer.passed else "❌"
-            lines.append(f"- {li} **{layer.name}**: {layer.reason or ('PASS' if layer.passed else 'FAIL')}")
+            lines.append(
+                f"- {li} **{layer.name}**: {layer.reason or ('PASS' if layer.passed else 'FAIL')}"
+            )
             if layer.details and not layer.passed:
                 for k, v in layer.details.items():
                     lines.append(f"  - {k}: {v}")
         if not self.passed:
-            lines.extend([
-                "",
-                "### Failed Layers",
-                "",
-            ])
+            lines.extend(
+                [
+                    "",
+                    "### Failed Layers",
+                    "",
+                ]
+            )
             for layer in self.failed_layers:
                 lines.append(f"- **{layer.name}**: {layer.reason}")
-            lines.extend([
-                "",
-                "**Action**: Task re-routed to `output:requires-verification` for human review.",
-            ])
+            lines.extend(
+                [
+                    "",
+                    "**Action**: Task re-routed to `output:requires-verification` for human review.",
+                ]
+            )
         return "\n".join(lines)
 
 
@@ -134,7 +145,9 @@ def check_shape(agent_output: str, task_body: str) -> LayerResult:
             details=details,
         )
 
-    return LayerResult(name="shape_ok", passed=True, reason="No shape violations detected")
+    return LayerResult(
+        name="shape_ok", passed=True, reason="No shape violations detected"
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -184,7 +197,10 @@ def check_workdir(modified_files: list[str], declared_workdir: str) -> LayerResu
             name="workdir_ok",
             passed=False,
             reason=f"{len(out_of_workdir)} files outside declared workdir '{declared_workdir}'",
-            details={"out_of_workdir": out_of_workdir[:10], "count": len(out_of_workdir)},
+            details={
+                "out_of_workdir": out_of_workdir[:10],
+                "count": len(out_of_workdir),
+            },
         )
 
     return LayerResult(
@@ -327,7 +343,10 @@ def check_linked_pr(
             name="linked_pr_ok",
             passed=False,
             reason=f"No PR found for branch/commit '{lookup}'",
-            details={"branch": branch_name, "sha": commit_sha[:7] if commit_sha else ""},
+            details={
+                "branch": branch_name,
+                "sha": commit_sha[:7] if commit_sha else "",
+            },
         )
 
     return LayerResult(
@@ -373,6 +392,7 @@ def check_basic_syntax(modified_files: list[str], workdir: str = ".") -> LayerRe
                 # which may not be installed; skip if not available
                 try:
                     import yaml
+
                     with open(full_path) as f:
                         yaml.safe_load(f)
                 except ImportError:
@@ -388,7 +408,9 @@ def check_basic_syntax(modified_files: list[str], workdir: str = ".") -> LayerRe
             details={"errors": errors[:5], "total_errors": len(errors)},
         )
 
-    return LayerResult(name="basic_syntax_ok", passed=True, reason="All checked files parse cleanly")
+    return LayerResult(
+        name="basic_syntax_ok", passed=True, reason="All checked files parse cleanly"
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -417,10 +439,32 @@ def check_goal_match(task_body: str, agent_output: str) -> LayerResult:
     )
     # Common stopwords
     stopwords = {
-        "should", "would", "could", "these", "those", "their", "there",
-        "where", "which", "while", "about", "after", "before", "other",
-        "using", "based", "create", "update", "change", "implement",
-        "please", "thanks", "hello", "regards", "agent", "task",
+        "should",
+        "would",
+        "could",
+        "these",
+        "those",
+        "their",
+        "there",
+        "where",
+        "which",
+        "while",
+        "about",
+        "after",
+        "before",
+        "other",
+        "using",
+        "based",
+        "create",
+        "update",
+        "change",
+        "implement",
+        "please",
+        "thanks",
+        "hello",
+        "regards",
+        "agent",
+        "task",
     }
     keywords = task_words - stopwords
 
@@ -497,6 +541,7 @@ def run_verification(
 @dataclass
 class DriftReport:
     """Result of a drift check."""
+
     passed: bool
     out_of_workdir: list[str] = field(default_factory=list)
     total_files: int = 0
@@ -592,7 +637,9 @@ def check_drift(
 
     if out_of_workdir:
         report.passed = False
-        report.reasons.append(f"{len(out_of_workdir)} files outside workdir '{declared_workdir}'")
+        report.reasons.append(
+            f"{len(out_of_workdir)} files outside workdir '{declared_workdir}'"
+        )
 
     # Check file count
     if len(modified_files) > max_files:
@@ -609,7 +656,9 @@ def check_drift(
 
         if report.oversized_files:
             report.passed = False
-            report.reasons.append(f"{len(report.oversized_files)} files exceed {max_lines_per_file} lines")
+            report.reasons.append(
+                f"{len(report.oversized_files)} files exceed {max_lines_per_file} lines"
+            )
 
     return report
 
@@ -636,7 +685,11 @@ def _count_lines_per_file(git_diff: str) -> dict[str, int]:
             continue
 
         # Count +/- lines for current file
-        if current_file and line.startswith(("+", "-")) and not line.startswith(("+++", "---")):
+        if (
+            current_file
+            and line.startswith(("+", "-"))
+            and not line.startswith(("+++", "---"))
+        ):
             per_file[current_file] += 1
 
     return per_file
@@ -655,6 +708,7 @@ ARCHIVED_NEEDS_HUMAN_REVIEW = "ARCHIVED-agent:needs-human-review"
 @dataclass
 class RoutingDecision:
     """Decision about which label a task should carry."""
+
     should_relabel: bool
     new_label: str
     reason: str
@@ -729,10 +783,13 @@ def _safe_identifier(identifier: str) -> str:
 def save_verdict(verdict: VerificationVerdict, base_dir: str | None = None) -> str:
     """Save verdict to disk as JSON. Returns path."""
     if base_dir is None:
-        base_dir = os.environ.get(
-            "PRISMATIC_HOME",
-            os.path.expanduser("~/.hermes/profiles/orchestrator"),
-        ) + "/data/verification_records"
+        base_dir = (
+            os.environ.get(
+                "PRISMATIC_HOME",
+                os.path.expanduser("~/.hermes/profiles/orchestrator"),
+            )
+            + "/data/verification_records"
+        )
 
     Path(base_dir).mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -746,13 +803,18 @@ def save_verdict(verdict: VerificationVerdict, base_dir: str | None = None) -> s
     return str(filepath)
 
 
-def save_drift_report(report: DriftReport, identifier: str, base_dir: str | None = None) -> str:
+def save_drift_report(
+    report: DriftReport, identifier: str, base_dir: str | None = None
+) -> str:
     """Save drift report to disk as JSON. Returns path."""
     if base_dir is None:
-        base_dir = os.environ.get(
-            "PRISMATIC_HOME",
-            os.path.expanduser("~/.hermes/profiles/orchestrator"),
-        ) + "/data/drift_reports"
+        base_dir = (
+            os.environ.get(
+                "PRISMATIC_HOME",
+                os.path.expanduser("~/.hermes/profiles/orchestrator"),
+            )
+            + "/data/drift_reports"
+        )
 
     Path(base_dir).mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -764,3 +826,220 @@ def save_drift_report(report: DriftReport, identifier: str, base_dir: str | None
         json.dump(report.to_dict(), f, indent=2)
 
     return str(filepath)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Gap 4 (Phase 2): agent:ned-review trigger
+# ─────────────────────────────────────────────────────────────────────
+#
+# Wires the ``agent:ned-review`` Linear label into the orchestrator:
+#
+#   1. Detect the label on a task
+#   2. Call :class:`prismatic.review.PRReviewer` against the linked PR
+#   3. Post the verdict as a Linear comment
+#   4. ``APPROVE``         -> transition to Done
+#      ``REQUEST_CHANGES`` -> re-route to original worker
+#      ``NEEDS_DISCUSSION``-> leave state untouched, flag Michael
+#
+# Reference: okf/operations/phase2-quality-gates-plan.md (Gap 4, task #6).
+# This module is the trigger; the heavy reviewer logic lives in
+# ``prismatic.review.pr_reviewer`` (tasks #1-5 of Gap 4).
+
+
+from prismatic.review.pr_reviewer import (  # noqa: E402  (placed after the gate code on purpose)
+    APPROVE,
+    NEEDS_DISCUSSION,
+    NED_REVIEW_LABEL,
+    PRReviewResult,
+    PRReviewer,
+    REQUEST_CHANGES,
+    StubPRReviewer,
+)
+
+
+# Linear state targets produced by the trigger.
+NED_REVIEW_TARGET_STATE = {
+    APPROVE: "Done",
+    REQUEST_CHANGES: "In Progress",  # re-route to original worker
+    NEEDS_DISCUSSION: "In Review",  # flag Michael; do not auto-transition
+}
+
+
+@dataclass
+class NedReviewDecision:
+    """Decision returned by :func:`trigger_ned_review`.
+
+    Captures the verdict, the Linear comment body that was (or would
+    be) posted, and the target Linear state. ``metadata`` is opaque —
+    populated by the trigger for audit logging and test assertions.
+    """
+
+    identifier: str
+    triggered: bool
+    verdict: str
+    target_state: str
+    linear_comment: str
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def approved(self) -> bool:
+        return self.verdict == APPROVE
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "identifier": self.identifier,
+            "triggered": self.triggered,
+            "verdict": self.verdict,
+            "target_state": self.target_state,
+            "linear_comment": self.linear_comment,
+            "metadata": self.metadata,
+        }
+
+
+def has_ned_review_label(labels: list[str] | list[dict[str, Any]] | None) -> bool:
+    """Return True iff the task carries the ``agent:ned-review`` label.
+
+    Accepts either a flat list of label-name strings or the richer
+    ``Linear`` ``labels.nodes`` shape (``[{"name": "..."}, ...]``).
+    Comparison is case-insensitive so a label spelled ``Agent:Ned-Review``
+    still matches — Linear normalizes label casing inconsistently across
+    API versions.
+    """
+    if not labels:
+        return False
+    needle = NED_REVIEW_LABEL.lower()
+    for entry in labels:
+        if isinstance(entry, str):
+            if entry.lower() == needle:
+                return True
+        elif isinstance(entry, dict):
+            name = entry.get("name")
+            if isinstance(name, str) and name.lower() == needle:
+                return True
+    return False
+
+
+def _format_linear_comment(result: PRReviewResult, pr_url: str) -> str:
+    """Format the reviewer verdict as a Linear-ready markdown comment."""
+    icon = {"APPROVE": "✅", "REQUEST_CHANGES": "❌", "NEEDS_DISCUSSION": "💬"}.get(
+        result.verdict, "ℹ️"
+    )
+    lines = [
+        f"## {icon} Ned-Review: `{result.verdict}`",
+        "",
+        f"**PR:** `{pr_url}`  ",
+        f"**Timestamp:** {datetime.now(timezone.utc).isoformat()}",
+        "",
+        result.summary.strip(),
+    ]
+    if result.inline_comments:
+        lines.extend(["", "### Inline comments", ""])
+        for c in result.inline_comments[:20]:  # cap at 20 for readability
+            lines.append(f"- `{c.path}:{c.line}` — {c.body}")
+        if len(result.inline_comments) > 20:
+            lines.append(f"- …and {len(result.inline_comments) - 20} more")
+    lines.extend(
+        [
+            "",
+            "**Next action:** "
+            + {
+                APPROVE: "transitioning to `Done`.",
+                REQUEST_CHANGES: "re-routing to original worker (`In Progress`).",
+                NEEDS_DISCUSSION: "leaving `In Review` for Michael.",
+            }.get(result.verdict, "no state change."),
+        ]
+    )
+    return "\n".join(lines)
+
+
+def trigger_ned_review(
+    issue: dict[str, Any],
+    reviewer: PRReviewer | None = None,
+    *,
+    post_comment: Callable[[str, str], None] | None = None,
+    transition_state: Callable[[str, str], None] | None = None,
+) -> NedReviewDecision:
+    """Run the ``agent:ned-review`` trigger for one Linear issue.
+
+    The orchestrator calls this after a worker marks a task as
+    "Ready for Review". ``issue`` is the Linear issue payload (or any
+    dict with ``identifier``, ``labels``, and a ``pr_url`` key under
+    arbitrary nesting). The function:
+
+    1. Checks for the ``agent:ned-review`` label.
+    2. Calls ``reviewer.review_pr(pr_url)`` to get a :class:`PRReviewResult`.
+    3. Builds the Linear comment body via :func:`_format_linear_comment`.
+    4. Calls ``post_comment(identifier, body)`` if provided.
+    5. Calls ``transition_state(identifier, target_state)`` if provided.
+
+    The two I/O callbacks are dependency-injected so the trigger stays
+    unit-testable without a real Linear client. Production callers wire
+    ``post_comment`` / ``transition_state`` to the Linear GraphQL
+    adapter; tests pass no-op callables and assert on the returned
+    :class:`NedReviewDecision`.
+
+    Returns a :class:`NedReviewDecision` describing what happened. When
+    the label is absent the decision has ``triggered=False`` and the
+    state is left untouched.
+    """
+    identifier = issue.get("identifier") or issue.get("id") or "<unknown>"
+    labels = issue.get("labels")
+
+    if not has_ned_review_label(labels):
+        return NedReviewDecision(
+            identifier=identifier,
+            triggered=False,
+            verdict="",
+            target_state="",
+            linear_comment="",
+            metadata={"reason": "label_missing"},
+        )
+
+    pr_url = (
+        issue.get("pr_url")
+        or issue.get("pullRequestUrl")
+        or issue.get("pull_request_url")
+        or ""
+    )
+    if not pr_url:
+        return NedReviewDecision(
+            identifier=identifier,
+            triggered=True,
+            verdict=NEEDS_DISCUSSION,
+            target_state=NED_REVIEW_TARGET_STATE[NEEDS_DISCUSSION],
+            linear_comment=(
+                f"## 💬 Ned-Review: `{NEEDS_DISCUSSION}`\n\n"
+                f"Issue `{identifier}` carries `{NED_REVIEW_LABEL}` but "
+                "no linked PR was found on the issue payload "
+                "(`pr_url` / `pullRequestUrl` missing). "
+                "Leaving `In Review` for Michael."
+            ),
+            metadata={"reason": "pr_url_missing"},
+        )
+
+    reviewer = reviewer or StubPRReviewer()
+    result = reviewer.review_pr(pr_url)
+    target_state = NED_REVIEW_TARGET_STATE[result.verdict]
+    comment = _format_linear_comment(result, pr_url)
+
+    if post_comment is not None:
+        try:
+            post_comment(identifier, comment)
+        except Exception as exc:  # pragma: no cover - I/O failure path
+            # Surface as metadata; do NOT crash the trigger.
+            result.metadata.setdefault("post_comment_error", str(exc))
+
+    if transition_state is not None:
+        try:
+            transition_state(identifier, target_state)
+        except Exception as exc:  # pragma: no cover - I/O failure path
+            result.metadata.setdefault("transition_error", str(exc))
+
+    return NedReviewDecision(
+        identifier=identifier,
+        triggered=True,
+        verdict=result.verdict,
+        target_state=target_state,
+        linear_comment=comment,
+        metadata=result.metadata,
+    )
