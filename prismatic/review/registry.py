@@ -33,6 +33,7 @@ registry pattern composes WITH subclassing, not against it.
 
 Reference: okf/operations/phase2-quality-gates-plan.md (Gap 9 / Part B)
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -102,10 +103,10 @@ class ReviewerRegistry:
 
     def __init__(self) -> None:
         self._secret_patterns: list[SecretPattern] = []
-        self._checks: list[QualityCheck] = []
+        self._checks_by_name: dict[str, QualityCheck] = {}
+        self._unnamed_checks: list[QualityCheck] = []
         self._impact_rules: list[ImpactRule] = []
         self._seen_secret_keys: set[tuple[str, str]] = set()
-        self._seen_check_names: set[str] = set()
 
     # Secret patterns
 
@@ -135,25 +136,14 @@ class ReviewerRegistry:
     def register_check(self, fn: QualityCheck, *, name: str | None = None) -> None:
         """Register one extra code-quality check callable.
 
-        If name is given and was already registered, the new function
-        silently replaces the old one. If name is None, no dedup.
+        If ``name`` is given and was already registered, the new function
+        silently replaces the old one. If ``name`` is None, the check is
+        appended to the unnamed list (no dedup, no replace).
         """
-        if name is not None and name in self._seen_check_names:
-            # Replace: pop old then append new.
-            self._checks = [c for c in self._checks if getattr(c, "_prismatic_check_name", None) != name]
-            try:
-                fn._prismatic_check_name = name  # type: ignore[attr-defined]
-            except (AttributeError, TypeError):
-                pass  # builtins/etc. -- skip name tagging
-            self._checks.append(fn)
-            return
-        if name is not None:
-            self._seen_check_names.add(name)
-            try:
-                fn._prismatic_check_name = name  # type: ignore[attr-defined]
-            except (AttributeError, TypeError):
-                pass
-        self._checks.append(fn)
+        if name is None:
+            self._unnamed_checks.append(fn)
+        else:
+            self._checks_by_name[name] = fn
 
     # Impact rules
 
@@ -173,9 +163,15 @@ class ReviewerRegistry:
             ComposedReviewerSpec with all current contributions. Safe to
             pass across threads; safe to hold for the duration of a review.
         """
+        # Named checks first (in dict insertion order), then unnamed (in
+        # list-append order). This matches the registration-order semantics
+        # callers expect: first-registered fires first.
+        all_checks: list[QualityCheck] = list(self._checks_by_name.values()) + list(
+            self._unnamed_checks
+        )
         return ComposedReviewerSpec(
             secret_patterns=tuple(self._secret_patterns),
-            checks=tuple(self._checks),
+            checks=tuple(all_checks),
             impact_rules=tuple(self._impact_rules),
         )
 
@@ -187,7 +183,7 @@ class ReviewerRegistry:
 
     @property
     def check_count(self) -> int:
-        return len(self._checks)
+        return len(self._checks_by_name) + len(self._unnamed_checks)
 
     @property
     def impact_rule_count(self) -> int:

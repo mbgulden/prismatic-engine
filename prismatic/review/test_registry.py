@@ -1,13 +1,11 @@
 """Tests for prismatic.review.registry (Gap 9 / Part B)."""
+
 from __future__ import annotations
 
 import pytest
 
 from prismatic.review.registry import (
-    ComposedReviewerSpec,
-    ImpactRule,
     ReviewerRegistry,
-    SecretPattern,
 )
 
 
@@ -222,12 +220,14 @@ class TestComposeSnapshot:
 class TestRegistryIntegrationWithReviewer:
     def test_reviewer_without_registry_unchanged(self):
         from prismatic.review import RealPRReviewer
+
         reviewer = RealPRReviewer()
         assert reviewer.registry is None
         assert reviewer.timeout_seconds == 30
 
     def test_reviewer_with_registry_stores_it(self):
         from prismatic.review import RealPRReviewer
+
         reg = ReviewerRegistry()
         reviewer = RealPRReviewer(registry=reg)
         assert reviewer.registry is reg
@@ -272,12 +272,14 @@ class TestRegistryIntegrationWithReviewer:
 
         def my_check(diff):
             captured_diffs.append(diff)
-            return [QualityFinding(
-                path="custom.py",
-                line=99,
-                severity="warning",
-                message="plugin-detected-issue",
-            )]
+            return [
+                QualityFinding(
+                    path="custom.py",
+                    line=99,
+                    severity="warning",
+                    message="plugin-detected-issue",
+                )
+            ]
 
         reg.register_check(my_check, name="custom_check")
 
@@ -303,7 +305,9 @@ class TestRegistryIntegrationWithReviewer:
             raise RuntimeError("plugin crashed")
 
         def good_check(diff):
-            return [QualityFinding(path="x.py", line=1, severity="warning", message="good")]
+            return [
+                QualityFinding(path="x.py", line=1, severity="warning", message="good")
+            ]
 
         reg.register_check(broken_check, name="broken")
         reg.register_check(good_check, name="good")
@@ -343,5 +347,6 @@ class TestHooksModule:
             HOOK_BEFORE_NED_REVIEW,
             ALL_HOOKS,
         )
+
         assert HOOK_BEFORE_SECRET_SCAN in ALL_HOOKS
         assert HOOK_BEFORE_NED_REVIEW in ALL_HOOKS

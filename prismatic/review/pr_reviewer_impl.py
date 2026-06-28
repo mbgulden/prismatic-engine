@@ -516,12 +516,14 @@ class RealPRReviewer:
                     if extra:
                         findings.extend(extra)
                 except Exception as exc:  # plugin crash isolation
-                    findings.append(QualityFinding(
-                        path="<plugin-error>",
-                        line=0,
-                        severity="warning",
-                        message=f"Plugin check failed: {exc}",
-                    ))
+                    findings.append(
+                        QualityFinding(
+                            path="<plugin-error>",
+                            line=0,
+                            severity="warning",
+                            message=f"Plugin check failed: {exc}",
+                        )
+                    )
 
         # Compute verdict
         verdict, summary = compute_verdict(findings)
@@ -536,25 +538,30 @@ class RealPRReviewer:
             for f in findings
         ]
 
+        metadata: dict[str, Any] = {
+            "reviewer": "real",
+            "pr_url": pr_url,
+            "findings_count": len(findings),
+            "critical_count": len([f for f in findings if f.severity == "critical"]),
+            "high_count": len([f for f in findings if f.severity == "high"]),
+            "warning_count": len([f for f in findings if f.severity == "warning"]),
+        }
+        # Only emit registry metadata when a registry is attached
+        # (avoids "0 patterns" ambiguity for the no-registry case).
+        if spec is not None:
+            metadata["registry_pattern_count"] = len(spec.secret_patterns)
+            metadata["registry_check_count"] = len(spec.checks)
+
         return PRReviewResult(
             verdict=verdict,
             summary=summary,
             inline_comments=inline_comments,
-            metadata={
-                "reviewer": "real",
-                "pr_url": pr_url,
-                "findings_count": len(findings),
-                "critical_count": len(
-                    [f for f in findings if f.severity == "critical"]
-                ),
-                "high_count": len([f for f in findings if f.severity == "high"]),
-                "warning_count": len([f for f in findings if f.severity == "warning"]),
-                "registry_pattern_count": len(spec.secret_patterns) if spec else 0,
-                "registry_check_count": len(spec.checks) if spec else 0,
-            },
+            metadata=metadata,
         )
 
-    def _detect_secrets_with_registry(self, diff: str, spec: Any | None) -> list[QualityFinding]:
+    def _detect_secrets_with_registry(
+        self, diff: str, spec: Any | None
+    ) -> list[QualityFinding]:
         """Run built-in secret detection + registry-added patterns.
 
         When a registry is attached, its extra patterns are merged with
@@ -584,11 +591,13 @@ class RealPRReviewer:
             content = line[1:]
             for pattern, secret_type, severity in spec.secret_patterns:
                 if re.search(pattern, content):
-                    findings.append(QualityFinding(
-                        path=current_file,
-                        line=i,
-                        severity=severity,
-                        message=f"Potential {secret_type} detected (plugin) — DO NOT COMMIT",
-                    ))
+                    findings.append(
+                        QualityFinding(
+                            path=current_file,
+                            line=i,
+                            severity=severity,
+                            message=f"Potential {secret_type} detected (plugin) — DO NOT COMMIT",
+                        )
+                    )
                     break
         return findings

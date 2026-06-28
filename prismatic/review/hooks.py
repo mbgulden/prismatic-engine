@@ -23,18 +23,30 @@ pattern is the *declarative* extension story -- it surfaces specific
 lifecycle moments. Both layers compose: a plugin can register a custom
 check via the registry AND hook into a lifecycle moment.
 
+Wiring status (Gap 9 / Part B):
+- HOOK_* constants are EXPORTED and documented.
+- Dispatch code (consumer-side hook bus) is NOT YET WIRED in this PR.
+  Each hook's docstring notes where it should be wired in a future PR.
+  Until then, hooks are inert identifiers -- safe to reference in
+  plugin code without crashing the reviewer.
+
 Reference: okf/operations/phase2-quality-gates-plan.md (Gap 9 / Part B)
 """
+
 from __future__ import annotations
 
 
-# Reviewer-side hooks (fired by RealPRReviewer + PipelineOrchestrator)
+# Reviewer-side hooks (NOT YET WIRED in this PR; constants are stable)
+# TODO Gap 9 / Part C: dispatch these via a registry-driven hook bus
+# inside RealPRReviewer.review_pr() and PipelineOrchestrator.process().
 
 HOOK_BEFORE_SECRET_SCAN = "before_secret_scan"
 """Before built-in secret pattern scan runs. Args: diff.
 
 Plugins may return extra (regex, kind, severity) tuples that are
 merged into the scan patterns for this review.
+
+TODO Gap 9 / Part C: wire dispatch in RealPRReviewer.review_pr().
 """
 
 HOOK_BEFORE_QUALITY_CHECKS = "before_quality_checks"
@@ -42,6 +54,8 @@ HOOK_BEFORE_QUALITY_CHECKS = "before_quality_checks"
 
 Plugins may return extra check callables that take a diff and return
 a list of QualityFinding objects.
+
+TODO Gap 9 / Part C: wire dispatch in RealPRReviewer.review_pr().
 """
 
 HOOK_BEFORE_CLASSIFY_IMPACT = "before_classify_impact"
@@ -49,6 +63,8 @@ HOOK_BEFORE_CLASSIFY_IMPACT = "before_classify_impact"
 
 Plugins may return an impact string (one of IMPACT_TRIVIAL, IMPACT_MINOR,
 IMPACT_MAJOR, IMPACT_BLOCKER) that overrides the built-in classification.
+
+TODO Gap 9 / Part C: wire dispatch in PipelineOrchestrator.process().
 """
 
 HOOK_BEFORE_DECIDE_ACTION = "before_decide_action"
@@ -56,10 +72,12 @@ HOOK_BEFORE_DECIDE_ACTION = "before_decide_action"
 
 Plugins may return an action string (one of ACTION_ADVANCE, ACTION_HOLD,
 ACTION_REWORK, ACTION_GIVE_UP) that overrides the built-in decision.
+
+TODO Gap 9 / Part C: wire dispatch in PipelineOrchestrator.process().
 """
 
 
-# Factory-side hook (fired by trigger_ned_review)
+# Factory-side hook (NOT YET WIRED in this PR)
 
 HOOK_BEFORE_NED_REVIEW = "before_ned_review"
 """In trigger_ned_review() before the reviewer runs. Args: issue.
@@ -67,6 +85,8 @@ HOOK_BEFORE_NED_REVIEW = "before_ned_review"
 Plugins may mutate the issue dict in-place (e.g. add metadata, attach
 PR URLs, adjust labels) or short-circuit by raising. Side-effects only;
 return value is ignored.
+
+TODO Gap 9 / Part C: wire dispatch in trigger_ned_review().
 """
 
 
