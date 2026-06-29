@@ -172,8 +172,28 @@ A consolidated collection of 8 React/Webpack-based plugin extensions built for t
    *Swarm session inspector. Explores workspace directories, acts as session director, and embeds an interactive shell terminal.*
 7. **`hermes-plugin-vram-observability/`**  
    *Hardware telemetry monitor. Connects to `nvidia-smi` endpoints to render live GPU load, memory allocation, and VRAM limits.*
-8. **`hermes-plugin-workspace-tree-navigator/`**  
+8. **`hermes-plugin-workspace-tree-navigator/`**
    *Interactive file tree navigation component. Enables directory exploring, file editing, and direct downloads through the dashboard.*
+
+### 📚 Building Your First Plugin — Start With `prismatic-hello-world`
+
+If you want to add a new plugin to the engine (not a Hermes dashboard widget,
+but a Core engine plugin that registers secret patterns, quality checks,
+impact rules, or action rules), start by copying **`plugins/prismatic_hello_world/`**.
+
+It's the **canonical reference plugin** — a working example that demonstrates every registration channel the engine exposes. The plugin registers all four pattern types (secret pattern, quality check, impact rule, action rule), so you can see exactly how each one is wired through `PluginLoader` → `PrismaticPlugin.on_init()` → `ReviewerRegistry`.
+
+**To create a new plugin:**
+
+1. `cp -r plugins/prismatic_hello_world plugins/my_plugin` (note: underscores, not dashes — Python can't import dashes)
+2. Edit `plugins/my_plugin/plugin-manifest.yaml` — change `name`, `entry_point`, `description`, `author`, `core_version_constraint`
+3. Edit `plugins/my_plugin/plugin.py` — rename `HelloWorldPlugin` → `MyPlugin`, replace the four registrations with your own
+4. Rename the directory: `mv plugins/my_plugin plugins/my_plugin` (already correct if you copied to underscore name)
+5. Edit the entry_point in your manifest: `my_plugin.plugin:MyPlugin`
+6. Add tests in `plugins/my_plugin/tests/test_my_plugin.py` (5+ tests, mutation-through assertions)
+7. Run `python3 -m pytest plugins/my_plugin/ -v` to verify
+
+See `plugins/prismatic_hello_world/README.md` for the full walkthrough and `specs/implementation-plans/GRO-1497-plugin-interface-plan.md` for the complete manifest schema reference.
 
 ---
 
