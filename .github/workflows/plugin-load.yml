@@ -1,0 +1,43 @@
+name: Plugin Load Gate
+
+# Runs Gap 13's ship-time plugin load verification on every PR that
+# touches plugins/ or prismatic/core/registry.py. Fails the build if
+# any shipped plugin doesn't load in the current environment.
+
+on:
+  pull_request:
+    paths:
+      - "plugins/**"
+      - "prismatic/core/registry.py"
+      - "prismatic/quality/plugin_load.py"
+      - "tests/test_plugin_load_gate.py"
+  push:
+    branches:
+      - deploy-fresh
+      - main
+
+jobs:
+  verify-plugins-load:
+    name: Verify shipped plugins load
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install prismatic engine + dev deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run plugin load gate
+        run: |
+          python -m prismatic.quality.plugin_load
+
+      - name: Run gate unit tests
+        run: |
+          python -m pytest tests/test_plugin_load_gate.py -v

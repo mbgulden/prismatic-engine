@@ -27,3 +27,4 @@ config.local.yaml
 scratch/
 .wrangler/
 node_modules/
+.venv_dev/
