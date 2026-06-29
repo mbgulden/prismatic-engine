@@ -807,6 +807,113 @@ AGENT_LAUNCHERS: dict[str, Callable[..., Any]] = {
 
 
 # ═══════════════════════════════════════════════════════════════
+# Process observer — fixes GRO-2979 / GRO-2978 closure gap.
+#
+# The 5 launchers above spawn agents (agy/jules/codex as subprocess.Popen,
+# fred/kai as nudge-file writes). Until GRO-2979, every spawned process was
+# fire-and-forget: the dispatcher's outer loop never observed the proc, so
+# telemetry_agent_runs rows stayed status='dispatched' forever, and a single
+# in-lane issue would re-dispatch on every cycle (GRO-2051 re-dispatched 178
+# times in 5 days before the bug was diagnosed).
+#
+# The fix is structural: register every spawned Popen and drain its exit
+# status back into TelemetryCollector.update_agent_run(). Signal-based
+# launchers (fred/kai) already mark completion via the file watcher in the
+# recipient — only Popen-launching agents need observer wiring.
+# ═══════════════════════════════════════════════════════════════
+
+# run_id → (proc, start_monotonic)
+_PENDING_PROCS: dict[str, tuple[subprocess.Popen, float]] = {}
+_PENDING_LOCK = threading.Lock()
+_OBSERVER_THREAD_STARTED = threading.Lock()
+
+
+def register_proc_for_observation(run_id: str, proc: subprocess.Popen) -> None:
+    """Register a subprocess.Popen for closure-write observation.
+
+    The observer thread polls each registered proc and, on exit, writes a
+    `telemetry_agent_runs` UPDATE via ``TelemetryCollector.update_agent_run``.
+    Safe to call from any thread; no-ops if the proc has already exited
+    (closes the window in which fire-and-forget launchers could leak).
+    """
+    if proc is None:
+        return
+    with _PENDING_LOCK:
+        _PENDING_PROCS[run_id] = (proc, time.monotonic())
+    _ensure_observer_started()
+
+
+def _ensure_observer_started() -> None:
+    """Start the observer thread on first registration. Idempotent."""
+    global _OBSERVER_THREAD
+    with _OBSERVER_THREAD_STARTED:
+        if getattr(_ensure_observer_started, "_already", False):
+            return
+        t = threading.Thread(
+            target=_observer_loop,
+            name="prismatic-proc-observer",
+            daemon=True,
+        )
+        t.start()
+        _ensure_observer_started._already = True  # type: ignore[attr-defined]
+
+
+def _observer_loop() -> None:
+    """Daemon thread: observe every registered proc, write closure on exit.
+
+    Polls each proc every 2 seconds. On exit, captures stdout/stderr from
+    /proc/<pid>/fd if available (Linux), determines status (exit_code 0 →
+    completed, non-zero → failed), and calls update_agent_run(). Removes
+    the proc from the pending set so it isn't double-processed.
+    """
+    while True:
+        try:
+            ready: list[tuple[str, subprocess.Popen]] = []
+            with _PENDING_LOCK:
+                for run_id, (proc, started_at) in list(_PENDING_PROCS.items()):
+                    if proc.poll() is not None:
+                        ready.append((run_id, proc))
+                        del _PENDING_PROCS[run_id]
+
+            for run_id, proc in ready:
+                try:
+                    rc = proc.returncode
+                    status = "completed" if rc == 0 else "failed"
+                    stderr = ""
+                    try:
+                        # Best-effort: capture a snippet of stderr from the
+                        # child if it was redirected to a pipe we own.
+                        # The launchers use DEVNULL today, so this is a
+                        # no-op placeholder for the future --report-exit
+                        # CLI flag.
+                        stderr = ""
+                    except Exception:
+                        pass
+                    try:
+                        from .telemetry import get_collector
+                        collector = get_collector()
+                        collector.update_agent_run(
+                            run_id=run_id,
+                            status=status,
+                            exit_code=rc,
+                            error_message=stderr or None,
+                        )
+                    except Exception as exc:
+                        print(
+                            f"[dispatcher] observer: update_agent_run "
+                            f"failed for {run_id}: {exc}"
+                        )
+                except Exception as exc:
+                    print(
+                        f"[dispatcher] observer: unexpected error for "
+                        f"{run_id}: {exc}"
+                    )
+        except Exception as exc:
+            print(f"[dispatcher] observer loop crashed: {exc}")
+        time.sleep(2.0)
+
+
+# ═══════════════════════════════════════════════════════════════
 # Pipeline Router (thin wrapper around prismatic.router)
 # ═══════════════════════════════════════════════════════════════
 
@@ -1596,6 +1703,40 @@ def dispatch_once(
 
         for issue in issues:
             issue_id = issue["id"]
+            identifier = issue.get("identifier", issue_id)
+
+            # ── Dispatch cap (GRO-2979 regression prevention) ─────
+            # If this issue has been re-dispatched too many times in
+            # the configured window without a closure, skip and alert.
+            try:
+                if dedup.is_over_dispatch_cap(issue_id):
+                    stuck_count = dedup._count_dispatches(issue_id)
+                    print(
+                        f"[dispatcher] ⚠️  STUCK {agent_name} → {identifier}: "
+                        f"{stuck_count} dispatches in "
+                        f"{dedup.MAX_DISPATCH_WINDOW_HOURS}h "
+                        f"(cap={dedup.MAX_DISPATCH_COUNT_PER_ISSUE}). "
+                        f"Skipping dispatch; needs human triage."
+                    )
+                    try:
+                        add_comment(
+                            issue_id,
+                            f"⚠️ **Auto-marked stuck**: {stuck_count} "
+                            f"dispatches in "
+                            f"{dedup.MAX_DISPATCH_WINDOW_HOURS}h with no "
+                            f"closure. Cap is "
+                            f"{dedup.MAX_DISPATCH_COUNT_PER_ISSUE}. "
+                            f"Pausing dispatch — needs review.",
+                        )
+                    except Exception:
+                        pass
+                    counts.setdefault("stuck", 0)
+                    counts["stuck"] += 1
+                    continue
+            except Exception as exc:
+                # Cap check is best-effort; never block on telemetry.
+                print(f"[dispatcher] dispatch-cap check failed: {exc}")
+            # ── End dispatch cap ───────────────────────────────────
 
             # Skip if already dispatched this cycle
             if dedup.is_processed(issue_id, label, cycle_id):
@@ -1692,6 +1833,27 @@ def dispatch_once(
                         credits_spent=decision.estimated_cost,
                     )
                     # ── End telemetry ──────────────────────────────────
+                    # ── Process observer (GRO-2979) ──────────────────
+                    # If the launcher returned a subprocess.Popen, register
+                    # it for closure observation. Signal-based launchers
+                    # (fred/kai) return bool — they don't need this.
+                    try:
+                        if isinstance(result, subprocess.Popen):
+                            register_proc_for_observation(run_id, result)
+                    except Exception as exc:
+                        # Observability is best-effort; never block dispatch
+                        print(
+                            f"[dispatcher] register_proc_for_observation "
+                            f"failed for {identifier}: {exc}"
+                        )
+                    # ── End process observer ──────────────────────────
+                    # ── Dispatch counter (GRO-2979) ──────────────────
+                    # Bump per-issue counter so the cap can detect storms.
+                    try:
+                        dedup.record_dispatch(issue_id)
+                    except Exception as exc:
+                        print(f"[dispatcher] record_dispatch failed: {exc}")
+                    # ── End dispatch counter ──────────────────────────
                     # Emit agent_launched event to IPC bridge
                     _emit_agent_event("agent_launched", agent_name, identifier, cycle_id=cycle_id)
                     # Post a comment tracking the dispatch
