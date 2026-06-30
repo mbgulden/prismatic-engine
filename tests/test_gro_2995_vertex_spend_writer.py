@@ -37,8 +37,11 @@ from prismatic.telemetry import TelemetryCollector
 def telemetry_db(tmp_path):
     """TelemetryCollector backed by a temp DB. Each test owns its own collector;
     the daemon writer thread is GC'd when the fixture scope ends."""
+    import time
     db_path = str(tmp_path / "test_gro_2995.db")
     collector = TelemetryCollector(db_path=db_path)
+    # Give the daemon writer a moment to start before tests push events
+    time.sleep(0.05)
     yield collector, db_path
 
 
@@ -59,6 +62,7 @@ def test_table_auto_created_on_init(tmp_path):
 
 def test_record_vertex_spend_writes_one_row(telemetry_db):
     """Calling record_vertex_spend then draining yields exactly one row."""
+    import time
     collector, db_path = telemetry_db
     collector.record_vertex_spend(
         project_id="my-gcp-project",
@@ -67,8 +71,9 @@ def test_record_vertex_spend_writes_one_row(telemetry_db):
         credits=12.5,
         operation="code_generation",
     )
-    collector._drain()  # noqa: SLF001
-    conn = sqlite3.connect(db_path)
+    # Daemon writer polls queue with 1.0s timeout — wait for it to drain
+    time.sleep(1.5)
+    conn = sqlite3.connect(db_path, timeout=5.0)
     try:
         rows = conn.execute(
             "SELECT project_id, model, region, credits, operation "
@@ -87,6 +92,7 @@ def test_record_vertex_spend_writes_one_row(telemetry_db):
 
 def test_acceptance_query_returns_nonzero(telemetry_db):
     """Acceptance: COUNT(*) WHERE recorded_at > now()-7 days > 0 after a record."""
+    import time
     collector, db_path = telemetry_db
     collector.record_vertex_spend(
         project_id="acc-proj",
@@ -95,8 +101,8 @@ def test_acceptance_query_returns_nonzero(telemetry_db):
         credits=3.14,
         operation="summarization",
     )
-    collector._drain()  # noqa: SLF001
-    conn = sqlite3.connect(db_path)
+    time.sleep(1.5)
+    conn = sqlite3.connect(db_path, timeout=5.0)
     try:
         count = conn.execute(
             "SELECT COUNT(*) FROM gcp_vertex_spend_events "
@@ -112,6 +118,7 @@ def test_acceptance_query_returns_nonzero(telemetry_db):
 
 def test_multiple_records_accumulate(telemetry_db):
     """Three calls to record_vertex_spend should produce three rows."""
+    import time
     collector, db_path = telemetry_db
     for i in range(3):
         collector.record_vertex_spend(
@@ -121,8 +128,8 @@ def test_multiple_records_accumulate(telemetry_db):
             credits=float(i + 1),
             operation=f"op-{i}",
         )
-    collector._drain()  # noqa: SLF001
-    conn = sqlite3.connect(db_path)
+    time.sleep(2.0)
+    conn = sqlite3.connect(db_path, timeout=5.0)
     try:
         count = conn.execute(
             "SELECT COUNT(*) FROM gcp_vertex_spend_events"
@@ -140,6 +147,7 @@ def test_default_values_for_optional_fields(telemetry_db):
     """When tpm_used / rpm_used / context_pct / estimated_cost are omitted,
     the schema defaults (0, 0, 0.0, 0.0) should apply, and estimated_cost
     should default to the `credits` value per the writer docstring."""
+    import time
     collector, db_path = telemetry_db
     collector.record_vertex_spend(
         project_id="defaults",
@@ -148,8 +156,8 @@ def test_default_values_for_optional_fields(telemetry_db):
         credits=7.0,
         operation="defaults_test",
     )
-    collector._drain()  # noqa: SLF001
-    conn = sqlite3.connect(db_path)
+    time.sleep(1.5)
+    conn = sqlite3.connect(db_path, timeout=5.0)
     try:
         row = conn.execute(
             "SELECT tpm_used, rpm_used, context_pct, estimated_cost "
