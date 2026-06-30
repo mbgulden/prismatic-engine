@@ -30,6 +30,7 @@ from typing import Any
 import uvicorn
 from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from prismatic.gateway.event_bus import get_event_bus, set_event_bus, EventBus
 from prismatic.gateway.ipc_bridge import (
@@ -74,6 +75,36 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Auth check for observability endpoints (re-added 2026-06-30 after Phase D
+# cherry-pick conflict dropped it). Reuses the IP allowlist from
+# PRISMATIC_ALLOWED_IPS (already in systemd) plus an optional bearer token
+# from PRISMATIC_METRICS_TOKEN. If neither is configured, endpoints are
+# local-only (rejected unless from 127.0.0.1).
+_METRICS_TOKEN = os.environ.get("PRISMATIC_METRICS_TOKEN", "")
+_ALLOWED_IPS_RAW = os.environ.get("PRISMATIC_ALLOWED_IPS", "127.0.0.1,::1")
+_ALLOWED_IPS = {ip.strip() for ip in _ALLOWED_IPS_RAW.split(",") if ip.strip()}
+
+
+def _check_observability_auth(request: Request) -> bool:
+    """Allow if bearer token matches OR client IP is allowlisted."""
+    if _METRICS_TOKEN:
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer ") and auth[7:] == _METRICS_TOKEN:
+            return True
+    client_ip = request.client.host if request.client else ""
+    if client_ip in _ALLOWED_IPS:
+        return True
+    return False
+
+
+@app.middleware("http")
+async def _observability_auth_middleware(request: Request, call_next):
+    path = request.url.path
+    if path == "/metrics" or path.startswith("/events/") or path.startswith("/curator/"):
+        if not _check_observability_auth(request):
+            return JSONResponse({"detail": "forbidden"}, status_code=403)
+    return await call_next(request)
 
 # Mount the IPC bridge event ingest route (POST /events, GET /events/history)
 # The router's @router.post("/events") defines the full path — no prefix needed
@@ -315,6 +346,96 @@ async def events_bus_stats() -> dict[str, Any]:
         return {"exists": True, "error": str(e)}
 
 
+@app.get("/curator/health")
+async def curator_health() -> dict[str, Any]:
+    """Story 1.7: Curator Lane observability dashboard endpoint.
+
+    Returns curator state: tag distribution, lane stats, recent escalations,
+    pool stats, budget usage, and last digest timestamp.
+
+    Used by the morning digest generator + ad-hoc health checks.
+    """
+    import sqlite3
+    curator_db = os.environ.get("PRISMATIC_CURATOR_DB")
+    if not curator_db or not os.path.exists(curator_db):
+        return {"exists": False, "error": "curator DB not found"}
+
+    # Pool stats via import (graceful if not available)
+    pool_stats = None
+    try:
+        sys.path.insert(0, "/home/ubuntu/work/prismatic-engine")
+        from prismatic.supervisor.recovery import get_pool
+        pool_stats = get_pool().stats()
+    except Exception as e:
+        pool_stats = {"error": str(e)}
+
+    # Budget stats
+    budget_path = os.path.expanduser("~/.prismatic/curator/budget.json")
+    budget = None
+    if os.path.exists(budget_path):
+        try:
+            import json as _json
+            with open(budget_path) as f:
+                budget = _json.load(f)
+        except Exception:
+            pass
+
+    try:
+        conn = sqlite3.connect(curator_db, timeout=5)
+        try:
+            # Tag distribution
+            cur = conn.execute(
+                "SELECT tag, COUNT(*) FROM tagged_events GROUP BY tag"
+            )
+            tag_counts = {row[0]: row[1] for row in cur.fetchall()}
+
+            # Last 10 escalations
+            cur = conn.execute(
+                "SELECT event_rowid, lane_hint, reason, tagged_at "
+                "FROM tagged_events WHERE tag = 'escalate' "
+                "ORDER BY tagged_at DESC LIMIT 10"
+            )
+            recent_escalations = [
+                {
+                    "event_rowid": row[0],
+                    "lane_hint": row[1],
+                    "reason": row[2],
+                    "tagged_at": row[3],
+                }
+                for row in cur.fetchall()
+            ]
+
+            # Last digest
+            cur = conn.execute(
+                "SELECT date, ran_at, escalate_count, paged_michael, digest_path "
+                "FROM digest_runs ORDER BY ran_at DESC LIMIT 1"
+            )
+            last_digest_row = cur.fetchone()
+            last_digest = None
+            if last_digest_row:
+                last_digest = {
+                    "date": last_digest_row[0],
+                    "ran_at": last_digest_row[1],
+                    "escalate_count": last_digest_row[2],
+                    "paged_michael": bool(last_digest_row[3]),
+                    "digest_path": last_digest_row[4],
+                }
+        finally:
+            conn.close()
+    except Exception as e:
+        return {"exists": True, "error": str(e)}
+
+    return {
+        "exists": True,
+        "tag_counts": tag_counts,
+        "total_tagged": sum(tag_counts.values()),
+        "recent_escalations": recent_escalations,
+        "last_digest": last_digest,
+        "pool_stats": pool_stats,
+        "budget": budget,
+    }
+
+
 @app.get("/locks/stale")
 async def list_stale_locks() -> list[dict[str, Any]]:
     """Return locks whose heartbeat has expired (>5 min stale)."""
@@ -528,6 +649,71 @@ async def linear_webhook_alias(request: Request) -> dict[str, Any]:
     Forward to the same handler.
     """
     return await linear_webhook(request)
+
+
+# ── Chat AGY Endpoints (v0.1) ──────────────────────────────────────
+
+@app.get("/chat/sessions")
+async def list_chat_sessions() -> list[dict[str, Any]]:
+    """Get the list of active/known AGY chat sessions."""
+    from prismatic.capabilities.chat_agy import ChatAGYCapability
+    cap = ChatAGYCapability()
+    return cap.list_sessions()
+
+
+@app.get("/chat/sessions/{session_id}")
+async def get_chat_session(session_id: str):
+    """Get a single chat session by ID, or return 404 per v0.1 contract."""
+    from prismatic.capabilities.chat_agy import ChatAGYCapability
+    from fastapi import HTTPException
+    cap = ChatAGYCapability()
+    session = cap.get_session(session_id)
+    if session is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "session_not_found",
+                "reason": f"Session '{session_id}' not found under the v0.1 contract (no live data path)."
+            }
+        )
+    return session
+
+
+# ── Schedule Observatory Endpoints ─────────────────────────────────
+
+@app.get("/schedules")
+async def list_schedules() -> list[dict[str, Any]]:
+    """List all configured schedules across providers."""
+    from prismatic.schedules import get_all_schedules
+    return [s.to_dict() for s in get_all_schedules()]
+
+
+@app.post("/schedules/chat-command")
+async def schedules_chat_command(payload: dict[str, Any]) -> dict[str, Any]:
+    """Parse a chat command to update a schedule."""
+    from prismatic.schedules import process_chat_schedule_request
+    message = payload.get("message", "")
+    return process_chat_schedule_request(message)
+
+
+@app.post("/schedules/{schedule_id}/mutate")
+async def mutate_schedule(schedule_id: str, payload: dict[str, Any]):
+    """Mutate a schedule with owner-aware policy check."""
+    from prismatic.schedules import request_schedule_mutation, UnauthorizedMutationError
+    from fastapi.responses import JSONResponse
+    enabled = payload.get("enabled")
+    schedule_expr = payload.get("schedule_expr")
+    try:
+        res = request_schedule_mutation(
+            schedule_id=schedule_id,
+            enabled=enabled,
+            schedule_expr=schedule_expr
+        )
+        return res
+    except UnauthorizedMutationError as e:
+        return JSONResponse(status_code=403, content={"error": str(e)})
+    except FileNotFoundError as e:
+        return JSONResponse(status_code=404, content={"error": str(e)})
 
 
 
