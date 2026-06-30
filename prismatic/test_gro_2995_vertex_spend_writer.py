@@ -311,8 +311,11 @@ def test_quota_snapshot_emits_vertex_spend_per_record(tmp_path):
         ]
         ledger.record_quota_snapshot(records, project_id="wiring-test-pid")
 
-        # Drain collector to flush the queued vertex_spend events.
-        collector._drain()  # noqa: SLF001
+        # Wait for the daemon writer to flush the queued vertex_spend
+        # events. We do NOT call collector._drain() directly — that would
+        # start a SECOND drainer thread and deadlock on the queue.
+        import time
+        time.sleep(2.0)
     finally:
         _tel_mod._collector = original
         # Daemon writer thread will be GC'd when pytest process exits; no
