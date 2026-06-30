@@ -26,6 +26,16 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
 
+# Make sibling modules importable
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from prismatic.supervisor.recovery import (  # noqa: E402
+    get_pool, dispatch_to_supervisor_bounded,
+)
+from prismatic.curator.dispatcher import (  # noqa: E402
+    LaneBudgetTracker, decide_dispatch, build_supervisor_cmd,
+)
+
 # === Paths ===
 
 PRISMATIC_HOME = Path(os.environ.get("PRISMATIC_HOME") or Path.home())
@@ -450,10 +460,46 @@ def record_digest_run(target_date: str, counts: dict, path: Path) -> None:
 class CuratorLane:
     """Main curator supervisor. One instance, runs continuously."""
 
-    def __init__(self, poll_interval: float = 3.0):
+    def __init__(self, poll_interval: float = 3.0,
+                 enable_dispatch: bool = True):
         self.poll_interval = poll_interval
         self._last_rowid = get_last_processed_rowid()
+        self.enable_dispatch = enable_dispatch
+        self._budget = LaneBudgetTracker()
+        self._pool = get_pool()
         init_curator_db()
+
+    def _maybe_dispatch(self, event: BusEvent, tag_result: TagResult) -> None:
+        """If a tagged event is 'delegate', try to spawn a real agent.
+
+        This is Story 1.5: Sonnet/Opus integration into the curator.
+        """
+        if tag_result.tag != "delegate":
+            return  # only delegates trigger dispatch
+        if not self.enable_dispatch:
+            return  # curator in classify-only mode
+
+        # Extract issue_id from the payload
+        issue_id = None
+        payload = event.payload or {}
+        if isinstance(payload.get("data"), dict):
+            issue_id = payload["data"].get("identifier")
+        if not issue_id:
+            issue_id = event.topic  # fallback to topic name
+
+        decision = decide_dispatch(tag_result.lane_hint, budget_tracker=self._budget)
+        if not decision.should_dispatch or not decision.lane:
+            # Log but don't take action (budget exceeded or unknown lane)
+            print(f"[curator] dispatch skipped for {issue_id}: {decision.reason}")
+            return
+
+        cmd = build_supervisor_cmd(issue_id, decision.lane, decision.model)
+        result = dispatch_to_supervisor_bounded(issue_id, cmd)
+        if result["status"] == "spawned":
+            self._budget.charge(decision.lane)
+            print(f"[curator] dispatched {issue_id} -> {decision.lane}/{decision.model} PID={result['pid']}")
+        else:
+            print(f"[curator] dispatch queued for {issue_id} (reason={result.get('reason', 'unknown')})")
 
     def tick(self) -> int:
         """Process one batch of bus events. Returns count tagged."""
@@ -468,6 +514,8 @@ class CuratorLane:
                 update_lane_stats(result.lane_hint, result.tag)
             self._last_rowid = ev.rowid
             tagged += 1
+            # Story 1.5: dispatch delegate events
+            self._maybe_dispatch(ev, result)
         return tagged
 
     async def run(self) -> None:
