@@ -217,43 +217,6 @@ async def list_locks() -> list[dict[str, Any]]:
 
 # ── D.5: Observability metrics ──────────────────────────────────
 
-# Auth check for observability endpoints. Reuses the IP allowlist
-# already in systemd (PRISMATIC_ALLOWED_IPS), plus an optional bearer
-# token from PRISMATIC_METRICS_TOKEN env var. If neither is configured,
-# endpoints are local-only (rejected unless from 127.0.0.1).
-_METRICS_TOKEN = os.environ.get("PRISMATIC_METRICS_TOKEN", "")
-_ALLOWED_IPS_RAW = os.environ.get("PRISMATIC_ALLOWED_IPS", "127.0.0.1,::1")
-_ALLOWED_IPS = {ip.strip() for ip in _ALLOWED_IPS_RAW.split(",") if ip.strip()}
-
-
-def _check_observability_auth(request: Request) -> bool:
-    """Return True if the request is allowed to read /metrics and /events/*.
-
-    Allowed if:
-    - Bearer token matches $PRISMATIC_METRICS_TOKEN (if set), OR
-    - Client IP is in $PRISMATIC_ALLOWED_IPS (which defaults to loopback).
-    """
-    if _METRICS_TOKEN:
-        auth = request.headers.get("Authorization", "")
-        if auth.startswith("Bearer ") and auth[7:] == _METRICS_TOKEN:
-            return True
-    client_ip = request.client.host if request.client else ""
-    if client_ip in _ALLOWED_IPS:
-        return True
-    return False
-
-
-@app.middleware("http")
-async def _observability_auth_middleware(request: Request, call_next):
-    """Apply _check_observability_auth to /metrics and /events/* routes."""
-    path = request.url.path
-    if path == "/metrics" or path.startswith("/events/"):
-        if not _check_observability_auth(request):
-            from fastapi.responses import JSONResponse
-            return JSONResponse({"detail": "forbidden"}, status_code=403)
-    return await call_next(request)
-
-
 @app.get("/metrics")
 async def metrics() -> dict[str, Any]:
     """Phase D.5 — observability metrics endpoint.
@@ -523,7 +486,6 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
     body = await request.body()
     signature = request.headers.get("linear-signature", "")
     _webhook_counters["linear_received"] += 1
-    # (DEBUG logging removed 2026-06-30 — diagnosis complete)
     if signature:
         import hashlib, hmac as _hmac
         secrets = get_linear_secrets()
