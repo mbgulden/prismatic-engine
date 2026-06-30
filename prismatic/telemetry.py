@@ -309,6 +309,60 @@ class TelemetryCollector:
         }
         self._push("credit", event)
 
+    def record_vertex_spend(
+        self,
+        project_id: str,
+        model: str,
+        region: str,
+        credits: float,
+        operation: str,
+        recorded_at: str | None = None,
+        tpm_used: int = 0,
+        rpm_used: int = 0,
+        context_pct: float = 0.0,
+        estimated_cost: float | None = None,
+    ) -> None:
+        """Record a GCP Vertex AI spend event.
+
+        Mirrors the table created at `prismatic/vertex_telemetry.py:125`
+        (gcp_vertex_spend_events) so the engine's telemetry ledger and the
+        Vertex telemetry monitor agree on a single normalized schema.
+
+        Args:
+            project_id: GCP project ID (e.g. "my-gcp-project").
+            model:      Vertex model name (e.g. "gemini-2.5-pro").
+            region:     GCP region (e.g. "us-central1").
+            credits:    Credit units spent (the engine's internal unit;
+                        converts to USD via cost_attribution).
+            operation:  Free-form operation tag (e.g. "code_generation").
+            recorded_at: ISO-8601 timestamp; defaults to now() UTC.
+            tpm_used:   Tokens Per Minute (optional; 0 if unknown).
+            rpm_used:   Requests Per Minute (optional; 0 if unknown).
+            context_pct: Context-window utilization 0.0-1.0 (optional).
+            estimated_cost: USD-equivalent; falls back to `credits` if None.
+
+        Note:
+            `ledger_id` (FK to `gcp_vertex_billing_ledger`) is not exposed
+            because the engine's credit ledger is a separate table
+            (`telemetry_credit_ledger`). Storing both would create a
+            cross-ledger join we don't currently need.
+        """
+        if estimated_cost is None:
+            estimated_cost = float(credits)
+        event = {
+            "project_id": project_id,
+            "model": model,
+            "region": region,
+            "credits": float(credits),
+            "operation": operation,
+            "tpm_used": int(tpm_used),
+            "rpm_used": int(rpm_used),
+            "context_pct": float(context_pct),
+            "estimated_cost": float(estimated_cost),
+            "recorded_at": recorded_at or datetime.now(timezone.utc).isoformat(),
+        }
+        self._push("vertex_spend", event)
+
     def record_agy_live_state(
         self,
         run_id: str,
@@ -993,6 +1047,26 @@ class TelemetryCollector:
                             data.get("created_at", ""),
                         ),
                     )
+                elif event_type == "vertex_spend":
+                    conn.execute(
+                        """INSERT INTO gcp_vertex_spend_events
+                           (project_id, model, region, credits, operation,
+                            tpm_used, rpm_used, context_pct, estimated_cost,
+                            recorded_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            data.get("project_id", ""),
+                            data.get("model", ""),
+                            data.get("region", ""),
+                            data.get("credits", 0.0),
+                            data.get("operation", ""),
+                            data.get("tpm_used", 0),
+                            data.get("rpm_used", 0),
+                            data.get("context_pct", 0.0),
+                            data.get("estimated_cost", 0.0),
+                            data.get("recorded_at", ""),
+                        ),
+                    )
 
                 conn.commit()
             except Exception:
@@ -1165,6 +1239,31 @@ class TelemetryCollector:
                 );
                 CREATE INDEX IF NOT EXISTS idx_pipeline_action_issue
                     ON telemetry_pipeline_action(issue_id, created_at);
+
+                -- ── GRO-2995: GCP Vertex AI spend events ─────────────────
+                -- Mirrors `prismatic/vertex_telemetry.py:125` but without
+                -- the `ledger_id` FK — the engine's credit ledger is a
+                -- separate table (`telemetry_credit_ledger`). All Vertex
+                -- spend is recorded via `TelemetryCollector.record_vertex_spend()`,
+                -- which queues a `vertex_spend` event handled by the
+                -- `_drain` branch above.
+                CREATE TABLE IF NOT EXISTS gcp_vertex_spend_events (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id      TEXT NOT NULL DEFAULT '',
+                    model           TEXT,
+                    region          TEXT,
+                    credits         REAL DEFAULT 0.0,
+                    operation       TEXT,
+                    tpm_used        INTEGER DEFAULT 0,
+                    rpm_used        INTEGER DEFAULT 0,
+                    context_pct     REAL DEFAULT 0.0,
+                    estimated_cost  REAL DEFAULT 0.0,
+                    recorded_at     TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_vertex_spend_model
+                    ON gcp_vertex_spend_events(model, recorded_at);
+                CREATE INDEX IF NOT EXISTS idx_vertex_spend_project
+                    ON gcp_vertex_spend_events(project_id, recorded_at);
             """)
             # ── Phase 4.4 migration: add client_id/project_id to credit_ledger ──
             try:

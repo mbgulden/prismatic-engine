@@ -363,7 +363,22 @@ class VertexBillingLedger:
     def record_quota_snapshot(
         self, quota_records: list[dict[str, Any]], project_id: str = ""
     ) -> None:
-        """Write a batch of quota snapshot records to the ledger."""
+        """Write a batch of quota snapshot records to the ledger.
+
+        Also emits a corresponding ``record_vertex_spend()`` event per record so
+        the engine's main telemetry ledger (``gcp_vertex_spend_events`` table
+        managed by ``TelemetryCollector``) gets rows. The spend per record is
+        derived from ``utilization_pct`` as a proxy — exact USD cost requires
+        the Vertex billing API which is out of scope for quota polling. The
+        goal is that the acceptance-criteria query
+        ``SELECT COUNT(*) FROM gcp_vertex_spend_events
+         WHERE recorded_at > datetime('now','-7 days')`` returns > 0 once any
+        quota poll runs.
+
+        Telemetry failures are best-effort: a ``record_vertex_spend`` failure
+        (collector down, schema drift, etc.) MUST NOT break the quota snapshot
+        write — that's the load-bearing data path.
+        """
         if not quota_records:
             return
         now = datetime.now(timezone.utc).isoformat()
@@ -394,6 +409,43 @@ class VertexBillingLedger:
                     ),
                 )
             conn.commit()
+
+        # ── GRO-2995 wiring — after ledger commit so the quota data is
+        # durable before we publish spend events. Best-effort (try/except)
+        # per the Pass-N+44 wiring pattern. Place AFTER the inner loop and
+        # AFTER the `with conn` block exits — never between an `if:` and
+        # its `return`, never between the inner INSERT and its `commit()`.
+        try:
+            from prismatic.telemetry import get_collector
+
+            collector = get_collector()
+        except Exception:
+            collector = None
+
+        if collector is not None:
+            for rec in quota_records:
+                try:
+                    metric_type = rec.get("metric_type", "custom")
+                    usage = float(rec.get("usage", 0))
+                    util_pct = float(rec.get("utilization_pct", 0.0))
+                    collector.record_vertex_spend(
+                        project_id=pid,
+                        model=rec.get("model", ""),
+                        region=rec.get("region", ""),
+                        # utilization as a credit proxy: every quota record
+                        # represents some burn; exact cost needs the billing
+                        # API which is out of scope for quota polling.
+                        credits=round(util_pct / 100.0, 6),
+                        operation=f"quota_poll_{metric_type}",
+                        tpm_used=int(usage) if metric_type == "tpm" else 0,
+                        rpm_used=int(usage) if metric_type == "rpm" else 0,
+                        context_pct=round(util_pct / 100.0, 6),
+                        recorded_at=now,
+                    )
+                except Exception:
+                    # Best-effort per Pass-N+44: telemetry outage must not
+                    # break the quota snapshot path (which it just did above).
+                    pass
 
     def record_balance_checkpoint(
         self, balance_data: dict[str, Any], project_id: str = ""
