@@ -523,6 +523,7 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
     body = await request.body()
     signature = request.headers.get("linear-signature", "")
     _webhook_counters["linear_received"] += 1
+    # (DEBUG logging removed 2026-06-30 — diagnosis complete)
     if signature:
         import hashlib, hmac as _hmac
         secrets = get_linear_secrets()
