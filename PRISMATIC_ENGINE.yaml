@@ -9,10 +9,10 @@ version: 1
 
 agents:
   fred:
-    role: Orchestrator & Infrastructure
+    role: Orchestrator & Infrastructure (owns entire repo)
     lanes:
-      owner: ["src/", "infra/", "deploy/", ".github/", "specs/"]
-      read_only: ["content/", "active-oahu/"]
+      owner: ["*"]  # Fred owns the whole repo for orchestration purposes
+      read_only: []
     branch_prefix: "feature/"
     staging_governor: true  # Only Fred merges to staging
 
@@ -40,7 +40,7 @@ agents:
   ned:
     role: Code Execution & Task Agent
     lanes:
-      owner: ["scripts/", "prismatic/", "plugins/"]
+      owner: ["scripts/", "plugins/"]  # Removed "prismatic/" — Fred owns everything
       read_only: ["content/", "assets/", "designs/", "research/"]
     branch_prefix: "ned/"
 
