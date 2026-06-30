@@ -503,6 +503,9 @@ class CuratorLane:
 
     def tick(self) -> int:
         """Process one batch of bus events. Returns count tagged."""
+        # Reap zombie supervisors from prior dispatches (Story 1.2 fix).
+        # Synchronous — fast WNOHANG waitpid on tracked PIDs.
+        self._pool._reap_zombies()
         events = fetch_bus_events_after(self._last_rowid)
         tagged = 0
         for ev in events:

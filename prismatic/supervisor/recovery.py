@@ -148,9 +148,12 @@ class SupervisorPool:
         The cmd list is the argv for the supervisor process. The pool tracks
         the PID for reaping. If the issue_id has hit max_retries, it's
         written to the DLQ instead.
+
+        Reaps synchronously after spawn to immediately clean up any
+        zombies from prior dispatches, regardless of the reap_interval.
         """
-        # Reap stale entries first
-        self.reap()
+        # Reap stale entries first (synchronous, fast)
+        self._reap_zombies()
 
         # Check retry count
         retry_count = self._retry_counts.get(issue_id, 0)
@@ -188,6 +191,24 @@ class SupervisorPool:
             # Increment retry count, will be retried up to max_retries
             self._retry_counts[issue_id] = retry_count + 1
             raise
+
+    def _reap_zombies(self) -> int:
+        """Synchronous reap: just call waitpid on tracked PIDs. Returns count reaped."""
+        n = 0
+        for pid in list(self._pool.keys()):
+            try:
+                wpid, _ = os.waitpid(pid, os.WNOHANG)
+                if wpid == pid:
+                    del self._pool[pid]
+                    self._total_reaped += 1
+                    n += 1
+            except ChildProcessError:
+                del self._pool[pid]
+                self._total_reaped += 1
+                n += 1
+            except OSError:
+                pass
+        return n
 
     def on_failure(self, issue_id: str, error: str) -> None:
         """Call when a supervisor reports failure. Increments retry count."""
