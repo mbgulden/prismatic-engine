@@ -534,9 +534,7 @@ class TelemetryCollector:
             wakeup_empty_total_count = (
                 wakeup_empty_total["cnt"] if wakeup_empty_total else 0
             )
-            wakeup_empty_per_hour = (
-                round(wakeup_empty_total_count / max(hours, 1), 3)
-            )
+            wakeup_empty_per_hour = round(wakeup_empty_total_count / max(hours, 1), 3)
 
             # ── Gap 12: Hooks block ─────────────────────────────
             hooks_row = conn.execute(
@@ -574,9 +572,7 @@ class TelemetryCollector:
             wakeup_empty_total_count = (
                 wakeup_empty_total["cnt"] if wakeup_empty_total else 0
             )
-            wakeup_empty_per_hour = (
-                round(wakeup_empty_total_count / max(hours, 1), 3)
-            )
+            wakeup_empty_per_hour = round(wakeup_empty_total_count / max(hours, 1), 3)
 
             return {
                 "loops": [dict(r) for r in loops],
