@@ -1789,6 +1789,25 @@ def main_loop(
                 f"{counts['stale_killed']} stale killed, "
                 f"{counts['errors']} errors"
             )
+            # ── GRO-3121: wakeup-empty metric ──────────────
+            # When the dispatcher fires its polling loop but finds
+            # nothing to dispatch, log it as an empty wakeup. This is
+            # the polling-cost baseline Michael wants before deciding
+            # to replace polling with webhook subscription. One row per
+            # empty cycle — the factory digest surfaces the aggregate.
+            try:
+                if (
+                    counts.get("dispatched", 0) == 0
+                    and counts.get("errors", 0) == 0
+                ):
+                    collector.record_wakeup_empty(
+                        agent="dispatcher",
+                        cycle_id=datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"),
+                        reason="queue_empty",
+                    )
+            except Exception:
+                pass  # Telemetry is best-effort — never break the loop
+            # ── End wakeup-empty metric ──────────────────────────
             # ── Telemetry: log cycle metrics ─────────────────────
             if counts.get("dispatched", 0) > 0:
                 dashboard = collector.get_dashboard_data(hours=1)
