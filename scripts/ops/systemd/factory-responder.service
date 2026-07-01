@@ -1,0 +1,15 @@
+[Unit]
+Description=Prismatic Factory Responder — give the monitor teeth
+After=prismatic-gateway.service factory-monitor.service
+Wants=prismatic-gateway.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu
+ExecStart=/home/ubuntu/.prismatic/venv_stable/bin/python3 /home/ubuntu/.hermes/profiles/orchestrator/scripts/factory_responder.py --once
+StandardOutput=append:/home/ubuntu/.hermes/profiles/orchestrator/logs/factory-responder.log
+StandardError=append:/home/ubuntu/.hermes/profiles/orchestrator/logs/factory-responder.err.log
+
+[Install]
+WantedBy=multi-user.target
