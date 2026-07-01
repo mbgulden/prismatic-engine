@@ -394,7 +394,7 @@ def should_send(alert_key: str, state: dict, debounce_sec: int = 1800) -> bool:
 
 
 def build_emergency_resolved_message(alerts: list, planned_actions: list, monitor_output: dict) -> str:
-    """EMERGENCY — RESOLVED: I fixed it, you do nothing."""
+    """EMERGENCY — RESOLVED: I fixed it. You do nothing."""
     actions_text = "\n".join(f"  - {a[3]}" for a in planned_actions)
     linear_issues = [a[2] for a in planned_actions if a[1] == "linear" and a[2] and str(a[2]).startswith("GRO-")]
     linear_section = f"\n📋 Tracking: {', '.join(linear_issues)}" if linear_issues else ""
@@ -423,19 +423,25 @@ I fixed it before you noticed. Linear has the full log if you want to read why i
 
 
 def build_decision_needed_message(alerts: list, planned_actions: list, monitor_output: dict) -> str:
-    """EMERGENCY — REAL DECISION NEEDED: single Yes/No question with default.
+    """EMERGENCY — REAL DECISION NEEDED.
 
-    The default action always does the SAFE thing. The Yes/No is for
-    cases where the alternative is consequential enough to warrant
-    Michael's attention.
+    ONLY used when there's an irreversible fork. Fred's professional
+    recommendation is stated clearly. Yes/No only.
+
+    Today this fires only when:
+      - Service restart didn't stick AND rollback is the right call
+      - Something is causing data loss (a delete, a destructive op)
+
+    In both cases the recommendation is the safe one.
     """
     what_happened = alerts[0] if len(alerts) == 1 else chr(10).join(f"  - {a}" for a in alerts)
     actions_text = "\n".join(f"  - {a[3]}" for a in planned_actions) or "  - (no recovery actions worked)"
     linear_issues = [a[2] for a in planned_actions if a[1] == "linear" and a[2] and str(a[2]).startswith("GRO-")]
     linear_section = f"\n📋 Tracking: {', '.join(linear_issues)}" if linear_issues else ""
 
-    # The actual decision question — phrased as a single Yes/No
-    # The user will see the safe-default + the alternative
+    # === The question ===
+    # We should be in this branch only because rollback is the right call
+    # and we shouldn't do it silently. So: ask, but with strong recommendation.
     return f"""🚨 EMERGENCY — REAL DECISION NEEDED
 
 📋 What happened:
@@ -445,56 +451,49 @@ def build_decision_needed_message(alerts: list, planned_actions: list, monitor_o
 {actions_text}
 {linear_section}
 
-❓ Should I roll back to the last working commit?
-  - The factory has been broken for a while and I can't fix it automatically.
-  - Default (no reply in 10 min): I roll back. Going back to a working
-    state is safer than staying broken.
-  - Reply `no` to keep the broken state and not auto-rollback. I'll
-    surface it again on the next monitor run.
+❓ My recommendation: Roll back to the last working commit.
+  - Reason: Going back to a known-good state is the fastest way to
+    restore service. The current code has a bug I can't auto-fix.
+  - Cost of following my rec: ~1 minute of downtime during the rollback.
+  - Cost of NOT following my rec: the factory stays broken until you
+    can look at the code, and the same problem will keep recurring on
+    every restart.
 
-📊 Details: `python3 /home/ubuntu/.hermes/profiles/orchestrator/scripts/factory_monitor.py`
+Reply `yes` to roll back now.
+Reply `no` to keep the current state and not auto-rollback.
+(Default if no reply in 10 min: I roll back. Better to have a 1-minute
+downtime than a multi-hour outage.)
 
 — Fred"""
 
 
 def build_unresolved_message(alerts: list, planned_actions: list, monitor_output: dict) -> str:
-    """EMERGENCY — UNRESOLVED: I tried but recovery failed. Single Yes/No."""
-    what_happened = alerts[0] if len(alerts) == 1 else chr(10).join(f"  - {a}" for a in alerts)
-    actions_text = "\n".join(f"  - {a[3]}" for a in planned_actions)
-    linear_issues = [a[2] for a in planned_actions if a[1] == "linear" and a[2] and str(a[2]).startswith("GRO-")]
-    linear_section = f"\n📋 Tracking: {', '.join(linear_issues)}" if linear_issues else ""
+    """EMERGENCY — UNRESOLVED.
 
-    return f"""🚨 EMERGENCY — UNRESOLVED
+    This fires when recovery failed AND rollback was the right call
+    but I want to make sure before doing it.
 
-📋 What happened:
-{what_happened}
-
-🔧 What I tried (all failed):
-{actions_text}
-{linear_section}
-
-❓ Should I roll back to the last working commit?
-  - The factory is broken and I can't auto-recover.
-  - Default (no reply in 10 min): I roll back. Going back to a working
-    state is safer than staying broken.
-  - Reply `no` to keep the broken state and not auto-rollback. I'll
-    surface it again on the next monitor run.
-
-📊 Details: `tail -50 /home/ubuntu/.prismatic/logs/{planned_actions[0][2] if planned_actions else 'gateway'}.log`
-
-— Fred"""
+    Actually: this is the SAME as build_decision_needed_message now.
+    We always either auto-fix or recommend rollback. We don't ask
+    unless the answer is non-obvious.
+    """
+    return build_decision_needed_message(alerts, planned_actions, monitor_output)
 
 
 def build_heads_up_message(alerts: list, monitor_output: dict) -> str:
-    """Heads up: informational only, nothing to do."""
+    """Heads up: informational only. No decision needed.
+
+    Examples: escalations (curator flagged events as 'escalate'),
+    bus backlog (events not being processed), high error rate.
+    """
     what_happened = alerts[0] if len(alerts) == 1 else chr(10).join(f"  - {a}" for a in alerts)
     return f"""⚠️  Heads up
 
 📋 {what_happened}
 
 🔧 What I'm doing:
-  - Flagging for the next monitor run to recheck
-  - No auto-action — these need human eyes, not scripts
+  - Watching this; if it escalates I'll take real action
+  - No auto-action yet — these need monitoring, not scripts
 
 😌 What you need to do: Maybe nothing. The factory is up and running. This is just a signal worth knowing about.
 
