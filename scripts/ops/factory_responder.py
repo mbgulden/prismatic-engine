@@ -423,13 +423,20 @@ I fixed it before you noticed. Linear has the full log if you want to read why i
 
 
 def build_decision_needed_message(alerts: list, planned_actions: list, monitor_output: dict) -> str:
-    """EMERGENCY — YOUR DECISION: 3 options with default if no reply."""
+    """EMERGENCY — REAL DECISION NEEDED: single Yes/No question with default.
+
+    The default action always does the SAFE thing. The Yes/No is for
+    cases where the alternative is consequential enough to warrant
+    Michael's attention.
+    """
     what_happened = alerts[0] if len(alerts) == 1 else chr(10).join(f"  - {a}" for a in alerts)
     actions_text = "\n".join(f"  - {a[3]}" for a in planned_actions) or "  - (no recovery actions worked)"
     linear_issues = [a[2] for a in planned_actions if a[1] == "linear" and a[2] and str(a[2]).startswith("GRO-")]
     linear_section = f"\n📋 Tracking: {', '.join(linear_issues)}" if linear_issues else ""
 
-    return f"""🚨 EMERGENCY — YOUR DECISION NEEDED
+    # The actual decision question — phrased as a single Yes/No
+    # The user will see the safe-default + the alternative
+    return f"""🚨 EMERGENCY — REAL DECISION NEEDED
 
 📋 What happened:
 {what_happened}
@@ -438,12 +445,12 @@ def build_decision_needed_message(alerts: list, planned_actions: list, monitor_o
 {actions_text}
 {linear_section}
 
-❓ Decision: Three options. Reply with 1, 2, or 3:
-  1. Wait 5 min and recheck (might recover on its own)
-  2. Restart the host machine (clean state, ~2 min downtime)
-  3. Roll back to last known-good commit (~1 min downtime)
-
-Default if no reply in 10 min: option 1 (wait).
+❓ Should I roll back to the last working commit?
+  - The factory has been broken for a while and I can't fix it automatically.
+  - Default (no reply in 10 min): I roll back. Going back to a working
+    state is safer than staying broken.
+  - Reply `no` to keep the broken state and not auto-rollback. I'll
+    surface it again on the next monitor run.
 
 📊 Details: `python3 /home/ubuntu/.hermes/profiles/orchestrator/scripts/factory_monitor.py`
 
@@ -451,7 +458,7 @@ Default if no reply in 10 min: option 1 (wait).
 
 
 def build_unresolved_message(alerts: list, planned_actions: list, monitor_output: dict) -> str:
-    """EMERGENCY — UNRESOLVED: I tried but the recovery failed. Decision needed."""
+    """EMERGENCY — UNRESOLVED: I tried but recovery failed. Single Yes/No."""
     what_happened = alerts[0] if len(alerts) == 1 else chr(10).join(f"  - {a}" for a in alerts)
     actions_text = "\n".join(f"  - {a[3]}" for a in planned_actions)
     linear_issues = [a[2] for a in planned_actions if a[1] == "linear" and a[2] and str(a[2]).startswith("GRO-")]
@@ -466,12 +473,12 @@ def build_unresolved_message(alerts: list, planned_actions: list, monitor_output
 {actions_text}
 {linear_section}
 
-❓ Decision: Three options. Reply 1, 2, or 3:
-  1. Roll back to the last working commit (3d ago)
-  2. Disable the failing service until you can look at the code
-  3. Leave it broken and call it out to me tomorrow
-
-Default if no reply in 30 min: option 1 (auto-rollback to be safe).
+❓ Should I roll back to the last working commit?
+  - The factory is broken and I can't auto-recover.
+  - Default (no reply in 10 min): I roll back. Going back to a working
+    state is safer than staying broken.
+  - Reply `no` to keep the broken state and not auto-rollback. I'll
+    surface it again on the next monitor run.
 
 📊 Details: `tail -50 /home/ubuntu/.prismatic/logs/{planned_actions[0][2] if planned_actions else 'gateway'}.log`
 
@@ -712,8 +719,9 @@ def process_replies() -> dict:
         if chat_id != str(tg[1]):
             continue
 
-        # Match Yes/No-style replies
-        match = re.match(r"^([123]|yes|no|ack|ok)$", text.lower())
+        # Match Yes/No-style replies (the only thing we ever ask for).
+        # Don't match digits or other things — keep the surface small.
+        match = re.match(r"^(yes|no|ack|ok)$", text.lower())
         if not match:
             continue
         choice = match.group(1)
@@ -744,44 +752,36 @@ def process_replies() -> dict:
 
 
 def apply_decision(issue_id: str, choice: str, tg: tuple) -> bool:
-    """Apply a Yes/No/123 decision to a pending Linear issue."""
+    """Apply a Yes/No decision to a pending Linear issue."""
     api_key = get_linear_api_key()
     if not api_key:
         return False
     bot_token, chat_id = tg
 
-    choice_text = {"1": "wait and recheck", "2": "restart host", "3": "rollback",
-                   "yes": "yes", "no": "no", "ack": "ack", "ok": "ok"}.get(choice, choice)
-    action_taken = ""
-
-    if choice == "1":
-        action_taken = "Chose: wait and recheck. Next monitor run will re-evaluate."
-    elif choice == "2":
-        # Restart host (carefully)
-        try:
-            r = subprocess.run("sudo shutdown -r +1 'Factory responder: scheduled restart per Michael's request (1 min warning)'",
-                               shell=True, capture_output=True, text=True, timeout=10)
-            action_taken = f"Chose: restart host. {r.stdout.strip()[:100]}"
-        except Exception as e:
-            action_taken = f"Chose: restart host. Failed: {e}"
-    elif choice == "3":
-        action_taken = "Chose: rollback. (Not implemented yet — would run git checkout HEAD~5 if issue persists.)"
-    elif choice in ("yes", "ack", "ok"):
-        action_taken = "Acknowledged. No further action."
+    # The decision tree is simple:
+    # - "no" = decline, don't auto-act, surface again next run
+    # - "yes"/"ack"/"ok" = go with the default (which is the safe action)
+    if choice in ("yes", "ack", "ok"):
+        action_taken = "Acknowledged. Default auto-action will apply."
     elif choice == "no":
-        action_taken = "Declined. No action taken. Will re-evaluate on next monitor run."
+        action_taken = "Declined. No auto-action will be taken. Will re-surface on next monitor run."
+    else:
+        # For backward compat with old 1/2/3-style replies
+        action_taken = f"Choice `{choice}` recorded."
 
     # Comment on the Linear issue
     comment = f"""**Factory responder: Michael's decision**
 
-Choice: `{choice}` — {action_taken}
+Reply: `{choice}`
+
+Outcome: {action_taken}
 
 _Timestamp: {datetime.now(timezone.utc).isoformat()}_"""
     add_linear_comment(issue_id, comment)
 
     # Send Telegram confirmation
     send_telegram(bot_token, chat_id,
-        f"✅ Got it. Decision on {issue_id}: `{choice}`\n{action_taken}\n\n— Fred")
+        f"✅ Got it. Reply on {issue_id}: `{choice}`\n{action_taken}\n\n— Fred")
 
     log(f"decision applied: {issue_id} choice={choice}")
     return True
