@@ -24,6 +24,7 @@ import os
 import sys
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -307,23 +308,182 @@ async def complete_run(run_id: str, payload: dict[str, Any] | None = None) -> Re
     return {"status": "ok"}
 
 
-# ── Webhook Endpoints (stubs — full implementation in dedicated modules) ──
+# ── Canonical SQLite Bus Persistence ──────────────────────────────────
+# The in-process EventBus only fans out to in-process handlers (curator
+# subscriber, WebSocket clients). The standalone supervisor's bus-subscriber
+# thread polls the canonical SQLite file at $HOME/.prismatic/bus/event_log.sqlite.
+# So to close the loop, every webhook publish must ALSO write to that file.
+# (Jul 1 2026 — wired with the linear_webhook and github_webhook handlers.)
+import sqlite3 as _sqlite3_canonical
+import time as _time_canonical
+import threading as _threading_canonical
+
+_CANONICAL_BUS_LOCK = _threading_canonical.Lock()
+# Same path resolution rule as the supervisor's publish_agent_completed:
+# $HOME only, NEVER $PRISMATIC_HOME (which points to the user's work
+# directory and an orphan bus at $PRISMATIC_HOME/.prismatic/bus/event_log.sqlite).
+_CANONICAL_BUS_PATH = (
+    os.environ.get("PRISMATIC_BUS_DB")
+    or str(Path(os.path.expanduser("~")) / ".prismatic" / "bus" / "event_log.sqlite")
+)
+
+
+def _ensure_canonical_bus_table(conn) -> None:
+    """Create the canonical events table if it doesn't exist (idempotent)."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS events (
+            rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+            dedup_key TEXT UNIQUE,
+            topic TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            ts REAL NOT NULL,
+            processed INTEGER DEFAULT 0
+        )
+        """
+    )
+
+
+def _write_to_canonical_bus(event_type: str, source: str, payload: dict) -> None:
+    """Persist a webhook event to the canonical SQLite bus.
+
+    Other processes (e.g. standalone supervisor's bus-subscriber) read from
+    this same file at 500ms cadence. Without this write, webhook events
+    never reach the cross-process subscribers.
+    """
+    try:
+        with _CANONICAL_BUS_LOCK:
+            conn = _sqlite3_canonical.connect(_CANONICAL_BUS_PATH, timeout=5)
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+                _ensure_canonical_bus_table(conn)
+                # Dedup key: topic + first 64 bytes of source + ts rounded to second
+                ts = _time_canonical.time()
+                dedup_key = f"{event_type}:{source}:{int(ts)}"
+                conn.execute(
+                    "INSERT OR IGNORE INTO events (dedup_key, topic, payload_json, ts) VALUES (?, ?, ?, ?)",
+                    (
+                        dedup_key,
+                        event_type,
+                        json.dumps({"type": event_type, "source": source,
+                                    "timestamp": datetime.fromtimestamp(ts, timezone.utc).isoformat(),
+                                    "payload": payload}, default=str),
+                        ts,
+                    ),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+    except Exception as exc:
+        logger.warning("Canonical bus write failed: %s", exc)
+
+
+# ── Webhook Endpoints ────────────────────────────────────────────────
+
+# the in-process EventBus. The IPC bridge (Unix socket) is what persists the
+# event to the canonical SQLite bus; the standalone supervisor's bus-subscriber
+# thread (500ms poll) reads from that same SQLite and dispatches to lanes.
+#
+# Without these publishes, the "event-driven" loop from Linear -> bus -> curator
+# -> AGY is broken (GRO-3151). With them, every Linear change becomes a bus
+# event and the factory reacts.
+#
+# (Jul 1 2026) HMAC verification is intentionally NOT added yet — the gateway
+# is behind Cloudflare Access and the Linear webhook URL is unguessable. Once
+# GRO-3151 lands, this gets a follow-up ticket for HMAC + raw body validation.
 
 
 @app.post("/api/gateway/github")
 async def github_webhook(request: Request) -> dict[str, Any]:
     """Receive GitHub webhook events (PR opened, synchronized, review submitted)."""
     body = await request.body()
-    logger.info("GitHub webhook received (%d bytes)", len(body))
-    return {"status": "ok", "message": "webhook received"}
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except Exception as exc:
+        logger.warning("GitHub webhook: invalid JSON (%d bytes): %s", len(body), exc)
+        return {"status": "error", "message": "invalid JSON"}
+
+    event_type = payload.get("action") or payload.get("hook_type") or "unknown"
+    repo = (payload.get("repository") or {}).get("full_name", "unknown")
+    logger.info("GitHub webhook: %s on %s", event_type, repo)
+
+    bus = get_event_bus()
+    await bus.publish(
+        event_type=f"github.{event_type}",
+        source="github_webhook",
+        payload={
+            "action": event_type,
+            "repository": repo,
+            "sender": (payload.get("sender") or {}).get("login"),
+            "delivery_id": request.headers.get("X-GitHub-Delivery"),
+            "raw": payload,
+        },
+    )
+    # Also persist to canonical SQLite for cross-process subscribers
+    _write_to_canonical_bus(
+        event_type=f"github.{event_type}",
+        source="github_webhook",
+        payload={"action": event_type, "repository": repo, "raw": payload},
+    )
+    return {"status": "ok", "message": "github webhook published to bus"}
 
 
 @app.post("/api/gateway/linear")
 async def linear_webhook(request: Request) -> dict[str, Any]:
-    """Receive Linear webhook events (issue status changes, comments)."""
+    """Receive Linear webhook events (issue status changes, comments).
+
+    Maps Linear's action+type to bus event topics:
+      - Issue + create         -> linear.issue.created
+      - Issue + update/remove  -> linear.issue.updated
+      - Comment + create       -> linear.comment.created
+      - other (Project, etc.)  -> linear.<type>.<action>
+
+    All payloads are persisted to the canonical SQLite bus via the IPC bridge.
+    """
     body = await request.body()
-    logger.info("Linear webhook received (%d bytes)", len(body))
-    return {"status": "ok", "message": "webhook received"}
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except Exception as exc:
+        logger.warning("Linear webhook: invalid JSON (%d bytes): %s", len(body), exc)
+        return {"status": "error", "message": "invalid JSON"}
+
+    action = payload.get("action", "unknown")
+    linear_type = payload.get("type", "unknown")
+    data = payload.get("data") or {}
+    issue_id = data.get("identifier") or data.get("id")
+
+    logger.info(
+        "Linear webhook: %s on %s (%s)",
+        action, linear_type, issue_id or "n/a",
+    )
+
+    if linear_type == "Comment":
+        bus_topic = f"linear.comment.{action}"
+    elif linear_type == "Issue":
+        bus_topic = f"linear.issue.{action if action != 'remove' else 'updated'}"
+    else:
+        bus_topic = f"linear.{linear_type.lower()}.{action}"
+
+    bus = get_event_bus()
+    await bus.publish(
+        event_type=bus_topic,
+        source="linear_webhook",
+        payload={
+            "action": action,
+            "linear_type": linear_type,
+            "issue_id": issue_id,
+            "raw": payload,
+        },
+    )
+    # Also write to canonical SQLite so cross-process subscribers (the
+    # standalone supervisor's bus-subscriber thread) see this event.
+    _write_to_canonical_bus(
+        event_type=bus_topic,
+        source="linear_webhook",
+        payload={"action": action, "linear_type": linear_type, "issue_id": issue_id, "raw": payload},
+    )
+    return {"status": "ok", "message": f"linear webhook published to bus as {bus_topic}"}
+
 
 
 # ── CLI Entry Point ──────────────────────────────────────────────────
