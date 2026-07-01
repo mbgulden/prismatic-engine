@@ -357,9 +357,37 @@ def _write_to_canonical_bus(event_type: str, source: str, payload: dict) -> None
             try:
                 conn.execute("PRAGMA journal_mode=WAL")
                 _ensure_canonical_bus_table(conn)
-                # Dedup key: topic + first 64 bytes of source + ts rounded to second
+                # Dedup key: topic + issue_id (if available) + ts.
+                # We need sub-second resolution because real webhook traffic
+                # can burst multiple events in the same second (e.g. a "label
+                # added" + "issue updated" pair). ts is stored as REAL (float
+                # seconds) so we use the float repr which gives microsecond
+                # resolution when the value has microsecond precision.
                 ts = _time_canonical.time()
-                dedup_key = f"{event_type}:{source}:{int(ts)}"
+                # The webhook handler passes either:
+                #   linear: {"action", "linear_type", "issue_id", "raw"}
+                #   github: {"action", "repository", "raw"}
+                # We also handle the case where the helper is called directly
+                # with a raw Linear-shaped payload ({"data": {"identifier": ...}}).
+                issue_id_for_dedup = ""
+                if isinstance(payload, dict):
+                    issue_id_for_dedup = payload.get("issue_id") or ""
+                    if not issue_id_for_dedup:
+                        data = payload.get("data") or payload
+                        if isinstance(data, dict):
+                            issue_id_for_dedup = (
+                                data.get("identifier") or data.get("id") or ""
+                            )
+                # Use a fine-grained timestamp string. Float repr preserves
+                # microseconds when present; we also include a random suffix
+                # as a tiebreaker in case the OS clock has low resolution.
+                import random as _random_canonical
+                ts_part = f"{ts:.6f}_{_random_canonical.randint(0, 9999):04d}"
+                dedup_key = (
+                    f"{event_type}:{issue_id_for_dedup}:{ts_part}"
+                    if issue_id_for_dedup
+                    else f"{event_type}:{source}:{ts_part}"
+                )
                 conn.execute(
                     "INSERT OR IGNORE INTO events (dedup_key, topic, payload_json, ts) VALUES (?, ?, ?, ?)",
                     (
