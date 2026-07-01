@@ -16,7 +16,6 @@ from __future__ import annotations
 import sqlite3
 import sys
 import time
-import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
@@ -37,8 +36,9 @@ def collector(tmp_path):
     c._running = False
 
 
-def _wait_drain(c: TelemetryCollector, db_path: str, table: str,
-                timeout: float = 3.0) -> list[dict]:
+def _wait_drain(
+    c: TelemetryCollector, db_path: str, table: str, timeout: float = 3.0
+) -> list[dict]:
     """Block until at least one row appears in *table*, or timeout."""
     deadline = time.monotonic() + timeout
     conn = sqlite3.connect(db_path)
@@ -54,8 +54,9 @@ def _wait_drain(c: TelemetryCollector, db_path: str, table: str,
         conn.close()
 
 
-def _wait_count(c: TelemetryCollector, db_path: str, table: str,
-                expected: int, timeout: float = 3.0) -> int:
+def _wait_count(
+    c: TelemetryCollector, db_path: str, table: str, expected: int, timeout: float = 3.0
+) -> int:
     """Block until *table* contains >= *expected* rows."""
     deadline = time.monotonic() + timeout
     conn = sqlite3.connect(db_path)
@@ -93,11 +94,19 @@ class TestSchema:
         conn = sqlite3.connect(db_path)
         try:
             cols = {
-                row[1] for row in
-                conn.execute("PRAGMA table_info(telemetry_wakeup_empty)").fetchall()
+                row[1]
+                for row in conn.execute(
+                    "PRAGMA table_info(telemetry_wakeup_empty)"
+                ).fetchall()
             }
-            expected = {"id", "agent", "cycle_id", "duration_sec",
-                        "reason", "created_at"}
+            expected = {
+                "id",
+                "agent",
+                "cycle_id",
+                "duration_sec",
+                "reason",
+                "created_at",
+            }
             assert expected.issubset(cols), f"missing columns: {expected - cols}"
         finally:
             conn.close()
@@ -108,8 +117,8 @@ class TestSchema:
         conn = sqlite3.connect(db_path)
         try:
             indexes = {
-                row[0] for row in
-                conn.execute(
+                row[0]
+                for row in conn.execute(
                     "SELECT name FROM sqlite_master "
                     "WHERE type='index' AND tbl_name='telemetry_wakeup_empty'"
                 ).fetchall()
@@ -173,9 +182,7 @@ class TestRecordWakeupEmpty:
                 c.record_wakeup_empty(agent="spam", cycle_id=f"s-{i}")
         finally:
             c._running = True  # restart for fixture teardown
-            c._writer = __import__("threading").Thread(
-                target=c._drain, daemon=True
-            )
+            c._writer = __import__("threading").Thread(target=c._drain, daemon=True)
             c._writer.start()
 
 
@@ -208,8 +215,7 @@ class TestDashboardBlock:
         _wait_count(c, db_path, "telemetry_wakeup_empty", expected=8)
         data = c.get_dashboard_data(hours=24)
         assert data["wakeup_empty"]["count"] == 8
-        by_agent = {r["agent"]: r["cnt"]
-                    for r in data["wakeup_empty"]["by_agent"]}
+        by_agent = {r["agent"]: r["cnt"] for r in data["wakeup_empty"]["by_agent"]}
         assert by_agent == {"ned": 5, "fred": 3}
 
     def test_per_hour_within_24h_window(self, collector):
@@ -270,10 +276,12 @@ class TestDispatcherWiring:
         # These modules are imported by prismatic.dispatcher at top of file.
         # Patch them so the import doesn't fail or hit the network.
         sys.modules.setdefault(
-            "prismatic.providers.signals", MagicMock(),
+            "prismatic.providers.signals",
+            MagicMock(),
         )
         sys.modules.setdefault(
-            "prismatic.credit_policy_engine", MagicMock(),
+            "prismatic.credit_policy_engine",
+            MagicMock(),
         )
 
     def test_main_loop_records_empty_wakeup(self, tmp_path, monkeypatch):
@@ -287,17 +295,20 @@ class TestDispatcherWiring:
             # Build a dispatcher module with main_loop + patched dependencies.
             import prismatic.dispatcher as dispatcher
 
-            counts = {"dispatched": 0, "pipeline_setup": 0,
-                      "stale_killed": 0, "errors": 0}
+            counts = {
+                "dispatched": 0,
+                "pipeline_setup": 0,
+                "stale_killed": 0,
+                "errors": 0,
+            }
 
             # Patch out everything main_loop touches: dispatch_once,
             # collector, and the time.sleep so the loop exits after 1 cycle.
-            with patch.object(dispatcher, "dispatch_once",
-                              return_value=counts), \
-                 patch.object(dispatcher, "get_collector",
-                              return_value=collector), \
-                 patch.object(dispatcher.time, "sleep",
-                              side_effect=KeyboardInterrupt):
+            with (
+                patch.object(dispatcher, "dispatch_once", return_value=counts),
+                patch.object(dispatcher, "get_collector", return_value=collector),
+                patch.object(dispatcher.time, "sleep", side_effect=KeyboardInterrupt),
+            ):
                 try:
                     dispatcher.main_loop(interval=0, once=False)
                 except KeyboardInterrupt:
@@ -333,14 +344,18 @@ class TestDispatcherWiring:
         collector = TelemetryCollector(db_path=db_path)
         try:
             import prismatic.dispatcher as dispatcher
-            counts = {"dispatched": 1, "pipeline_setup": 0,
-                      "stale_killed": 0, "errors": 0}
-            with patch.object(dispatcher, "dispatch_once",
-                              return_value=counts), \
-                 patch.object(dispatcher, "get_collector",
-                              return_value=collector), \
-                 patch.object(dispatcher.time, "sleep",
-                              side_effect=KeyboardInterrupt):
+
+            counts = {
+                "dispatched": 1,
+                "pipeline_setup": 0,
+                "stale_killed": 0,
+                "errors": 0,
+            }
+            with (
+                patch.object(dispatcher, "dispatch_once", return_value=counts),
+                patch.object(dispatcher, "get_collector", return_value=collector),
+                patch.object(dispatcher.time, "sleep", side_effect=KeyboardInterrupt),
+            ):
                 try:
                     dispatcher.main_loop(interval=0, once=False)
                 except KeyboardInterrupt:
@@ -368,14 +383,18 @@ class TestDispatcherWiring:
         collector = TelemetryCollector(db_path=db_path)
         try:
             import prismatic.dispatcher as dispatcher
-            counts = {"dispatched": 0, "pipeline_setup": 0,
-                      "stale_killed": 0, "errors": 1}
-            with patch.object(dispatcher, "dispatch_once",
-                              return_value=counts), \
-                 patch.object(dispatcher, "get_collector",
-                              return_value=collector), \
-                 patch.object(dispatcher.time, "sleep",
-                              side_effect=KeyboardInterrupt):
+
+            counts = {
+                "dispatched": 0,
+                "pipeline_setup": 0,
+                "stale_killed": 0,
+                "errors": 1,
+            }
+            with (
+                patch.object(dispatcher, "dispatch_once", return_value=counts),
+                patch.object(dispatcher, "get_collector", return_value=collector),
+                patch.object(dispatcher.time, "sleep", side_effect=KeyboardInterrupt),
+            ):
                 try:
                     dispatcher.main_loop(interval=0, once=False)
                 except KeyboardInterrupt:
@@ -389,8 +408,6 @@ class TestDispatcherWiring:
                 ).fetchone()[0]
             finally:
                 conn.close()
-            assert cnt == 0, (
-                f"expected 0 wakeup_empty rows when errors>0, got {cnt}"
-            )
+            assert cnt == 0, f"expected 0 wakeup_empty rows when errors>0, got {cnt}"
         finally:
             collector._running = False
