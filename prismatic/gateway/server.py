@@ -363,7 +363,12 @@ async def curator_health() -> dict[str, Any]:
     # Pool stats via import (graceful if not available)
     pool_stats = None
     try:
-        sys.path.insert(0, "/home/ubuntu/work/prismatic-engine")
+        engine_root = os.path.join(
+            os.environ.get("PRISMATIC_HOME") or os.path.expanduser("~"),
+            "work", "prismatic-engine",
+        )
+        if os.path.isdir(engine_root) and engine_root not in sys.path:
+            sys.path.insert(0, engine_root)
         from prismatic.supervisor.recovery import get_pool
         pool_stats = get_pool().stats()
     except Exception as e:
