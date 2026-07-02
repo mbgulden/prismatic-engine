@@ -21,10 +21,10 @@
   ];
 
   const INITIAL_WORKSPACES = [
-    { id: 'linear-growth', name: 'Linear · GrowthWebDev', path: '/home/ubuntu/work/linear-growth-context', branch: 'main', status: 'connected', files: 142, size: '2.4 MB' },
-    { id: 'github-mbgulden', name: 'GitHub · mbgulden', path: '/home/ubuntu/work/agentic-swarm-ops', branch: 'main', status: 'connected', files: 89, size: '1.8 MB' },
-    { id: 'gdrive-context', name: 'Google Drive · Context', path: '/home/ubuntu/mounts/google-drive-context', branch: 'n/a', status: 'stalled', files: 34, size: '480 KB' },
-    { id: 'discord-aot', name: 'Discord · AOT Feed', path: '/home/ubuntu/work/discord-feed-adapter', branch: 'main', status: 'connected', files: 12, size: '150 KB' }
+    { id: 'linear-growth', name: 'Linear · GrowthWebDev', path: '~/work/linear-growth-context', branch: 'main', status: 'connected', files: 142, size: '2.4 MB' },
+    { id: 'github-mbgulden', name: 'GitHub · mbgulden', path: '~/work/agentic-swarm-ops', branch: 'main', status: 'connected', files: 89, size: '1.8 MB' },
+    { id: 'gdrive-context', name: 'Google Drive · Context', path: '~/mounts/google-drive-context', branch: 'n/a', status: 'stalled', files: 34, size: '480 KB' },
+    { id: 'discord-aot', name: 'Discord · AOT Feed', path: '~/work/discord-feed-adapter', branch: 'main', status: 'connected', files: 12, size: '150 KB' }
   ];
 
   const INITIAL_EVENTS = [
@@ -264,6 +264,58 @@
       return agents.find(a => a.id === activeId);
     }, [agents, hoveredAgentId, selectedAgentFilter]);
 
+    const engineSnapshot = React.useMemo(() => {
+      const activeAgents = agents.filter(agent => agent.status === 'working');
+      const idleAgents = agents.filter(agent => agent.status === 'idle');
+      const offlineAgents = agents.filter(agent => agent.status === 'offline');
+      const connectedWorkspaces = workspaces.filter(ws => ws.status === 'connected');
+      const stalledWorkspaces = workspaces.filter(ws => ws.status !== 'connected');
+      const installedSkills = skills.filter(skill => skill.installed);
+      const recentEvent = events[0] || null;
+      const recentRun = runRecords[0] || null;
+      const queueEntries = Object.entries(AGENT_QUEUES).map(([agentId, items]) => {
+        const agent = AGENTS.find(entry => entry.id === agentId);
+        return {
+          agentId,
+          agentName: agent ? agent.name : agentId.toUpperCase(),
+          count: items.length,
+          priority: items[0] ? items[0].priority : '—',
+          title: items[0] ? items[0].title : 'No queued work',
+          route: agent ? agent.badge : agentId.toUpperCase()
+        };
+      });
+      const queueDepth = queueEntries.reduce((sum, entry) => sum + entry.count, 0);
+      const health = stalledWorkspaces.length > 0 || offlineAgents.length > 1
+        ? 'degraded'
+        : activeAgents.length > 0
+          ? 'busy'
+          : 'healthy';
+      const healthLabel = health === 'degraded' ? 'Degraded' : health === 'busy' ? 'Active' : 'Healthy';
+
+      return {
+        health,
+        healthLabel,
+        queueDepth,
+        activeAgents,
+        idleAgents,
+        offlineAgents,
+        connectedWorkspaces,
+        stalledWorkspaces,
+        installedSkills,
+        recentEvent,
+        recentRun,
+        queueEntries,
+        totals: {
+          agents: agents.length,
+          workspaces: workspaces.length,
+          skills: installedSkills.length,
+          events: events.length,
+          runs: runRecords.length,
+        },
+        lastRefresh: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      };
+    }, [agents, workspaces, events, skills, runRecords]);
+
     // RENDER HELPER FOR HEAD & NAV
     const renderHeaderAndNav = () => {
       return h('div', null, [
@@ -322,6 +374,53 @@
 
     return h('div', { className: 'hub-container' }, [
       renderHeaderAndNav(),
+
+      activeTab === 'dashboard' && h('div', { className: 'card-panel snapshot-panel' }, [
+        h('div', { className: 'card-header' }, [
+          h('div', null, [
+            h('h2', null, 'Live Prismatic Engine Snapshot'),
+            h('p', { className: 'card-meta-text' }, `Refreshed ${engineSnapshot.lastRefresh} · whole-engine roll-up`)
+          ]),
+          h('span', { className: `status-badge ${engineSnapshot.health}` }, engineSnapshot.healthLabel)
+        ]),
+        h('div', { className: 'shimmer-divider' }),
+        h('div', { className: 'dedup-metrics-grid' }, [
+          h('div', { className: 'metric-tile' }, [
+            h('span', { className: 'tile-lbl' }, 'Agents Online'),
+            h('span', { className: 'tile-val' }, engineSnapshot.activeAgents.length)
+          ]),
+          h('div', { className: 'metric-tile' }, [
+            h('span', { className: 'tile-lbl' }, 'Connected Workspaces'),
+            h('span', { className: 'tile-val' }, engineSnapshot.connectedWorkspaces.length)
+          ]),
+          h('div', { className: 'metric-tile' }, [
+            h('span', { className: 'tile-lbl' }, 'Queue Depth'),
+            h('span', { className: 'tile-val' }, engineSnapshot.queueDepth)
+          ]),
+          h('div', { className: 'metric-tile' }, [
+            h('span', { className: 'tile-lbl' }, 'Installed Skills'),
+            h('span', { className: 'tile-val' }, engineSnapshot.totals.skills)
+          ])
+        ]),
+        h('div', { className: 'dedup-status-list' }, [
+          h('div', { className: 'dedup-row' }, [
+            h('span', null, 'Stalled Workspaces'),
+            h('span', { className: 'code-text' }, engineSnapshot.stalledWorkspaces.length ? engineSnapshot.stalledWorkspaces.map(ws => ws.name).join(' · ') : 'None')
+          ]),
+          h('div', { className: 'dedup-row' }, [
+            h('span', null, 'Recent Event'),
+            h('span', { className: 'code-text' }, engineSnapshot.recentEvent ? `${engineSnapshot.recentEvent.source} · ${engineSnapshot.recentEvent.ref} · ${engineSnapshot.recentEvent.time}` : 'No event stream yet')
+          ]),
+          h('div', { className: 'dedup-row' }, [
+            h('span', null, 'Latest Run'),
+            h('span', { className: 'code-text' }, engineSnapshot.recentRun ? `${engineSnapshot.recentRun.agent} · ${engineSnapshot.recentRun.trigger}` : 'No run history yet')
+          ])
+        ]),
+        h('div', { className: 'dedup-status-list' }, engineSnapshot.queueEntries.map(entry => h('div', { key: entry.agentId, className: 'dedup-row' }, [
+          h('span', null, `${entry.route} · ${entry.agentName}`),
+          h('span', { className: 'code-text' }, `${entry.count} queued · ${entry.priority}`)
+        ])))
+      ]),
 
       /* -------------------------------------------------- */
       /* TAB PANEL: DASHBOARD                               */
