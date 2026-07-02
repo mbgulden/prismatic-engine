@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Prismatic Engine — AGY Quota Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;700&family=Geist:wght@300;400;600;800&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg-obsidian: #080809;
+      --bg-chassis: #121217;
+      --bg-charcoal: #0e0e12;
+      --border-steel: #222226;
+      --border-active: #3A3A42;
+      --text-primary: #F5F5F7;
+      --text-muted: #8E8E93;
+      --color-agy: #ff4545;
+      --color-ok: #00e676;
+      --color-warn: #ff9f1c;
+      --color-critical: #ffcc00;
+      --color-exhausted: #ff4545;
+      --font-sans: 'Geist', 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --font-mono: 'Geist Mono', 'JetBrains Mono', monospace;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      background-color: var(--bg-obsidian);
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      -webkit-font-smoothing: antialiased;
+      line-height: 1.6;
+      padding: 2rem;
+    }
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(var(--border-steel) 1px, transparent 1px),
+        linear-gradient(90deg, var(--border-steel) 1px, transparent 1px);
+      background-size: 40px 40px;
+      opacity: 0.10;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .container { max-width: 1400px; margin: 0 auto; position: relative; z-index: 1; }
+
+    header { margin-bottom: 2rem; }
+    h1 { font-size: 2.5rem; font-weight: 800; letter-spacing: -0.02em; }
+    .subtitle { color: var(--text-muted); font-size: 1rem; margin-top: 0.25rem; font-family: var(--font-mono); }
+
+    .grid { display: grid; gap: 1.5rem; }
+    .grid-2 { grid-template-columns: 1fr 1fr; }
+    .grid-3 { grid-template-columns: 1fr 1fr 1fr; }
+    @media (max-width: 900px) {
+      .grid-2, .grid-3 { grid-template-columns: 1fr; }
+    }
+
+    .card {
+      background: var(--bg-chassis);
+      border: 1px solid var(--border-steel);
+      border-radius: 12px;
+      padding: 1.5rem;
+    }
+    .card h2 { font-size: 1.1rem; font-weight: 600; margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem; }
+    .card h2 .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--color-ok); box-shadow: 0 0 8px var(--color-ok); }
+
+    .tier-banner {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      padding: 1rem 1.5rem;
+      background: linear-gradient(135deg, rgba(255, 69, 69, 0.10), rgba(255, 159, 28, 0.05));
+      border: 1px solid var(--border-active);
+      border-radius: 12px;
+      margin-bottom: 1.5rem;
+    }
+    .tier-name { font-size: 1.3rem; font-weight: 700; }
+    .tier-paid { color: var(--color-ok); font-family: var(--font-mono); font-size: 0.85rem; padding: 0.2rem 0.6rem; background: rgba(0, 230, 118, 0.10); border: 1px solid rgba(0, 230, 118, 0.3); border-radius: 4px; }
+    .tier-info { color: var(--text-muted); font-family: var(--font-mono); font-size: 0.85rem; }
+
+    /* Quota bar */
+    .quota-row {
+      display: grid;
+      grid-template-columns: 240px 1fr 80px 100px;
+      gap: 1rem;
+      align-items: center;
+      padding: 0.75rem 0;
+      border-bottom: 1px solid var(--border-steel);
+    }
+    .quota-row:last-child { border-bottom: none; }
+    .quota-name { font-family: var(--font-mono); font-size: 0.9rem; }
+    .quota-name .display { color: var(--text-muted); font-size: 0.8rem; display: block; margin-top: 0.15rem; }
+
+    .quota-bar {
+      height: 24px;
+      background: var(--bg-obsidian);
+      border-radius: 6px;
+      border: 1px solid var(--border-steel);
+      overflow: hidden;
+      position: relative;
+    }
+    .quota-bar-fill {
+      height: 100%;
+      transition: width 0.5s ease;
+      border-radius: 4px 0 0 4px;
+    }
+    .quota-bar-fill.ok { background: linear-gradient(90deg, #00e676, #2ecc71); }
+    .quota-bar-fill.warn { background: linear-gradient(90deg, #ff9f1c, #f1c40f); }
+    .quota-bar-fill.critical { background: linear-gradient(90deg, #ffcc00, #ff9f1c); }
+    .quota-bar-fill.exhausted { background: linear-gradient(90deg, #ff4545, #c0392b); }
+
+    .quota-pct { font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700; text-align: right; }
+    .quota-pct.ok { color: var(--color-ok); }
+    .quota-pct.warn { color: var(--color-warn); }
+    .quota-pct.critical { color: var(--color-critical); }
+    .quota-pct.exhausted { color: var(--color-exhausted); }
+
+    .quota-reset { font-family: var(--font-mono); font-size: 0.85rem; color: var(--text-muted); text-align: right; }
+    .quota-dispatch { font-family: var(--font-mono); font-size: 0.85rem; }
+    .quota-dispatch.ok { color: var(--color-ok); }
+    .quota-dispatch.block { color: var(--color-exhausted); }
+
+    /* History chart */
+    .chart-container {
+      background: var(--bg-obsidian);
+      border: 1px solid var(--border-steel);
+      border-radius: 8px;
+      padding: 1rem;
+      height: 320px;
+    }
+
+    /* Events */
+    .event-row {
+      display: grid;
+      grid-template-columns: 110px 1fr 80px 80px;
+      gap: 1rem;
+      padding: 0.5rem 0;
+      border-bottom: 1px solid var(--border-steel);
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+    }
+    .event-row:last-child { border-bottom: none; }
+    .event-row .ts { color: var(--text-muted); }
+    .badge {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .badge.warning { background: rgba(255, 159, 28, 0.15); color: var(--color-warn); border: 1px solid rgba(255, 159, 28, 0.3); }
+    .badge.critical { background: rgba(255, 204, 0, 0.15); color: var(--color-critical); border: 1px solid rgba(255, 204, 0, 0.3); }
+    .badge.exhausted { background: rgba(255, 69, 69, 0.15); color: var(--color-exhausted); border: 1px solid rgba(255, 69, 69, 0.3); }
+    .badge.recovered { background: rgba(0, 230, 118, 0.15); color: var(--color-ok); border: 1px solid rgba(0, 230, 118, 0.3); }
+
+    /* Threshold editor */
+    .threshold-row {
+      display: grid;
+      grid-template-columns: 200px 80px 80px 80px 80px;
+      gap: 0.75rem;
+      align-items: center;
+      padding: 0.5rem 0;
+      border-bottom: 1px solid var(--border-steel);
+    }
+    .threshold-row .label { font-family: var(--font-mono); font-size: 0.85rem; }
+    .threshold-row input {
+      background: var(--bg-obsidian);
+      border: 1px solid var(--border-steel);
+      color: var(--text-primary);
+      padding: 0.3rem 0.5rem;
+      border-radius: 4px;
+      font-family: var(--font-mono);
+      font-size: 0.85rem;
+      width: 100%;
+    }
+    .threshold-row input:focus { outline: 1px solid var(--color-agy); border-color: var(--color-agy); }
+    .threshold-row button {
+      background: var(--bg-charcoal);
+      border: 1px solid var(--border-active);
+      color: var(--text-primary);
+      padding: 0.3rem 0.6rem;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      cursor: pointer;
+    }
+    .threshold-row button:hover { background: var(--border-active); }
+    .threshold-row .status { font-size: 0.75rem; }
+    .threshold-row .status.saved { color: var(--color-ok); }
+    .threshold-row .status.err { color: var(--color-exhausted); }
+    .threshold-row .default { font-size: 0.7rem; color: var(--text-muted); }
+
+    /* Toolbar */
+    .toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1.5rem;
+    }
+    .toolbar .left, .toolbar .right { display: flex; align-items: center; gap: 0.75rem; }
+    .btn {
+      background: var(--bg-chassis);
+      border: 1px solid var(--border-active);
+      color: var(--text-primary);
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      cursor: pointer;
+      font-family: var(--font-sans);
+    }
+    .btn:hover { background: var(--border-active); }
+    .btn-primary { background: var(--color-agy); border-color: var(--color-agy); }
+    .btn-primary:hover { background: #ff6b6b; }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.3rem 0.75rem;
+      background: var(--bg-chassis);
+      border: 1px solid var(--border-steel);
+      border-radius: 16px;
+      font-size: 0.85rem;
+      font-family: var(--font-mono);
+    }
+    .status-pill .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--color-ok);
+    }
+    .status-pill.stale .dot { background: var(--color-warn); }
+    .status-pill.err .dot { background: var(--color-exhausted); }
+
+    .footer {
+      margin-top: 3rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--border-steel);
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      font-family: var(--font-mono);
+    }
+
+    /* Error banner */
+    .err-banner {
+      background: rgba(255, 69, 69, 0.10);
+      border: 1px solid rgba(255, 69, 69, 0.3);
+      border-radius: 8px;
+      padding: 1rem;
+      color: var(--color-exhausted);
+      margin-bottom: 1.5rem;
+      font-family: var(--font-mono);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>AGY Quota Dashboard</h1>
+      <p class="subtitle">Google AI Ultra subscription · live quota, history, and throttle control</p>
+    </header>
+
+    <div id="err-banner"></div>
+
+    <div class="toolbar">
+      <div class="left">
+        <span id="status-pill" class="status-pill"><span class="dot"></span><span id="status-text">live</span></span>
+        <span id="last-updated" style="color: var(--text-muted); font-family: var(--font-mono); font-size: 0.85rem;"></span>
+      </div>
+      <div class="right">
+        <button class="btn" id="refresh-btn">↻ Refresh</button>
+        <button class="btn btn-primary" id="force-poll-btn">⚡ Force poll</button>
+        <select class="btn" id="refresh-interval">
+          <option value="15000">Auto-refresh: 15s</option>
+          <option value="30000" selected>Auto-refresh: 30s</option>
+          <option value="60000">Auto-refresh: 1m</option>
+          <option value="300000">Auto-refresh: 5m</option>
+          <option value="0">Auto-refresh: off</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="tier-banner" class="tier-banner">
+      <div>
+        <div class="tier-name" id="tier-name">—</div>
+        <div class="tier-info" id="tier-info">—</div>
+      </div>
+      <div style="margin-left: auto;">
+        <span class="tier-paid" id="tier-paid">—</span>
+      </div>
+    </div>
+
+    <div class="grid grid-2" style="margin-bottom: 1.5rem;">
+      <div class="card">
+        <h2><span class="pulse"></span>Current Quota</h2>
+        <div id="quota-list"></div>
+      </div>
+      <div class="card">
+        <h2><span class="pulse"></span>Recent Events (24h)</h2>
+        <div id="events-list"></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom: 1.5rem;">
+      <h2>Quota History (24h)</h2>
+      <div class="chart-container">
+        <canvas id="history-chart"></canvas>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Threshold Configuration</h2>
+      <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">
+        Per-model thresholds. When quota drops below <code>warn%</code> → warning event, <code>critical%</code> → critical event, <code>pause%</code> → supervisor refuses to dispatch.
+      </p>
+      <div id="threshold-list"></div>
+    </div>
+
+    <div class="footer">
+      Prismatic Engine · AGY Quota Dashboard · auto-refresh configured client-side ·
+      data sourced from <code>~/.prismatic/quota_state.db</code> + live <code>cloudcode-pa.googleapis.com</code> API
+    </div>
+  </div>
+
+  <script>
+    // ── State ─────────────────────────────────────────────────
+    let chart = null;
+    let refreshTimer = null;
+    let currentData = null;
+
+    // ── API helpers ─────────────────────────────────────────
+    async function fetchJSON(path, opts = {}) {
+      const resp = await fetch(path, {
+        ...opts,
+        headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
+      });
+      if (!resp.ok) {
+        const err = await resp.text();
+        throw new Error(`HTTP ${resp.status}: ${err.slice(0, 200)}`);
+      }
+      return resp.json();
+    }
+
+    function pctClass(p) {
+      if (p === null || p === undefined) return "ok";
+      if (p <= 5) return "exhausted";
+      if (p <= 15) return "critical";
+      if (p <= 30) return "warn";
+      return "ok";
+    }
+
+    function fmtTime(ts) {
+      const d = new Date(ts * 1000);
+      return d.toLocaleString();
+    }
+
+    function fmtAgo(ts) {
+      const s = Math.floor(Date.now() / 1000 - ts);
+      if (s < 60) return `${s}s ago`;
+      if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+      if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+      return `${Math.floor(s / 86400)}d ago`;
+    }
+
+    // ── Renderers ────────────────────────────────────────────
+    function renderTier(data) {
+      const tier = data.current && data.current[0] ? (data.current[0].display_name || "—") : "—";
+      // tier data isn't in /api/quota; show minimal info instead
+      document.getElementById("tier-name").textContent = "Google AI Ultra";
+      document.getElementById("tier-info").textContent = `Project: ${data.current && data.current[0] ? data.current[0].project_id : "—"} · ${data.current.length} models tracked`;
+      document.getElementById("tier-paid").textContent = "● ACTIVE";
+    }
+
+    function renderQuota(data) {
+      const list = document.getElementById("quota-list");
+      list.innerHTML = "";
+      if (!data.current || data.current.length === 0) {
+        list.innerHTML = '<div style="color: var(--text-muted); font-family: var(--font-mono);">No data yet — force a poll to populate.</div>';
+        return;
+      }
+      // sort by remaining_pct ascending so exhausted/low come first
+      const sorted = [...data.current].sort((a, b) => (a.remaining_pct || 0) - (b.remaining_pct || 0));
+      for (const m of sorted) {
+        const pct = m.remaining_pct;
+        const cls = pctClass(pct);
+        const canDispatch = pct === null ? "?" : (pct > 5 ? "✓ dispatch OK" : "✗ blocked");
+        const dispatchCls = pct === null ? "ok" : (pct > 5 ? "ok" : "block");
+        const resetText = m.reset_time ? m.reset_time.replace("T", " ").replace("Z", "Z") : "—";
+        const row = document.createElement("div");
+        row.className = "quota-row";
+        row.innerHTML = `
+          <div class="quota-name">
+            ${m.model}
+            <span class="display">${m.display_name || ""}</span>
+          </div>
+          <div class="quota-bar">
+            <div class="quota-bar-fill ${cls}" style="width: ${pct || 0}%;"></div>
+          </div>
+          <div class="quota-pct ${cls}">${pct !== null ? pct.toFixed(1) + "%" : "?"}</div>
+          <div>
+            <div class="quota-reset">${resetText}</div>
+            <div class="quota-dispatch ${dispatchCls}">${canDispatch}</div>
+          </div>
+        `;
+        list.appendChild(row);
+      }
+    }
+
+    function renderEvents(data) {
+      const list = document.getElementById("events-list");
+      list.innerHTML = "";
+      if (!data.recent_events_24h || data.recent_events_24h.length === 0) {
+        list.innerHTML = '<div style="color: var(--text-muted); font-family: var(--font-mono);">No events in last 24h.</div>';
+        return;
+      }
+      for (const ev of data.recent_events_24h.slice(0, 12)) {
+        const row = document.createElement("div");
+        row.className = "event-row";
+        row.innerHTML = `
+          <div class="ts">${fmtAgo(ev.ts)}</div>
+          <div>${ev.model}</div>
+          <div><span class="badge ${ev.event_type}">${ev.event_type}</span></div>
+          <div style="text-align: right;">${ev.remaining_pct !== null ? ev.remaining_pct.toFixed(1) + "%" : "—"}</div>
+        `;
+        list.appendChild(row);
+      }
+    }
+
+    async function renderHistory() {
+      // Get history for all current models
+      if (!currentData || !currentData.current) return;
+      const datasets = [];
+      const allTs = new Set();
+      const models = currentData.current.slice(0, 8); // cap at 8 to keep chart readable
+
+      for (const m of models) {
+        try {
+          const hist = await fetchJSON(`/api/quota/history?model=${encodeURIComponent(m.model)}&hours=24`);
+          if (!hist.history || hist.history.length === 0) continue;
+          const data = hist.history.map(h => ({ x: h.ts * 1000, y: h.remaining_pct }));
+          data.forEach(p => allTs.add(p.x));
+          // Color by current state
+          const cls = pctClass(m.remaining_pct);
+          const color = cls === "exhausted" ? "#ff4545" : cls === "critical" ? "#ffcc00" : cls === "warn" ? "#ff9f1c" : "#00e676";
+          datasets.push({
+            label: m.model,
+            data,
+            borderColor: color,
+            backgroundColor: color + "20",
+            tension: 0.2,
+            pointRadius: 0,
+            borderWidth: 2,
+          });
+        } catch (e) {
+          console.warn(`history fetch failed for ${m.model}: ${e.message}`);
+        }
+      }
+
+      if (chart) chart.destroy();
+      const ctx = document.getElementById("history-chart").getContext("2d");
+      chart = new Chart(ctx, {
+        type: "line",
+        data: { datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: "nearest", intersect: false },
+          plugins: {
+            legend: {
+              labels: { color: "#F5F5F7", font: { family: "Geist Mono", size: 10 } },
+              position: "bottom",
+            },
+            tooltip: {
+              backgroundColor: "#121217",
+              borderColor: "#222226",
+              borderWidth: 1,
+              titleColor: "#F5F5F7",
+              bodyColor: "#F5F5F7",
+              titleFont: { family: "Geist Mono" },
+              bodyFont: { family: "Geist Mono" },
+              callbacks: {
+                title: (items) => new Date(items[0].parsed.x).toLocaleString(),
+                label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toFixed(1)}%`,
+              },
+            },
+          },
+          scales: {
+            x: {
+              type: "time",
+              time: { unit: "hour", displayFormats: { hour: "HH:mm" } },
+              grid: { color: "#22222644" },
+              ticks: { color: "#8E8E93", font: { family: "Geist Mono" } },
+            },
+            y: {
+              min: 0,
+              max: 100,
+              grid: { color: "#22222644" },
+              ticks: { color: "#8E8E93", font: { family: "Geist Mono" }, callback: v => v + "%" },
+            },
+          },
+        },
+      });
+    }
+
+    function renderThresholds(data) {
+      const list = document.getElementById("threshold-list");
+      list.innerHTML = "";
+      if (!data.thresholds || data.thresholds.length === 0) {
+        list.innerHTML = '<div style="color: var(--text-muted); font-family: var(--font-mono);">No thresholds configured.</div>';
+        return;
+      }
+      for (const t of data.thresholds) {
+        const row = document.createElement("div");
+        row.className = "threshold-row";
+        row.innerHTML = `
+          <div class="label">
+            ${t.model}
+            ${t.default ? '<span class="default">(default)</span>' : ''}
+          </div>
+          <input type="number" min="0" max="100" value="${t.warn_pct}" data-field="warn" data-model="${t.model}">
+          <input type="number" min="0" max="100" value="${t.critical_pct}" data-field="critical" data-model="${t.model}">
+          <input type="number" min="0" max="100" value="${t.pause_pct}" data-field="pause" data-model="${t.model}">
+          <button data-save="${t.model}">Save</button>
+          <span class="status" data-status="${t.model}"></span>
+        `;
+        list.appendChild(row);
+      }
+      // Wire save buttons
+      list.querySelectorAll("button[data-save]").forEach(btn => {
+        btn.addEventListener("click", async () => {
+          const model = btn.getAttribute("data-save");
+          const warn = parseFloat(list.querySelector(`input[data-field=warn][data-model="${model}"]`).value);
+          const critical = parseFloat(list.querySelector(`input[data-field=critical][data-model="${model}"]`).value);
+          const pause = parseFloat(list.querySelector(`input[data-field=pause][data-model="${model}"]`).value);
+          const status = list.querySelector(`span[data-status="${model}"]`);
+          status.className = "status";
+          status.textContent = "saving…";
+          try {
+            const result = await fetchJSON("/api/quota/thresholds", {
+              method: "POST",
+              body: JSON.stringify({ model, warn, critical, pause }),
+            });
+            if (result.ok) {
+              status.className = "status saved";
+              status.textContent = "✓ saved";
+              setTimeout(() => { status.textContent = ""; status.className = "status"; }, 2000);
+            } else {
+              status.className = "status err";
+              status.textContent = "✗ " + (result.error || "error");
+            }
+          } catch (e) {
+            status.className = "status err";
+            status.textContent = "✗ " + e.message;
+          }
+        });
+      });
+    }
+
+    function renderError(msg) {
+      const banner = document.getElementById("err-banner");
+      if (msg) {
+        banner.innerHTML = `<div class="err-banner">⚠ ${msg}</div>`;
+      } else {
+        banner.innerHTML = "";
+      }
+    }
+
+    // ── Main refresh loop ───────────────────────────────────
+    async function refresh() {
+      try {
+        const data = await fetchJSON("/api/quota");
+        if (data.error) {
+          renderError(data.error);
+        } else {
+          renderError(null);
+        }
+        currentData = data;
+        renderTier(data);
+        renderQuota(data);
+        renderEvents(data);
+        renderThresholds(data);
+        renderHistory();
+
+        const lastTs = data.current && data.current[0] ? data.current[0].ts : null;
+        document.getElementById("last-updated").textContent =
+          lastTs ? `Last snapshot: ${fmtAgo(lastTs)}` : "No snapshots yet";
+
+        const pill = document.getElementById("status-pill");
+        if (lastTs && Date.now() / 1000 - lastTs > 1800) {
+          pill.className = "status-pill stale";
+          document.getElementById("status-text").textContent = "stale (>30m)";
+        } else {
+          pill.className = "status-pill";
+          document.getElementById("status-text").textContent = "live";
+        }
+      } catch (e) {
+        renderError(`Failed to load: ${e.message}`);
+        document.getElementById("status-pill").className = "status-pill err";
+        document.getElementById("status-text").textContent = "error";
+      }
+    }
+
+    async function forcePoll() {
+      const btn = document.getElementById("force-poll-btn");
+      btn.disabled = true;
+      btn.textContent = "⏳ Polling…";
+      try {
+        await fetchJSON("/api/quota/poll", { method: "POST" });
+        await refresh();
+      } catch (e) {
+        renderError(`Force poll failed: ${e.message}`);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "⚡ Force poll";
+      }
+    }
+
+    function setupAutoRefresh() {
+      if (refreshTimer) clearInterval(refreshTimer);
+      const ms = parseInt(document.getElementById("refresh-interval").value, 10);
+      if (ms > 0) refreshTimer = setInterval(refresh, ms);
+    }
+
+    document.getElementById("refresh-btn").addEventListener("click", refresh);
+    document.getElementById("force-poll-btn").addEventListener("click", forcePoll);
+    document.getElementById("refresh-interval").addEventListener("change", setupAutoRefresh);
+
+    // Initial load + auto-refresh
+    refresh();
+    setupAutoRefresh();
+  </script>
+</body>
+</html>

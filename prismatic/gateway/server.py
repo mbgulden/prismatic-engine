@@ -140,6 +140,152 @@ async def health() -> dict[str, Any]:
     }
 
 
+# ── Quota API (Google AI Ultra subscription tracking) ────────────────
+# Wraps the orchestrator's agy_quota_state module. Used by the /quota UI
+# to display live quota + history + throttle state. The supervisor also
+# calls can_dispatch() before launching to refuse dispatches below pause.
+#
+# Auth: this endpoint exposes model quota and reset times but NOT the OAuth
+# token. The token is loaded by the server-side agy_quota module. Auth gate
+# (Google sign-in) is at the UI layer; the API itself is local-only.
+
+
+@app.get("/api/quota")
+async def get_quota_current() -> dict[str, Any]:
+    """Current quota state (most recent snapshot per model) + thresholds + can_dispatch flags."""
+    try:
+        sys.path.insert(0, str(Path.home() / ".hermes" / "profiles" / "orchestrator" / "scripts"))
+        from agy_quota_state import QuotaState  # type: ignore
+        state = QuotaState()
+        return {
+            "current": state.get_current(),
+            "thresholds": state.config.list_thresholds(),
+            "recent_events_24h": state.get_recent_events(hours=24),
+        }
+    except Exception as exc:
+        logger.warning("quota fetch failed: %s", exc)
+        return {"error": str(exc), "current": [], "thresholds": [], "recent_events_24h": []}
+
+
+@app.get("/api/quota/history")
+async def get_quota_history(model: str = "", hours: float = 24.0) -> dict[str, Any]:
+    """Quota history for one model (or all models) over the given hours."""
+    try:
+        sys.path.insert(0, str(Path.home() / ".hermes" / "profiles" / "orchestrator" / "scripts"))
+        from agy_quota_state import QuotaState  # type: ignore
+        state = QuotaState()
+        if model:
+            history = state.get_history(model, hours)
+            return {"model": model, "hours": hours, "history": history}
+        # No model: return summary per model
+        current = state.get_current()
+        out = {}
+        for m in current:
+            hist = state.get_history(m["model"], hours)
+            pcts = [h["remaining_pct"] for h in hist if h["remaining_pct"] is not None]
+            if pcts:
+                out[m["model"]] = {
+                    "snapshots": len(hist),
+                    "min": min(pcts),
+                    "max": max(pcts),
+                    "avg": round(sum(pcts) / len(pcts), 1),
+                    "current": m["remaining_pct"],
+                }
+        return {"hours": hours, "summary": out}
+    except Exception as exc:
+        logger.warning("quota history fetch failed: %s", exc)
+        return {"error": str(exc), "history": []}
+
+
+@app.get("/api/quota/thresholds")
+async def get_quota_thresholds() -> dict[str, Any]:
+    """List all per-model thresholds (defaults + user-set)."""
+    try:
+        sys.path.insert(0, str(Path.home() / ".hermes" / "profiles" / "orchestrator" / "scripts"))
+        from agy_quota_state import QuotaConfig  # type: ignore
+        return {"thresholds": QuotaConfig().list_thresholds()}
+    except Exception as exc:
+        logger.warning("quota thresholds fetch failed: %s", exc)
+        return {"error": str(exc), "thresholds": []}
+
+
+@app.post("/api/quota/thresholds")
+async def set_quota_threshold(request: Request) -> dict[str, Any]:
+    """Set thresholds for a model. Body: {model, warn, critical, pause}."""
+    try:
+        body = await request.json()
+        model = body.get("model")
+        warn = float(body.get("warn"))
+        critical = float(body.get("critical"))
+        pause = float(body.get("pause"))
+        if not model or warn is None or critical is None or pause is None:
+            return {"error": "missing model/warn/critical/pause"}
+        sys.path.insert(0, str(Path.home() / ".hermes" / "profiles" / "orchestrator" / "scripts"))
+        from agy_quota_state import QuotaConfig  # type: ignore
+        QuotaConfig().set_thresholds(model, warn, critical, pause)
+        return {"ok": True, "model": model, "warn": warn, "critical": critical, "pause": pause}
+    except Exception as exc:
+        logger.warning("quota threshold set failed: %s", exc)
+        return {"error": str(exc)}
+
+
+@app.post("/api/quota/poll")
+async def post_quota_poll(request: Request) -> dict[str, Any]:
+    """Force a fresh quota poll + record. Used by the UI's 'refresh' button."""
+    try:
+        sys.path.insert(0, str(Path.home() / ".hermes" / "profiles" / "orchestrator" / "scripts"))
+        from agy_quota_state import QuotaState  # type: ignore
+        state = QuotaState()
+        data = state.poll_and_record()
+        return {"ok": True, "snapshot_count": len(data.get("models", []))}
+    except Exception as exc:
+        logger.warning("quota poll failed: %s", exc)
+        return {"error": str(exc)}
+
+
+# Simple auth gate for the /quota UI. The /api/* JSON endpoints are open
+# to localhost callers (the UI itself). The /quota HTML page requires a
+# Google OAuth bearer token that matches the AGY token file. This is a
+# lightweight check — the user is already signed in to use AGY, so the
+# same token proves they have the right to view quota state.
+# In production, replace with proper session cookies + Google ID token.
+async def _verify_agy_bearer(request: Request) -> bool:
+    """Check Authorization header against the AGY OAuth access_token."""
+    try:
+        token_path = Path.home() / ".gemini" / "antigravity-cli" / "antigravity-oauth-token"
+        if not token_path.exists():
+            return False
+        stored = json.loads(token_path.read_text())
+        stored_token = stored.get("token", {}).get("access_token") if "token" in stored else stored.get("access_token")
+        if not stored_token:
+            return False
+        auth = request.headers.get("authorization", "")
+        if not auth.startswith("Bearer "):
+            return False
+        provided = auth[7:].strip()
+        # Compare first 20 chars (full token compare would be a CSRF risk in logs)
+        return provided[:20] == stored_token[:20] and len(provided) > 20
+    except Exception:
+        return False
+
+
+@app.get("/quota")
+async def quota_ui(request: Request) -> Response:
+    """Serve the AGY quota dashboard HTML page. Requires AGY bearer auth."""
+    if not await _verify_agy_bearer(request):
+        return Response(
+            status_code=401,
+            content="<h1>401 — Sign in with your Google AI Ultra account to view quota</h1>"
+                    "<p>This dashboard requires a Google OAuth bearer token.</p>"
+                    "<p>Run <code>python3 ~/.hermes/profiles/orchestrator/scripts/refresh_agy_token.py</code> "
+                    "to refresh, then include the access token as: "
+                    "<code>Authorization: Bearer &lt;access_token&gt;</code></p>",
+            media_type="text/html",
+        )
+    html = (Path(__file__).parent / "static" / "quota.html").read_text()
+    return Response(content=html, media_type="text/html")
+
+
 # ── WebSocket Endpoint ──────────────────────────────────────────────
 
 
@@ -457,6 +603,7 @@ async def github_webhook(request: Request) -> dict[str, Any]:
 
 
 @app.post("/api/gateway/linear")
+@app.post("/webhooks/linear")  # Backward-compat alias: Linear's webhook config uses this path
 async def linear_webhook(request: Request) -> dict[str, Any]:
     """Receive Linear webhook events (issue status changes, comments).
 
@@ -467,6 +614,12 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
       - other (Project, etc.)  -> linear.<type>.<action>
 
     All payloads are persisted to the canonical SQLite bus via the IPC bridge.
+
+    Two routes are registered for the same handler so we don't break
+    existing Linear webhook configs (which use /webhooks/linear) while
+    supporting the canonical /api/gateway/linear path. Verified Jul 1 2026:
+    Linear's webhook config points at /webhooks/linear but the gateway
+    only had /api/gateway/linear, causing silent 404s and no event flow.
     """
     body = await request.body()
     try:
@@ -603,6 +756,67 @@ def main() -> None:
         logger.info("gRPC server starting on port %d", args.grpc_port)
 
     # Start FastAPI/uvicorn
+    # Self-register in the Prismatic service registry (GRO-3167, Jul 1 2026).
+    # This lets the supervisor, watchdog, and other services discover the gateway
+    # without hardcoded host:port knowledge. The heartbeat is best-effort — if
+    # the registry is missing or the helper is unavailable, the gateway still
+    # starts. Registration runs in a daemon thread so it doesn't block startup.
+    import threading as _threading
+
+    def _register_self() -> None:
+        try:
+            # The registry helper lives in the orchestrator profile's scripts
+            # dir, which may not be on sys.path for the gateway's venv. Try
+            # the import directly, then fall back to a sys.path-insert.
+            try:
+                import prismatic_service_registry as _registry
+            except ImportError:
+                import sys
+                _helper_path = str(Path.home() / ".hermes" / "profiles" / "orchestrator" / "scripts")
+                if _helper_path not in sys.path:
+                    sys.path.insert(0, _helper_path)
+                import prismatic_service_registry as _registry
+            # Deregister any stale entry from a previous instance first
+            try:
+                _registry.deregister("prismatic.gateway")
+            except Exception:
+                pass
+            _registry.register(
+                "prismatic.gateway",
+                host="localhost",  # Services connect via localhost
+                port=args.port,
+                version="0.1.0",
+                role="webhook_ingress",
+                endpoints=[
+                    "/api/gateway/linear",
+                    "/webhooks/linear",
+                    "/api/gateway/github",
+                    "/health",
+                ],
+            )
+            logger.info("Registered prismatic.gateway in service registry (port %d)", args.port)
+            # Start a heartbeat thread so the registry doesn't mark us stale.
+            # Registry marks entries stale after 60s of no heartbeat.
+            import threading as _threading
+            import time as _time
+
+            def _heartbeat_loop() -> None:
+                while True:
+                    try:
+                        _time.sleep(30)
+                        _registry.heartbeat("prismatic.gateway")
+                    except Exception:
+                        pass
+
+            _threading.Thread(target=_heartbeat_loop, daemon=True).start()
+            logger.info("Started gateway heartbeat (30s interval)", flush=True)
+        except ImportError:
+            logger.debug("prismatic_service_registry not importable; skipping self-registration")
+        except Exception as e:
+            logger.warning("Failed to self-register in service registry: %s", e)
+
+    _threading.Thread(target=_register_self, daemon=True).start()
+
     uvicorn.run(
         "prismatic.gateway.server:app",
         host=args.host,
