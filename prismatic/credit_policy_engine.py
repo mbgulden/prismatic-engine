@@ -20,6 +20,13 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Optional
 
+# Telemetry integration
+try:
+    from .telemetry import get_collector
+except (ImportError, ValueError):
+    # Handle direct script execution where relative import fails
+    get_collector = lambda: None
+
 
 # ═══════════════════════════════════════════════════════════════
 # Data Structures
@@ -259,6 +266,17 @@ class CreditPolicyEngine:
         """
         estimated_cost = self.estimate_cost(operation, **kwargs)
         state = self._get_or_create_state(thread_id)
+
+        # Telemetry: Record token estimate
+        telemetry = get_collector()
+        if telemetry:
+            agent_label = kwargs.get("agent_label", "unknown")
+            telemetry.record_tokens(
+                run_id=thread_id,
+                agent=agent_label,
+                provider=self.provider,
+                prompt_tokens=estimated_cost,  # proxy until real token counts available
+            )
 
         # Build evaluation context for rule conditions
         context = {

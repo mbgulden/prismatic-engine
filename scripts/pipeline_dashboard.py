@@ -29,13 +29,24 @@ Part of GRO-1478 — Pipeline metrics dashboard.
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from collections import Counter
 
 METRICS_PATHS = [
     "/tmp/pipeline_metrics.jsonl",
     "pipeline_metrics.jsonl",
 ]
+
+# Telemetry integration
+try:
+    from prismatic.telemetry import get_collector
+except ImportError:
+    # If running from scripts/ with prismatic in parent
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    try:
+        from prismatic.telemetry import get_collector
+    except ImportError:
+        get_collector = None
 
 # ── Load metrics ────────────────────────────────────────────
 
@@ -193,6 +204,36 @@ def detect_bypasses(metrics_list):
 
 # ── Dashboard format ─────────────────────────────────────────
 
+def print_telemetry_dashboard():
+    """Print a human-readable telemetry dashboard."""
+    if not get_collector:
+        print("  Telemetry collector not available.")
+        return
+
+    telemetry = get_collector()
+    data = telemetry.get_dashboard_data(hours=24)
+
+    print("╔" + "═" * 58 + "╗")
+    print("║           PRISMATIC-INSIGHT TELEMETRY                    ║")
+    print("╠" + "═" * 58 + "╣")
+    print("║  Last 24 Hours                                           ║")
+    print("║  ─────────────                                           ║")
+    print(f"║  Dispatches:  {data['dispatches']:<5} Stalled:  {data['stalled']:<5} Blocked:  {data['blocked']:<5} ║")
+    print(f"║  Tokens Used: {data['tokens_used']:,}    Avg TPS:  {data['avg_tps']:<8.1f}         ║")
+
+    for model, heat in data["context_heat"].items():
+        heat_str = f"{heat:.0%}"
+        print(f"║  Context Heat ({model[:15]}):  {heat_str:<26} ║")
+
+    total_tests = data['tests_passed'] + data['tests_failed']
+    pass_pct = (data['tests_passed'] / total_tests * 100) if total_tests > 0 else 0
+    print(f"║  Tests:  {data['tests_passed']} passed / {data['tests_failed']} failed ({pass_pct:.1f}%)                   ║")
+    print("║                                                          ║")
+    print(f"║  Circuit Breakers:  {data['tripped_breakers'] if data['tripped_breakers'] > 0 else 'None':<32} tripped   ║")
+    print(f"║  Rollbacks:  {data['rollbacks']:<44} ║")
+    print("╚" + "═" * 58 + "╝")
+
+
 def print_dashboard(metrics_list):
     """Print a human-readable health dashboard."""
     task_stats = compute_task_stats(metrics_list)
@@ -334,7 +375,9 @@ def summary_output(metrics_list):
 if __name__ == "__main__":
     metrics = load_metrics()
 
-    if "--json" in sys.argv:
+    if "--telemetry" in sys.argv:
+        print_telemetry_dashboard()
+    elif "--json" in sys.argv:
         json_output(metrics)
     elif "--summary" in sys.argv:
         summary_output(metrics)

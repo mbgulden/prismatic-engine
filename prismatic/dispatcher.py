@@ -44,6 +44,7 @@ from .credit_policy_engine import (
     evaluate_agent_launch,
     AGENT_PROVIDER_MAP,
 )
+from .telemetry import get_collector
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -530,6 +531,20 @@ def signal_kai(
     )
 
 
+def _watch_subprocess(proc: subprocess.Popen, run_id: str, agent: str, issue_id: str):
+    """Background thread to watch subprocess exit and record telemetry."""
+    proc.wait()
+    telemetry = get_collector()
+    telemetry.record_validation(
+        run_id=run_id,
+        agent=agent,
+        event_type="exit",
+        total=1,
+        passed=1 if proc.returncode == 0 else 0,
+        failed=1 if proc.returncode != 0 else 0,
+    )
+
+
 def launch_agy(issue_id: str, task: str = "") -> subprocess.Popen | None:
     """Launch the AGY CLI in headless mode for the given issue.
 
@@ -563,6 +578,15 @@ def launch_agy(issue_id: str, task: str = "") -> subprocess.Popen | None:
             stdin=subprocess.DEVNULL,
         )
         print(f"[dispatcher] Launched AGY (pid={proc.pid}) for issue {issue_id}")
+
+        # Telemetry: Watch subprocess
+        run_id = f"agy-{issue_id}-{int(time.time())}"
+        threading.Thread(
+            target=_watch_subprocess,
+            args=(proc, run_id, "agy", issue_id),
+            daemon=True
+        ).start()
+
         return proc
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"[dispatcher] Failed to launch AGY: {exc}")
@@ -595,6 +619,15 @@ def launch_jules(issue_id: str, task: str = "") -> subprocess.Popen | None:
             stdin=subprocess.DEVNULL,
         )
         print(f"[dispatcher] Launched Jules (pid={proc.pid}) for issue {issue_id}")
+
+        # Telemetry: Watch subprocess
+        run_id = f"jules-{issue_id}-{int(time.time())}"
+        threading.Thread(
+            target=_watch_subprocess,
+            args=(proc, run_id, "jules", issue_id),
+            daemon=True
+        ).start()
+
         return proc
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"[dispatcher] Failed to launch Jules: {exc}")
@@ -627,6 +660,15 @@ def launch_codex(issue_id: str, task: str = "") -> subprocess.Popen | None:
             stdin=subprocess.DEVNULL,
         )
         print(f"[dispatcher] Launched Codex (pid={proc.pid}) for issue {issue_id}")
+
+        # Telemetry: Watch subprocess
+        run_id = f"codex-{issue_id}-{int(time.time())}"
+        threading.Thread(
+            target=_watch_subprocess,
+            args=(proc, run_id, "codex", issue_id),
+            daemon=True
+        ).start()
+
         return proc
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"[dispatcher] Failed to launch Codex: {exc}")
@@ -940,7 +982,15 @@ def recover_stalled_agy(
             )
             conn.commit()
 
-            if cycle_count >= max_retries:
+            # Telemetry: Check circuit breaker
+            tripped = get_collector().check_circuit(
+                issue_id=issue_id,
+                agent="agy",
+                micro_count=cycle_count,
+                macro_count=0  # Placeholder, escalation logic could track macro
+            )
+
+            if cycle_count >= max_retries or tripped:
                 # Escalate — kill AGY and transition to escalate_to agent
                 cleanup_stale_agy(max_age_minutes=0)  # Kill all AGY processes
 
@@ -1455,6 +1505,19 @@ def dispatch_once(
             try:
                 result = launcher(issue_id, title=issue.get("title", ""))
                 if result:
+                    # Telemetry: record loop
+                    try:
+                        run_id = f"{agent_name}-{issue_id}-{int(time.time())}"
+                        get_collector().record_loop(
+                            run_id=run_id,
+                            issue_id=issue_id,
+                            agent=agent_name,
+                            loop_type="dispatch",
+                            trigger="linear_label_match"
+                        )
+                    except Exception as e:
+                        print(f"[dispatcher] Telemetry error: {e}")
+
                     dedup.mark_processed(issue_id, label, cycle_id)
                     counts["dispatched"] += 1
                     agent_name_pretty = agent_name.capitalize()
