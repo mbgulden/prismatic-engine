@@ -643,9 +643,14 @@ def validate_artifacts(paths: list[str], require_non_empty: bool = True) -> dict
 
 
 def validate_agent_output(issue_identifier: str | None = None, log_path: str | None = None, artifact: list[str] | None = None, text: str | None = None) -> dict[str, Any]:
-    artifacts = artifact or []
+    artifacts = list(artifact) if artifact else []
     if text:
         artifacts.extend(extract_file_paths(text))
+
+    # Mandate RESULT.md as default if no artifacts specified
+    if not artifacts:
+        artifacts.append("RESULT.md")
+
     transcript = ""
     resolved_log = Path(log_path) if log_path else Path(f"/tmp/antigravity_{issue_identifier}.log") if issue_identifier else None
     log_exists = bool(resolved_log and resolved_log.exists())
@@ -657,7 +662,7 @@ def validate_agent_output(issue_identifier: str | None = None, log_path: str | N
         for pattern, label in ERROR_PATTERNS:
             if re.search(pattern, transcript, re.IGNORECASE):
                 error_markers.append(label)
-    artifact_result = validate_artifacts(sorted(set(artifacts))) if artifacts else {"passed": True, "found": [], "missing": [], "empty": []}
+    artifact_result = validate_artifacts(sorted(set(artifacts)))
     passed = log_exists and transcript_size >= 100 and not error_markers and artifact_result["passed"]
     return {
         "issue_identifier": issue_identifier,
