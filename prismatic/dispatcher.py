@@ -1776,12 +1776,6 @@ def main() -> None:
     # ── Skills Subcommand ─────────────────────────────────────
     subparsers.add_parser("skills", help="Skill marketplace subcommands (run 'skills --help' for details)")
 
-    # ── Gateway Subcommand ────────────────────────────────────
-    gateway_parser = subparsers.add_parser("gateway", help="Start the API gateway server")
-    gateway_parser.add_argument("--port", type=int, default=8000, help="Port to bind (default: 8000)")
-    gateway_parser.add_argument("--host", default="0.0.0.0", help="Host to bind (default: 0.0.0.0)")
-    gateway_parser.add_argument("--reload", action="store_true", help="Enable auto-reload")
-
     # ── Help / No Command ─────────────────────────────────────
     if len(sys.argv) == 1:
         parser.print_help()
@@ -1802,11 +1796,6 @@ def main() -> None:
             print(f"Set up {len(issues)} pipeline issues")
             return
         main_loop(interval=args.interval, once=args.once)
-    elif args.command == "gateway":
-        from .api.server import app
-        import uvicorn
-        print(f"[dispatcher] Starting API gateway on {args.host}:{args.port}")
-        uvicorn.run(app, host=args.host, port=args.port, reload=args.reload)
     else:
         # Default fallback
         if args.command is None:
