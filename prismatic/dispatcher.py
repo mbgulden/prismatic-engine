@@ -46,6 +46,7 @@ from .credit_policy_engine import (
 )
 from .telemetry import get_collector
 from .mode_switch import ModeSwitch, OrchestrationMode
+from .core.governor import DistributedComputeGovernor
 
 # ── Orchestration Mode Switch ─────────────────────────────────
 mode_switch = ModeSwitch(os.environ.get("PRISMATIC_ORCHESTRATION_MODE", "collaborative"))
@@ -88,6 +89,8 @@ DEFAULT_DB_PATH: str = os.path.join(
 AGY_PATH: str = os.environ.get("AGY_PATH", "agy")
 JULES_PATH: str = os.environ.get("JULES_PATH", "jules")
 CODEX_PATH: str = os.environ.get("CODEX_PATH", "codex")
+INSTANCE_ID: str = os.environ.get("PRISMATIC_INSTANCE_ID", "default")
+GOVERNOR_TTL_SECONDS: int = int(os.environ.get("PRISMATIC_GOVERNOR_TTL_SECONDS", "300"))
 
 # Polling interval (seconds)
 POLL_INTERVAL: int = int(os.environ.get("PRISMATIC_POLL_INTERVAL", "30"))
@@ -632,6 +635,17 @@ def launch_agy(issue_id: str, task: str = "", **kwargs: Any) -> subprocess.Popen
         print(f"[dispatcher] AGY binary not found at {AGY_PATH}")
         return None
 
+    governor = _get_governor()
+    if not governor.acquire(
+        "agy",
+        issue_id,
+        INSTANCE_ID,
+        max_concurrent=_max_concurrent_for("agy", 2),
+        capability="code_generation",
+    ):
+        print(f"[dispatcher] ⏳ AGY at capacity — deferring {issue_id}")
+        return None
+
     try:
         cmd = [
             AGY_PATH,
@@ -662,10 +676,13 @@ def launch_agy(issue_id: str, task: str = "", **kwargs: Any) -> subprocess.Popen
             stdin=subprocess.DEVNULL,
         )
         print(f"[dispatcher] Launched AGY (pid={proc.pid}) for issue {issue_id}")
+        if not _finalize_agent_launch("agy", issue_id, proc):
+            return None
         _emit_agent_event("agent_launched", "agy", issue_id, pid=proc.pid)
         return proc
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"[dispatcher] Failed to launch AGY: {exc}")
+        governor.release("agy", issue_id)
         return None
 
 
@@ -695,6 +712,17 @@ def launch_jules(issue_id: str, task: str = "", **kwargs: Any) -> subprocess.Pop
         print(f"[dispatcher] Jules binary not found at {JULES_PATH}")
         return None
 
+    governor = _get_governor()
+    if not governor.acquire(
+        "jules",
+        issue_id,
+        INSTANCE_ID,
+        max_concurrent=_max_concurrent_for("jules", 1),
+        capability="code_review",
+    ):
+        print(f"[dispatcher] ⏳ Jules at capacity — deferring {issue_id}")
+        return None
+
     try:
         cmd = [JULES_PATH, "--issue", issue_id]
         if task:
@@ -707,10 +735,13 @@ def launch_jules(issue_id: str, task: str = "", **kwargs: Any) -> subprocess.Pop
             stdin=subprocess.DEVNULL,
         )
         print(f"[dispatcher] Launched Jules (pid={proc.pid}) for issue {issue_id}")
+        if not _finalize_agent_launch("jules", issue_id, proc):
+            return None
         _emit_agent_event("agent_launched", "jules", issue_id, pid=proc.pid)
         return proc
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"[dispatcher] Failed to launch Jules: {exc}")
+        governor.release("jules", issue_id)
         return None
 
 
@@ -728,6 +759,17 @@ def launch_codex(issue_id: str, task: str = "", **kwargs: Any) -> subprocess.Pop
         print(f"[dispatcher] Codex binary not found at {CODEX_PATH}")
         return None
 
+    governor = _get_governor()
+    if not governor.acquire(
+        "codex",
+        issue_id,
+        INSTANCE_ID,
+        max_concurrent=_max_concurrent_for("codex", 1),
+        capability="code_generation",
+    ):
+        print(f"[dispatcher] ⏳ Codex at capacity — deferring {issue_id}")
+        return None
+
     try:
         cmd = [CODEX_PATH, "--issue", issue_id]
         if task:
@@ -740,10 +782,13 @@ def launch_codex(issue_id: str, task: str = "", **kwargs: Any) -> subprocess.Pop
             stdin=subprocess.DEVNULL,
         )
         print(f"[dispatcher] Launched Codex (pid={proc.pid}) for issue {issue_id}")
+        if not _finalize_agent_launch("codex", issue_id, proc):
+            return None
         _emit_agent_event("agent_launched", "codex", issue_id, pid=proc.pid)
         return proc
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"[dispatcher] Failed to launch Codex: {exc}")
+        governor.release("codex", issue_id)
         return None
 
 
@@ -790,6 +835,89 @@ def launch_sandbox(issue_id: str, agent_name: str, **kwargs: Any) -> subprocess.
     except Exception as exc:
         print(f"[dispatcher] Failed to launch sandbox for {agent_name}: {exc}")
         return None
+
+
+# Global compute governor and local process tracker.
+_governor: DistributedComputeGovernor | None = None
+_active_processes: dict[tuple[str, str], subprocess.Popen] = {}
+
+
+def _get_governor() -> DistributedComputeGovernor:
+    """Return the shared compute governor, initialized lazily."""
+    global _governor
+    if _governor is None:
+        _governor = DistributedComputeGovernor()
+    return _governor
+
+
+def _max_concurrent_for(agent_name: str, default: int = 1) -> int:
+    raw = AGENT_CONFIG.get(agent_name, {}).get("max_concurrent", default)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = default
+    return max(1, value)
+
+
+def _track_agent_process(agent_name: str, issue_id: str, proc: subprocess.Popen) -> None:
+    _get_governor().update_pid(agent_name, issue_id, proc.pid)
+    _active_processes[(agent_name, issue_id)] = proc
+
+
+def _terminate_untracked_process(proc: subprocess.Popen, *, timeout: float = 2.0) -> None:
+    """Ensure an untracked child process is no longer running."""
+    if proc.poll() is not None:
+        return
+    try:
+        proc.terminate()
+        proc.wait(timeout=timeout)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    except Exception:
+        pass
+
+    if proc.poll() is not None:
+        return
+    try:
+        proc.kill()
+        proc.wait(timeout=timeout)
+    except Exception as exc:
+        print(f"[dispatcher] Failed to kill untracked process pid={proc.pid}: {exc}")
+
+
+def _finalize_agent_launch(agent_name: str, issue_id: str, proc: subprocess.Popen) -> bool:
+    """Track a launched child process or force-stop it if tracking fails."""
+    try:
+        _track_agent_process(agent_name, issue_id, proc)
+        return True
+    except Exception as exc:
+        print(f"[dispatcher] Failed to track {agent_name} process for {issue_id}: {exc}")
+        try:
+            _terminate_untracked_process(proc)
+        finally:
+            try:
+                _get_governor().release(agent_name, issue_id)
+            except Exception:
+                pass
+        return False
+
+
+def check_active_processes() -> int:
+    """Heartbeat live child processes and release finished allocations."""
+    finished: list[tuple[str, str]] = []
+    governor = _get_governor()
+    for (agent_name, issue_id), proc in list(_active_processes.items()):
+        retcode = proc.poll()
+        if retcode is None:
+            governor.heartbeat(agent_name, issue_id)
+            continue
+        print(f"[dispatcher] Process for {agent_name} on {issue_id} finished (exit={retcode})")
+        governor.release(agent_name, issue_id)
+        finished.append((agent_name, issue_id))
+    for key in finished:
+        _active_processes.pop(key, None)
+    return len(finished)
 
 
 # Map agent name → launch function
@@ -987,7 +1115,9 @@ def cleanup_stale_agy(max_age_minutes: int = 5) -> int:
             # Kill if older than max_age_minutes
             if age_seconds > max_age_minutes * 60:
                 try:
-                    os.kill(int(pid_str), signal.SIGTERM)
+                    pid = int(pid_str)
+                    os.kill(pid, signal.SIGTERM)
+                    _get_governor().release_by_pid(pid)
                     killed += 1
                     print(
                         f"[dispatcher] Killed stale AGY pid={pid_str} "
@@ -1754,6 +1884,17 @@ def dispatch_once(
         except (FileNotFoundError, ValueError):
             pipelines = {"pipelines": {}}
 
+    # 0. Prune stale compute allocations before dispatch so crash leftovers
+    # do not starve the current cycle.
+    try:
+        pruned = _get_governor().prune_stale(ttl_seconds=GOVERNOR_TTL_SECONDS)
+        if pruned:
+            print(f"[dispatcher] Pruned {pruned} stale compute allocation(s)")
+        counts["governor_pruned"] = pruned
+    except Exception as exc:
+        print(f"[dispatcher] compute governor pre-dispatch prune error: {exc}")
+        counts["errors"] += 1
+
     # 1. Dispatch local tasks first — no Linear/task-provider dependency.
     try:
         counts["local_dispatched"] = dispatch_local_tasks(
@@ -1986,6 +2127,13 @@ def dispatch_once(
         recover_stalled_agy(max_retries=MAX_CYCLES_BEFORE_RECOVER)
     except Exception as exc:
         print(f"[dispatcher] recover_stalled_agy error: {exc}")
+        counts["errors"] += 1
+
+    # 4b. Release finished child processes and heartbeat live ones.
+    try:
+        counts["governor_released"] = check_active_processes()
+    except Exception as exc:
+        print(f"[dispatcher] check_active_processes error: {exc}")
         counts["errors"] += 1
 
     # 5. Detect origin completions — signal origin agents when reviews finish
