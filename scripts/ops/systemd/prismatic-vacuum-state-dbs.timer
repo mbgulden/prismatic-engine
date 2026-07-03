@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly Prismatic Engine SQLite state DB vacuum
+
+[Timer]
+OnCalendar=Sun *-*-* 03:20:00
+Persistent=true
+RandomizedDelaySec=10m
+Unit=prismatic-vacuum-state-dbs.service
+
+[Install]
+WantedBy=timers.target

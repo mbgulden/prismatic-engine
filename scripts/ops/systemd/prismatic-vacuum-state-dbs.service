@@ -1,0 +1,9 @@
+[Unit]
+Description=Prismatic Engine SQLite state DB vacuum runner
+Documentation=file:%h/work/prismatic-engine/docs/runbook.md
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/work/prismatic-engine
+Environment=PRISMATIC_VACUUM_ROOTS=%h/.prismatic/db,%h/work/prismatic-engine/prismatic_state
+ExecStart=%h/work/prismatic-engine/scripts/ops/vacuum-state-dbs.sh
