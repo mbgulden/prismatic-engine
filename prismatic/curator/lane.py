@@ -112,6 +112,32 @@ def _labels_from_payload(payload: dict) -> set[str]:
     return out
 
 
+def _event_inner_payload(payload: dict) -> dict:
+    """Return EventBus-wrapped payload.payload when present, else payload."""
+    inner = payload.get("payload") if isinstance(payload, dict) else None
+    return inner if isinstance(inner, dict) else payload
+
+
+def _event_action(payload: dict) -> str:
+    inner = _event_inner_payload(payload) or {}
+    return str(inner.get("action") or payload.get("action") or "").lower()
+
+
+def _github_handoff_id(topic: str, payload: dict) -> str:
+    """Stable identifier for GitHub PR delegate handoff."""
+    inner = _event_inner_payload(payload) or {}
+    pr = inner.get("pull_request") if isinstance(inner.get("pull_request"), dict) else {}
+    repo = inner.get("repository") if isinstance(inner.get("repository"), dict) else {}
+    html_url = pr.get("html_url")
+    if html_url:
+        return str(html_url)
+    full_name = repo.get("full_name")
+    number = inner.get("number") or pr.get("number")
+    if full_name and number:
+        return f"{full_name}#{number}"
+    return topic
+
+
 def tag_event(event: BusEvent) -> TagResult:
     """Decide which bucket this event belongs in. Per SPEC.md §4."""
     src = (event.source or "").lower()
@@ -126,9 +152,17 @@ def tag_event(event: BusEvent) -> TagResult:
     if "agent_completed" in topic or "agent.completed" in topic:
         return TagResult("auto-pick", reason="informational agent result")
 
-    # Agent failed = real problem → escalate
+    # Agent failed = real problem → escalate, preserving lane when available.
     if "agent_failed" in topic or "agent.failed" in topic:
-        return TagResult("escalate", reason="agent reported failure")
+        lane_hint = None
+        if src.startswith("dispatcher:"):
+            lane_hint = src.split(":", 1)[1]
+        elif isinstance(payload.get("lane"), str):
+            lane_hint = payload["lane"]
+        elif isinstance(payload.get("agent"), str):
+            lane_hint = payload["agent"]
+        return TagResult("escalate", lane_hint=lane_hint,
+                         reason="agent reported failure")
 
     # Budget exceeded = hard cap hit → escalate
     if "budget" in topic and "exceeded" in topic:
@@ -150,6 +184,14 @@ def tag_event(event: BusEvent) -> TagResult:
             lane_hint = src.split(":", 1)[1]
         return TagResult("auto-pick", lane_hint=lane_hint,
                          reason="dispatcher launched agent")
+
+    # Webhook control events. Handle these before Linear/GitHub source rules so
+    # auth failures cannot be downgraded to routine webhook noise.
+    if src == "webhook" or "webhook" in topic or "webhook" in src:
+        if "auth_failed" in topic:
+            return TagResult("escalate", reason="webhook hmac auth failure")
+        if "ping" in topic:
+            return TagResult("drop", reason="webhook ping")
 
     # Linear events (source="linear" or topic implies it)
     if src == "linear" or (not src and "issue" in topic):
@@ -184,8 +226,14 @@ def tag_event(event: BusEvent) -> TagResult:
 
     # GitHub events
     if src == "github":
-        if topic == "ping" or payload.get("zen"):
+        github_payload = _event_inner_payload(payload)
+        if topic == "ping" or github_payload.get("zen") or payload.get("zen"):
             return TagResult("drop", reason="GitHub ping/test event")
+        if topic == "pull_request":
+            action = _event_action(payload)
+            if action in ("opened", "reopened", "synchronize"):
+                return TagResult("delegate", lane_hint="jules",
+                                 reason=f"GitHub PR {action}")
         return TagResult("auto-pick", reason="github informational event")
 
     # Dispatcher / supervisor events (compound source like "dispatcher:fred")
@@ -201,8 +249,8 @@ def tag_event(event: BusEvent) -> TagResult:
             return TagResult("escalate", reason="watchdog timeout")
         return TagResult("auto-pick", reason="watchdog status event")
 
-    # Webhook source (generic)
-    if src == "webhook":
+    # Final fallback for generic webhooks that were not Linear/GitHub events.
+    if src == "webhook" or "webhook" in topic or "webhook" in src:
         return TagResult("auto-pick", reason="generic webhook delivery")
 
     # Default: unknown event type, escalate so it gets human attention
@@ -210,6 +258,13 @@ def tag_event(event: BusEvent) -> TagResult:
 
 
 # === State store ===
+
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, spec: str) -> None:
+    """Add a column if it is missing, preserving existing SQLite files."""
+    cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {spec}")
+
 
 def init_curator_db() -> None:
     """Create curator tables if they don't exist."""
@@ -223,7 +278,9 @@ def init_curator_db() -> None:
                 tag TEXT NOT NULL CHECK(tag IN ('auto-pick','delegate','escalate','drop')),
                 lane_hint TEXT,
                 tagged_at REAL NOT NULL,
-                reason TEXT
+                reason TEXT,
+                dispatched INTEGER DEFAULT 0,
+                dispatched_at REAL
             );
             CREATE TABLE IF NOT EXISTS lane_stats (
                 lane TEXT PRIMARY KEY,
@@ -250,6 +307,8 @@ def init_curator_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_tagged_tag
                 ON tagged_events(tag);
         """)
+        _ensure_column(conn, "tagged_events", "dispatched", "INTEGER DEFAULT 0")
+        _ensure_column(conn, "tagged_events", "dispatched_at", "REAL")
         conn.commit()
     finally:
         conn.close()
@@ -469,40 +528,8 @@ class CuratorLane:
         self._pool = get_pool()
         init_curator_db()
 
-    def _maybe_dispatch(self, event: BusEvent, tag_result: TagResult) -> None:
-        """If a tagged event is 'delegate', try to spawn a real agent.
-
-        This is Story 1.5: Sonnet/Opus integration into the curator.
-        """
-        if tag_result.tag != "delegate":
-            return  # only delegates trigger dispatch
-        if not self.enable_dispatch:
-            return  # curator in classify-only mode
-
-        # Extract issue_id from the payload
-        issue_id = None
-        payload = event.payload or {}
-        if isinstance(payload.get("data"), dict):
-            issue_id = payload["data"].get("identifier")
-        if not issue_id:
-            issue_id = event.topic  # fallback to topic name
-
-        decision = decide_dispatch(tag_result.lane_hint, budget_tracker=self._budget)
-        if not decision.should_dispatch or not decision.lane:
-            # Log but don't take action (budget exceeded or unknown lane)
-            print(f"[curator] dispatch skipped for {issue_id}: {decision.reason}")
-            return
-
-        cmd = build_supervisor_cmd(issue_id, decision.lane, decision.model)
-        result = dispatch_to_supervisor_bounded(issue_id, cmd)
-        if result["status"] == "spawned":
-            self._budget.charge(decision.lane)
-            print(f"[curator] dispatched {issue_id} -> {decision.lane}/{decision.model} PID={result['pid']}")
-        else:
-            print(f"[curator] dispatch queued for {issue_id} (reason={result.get('reason', 'unknown')})")
-
-    def tick(self) -> int:
-        """Process one batch of bus events. Returns count tagged."""
+    def tick_tagging(self) -> int:
+        """Stream 1: tag new bus events without blocking on task execution."""
         # Reap zombie supervisors from prior dispatches (Story 1.2 fix).
         # Synchronous — fast WNOHANG waitpid on tracked PIDs.
         self._pool._reap_zombies()
@@ -510,6 +537,7 @@ class CuratorLane:
         tagged = 0
         for ev in events:
             if already_tagged(ev.rowid):
+                self._last_rowid = ev.rowid
                 continue  # idempotent
             result = tag_event(ev)
             persist_tag(ev.rowid, result.tag, result.lane_hint, result.reason)
@@ -517,20 +545,125 @@ class CuratorLane:
                 update_lane_stats(result.lane_hint, result.tag)
             self._last_rowid = ev.rowid
             tagged += 1
-            # Story 1.5: dispatch delegate events
-            self._maybe_dispatch(ev, result)
+        return tagged
+
+    def _fetch_pending_dispatches(self, limit: int = 50) -> list[tuple[int, int, str | None, str, str]]:
+        """Fetch durable delegate tags that have not been handed to supervisor."""
+        if not CURATOR_DB.exists() or not BUS_DB.exists():
+            return []
+
+        with sqlite3.connect(CURATOR_DB, timeout=5) as curator_conn:
+            rows = curator_conn.execute(
+                """
+                SELECT rowid, event_rowid, lane_hint
+                FROM tagged_events
+                WHERE tag = 'delegate' AND COALESCE(dispatched, 0) = 0
+                ORDER BY rowid ASC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+
+        if not rows:
+            return []
+
+        pending: list[tuple[int, int, str | None, str, str]] = []
+        with sqlite3.connect(BUS_DB, timeout=5) as bus_conn:
+            for rowid, event_rowid, lane_hint in rows:
+                bus_row = bus_conn.execute(
+                    "SELECT topic, payload_json FROM events WHERE rowid = ?",
+                    (event_rowid,),
+                ).fetchone()
+                if not bus_row:
+                    continue
+                topic, payload_json = bus_row
+                pending.append((int(rowid), int(event_rowid), lane_hint, topic, payload_json))
+        return pending
+
+    def _mark_dispatched(self, tagged_rowid: int) -> None:
+        with sqlite3.connect(CURATOR_DB, timeout=5) as conn:
+            conn.execute(
+                "UPDATE tagged_events SET dispatched = 1, dispatched_at = ? WHERE rowid = ?",
+                (time.time(), tagged_rowid),
+            )
+            conn.commit()
+
+    def tick_dispatch(self) -> int:
+        """Stream 2: hand pending delegate tags to supervisor. Returns count."""
+        if not self.enable_dispatch:
+            return 0
+        dispatched = 0
+        for tagged_rowid, _event_rowid, lane_hint, topic, payload_json in self._fetch_pending_dispatches():
+            try:
+                payload = json.loads(payload_json)
+            except Exception:
+                payload = {}
+
+            issue_id = None
+            source = str(payload.get("source") or "").lower()
+            if source == "github":
+                issue_id = _github_handoff_id(topic, payload)
+            if not issue_id and isinstance(payload.get("data"), dict):
+                issue_id = payload["data"].get("identifier")
+            if not issue_id and isinstance(payload.get("payload"), dict):
+                data = payload["payload"].get("data")
+                if isinstance(data, dict):
+                    issue_id = data.get("identifier")
+            if not issue_id:
+                issue_id = topic
+
+            decision = decide_dispatch(lane_hint, budget_tracker=self._budget)
+            if not decision.should_dispatch or not decision.lane:
+                print(f"[curator] dispatch pending for {issue_id}: {decision.reason}")
+                continue
+
+            cmd = build_supervisor_cmd(issue_id, decision.lane, decision.model)
+            result = dispatch_to_supervisor_bounded(issue_id, cmd)
+            if result.get("status") in {"spawned", "queued"}:
+                if result.get("status") == "spawned":
+                    self._budget.charge(decision.lane)
+                self._mark_dispatched(tagged_rowid)
+                dispatched += 1
+                status_msg = f"PID={result.get('pid')}" if result.get("pid") else "queued"
+                print(f"[curator] dispatched {issue_id} -> {decision.lane}/{decision.model} ({status_msg})")
+            else:
+                print(f"[curator] dispatch failed for {issue_id}: {result.get('reason', 'unknown')}")
+        return dispatched
+
+    def tick(self) -> int:
+        """Compatibility one-shot: tag events, then dispatch pending delegate tags."""
+        tagged = self.tick_tagging()
+        self.tick_dispatch()
         return tagged
 
     async def run(self) -> None:
-        """Main loop. Polls bus, tags events, persists."""
-        print(f"[curator] starting, last_rowid={self._last_rowid}")
+        """Run tagging and dispatch streams concurrently."""
+        print(f"[curator] starting streams, last_rowid={self._last_rowid}")
+        await asyncio.gather(self._tagging_loop(), self._dispatch_loop())
+
+    async def _tagging_loop(self) -> None:
+        print("[curator] stream 1 (tagging) active")
         while True:
             try:
-                n = self.tick()
+                n = self.tick_tagging()
                 if n:
                     print(f"[curator] tagged {n} events, cursor={self._last_rowid}")
             except Exception as e:
-                print(f"[curator] error: {e}")
+                print(f"[curator] tagging error: {e}")
+            await asyncio.sleep(self.poll_interval)
+
+    async def _dispatch_loop(self) -> None:
+        if not self.enable_dispatch:
+            print("[curator] stream 2 (dispatch) disabled")
+            return
+        print("[curator] stream 2 (dispatch) active")
+        while True:
+            try:
+                n = self.tick_dispatch()
+                if n:
+                    print(f"[curator] dispatched {n} delegate tasks")
+            except Exception as e:
+                print(f"[curator] dispatch error: {e}")
             await asyncio.sleep(self.poll_interval)
 
     def emit_daily_digest(self, target_date: str | None = None) -> Path:
@@ -563,8 +696,9 @@ def main():
     lane = CuratorLane(poll_interval=args.poll_interval)
 
     if args.once:
-        n = lane.tick()
-        print(f"[curator] tagged {n} events, cursor={lane._last_rowid}")
+        n_tags = lane.tick_tagging()
+        n_dispatch = lane.tick_dispatch()
+        print(f"[curator] tagged {n_tags} events, dispatched {n_dispatch} tasks, cursor={lane._last_rowid}")
         return
 
     # Continuous mode
