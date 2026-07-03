@@ -93,9 +93,26 @@ def test_second_witness_requires_log_and_artifacts(tmp_path: Path) -> None:
     log.write_text("completed cleanly\n" * 20)
     artifact.write_text("report")
 
+    # Explicit artifact
     passed = validate_agent_output(log_path=str(log), artifact=[str(artifact)])
     missing = validate_agent_output(log_path=str(log), artifact=[str(tmp_path / "missing.md")])
 
     assert passed["passed"] is True
     assert missing["passed"] is False
     assert str(tmp_path / "missing.md") in missing["artifacts"]["missing"]
+
+    # Default artifact (RESULT.md) - missing
+    res_default_missing = validate_agent_output(log_path=str(log))
+    assert res_default_missing["passed"] is False
+    assert "RESULT.md" in res_default_missing["artifacts"]["missing"]
+
+    # Default artifact (RESULT.md) - present
+    import os
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        Path("RESULT.md").write_text("DONE")
+        res_default_present = validate_agent_output(log_path=str(log))
+        assert res_default_present["passed"] is True
+    finally:
+        os.chdir(old_cwd)
