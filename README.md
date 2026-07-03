@@ -1,261 +1,165 @@
-# Prismatic Engine
+# prismatic-engine
 
-> **One coordinator, full-spectrum autonomy.**  
-> Prismatic Engine is a portable, multi-agent orchestration engine. Deploy autonomous agent swarms across any infrastructure — local, edge, or cloud. It is the hub in a hub-and-spoke architecture: one brain, many hands.
+**Event-driven agent factory for the Prismatic Engine.**
 
----
+A FastAPI-based gateway that consumes Linear/GitHub webhooks, persists them to a SQLite bus, tags them via a curator lane, and dispatches them to bounded AGY supervisor pools with per-lane budget enforcement.
 
-## 📖 Table of Contents
-1. [What is Prismatic Engine?](#what-is-prismatic-engine)
-2. [Architecture Overview](#architecture-overview)
-3. [Repository File Map](#repository-file-map)
-4. [Portable Agent Skills (`portable-skills/`)](#portable-agent-skills-portable-skills)
-5. [Swarm Dashboard Plugins (`plugins/`)](#swarm-dashboard-plugins-plugins)
-6. [Governance, Reports & Research](#governance-reports--research)
-7. [Getting Started & Installation](#getting-started--installation) (Walkthrough: [First-User Journey](docs/first-user-journey.md))
-8. [License](#license)
+## Quick Start
 
----
+```bash
+# Check service health
+systemctl status prismatic-gateway prismatic-consumer prismatic-curator
 
-## 💡 What is Prismatic Engine?
+# View live curator state
+curl -s http://localhost:9000/curator/health | python3 -m json.tool
 
-Prismatic Engine is a **provider-agnostic task orchestration framework** that bridges issue trackers (Linear, GitHub, Jira) with agent runtimes (Hermes, Docker, CLI, remote bots). It answers one question:
+# Read today's digest
+cat /home/ubuntu/.prismatic/curator/digests/2026-06-30.md
 
-> *"What task should which agent work on right now, and how do I tell them?"*
+# Run all tests
+PYTHONPATH=/home/ubuntu/.prismatic/venv_stable/lib/python3.12/site-packages:. \
+  /home/ubuntu/.prismatic/venv_stable/bin/python3 -m pytest \
+  prismatic/curator/tests/ prismatic/supervisor/tests/
+# Expected: 39 passed
+```
 
-It is **not** an AI agent itself. It is the **coordinator** — the dispatcher that reads issues, enforces branch and lane boundaries, manages lock safety, routes them to the right agent, and tracks completion.
+## Architecture
 
-### Key Concepts
+```
+Linear/GitHub webhooks
+       │
+       ▼
+┌─────────────────────┐
+│  prismatic-gateway  │  ← HMAC verify, /metrics, /events, /curator/health
+│  (port 9000)        │
+└──────────┬──────────┘
+           ▼
+┌─────────────────────┐
+│  SQLite event bus   │  ← WAL, 14-day/10k retention, durable
+│  ~/.prismatic/bus/  │
+└──────────┬──────────┘
+           ▼
+┌─────────────────────┐
+│ prismatic-consumer  │  ← rowid + atomic + 60s dedup
+│ (dispatch_consumer) │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│ SupervisorPool      │  ← bounded, MAX_CONCURRENT=8, reaps zombies
+│ (recovery.py)       │
+└──────────┬──────────┘
+           ▼
+┌─────────────────────┐
+│ AGY supervisors     │  ← per-lane dispatch (fred/codex/kai/jules/ned)
+│ (hermes profile)    │
+└─────────────────────┘
 
-| Concept | Description |
+(In parallel:)
+┌─────────────────────┐
+│ prismatic-curator   │  ← tags events, dispatches delegates via pool
+│ (curator/lane.py)   │  ← 8am daily digest, budget enforcement
+└─────────────────────┘
+```
+
+See `docs/phase-d-post-publish-chain.md` for the detailed Phase D architecture.
+
+## Modules
+
+### `prismatic/gateway/`
+- `event_bus.py` — In-process pub/sub + SQLite WAL persistence
+- `server.py` — FastAPI gateway with 5 endpoints: `/health`, `/metrics`, `/events/recent`, `/events/bus-stats`, `/curator/health`
+
+### `prismatic/curator/`
+- **[SPEC.md](prismatic/curator/SPEC.md)** — Doc #4: the canonical spec for the curator lane (14KB, 320 lines)
+- `lane.py` — Curator implementation (18KB, 575 lines)
+- `dispatcher.py` — Lane budget + Sonnet/Opus routing (8KB, 236 lines)
+- `tests/test_lane.py` — 15 unit tests
+- `tests/test_dispatcher.py` — 13 unit tests
+
+### `prismatic/supervisor/`
+- `recovery.py` — Bounded supervisor pool with reaping + DLQ (8.5KB, 271 lines)
+- `tests/test_recovery.py` — 11 unit tests
+
+### `scripts/`
+- `linear_relabel.py` — Bulk-label Linear issues for engine consumption (14KB)
+- `linear_relabel.py --dry-run` — preview changes
+- `linear_relabel.py --apply --yes` — apply idempotently
+
+## Systemd Units
+
+| Unit | Purpose |
 |---|---|
-| **Coordinator** | Central loop: poll tracker → route to agent → signal → verify. |
-| **Signal** | Unit of work sent to an agent (file nudge, HTTP POST, Redis pub/sub). |
-| **Task Provider** | Bridge to an issue tracker (Linear GraphQL, GitHub API, etc.). |
-| **Agent** | Any runtime that can execute work (Hermes, CLI, Docker, Telegram bot). |
-| **Pipeline** | Routing rules mapping labels/keywords to agents. |
-| **Workspace** | Context directory passed to agents for file access. |
-| **Lanes** | Directory write/read permissions assigned to specific agent profiles to prevent overlapping edits. |
-| **Locks** | Thread-safe file-locking system preventing collision when multiple agents work on the same repository. |
+| `prismatic-gateway.service` | HTTP gateway on port 9000 |
+| `prismatic-consumer.service` | bus consumer, dispatch via bounded pool |
+| `prismatic-curator.service` | tags events, dispatches delegates, runs continuously |
+| `prismatic-curator-digest.service` | one-shot, emits daily digest |
+| `prismatic-curator-digest.timer` | fires at 8am America/Denver daily |
 
----
+## Configuration
 
-## 🏗️ Architecture Overview
+Environment variables (set in `/etc/systemd/system/prismatic-*.service`):
 
-The Prismatic Engine separates the core coordination logic from the execution platforms (agents) and monitoring views (dashboards).
+| Var | Default | Purpose |
+|---|---|---|
+| `PRISMATIC_HOME` | `/home/ubuntu` | base path |
+| `PRISMATIC_BUS_DB` | `~/.prismatic/bus/event_log.sqlite` | bus location |
+| `PRISMATIC_CURATOR_DB` | `~/.prismatic/curator/state.sqlite` | curator state |
+| `PRISMATIC_DIGEST_DIR` | `~/.prismatic/curator/digests` | digest output dir |
+| `PRISMATIC_DIGEST_HOUR` | `8` | daily digest hour |
+| `PRISMATIC_METRICS_TOKEN` | (empty) | bearer token for /metrics auth |
+| `PRISMATIC_ALLOWED_IPS` | `127.0.0.1,::1` | IP allowlist for observability endpoints |
+| `PRISMATIC_LINEAR_WEBHOOK_SECRET` | (required) | HMAC secret for Linear webhooks |
+| `PRISMATIC_LINEAR_WEBHOOK_SECRET_SECONDARY` | (optional) | 2nd slot for rotation |
+| `PRISMATIC_GITHUB_WEBHOOK_SECRET` | (required) | HMAC secret for GitHub webhooks |
+| `PRISMATIC_SUPERVISOR_MAX` | `8` | max concurrent supervisors |
+| `PRISMATIC_SUPERVISOR_REAP_INTERVAL` | `30` | seconds between reap sweeps |
+| `PRISMATIC_BUDGET_FRED` | `5.00` | USD/day cap for fred lane (opus) |
+| `PRISMATIC_BUDGET_CODEX` | `10.00` | USD/day cap for codex lane |
+| `PRISMATIC_BUDGET_KAI` | `3.00` | USD/day cap for kai lane |
+| `PRISMATIC_BUDGET_JULES` | `3.00` | USD/day cap for jules lane |
+| `PRISMATIC_BUDGET_NED` | `5.00` | USD/day cap for ned lane |
+| `PRISMATIC_BUDGET_TRIAGE` | `1.00` | USD/day cap for triage lane |
 
-```
- ┌─────────────────────────────────────────────────────────────────┐
- │                      PRISMATIC ENGINE (Core)                    │
- │                                                                  │
- │   ┌──────────────┐    ┌──────────────┐    ┌──────────────┐      │
- │   │  Task         │    │  Coordinator  │    │  Signal       │      │
- │   │  Provider     │───▶│  (Router)     │───▶│  Provider     │      │
- │   │  (Linear)     │    │               │    │  (File/HTTP)  │      │
- │   └──────────────┘    └──────────────┘    └──────┬───────┘      │
- │                                                    │              │
- │                                                    ▼              │
- │                                          ┌──────────────────┐    │
- │                                          │   Agent Runtime   │    │
- │                                          │  (Hermes/Docker)  │    │
- │                                          └────────┬─────────┘    │
- └───────────────────────────────────────────────────┼──────────────┘
-                                                     │ (Telemetry Events)
-                                                     ▼
- ┌─────────────────────────────────────────────────────────────────┐
- │                     HERMES SWARM DASHBOARDS                     │
- │                                                                  │
- │  ┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐ │
- │  │  Prismatic Hub  │   │  Swarm Manager  │   │ GPU/VRAM Monitor│ │
- │  └─────────────────┘   └─────────────────┘   └─────────────────┘ │
- │  ┌─────────────────┐   ┌─────────────────┐   ┌─────────────────┐ │
- │  │ Lock Observability │   │ MCP Server Deck │   │ Activity Stream │ │
- │  └─────────────────┘   └─────────────────┘   └─────────────────┘ │
- └─────────────────────────────────────────────────────────────────┘
-```
+## Lane Policy
 
-### 1. Hub-and-Spoke Event Routing
-The coordinator polls the issue tracker for new work, resolves metadata (labels, assignees), checks file locks, verifies lane write permissions, and dispatches a signal payload. Agents execute code in their isolated workspaces and report logs back.
+Per `PRISMATIC_ENGINE.yaml`:
+- **Fred** owns the entire repo (orchestrator) — `lanes.owner: ["*"]`
+- **Ned** owns `scripts/` + `plugins/` — code execution & task agent
+- **Kai** owns `content/` + `active-oahu/` — content writer
+- **AGY** owns `assets/` + `designs/` + `research/` — designer & researcher
+- **Jules** has no direct edits, PR-only — PR agent & code reviewer
 
-### 2. Multi-Agent Git Coordination & Lane Governance
-To prevent agents from overwriting each other's work or pushing conflicts:
-* **Lanes** are defined in `PRISMATIC_ENGINE.yaml` (e.g., Fred owns `src/`, Kai owns `content/`, Ned owns `scripts/` and `prismatic/`).
-* A local git `pre-push` hook validates the pushing branch prefix and ensures only files in the agent's owned lane were modified.
-* **Locks** are stored in a centralized lock registry (`~/.antigravity/swarm_locks.json`) with stale lock detection (heartbeat auto-expiration > 5 minutes). Pushes containing locked files are rejected.
+The lane policy is enforced by `scripts/pre-push-hook.py`. Use `feature/*`, `content/*`, `design/*`, `fix/*`, or `ned/*` branch prefixes.
 
----
+## Tests
 
-## 📂 Repository File Map
-
-```
-.
-├── PRISMATIC_ENGINE.yaml             # Main project config (roles, lanes, locks, staging)
-├── SOUL.md                           # Philosophical core, non-negotiables & vision doc
-├── index.html                        # Sleek, animated dashboard landing page/demo
-├── Dockerfile                        # Container recipe for serving the engine
-├── docker-compose.yml                # Multi-container orchestration config
-├── install.sh                        # Engine CLI installer and systemd service generator
-├── pyproject.toml                    # Build config for the python package
-├── LICENSE                           # Affero GPL v3 license
-│
-├── prismatic/                        # Core Python engine codebase
-│   ├── __init__.py                   # Package initialization
-│   ├── coordinator.py                # Coordinator orchestrator loop
-│   ├── agents/                       # Agent adapter implementations
-│   │   ├── __init__.py
-│   │   ├── base.py                   # BaseAgent abstract definition
-│   │   └── hermes.py                 # Hermes agent signal wrapper
-│   └── providers/                    # Transport and tracker bridges
-│       ├── __init__.py
-│       ├── signals/                  # Signal adapters (File, HTTP, Redis, Telegram)
-│       │   ├── base.py
-│       │   ├── file.py
-│       │   ├── http.py
-│       │   └── redis.py
-│       └── tasks/                    # Task adapters (Linear, Local)
-│           ├── base.py
-│           └── linear.py
-│
-├── portable-skills/                  # Reusable agent skill profiles and disciplines
-│   ├── INSTALL.md                    # Setup and installation instructions
-│   ├── export.py                     # Skill packaging exporter tool
-│   ├── export.sh                     # Bash wrapper for skill exports
-│   └── (discipline subdirectories... detailed below)
-│
-├── plugins/                          # Suite of 8 dashboard monitoring extensions
-│   └── (plugin subdirectories... detailed below)
-│
-├── reports/                          # Audit reports and implementation specs
-│   ├── rubric-assessment-2026-06-11.md
-│   ├── agy-hermes-discovery-report.md
-│   └── agy-core-boundary-validation.md
-│
-├── research/                         # Coordination landscape & research notes
-├── specs/                            # Written architecture specifications
-├── test-plans/                       # Quality assurance test plans and scripts
-├── docs/                             # Walkthroughs and onboarding documentation
-│   └── first-user-journey.md         # First-User Journey & Linear implementation trail
-└── scripts/                          # Development and sync helpers
-```
-
----
-
-## 🧠 Portable Agent Skills (`portable-skills/`)
-
-These directories contain modular, reusable rule systems and markdown runbooks injected into agents' system prompts to enforce professional disciplines:
-
-* **[INSTALL.md](portable-skills/INSTALL.md)**: Details how to copy/link these skills into live Hermes agent profile directories.
-* **[export.py](portable-skills/export.py) / [export.sh](portable-skills/export.sh)**: Automates bundling, checking, and exporting these directories.
-* **`autonomous-execution-discipline/`**: Guidelines for runner agents (like Ned) to independently parse errors, test code, and verify builds without prompting for human approval.
-* **`github-pr-workflow/`**: Git review, automated staging tests, PR audits, and conflict resolution protocols.
-* **`golden-thread/`**: Step-by-step verification methodology to ensure code does not just compile but solves the root problem.
-* **`himalaya/`**: Code cleaniness and design aesthetic standards.
-* **`orchestrator-delegation-discipline/`**: Rules for the coordinator agent (Fred) to decompose large tasks and delegate them to specialized roles.
-* **`static-site-seo-fix/`**: Procedures for audits, canonical tag fixes, and landing page indexation policies.
-* **`systematic-debugging/`**: Troubleshooting processes including logging audits and local reproduction.
-
----
-
-## 🖥️ Swarm Dashboard Plugins (`plugins/`)
-
-A consolidated collection of 8 React/Webpack-based plugin extensions built for the Hermes Dashboard to visualize swarm operations:
-
-1. **`hermes-plugin-lock-dashboard/`**  
-   *Displays live file lock status. Shows which files are currently locked, by which agent, and the remaining heartbeat TTL.*
-2. **`hermes-plugin-mcp-controller/`**  
-   *Model Context Protocol command panel. Lets you monitor active servers, test tools, and view server error logs.*
-3. **`hermes-plugin-orchestrator-command-deck/`**  
-   *Swarm control center. Dispatches commands, monitors active agents, and tracks active routing queues.*
-4. **`hermes-plugin-prismatic-hub/`**  
-   *Main coordination hub page. Visualizes event webhook dispatch, SQLite deduplication tables, and houses the interactive SVG prism refractor.*
-5. **`hermes-plugin-realtime-activity-stream/`**  
-   *Live SSE activity viewer. Feeds running subprocess logs and status updates from agents in real time.*
-6. **`hermes-plugin-swarm-manager/`**  
-   *Swarm session inspector. Explores workspace directories, acts as session director, and embeds an interactive shell terminal.*
-7. **`hermes-plugin-vram-observability/`**  
-   *Hardware telemetry monitor. Connects to `nvidia-smi` endpoints to render live GPU load, memory allocation, and VRAM limits.*
-8. **`hermes-plugin-workspace-tree-navigator/`**  
-   *Interactive file tree navigation component. Enables directory exploring, file editing, and direct downloads through the dashboard.*
-
----
-
-## 🛡️ Governance, Reports & Research
-
-The governance and research documents represent the engineering constraints and history behind the Prismatic Engine:
-
-* **[PRISMATIC_ENGINE.yaml](PRISMATIC_ENGINE.yaml)**: Enforces agent profiles (Fred, Kai, AGY, Jules, Ned), their branch name prefixes (e.g. `execution/`, `design/`), and their read/write folder lanes.
-* **[SOUL.md](SOUL.md)**: Describes the "manifestation of idea in reality" mantra. A strict guide on avoiding placeholders, completing tasks fully, and building features to be production-ready.
-* **`reports/agy-core-boundary-validation.md`**: Architectural audit outlining core dispatch mechanisms vs plugin structures.
-* **`reports/rubric-assessment-2026-06-11.md`**: Core evaluation score sheet checking swarm resilience, security, and performance.
-* **`specs/prismatic-engine-architecture-v1.md`**: The initial architecture specification covering coordinator loops, git hooks, and lock interfaces.
-
----
-
-## 🚀 Getting Started & Installation
-
-> 💡 **New to Prismatic Engine?** Follow our step-by-step **[First-User Journey Walkthrough](docs/first-user-journey.md)** to install, bootstrap, and run your first autonomous task in under five minutes.
-
-### 1. Engine CLI Setup
 ```bash
-# Clone the repository
-git clone https://github.com/mbgulden/prismatic-engine.git
-cd prismatic-engine
+# Run all tests
+PYTHONPATH=/home/ubuntu/.prismatic/venv_stable/lib/python3.12/site-packages:. \
+  /home/ubuntu/.prismatic/venv_stable/bin/python3 -m pytest prismatic/
 
-# Install in editable mode
-pip install -e .
-
-# Initialize the configuration files
-prismatic init
-
-# Confirm local engine health without attaching providers
-prismatic status
-
-# Create a local task without Linear
-prismatic task create "Audit this repository for linting errors" --agent agy --workspace .
-
-# Serve the coordinator
-prismatic serve --once
+# Run specific suite
+PYTHONPATH=/home/ubuntu/.prismatic/venv_stable/lib/python3.12/site-packages:. \
+  /home/ubuntu/.prismatic/venv_stable/bin/python3 -m pytest \
+  prismatic/curator/tests/ prismatic/supervisor/tests/
 ```
 
-The legacy `prismatic-engine`, `prismatic-admin`, and `prismatic-*` entry points
-remain available, but `prismatic` is the user-facing command surface for the
-first-user journey.
+**Current status:** 39/39 passing in ~1.2s.
 
-### 2. Lock & Lane Git Validation Hook Setup
-Link the pre-push hook to check agent lanes before pushes:
-```bash
-ln -s ../../scripts/pre-push-hook.py .git/hooks/pre-push
-chmod +x .git/hooks/pre-push
-```
+## Documentation
 
-### 3. Running Dashboard Plugins
-Each plugin inside `plugins/` features a package configuration and can be built and run inside the Hermes container environment:
-```bash
-cd plugins/hermes-plugin-prismatic-hub
-npm install
-npm run build
-```
-This compiles assets into `dashboard/dist/index.js` which is loaded dynamically by the dashboard runtime.
+- [Curator Lane Spec (Doc #4)](prismatic/curator/SPEC.md) — The canonical spec
+- [Phase D Post-Publish Chain](docs/phase-d-post-publish-chain.md) — Architecture diagram
+- `/home/ubuntu/work/okf/operations/INDEX.md` — Top-level OKF docs index
+- `/home/ubuntu/work/okf/operations/API-REFERENCE.md` — HTTP API reference
+- `/home/ubuntu/work/okf/operations/2026-06-30-session-documentation.md` — What we built today
 
----
+## Linear
 
-## 📄 License
+- Epic 1: GRO-3022 (In Progress, 6/8 stories done) — [Curator Lane + Service Reliability](https://linear.app/growthwebdev/issue/GRO-3022)
+- Epics 2-7: GRO-3023..3028 (Backlog) — 3-month roadmap
 
-Prismatic Engine is released under the **AGPLv3 License**.
+## License
 
-```
-Copyright (C) 2026 Michael Gulden (mbgulden)
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU Affero General Public License as
-published by the Free Software Foundation, either version 3 of the
-License, or (at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-GNU Affero General Public License for more details.
-```
-
----
-*Prismatic Engine — one coordinator, full-spectrum autonomy.*
+Internal to GrowthWebDev. See `LICENSE` (TBD).
