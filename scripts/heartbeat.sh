@@ -31,15 +31,17 @@ if [[ "${1:-}" == "--check" ]]; then
         exit 1
     fi
 
-    # Check if PID is alive
-    if ! kill -0 "$PID" 2>/dev/null; then
-        echo "DEAD: PID $PID is not running"
-        exit 1
+    # Check if PID is alive (if not unknown)
+    if [[ "$PID" != "unknown" ]]; then
+        if ! kill -0 "$PID" 2>/dev/null; then
+            echo "DEAD: PID $PID is not running"
+            exit 1
+        fi
     fi
 
-    # Check timestamp freshness
+    # Check timestamp freshness via mtime (more reliable than parsing)
     NOW_EPOCH=$(date +%s)
-    HEARTBEAT_EPOCH=$(date -d "$TIMESTAMP" +%s 2>/dev/null || echo 0)
+    HEARTBEAT_EPOCH=$(stat -c %Y "$HEARTBEAT_FILE" 2>/dev/null || echo 0)
     AGE=$((NOW_EPOCH - HEARTBEAT_EPOCH))
 
     if [[ $AGE -gt $MAX_AGE_SECONDS ]]; then
@@ -54,5 +56,11 @@ fi
 # Write mode
 PID=$(systemctl --user show prismatic-dispatcher.service -p MainPID --value 2>/dev/null || echo "unknown")
 TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-echo "$PID $TIMESTAMP" > "$HEARTBEAT_FILE"
-echo "Heartbeat written: PID=$PID at $TIMESTAMP"
+
+# Use flock to prevent partial writes if multiple things hit it
+{
+    flock -x 200
+    echo "$PID $TIMESTAMP" > "$HEARTBEAT_FILE"
+} 200>"${HEARTBEAT_FILE}.lock"
+
+echo "Heartbeat written: PID=$PID at $TIMESTAMP (mtime updated)"
