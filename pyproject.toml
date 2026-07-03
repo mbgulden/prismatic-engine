@@ -48,4 +48,4 @@ prismatic-lock = "prismatic.lock:main"
 include = ["prismatic*"]
 
 [tool.setuptools.package-data]
-prismatic = ["skills/**/*"]
+prismatic = ["skills/**/*", "templates/**/*"]
