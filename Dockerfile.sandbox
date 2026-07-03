@@ -10,7 +10,7 @@ RUN addgroup -g 10001 -S sandbox && \
     adduser -u 10001 -S -G sandbox -h /home/sandbox -s /bin/sh sandbox
 
 # Install certificates and basic dependencies for python package managers
-RUN apk add --no-cache ca-certificates
+RUN apk add --no-cache ca-certificates git openssh-client
 
 # Setup workspace
 WORKDIR /workspace
@@ -20,4 +20,4 @@ RUN chown sandbox:sandbox /workspace
 USER sandbox
 
 # Default execution
-CMD ["python", "-c", "import sys; print(f'Sandbox active. Python version: {sys.version}')"]
+CMD ["python3", "-c", "import sys; print(f'Sandbox active. Python version: {sys.version}')"]
