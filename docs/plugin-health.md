@@ -6,6 +6,10 @@ The gateway exposes a lifecycle-aware plugin health route:
 GET /api/v1/plugins/{plugin_name}/health
 ```
 
+The route is protected by the same observability auth gate used for internal
+metrics/event/curator endpoints: callers must match `PRISMATIC_ALLOWED_IPS` or
+send `Authorization: Bearer $PRISMATIC_METRICS_TOKEN` when that token is set.
+
 The response is derived from `PluginLifecycleSandboxManager` state persisted under
 `$PRISMATIC_STATE_DIR/plugin_lifecycle.db`. Telemetry metrics are optional: if the
 active telemetry collector exposes `report_plugin_metrics(plugin_name)`, those

@@ -189,8 +189,11 @@ async def health() -> dict[str, Any]:
 
 
 @app.get("/api/v1/plugins/{plugin_name}/health")
-async def plugin_health(plugin_name: str) -> JSONResponse:
+async def plugin_health(plugin_name: str, request: Request) -> JSONResponse:
     """Return lifecycle/telemetry health for a sandboxed plugin."""
+    if not _check_observability_auth(request):
+        return JSONResponse({"detail": "forbidden"}, status_code=403)
+
     payload = get_plugin_health(plugin_name)
     if payload.get("status") == "NOT_FOUND":
         return JSONResponse(payload, status_code=404)

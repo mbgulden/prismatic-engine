@@ -89,13 +89,10 @@ def get_plugin_health(
         status = {"state": "NOT_FOUND", "name": plugin_name}
 
     state = _normalize_state(status.get("state"))
-    metrics = _plugin_metrics(plugin_name)
-
-    if state in {"", "NOT_FOUND"} and not metrics:
+    if state in {"", "NOT_FOUND"}:
         return {"status": "NOT_FOUND", "plugin_name": plugin_name}
 
-    if not state or state == "NOT_FOUND":
-        state = _normalize_state(metrics.get("current_state"))
+    metrics = _plugin_metrics(plugin_name)
 
     started_at = float(status.get("started_at") or 0.0)
     uptime = 0.0
