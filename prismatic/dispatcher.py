@@ -45,11 +45,14 @@ from .credit_policy_engine import (
     AGENT_PROVIDER_MAP,
 )
 from .telemetry import get_collector
+from .core.governor import DistributedComputeGovernor
 
 
 # ═══════════════════════════════════════════════════════════════
 # Constants
 # ═══════════════════════════════════════════════════════════════
+
+INSTANCE_ID: str = os.environ.get("PRISMATIC_INSTANCE_ID", "default")
 
 TEAM_ID: str = os.environ.get("PRISMATIC_TEAM_ID", "")
 
@@ -468,6 +471,21 @@ AGENT_CONFIG: dict[str, dict[str, Any]] = {
 # Agent Launchers
 # ═══════════════════════════════════════════════════════════════
 
+# Global Compute Governor
+_governor: DistributedComputeGovernor | None = None
+
+# Active process tracker: { (agent_name, issue_id): subprocess.Popen }
+_active_processes: dict[tuple[str, str], subprocess.Popen] = {}
+
+
+def _get_governor() -> DistributedComputeGovernor:
+    """Lazy-init the distributed compute governor."""
+    global _governor
+    if _governor is None:
+        _governor = DistributedComputeGovernor()
+    return _governor
+
+
 # Default signal provider instance — file-based, writing to NUDGE_DIR
 _signal_provider: Any = None
 
@@ -571,6 +589,11 @@ def launch_agy(issue_id: str, task: str = "") -> subprocess.Popen | None:
         print(f"[dispatcher] AGY binary not found at {AGY_PATH}")
         return None
 
+    governor = _get_governor()
+    if not governor.acquire("agy", issue_id, INSTANCE_ID, max_concurrent=2):
+        print(f"[dispatcher] ⏳ AGY at capacity — queuing {issue_id}")
+        return None
+
     try:
         cmd = [
             AGY_PATH,
@@ -601,9 +624,12 @@ def launch_agy(issue_id: str, task: str = "") -> subprocess.Popen | None:
             stdin=subprocess.DEVNULL,
         )
         print(f"[dispatcher] Launched AGY (pid={proc.pid}) for issue {issue_id}")
+        governor.update_pid("agy", issue_id, proc.pid)
+        _active_processes[("agy", issue_id)] = proc
         return proc
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"[dispatcher] Failed to launch AGY: {exc}")
+        governor.release("agy", issue_id)
         return None
 
 
@@ -621,6 +647,11 @@ def launch_jules(issue_id: str, task: str = "") -> subprocess.Popen | None:
         print(f"[dispatcher] Jules binary not found at {JULES_PATH}")
         return None
 
+    governor = _get_governor()
+    if not governor.acquire("jules", issue_id, INSTANCE_ID):
+        print(f"[dispatcher] ⏳ Jules busy — queuing {issue_id}")
+        return None
+
     try:
         cmd = [JULES_PATH, "--issue", issue_id]
         if task:
@@ -633,9 +664,12 @@ def launch_jules(issue_id: str, task: str = "") -> subprocess.Popen | None:
             stdin=subprocess.DEVNULL,
         )
         print(f"[dispatcher] Launched Jules (pid={proc.pid}) for issue {issue_id}")
+        governor.update_pid("jules", issue_id, proc.pid)
+        _active_processes[("jules", issue_id)] = proc
         return proc
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"[dispatcher] Failed to launch Jules: {exc}")
+        governor.release("jules", issue_id)
         return None
 
 
@@ -653,6 +687,11 @@ def launch_codex(issue_id: str, task: str = "") -> subprocess.Popen | None:
         print(f"[dispatcher] Codex binary not found at {CODEX_PATH}")
         return None
 
+    governor = _get_governor()
+    if not governor.acquire("codex", issue_id, INSTANCE_ID):
+        print(f"[dispatcher] ⏳ Codex busy — queuing {issue_id}")
+        return None
+
     try:
         cmd = [CODEX_PATH, "--issue", issue_id]
         if task:
@@ -665,10 +704,35 @@ def launch_codex(issue_id: str, task: str = "") -> subprocess.Popen | None:
             stdin=subprocess.DEVNULL,
         )
         print(f"[dispatcher] Launched Codex (pid={proc.pid}) for issue {issue_id}")
+        governor.update_pid("codex", issue_id, proc.pid)
+        _active_processes[("codex", issue_id)] = proc
         return proc
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"[dispatcher] Failed to launch Codex: {exc}")
+        governor.release("codex", issue_id)
         return None
+
+
+def check_active_processes() -> None:
+    """Monitor background processes, update heartbeats, and release finished tasks."""
+    governor = _get_governor()
+    finished = []
+
+    for (agent_name, issue_id), proc in _active_processes.items():
+        # Check if process is still running
+        retcode = proc.poll()
+        if retcode is None:
+            # Still running — send heartbeat
+            governor.heartbeat(agent_name, issue_id)
+        else:
+            # Finished — release compute allocation
+            print(f"[dispatcher] Process for {agent_name} on {issue_id} finished (exit={retcode})")
+            governor.release(agent_name, issue_id)
+            finished.append((agent_name, issue_id))
+
+    # Remove finished processes from tracker
+    for key in finished:
+        del _active_processes[key]
 
 
 # Map agent name → launch function
@@ -866,7 +930,9 @@ def cleanup_stale_agy(max_age_minutes: int = 5) -> int:
             # Kill if older than max_age_minutes
             if age_seconds > max_age_minutes * 60:
                 try:
-                    os.kill(int(pid_str), signal.SIGTERM)
+                    pid = int(pid_str)
+                    os.kill(pid, signal.SIGTERM)
+                    _get_governor().release_by_pid(pid)
                     killed += 1
                     print(
                         f"[dispatcher] Killed stale AGY pid={pid_str} "
@@ -1598,7 +1664,22 @@ def dispatch_once(
         print(f"[dispatcher] recover_stalled_agy error: {exc}")
         counts["errors"] += 1
 
-    # 5. Detect origin completions — signal origin agents when reviews finish
+    # 4b. Prune stale compute allocations
+    try:
+        pruned = _get_governor().prune_stale(ttl_seconds=300)
+        if pruned:
+            print(f"[dispatcher] Pruned {pruned} stale compute allocation(s)")
+    except Exception as exc:
+        print(f"[dispatcher] Compute governor prune error: {exc}")
+
+    # 5. Monitor active processes and update heartbeats
+    try:
+        check_active_processes()
+    except Exception as exc:
+        print(f"[dispatcher] check_active_processes error: {exc}")
+        counts["errors"] += 1
+
+    # 6. Detect origin completions — signal origin agents when reviews finish
     try:
         origin_count = detect_origin_completions(dedup, cycle_id)
         if origin_count:
