@@ -28,12 +28,16 @@ classifiers = [
 
 dependencies = [
     "pyyaml>=6.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.20.0",
+    "pydantic>=2.0.0",
 ]
 
 [project.optional-dependencies]
 http = ["requests>=2.31"]
 redis = ["redis>=5.0"]
-all = ["prismatic-engine[http,redis]"]
+test = ["pytest", "pytest-asyncio", "httpx"]
+all = ["prismatic-engine[http,redis,test]"]
 
 [project.urls]
 Homepage = "https://github.com/mbgulden/prismatic-engine"
