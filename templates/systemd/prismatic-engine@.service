@@ -4,7 +4,9 @@ After=network.target
 
 [Service]
 Type=simple
-User=prismatic
+User=%u
+Group=%g
+Environment=PRISMATIC_HOME=%h
 Environment=LINEAR_API_KEY=%i
 Environment=LINEAR_TEAM_ID=GRO
 ExecStart=/usr/local/bin/prismatic-engine serve

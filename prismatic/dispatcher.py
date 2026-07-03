@@ -58,9 +58,10 @@ DEFAULT_DB_PATH: str = os.path.join(
 )
 
 # Agent binary paths — override via env vars
-AGY_PATH: str = os.environ.get("AGY_PATH", "/home/ubuntu/.local/bin/agy")
-JULES_PATH: str = os.environ.get("JULES_PATH", "/home/ubuntu/.local/bin/jules")
-CODEX_PATH: str = os.environ.get("CODEX_PATH", "/home/ubuntu/.local/bin/codex")
+PRISMATIC_HOME: str = os.environ.get("PRISMATIC_HOME", os.path.expanduser("~"))
+AGY_PATH: str = os.environ.get("AGY_PATH", os.path.join(PRISMATIC_HOME, ".local/bin/agy"))
+JULES_PATH: str = os.environ.get("JULES_PATH", os.path.join(PRISMATIC_HOME, ".local/bin/jules"))
+CODEX_PATH: str = os.environ.get("CODEX_PATH", os.path.join(PRISMATIC_HOME, ".local/bin/codex"))
 
 # Polling interval (seconds)
 POLL_INTERVAL: int = int(os.environ.get("PRISMATIC_POLL_INTERVAL", "30"))
