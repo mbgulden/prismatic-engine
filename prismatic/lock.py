@@ -51,20 +51,44 @@ def _emit_lock_event(event_type: str, filepath: str, agent_id: str, **extra: Any
         pass  # Best-effort — don't let event emission break locking
 
 # ── Constants ──────────────────────────────────────────
-_PRISMATIC_HOME = Path(os.environ.get("PRISMATIC_HOME") or os.path.expanduser("~"))
-LOCK_FILE = _PRISMATIC_HOME / ".antigravity" / "swarm_locks.json"
+def _default_prismatic_home() -> Path:
+    """Resolve the portable Prismatic home directory."""
+    return Path(os.path.expandvars(os.environ.get("PRISMATIC_HOME", "~"))).expanduser()
+
+
+LOCK_FILE = _default_prismatic_home() / ".antigravity" / "swarm_locks.json"
 STALE_TTL_MS = 300_000  # 5 minutes
 
 
 # ── Lock Registry Operations ───────────────────────────
 
 
+def _configured_lock_file(repo_root: Path | None = None) -> Path:
+    """Return lock registry path, honoring PRISMATIC_ENGINE.yaml when present."""
+    root = repo_root or _get_repo_root()
+    if root:
+        config_path = root / "PRISMATIC_ENGINE.yaml"
+        if config_path.exists():
+            try:
+                import yaml
+
+                config = yaml.safe_load(config_path.read_text()) or {}
+                configured = config.get("locks", {}).get("file")
+                if configured:
+                    return Path(os.path.expandvars(str(configured))).expanduser()
+            except Exception:
+                # Locking must stay available even if a local config is malformed.
+                pass
+    return LOCK_FILE
+
+
 def _read_locks() -> list[dict[str, Any]]:
     """Read the lock registry, returning empty list if missing or corrupt."""
-    if not LOCK_FILE.exists():
+    lock_file = _configured_lock_file()
+    if not lock_file.exists():
         return []
     try:
-        with open(LOCK_FILE) as f:
+        with open(lock_file) as f:
             data = json.load(f)
             if not isinstance(data, list):
                 return []
@@ -75,19 +99,21 @@ def _read_locks() -> list[dict[str, Any]]:
 
 def _write_locks(locks: list[dict[str, Any]]) -> None:
     """Atomically write the lock registry."""
-    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
-    tmp = LOCK_FILE.with_suffix(".tmp")
+    lock_file = _configured_lock_file()
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    tmp = lock_file.with_suffix(".tmp")
     with open(tmp, "w") as f:
         json.dump(locks, f, indent=2)
-    os.replace(tmp, LOCK_FILE)
+    os.replace(tmp, lock_file)
 
 
 @contextmanager
 def _lock_file():
     """Lock the registry file for thread-safe access."""
-    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
-    LOCK_FILE.touch(exist_ok=True)
-    with open(LOCK_FILE, "r+") as f:
+    lock_file = _configured_lock_file()
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    lock_file.touch(exist_ok=True)
+    with open(lock_file, "r+") as f:
         fcntl.flock(f.fileno(), fcntl.LOCK_EX)
         try:
             yield
