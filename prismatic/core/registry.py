@@ -24,7 +24,6 @@ from packaging.version import Version
 
 from prismatic.interface.plugin import (
     PluginContext,
-    AgentContract,
     PrismaticPlugin,
     PluginValidationError,
 )
@@ -53,9 +52,7 @@ class PluginLoader:
         files, validate requirements, and dynamically register plugins.
         """
         if not os.path.exists(self.plugins_dir):
-            logger.warning(
-                "Plugin directory does not exist: %s", self.plugins_dir
-            )
+            logger.warning("Plugin directory does not exist: %s", self.plugins_dir)
             return
 
         for entry in os.scandir(self.plugins_dir):
@@ -68,7 +65,14 @@ class PluginLoader:
 
             try:
                 self._load_plugin(manifest_path, context)
-            except Exception:
+            except Exception as exc:
+                self._record_plugin_registration(
+                    context,
+                    manifest_path.parent.name,
+                    version=None,
+                    success=False,
+                    error=str(exc),
+                )
                 logger.error(
                     "Failed to load plugin from %s",
                     manifest_path.parent.name,
@@ -97,9 +101,7 @@ class PluginLoader:
 
     # ── internal ───────────────────────────────────────────────────────
 
-    def _load_plugin(
-        self, manifest_path: Path, context: PluginContext
-    ) -> None:
+    def _load_plugin(self, manifest_path: Path, context: PluginContext) -> None:
         with open(manifest_path, "r") as fh:
             manifest = yaml.safe_load(fh)
 
@@ -167,11 +169,49 @@ class PluginLoader:
             tools = plugin_instance.register_tools()
             self.registered_tools.extend(tools)
         except Exception:
-            logger.error(
-                "Plugin '%s' failed to register tools", name, exc_info=True
-            )
+            logger.error("Plugin '%s' failed to register tools", name, exc_info=True)
 
         logger.info("Successfully loaded plugin '%s' (v%s)", name, version)
+        self._record_plugin_registration(
+            context,
+            name,
+            version=version,
+            success=True,
+            error=None,
+        )
+
+    def _record_plugin_registration(
+        self,
+        context: PluginContext,
+        plugin_name: str,
+        version: Optional[str],
+        success: bool,
+        error: Optional[str],
+    ) -> None:
+        """Best-effort telemetry hook for plugin registration attempts."""
+        collector = getattr(context, "telemetry_client", None)
+        if collector is None:
+            try:
+                from prismatic.telemetry import get_collector
+
+                collector = get_collector()
+            except Exception:
+                logger.debug("Plugin telemetry collector unavailable", exc_info=True)
+                return
+
+        recorder = getattr(collector, "record_plugin_registered", None)
+        if recorder is None:
+            return
+
+        try:
+            recorder(
+                plugin_name=plugin_name,
+                version=version,
+                success=success,
+                error=error,
+            )
+        except Exception:
+            logger.debug("Plugin telemetry recording failed", exc_info=True)
 
 
 # ── GRO-2228: PWP pipeline hook orchestrator ───────────────────────────────
@@ -234,7 +274,9 @@ class PWPPluginRunner:
         context: Dict[str, Any],
         stages: Iterable[Stage],
         deploy_target: Optional[str] = None,
-        deploy_artifact_provider: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
+        deploy_artifact_provider: Optional[
+            Callable[[Dict[str, Any]], Dict[str, Any]]
+        ] = None,
     ) -> Dict[str, Any]:
         """
         Run a PWP pipeline.
@@ -293,8 +335,7 @@ class PWPPluginRunner:
         if deploy_target is not None:
             if deploy_artifact_provider is None:
                 raise ValueError(
-                    "deploy_artifact_provider is required when "
-                    "deploy_target is set"
+                    "deploy_artifact_provider is required when deploy_target is set"
                 )
             artifact = deploy_artifact_provider(result)
             self.loader.execute_hook(

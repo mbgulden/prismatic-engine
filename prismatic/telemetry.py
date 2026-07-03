@@ -15,7 +15,6 @@ import os
 import queue
 import sqlite3
 import threading
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -47,7 +46,9 @@ ALERT_WINDOW_HOURS = int(os.environ.get("PRISMATIC_ALERT_WINDOW_HOURS", "1"))
 RETENTION_AGENT_RUNS = int(os.environ.get("PRISMATIC_RETENTION_AGENT_RUNS", "30"))
 RETENTION_TOOL_CALLS = int(os.environ.get("PRISMATIC_RETENTION_TOOL_CALLS", "7"))
 RETENTION_LOOP_EVENTS = int(os.environ.get("PRISMATIC_RETENTION_LOOP_EVENTS", "90"))
-RETENTION_RESOURCE_SNAPSHOTS = int(os.environ.get("PRISMATIC_RETENTION_RESOURCE_SNAPSHOTS", "1"))
+RETENTION_RESOURCE_SNAPSHOTS = int(
+    os.environ.get("PRISMATIC_RETENTION_RESOURCE_SNAPSHOTS", "1")
+)
 RETENTION_CREDIT_LEDGER = int(os.environ.get("PRISMATIC_RETENTION_CREDIT_LEDGER", "90"))
 
 
@@ -61,6 +62,7 @@ class TelemetryCollector:
 
     def __init__(self, db_path: str | None = None):
         self._db_path = db_path or DEFAULT_DB_PATH
+        Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
         self._queue: queue.Queue[tuple[str, dict[str, Any]]] = queue.Queue(
             maxsize=10000
         )
@@ -152,6 +154,23 @@ class TelemetryCollector:
         }
         self._push("validation", event)
 
+    def record_plugin_registered(
+        self,
+        plugin_name: str,
+        version: str | None = None,
+        success: bool = True,
+        error: str | None = None,
+    ) -> None:
+        """Record the result of a plugin registration attempt."""
+        event = {
+            "plugin_name": plugin_name,
+            "version": version,
+            "success": 1 if success else 0,
+            "error": error,
+            "registered_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._push("plugin_registered", event)
+
     def check_circuit(
         self, issue_id: str, agent: str, micro_count: int, macro_count: int = 0
     ) -> bool:
@@ -178,12 +197,8 @@ class TelemetryCollector:
             total_macro = prev_macro + macro_count
 
             now = datetime.now(timezone.utc).isoformat()
-            tripped = (
-                not already_tripped
-                and (
-                    total_micro >= BREAKER_MICRO_MAX
-                    or total_macro >= BREAKER_MACRO_MAX
-                )
+            tripped = not already_tripped and (
+                total_micro >= BREAKER_MICRO_MAX or total_macro >= BREAKER_MACRO_MAX
             )
 
             conn.execute(
@@ -203,17 +218,20 @@ class TelemetryCollector:
             conn.commit()
 
             if tripped:
-                self._push("loop", {
-                    "run_id": f"breaker-{issue_id}",
-                    "issue_id": issue_id,
-                    "agent": agent,
-                    "loop_type": "circuit_breaker",
-                    "trigger": f"micro={total_micro} macro={total_macro}",
-                    "resolved": 0,
-                    "depth": 0,
-                    "parent_id": None,
-                    "created_at": now,
-                })
+                self._push(
+                    "loop",
+                    {
+                        "run_id": f"breaker-{issue_id}",
+                        "issue_id": issue_id,
+                        "agent": agent,
+                        "loop_type": "circuit_breaker",
+                        "trigger": f"micro={total_micro} macro={total_macro}",
+                        "resolved": 0,
+                        "depth": 0,
+                        "parent_id": None,
+                        "created_at": now,
+                    },
+                )
 
             return tripped
         finally:
@@ -337,7 +355,6 @@ class TelemetryCollector:
         }
         self._push("agy_live_state", event)
 
-
     def get_dashboard_data(self, hours: int = 24) -> dict[str, Any]:
         """Query recent telemetry for dashboard display.
 
@@ -346,7 +363,7 @@ class TelemetryCollector:
         """
         conn = sqlite3.connect(self._db_path)
         conn.row_factory = sqlite3.Row
-        cutoff = (datetime.now(timezone.utc).timestamp() - hours * 3600)
+        cutoff = datetime.now(timezone.utc).timestamp() - hours * 3600
         cutoff_str = datetime.fromtimestamp(cutoff, tz=timezone.utc).isoformat()
         try:
             # Loop stats
@@ -436,55 +453,59 @@ class TelemetryCollector:
         # ── Rule 1: Credit burn rate ────────────────────────
         burn_rate = data.get("credit_burn_rate", 0)
         if burn_rate > ALERT_CREDIT_BURN_RATE:
-            alerts.append({
-                "rule": "credit_burn",
-                "current_value": burn_rate,
-                "threshold": ALERT_CREDIT_BURN_RATE,
-                "message": (
-                    f"Credit burn rate {burn_rate:.0f}/hr exceeds "
-                    f"threshold {ALERT_CREDIT_BURN_RATE}/hr "
-                    f"(total: {data.get('total_credits', 0)} credits "
-                    f"in {window}h)"
-                ),
-                "severity": "high",
-            })
+            alerts.append(
+                {
+                    "rule": "credit_burn",
+                    "current_value": burn_rate,
+                    "threshold": ALERT_CREDIT_BURN_RATE,
+                    "message": (
+                        f"Credit burn rate {burn_rate:.0f}/hr exceeds "
+                        f"threshold {ALERT_CREDIT_BURN_RATE}/hr "
+                        f"(total: {data.get('total_credits', 0)} credits "
+                        f"in {window}h)"
+                    ),
+                    "severity": "high",
+                }
+            )
 
         # ── Rule 2: Loop count ──────────────────────────────
-        total_loops = sum(
-            r.get("cnt", 0) for r in data.get("loops", [])
-        )
+        total_loops = sum(r.get("cnt", 0) for r in data.get("loops", []))
         if total_loops > ALERT_LOOP_COUNT:
             loop_detail = ", ".join(
                 f"{r.get('loop_type', '?')}={r.get('cnt', 0)}"
                 for r in data.get("loops", [])
             )
-            alerts.append({
-                "rule": "loop_count",
-                "current_value": total_loops,
-                "threshold": ALERT_LOOP_COUNT,
-                "message": (
-                    f"Loop count {total_loops} in {window}h exceeds "
-                    f"threshold {ALERT_LOOP_COUNT} "
-                    f"({loop_detail})"
-                ),
-                "severity": "high",
-            })
+            alerts.append(
+                {
+                    "rule": "loop_count",
+                    "current_value": total_loops,
+                    "threshold": ALERT_LOOP_COUNT,
+                    "message": (
+                        f"Loop count {total_loops} in {window}h exceeds "
+                        f"threshold {ALERT_LOOP_COUNT} "
+                        f"({loop_detail})"
+                    ),
+                    "severity": "high",
+                }
+            )
 
         # ── Rule 3: Failure rate ────────────────────────────
         failure_rate = data.get("failure_rate", 0)
         total_runs = data.get("total_agent_runs", 0)
         if total_runs > 0 and failure_rate > ALERT_FAILURE_RATE:
-            alerts.append({
-                "rule": "failure_rate",
-                "current_value": failure_rate,
-                "threshold": ALERT_FAILURE_RATE,
-                "message": (
-                    f"Agent failure rate {failure_rate:.1%} exceeds "
-                    f"threshold {ALERT_FAILURE_RATE:.0%} "
-                    f"({data.get('failed_agent_runs', 0)}/{total_runs} runs)"
-                ),
-                "severity": "high",
-            })
+            alerts.append(
+                {
+                    "rule": "failure_rate",
+                    "current_value": failure_rate,
+                    "threshold": ALERT_FAILURE_RATE,
+                    "message": (
+                        f"Agent failure rate {failure_rate:.1%} exceeds "
+                        f"threshold {ALERT_FAILURE_RATE:.0%} "
+                        f"({data.get('failed_agent_runs', 0)}/{total_runs} runs)"
+                    ),
+                    "severity": "high",
+                }
+            )
 
         # ── Post alerts to Linear if credentials available ──
         if alerts and linear_api_key:
@@ -492,9 +513,7 @@ class TelemetryCollector:
 
         return alerts
 
-    def _post_alert_comments(
-        self, alerts: list[dict[str, Any]], api_key: str
-    ) -> None:
+    def _post_alert_comments(self, alerts: list[dict[str, Any]], api_key: str) -> None:
         """Post alert comments to the most-recently-affected Linear issues.
 
         For each alert, finds the issue that generated the most related
@@ -543,21 +562,34 @@ class TelemetryCollector:
                 )
 
                 # Post via Linear API (curl subprocess for reliability)
-                payload = json.dumps({
-                    "query": (
-                        "mutation { commentCreate(input: "
-                        f'{{ issueId: "{issue_id}", body: "{body}" }}'
-                        ") { success } }"
-                    ),
-                })
+                payload = json.dumps(
+                    {
+                        "query": (
+                            "mutation { commentCreate(input: "
+                            f'{{ issueId: "{issue_id}", body: "{body}" }}'
+                            ") { success } }"
+                        ),
+                    }
+                )
                 try:
-                    result = _sp.run([
-                        "curl", "-s", "-X", "POST",
-                        "https://api.linear.app/graphql",
-                        "-H", f"Authorization: {api_key}",
-                        "-H", "Content-Type: application/json",
-                        "-d", payload,
-                    ], capture_output=True, text=True, timeout=15)
+                    result = _sp.run(
+                        [
+                            "curl",
+                            "-s",
+                            "-X",
+                            "POST",
+                            "https://api.linear.app/graphql",
+                            "-H",
+                            f"Authorization: {api_key}",
+                            "-H",
+                            "Content-Type: application/json",
+                            "-d",
+                            payload,
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=15,
+                    )
                     resp = json.loads(result.stdout)
                     ok = resp.get("data", {}).get("commentCreate", {}).get("success")
                     if not ok:
@@ -658,10 +690,15 @@ class TelemetryCollector:
                             resolved, depth, parent_id, created_at)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
-                            data["run_id"], data["issue_id"], data["agent"],
-                            data["loop_type"], data.get("trigger"),
-                            data.get("resolved", 0), data.get("depth", 0),
-                            data.get("parent_id"), data["created_at"],
+                            data["run_id"],
+                            data["issue_id"],
+                            data["agent"],
+                            data["loop_type"],
+                            data.get("trigger"),
+                            data.get("resolved", 0),
+                            data.get("depth", 0),
+                            data.get("parent_id"),
+                            data["created_at"],
                         ),
                     )
                 elif event_type == "tokens":
@@ -672,11 +709,17 @@ class TelemetryCollector:
                             vram_mb, recorded_at)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
-                            data["run_id"], data["agent"], data["provider"],
-                            data.get("model"), data.get("prompt_tokens", 0),
-                            data.get("completion_tokens", 0), data.get("ttft_ms", 0.0),
-                            data.get("tps", 0.0), data.get("context_pct", 0.0),
-                            data.get("vram_mb", 0), data["recorded_at"],
+                            data["run_id"],
+                            data["agent"],
+                            data["provider"],
+                            data.get("model"),
+                            data.get("prompt_tokens", 0),
+                            data.get("completion_tokens", 0),
+                            data.get("ttft_ms", 0.0),
+                            data.get("tps", 0.0),
+                            data.get("context_pct", 0.0),
+                            data.get("vram_mb", 0),
+                            data["recorded_at"],
                         ),
                     )
                 elif event_type == "validation":
@@ -687,10 +730,15 @@ class TelemetryCollector:
                             watch_sec, created_at)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
-                            data["run_id"], data["agent"], data["event_type"],
-                            data.get("total_tests", 0), data.get("passed", 0),
-                            data.get("failed", 0), data.get("sandbox_id"),
-                            data.get("rollback", 0), data.get("watch_sec", 0.0),
+                            data["run_id"],
+                            data["agent"],
+                            data["event_type"],
+                            data.get("total_tests", 0),
+                            data.get("passed", 0),
+                            data.get("failed", 0),
+                            data.get("sandbox_id"),
+                            data.get("rollback", 0),
+                            data.get("watch_sec", 0.0),
                             data["created_at"],
                         ),
                     )
@@ -702,11 +750,16 @@ class TelemetryCollector:
                             credits_spent, error_message)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
-                            data["run_id"], data["agent"],
-                            data.get("provider", ""), data.get("model"),
-                            data.get("issue_id", ""), data.get("status", "dispatched"),
-                            data["start_time"], data.get("end_time"),
-                            data.get("exit_code"), data.get("credits_spent", 0),
+                            data["run_id"],
+                            data["agent"],
+                            data.get("provider", ""),
+                            data.get("model"),
+                            data.get("issue_id", ""),
+                            data.get("status", "dispatched"),
+                            data["start_time"],
+                            data.get("end_time"),
+                            data.get("exit_code"),
+                            data.get("credits_spent", 0),
                             data.get("error_message"),
                         ),
                     )
@@ -718,9 +771,12 @@ class TelemetryCollector:
                                error_message = ?
                            WHERE run_id = ?""",
                         (
-                            data["status"], data["end_time"],
-                            data.get("exit_code"), data.get("credits_spent", 0),
-                            data.get("error_message"), data["run_id"],
+                            data["status"],
+                            data["end_time"],
+                            data.get("exit_code"),
+                            data.get("credits_spent", 0),
+                            data.get("error_message"),
+                            data["run_id"],
                         ),
                     )
                 elif event_type == "credit":
@@ -730,10 +786,15 @@ class TelemetryCollector:
                             operation, recorded_at, client_id, project_id)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
-                            data["run_id"], data["agent"], data["provider"],
-                            data.get("model"), data["credits_spent"],
-                            data.get("operation", ""), data["recorded_at"],
-                            data.get("client_id"), data.get("project_id"),
+                            data["run_id"],
+                            data["agent"],
+                            data["provider"],
+                            data.get("model"),
+                            data["credits_spent"],
+                            data.get("operation", ""),
+                            data["recorded_at"],
+                            data.get("client_id"),
+                            data.get("project_id"),
                         ),
                     )
                 elif event_type == "agy_live_state":
@@ -744,13 +805,27 @@ class TelemetryCollector:
                             rate_limits, raw_payload, recorded_at)
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
-                            data["run_id"], data.get("active_model"),
+                            data["run_id"],
+                            data.get("active_model"),
                             data.get("prompt_tokens", 0),
                             data.get("completion_tokens", 0),
                             data.get("context_usage_pct", 0.0),
                             data.get("rate_limits"),
                             data.get("raw_payload"),
                             data["recorded_at"],
+                        ),
+                    )
+                elif event_type == "plugin_registered":
+                    conn.execute(
+                        """INSERT INTO telemetry_plugin_registered
+                           (plugin_name, version, success, error, registered_at)
+                           VALUES (?, ?, ?, ?, ?)""",
+                        (
+                            data["plugin_name"],
+                            data.get("version"),
+                            data.get("success", 1),
+                            data.get("error"),
+                            data["registered_at"],
                         ),
                     )
 
@@ -869,22 +944,31 @@ class TelemetryCollector:
                     ON agy_live_state(run_id);
                 CREATE INDEX IF NOT EXISTS idx_agy_live_time
                     ON agy_live_state(recorded_at);
+
+                CREATE TABLE IF NOT EXISTS telemetry_plugin_registered (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    plugin_name     TEXT NOT NULL,
+                    version         TEXT,
+                    success         INTEGER DEFAULT 1,
+                    error           TEXT,
+                    registered_at   TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_plugin_registered_name
+                    ON telemetry_plugin_registered(plugin_name, registered_at);
+                CREATE INDEX IF NOT EXISTS idx_plugin_registered_success
+                    ON telemetry_plugin_registered(success, registered_at);
             """)
             # ── Phase 4.4 migration: add client_id/project_id to credit_ledger ──
             try:
-                cursor = conn.execute(
-                    "PRAGMA table_info(telemetry_credit_ledger)"
-                )
+                cursor = conn.execute("PRAGMA table_info(telemetry_credit_ledger)")
                 existing_cols = {row[1] for row in cursor.fetchall()}
                 if "client_id" not in existing_cols:
                     conn.execute(
-                        "ALTER TABLE telemetry_credit_ledger "
-                        "ADD COLUMN client_id TEXT"
+                        "ALTER TABLE telemetry_credit_ledger ADD COLUMN client_id TEXT"
                     )
                 if "project_id" not in existing_cols:
                     conn.execute(
-                        "ALTER TABLE telemetry_credit_ledger "
-                        "ADD COLUMN project_id TEXT"
+                        "ALTER TABLE telemetry_credit_ledger ADD COLUMN project_id TEXT"
                     )
             except Exception:
                 pass  # Migration is best-effort
