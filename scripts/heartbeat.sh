@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # Prismatic Engine — Heartbeat Writer
-# Writes the dispatcher PID and current timestamp to heartbeat.pid.
+# Writes the dispatcher PID to heartbeat.pid. Freshness is tracked via mtime.
 # Called by ExecStartPost= in prismatic-dispatcher.service after daemon starts.
 #
 # Usage:
 #   scripts/heartbeat.sh                    # Write heartbeat
 #   scripts/heartbeat.sh --check            # Check if heartbeat is fresh (<120s)
 #
-# File format: PID TIMESTAMP_ISO8601
-# Example: 1230107 2026-06-13T06:17:00Z
+# File format: PID
+# Example: 1230107
 # ==============================================================================
 set -euo pipefail
 
@@ -25,21 +25,30 @@ if [[ "${1:-}" == "--check" ]]; then
         exit 1
     fi
 
-    read -r PID TIMESTAMP < "$HEARTBEAT_FILE" || true
-    if [[ -z "$PID" || -z "$TIMESTAMP" ]]; then
-        echo "CORRUPT: heartbeat.pid has invalid format"
+    read -r PID < "$HEARTBEAT_FILE" || true
+    if [[ -z "$PID" ]]; then
+        echo "CORRUPT: heartbeat.pid is empty"
         exit 1
     fi
 
-    # Check if PID is alive
-    if ! kill -0 "$PID" 2>/dev/null; then
-        echo "DEAD: PID $PID is not running"
-        exit 1
+    # Check if PID is alive (if not "unknown")
+    if [[ "$PID" != "unknown" ]]; then
+        if ! kill -0 "$PID" 2>/dev/null; then
+            echo "DEAD: PID $PID is not running"
+            exit 1
+        fi
     fi
 
-    # Check timestamp freshness
+    # Check mtime freshness
     NOW_EPOCH=$(date +%s)
-    HEARTBEAT_EPOCH=$(date -d "$TIMESTAMP" +%s 2>/dev/null || echo 0)
+
+    # Cross-platform stat for mtime
+    if stat -c %Y "$HEARTBEAT_FILE" >/dev/null 2>&1; then
+        HEARTBEAT_EPOCH=$(stat -c %Y "$HEARTBEAT_FILE")
+    else
+        HEARTBEAT_EPOCH=$(stat -f %m "$HEARTBEAT_FILE")
+    fi
+
     AGE=$((NOW_EPOCH - HEARTBEAT_EPOCH))
 
     if [[ $AGE -gt $MAX_AGE_SECONDS ]]; then
@@ -47,12 +56,11 @@ if [[ "${1:-}" == "--check" ]]; then
         exit 1
     fi
 
-    echo "OK: PID $PID alive, heartbeat ${AGE}s ago"
+    echo "OK: PID $PID alive/unknown, heartbeat ${AGE}s ago"
     exit 0
 fi
 
 # Write mode
 PID=$(systemctl --user show prismatic-dispatcher.service -p MainPID --value 2>/dev/null || echo "unknown")
-TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-echo "$PID $TIMESTAMP" > "$HEARTBEAT_FILE"
-echo "Heartbeat written: PID=$PID at $TIMESTAMP"
+echo "$PID" > "$HEARTBEAT_FILE"
+echo "Heartbeat written: PID=$PID"
