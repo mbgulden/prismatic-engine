@@ -99,3 +99,19 @@ def test_second_witness_requires_log_and_artifacts(tmp_path: Path) -> None:
     assert passed["passed"] is True
     assert missing["passed"] is False
     assert str(tmp_path / "missing.md") in missing["artifacts"]["missing"]
+
+
+def test_second_witness_mandates_result_md_by_default(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    log = tmp_path / "agy.log"
+    log.write_text("completed cleanly\n" * 20)
+
+    # By default, should fail because RESULT.md is missing
+    res = validate_agent_output(log_path=str(log))
+    assert res["passed"] is False
+    assert "RESULT.md" in res["artifacts"]["missing"]
+
+    # Should pass if RESULT.md exists
+    (tmp_path / "RESULT.md").write_text("success")
+    res = validate_agent_output(log_path=str(log))
+    assert res["passed"] is True
