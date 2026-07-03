@@ -2312,8 +2312,21 @@ def main() -> None:
     # ── Gateway Subcommand ────────────────────────────────────
     gateway_parser = subparsers.add_parser("gateway", help="Start the FastAPI gateway server")
     gateway_parser.add_argument("--host", default="127.0.0.1", help="Host to bind (default: 127.0.0.1)")
-    gateway_parser.add_argument("--port", type=int, default=8000, help="Port to bind (default: 8000)")
+    gateway_parser.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get("PRISMATIC_PORT", 9000)),
+        help="Port to bind HTTP (default: PRISMATIC_PORT or 9000)",
+    )
+    gateway_parser.add_argument(
+        "--log-level",
+        default="info",
+        choices=["debug", "info", "warning", "error"],
+        help="Logging level",
+    )
     gateway_parser.add_argument("--reload", action="store_true", help="Enable uvicorn auto-reload")
+    gateway_parser.add_argument("--grpc", action="store_true", help="Enable gRPC server alongside HTTP")
+    gateway_parser.add_argument("--grpc-port", type=int, default=9002, help="Port for gRPC server")
 
     # ── Doctor Subcommand ─────────────────────────────────────
     doctor_parser = subparsers.add_parser("doctor", help="Verify system health, capabilities, and provider connections")
@@ -2343,11 +2356,39 @@ def main() -> None:
     elif args.command == "doctor":
         sys.exit(cmd_doctor(args))
     elif args.command == "gateway":
-        from .gateway.server import app
+        import threading
+
         import uvicorn
 
-        print(f"[dispatcher] Starting gateway on {args.host}:{args.port}")
-        uvicorn.run(app, host=args.host, port=args.port, reload=args.reload)
+        print(
+            f"[dispatcher] Starting gateway on {args.host}:{args.port} "
+            f"(reload={args.reload}, grpc={args.grpc})"
+        )
+        if args.grpc:
+            def _run_grpc_loop(port: int) -> None:
+                import asyncio
+
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    from prismatic.gateway.grpc_server import serve_grpc
+
+                    loop.run_until_complete(serve_grpc(port=port))
+                finally:
+                    loop.close()
+
+            threading.Thread(
+                target=_run_grpc_loop,
+                args=(args.grpc_port,),
+                daemon=True,
+            ).start()
+        uvicorn.run(
+            "prismatic.gateway.server:app",
+            host=args.host,
+            port=args.port,
+            log_level=args.log_level,
+            reload=args.reload,
+        )
     elif args.command == "serve":
         if args.setup_pipelines:
             issues = setup_pipeline_issues()
