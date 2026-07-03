@@ -644,6 +644,8 @@ def validate_artifacts(paths: list[str], require_non_empty: bool = True) -> dict
 
 def validate_agent_output(issue_identifier: str | None = None, log_path: str | None = None, artifact: list[str] | None = None, text: str | None = None) -> dict[str, Any]:
     artifacts = artifact or []
+    if not artifacts:
+        artifacts = ["RESULT.md"]
     if text:
         artifacts.extend(extract_file_paths(text))
     transcript = ""
