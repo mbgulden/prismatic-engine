@@ -28,6 +28,21 @@ def test_get_plugin_health_returns_not_found_without_lifecycle_or_metrics(monkey
     assert payload == {"status": "NOT_FOUND", "plugin_name": "demo-plugin"}
 
 
+def test_get_plugin_health_not_found_is_authoritative_over_stale_metrics(monkeypatch):
+    monkeypatch.setattr(
+        plugin_health_module,
+        "_plugin_metrics",
+        lambda name: {"current_state": "RUNNING", "uptime_seconds": 99},
+    )
+
+    payload = plugin_health_module.get_plugin_health(
+        "demo-plugin",
+        lifecycle_manager=FakeLifecycleManager({"state": "NOT_FOUND", "name": "demo-plugin"}),
+    )
+
+    assert payload == {"status": "NOT_FOUND", "plugin_name": "demo-plugin"}
+
+
 def test_get_plugin_health_maps_running_lifecycle_state(monkeypatch):
     monkeypatch.setattr(plugin_health_module, "_plugin_metrics", lambda name: {})
     started_at = time.time() - 12.4
@@ -71,6 +86,7 @@ def test_get_plugin_health_maps_failed_state_to_unhealthy(monkeypatch):
 
 
 def test_gateway_plugin_health_route_uses_http_status_mapping(monkeypatch):
+    monkeypatch.setattr(server, "_check_observability_auth", lambda request: True)
     monkeypatch.setattr(
         server,
         "get_plugin_health",
@@ -86,6 +102,7 @@ def test_gateway_plugin_health_route_uses_http_status_mapping(monkeypatch):
 
 
 def test_gateway_plugin_health_route_returns_404_for_unknown(monkeypatch):
+    monkeypatch.setattr(server, "_check_observability_auth", lambda request: True)
     monkeypatch.setattr(
         server,
         "get_plugin_health",
@@ -97,3 +114,13 @@ def test_gateway_plugin_health_route_returns_404_for_unknown(monkeypatch):
 
     assert response.status_code == 404
     assert response.json() == {"status": "NOT_FOUND", "plugin_name": "missing"}
+
+
+def test_gateway_plugin_health_route_requires_observability_auth(monkeypatch):
+    monkeypatch.setattr(server, "_check_observability_auth", lambda request: False)
+
+    client = TestClient(server.app)
+    response = client.get("/api/v1/plugins/demo-plugin/health")
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "forbidden"}
