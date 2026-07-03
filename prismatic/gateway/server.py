@@ -43,6 +43,7 @@ from prismatic.gateway.ws_broadcaster import (
     stop_ws_broadcaster,
 )
 from prismatic.lock import _read_locks as read_swarm_locks
+from prismatic.plugin_health import get_plugin_health
 from prismatic.run_records import AgentRunRecordStore
 
 logger = logging.getLogger("prismatic.gateway.server")
@@ -185,6 +186,17 @@ async def health() -> dict[str, Any]:
         "uptime_seconds": round(uptime, 1),
         "started_at": _started_at,
     }
+
+
+@app.get("/api/v1/plugins/{plugin_name}/health")
+async def plugin_health(plugin_name: str) -> JSONResponse:
+    """Return lifecycle/telemetry health for a sandboxed plugin."""
+    payload = get_plugin_health(plugin_name)
+    if payload.get("status") == "NOT_FOUND":
+        return JSONResponse(payload, status_code=404)
+    if payload.get("status") == "unhealthy":
+        return JSONResponse(payload, status_code=503)
+    return JSONResponse(payload)
 
 
 # ── WebSocket Endpoint ──────────────────────────────────────────────
