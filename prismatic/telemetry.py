@@ -310,6 +310,44 @@ class TelemetryCollector:
         }
         self._push("credit", event)
 
+    def record_vertex_spend(
+        self,
+        project_id: str,
+        model: str,
+        region: str,
+        credits: float,
+        operation: str,
+        recorded_at: str | None = None,
+        tpm_used: int = 0,
+        rpm_used: int = 0,
+        context_pct: float = 0.0,
+        estimated_cost: float | None = None,
+    ) -> None:
+        """Record a GCP Vertex AI spend event.
+
+        The event is written asynchronously into the canonical Vertex ledger
+        tables in the engine telemetry database. The collector inserts a
+        ``gcp_vertex_billing_ledger`` row first, then writes
+        ``gcp_vertex_spend_events.ledger_id`` with that generated ID so the
+        schema stays compatible with ``VertexBillingLedger`` in the shared
+        default ``event_router.db``.
+        """
+        if estimated_cost is None:
+            estimated_cost = float(credits)
+        event = {
+            "project_id": project_id,
+            "model": model,
+            "region": region,
+            "credits": float(credits),
+            "operation": operation,
+            "tpm_used": int(tpm_used),
+            "rpm_used": int(rpm_used),
+            "context_pct": float(context_pct),
+            "estimated_cost": float(estimated_cost),
+            "recorded_at": recorded_at or datetime.now(timezone.utc).isoformat(),
+        }
+        self._push("vertex_spend", event)
+
     def record_agy_live_state(
         self,
         run_id: str,
@@ -736,6 +774,35 @@ class TelemetryCollector:
                             data.get("client_id"), data.get("project_id"),
                         ),
                     )
+                elif event_type == "vertex_spend":
+                    cur = conn.execute(
+                        """INSERT INTO gcp_vertex_billing_ledger
+                           (recorded_at, project, credits)
+                           VALUES (?, ?, ?)""",
+                        (
+                            data.get("recorded_at", ""),
+                            data.get("project_id", ""),
+                            data.get("credits", 0.0),
+                        ),
+                    )
+                    conn.execute(
+                        """INSERT INTO gcp_vertex_spend_events
+                           (ledger_id, model, region, tpm_used, rpm_used,
+                            context_pct, estimated_cost, operation,
+                            recorded_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            cur.lastrowid,
+                            data.get("model", ""),
+                            data.get("region", ""),
+                            data.get("tpm_used", 0),
+                            data.get("rpm_used", 0),
+                            data.get("context_pct", 0.0),
+                            data.get("estimated_cost", 0.0),
+                            data.get("operation", ""),
+                            data.get("recorded_at", ""),
+                        ),
+                    )
                 elif event_type == "agy_live_state":
                     conn.execute(
                         """INSERT INTO agy_live_state
@@ -853,6 +920,36 @@ class TelemetryCollector:
                 );
                 CREATE INDEX IF NOT EXISTS idx_credit_ledger_run
                     ON telemetry_credit_ledger(run_id);
+
+                CREATE TABLE IF NOT EXISTS gcp_vertex_billing_ledger (
+                    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                    recorded_at      TEXT NOT NULL,
+                    project          TEXT NOT NULL DEFAULT '',
+                    total_cost       REAL DEFAULT 0.0,
+                    credits          REAL DEFAULT 0.0,
+                    currency         TEXT DEFAULT 'USD',
+                    quota_data       TEXT,
+                    service_breakdown TEXT,
+                    error_info       TEXT,
+                    raw_payload      TEXT
+                );
+                CREATE INDEX IF NOT EXISTS idx_vertex_billing_time
+                    ON gcp_vertex_billing_ledger(recorded_at);
+
+                CREATE TABLE IF NOT EXISTS gcp_vertex_spend_events (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ledger_id       INTEGER NOT NULL REFERENCES gcp_vertex_billing_ledger(id),
+                    model           TEXT,
+                    region          TEXT,
+                    tpm_used        INTEGER DEFAULT 0,
+                    rpm_used        INTEGER DEFAULT 0,
+                    context_pct     REAL DEFAULT 0.0,
+                    estimated_cost  REAL DEFAULT 0.0,
+                    operation       TEXT,
+                    recorded_at     TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_vertex_spend_model
+                    ON gcp_vertex_spend_events(model, recorded_at);
 
                 CREATE TABLE IF NOT EXISTS agy_live_state (
                     id              INTEGER PRIMARY KEY AUTOINCREMENT,

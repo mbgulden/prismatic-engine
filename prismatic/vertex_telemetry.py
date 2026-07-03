@@ -363,7 +363,14 @@ class VertexBillingLedger:
     def record_quota_snapshot(
         self, quota_records: list[dict[str, Any]], project_id: str = ""
     ) -> None:
-        """Write a batch of quota snapshot records to the ledger."""
+        """Write a batch of quota snapshot records to the ledger.
+
+        After the quota snapshot commits, this also emits best-effort
+        ``TelemetryCollector.record_vertex_spend()`` events so the engine-wide
+        ``gcp_vertex_spend_events`` table receives rows during normal Vertex
+        quota polling. Telemetry failures must not break the durable quota
+        snapshot path.
+        """
         if not quota_records:
             return
         now = datetime.now(timezone.utc).isoformat()
@@ -394,6 +401,33 @@ class VertexBillingLedger:
                     ),
                 )
             conn.commit()
+
+        try:
+            from prismatic.telemetry import get_collector
+
+            collector = get_collector()
+        except Exception:
+            collector = None
+
+        if collector is not None:
+            for rec in quota_records:
+                try:
+                    metric_type = rec.get("metric_type", "custom")
+                    usage = float(rec.get("usage", 0))
+                    util_pct = float(rec.get("utilization_pct", 0.0))
+                    collector.record_vertex_spend(
+                        project_id=pid,
+                        model=rec.get("model", ""),
+                        region=rec.get("region", ""),
+                        credits=round(util_pct / 100.0, 6),
+                        operation=f"quota_poll_{metric_type}",
+                        tpm_used=int(usage) if metric_type == "tpm" else 0,
+                        rpm_used=int(usage) if metric_type == "rpm" else 0,
+                        context_pct=round(util_pct / 100.0, 6),
+                        recorded_at=now,
+                    )
+                except Exception:
+                    pass
 
     def record_balance_checkpoint(
         self, balance_data: dict[str, Any], project_id: str = ""
