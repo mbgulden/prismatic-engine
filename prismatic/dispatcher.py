@@ -498,7 +498,7 @@ AGENT_CONFIG: dict[str, dict[str, Any]] = {
     },
     "jules": {
         "executable": JULES_PATH,
-        "mode": "launch",
+        "mode": os.environ.get("JULES_EXECUTION_MODE", "launch"),
         "timeout": 600,
         "next_label": "agent::codex",
         "description": "Jules CLI — testing & QA",
@@ -1556,6 +1556,7 @@ def detect_origin_completions(
             return 0
 
         # 3. Detect origin→reviewer→fred transitions
+        signalled = 0
         for issue in fred_issues:
             issue_id = issue["id"]
             identifier = issue.get("identifier", issue_id)
