@@ -470,7 +470,11 @@ def extract_golden_thread_summary(config: JournalConfig) -> str:
         return "> ⚠️ project-registry.json unreadable\n"
     lines = ["### 🔗 Golden Thread (project-registry.json)"]
     sync = reg.get("_last_sync", {})
+    if sync and not isinstance(sync, dict):
+        sync = {"summary": str(sync)}
     if sync:
+        if sync.get("summary"):
+            lines.append(f"- Last sync: {sync['summary']}")
         lines.append(f"- Linear: {sync.get('linear_in_progress', 0)} In Progress, {sync.get('linear_in_review', 0)} In Review, {sync.get('linear_todo', 0)} Todo")
         lines.append(f"- GitHub: {sync.get('github_prs_open', 0)} open PRs, {sync.get('github_issues_open', 0)} issues")
         lines.append("")
