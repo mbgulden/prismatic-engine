@@ -2235,6 +2235,7 @@ def main() -> None:
         ``serve``     Start the dispatcher event loop.
         ``init``      Initialize default configuration files.
         ``skills``    Skill marketplace subcommands.
+        ``gateway``   Start the FastAPI gateway server.
         ``--help``    Show usage.
 
     Legacy Support (for backward compatibility):
@@ -2308,6 +2309,12 @@ def main() -> None:
     # ── Skills Subcommand ─────────────────────────────────────
     subparsers.add_parser("skills", help="Skill marketplace subcommands (run 'skills --help' for details)")
 
+    # ── Gateway Subcommand ────────────────────────────────────
+    gateway_parser = subparsers.add_parser("gateway", help="Start the FastAPI gateway server")
+    gateway_parser.add_argument("--host", default="127.0.0.1", help="Host to bind (default: 127.0.0.1)")
+    gateway_parser.add_argument("--port", type=int, default=8000, help="Port to bind (default: 8000)")
+    gateway_parser.add_argument("--reload", action="store_true", help="Enable uvicorn auto-reload")
+
     # ── Doctor Subcommand ─────────────────────────────────────
     doctor_parser = subparsers.add_parser("doctor", help="Verify system health, capabilities, and provider connections")
     doctor_parser.add_argument(
@@ -2335,6 +2342,12 @@ def main() -> None:
         cmd_billing_report(args)
     elif args.command == "doctor":
         sys.exit(cmd_doctor(args))
+    elif args.command == "gateway":
+        from .gateway.server import app
+        import uvicorn
+
+        print(f"[dispatcher] Starting gateway on {args.host}:{args.port}")
+        uvicorn.run(app, host=args.host, port=args.port, reload=args.reload)
     elif args.command == "serve":
         if args.setup_pipelines:
             issues = setup_pipeline_issues()
