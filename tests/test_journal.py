@@ -99,3 +99,22 @@ def test_second_witness_requires_log_and_artifacts(tmp_path: Path) -> None:
     assert passed["passed"] is True
     assert missing["passed"] is False
     assert str(tmp_path / "missing.md") in missing["artifacts"]["missing"]
+
+
+def test_second_witness_defaults_to_result_md(tmp_path: Path) -> None:
+    log = tmp_path / "fred.log"
+    log.write_text("completed cleanly\n" * 20)
+
+    # If no artifacts, should check for RESULT.md
+    res = validate_agent_output(log_path=str(log))
+    assert res["passed"] is False
+    assert "RESULT.md" in res["artifacts"]["missing"]
+
+    # Now create it
+    (Path.cwd() / "RESULT.md").write_text("success")
+    try:
+        res2 = validate_agent_output(log_path=str(log))
+        assert res2["passed"] is True
+        assert "RESULT.md" in res2["artifacts"]["found"]
+    finally:
+        (Path.cwd() / "RESULT.md").unlink()
