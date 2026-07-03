@@ -646,6 +646,11 @@ def validate_agent_output(issue_identifier: str | None = None, log_path: str | N
     artifacts = artifact or []
     if text:
         artifacts.extend(extract_file_paths(text))
+
+    # GRO-2196: Mandate RESULT.md as a default postcondition if no other artifacts specified
+    if not artifacts:
+        artifacts = ["RESULT.md"]
+
     transcript = ""
     resolved_log = Path(log_path) if log_path else Path(f"/tmp/antigravity_{issue_identifier}.log") if issue_identifier else None
     log_exists = bool(resolved_log and resolved_log.exists())
