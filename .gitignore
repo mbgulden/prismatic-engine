@@ -21,6 +21,7 @@ Thumbs.db
 prismatic_state/
 /tmp/prismatic/
 /tmp/pipeline_metrics.jsonl
+RESULT.md
 
 # Config overrides
 config.local.yaml

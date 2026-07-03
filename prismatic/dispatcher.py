@@ -2004,6 +2004,33 @@ def dispatch_once(
     return counts
 
 
+def write_result_md(cycle: int, counts: dict[str, int], start_time: str) -> None:
+    """Write cycle summary to RESULT.md in the current workspace."""
+    end_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    content = f"""# Prismatic Dispatcher Result
+
+- **Cycle**: {cycle}
+- **Started**: {start_time}
+- **Completed**: {end_time}
+- **Status**: {"✅ SUCCESS" if counts['errors'] == 0 else "⚠️ ERRORS"}
+
+## Summary
+| Metric | Count |
+| :--- | :--- |
+| Dispatched | {counts.get('dispatched', 0)} |
+| Local Dispatched | {counts.get('local_dispatched', 0)} |
+| Pipeline Setup | {counts.get('pipeline_setup', 0)} |
+| Stale Killed | {counts.get('stale_killed', 0)} |
+| Errors | {counts.get('errors', 0)} |
+| Blocked (Policy) | {counts.get('blocked', 0)} |
+"""
+    try:
+        with open("RESULT.md", "w") as f:
+            f.write(content)
+    except Exception as exc:
+        print(f"[dispatcher] Failed to write RESULT.md: {exc}")
+
+
 def main_loop(
     interval: int = POLL_INTERVAL,
     once: bool = False,
@@ -2053,6 +2080,7 @@ def main_loop(
                 f"{counts['stale_killed']} stale killed, "
                 f"{counts['errors']} errors"
             )
+            write_result_md(cycle, counts, now)
             # ── Telemetry: log cycle metrics ─────────────────────
             if counts.get("dispatched", 0) > 0:
                 dashboard = collector.get_dashboard_data(hours=1)
