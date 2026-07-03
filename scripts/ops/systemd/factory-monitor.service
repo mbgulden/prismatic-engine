@@ -1,0 +1,14 @@
+[Unit]
+Description=Prismatic Factory Monitor — heartbeat health check
+After=prismatic-gateway.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu
+ExecStart=/home/ubuntu/.prismatic/venv_stable/bin/python3 /home/ubuntu/.hermes/profiles/orchestrator/scripts/factory_monitor.py
+StandardOutput=append:/home/ubuntu/.hermes/profiles/orchestrator/logs/factory-monitor.log
+StandardError=append:/home/ubuntu/.hermes/profiles/orchestrator/logs/factory-monitor.err.log
+
+[Install]
+WantedBy=multi-user.target
