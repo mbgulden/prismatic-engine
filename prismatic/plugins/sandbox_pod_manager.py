@@ -32,6 +32,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from prismatic.sandbox.cgroup_enforcer import CgroupEnforcer
+
 logger = logging.getLogger("prismatic.plugins.sandbox")
 
 
@@ -99,6 +101,11 @@ class SandboxPodManager:
         self._cpu_limit = cpu_limit
         self._runtime_class = runtime_class
         self._pods: Dict[str, PodInfo] = {}
+        try:
+            self._cgroup_enforcer = CgroupEnforcer()
+        except Exception as exc:  # cgroupfs is optional in dev/CI
+            logger.warning("Cgroup enforcer unavailable: %s", exc)
+            self._cgroup_enforcer = None
 
         # Detect runtime
         self._runtime = runtime
@@ -215,6 +222,19 @@ class SandboxPodManager:
             if result.get("pid"):
                 info.pid = result["pid"]
 
+            # Apply secondary cgroup limits if available. Docker/k3s limits remain
+            # the primary enforcement layer; cgroups provide a best-effort local
+            # hardening layer on Linux hosts with writable cgroupfs.
+            if self._cgroup_enforcer is not None:
+                try:
+                    self._cgroup_enforcer.apply_limits(
+                        name,
+                        memory_max=self._memory_limit,
+                        cpu_max=self._cpu_limit,
+                    )
+                except Exception as cg_err:
+                    logger.warning("Cgroup limit application failed for '%s': %s", name, cg_err)
+
             self._save_pod_info(name)
             logger.info("Pod '%s' started (id=%s, runtime=%s)", name, info.container_id, self._runtime)
             return {"state": info.state.value, "container_id": info.container_id, "runtime": self._runtime}
@@ -319,6 +339,14 @@ class SandboxPodManager:
         except Exception as exc:
             logger.warning("Pod '%s' container removal failed: %s", name, exc)
 
+        # Clean cgroup limits
+
+        if self._cgroup_enforcer is not None:
+            try:
+                self._cgroup_enforcer.remove_limits(name)
+            except Exception as cg_err:
+                logger.warning("Cgroup limit removal failed for '%s': %s", name, cg_err)
+
         # Clean state files
         state_file = self._state_dir / f"{name}.json"
         state_file.unlink(missing_ok=True)
@@ -385,6 +413,11 @@ class SandboxPodManager:
         if self._read_only_root:
             cmd.append("--read-only")
 
+        # Apply deny-by-default seccomp profile when available.
+        seccomp_path = Path("config/seccomp/plugin-default.json")
+        if seccomp_path.exists():
+            cmd.extend(["--security-opt", f"seccomp={seccomp_path.absolute()}"])
+
         if self._memory_limit:
             cmd.extend(["--memory", self._memory_limit])
 
@@ -402,9 +435,10 @@ class SandboxPodManager:
         for port in config.get("ports", []):
             cmd.extend(["-p", port])
 
-        # Volume mounts
+        # Volume mounts with traversal/symlink validation
         for vol in config.get("volumes", []):
-            cmd.extend(["-v", vol])
+            validated_vol = self._validate_volume_mount(vol)
+            cmd.extend(["-v", validated_vol])
 
         # Labels for tracking
         cmd.extend(["-l", f"prismatic-plugin={name}"])
@@ -533,6 +567,38 @@ class SandboxPodManager:
             state = json.loads(state_file.read_text())
             state["state"] = "STOPPED"
             state_file.write_text(json.dumps(state, indent=2))
+
+
+    @staticmethod
+    def _validate_volume_mount(volume_spec: str, seccomp_profile_name: str | None = None) -> str:
+        """Validate a Docker-style volume mount before passing it to a runtime.
+
+        Blocks path traversal and symlink escapes by checking the host side of
+        ``/host/path:/container/path[:mode]``. The allowed host roots are kept
+        intentionally narrow to avoid accidentally mounting sensitive system
+        paths into untrusted plugin sandboxes.
+        """
+        host_part = volume_spec.split(":", 1)[0] if ":" in volume_spec else volume_spec
+        normalized = host_part.lower().replace("\\", "/")
+        traversal_patterns = ("..", "%2e%2e", "%252e%252e", "..%5c")
+        for pattern in traversal_patterns:
+            if pattern in normalized:
+                raise PodManagerError(
+                    f"Path traversal detected in volume mount: {volume_spec!r} "
+                    f"(forbidden pattern: {pattern!r})"
+                )
+
+        resolved = Path(host_part).resolve()
+        allowed_bases = [Path("/home"), Path("/tmp"), Path("/data"), Path("/opt"), Path("/mnt"), Path("/var")]
+        if not any(resolved == base or str(resolved).startswith(str(base) + os.sep) for base in allowed_bases):
+            raise PodManagerError(
+                f"Volume mount path {host_part!r} resolves to {str(resolved)!r}, "
+                f"outside allowed base directories: {[str(b) for b in allowed_bases]}"
+            )
+
+        if seccomp_profile_name:
+            logger.debug("Volume mount %r passed validation (seccomp=%s)", volume_spec, seccomp_profile_name)
+        return volume_spec
 
     # ── Persistence ────────────────────────────────────────────────
 
