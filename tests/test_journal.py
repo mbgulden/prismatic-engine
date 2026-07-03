@@ -99,3 +99,25 @@ def test_second_witness_requires_log_and_artifacts(tmp_path: Path) -> None:
     assert passed["passed"] is True
     assert missing["passed"] is False
     assert str(tmp_path / "missing.md") in missing["artifacts"]["missing"]
+
+
+def test_second_witness_defaults_to_result_md(tmp_path: Path) -> None:
+    log = tmp_path / "agy.log"
+    log.write_text("completed cleanly\n" * 20)
+
+    # Move to tmp_path to avoid polluting current dir and ensure RESULT.md is relative to it
+    import os
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        # Should fail when RESULT.md is missing
+        res = validate_agent_output(log_path=str(log))
+        assert res["passed"] is False
+        assert "RESULT.md" in res["artifacts"]["missing"]
+
+        # Should pass when RESULT.md exists
+        Path("RESULT.md").write_text("done")
+        res = validate_agent_output(log_path=str(log))
+        assert res["passed"] is True
+    finally:
+        os.chdir(old_cwd)

@@ -657,7 +657,11 @@ def validate_agent_output(issue_identifier: str | None = None, log_path: str | N
         for pattern, label in ERROR_PATTERNS:
             if re.search(pattern, transcript, re.IGNORECASE):
                 error_markers.append(label)
-    artifact_result = validate_artifacts(sorted(set(artifacts))) if artifacts else {"passed": True, "found": [], "missing": [], "empty": []}
+    # Default to RESULT.md if no artifacts are explicitly specified
+    if not artifacts:
+        artifacts = ["RESULT.md"]
+
+    artifact_result = validate_artifacts(sorted(set(artifacts)))
     passed = log_exists and transcript_size >= 100 and not error_markers and artifact_result["passed"]
     return {
         "issue_identifier": issue_identifier,

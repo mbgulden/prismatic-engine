@@ -107,8 +107,7 @@ fi
 
 # 5. Write recovery heartbeat
 PID=$(systemctl --user show "$SERVICE_NAME" -p MainPID --value 2>/dev/null || echo "unknown")
-TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-echo "$PID $TIMESTAMP" > "${PRISMATIC_HOME}/.prismatic/run/heartbeat.pid"
+echo "$PID" > "${PRISMATIC_HOME}/.prismatic/run/heartbeat.pid"
 log "  Heartbeat written: PID=$PID"
 
 log "══════════════════════════════════════════════"
