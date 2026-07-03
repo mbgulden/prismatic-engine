@@ -498,7 +498,7 @@ AGENT_CONFIG: dict[str, dict[str, Any]] = {
     },
     "jules": {
         "executable": JULES_PATH,
-        "mode": "launch",
+        "mode": os.environ.get("JULES_EXECUTION_MODE", "launch"),
         "timeout": 600,
         "next_label": "agent::codex",
         "description": "Jules CLI — testing & QA",
@@ -744,6 +744,51 @@ def launch_codex(issue_id: str, task: str = "", **kwargs: Any) -> subprocess.Pop
         return proc
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"[dispatcher] Failed to launch Codex: {exc}")
+        return None
+
+
+def launch_sandbox(issue_id: str, agent_name: str, **kwargs: Any) -> subprocess.Popen | None:
+    """Launch an agent task using the SandboxAgent (gVisor/Docker).
+
+    Args:
+        issue_id: Linear issue UUID or identifier.
+        agent_name: Name of the agent (agy, jules, etc.)
+
+    Returns:
+        subprocess.Popen handle if the sandbox execution started successfully.
+    """
+    from .agents import create_agent
+    from .providers.tasks.base import Issue
+
+    # Retrieve agent specific config
+    agent_config = AGENT_CONFIG.get(agent_name, {}).copy()
+
+    # Prepare sandbox-specific config
+    sandbox_config = {
+        "executable": "sandbox",
+        "mode": "sandbox",
+        "image": agent_config.get("sandbox_image", "prismatic-sandbox:latest"),
+        "use_gvisor": os.environ.get("PRISMATIC_USE_GVISOR", "true").lower() == "true",
+        # Pass the original agent's executable/path as the command to run in sandbox
+        "cmd": [agent_config.get("executable", agent_name), "--issue", issue_id],
+    }
+
+    if "task" in kwargs:
+        sandbox_config["cmd"].extend(["--task", kwargs["task"]])
+
+    # Create a stub Issue object for the agent
+    issue = Issue(
+        id=issue_id,
+        identifier=issue_id,
+        title=kwargs.get("title", f"Task for {agent_name}"),
+    )
+
+    try:
+        agent = create_agent(sandbox_config)
+        # SandboxAgent.execute() now returns a subprocess.Popen handle
+        return agent.execute(issue)
+    except Exception as exc:
+        print(f"[dispatcher] Failed to launch sandbox for {agent_name}: {exc}")
         return None
 
 
@@ -1474,6 +1519,7 @@ def detect_origin_completions(
     Returns:
         Number of origin signals sent.
     """
+    signalled = 0
     try:
         os.environ["PRISMATIC_CURRENT_AGENT_NAME"] = "prismatic.dispatcher"
         # 1. Snapshot: record current labels for issues the dispatcher
@@ -1510,6 +1556,7 @@ def detect_origin_completions(
             return 0
 
         # 3. Detect origin→reviewer→fred transitions
+        signalled = 0
         for issue in fred_issues:
             issue_id = issue["id"]
             identifier = issue.get("identifier", issue_id)
@@ -1875,8 +1922,16 @@ def dispatch_once(
                 if throttle_dispatch:
                     print(f"[dispatcher] ⚠️ Throttling dispatch of {agent_name} (5s delay) due to high credit burn velocity.")
                     time.sleep(5)
-                result = launcher(issue_id, title=issue.get("title", ""))
+
+                # ── Sandbox Mode Gate ──────────────────────────────────
+                if config.get("mode") == "sandbox":
+                    result = launch_sandbox(issue_id, agent_name, title=issue.get("title", ""))
+                else:
+                    result = launcher(issue_id, title=issue.get("title", ""))
+
                 if result:
+                    # Capture PID for telemetry if it's a subprocess
+                    pid = getattr(result, "pid", None) if not isinstance(result, bool) else None
                     dedup.mark_processed(issue_id, label, cycle_id)
                     counts["dispatched"] += 1
                     agent_name_pretty = agent_name.capitalize()
@@ -1898,7 +1953,7 @@ def dispatch_once(
                     )
                     # ── End telemetry ──────────────────────────────────
                     # Emit agent_launched event to IPC bridge
-                    _emit_agent_event("agent_launched", agent_name, identifier, cycle_id=cycle_id)
+                    _emit_agent_event("agent_launched", agent_name, identifier, cycle_id=cycle_id, pid=pid)
                     # Post a comment tracking the dispatch
                     try:
                         add_comment(
