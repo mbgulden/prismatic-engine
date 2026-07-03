@@ -128,7 +128,13 @@ def tag_event(event: BusEvent) -> TagResult:
 
     # Agent failed = real problem → escalate
     if "agent_failed" in topic or "agent.failed" in topic:
-        return TagResult("escalate", reason="agent reported failure")
+        lane_hint = None
+        if src.startswith("dispatcher:"):
+            lane_hint = src.split(":", 1)[1]
+        elif "lane" in payload:
+            lane_hint = payload["lane"]
+        return TagResult("escalate", lane_hint=lane_hint,
+                         reason="agent reported failure")
 
     # Budget exceeded = hard cap hit → escalate
     if "budget" in topic and "exceeded" in topic:
@@ -150,6 +156,14 @@ def tag_event(event: BusEvent) -> TagResult:
             lane_hint = src.split(":", 1)[1]
         return TagResult("auto-pick", lane_hint=lane_hint,
                          reason="dispatcher launched agent")
+
+    # Webhook source (generic)
+    if src == "webhook" or "webhook" in topic or "webhook" in src:
+        if "auth_failed" in topic:
+            return TagResult("escalate", reason="webhook hmac auth failure")
+        if "ping" in topic:
+            return TagResult("drop", reason="webhook ping")
+        # Don't return auto-pick yet if it's GitHub or Linear, let them handle it
 
     # Linear events (source="linear" or topic implies it)
     if src == "linear" or (not src and "issue" in topic):
@@ -186,6 +200,12 @@ def tag_event(event: BusEvent) -> TagResult:
     if src == "github":
         if topic == "ping" or payload.get("zen"):
             return TagResult("drop", reason="GitHub ping/test event")
+        # PR opened/reopened/synchronized → delegate to jules for review
+        if topic == "pull_request":
+            action = payload.get("action")
+            if action in ("opened", "reopened", "synchronize"):
+                return TagResult("delegate", lane_hint="jules",
+                                 reason=f"GitHub PR {action}")
         return TagResult("auto-pick", reason="github informational event")
 
     # Dispatcher / supervisor events (compound source like "dispatcher:fred")
@@ -201,8 +221,8 @@ def tag_event(event: BusEvent) -> TagResult:
             return TagResult("escalate", reason="watchdog timeout")
         return TagResult("auto-pick", reason="watchdog status event")
 
-    # Webhook source (generic)
-    if src == "webhook":
+    # Final fallback for generic webhooks that weren't Linear/GitHub
+    if src == "webhook" or "webhook" in topic or "webhook" in src:
         return TagResult("auto-pick", reason="generic webhook delivery")
 
     # Default: unknown event type, escalate so it gets human attention
@@ -223,7 +243,9 @@ def init_curator_db() -> None:
                 tag TEXT NOT NULL CHECK(tag IN ('auto-pick','delegate','escalate','drop')),
                 lane_hint TEXT,
                 tagged_at REAL NOT NULL,
-                reason TEXT
+                reason TEXT,
+                dispatched INTEGER DEFAULT 0,
+                dispatched_at REAL
             );
             CREATE TABLE IF NOT EXISTS lane_stats (
                 lane TEXT PRIMARY KEY,
@@ -250,6 +272,15 @@ def init_curator_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_tagged_tag
                 ON tagged_events(tag);
         """)
+        # Migration for dispatched columns
+        try:
+            conn.execute("ALTER TABLE tagged_events ADD COLUMN dispatched INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass
+        try:
+            conn.execute("ALTER TABLE tagged_events ADD COLUMN dispatched_at REAL")
+        except sqlite3.OperationalError:
+            pass
         conn.commit()
     finally:
         conn.close()
@@ -469,40 +500,8 @@ class CuratorLane:
         self._pool = get_pool()
         init_curator_db()
 
-    def _maybe_dispatch(self, event: BusEvent, tag_result: TagResult) -> None:
-        """If a tagged event is 'delegate', try to spawn a real agent.
-
-        This is Story 1.5: Sonnet/Opus integration into the curator.
-        """
-        if tag_result.tag != "delegate":
-            return  # only delegates trigger dispatch
-        if not self.enable_dispatch:
-            return  # curator in classify-only mode
-
-        # Extract issue_id from the payload
-        issue_id = None
-        payload = event.payload or {}
-        if isinstance(payload.get("data"), dict):
-            issue_id = payload["data"].get("identifier")
-        if not issue_id:
-            issue_id = event.topic  # fallback to topic name
-
-        decision = decide_dispatch(tag_result.lane_hint, budget_tracker=self._budget)
-        if not decision.should_dispatch or not decision.lane:
-            # Log but don't take action (budget exceeded or unknown lane)
-            print(f"[curator] dispatch skipped for {issue_id}: {decision.reason}")
-            return
-
-        cmd = build_supervisor_cmd(issue_id, decision.lane, decision.model)
-        result = dispatch_to_supervisor_bounded(issue_id, cmd)
-        if result["status"] == "spawned":
-            self._budget.charge(decision.lane)
-            print(f"[curator] dispatched {issue_id} -> {decision.lane}/{decision.model} PID={result['pid']}")
-        else:
-            print(f"[curator] dispatch queued for {issue_id} (reason={result.get('reason', 'unknown')})")
-
-    def tick(self) -> int:
-        """Process one batch of bus events. Returns count tagged."""
+    def tick_tagging(self) -> int:
+        """Stream 1: Process bus events for tagging. Returns count tagged."""
         events = fetch_bus_events_after(self._last_rowid)
         tagged = 0
         for ev in events:
@@ -514,20 +513,110 @@ class CuratorLane:
                 update_lane_stats(result.lane_hint, result.tag)
             self._last_rowid = ev.rowid
             tagged += 1
-            # Story 1.5: dispatch delegate events
-            self._maybe_dispatch(ev, result)
         return tagged
 
+    def tick_dispatch(self) -> int:
+        """Stream 2: Process pending 'delegate' tags. Returns count dispatched."""
+        pending = self._fetch_pending_dispatches()
+        dispatched = 0
+        for rowid, event_rowid, lane_hint, topic, payload_json in pending:
+            try:
+                payload = json.loads(payload_json)
+            except Exception:
+                payload = {}
+
+            # Extract issue_id from the payload
+            issue_id = None
+            if isinstance(payload.get("data"), dict):
+                issue_id = payload["data"].get("identifier")
+            if not issue_id:
+                issue_id = topic  # fallback to topic name
+
+            decision = decide_dispatch(lane_hint, budget_tracker=self._budget)
+            if not decision.should_dispatch or not decision.lane:
+                # Log but don't take action (budget exceeded or unknown lane)
+                # We don't mark as dispatched to allow retry after budget reset.
+                print(f"[curator] dispatch pending for {issue_id}: {decision.reason}")
+                continue
+
+            cmd = build_supervisor_cmd(issue_id, decision.lane, decision.model)
+            result = dispatch_to_supervisor_bounded(issue_id, cmd)
+            if result["status"] in ("spawned", "queued"):
+                if result["status"] == "spawned":
+                    self._budget.charge(decision.lane)
+                self._mark_dispatched(rowid)
+                dispatched += 1
+                status_msg = f"PID={result.get('pid')}" if result.get("pid") else "queued"
+                print(f"[curator] dispatched {issue_id} -> {decision.lane}/{decision.model} ({status_msg})")
+            else:
+                print(f"[curator] dispatch failed for {issue_id}: {result.get('reason', 'unknown')}")
+
+        return dispatched
+
+    def _fetch_pending_dispatches(self, limit: int = 50) -> list:
+        if not BUS_DB.exists():
+            return []
+        conn = sqlite3.connect(CURATOR_DB, timeout=5)
+        try:
+            conn.execute(f"ATTACH DATABASE '{BUS_DB}' AS bus")
+            cur = conn.execute("""
+                SELECT t.rowid, t.event_rowid, t.lane_hint, b.topic, b.payload_json
+                FROM tagged_events t
+                JOIN bus.events b ON t.event_rowid = b.rowid
+                WHERE t.tag = 'delegate' AND t.dispatched = 0
+                LIMIT ?
+            """, (limit,))
+            return cur.fetchall()
+        except Exception as e:
+            print(f"[curator] fetch_pending_dispatches error: {e}")
+            return []
+        finally:
+            conn.close()
+
+    def _mark_dispatched(self, rowid: int) -> None:
+        conn = sqlite3.connect(CURATOR_DB, timeout=5)
+        try:
+            conn.execute(
+                "UPDATE tagged_events SET dispatched = 1, dispatched_at = ? WHERE rowid = ?",
+                (time.time(), rowid)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
     async def run(self) -> None:
-        """Main loop. Polls bus, tags events, persists."""
-        print(f"[curator] starting, last_rowid={self._last_rowid}")
+        """Main loop. Runs tagging and dispatch streams concurrently."""
+        print(f"[curator] starting streams, last_rowid={self._last_rowid}")
+        await asyncio.gather(
+            self._tagging_loop(),
+            self._dispatch_loop(),
+        )
+
+    async def _tagging_loop(self) -> None:
+        """Stream 1: Consume bus events and tag them."""
+        print("[curator] stream 1 (tagging) active")
         while True:
             try:
-                n = self.tick()
+                n = self.tick_tagging()
                 if n:
                     print(f"[curator] tagged {n} events, cursor={self._last_rowid}")
             except Exception as e:
-                print(f"[curator] error: {e}")
+                print(f"[curator] tagging error: {e}")
+            await asyncio.sleep(self.poll_interval)
+
+    async def _dispatch_loop(self) -> None:
+        """Stream 2: Poll tagged_events for 'delegate' tasks and dispatch them."""
+        if not self.enable_dispatch:
+            print("[curator] stream 2 (dispatch) disabled")
+            return
+        print("[curator] stream 2 (dispatch) active")
+        while True:
+            try:
+                n = self.tick_dispatch()
+                if n:
+                    print(f"[curator] dispatched {n} delegate tasks")
+            except Exception as e:
+                print(f"[curator] dispatch error: {e}")
             await asyncio.sleep(self.poll_interval)
 
     def emit_daily_digest(self, target_date: str | None = None) -> Path:
@@ -560,8 +649,9 @@ def main():
     lane = CuratorLane(poll_interval=args.poll_interval)
 
     if args.once:
-        n = lane.tick()
-        print(f"[curator] tagged {n} events, cursor={lane._last_rowid}")
+        n_tags = lane.tick_tagging()
+        n_dispatch = lane.tick_dispatch()
+        print(f"[curator] tagged {n_tags} events, dispatched {n_dispatch} tasks, cursor={lane._last_rowid}")
         return
 
     # Continuous mode
