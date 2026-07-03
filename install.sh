@@ -97,6 +97,51 @@ for cfg in agents.yaml workspaces.yaml router.yaml; do
     fi
 done
 
+# ── Setup systemd service (Linux only) ──────────────────────
+if [ "$PLATFORM" = "linux" ] && command -v systemctl &> /dev/null; then
+    echo ""
+    read -p "Do you want to install the systemd service? (y/N): " install_systemd
+    if [[ "$install_systemd" =~ ^[Yy]$ ]]; then
+        info "Setting up systemd service..."
+        SERVICE_FILE="prismatic-engine@.service"
+        TEMPLATE="$SCRIPT_DIR/templates/systemd/$SERVICE_FILE"
+
+        if [ -f "$TEMPLATE" ]; then
+            # We use sudo for systemd operations
+            if [ "$EUID" -ne 0 ]; then
+                SUDO="sudo"
+            else
+                SUDO=""
+            fi
+
+            read -p "Enter your Linear Team ID [GRO]: " team_id
+            team_id=${team_id:-GRO}
+
+            # Create a personalized service file from template
+            CURRENT_USER=$(whoami)
+            CURRENT_GROUP=$(id -gn)
+            CURRENT_HOME=$HOME
+
+            TARGET_SERVICE="/etc/systemd/system/$SERVICE_FILE"
+            $SUDO cp "$TEMPLATE" "$TARGET_SERVICE"
+            $SUDO sed -i "s/User=%u/User=$CURRENT_USER/" "$TARGET_SERVICE"
+            $SUDO sed -i "s/Group=%g/Group=$CURRENT_GROUP/" "$TARGET_SERVICE"
+            $SUDO sed -i "s|Environment=PRISMATIC_HOME=%h|Environment=PRISMATIC_HOME=$CURRENT_HOME|" "$TARGET_SERVICE"
+            $SUDO sed -i "s/Environment=LINEAR_TEAM_ID=GRO/Environment=LINEAR_TEAM_ID=$team_id/" "$TARGET_SERVICE"
+
+            # Detect prismatic-engine location
+            PRISMATIC_BIN=$(which prismatic-engine || echo "/usr/local/bin/prismatic-engine")
+            $SUDO sed -i "s|ExecStart=/usr/local/bin/prismatic-engine|ExecStart=$PRISMATIC_BIN|" "$TARGET_SERVICE"
+
+            $SUDO systemctl daemon-reload
+            ok "Systemd service installed to $TARGET_SERVICE"
+            info "To start it, run: sudo systemctl enable --now prismatic-engine@YOUR_LINEAR_KEY"
+        else
+            warn "Systemd template not found at $TEMPLATE — skipping"
+        fi
+    fi
+fi
+
 # ── Print next steps ────────────────────────────────────────
 echo ""
 echo "═══════════════════════════════════════════════════════════"

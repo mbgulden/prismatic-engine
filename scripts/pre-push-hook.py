@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 # ── Constants ──────────────────────────────────────────
-PRISMATIC_HOME = os.environ.get('PRISMATIC_HOME', '/home/ubuntu')
+PRISMATIC_HOME = os.path.expandvars(os.environ.get('PRISMATIC_HOME', os.path.expanduser('~')))
 LOCK_FILE = Path(PRISMATIC_HOME) / '.antigravity' / 'swarm_locks.json'
 STALE_TTL_MS = 300_000  # 5 minutes
 GOVERNOR_AGENT = "fred"
@@ -84,12 +84,18 @@ def _read_yaml_config(repo_root: Path) -> dict[str, Any] | None:
         return None
 
 
-def _read_locks() -> list[dict[str, Any]]:
+def _read_locks(config: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Read the lock registry."""
-    if not LOCK_FILE.exists():
+    lock_file = LOCK_FILE
+    if config:
+        cfg_file = config.get("locks", {}).get("file")
+        if cfg_file:
+            lock_file = Path(os.path.expandvars(cfg_file))
+
+    if not lock_file.exists():
         return []
     try:
-        with open(LOCK_FILE) as f:
+        with open(lock_file) as f:
             data = json.load(f)
             if isinstance(data, list):
                 return data
@@ -250,7 +256,7 @@ def main() -> int:
         return 1
 
     # Rule 3: Lock checking
-    locks = _read_locks()
+    locks = _read_locks(config)
     blocked = _check_file_locks(all_files, agent_id, locks, repo_root)
     if blocked:
         print(f"❌ [Prismatic Engine] Locked files detected:")
