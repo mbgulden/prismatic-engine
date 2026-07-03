@@ -59,6 +59,21 @@ _webhook_counters: dict[str, int] = {
     "linear_published": 0,
 }
 
+
+async def _publish_webhook_auth_failed(source: str) -> None:
+    """Publish a redacted webhook auth-failure event for curator escalation."""
+    try:
+        from prismatic.gateway.event_bus import get_event_bus
+        bus = get_event_bus()
+        if bus is not None:
+            await bus.publish(
+                event_type="webhook.auth_failed",
+                source=source,
+                payload={"status": "auth-failed"},
+            )
+    except Exception as exc:
+        logger.warning("webhook auth-failed bus publish failed: %s", exc)
+
 # ── FastAPI Application ──────────────────────────────────────────────
 
 app = FastAPI(
@@ -596,6 +611,7 @@ async def github_webhook(request: Request) -> dict[str, Any]:
                 break
         if expected is None:
             _webhook_counters["github_auth_failed"] += 1
+            await _publish_webhook_auth_failed("github")
             from fastapi.responses import JSONResponse
             return JSONResponse({"status": "auth-failed"}, status_code=401)
     try:
@@ -607,7 +623,7 @@ async def github_webhook(request: Request) -> dict[str, Any]:
         bus = get_event_bus()
         if bus is not None:
             await bus.publish(
-                event_type=event.get("action", "unknown"),
+                event_type=request.headers.get("X-GitHub-Event") or event.get("action", "unknown"),
                 source="github",
                 payload=event,
             )
@@ -639,6 +655,7 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
                     break
             if expected is None:
                 _webhook_counters["linear_auth_failed"] += 1
+                await _publish_webhook_auth_failed("linear")
                 from fastapi.responses import JSONResponse
                 return JSONResponse({"status": "auth-failed"}, status_code=401)
     try:
