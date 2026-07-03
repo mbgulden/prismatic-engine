@@ -75,10 +75,23 @@ def test_github_ping_is_drop():
     assert result.tag == "drop"
 
 
-def test_github_pr_opened_is_auto_pick():
+def test_github_pr_opened_is_delegate():
     ev = make_event("github", "pull_request", {"action": "opened"})
     result = tag_event(ev)
-    assert result.tag == "auto-pick"
+    assert result.tag == "delegate"
+    assert result.lane_hint == "jules"
+
+
+def test_webhook_auth_failed_is_escalate():
+    ev = make_event("linear", "webhook.auth_failed", {})
+    result = tag_event(ev)
+    assert result.tag == "escalate"
+
+
+def test_webhook_ping_is_drop():
+    ev = make_event("github", "webhook.ping", {})
+    result = tag_event(ev)
+    assert result.tag == "drop"
 
 
 def test_dispatcher_agent_launched_is_auto_pick():
@@ -138,3 +151,31 @@ def test_nested_payload_extraction():
                                  "data": {"labels": [{"name": "dispatch:ready"}]}}})
     result = tag_event(ev)
     assert result.tag == "delegate"
+
+
+def test_schema_migration_and_dispatched_state():
+    """Verify CURATOR_DB schema has dispatched columns and they work."""
+    with tempfile.NamedTemporaryFile() as tmp:
+        db_path = Path(tmp.name)
+        # Override global CURATOR_DB for this test
+        import prismatic.curator.lane as lane
+        original_db = lane.CURATOR_DB
+        lane.CURATOR_DB = db_path
+        try:
+            lane.init_curator_db()
+            conn = sqlite3.connect(db_path)
+            # Check columns
+            cursor = conn.execute("PRAGMA table_info(tagged_events)")
+            cols = {row[1] for row in cursor.fetchall()}
+            assert "dispatched" in cols
+            assert "dispatched_at" in cols
+
+            # Check mark_dispatched
+            lane.persist_tag(1, "delegate", "triage", "test")
+            curator = lane.CuratorLane(enable_dispatch=False)
+            curator._mark_dispatched(1)
+
+            cursor = conn.execute("SELECT dispatched FROM tagged_events WHERE rowid = 1")
+            assert cursor.fetchone()[0] == 1
+        finally:
+            lane.CURATOR_DB = original_db

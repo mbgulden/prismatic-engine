@@ -455,6 +455,16 @@ async def github_webhook(request: Request) -> dict[str, Any]:
                 break
         if expected is None:
             _webhook_counters["github_auth_failed"] += 1
+            try:
+                from prismatic.gateway.event_bus import get_event_bus
+                bus = get_event_bus()
+                await bus.publish(
+                    event_type="webhook.auth_failed",
+                    source="github",
+                    payload={"status": "auth-failed", "signature": signature},
+                )
+            except Exception:
+                pass
             from fastapi.responses import JSONResponse
             return JSONResponse({"status": "auth-failed"}, status_code=401)
     try:
@@ -498,6 +508,16 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
                     break
             if expected is None:
                 _webhook_counters["linear_auth_failed"] += 1
+                try:
+                    from prismatic.gateway.event_bus import get_event_bus
+                    bus = get_event_bus()
+                    await bus.publish(
+                        event_type="webhook.auth_failed",
+                        source="linear",
+                        payload={"status": "auth-failed", "signature": signature},
+                    )
+                except Exception:
+                    pass
                 from fastapi.responses import JSONResponse
                 return JSONResponse({"status": "auth-failed"}, status_code=401)
     try:
