@@ -1383,11 +1383,6 @@ def dispatch_once(
 
     # 2. Dispatch to each agent
     for agent_name, config in AGENT_CONFIG.items():
-        if config.get("mode") == "signal":
-            # Signal-based agents (fred, kai) — only dispatch if
-            # they have pending work nudges
-            continue  # Signal providers handle their own dispatch
-
         label = f"agent::{agent_name}"
         try:
             issues = get_issues_with_label(label)
