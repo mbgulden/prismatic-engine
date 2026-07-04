@@ -229,6 +229,16 @@ async def get_lock(file_path: str) -> Response:
     )
 
 
+# ── Plugin Health API ───────────────────────────────────────────────
+
+
+@app.get("/plugins/{plugin_name}/health")
+async def plugin_health(plugin_name: str) -> dict[str, Any]:
+    """Return health status for a specific plugin sandbox."""
+    from prismatic.plugin_health import get_plugin_health
+    return get_plugin_health(plugin_name)
+
+
 # ── Agent Run Records API ────────────────────────────────────────────
 
 
