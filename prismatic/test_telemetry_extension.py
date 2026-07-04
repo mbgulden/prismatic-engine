@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -408,6 +409,67 @@ class TestRecordMethodsExist:
 class TestCleanupExpired:
     """Gap 12 tables appear in cleanup_expired's retention map."""
 
+    def _create_growth_tables(self, db_path: str, *, old: bool = True) -> None:
+        detected_at = (
+            datetime.now(timezone.utc) - timedelta(days=45 if old else 1)
+        ).isoformat()
+        seen_at = (
+            datetime.now(timezone.utc) - timedelta(days=21 if old else 1)
+        ).isoformat()
+        processed_at = (
+            datetime.now(timezone.utc) - timedelta(days=21 if old else 1)
+        ).isoformat()
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS telemetry_media_artifacts (
+                    filepath TEXT PRIMARY KEY,
+                    file_hash TEXT,
+                    media_type TEXT NOT NULL,
+                    engine TEXT NOT NULL,
+                    duration REAL DEFAULT 0.0,
+                    credits_spent INTEGER DEFAULT 0,
+                    detected_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS label_snapshots (
+                    issue_id TEXT NOT NULL,
+                    label_name TEXT NOT NULL,
+                    cycle_id TEXT NOT NULL,
+                    seen_at TEXT NOT NULL,
+                    PRIMARY KEY (issue_id, label_name, cycle_id)
+                );
+                CREATE TABLE IF NOT EXISTS dedup_log (
+                    issue_id TEXT NOT NULL,
+                    agent_label TEXT NOT NULL,
+                    cycle_id TEXT NOT NULL,
+                    processed_at TEXT NOT NULL,
+                    PRIMARY KEY (issue_id, agent_label, cycle_id)
+                );
+                """
+            )
+            conn.execute(
+                """INSERT OR REPLACE INTO telemetry_media_artifacts
+                   (filepath, file_hash, media_type, engine, detected_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                ("/tmp/old.png", "hash", "image", "test", detected_at),
+            )
+            conn.execute(
+                """INSERT OR REPLACE INTO label_snapshots
+                   (issue_id, label_name, cycle_id, seen_at)
+                   VALUES (?, ?, ?, ?)""",
+                ("GRO-1", "agent:ned", "cycle-1", seen_at),
+            )
+            conn.execute(
+                """INSERT OR REPLACE INTO dedup_log
+                   (issue_id, agent_label, cycle_id, processed_at)
+                   VALUES (?, ?, ?, ?)""",
+                ("GRO-1", "agent:ned", "cycle-1", processed_at),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
     def test_cleanup_expired_returns_gap12_tables(self, collector):
         """cleanup_expired(dry_run=True) returns all 4 new tables in the result dict."""
         c, _ = collector
@@ -416,6 +478,54 @@ class TestCleanupExpired:
         assert "telemetry_plugin_registered" in result
         assert "telemetry_hook_fired" in result
         assert "telemetry_pipeline_action" in result
+
+    def test_cleanup_expired_includes_high_growth_tables(self, collector):
+        """Dry-run reports the known high-growth event_router.db tables."""
+        c, db_path = collector
+        self._create_growth_tables(db_path)
+
+        result = c.cleanup_expired(dry_run=True)
+
+        assert result["telemetry_media_artifacts"] == 1
+        assert result["label_snapshots"] == 1
+        assert result["dedup_log"] == 1
+
+    def test_cleanup_expired_deletes_then_vacuums_outside_transaction(self, collector):
+        """Real cleanup deletes old rows and does not fail on VACUUM ordering."""
+        c, db_path = collector
+        self._create_growth_tables(db_path)
+
+        result = c.cleanup_expired(dry_run=False)
+
+        assert result["telemetry_media_artifacts"] == 1
+        assert result["label_snapshots"] == 1
+        assert result["dedup_log"] == 1
+        conn = sqlite3.connect(db_path)
+        try:
+            assert (
+                conn.execute(
+                    "SELECT COUNT(*) FROM telemetry_media_artifacts"
+                ).fetchone()[0]
+                == 0
+            )
+            assert (
+                conn.execute("SELECT COUNT(*) FROM label_snapshots").fetchone()[0] == 0
+            )
+            assert conn.execute("SELECT COUNT(*) FROM dedup_log").fetchone()[0] == 0
+        finally:
+            conn.close()
+
+    def test_cleanup_expired_skips_tables_missing_from_divergent_state_root(
+        self, collector
+    ):
+        """Divergent state-root schemas do not abort cleanup for existing tables."""
+        c, db_path = collector
+
+        result = c.cleanup_expired(dry_run=True)
+
+        assert result["telemetry_media_artifacts"] == 0
+        assert result["label_snapshots"] == 0
+        assert result["dedup_log"] == 0
 
 
 # ── Deferred tests (Gap 11) ─────────────────────────────────────────────────
