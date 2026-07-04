@@ -25,6 +25,10 @@ import textwrap
 import traceback
 from pathlib import Path
 
+# This is an executable smoke-test script, not a pytest module.
+# Prevent pytest from collecting the decorator helper named `test` below.
+__test__ = False
+
 # Ensure `prismatic` is importable
 PRISMATIC_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PRISMATIC_ROOT))

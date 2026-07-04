@@ -17,14 +17,17 @@ from typing import Any
 
 from .base import BaseAgent, AgentConfig, AGENT_TYPES
 from .hermes import HermesAgent
+from .sandbox import SandboxAgent
 
 # Register built-in agent types
 AGENT_TYPES["hermes"] = HermesAgent
+AGENT_TYPES["sandbox"] = SandboxAgent
 
 __all__ = [
     "BaseAgent",
     "AgentConfig",
     "HermesAgent",
+    "SandboxAgent",
     "AGENT_TYPES",
     "create_agent",
 ]

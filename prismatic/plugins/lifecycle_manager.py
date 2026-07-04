@@ -285,7 +285,7 @@ class PluginLifecycleSandboxManager:
 
             result = self._pod_manager.start_pod(name, config)
             record.container_id = result.get("container_id", "")
-            record.runtime = result.get("runtime", self._pod_manager._runtime)
+            record.runtime = result.get("runtime", self._pod_manager.runtime)
             record.started_at = time.time()
 
             self._transition(name, PluginState.RUNNING)

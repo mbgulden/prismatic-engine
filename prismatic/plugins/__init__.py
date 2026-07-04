@@ -1,16 +1,13 @@
-"""
-prismatic/plugins/__init__.py — Plugin runtime package.
-
-Provides the sandbox pod management layer and lifecycle state machine
-for running plugins in isolated environments (Docker or k3s).
-
-Contents
---------
-* **sandbox_pod_manager.py** — SandboxPodManager: launch/stop/health for plugin pods
-* **lifecycle_manager.py** — PluginLifecycleSandboxManager: state machine + lifecycle commands
-"""
+"""Plugin runtime package exports."""
 
 from __future__ import annotations
+
+from .lifecycle_manager import (
+    PluginLifecycleSandboxManager,
+    PluginState,
+    StateTransitionError,
+)
+from .sandbox_pod_manager import PodManagerError, PodState, SandboxPodManager
 
 __all__ = [
     "PodState",
@@ -20,14 +17,3 @@ __all__ = [
     "StateTransitionError",
     "PluginLifecycleSandboxManager",
 ]
-
-from .sandbox_pod_manager import (
-    PodState,
-    PodManagerError,
-    SandboxPodManager,
-)
-from .lifecycle_manager import (
-    PluginState,
-    StateTransitionError,
-    PluginLifecycleSandboxManager,
-)
