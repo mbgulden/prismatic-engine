@@ -466,6 +466,13 @@ def read_text(path: Path, limit: int = 8000) -> str:
 
 
 def collect_candidates(config: JournalConfig, since: float | None = None) -> list[Path]:
+    """Collect recently changed journal source files.
+
+    Cron output files are written and pruned concurrently by Hermes. Cache the
+    mtime observed during traversal instead of re-statting during sort so a file
+    disappearing between discovery and ordering cannot take down the hourly
+    snapshot job.
+    """
     since = (
         since
         or dt.datetime.now(dt.timezone.utc)
@@ -478,27 +485,31 @@ def collect_candidates(config: JournalConfig, since: float | None = None) -> lis
         config.harness_profile / "logs",
         config.research_repo / "docs",
     ]
-    files: list[Path] = []
+    files: dict[Path, float] = {}
     for root in roots:
         if not root.exists():
             continue
         for path in root.rglob("*"):
-            if not path.is_file() or path.suffix.lower() not in {
+            if not path.is_file():
+                continue
+            if path.suffix.lower() not in {
                 ".json",
                 ".jsonl",
                 ".md",
-                ".log",
                 ".txt",
-                ".yaml",
-                ".yml",
+                ".log",
             }:
                 continue
             try:
-                if path.stat().st_mtime >= since:
-                    files.append(path)
+                mtime = path.stat().st_mtime
             except FileNotFoundError:
                 continue
-    return sorted(set(files), key=lambda p: p.stat().st_mtime, reverse=True)
+            if mtime >= since:
+                files[path] = mtime
+    return [
+        path
+        for path, _ in sorted(files.items(), key=lambda item: item[1], reverse=True)
+    ]
 
 
 def git(repo: Path, cmd: list[str]) -> str:
