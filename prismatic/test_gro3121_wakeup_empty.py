@@ -1,5 +1,5 @@
 """
-tests/test_gro3121_wakeup_empty.py — GRO-3121 wakeup-empty metric.
+prismatic/test_gro3121_wakeup_empty.py — GRO-3121 wakeup-empty metric.
 
 Tests for the wakeup-empty telemetry metric:
   - TelemetryCollector.record_wakeup_empty() inserts rows

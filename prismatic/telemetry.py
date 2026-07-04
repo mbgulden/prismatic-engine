@@ -554,26 +554,6 @@ class TelemetryCollector:
                 (cutoff_str,),
             ).fetchone()
 
-            # ── GRO-3121: Wakeup-empty block ──────────────
-            # Total + per-agent counts for cycles where the dispatcher
-            # fired but found nothing to dispatch. Surfaced in the
-            # factory digest so Michael can quantify polling cost.
-            wakeup_empty_total = conn.execute(
-                "SELECT COUNT(*) as cnt FROM telemetry_wakeup_empty "
-                "WHERE created_at >= ?",
-                (cutoff_str,),
-            ).fetchone()
-            wakeup_empty_by_agent = conn.execute(
-                "SELECT agent, COUNT(*) as cnt FROM telemetry_wakeup_empty "
-                "WHERE created_at >= ? GROUP BY agent "
-                "ORDER BY cnt DESC",
-                (cutoff_str,),
-            ).fetchall()
-            wakeup_empty_total_count = (
-                wakeup_empty_total["cnt"] if wakeup_empty_total else 0
-            )
-            wakeup_empty_per_hour = round(wakeup_empty_total_count / max(hours, 1), 3)
-
             return {
                 "loops": [dict(r) for r in loops],
                 "tokens": [dict(r) for r in tokens],
