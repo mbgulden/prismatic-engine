@@ -49,6 +49,16 @@ RETENTION_RESOURCE_SNAPSHOTS = int(
     os.environ.get("PRISMATIC_RETENTION_RESOURCE_SNAPSHOTS", "1")
 )
 RETENTION_CREDIT_LEDGER = int(os.environ.get("PRISMATIC_RETENTION_CREDIT_LEDGER", "90"))
+RETENTION_MEDIA_ARTIFACTS = int(
+    os.environ.get("PRISMATIC_RETENTION_MEDIA_ARTIFACTS", "30")
+)
+RETENTION_LABEL_SNAPSHOTS = int(
+    os.environ.get("PRISMATIC_RETENTION_LABEL_SNAPSHOTS", "14")
+)
+RETENTION_DEDUP_LOG = int(os.environ.get("PRISMATIC_RETENTION_DEDUP_LOG", "14"))
+RETENTION_DURABLE_EVENTS = int(
+    os.environ.get("PRISMATIC_RETENTION_DURABLE_EVENTS", "30")
+)
 
 
 class TelemetryCollector:
@@ -725,11 +735,17 @@ class TelemetryCollector:
           - credit_ledger > RETENTION_CREDIT_LEDGER days (default 90)
           - token_metrics > RETENTION_LOOP_EVENTS days (default 90)
           - validation_events > RETENTION_LOOP_EVENTS days (default 90)
+          - media_artifacts > RETENTION_MEDIA_ARTIFACTS days (default 30)
+          - label_snapshots > RETENTION_LABEL_SNAPSHOTS days (default 14)
+          - dedup_log > RETENTION_DEDUP_LOG days (default 14)
+          - durable_events > RETENTION_DURABLE_EVENTS days (default 30)
         """
         conn = sqlite3.connect(self._db_path)
         deleted: dict[str, int] = {}
 
-        # Map table → (column, retention_days)
+        # Map table → (column, retention_days). Some tables are created by
+        # dispatcher/billing subsystems rather than TelemetryCollector itself;
+        # skip absent tables so cleanup works against both live and test DBs.
         tables = {
             "telemetry_agent_runs": ("start_time", RETENTION_AGENT_RUNS),
             "telemetry_loop_events": ("created_at", RETENTION_LOOP_EVENTS),
@@ -741,10 +757,28 @@ class TelemetryCollector:
             "telemetry_plugin_registered": ("created_at", RETENTION_LOOP_EVENTS),
             "telemetry_hook_fired": ("created_at", RETENTION_LOOP_EVENTS),
             "telemetry_pipeline_action": ("created_at", RETENTION_LOOP_EVENTS),
+            # State/retention tables created outside TelemetryCollector
+            "telemetry_media_artifacts": ("detected_at", RETENTION_MEDIA_ARTIFACTS),
+            "label_snapshots": ("seen_at", RETENTION_LABEL_SNAPSHOTS),
+            "dedup_log": ("processed_at", RETENTION_DEDUP_LOG),
+            "durable_events": ("timestamp", RETENTION_DURABLE_EVENTS),
         }
 
         try:
+            existing_tables = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            }
+            existing_columns = {
+                table: {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+                for table in existing_tables
+            }
             for table, (col, days) in tables.items():
+                if table not in existing_tables or col not in existing_columns[table]:
+                    continue
+
                 cutoff = datetime.now(timezone.utc).timestamp() - (days * 86400)
                 cutoff_str = datetime.fromtimestamp(cutoff, tz=timezone.utc).isoformat()
 
@@ -763,8 +797,8 @@ class TelemetryCollector:
                     deleted[table] = cursor.rowcount
 
             if not dry_run:
-                conn.execute("VACUUM")
                 conn.commit()
+                conn.execute("VACUUM")
         except Exception as exc:
             print(
                 f"prismatic.telemetry: cleanup failed: {exc}",
