@@ -6,6 +6,7 @@ The engine owns deterministic work: inventory, snapshot/event indexing,
 Linear import readiness checks, and artifact validation. Harnesses own cron,
 profile secrets, dashboards, and notification routing.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -16,7 +17,6 @@ import json
 import os
 import re
 import subprocess
-import sys
 import urllib.error
 import urllib.request
 from collections import defaultdict
@@ -37,9 +37,19 @@ DEFAULT_LABELS = {
     "type:docs": "d24a4a88-00d8-40e7-9e58-6fdfc8a1a6b6",
 }
 SECRET_PATTERNS = [
-    (re.compile(r"(?i)\b(api[_-]?key|token|password|secret|oauth code)\b\s*[:=]\s*[^\s'\"]+"), r"\1: [REDACTED]"),
+    (
+        re.compile(
+            r"(?i)\b(api[_-]?key|token|password|secret|oauth code)\b\s*[:=]\s*[^\s'\"]+"
+        ),
+        r"\1: [REDACTED]",
+    ),
     (re.compile(r"(?i)bearer\s+[A-Za-z0-9._~-]+"), "Bearer [REDACTED]"),
-    (re.compile(r"(?i)ghp_[A-Za-z0-9]+|github_pat_[A-Za-z0-9_]+|xox[a-z]-[A-Za-z0-9-]+"), "[REDACTED]"),
+    (
+        re.compile(
+            r"(?i)ghp_[A-Za-z0-9]+|github_pat_[A-Za-z0-9_]+|xox[a-z]-[A-Za-z0-9-]+"
+        ),
+        "[REDACTED]",
+    ),
 ]
 ERROR_PATTERNS = [
     (r"rate.?limit", "Rate limit hit"),
@@ -51,18 +61,25 @@ ERROR_PATTERNS = [
     (r"segmentation fault|SIGSEGV|SIGABRT", "Process crash signal"),
     (r"out of memory|OOM|MemoryError", "Out of memory"),
     (r"connection refused|connection reset|ECONNREFUSED", "Connection failure"),
-    (r"failed to (create|write|open|read|parse|load|import|connect)", "Operation failure"),
+    (
+        r"failed to (create|write|open|read|parse|load|import|connect)",
+        "Operation failure",
+    ),
     (r"panic:|fatal error|unrecoverable", "Fatal error"),
 ]
 FILE_PATH_PATTERN = re.compile(r"(?:^|\s)(/(?:home|tmp|etc|var|opt|usr)/[^\s:,;)\]]+)")
 
 
 def _default_workspace() -> Path:
-    return Path(os.environ.get("PRISMATIC_HOME", str(Path.home() / "work"))).expanduser()
+    return Path(
+        os.environ.get("PRISMATIC_HOME", str(Path.home() / "work"))
+    ).expanduser()
 
 
 def _default_harness_profile() -> Path:
-    explicit = os.environ.get("PRISMATIC_HARNESS_PROFILE") or os.environ.get("HERMES_PROFILE")
+    explicit = os.environ.get("PRISMATIC_HARNESS_PROFILE") or os.environ.get(
+        "HERMES_PROFILE"
+    )
     if explicit:
         return Path(explicit).expanduser()
     workspace = _default_workspace()
@@ -92,13 +109,39 @@ class JournalConfig:
     def from_env(cls) -> "JournalConfig":
         workspace = _default_workspace()
         harness_profile = _default_harness_profile()
-        research_repo = Path(os.environ.get("PRISMATIC_JOURNAL_REPO", str(workspace / "Hermes-Research"))).expanduser()
-        journal_root = Path(os.environ.get("PRISMATIC_JOURNAL_ROOT", str(research_repo / "journals"))).expanduser()
-        report_root = Path(os.environ.get("PRISMATIC_JOURNAL_REPORT_ROOT", str(research_repo / "reports" / "journal-continuity-audit"))).expanduser()
-        doc_root = Path(os.environ.get("PRISMATIC_JOURNAL_DOC_ROOT", str(research_repo / "docs" / "journal-continuity-audit"))).expanduser()
-        sessions_dir = Path(os.environ.get("PRISMATIC_JOURNAL_SESSIONS_DIR", str(harness_profile / "sessions"))).expanduser()
-        cron_jobs = Path(os.environ.get("PRISMATIC_CRON_JOBS", str(harness_profile / "cron" / "jobs.json"))).expanduser()
-        project_registry = Path(os.environ.get("PRISMATIC_PROJECT_REGISTRY", str(workspace / "project-registry.json"))).expanduser()
+        research_repo = Path(
+            os.environ.get("PRISMATIC_JOURNAL_REPO", str(workspace / "Hermes-Research"))
+        ).expanduser()
+        journal_root = Path(
+            os.environ.get("PRISMATIC_JOURNAL_ROOT", str(research_repo / "journals"))
+        ).expanduser()
+        report_root = Path(
+            os.environ.get(
+                "PRISMATIC_JOURNAL_REPORT_ROOT",
+                str(research_repo / "reports" / "journal-continuity-audit"),
+            )
+        ).expanduser()
+        doc_root = Path(
+            os.environ.get(
+                "PRISMATIC_JOURNAL_DOC_ROOT",
+                str(research_repo / "docs" / "journal-continuity-audit"),
+            )
+        ).expanduser()
+        sessions_dir = Path(
+            os.environ.get(
+                "PRISMATIC_JOURNAL_SESSIONS_DIR", str(harness_profile / "sessions")
+            )
+        ).expanduser()
+        cron_jobs = Path(
+            os.environ.get(
+                "PRISMATIC_CRON_JOBS", str(harness_profile / "cron" / "jobs.json")
+            )
+        ).expanduser()
+        project_registry = Path(
+            os.environ.get(
+                "PRISMATIC_PROJECT_REGISTRY", str(workspace / "project-registry.json")
+            )
+        ).expanduser()
         labels = dict(DEFAULT_LABELS)
         if os.environ.get("PRISMATIC_JOURNAL_LABELS_JSON"):
             labels.update(json.loads(os.environ["PRISMATIC_JOURNAL_LABELS_JSON"]))
@@ -113,9 +156,15 @@ class JournalConfig:
             cron_jobs=cron_jobs,
             project_registry=project_registry,
             team_id=os.environ.get("PRISMATIC_LINEAR_TEAM_ID", DEFAULT_TEAM_ID),
-            project_id=os.environ.get("PRISMATIC_JOURNAL_LINEAR_PROJECT_ID", DEFAULT_JCA_PROJECT_ID),
-            state_todo=os.environ.get("PRISMATIC_LINEAR_STATE_TODO", DEFAULT_STATE_TODO),
-            state_in_progress=os.environ.get("PRISMATIC_LINEAR_STATE_IN_PROGRESS", DEFAULT_STATE_IN_PROGRESS),
+            project_id=os.environ.get(
+                "PRISMATIC_JOURNAL_LINEAR_PROJECT_ID", DEFAULT_JCA_PROJECT_ID
+            ),
+            state_todo=os.environ.get(
+                "PRISMATIC_LINEAR_STATE_TODO", DEFAULT_STATE_TODO
+            ),
+            state_in_progress=os.environ.get(
+                "PRISMATIC_LINEAR_STATE_IN_PROGRESS", DEFAULT_STATE_IN_PROGRESS
+            ),
             labels=labels,
         )
 
@@ -128,22 +177,33 @@ def file_range(files: Iterable[str | Path]) -> dict[str, Any]:
     normalized = sorted(str(Path(f)) for f in files)
     if not normalized:
         return {"count": 0, "first": None, "last": None, "files": []}
-    return {"count": len(normalized), "first": normalized[0], "last": normalized[-1], "files": normalized}
+    return {
+        "count": len(normalized),
+        "first": normalized[0],
+        "last": normalized[-1],
+        "files": normalized,
+    }
 
 
-def _scan_top_level_files(root: Path, suffixes: tuple[str, ...]) -> list[dict[str, Any]]:
+def _scan_top_level_files(
+    root: Path, suffixes: tuple[str, ...]
+) -> list[dict[str, Any]]:
     entries = []
     if not root.exists():
         return entries
     for entry in os.scandir(root):
         if entry.is_file() and entry.name.endswith(suffixes):
             st = entry.stat()
-            entries.append({
-                "name": entry.name,
-                "path": entry.path,
-                "mtime": dt.datetime.fromtimestamp(st.st_mtime, dt.timezone.utc).isoformat(),
-                "size": st.st_size,
-            })
+            entries.append(
+                {
+                    "name": entry.name,
+                    "path": entry.path,
+                    "mtime": dt.datetime.fromtimestamp(
+                        st.st_mtime, dt.timezone.utc
+                    ).isoformat(),
+                    "size": st.st_size,
+                }
+            )
     return sorted(entries, key=lambda x: x["mtime"])
 
 
@@ -167,28 +227,40 @@ def cron_inventory(config: JournalConfig) -> dict[str, Any]:
     if not config.cron_jobs.exists():
         return {"exists": False, "jobs": []}
     data = json.loads(config.cron_jobs.read_text())
-    raw_jobs = data if isinstance(data, list) else data.get("jobs", []) if isinstance(data, dict) else []
+    raw_jobs = (
+        data
+        if isinstance(data, list)
+        else data.get("jobs", [])
+        if isinstance(data, dict)
+        else []
+    )
     jobs = []
     keywords = ("journal", "memory", "morning", "golden", "agy", "continuity")
     for job in raw_jobs:
         if not isinstance(job, dict):
             continue
-        blob = " ".join(str(job.get(k) or "") for k in ("name", "script", "prompt")).lower()
+        blob = " ".join(
+            str(job.get(k) or "") for k in ("name", "script", "prompt")
+        ).lower()
         if any(k in blob for k in keywords):
-            jobs.append({
-                "id": job.get("id") or job.get("job_id"),
-                "name": job.get("name"),
-                "enabled": job.get("enabled", not job.get("paused", False)),
-                "schedule": job.get("schedule_display") or job.get("schedule"),
-                "last_run_at": job.get("last_run_at"),
-                "last_status": job.get("last_status"),
-                "deliver": job.get("deliver"),
-                "script": job.get("script"),
-            })
+            jobs.append(
+                {
+                    "id": job.get("id") or job.get("job_id"),
+                    "name": job.get("name"),
+                    "enabled": job.get("enabled", not job.get("paused", False)),
+                    "schedule": job.get("schedule_display") or job.get("schedule"),
+                    "last_run_at": job.get("last_run_at"),
+                    "last_status": job.get("last_status"),
+                    "deliver": job.get("deliver"),
+                    "script": job.get("script"),
+                }
+            )
     return {"exists": True, "count": len(jobs), "jobs": jobs}
 
 
-def build_inventory(period: str, config: JournalConfig | None = None) -> tuple[Path, Path]:
+def build_inventory(
+    period: str, config: JournalConfig | None = None
+) -> tuple[Path, Path]:
     config = config or JournalConfig.from_env()
     out_dir = config.report_root / period
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -196,11 +268,22 @@ def build_inventory(period: str, config: JournalConfig | None = None) -> tuple[P
     inbox = glob.glob(str(config.journal_root / "inbox" / "*.md"))
     weekly = glob.glob(str(config.journal_root / "weekly" / "*.md"))
     events = glob.glob(str(config.journal_root / ".index" / "events-*.json"))
-    latest = [p for p in [config.journal_root / "latest.md", config.journal_root / "latest-inbox.md", config.journal_root / "latest-weekly.md"] if p.exists()]
+    latest = [
+        p
+        for p in [
+            config.journal_root / "latest.md",
+            config.journal_root / "latest-inbox.md",
+            config.journal_root / "latest-weekly.md",
+        ]
+        if p.exists()
+    ]
     inventory = {
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "period": period,
-        "docs": {"plan": str(config.doc_root / "README.md"), "sequence": str(config.doc_root / "workflow-sequence.json")},
+        "docs": {
+            "plan": str(config.doc_root / "README.md"),
+            "sequence": str(config.doc_root / "workflow-sequence.json"),
+        },
         "journal_root": str(config.journal_root),
         "dated_journals": file_range(dated),
         "inbox_journals": file_range(inbox),
@@ -209,8 +292,16 @@ def build_inventory(period: str, config: JournalConfig | None = None) -> tuple[P
         "latest_pointers": file_range(latest),
         "sessions": safe_session_inventory(config),
         "cron": cron_inventory(config),
-        "project_registry": {"path": str(config.project_registry), "exists": config.project_registry.exists()},
-        "linear": {"team": "GRO", "team_id": config.team_id, "project_id": config.project_id, "project_name": "Journal Continuity Audit"},
+        "project_registry": {
+            "path": str(config.project_registry),
+            "exists": config.project_registry.exists(),
+        },
+        "linear": {
+            "team": "GRO",
+            "team_id": config.team_id,
+            "project_id": config.project_id,
+            "project_name": "Journal Continuity Audit",
+        },
         "constraints": [
             "Do not recursively scan /home.",
             "Do not read all sessions at once; sample and search only after the audit identifies a needed date/source.",
@@ -236,7 +327,9 @@ def build_inventory(period: str, config: JournalConfig | None = None) -> tuple[P
         "## Relevant cron jobs",
     ]
     for job in inventory["cron"]["jobs"]:
-        md.append(f"- `{job['id']}` — {job['name']} — enabled={job['enabled']} — schedule={job['schedule']} — last={job['last_status']} — deliver={job['deliver']} — script={job['script']}")
+        md.append(
+            f"- `{job['id']}` — {job['name']} — enabled={job['enabled']} — schedule={job['schedule']} — last={job['last_status']} — deliver={job['deliver']} — script={job['script']}"
+        )
     md += [
         "",
         "## Audit instruction",
@@ -261,7 +354,11 @@ def _load_key(config: JournalConfig) -> str:
     return ""
 
 
-def gql(query: str, variables: dict[str, Any] | None = None, config: JournalConfig | None = None) -> dict[str, Any]:
+def gql(
+    query: str,
+    variables: dict[str, Any] | None = None,
+    config: JournalConfig | None = None,
+) -> dict[str, Any]:
     config = config or JournalConfig.from_env()
     key = _load_key(config)
     if not key:
@@ -289,11 +386,17 @@ def find_issue_by_title(title: str, config: JournalConfig) -> dict[str, Any] | N
         config,
     )
     if data.get("errors"):
-        raise SystemExit("Linear errors: " + json.dumps(data["errors"], indent=2)[:2000])
-    return next((i for i in data["data"]["issues"]["nodes"] if i["title"] == title), None)
+        raise SystemExit(
+            "Linear errors: " + json.dumps(data["errors"], indent=2)[:2000]
+        )
+    return next(
+        (i for i in data["data"]["issues"]["nodes"] if i["title"] == title), None
+    )
 
 
-def create_issue(title: str, desc: str, state_id: str, label_names: list[str], config: JournalConfig) -> tuple[dict[str, Any], bool]:
+def create_issue(
+    title: str, desc: str, state_id: str, label_names: list[str], config: JournalConfig
+) -> tuple[dict[str, Any], bool]:
     existing = find_issue_by_title(title, config)
     if existing:
         return existing, False
@@ -312,7 +415,9 @@ def create_issue(title: str, desc: str, state_id: str, label_names: list[str], c
         config,
     )
     if data.get("errors"):
-        raise SystemExit("Linear errors: " + json.dumps(data["errors"], indent=2)[:2000])
+        raise SystemExit(
+            "Linear errors: " + json.dumps(data["errors"], indent=2)[:2000]
+        )
     return data["data"]["issueCreate"]["issue"], True
 
 
@@ -323,9 +428,28 @@ def create_monthly(period: str, config: JournalConfig | None = None) -> dict[str
     audit_title = f"[MONTHLY JCA {period}] AGY read-only crack audit"
     control_desc = f"Monthly Journal Continuity Audit control for {period}.\n\nInventory created:\n- {json_path}\n- {md_path}\n\nSequence rule: only the active audit task has agent:agy. Downstream synthesis/import tasks are created after AGY output exists."
     audit_desc = f"Audit task. Pure research. Do NOT modify files, cron, Linear, or journals.\n\nRead:\n- {config.doc_root / 'README.md'}\n- {config.doc_root / 'workflow-sequence.json'}\n- {md_path}\n- {json_path}\n\nThen read listed journal/event files and write only:\n- {config.report_root / period / 'agy-crack-audit.md'}\n\nRequired sections: Fallen Through the Cracks; False Stale / Already Done; Strategic Through-lines; Revenue / Leads / Trust; Enforcement Gaps; Recommended Linear Backlog; Needs Michael. Cite exact files/dates."
-    control, c_new = create_issue(control_title, control_desc, config.state_in_progress, ["agent:fred", "pipeline:research-strategy", "type:docs"], config)
-    audit, a_new = create_issue(audit_title, audit_desc, config.state_todo, ["agent:agy", "pipeline:research-strategy", "type:research"], config)
-    return {"period": period, "inventory": str(md_path), "control": control, "control_created": c_new, "agy_audit": audit, "agy_created": a_new}
+    control, c_new = create_issue(
+        control_title,
+        control_desc,
+        config.state_in_progress,
+        ["agent:fred", "pipeline:research-strategy", "type:docs"],
+        config,
+    )
+    audit, a_new = create_issue(
+        audit_title,
+        audit_desc,
+        config.state_todo,
+        ["agent:agy", "pipeline:research-strategy", "type:research"],
+        config,
+    )
+    return {
+        "period": period,
+        "inventory": str(md_path),
+        "control": control,
+        "control_created": c_new,
+        "agy_audit": audit,
+        "agy_created": a_new,
+    }
 
 
 def redact(text: str) -> str:
@@ -342,14 +466,32 @@ def read_text(path: Path, limit: int = 8000) -> str:
 
 
 def collect_candidates(config: JournalConfig, since: float | None = None) -> list[Path]:
-    since = since or dt.datetime.now(dt.timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
-    roots = [config.sessions_dir, config.harness_profile / "cron" / "output", config.harness_profile / "logs", config.research_repo / "docs"]
+    since = (
+        since
+        or dt.datetime.now(dt.timezone.utc)
+        .replace(hour=0, minute=0, second=0, microsecond=0)
+        .timestamp()
+    )
+    roots = [
+        config.sessions_dir,
+        config.harness_profile / "cron" / "output",
+        config.harness_profile / "logs",
+        config.research_repo / "docs",
+    ]
     files: list[Path] = []
     for root in roots:
         if not root.exists():
             continue
         for path in root.rglob("*"):
-            if not path.is_file() or path.suffix.lower() not in {".json", ".jsonl", ".md", ".log", ".txt", ".yaml", ".yml"}:
+            if not path.is_file() or path.suffix.lower() not in {
+                ".json",
+                ".jsonl",
+                ".md",
+                ".log",
+                ".txt",
+                ".yaml",
+                ".yml",
+            }:
                 continue
             try:
                 if path.stat().st_mtime >= since:
@@ -361,7 +503,9 @@ def collect_candidates(config: JournalConfig, since: float | None = None) -> lis
 
 def git(repo: Path, cmd: list[str]) -> str:
     try:
-        res = subprocess.run(["git", "-C", str(repo), *cmd], capture_output=True, text=True, check=False)
+        res = subprocess.run(
+            ["git", "-C", str(repo), *cmd], capture_output=True, text=True, check=False
+        )
         return (res.stdout or res.stderr or "").strip()
     except Exception:
         return ""
@@ -374,7 +518,13 @@ def extract_session_signals(path: Path) -> list[dict[str, Any]]:
         data = json.loads(text)
     except Exception:
         return signals
-    messages = data if isinstance(data, list) else data.get("messages", data.get("conversation", [])) if isinstance(data, dict) else []
+    messages = (
+        data
+        if isinstance(data, list)
+        else data.get("messages", data.get("conversation", []))
+        if isinstance(data, dict)
+        else []
+    )
     if not isinstance(messages, list):
         return signals
     model = ""
@@ -391,12 +541,42 @@ def extract_session_signals(path: Path) -> list[dict[str, Any]]:
                 model = m.group(1)
         if role == "assistant":
             cleaned = redact(content)
-            if re.search(r"(?i)\b(decided|decision|let's|I'll|we should|the fix is|resolved|fixed)\b", cleaned[:300]):
-                signals.append({"type": "decision", "source": path.name, "snippet": cleaned[:200].replace("\n", " ").strip(), "model": model})
-            if re.search(r"(?i)\b(error|exception|traceback|failed|timeout|401|403|409|429|500)\b", cleaned[:300]):
-                signals.append({"type": "error", "source": path.name, "snippet": cleaned[:200].replace("\n", " ").strip(), "model": model})
-            for m in re.finditer(r"(?:created|wrote|modified|saved)\s+(?:to\s+)?`?([/~][^\s`]+)`?", cleaned[:1000]):
-                signals.append({"type": "file_created", "source": path.name, "path": m.group(1), "model": model})
+            if re.search(
+                r"(?i)\b(decided|decision|let's|I'll|we should|the fix is|resolved|fixed)\b",
+                cleaned[:300],
+            ):
+                signals.append(
+                    {
+                        "type": "decision",
+                        "source": path.name,
+                        "snippet": cleaned[:200].replace("\n", " ").strip(),
+                        "model": model,
+                    }
+                )
+            if re.search(
+                r"(?i)\b(error|exception|traceback|failed|timeout|401|403|409|429|500)\b",
+                cleaned[:300],
+            ):
+                signals.append(
+                    {
+                        "type": "error",
+                        "source": path.name,
+                        "snippet": cleaned[:200].replace("\n", " ").strip(),
+                        "model": model,
+                    }
+                )
+            for m in re.finditer(
+                r"(?:created|wrote|modified|saved)\s+(?:to\s+)?`?([/~][^\s`]+)`?",
+                cleaned[:1000],
+            ):
+                signals.append(
+                    {
+                        "type": "file_created",
+                        "source": path.name,
+                        "path": m.group(1),
+                        "model": model,
+                    }
+                )
     return signals
 
 
@@ -404,26 +584,60 @@ def extract_cron_signals(path: Path) -> list[dict[str, Any]]:
     text = redact(read_text(path, 5000))
     job_name = re.search(r"#\s*Cron Job:\s*(.+?)(?:\n|$)", text)
     job_id = re.search(r"\*\*Job ID:\*\*\s*(\S+)", text)
-    status = "error" if re.search(r"(?i)\b(error|exception|traceback|failed|timeout)\b", text) else "silent" if "[SILENT]" in text else "ok"
+    status = (
+        "error"
+        if re.search(r"(?i)\b(error|exception|traceback|failed|timeout)\b", text)
+        else "silent"
+        if "[SILENT]" in text
+        else "ok"
+    )
     summary = ""
     for line in text.splitlines()[8:]:
         stripped = line.strip()
         if len(stripped) > 15 and not stripped.startswith(("#", "**", "---", "http")):
             summary = stripped[:200]
             break
-    return [{"type": "cron_run", "source": path.name, "job_name": job_name.group(1).strip() if job_name else path.parent.name, "job_id": job_id.group(1).strip() if job_id else "", "status": status, "summary": summary}]
+    return [
+        {
+            "type": "cron_run",
+            "source": path.name,
+            "job_name": job_name.group(1).strip() if job_name else path.parent.name,
+            "job_id": job_id.group(1).strip() if job_id else "",
+            "status": status,
+            "summary": summary,
+        }
+    ]
 
 
 def extract_log_signals(path: Path) -> list[dict[str, Any]]:
     signals: list[dict[str, Any]] = []
     text = redact(read_text(path, 15000))
     for line in text.splitlines():
-        if re.search(r"(?i)\b(gateway.*restart|starting|application started|press ctrl\+c)\b", line):
-            signals.append({"type": "restart", "source": path.name, "snippet": line.strip()[:200]})
+        if re.search(
+            r"(?i)\b(gateway.*restart|starting|application started|press ctrl\+c)\b",
+            line,
+        ):
+            signals.append(
+                {"type": "restart", "source": path.name, "snippet": line.strip()[:200]}
+            )
             break
-    error_lines = [line.strip()[:200] for line in text.splitlines()[-50:] if re.search(r"(?i)\b(error|exception|traceback|failed|timeout|401|403|409|429|500|conflict)\b", line)]
+    error_lines = [
+        line.strip()[:200]
+        for line in text.splitlines()[-50:]
+        if re.search(
+            r"(?i)\b(error|exception|traceback|failed|timeout|401|403|409|429|500|conflict)\b",
+            line,
+        )
+    ]
     if error_lines:
-        signals.append({"type": "log_error", "source": path.name, "count": len(error_lines), "latest": error_lines[-3:]})
+        signals.append(
+            {
+                "type": "log_error",
+                "source": path.name,
+                "count": len(error_lines),
+                "latest": error_lines[-3:],
+            }
+        )
     return signals
 
 
@@ -432,15 +646,23 @@ def extract_git_signals(config: JournalConfig) -> list[dict[str, Any]]:
     status = git(config.research_repo, ["status", "--short"])
     if status:
         changed = [line.strip() for line in status.splitlines() if line.strip()]
-        signals.append({"type": "git_dirty", "files": changed[:20], "count": len(changed)})
-    log = git(config.research_repo, ["log", "--oneline", "--since=midnight", "--no-merges"])
+        signals.append(
+            {"type": "git_dirty", "files": changed[:20], "count": len(changed)}
+        )
+    log = git(
+        config.research_repo, ["log", "--oneline", "--since=midnight", "--no-merges"]
+    )
     if log:
         commits = [line.strip() for line in log.splitlines() if line.strip()]
-        signals.append({"type": "git_commits", "commits": commits[:10], "count": len(commits)})
+        signals.append(
+            {"type": "git_commits", "commits": commits[:10], "count": len(commits)}
+        )
     return signals
 
 
-def extract_all_signals(paths: list[Path], config: JournalConfig) -> list[dict[str, Any]]:
+def extract_all_signals(
+    paths: list[Path], config: JournalConfig
+) -> list[dict[str, Any]]:
     all_signals: list[dict[str, Any]] = []
     for path in paths:
         rel = str(path)
@@ -454,7 +676,11 @@ def extract_all_signals(paths: list[Path], config: JournalConfig) -> list[dict[s
     seen = set()
     unique = []
     for signal in all_signals:
-        key = (signal["type"], str(signal.get("snippet", ""))[:80], str(signal.get("source", "")))
+        key = (
+            signal["type"],
+            str(signal.get("snippet", ""))[:80],
+            str(signal.get("source", "")),
+        )
         if key not in seen:
             seen.add(key)
             unique.append(signal)
@@ -470,17 +696,35 @@ def extract_golden_thread_summary(config: JournalConfig) -> str:
         return "> ⚠️ project-registry.json unreadable\n"
     lines = ["### 🔗 Golden Thread (project-registry.json)"]
     sync = reg.get("_last_sync", {})
-    if sync:
-        lines.append(f"- Linear: {sync.get('linear_in_progress', 0)} In Progress, {sync.get('linear_in_review', 0)} In Review, {sync.get('linear_todo', 0)} Todo")
-        lines.append(f"- GitHub: {sync.get('github_prs_open', 0)} open PRs, {sync.get('github_issues_open', 0)} issues")
+    if isinstance(sync, dict) and sync:
+        lines.append(
+            f"- Linear: {sync.get('linear_in_progress', 0)} In Progress, {sync.get('linear_in_review', 0)} In Review, {sync.get('linear_todo', 0)} Todo"
+        )
+        lines.append(
+            f"- GitHub: {sync.get('github_prs_open', 0)} open PRs, {sync.get('github_issues_open', 0)} issues"
+        )
+        lines.append("")
+    elif sync:
+        lines.append(f"- Last sync: {str(sync)[:160]}")
         lines.append("")
     ventures = reg.get("ventures", {})
     standalone = reg.get("standalone_projects", {})
     active = []
     for key, value in {**ventures, **standalone}.items():
         next_action = value.get("next_action", "") if isinstance(value, dict) else ""
-        if next_action and "DONE" not in next_action[:30] and "deferred" not in next_action.lower()[:20]:
-            active.append((key, value.get("name", key), value.get("project_type", "?"), next_action[:120]))
+        if (
+            next_action
+            and "DONE" not in next_action[:30]
+            and "deferred" not in next_action.lower()[:20]
+        ):
+            active.append(
+                (
+                    key,
+                    value.get("name", key),
+                    value.get("project_type", "?"),
+                    next_action[:120],
+                )
+            )
     if active:
         lines.append("**Active projects:**")
         for _key, name, project_type, next_action in sorted(active[:12]):
@@ -489,20 +733,40 @@ def extract_golden_thread_summary(config: JournalConfig) -> str:
     return "\n".join(lines)
 
 
-def build_compact_markdown(signals: list[dict[str, Any]], now: str, config: JournalConfig) -> str:
+def build_compact_markdown(
+    signals: list[dict[str, Any]], now: str, config: JournalConfig
+) -> str:
     branch = git(config.research_repo, ["branch", "--show-current"]) or "unknown"
     head = git(config.research_repo, ["rev-parse", "--short", "HEAD"]) or "unknown"
     status = git(config.research_repo, ["status", "--short"])
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for signal in signals:
         grouped[signal["type"]].append(signal)
-    blocks = [f"## {now.split('T')[0]} · Snapshot {now.split('T')[1][:5]} UTC", "", f"`{branch}@{head}` · {len(signals)} events"]
+    blocks = [
+        f"## {now.split('T')[0]} · Snapshot {now.split('T')[1][:5]} UTC",
+        "",
+        f"`{branch}@{head}` · {len(signals)} events",
+    ]
     if status:
-        blocks.append(f" · {len([line for line in status.splitlines() if line.strip()])} dirty files")
+        blocks.append(
+            f" · {len([line for line in status.splitlines() if line.strip()])} dirty files"
+        )
     blocks += ["", "", extract_golden_thread_summary(config)]
-    type_icons = {"decision": "🧠", "error": "❌", "file_created": "📄", "cron_run": "⏱️", "restart": "🔄", "log_error": "⚠️", "git_dirty": "📝", "git_commits": "📦"}
+    type_icons = {
+        "decision": "🧠",
+        "error": "❌",
+        "file_created": "📄",
+        "cron_run": "⏱️",
+        "restart": "🔄",
+        "log_error": "⚠️",
+        "git_dirty": "📝",
+        "git_commits": "📦",
+    }
     for event_type, items in sorted(grouped.items()):
-        blocks += [f"### {type_icons.get(event_type, '•')} {event_type.replace('_', ' ').title()} ({len(items)})", ""]
+        blocks += [
+            f"### {type_icons.get(event_type, '•')} {event_type.replace('_', ' ').title()} ({len(items)})",
+            "",
+        ]
         for item in items[:8]:
             if event_type in {"decision", "error", "restart"}:
                 blocks.append(f"- {item.get('snippet', '?')[:150]}")
@@ -510,9 +774,13 @@ def build_compact_markdown(signals: list[dict[str, Any]], now: str, config: Jour
                 blocks.append(f"- `{item.get('path', '?')[:100]}`")
             elif event_type == "cron_run":
                 status_icon = "✅" if item.get("status") == "ok" else "❌"
-                blocks.append(f"- {status_icon} **{item.get('job_name', '?')}** — {item.get('summary', '')[:120]}")
+                blocks.append(
+                    f"- {status_icon} **{item.get('job_name', '?')}** — {item.get('summary', '')[:120]}"
+                )
             elif event_type == "log_error":
-                blocks.append(f"- {item.get('count', 0)} errors in `{item.get('source', '?')}`")
+                blocks.append(
+                    f"- {item.get('count', 0)} errors in `{item.get('source', '?')}`"
+                )
             elif event_type == "git_dirty":
                 blocks.append(f"- {item.get('count', 0)} files changed")
             elif event_type == "git_commits":
@@ -520,24 +788,36 @@ def build_compact_markdown(signals: list[dict[str, Any]], now: str, config: Jour
             else:
                 blocks.append(f"- {json.dumps(item)[:150]}")
         blocks.append("")
-    blocks += ["---", "*Auto-generated by prismatic-journal-snapshot · Secrets redacted*", ""]
+    blocks += [
+        "---",
+        "*Auto-generated by prismatic-journal-snapshot · Secrets redacted*",
+        "",
+    ]
     return "\n".join(blocks)
 
 
 def _days_ago(days: int) -> str:
-    return (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)).strftime("%Y-%m-%d")
+    return (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)).strftime(
+        "%Y-%m-%d"
+    )
 
 
-def update_event_index(signals: list[dict[str, Any]], now: str, config: JournalConfig) -> None:
+def update_event_index(
+    signals: list[dict[str, Any]], now: str, config: JournalConfig
+) -> None:
     index_dir = config.journal_root / ".index"
     index_dir.mkdir(parents=True, exist_ok=True)
     today = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
     today_events_path = index_dir / f"events-{today}.json"
-    today_events = json.loads(today_events_path.read_text()) if today_events_path.exists() else []
+    today_events = (
+        json.loads(today_events_path.read_text()) if today_events_path.exists() else []
+    )
     for signal in signals:
         signal["_timestamp"] = now
         today_events.append(signal)
-    today_events_path.write_text(json.dumps(today_events, indent=2, default=str), encoding="utf-8")
+    today_events_path.write_text(
+        json.dumps(today_events, indent=2, default=str), encoding="utf-8"
+    )
     index_file = index_dir / "events.json"
     master = json.loads(index_file.read_text()) if index_file.exists() else {}
     tag_counts = master.get("_tag_counts", {})
@@ -556,17 +836,26 @@ def update_event_index(signals: list[dict[str, Any]], now: str, config: JournalC
 
 def fingerprint(paths: list[Path], config: JournalConfig) -> str:
     payload = {
-        "paths": [f"{path}:{int(path.stat().st_mtime)}:{path.stat().st_size}" for path in paths[:50]],
+        "paths": [
+            f"{path}:{int(path.stat().st_mtime)}:{path.stat().st_size}"
+            for path in paths[:50]
+        ],
         "git": git(config.research_repo, ["status", "--short"]),
         "head": git(config.research_repo, ["rev-parse", "--short", "HEAD"]),
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
-def run_snapshot(config: JournalConfig | None = None, force: bool = False) -> dict[str, Any]:
+def run_snapshot(
+    config: JournalConfig | None = None, force: bool = False
+) -> dict[str, Any]:
     config = config or JournalConfig.from_env()
     today = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
-    since = dt.datetime.now(dt.timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+    since = (
+        dt.datetime.now(dt.timezone.utc)
+        .replace(hour=0, minute=0, second=0, microsecond=0)
+        .timestamp()
+    )
     inbox_dir = config.journal_root / "inbox"
     state_dir = config.journal_root / ".state"
     state_file = state_dir / "daily-journal-snapshot.json"
@@ -577,43 +866,90 @@ def run_snapshot(config: JournalConfig | None = None, force: bool = False) -> di
     current_fp = fingerprint(paths, config)
     previous_fp = ""
     try:
-        previous_fp = str(json.loads(state_file.read_text(encoding="utf-8")).get("fingerprint", ""))
+        previous_fp = str(
+            json.loads(state_file.read_text(encoding="utf-8")).get("fingerprint", "")
+        )
     except Exception:
         pass
     if not force and previous_fp == current_fp and today_file.exists():
         return {"changed": False, "signals": 0, "today_file": str(today_file)}
     now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     signals = extract_all_signals(paths, config)
-    if not force and not signals and not any(path.stat().st_mtime >= since for path in paths):
+    if (
+        not force
+        and not signals
+        and not any(path.stat().st_mtime >= since for path in paths)
+    ):
         return {"changed": False, "signals": 0, "today_file": str(today_file)}
     md = build_compact_markdown(signals, now, config)
-    existing = today_file.read_text(encoding="utf-8", errors="ignore") if today_file.exists() else ""
+    existing = (
+        today_file.read_text(encoding="utf-8", errors="ignore")
+        if today_file.exists()
+        else ""
+    )
     merged = existing.rstrip() + "\n\n" + md if existing else md
     today_file.write_text(merged, encoding="utf-8")
     (config.journal_root / "latest-inbox.md").write_text(merged, encoding="utf-8")
     update_event_index(signals, now, config)
     state_dir.mkdir(parents=True, exist_ok=True)
-    state_file.write_text(json.dumps({"fingerprint": current_fp, "updated_at": now}), encoding="utf-8")
-    return {"changed": True, "signals": len(signals), "today_file": str(today_file), "lines": len([line for line in md.splitlines() if line.strip()])}
+    state_file.write_text(
+        json.dumps({"fingerprint": current_fp, "updated_at": now}), encoding="utf-8"
+    )
+    return {
+        "changed": True,
+        "signals": len(signals),
+        "today_file": str(today_file),
+        "lines": len([line for line in md.splitlines() if line.strip()]),
+    }
 
 
-def import_plan_ready(period: str = "initial", config: JournalConfig | None = None, execute: bool = False) -> dict[str, Any]:
+def import_plan_ready(
+    period: str = "initial", config: JournalConfig | None = None, execute: bool = False
+) -> dict[str, Any]:
     config = config or JournalConfig.from_env()
     plan = config.report_root / period / "linear-import-plan.json"
     synthesis = config.report_root / period / "fred-synthesis.md"
     if not plan.exists() or not synthesis.exists():
-        return {"ready": False, "reason": "synthesis/import plan missing", "plan": str(plan), "synthesis": str(synthesis), "exit_code": 2}
+        return {
+            "ready": False,
+            "reason": "synthesis/import plan missing",
+            "plan": str(plan),
+            "synthesis": str(synthesis),
+            "exit_code": 2,
+        }
     body = gql("{ viewer { name } }", config=config)
     errors = body.get("errors") or []
     if errors:
         msg = json.dumps(errors)
         if "Rate limit exceeded" in msg or "RATELIMITED" in msg:
-            return {"ready": False, "reason": "Linear API rate-limited", "plan": str(plan), "synthesis": str(synthesis), "exit_code": 0}
-        return {"ready": False, "reason": "Linear API error", "errors": errors, "plan": str(plan), "synthesis": str(synthesis), "exit_code": 2}
+            return {
+                "ready": False,
+                "reason": "Linear API rate-limited",
+                "plan": str(plan),
+                "synthesis": str(synthesis),
+                "exit_code": 0,
+            }
+        return {
+            "ready": False,
+            "reason": "Linear API error",
+            "errors": errors,
+            "plan": str(plan),
+            "synthesis": str(synthesis),
+            "exit_code": 2,
+        }
     items = json.loads(plan.read_text()).get("items", [])
-    result = {"ready": True, "items": len(items), "plan": str(plan), "synthesis": str(synthesis), "execute": execute, "exit_code": 0}
+    result = {
+        "ready": True,
+        "items": len(items),
+        "plan": str(plan),
+        "synthesis": str(synthesis),
+        "execute": execute,
+        "exit_code": 0,
+    }
     if execute:
-        result["note"] = "Execution is intentionally conservative in Phase 1; dedupe/create mutations remain harness-orchestrated."
+        result["note"] = (
+            "Execution is intentionally conservative in Phase 1; dedupe/create mutations remain harness-orchestrated."
+        )
     return result
 
 
@@ -626,7 +962,9 @@ def extract_file_paths(text: str) -> list[str]:
     return sorted(set(paths))
 
 
-def validate_artifacts(paths: list[str], require_non_empty: bool = True) -> dict[str, Any]:
+def validate_artifacts(
+    paths: list[str], require_non_empty: bool = True
+) -> dict[str, Any]:
     found = []
     missing = []
     empty = []
@@ -642,7 +980,12 @@ def validate_artifacts(paths: list[str], require_non_empty: bool = True) -> dict
     return {"passed": passed, "found": found, "missing": missing, "empty": empty}
 
 
-def validate_agent_output(issue_identifier: str | None = None, log_path: str | None = None, artifact: list[str] | None = None, text: str | None = None) -> dict[str, Any]:
+def validate_agent_output(
+    issue_identifier: str | None = None,
+    log_path: str | None = None,
+    artifact: list[str] | None = None,
+    text: str | None = None,
+) -> dict[str, Any]:
     artifacts = list(artifact) if artifact else []
     if text:
         artifacts.extend(extract_file_paths(text))
@@ -652,7 +995,13 @@ def validate_agent_output(issue_identifier: str | None = None, log_path: str | N
         artifacts.append("RESULT.md")
 
     transcript = ""
-    resolved_log = Path(log_path) if log_path else Path(f"/tmp/antigravity_{issue_identifier}.log") if issue_identifier else None
+    resolved_log = (
+        Path(log_path)
+        if log_path
+        else Path(f"/tmp/antigravity_{issue_identifier}.log")
+        if issue_identifier
+        else None
+    )
     log_exists = bool(resolved_log and resolved_log.exists())
     transcript_size = 0
     error_markers: list[str] = []
@@ -663,7 +1012,12 @@ def validate_agent_output(issue_identifier: str | None = None, log_path: str | N
             if re.search(pattern, transcript, re.IGNORECASE):
                 error_markers.append(label)
     artifact_result = validate_artifacts(sorted(set(artifacts)))
-    passed = log_exists and transcript_size >= 100 and not error_markers and artifact_result["passed"]
+    passed = (
+        log_exists
+        and transcript_size >= 100
+        and not error_markers
+        and artifact_result["passed"]
+    )
     return {
         "issue_identifier": issue_identifier,
         "passed": passed,
@@ -685,9 +1039,15 @@ def cli_journal(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="cmd")
     inv = sub.add_parser("inventory", help="Build bounded source inventory")
     inv.add_argument("--period", default=period_default())
-    monthly = sub.add_parser("monthly", help="Create monthly control/audit Linear issues")
+    monthly = sub.add_parser(
+        "monthly", help="Create monthly control/audit Linear issues"
+    )
     monthly.add_argument("--period", default=period_default())
-    monthly.add_argument("--inventory-only", action="store_true", help="Compatibility mode for old monthly_journal_continuity_audit.py")
+    monthly.add_argument(
+        "--inventory-only",
+        action="store_true",
+        help="Compatibility mode for old monthly_journal_continuity_audit.py",
+    )
     args = parser.parse_args(argv)
     if args.cmd in {None, "inventory"}:
         json_path, md_path = build_inventory(args.period)
@@ -716,7 +1076,11 @@ def cli_journal_snapshot(argv: list[str] | None = None) -> int:
 def cli_linear_import(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="prismatic-linear-import")
     parser.add_argument("--period", default="initial")
-    parser.add_argument("--execute", action="store_true", help="Reserved for Phase 2; Phase 1 remains readiness-only")
+    parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="Reserved for Phase 2; Phase 1 remains readiness-only",
+    )
     args = parser.parse_args(argv)
     result = import_plan_ready(args.period, execute=args.execute)
     print(json.dumps(result, indent=2))
@@ -728,10 +1092,17 @@ def cli_second_witness(argv: list[str] | None = None) -> int:
     parser.add_argument("--issue", help="Issue identifier, e.g. GRO-1954")
     parser.add_argument("--log-path")
     parser.add_argument("--artifact", action="append", default=[])
-    parser.add_argument("--text-file", help="Optional text/comment file to scan for artifact paths")
+    parser.add_argument(
+        "--text-file", help="Optional text/comment file to scan for artifact paths"
+    )
     args = parser.parse_args(argv)
     text = Path(args.text_file).read_text(errors="replace") if args.text_file else None
-    result = validate_agent_output(issue_identifier=args.issue, log_path=args.log_path, artifact=args.artifact, text=text)
+    result = validate_agent_output(
+        issue_identifier=args.issue,
+        log_path=args.log_path,
+        artifact=args.artifact,
+        text=text,
+    )
     print(json.dumps(result, indent=2))
     return 0 if result["passed"] else 2
 
