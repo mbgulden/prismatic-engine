@@ -3,8 +3,8 @@
 # test_ned_memories_bak_sweep.sh
 #
 # Behavioral test for ~/.hermes/profiles/ned/scripts/ned_memories_bak_sweep.sh.
-# Exercises the script in a sandboxed fake HOME so we never touch the real
-# memories dir. Each test gets a fresh fake HOME for isolation.
+# Exercises the script in a sandboxed fake HERMES_PROFILE_DIR so we never touch
+# the real memories dir. Each test gets a fresh fake profile for isolation.
 #
 # Lane: agent:ned (quality/qgate)
 # Created: GRO-3124
@@ -50,7 +50,7 @@ make_bak() {
     fi
 }
 
-# Helper: build a fresh fake $HOME for each test invocation. Echoes the
+# Helper: build a fresh fake profile for each test invocation. Echoes the
 # fake_home path so callers can populate it before running the sweep.
 # Usage: fake_home="$(fresh_fake_home)"
 fresh_fake_home() {
@@ -69,7 +69,8 @@ run_sweep() {
     local mem_src="$2"
     shift 2
     cp -rp "$mem_src" "$fake_home/.hermes/profiles/ned/memories"
-    HOME="$fake_home" bash "$fake_home/.hermes/profiles/ned/scripts/ned_memories_bak_sweep.sh" "$@"
+    HERMES_PROFILE_DIR="$fake_home/.hermes/profiles/ned" HOME="$fake_home" \
+        bash "$fake_home/.hermes/profiles/ned/scripts/ned_memories_bak_sweep.sh" "$@"
 }
 
 echo "🧪 [test_ned_memories_bak_sweep] parent sandbox: $PARENT_SANDBOX"
@@ -151,7 +152,8 @@ echo ""
 echo "▶ Test 4: missing MEM_DIR handled gracefully"
 FAKE="$(fresh_fake_home)"
 # Skip the population step — invoke the script directly without a memories dir.
-HOME="$FAKE" bash "$FAKE/.hermes/profiles/ned/scripts/ned_memories_bak_sweep.sh" \
+HERMES_PROFILE_DIR="$FAKE/.hermes/profiles/ned" HOME="$FAKE" \
+    bash "$FAKE/.hermes/profiles/ned/scripts/ned_memories_bak_sweep.sh" \
     > /tmp/ned-test-out 2>&1
 RC=$?
 OUT=$(cat /tmp/ned-test-out)

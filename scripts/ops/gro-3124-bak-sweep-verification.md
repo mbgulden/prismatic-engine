@@ -98,11 +98,38 @@ The issue description assumed accumulation indicated a broken cleanup; verificat
 | Post-condition check logs alert | ✅ exists in script (exit 2 + stderr) | confirmed by Test 3 of new behavioral test |
 | Current backlog cleaned | ✅ no backlog (0 files > 7d) | dry-run reported `deleted=0` |
 
+## 2026-07-04 redispatch closeout
+
+The scanner re-surfaced [GRO-3124](https://prismatic.growthwebdev.com/tab/tasks?issue=GRO-3124) even though the issue was already `In Review` with prior Ned finalization comments. I re-ran the live evidence instead of trusting the stale report:
+
+```text
+$ date -u '+%Y-%m-%dT%H:%M:%SZ'
+2026-07-04T14:25:29Z
+$ bash /home/ubuntu/.hermes/profiles/ned/scripts/ned_memories_bak_sweep.sh --apply
+[ned-bak-sweep] mode=apply found=0 deleted=0 retention_days=7
+SWEEP_RC=0
+```
+
+Current live state: `bak_total=0`, so there is no stale `.bak-*` backlog to clean.
+
+I also found and fixed a regression in the behavioral test harness caused by GRO-3104's profile-path hardening. The production script now correctly prefers `HERMES_PROFILE_DIR` over `$HOME`; the test had only sandboxed `$HOME`, so it accidentally exercised the real Ned profile and reported `found=0` in all fake-profile cases. The test now sandboxes both `HOME` and `HERMES_PROFILE_DIR`.
+
+Verification after the harness fix:
+
+```text
+$ bash scripts/quality/test_ned_memories_bak_sweep.sh
+✅ Passed: 4
+❌ Failed: 0
+All behavioral tests passed.
+TEST_RC=0
+```
+
 ## Side findings (not bugs, noted for posterity)
 
 - `memory_capacity_check.py`'s `cleanup_old_backups()` and the Ned-lane `bak_sweep.sh` together provide defense in depth: the Python path cleans `*.bak-prune-*` on every mem-write, the Ned cron cleans any foreign `*.bak-pre-*` patterns weekly.
 - The issue's reference to "claims success but `.bak-*` files keep accumulating" was based on stale description; current state shows the system is working.
 - No additional cron wiring was needed. No code change to the sweep script was needed.
+- The Jul 4 redispatch was a stale-queue refire, not new acceptance drift; the only code change needed was test-harness alignment with the production `HERMES_PROFILE_DIR` contract.
 
 ## Out-of-scope items the issue's description mentioned but which are not Ned-lane
 
