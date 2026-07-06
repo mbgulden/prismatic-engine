@@ -1,0 +1,8 @@
+{
+  "harnesses": [
+    {"name": "agy-cli", "module": "prismatic.harnesses.agy_cli", "enabled": true},
+    {"name": "codex-cli", "module": "prismatic.harnesses.codex_cli", "enabled": false},
+    {"name": "hermes", "module": "prismatic.harnesses.hermes", "enabled": true},
+    {"name": "vllm", "module": "prismatic.harnesses.vllm", "enabled": false}
+  ]
+}
