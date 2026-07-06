@@ -8,6 +8,12 @@ Usage:
     python3 scripts/pipeline_dashboard.py --json       # output as JSON (for golden thread)
     python3 scripts/pipeline_dashboard.py --summary    # single-line summary for daily review
 
+Dashboard pane contract:
+    Every human-readable pane includes three operator-facing lines:
+    - Shows: what data is being summarized
+    - Why: why the signal matters for pipeline health
+    - Next: the default follow-up action for an operator
+
 Metrics tracked per task:
     - Time to self-validate (minutes)
     - Peer review depth (findings/100 lines)
@@ -193,6 +199,29 @@ def detect_bypasses(metrics_list):
 
 # ── Dashboard format ─────────────────────────────────────────
 
+def pane_context(title, shows, why, next_action):
+    """Print the context contract for a dashboard pane."""
+    print(f"\n── {title} ──")
+    print(f"  Shows: {shows}")
+    print(f"  Why:   {why}")
+    print(f"  Next:  {next_action}")
+
+
+def health_recommendation(score, bypass_count, acceptance_rate, avg_cycles, credit_avg):
+    """Return the most useful next operator action for the current health score."""
+    if bypass_count:
+        return "Audit the bypass list first; each item skipped normal review evidence."
+    if acceptance_rate < 0.5:
+        return "Inspect recent rejected reviews and tighten worker prompts before adding throughput."
+    if avg_cycles > 3:
+        return "Review high-cycle tasks for unclear acceptance criteria or missing upfront tests."
+    if credit_avg > 5:
+        return "Check expensive providers/runs and cap or reroute costly task classes."
+    if score < 80:
+        return "Review the weakest yellow metric above and assign one cleanup owner."
+    return "No immediate intervention; keep monitoring for bypasses or cost spikes."
+
+
 def print_dashboard(metrics_list):
     """Print a human-readable health dashboard."""
     task_stats = compute_task_stats(metrics_list)
@@ -206,16 +235,28 @@ def print_dashboard(metrics_list):
     print("=" * 60)
 
     # Task count
-    print(f"\n  📊 Tasks Tracked: {task_stats['count']}")
+    pane_context(
+        "Dashboard Scope",
+        "deduplicated pipeline metric records loaded from known JSONL sources.",
+        "this tells you whether the dashboard has enough evidence to be trusted.",
+        "if the count is unexpectedly low, verify dispatch metrics are being written before acting on trends.",
+    )
+    print(f"  📊 Tasks Tracked: {task_stats['count']}")
 
     if task_stats["count"] == 0:
-        print("\n  No pipeline metrics collected yet.")
+        print("  No pipeline metrics collected yet.")
         print("  Metrics are logged automatically after each dispatch cycle.")
+        print("  Next action: run one dispatch cycle or inspect the metrics writer if this should not be empty.")
         print("=" * 60)
         return
 
     # Per-task metrics
-    print("\n── Per-Task Metrics (averages) ──")
+    pane_context(
+        "Per-Task Metrics (averages)",
+        "latency, review depth, fix cycles, approval time, cost, and provider mix across tracked tasks.",
+        "these values expose whether individual tasks are cheap, reviewed, and converging quickly.",
+        "investigate any high range/max value before scaling the same task class further.",
+    )
     print(f"  ⏱️  Time to self-validate:  {task_stats['time_to_self_validate']['avg']} min (range: {task_stats['time_to_self_validate']['min']}–{task_stats['time_to_self_validate']['max']})")
     print(f"  🔍 Peer review depth:       {task_stats['peer_review_depth']['avg']} findings/100 lines")
     print(f"  🔄 Fix cycle count:         {task_stats['fix_cycle_count']['avg']}")
@@ -229,7 +270,12 @@ def print_dashboard(metrics_list):
         print(f"  🤖 Providers:               {prov_str}")
 
     # Per-session metrics
-    print(f"\n── Per-Session Metrics ──")
+    pane_context(
+        "Per-Session Metrics",
+        "daily completion volume, attempts, acceptance rate, and credit efficiency.",
+        "session-level trends distinguish one hard task from a degraded operating loop.",
+        "if acceptance drops or attempts spike, review the day's failed task comments before dispatching more work.",
+    )
     print(f"  📅 Sessions:                {session_stats['sessions']}")
     print(f"  ✅ Total completed:         {session_stats['total_completed']}")
     print(f"  🎯 Total attempted:         {session_stats['total_attempted']}")
@@ -239,21 +285,42 @@ def print_dashboard(metrics_list):
     # Daily breakdown
     daily = session_stats.get("daily", {})
     if len(daily) > 1:
-        print(f"\n── Daily Breakdown ──")
+        pane_context(
+            "Daily Breakdown",
+            "per-day throughput, acceptance, and credit totals for multi-day metric windows.",
+            "day-over-day drift shows whether fixes are improving the operating cadence or just moving noise around.",
+            "compare the weakest day against its Linear comments and PR review outcomes.",
+        )
         for date_key, sess in sorted(daily.items()):
             bar = "█" * min(sess["completed"], 20)
             print(f"  {date_key}: {bar} {sess['completed']} done, {sess['acceptance_rate']:.0%} acceptance, {sess['total_credits']} credits")
 
     # Bypasses
     if bypasses:
-        print(f"\n── ⚠️ Pipeline Bypasses: {len(bypasses)} ──")
+        pane_context(
+            f"⚠️ Pipeline Bypasses: {len(bypasses)}",
+            "tasks with no recorded peer-review depth and no fix-cycle evidence.",
+            "bypasses are governance gaps; they may represent unreviewed work entering the system.",
+            "open each listed issue and either attach missing evidence or requeue it for review.",
+        )
         for bid in bypasses[:10]:
             print(f"  ⚠️ {bid}")
 
     # Health score
     score = compute_health_score(task_stats, session_stats, bypasses)
     icon = "🟢" if score >= 80 else "🟡" if score >= 50 else "🔴"
-    print(f"\n── Pipeline Health: {icon} {score}/100 ──")
+    pane_context(
+        f"Pipeline Health: {icon} {score}/100",
+        "one roll-up score derived from acceptance rate, bypass count, fix cycles, and credit cost.",
+        "the score is the operator triage light: green means watch, yellow means inspect, red means stop dispatching and fix.",
+        health_recommendation(
+            score,
+            len(bypasses),
+            session_stats.get("avg_acceptance_rate", 1),
+            task_stats.get("fix_cycle_count", {}).get("avg", 0),
+            task_stats.get("credit_cost", {}).get("avg", 0),
+        ),
+    )
 
     print("=" * 60)
 
