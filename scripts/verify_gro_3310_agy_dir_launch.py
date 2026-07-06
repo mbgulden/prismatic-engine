@@ -5,12 +5,15 @@ This intentionally checks the live orchestrator supervisor script because the
 runtime source of truth for this task is outside the prismatic-engine checkout:
 ~/.hermes/profiles/orchestrator/scripts/agy_sandbox_event_supervisor.py
 """
+
 from __future__ import annotations
 
 import ast
 from pathlib import Path
 
-SUPERVISOR = Path("/home/ubuntu/.hermes/profiles/orchestrator/scripts/agy_sandbox_event_supervisor.py")
+SUPERVISOR = Path(
+    "/home/ubuntu/.hermes/profiles/orchestrator/scripts/agy_sandbox_event_supervisor.py"
+)
 
 
 def main() -> int:
@@ -50,7 +53,9 @@ def main() -> int:
     if '"--dir", str(sandbox)' not in cmd_src:
         raise AssertionError("AGY cmd does not include --dir str(sandbox)")
     if '"--print", prompt' not in cmd_src:
-        raise AssertionError("AGY cmd does not pass the bounded prompt as --print argument")
+        raise AssertionError(
+            "AGY cmd does not pass the bounded prompt as --print argument"
+        )
 
     leaked = [marker for marker in stdin_payload_markers if marker in source]
     if leaked:
@@ -64,11 +69,17 @@ def main() -> int:
             raise AssertionError(f"Popen site {idx} does not set stdin explicitly")
         stdin_src = ast.get_source_segment(source, kwargs["stdin"]) or ""
         if stdin_src != "None":
-            raise AssertionError(f"Popen site {idx} stdin is {stdin_src!r}, expected None")
+            raise AssertionError(
+                f"Popen site {idx} stdin is {stdin_src!r}, expected None"
+            )
         cwd_node = kwargs.get("cwd")
-        cwd_src = ast.get_source_segment(source, cwd_node) if cwd_node is not None else ""
+        cwd_src = (
+            ast.get_source_segment(source, cwd_node) if cwd_node is not None else ""
+        )
         if cwd_src != "str(sandbox)":
-            raise AssertionError(f"Popen site {idx} cwd is {cwd_src!r}, expected str(sandbox)")
+            raise AssertionError(
+                f"Popen site {idx} cwd is {cwd_src!r}, expected str(sandbox)"
+            )
 
     print("GRO-3310 verification passed")
     print(f"supervisor={SUPERVISOR}")
