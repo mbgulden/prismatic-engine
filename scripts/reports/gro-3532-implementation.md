@@ -28,7 +28,7 @@ This implementation hardens `prismatic.vertex_telemetry` so production quota pan
 
 ## Verification
 
-Focused regression coverage lives in `tests/test_vertex_telemetry_integrity.py`:
+Focused regression coverage lives in `prismatic/test_vertex_telemetry_integrity.py` so the verification artifact stays inside Ned's lane:
 
 1. normalizer strips null/undefined payload fields and adds freshness;
 2. poll status returns explicit per-location errors while still returning successful records;
@@ -37,5 +37,5 @@ Focused regression coverage lives in `tests/test_vertex_telemetry_integrity.py`:
 Run:
 
 ```bash
-python3 -m pytest tests/test_vertex_telemetry_integrity.py -q
+python3 -m pytest prismatic/test_vertex_telemetry_integrity.py -q
 ```
