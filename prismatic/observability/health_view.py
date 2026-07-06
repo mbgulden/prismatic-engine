@@ -176,7 +176,10 @@ def evaluate_subsystem(
                 summary="required service heartbeat is stale",
                 failure_class=failure_class,
                 last_seen_at=last_seen.isoformat(),
-                evidence=[f"heartbeat_age={int(age_seconds)}s", f"stale_after={stale_after}s"],
+                evidence=[
+                    f"heartbeat_age={int(age_seconds)}s",
+                    f"stale_after={stale_after}s",
+                ],
                 action=action,
             )
         return SubsystemHealth(
@@ -291,7 +294,9 @@ def render_markdown(view: dict[str, Any]) -> str:
             if item.get("action"):
                 lines.append(f"  - Action: {item['action']}")
 
-    lines.extend(["", "## Subsystems", "| Subsystem | Status | Failure class | Summary |"])
+    lines.extend(
+        ["", "## Subsystems", "| Subsystem | Status | Failure class | Summary |"]
+    )
     lines.append("|---|---:|---|---|")
     for row in view.get("subsystems", []):
         lines.append(
