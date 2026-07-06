@@ -18,12 +18,19 @@ The normalization path also recursively strips `None`, empty strings, and string
 - `prismatic/test_vertex_telemetry_integrity.py`
   - Covers nullish stripping, computed remaining quota, unavailable-limit explanation, explicit poll errors, persisted summary rows, and sanitized raw payload storage.
 
-## Verification planned
+## Verification
 
 Focused verification command:
 
 ```bash
 PYTHONPATH=. pytest prismatic/test_vertex_telemetry_integrity.py -q
+```
+
+Result on 2026-07-06:
+
+```text
+....                                                                     [100%]
+4 passed in 0.12s
 ```
 
 This report is the same-commit documentation update required for the implementation task.
