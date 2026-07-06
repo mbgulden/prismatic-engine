@@ -48,6 +48,7 @@ VALID_TYPES = {
     "agent_launched", "agent_completed", "agent_failed",
     "governor_allocate", "governor_release",
     "circuit_breaker_trip", "circuit_breaker_reset",
+    "system.mode_changed",
 }
 
 

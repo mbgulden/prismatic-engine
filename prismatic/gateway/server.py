@@ -46,6 +46,80 @@ from prismatic.run_records import AgentRunRecordStore
 
 logger = logging.getLogger("prismatic.gateway.server")
 
+SYSTEM_MODE_FILE_ENV = "PRISMATIC_SYSTEM_MODE_FILE"
+DEFAULT_SYSTEM_MODE = "autonomous"
+
+
+def _system_mode_path() -> Path:
+    """Return the persisted system-mode file path."""
+    override = os.environ.get(SYSTEM_MODE_FILE_ENV)
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / ".prismatic" / "system_mode.json"
+
+
+def _read_system_mode() -> str:
+    """Read the persisted system mode, falling back to autonomous."""
+    path = _system_mode_path()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return DEFAULT_SYSTEM_MODE
+
+    mode = data.get("mode") if isinstance(data, dict) else None
+    return mode if isinstance(mode, str) and mode else DEFAULT_SYSTEM_MODE
+
+
+def _write_system_mode(mode: str) -> None:
+    """Persist the active system mode for agents polling the mode file."""
+    path = _system_mode_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "mode": mode,
+                "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+async def _broadcast_to_gateway_websockets(message: dict[str, Any]) -> int:
+    """Broadcast a JSON message to clients connected to the FastAPI /ws endpoint."""
+    if not _ws_clients:
+        return 0
+
+    delivered = 0
+    dead: list[WebSocket] = []
+    for websocket in list(_ws_clients):
+        try:
+            await websocket.send_json(message)
+            delivered += 1
+        except Exception:
+            dead.append(websocket)
+
+    for websocket in dead:
+        _ws_clients.discard(websocket)
+
+    return delivered
+
+
+async def _publish_mode_changed(mode: str, previous_mode: str) -> dict[str, Any]:
+    """Publish and broadcast a system.mode_changed event."""
+    payload = {"mode": mode, "previous_mode": previous_mode}
+    event = await get_event_bus().publish(
+        "system.mode_changed",
+        source="gateway",
+        payload=payload,
+    )
+    event_dict = event.to_dict()
+    websocket_clients = await _broadcast_to_gateway_websockets(event_dict)
+    return {"event": event_dict, "websocket_clients": websocket_clients}
+
 # ── FastAPI Application ──────────────────────────────────────────────
 
 app = FastAPI(
@@ -138,6 +212,35 @@ async def health() -> dict[str, Any]:
         "started_at": _started_at,
     }
 
+
+@app.get("/api/mode")
+async def get_mode() -> dict[str, str]:
+    """Return the active orchestration mode from the persisted mode file."""
+    return {"mode": _read_system_mode()}
+
+
+@app.post("/api/mode")
+async def set_mode(body: dict[str, Any]) -> dict[str, Any]:
+    """Persist and broadcast the active orchestration mode.
+
+    Running agents that poll ``system_mode.json`` see the new mode without a
+    restart, while gateway WebSocket clients and EventBus subscribers receive a
+    ``system.mode_changed`` notification immediately.
+    """
+    previous_mode = _read_system_mode()
+    mode = body.get("mode", DEFAULT_SYSTEM_MODE)
+    if not isinstance(mode, str) or not mode.strip():
+        mode = DEFAULT_SYSTEM_MODE
+    mode = mode.strip()
+
+    _write_system_mode(mode)
+    publish_result = await _publish_mode_changed(mode, previous_mode)
+    return {
+        "mode": mode,
+        "previous_mode": previous_mode,
+        "event": publish_result["event"],
+        "websocket_clients": publish_result["websocket_clients"],
+    }
 
 # ── WebSocket Endpoint ──────────────────────────────────────────────
 
