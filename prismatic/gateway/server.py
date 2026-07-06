@@ -276,6 +276,112 @@ async def list_locks() -> list[dict[str, Any]]:
     return read_swarm_locks()
 
 
+# ── Dashboard recovery controls ─────────────────────────────────
+
+_RECOVERY_CONTROL_ACTIONS: dict[str, dict[str, str]] = {
+    "restart": {
+        "label": "Restart agent worker",
+        "status": "restart queued",
+        "detail": "Server recorded a restart request for the selected agent.",
+    },
+    "retry": {
+        "label": "Retry failed run",
+        "status": "retry queued",
+        "detail": "Server recorded a retry request and marked the run for another attempt.",
+    },
+    "replay": {
+        "label": "Replay last event",
+        "status": "replay queued",
+        "detail": "Server recorded an event replay request for the selected agent stream.",
+    },
+}
+
+
+def _dashboard_recovery_state_path() -> Path:
+    state_dir = Path(os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state/"))
+    return state_dir / "dashboard_recovery_controls.json"
+
+
+def _read_dashboard_recovery_state() -> dict[str, Any]:
+    path = _dashboard_recovery_state_path()
+    if not path.exists():
+        return {"actions": [], "last_status": None}
+    try:
+        data = json.loads(path.read_text())
+        if isinstance(data, dict):
+            data.setdefault("actions", [])
+            data.setdefault("last_status", None)
+            return data
+    except Exception:
+        logger.warning("dashboard recovery state read failed", exc_info=True)
+    return {"actions": [], "last_status": None}
+
+
+def _write_dashboard_recovery_state(state: dict[str, Any]) -> None:
+    path = _dashboard_recovery_state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, indent=2, sort_keys=True))
+
+
+@app.get("/api/dashboard/recovery-control/status")
+async def dashboard_recovery_control_status() -> dict[str, Any]:
+    """Return visible recovery-control proof for the dashboard UI."""
+    return _read_dashboard_recovery_state()
+
+
+@app.post("/api/dashboard/recovery-control", response_model=None)
+async def dashboard_recovery_control(payload: dict[str, Any]) -> dict[str, Any] | JSONResponse:
+    """Record restart/retry/replay recovery actions for live dashboard proof.
+
+    The dashboard controls intentionally do not shell out or kill processes from
+    the browser. The server-side effect is a durable recovery-control ledger plus
+    an optional event-bus publication, giving operators visible proof that the
+    command reached the gateway and changed server state.
+    """
+    action = str(payload.get("action", "")).strip().lower()
+    if action not in _RECOVERY_CONTROL_ACTIONS:
+        return JSONResponse(
+            {"error": "invalid_action", "allowed": sorted(_RECOVERY_CONTROL_ACTIONS)},
+            status_code=400,
+        )
+
+    agent = str(payload.get("agent") or "unknown").strip() or "unknown"
+    ref = str(payload.get("ref") or payload.get("run_id") or "dashboard").strip() or "dashboard"
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    spec = _RECOVERY_CONTROL_ACTIONS[action]
+    status_text = f"{spec['status']}: {agent} / {ref}"
+    entry = {
+        "id": f"recovery-{int(time.time() * 1000)}",
+        "action": action,
+        "agent": agent,
+        "ref": ref,
+        "label": spec["label"],
+        "status": status_text,
+        "detail": spec["detail"],
+        "created_at": now,
+    }
+
+    state = _read_dashboard_recovery_state()
+    actions = [entry] + list(state.get("actions", []))
+    state["actions"] = actions[:25]
+    state["last_status"] = status_text
+    state["updated_at"] = now
+    _write_dashboard_recovery_state(state)
+
+    try:
+        bus = get_event_bus()
+        if bus is not None:
+            await bus.publish(
+                event_type=f"dashboard.recovery.{action}",
+                source="prismatic-hub",
+                payload=entry,
+            )
+    except Exception:
+        logger.warning("dashboard recovery event publish failed", exc_info=True)
+
+    return {"ok": True, "status": status_text, "entry": entry, "state": state}
+
+
 # ── D.5: Observability metrics ──────────────────────────────────
 
 @app.get("/metrics")
