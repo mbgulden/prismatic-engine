@@ -11,7 +11,9 @@ from prismatic.queue_health import (
 )
 
 
-def issue(identifier: str, state: str, hours_old: float, labels: tuple[str, ...]) -> QueueIssue:
+def issue(
+    identifier: str, state: str, hours_old: float, labels: tuple[str, ...]
+) -> QueueIssue:
     return QueueIssue(
         identifier=identifier,
         title=f"Issue {identifier}",

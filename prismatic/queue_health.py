@@ -5,6 +5,7 @@ GraphQL adapter, while the scorecard builder and renderer are pure functions
 covered by tests.  The output is designed for daily operator use, not forensic
 reporting.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
