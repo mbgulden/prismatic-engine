@@ -105,7 +105,9 @@ def _upsert_managed_block(path: Path, block: str) -> bool:
     if MANAGED_BLOCK_START in original and MANAGED_BLOCK_END in original:
         before, rest = original.split(MANAGED_BLOCK_START, 1)
         _old, after = rest.split(MANAGED_BLOCK_END, 1)
-        updated = before.rstrip() + "\n\n" + block + after.lstrip("\n")
+        prefix = before.rstrip()
+        suffix = after.lstrip("\n")
+        updated = (prefix + "\n\n" if prefix else "") + block + suffix
     else:
         separator = "\n\n" if original.strip() else ""
         updated = original.rstrip() + separator + block
@@ -151,7 +153,9 @@ def _strip_settings_permissions(settings_path: Path) -> list[str]:
     removed: list[str] = []
     kept: list[Any] = []
     for item in allow:
-        if isinstance(item, str) and any(plugin in item for plugin in HIGH_OVERHEAD_PLUGINS):
+        if isinstance(item, str) and any(
+            plugin in item for plugin in HIGH_OVERHEAD_PLUGINS
+        ):
             removed.append(item)
         else:
             kept.append(item)
@@ -225,14 +229,18 @@ def main(argv: list[str] | None = None) -> int:
 
     import argparse
 
-    parser = argparse.ArgumentParser(description="Optimize a Prismatic workspace for agent dispatch")
+    parser = argparse.ArgumentParser(
+        description="Optimize a Prismatic workspace for agent dispatch"
+    )
     parser.add_argument(
         "workspace",
         nargs="?",
         default=os.environ.get("PRISMATIC_HOME", os.getcwd()),
         help="Workspace root to optimize (default: PRISMATIC_HOME or current directory)",
     )
-    parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    parser.add_argument(
+        "--json", action="store_true", help="Print machine-readable JSON"
+    )
     args = parser.parse_args(argv)
 
     result = optimize_workspace(args.workspace)

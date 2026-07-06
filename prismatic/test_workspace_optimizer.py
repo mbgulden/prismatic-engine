@@ -7,7 +7,9 @@ import json
 from prismatic.workspace_optimizer import HIGH_OVERHEAD_PLUGINS, optimize_workspace
 
 
-def test_optimize_workspace_creates_three_ignore_files_and_manifest(tmp_path, monkeypatch):
+def test_optimize_workspace_creates_three_ignore_files_and_manifest(
+    tmp_path, monkeypatch
+):
     home = tmp_path / "home"
     settings_dir = home / ".gemini" / "antigravity-cli"
     settings_dir.mkdir(parents=True)
