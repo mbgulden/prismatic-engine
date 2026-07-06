@@ -79,7 +79,8 @@ fi
 ok "Prismatic Engine installed ($INSTALL_METHOD)"
 
 # ── Create default config directory ─────────────────────────
-CONFIG_DIR="${PRISMATIC_HOME:-$HOME}/.prismatic"
+PRISMATIC_WORKSPACE="${PRISMATIC_HOME:-$SCRIPT_DIR}"
+CONFIG_DIR="$PRISMATIC_WORKSPACE/.prismatic"
 if [ ! -d "$CONFIG_DIR" ]; then
     mkdir -p "$CONFIG_DIR"
     info "Created config directory: $CONFIG_DIR"
@@ -87,12 +88,24 @@ fi
 
 # ── Initialize default config ───────────────────────────────
 info "Initializing default configuration..."
+ENGINE_BIN=""
 if command -v prismatic-engine &> /dev/null; then
+    ENGINE_BIN="$(command -v prismatic-engine)"
     prismatic-engine init
 elif [ -f "$HOME/.local/bin/prismatic-engine" ]; then
+    ENGINE_BIN="$HOME/.local/bin/prismatic-engine"
     "$HOME/.local/bin/prismatic-engine" init
 else
     warn "prismatic-engine command not found in PATH — skipping 'init'"
+fi
+
+# ── Optimize workspace for first-run dispatch ───────────────
+if [ -n "$ENGINE_BIN" ]; then
+    info "Optimizing workspace context guards: $PRISMATIC_WORKSPACE"
+    "$ENGINE_BIN" optimize-workspace "$PRISMATIC_WORKSPACE"
+    ok "Workspace optimized"
+else
+    warn "prismatic-engine command not found in PATH — skipping 'optimize-workspace'"
 fi
 
 # ── Systemd Service Generation ──────────────────────────────

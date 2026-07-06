@@ -1927,10 +1927,11 @@ def main() -> None:
     """Entry point: parse CLI arguments and start the dispatcher.
 
     Supports:
-        ``serve``     Start the dispatcher event loop.
-        ``init``      Initialize default configuration files.
-        ``skills``    Skill marketplace subcommands.
-        ``--help``    Show usage.
+        ``serve``                Start the dispatcher event loop.
+        ``init``                 Initialize default configuration files.
+        ``optimize-workspace``   Create first-run context guards.
+        ``skills``               Skill marketplace subcommands.
+        ``--help``               Show usage.
 
     Legacy Support (for backward compatibility):
         ``--once``, ``--interval``, ``--setup-pipelines`` work as before.
@@ -1975,6 +1976,23 @@ def main() -> None:
         help="Overwrite existing configuration files",
     )
 
+    # ── Optimize Workspace Subcommand ─────────────────────────
+    optimize_parser = subparsers.add_parser(
+        "optimize-workspace",
+        help="Create first-run ignore files and disable high-overhead plugins",
+    )
+    optimize_parser.add_argument(
+        "workspace",
+        nargs="?",
+        default=os.environ.get("PRISMATIC_HOME", os.getcwd()),
+        help="Workspace root to optimize (default: PRISMATIC_HOME or current directory)",
+    )
+    optimize_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON",
+    )
+
     # ── Billing-Report Subcommand (Phase 4.4) ─────────────────
     billing_parser = subparsers.add_parser(
         "billing-report", help="Generate client cost attribution report"
@@ -2017,6 +2035,9 @@ def main() -> None:
 
     if args.command == "init":
         init_config(force=args.force)
+    elif args.command == "optimize-workspace":
+        from .workspace_optimizer import main as optimize_main
+        sys.exit(optimize_main([args.workspace] + (["--json"] if args.json else [])))
     elif args.command == "billing-report":
         cmd_billing_report(args)
     elif args.command == "serve":
