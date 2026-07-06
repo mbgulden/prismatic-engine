@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from prismatic import dispatcher
 
 
@@ -38,7 +40,9 @@ def test_failed_dispatch_is_visible_and_retryable(tmp_path):
     dedup.close()
 
 
-def test_dispatch_once_does_not_duplicate_side_effects_across_cycles(monkeypatch, tmp_path):
+def test_dispatch_once_does_not_duplicate_side_effects_across_cycles(
+    monkeypatch, tmp_path
+):
     dedup = dispatcher.EventRouterDedup(str(tmp_path / "events.db"))
     launches = []
 
@@ -46,13 +50,15 @@ def test_dispatch_once_does_not_duplicate_side_effects_across_cycles(monkeypatch
     monkeypatch.setattr(dispatcher, "setup_pipeline_issues", lambda: [])
     monkeypatch.setattr(dispatcher, "cleanup_stale_agy", lambda max_age_minutes=5: 0)
     monkeypatch.setattr(dispatcher, "recover_stalled_agy", lambda max_retries=3: None)
-    monkeypatch.setattr(dispatcher, "detect_origin_completions", lambda dedup, cycle_id: 0)
+    monkeypatch.setattr(
+        dispatcher, "detect_origin_completions", lambda dedup, cycle_id: 0
+    )
     monkeypatch.setattr(dispatcher, "add_comment", lambda issue_id, body: True)
     monkeypatch.setattr(dispatcher, "get_collector", lambda: _Collector())
     monkeypatch.setattr(
         dispatcher,
         "evaluate_agent_launch",
-        lambda *args, **kwargs: dispatcher.PolicyDecision(
+        lambda *args, **kwargs: SimpleNamespace(
             action=dispatcher.PolicyAction.ALLOW,
             reason="ok",
             estimated_cost=0,
