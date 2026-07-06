@@ -21,7 +21,12 @@ class DemoHarness(AgentHarness):
         return "run-1"
 
     def status(self, run_id: str) -> dict:
-        return {"status": "completed", "started_at": None, "completed_at": None, "error": None}
+        return {
+            "status": "completed",
+            "started_at": None,
+            "completed_at": None,
+            "error": None,
+        }
 
     def cancel(self, run_id: str) -> bool:
         return True

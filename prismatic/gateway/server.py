@@ -21,7 +21,6 @@ import argparse
 import json
 import logging
 import os
-import sys
 import threading
 import time
 from pathlib import Path
@@ -31,11 +30,10 @@ import uvicorn
 from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from prismatic.gateway.event_bus import get_event_bus, set_event_bus, EventBus
+from prismatic.gateway.event_bus import get_event_bus
 from prismatic.gateway.ipc_bridge import (
     UnixSocketListener,
     create_event_ingest_route,
-    DEFAULT_SOCKET_PATH,
 )
 from prismatic.gateway.ws_broadcaster import (
     start_ws_broadcaster,
@@ -89,7 +87,7 @@ async def startup() -> None:
     _started_at = time.time()
 
     # Initialize EventBus (ensure singleton)
-    bus = get_event_bus()
+    get_event_bus()
 
     # Start IPC bridge Unix socket listener
     _ipc_listener = UnixSocketListener()
@@ -280,16 +278,18 @@ async def get_run(run_id: str) -> Response:
             media_type="application/json",
         )
     return Response(
-        content=json.dumps({
-            "run_id": record.run_id,
-            "issue_id": record.issue_id,
-            "agent_name": record.agent_name,
-            "status": record.status,
-            "started_at": record.started_at,
-            "completed_at": record.completed_at,
-            "output_path": record.output_path,
-            "error_message": record.error_message,
-        }),
+        content=json.dumps(
+            {
+                "run_id": record.run_id,
+                "issue_id": record.issue_id,
+                "agent_name": record.agent_name,
+                "status": record.status,
+                "started_at": record.started_at,
+                "completed_at": record.completed_at,
+                "output_path": record.output_path,
+                "error_message": record.error_message,
+            }
+        ),
         media_type="application/json",
     )
 
@@ -401,13 +401,16 @@ def main() -> None:
     # Start gRPC in background thread if enabled
     grpc_thread: threading.Thread | None = None
     if args.grpc:
+
         def _run_grpc_loop(port: int) -> None:
             """Run the gRPC server in a dedicated event loop."""
             import asyncio
+
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
                 from prismatic.gateway.grpc_server import serve_grpc
+
                 loop.run_until_complete(serve_grpc(port=port))
             except KeyboardInterrupt:
                 pass
