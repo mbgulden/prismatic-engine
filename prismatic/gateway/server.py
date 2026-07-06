@@ -24,6 +24,7 @@ import os
 import sys
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -98,15 +99,14 @@ async def startup() -> None:
     # Start WebSocket broadcaster (daemon thread with its own event loop)
     start_ws_broadcaster()
 
-    # Initialize run records store
-    state_dir = os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state/")
-    store_path = os.path.join(state_dir, "run_records.json")
-    _run_store = AgentRunRecordStore(store_path)
+    # Initialize run records store. The default is the shared SQLite
+    # database used by supervisor processes: ~/.prismatic/runs.db.
+    _run_store = AgentRunRecordStore()
 
     logger.info(
         "Gateway started at %s, store=%s, ipc=%s",
         time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        store_path,
+        _run_store._store_path,
         _ipc_listener.socket_path,
     )
 
@@ -232,6 +232,36 @@ async def get_lock(file_path: str) -> Response:
 # ── Agent Run Records API ────────────────────────────────────────────
 
 
+def _parse_iso_timestamp(value: str | None) -> datetime | None:
+    """Parse persisted ISO timestamps, including trailing-Z UTC values."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _run_record_to_dict(record: Any) -> dict[str, Any]:
+    """Serialize a run record for the public Runs API."""
+    started = _parse_iso_timestamp(record.started_at)
+    completed = _parse_iso_timestamp(record.completed_at)
+    duration = None
+    if started is not None and completed is not None:
+        duration = max(0.0, (completed - started).total_seconds())
+    return {
+        "run_id": record.run_id,
+        "issue_id": record.issue_id,
+        "agent_name": record.agent_name,
+        "status": record.status,
+        "started_at": record.started_at,
+        "completed_at": record.completed_at,
+        "duration_seconds": duration,
+        "output_path": record.output_path,
+        "error_message": record.error_message,
+    }
+
+
 @app.get("/runs")
 async def list_runs(status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
     """Return recent agent run records, optionally filtered by status."""
@@ -240,16 +270,7 @@ async def list_runs(status: str | None = None, limit: int = 50) -> list[dict[str
     records = _run_store.get_recent_runs(limit=limit)
     result = []
     for r in records:
-        d = {
-            "run_id": r.run_id,
-            "issue_id": r.issue_id,
-            "agent_name": r.agent_name,
-            "status": r.status,
-            "started_at": r.started_at,
-            "completed_at": r.completed_at,
-            "output_path": r.output_path,
-            "error_message": r.error_message,
-        }
+        d = _run_record_to_dict(r)
         if status is None or r.status == status:
             result.append(d)
     return result
@@ -272,16 +293,7 @@ async def get_run(run_id: str) -> Response:
             media_type="application/json",
         )
     return Response(
-        content=json.dumps({
-            "run_id": record.run_id,
-            "issue_id": record.issue_id,
-            "agent_name": record.agent_name,
-            "status": record.status,
-            "started_at": record.started_at,
-            "completed_at": record.completed_at,
-            "output_path": record.output_path,
-            "error_message": record.error_message,
-        }),
+        content=json.dumps(_run_record_to_dict(record)),
         media_type="application/json",
     )
 
@@ -331,9 +343,7 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
 
 def _create_run_store() -> AgentRunRecordStore | None:
     """Initialize run store (used by gRPC server)."""
-    state_dir = os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state/")
-    store_path = os.path.join(state_dir, "run_records.json")
-    return AgentRunRecordStore(store_path)
+    return AgentRunRecordStore()
 
 
 def main() -> None:
