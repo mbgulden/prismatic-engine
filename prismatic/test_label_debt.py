@@ -1,7 +1,15 @@
 from prismatic.label_debt import analyze_issues
 
 
-def issue(identifier, title, labels, state="Todo", state_type="unstarted", description="", **extra):
+def issue(
+    identifier,
+    title,
+    labels,
+    state="Todo",
+    state_type="unstarted",
+    description="",
+    **extra,
+):
     return {
         "identifier": identifier,
         "title": title,
@@ -45,7 +53,13 @@ def test_backfills_legitimate_active_work_missing_dispatch_ready():
 
 def test_cancels_duplicates_and_removes_dispatch_labels():
     report = analyze_issues(
-        [issue("GRO-11", "Stale clone of GRO-7", ["agent:ned", "dispatch:ready", "dispatch:priority"])]
+        [
+            issue(
+                "GRO-11",
+                "Stale clone of GRO-7",
+                ["agent:ned", "dispatch:ready", "dispatch:priority"],
+            )
+        ]
     )
 
     action = actions_by_id(report)["GRO-11"]
@@ -75,7 +89,15 @@ def test_quarantines_review_noise_outside_production_queue():
 
 def test_parks_done_or_archived_leftovers():
     report = analyze_issues(
-        [issue("GRO-13", "Completed thing", ["agent:ned", "dispatch:ready"], state="Done", state_type="completed")]
+        [
+            issue(
+                "GRO-13",
+                "Completed thing",
+                ["agent:ned", "dispatch:ready"],
+                state="Done",
+                state_type="completed",
+            )
+        ]
     )
 
     action = actions_by_id(report)["GRO-13"]
@@ -86,7 +108,13 @@ def test_parks_done_or_archived_leftovers():
 
 def test_blocked_work_gets_triage_instead_of_launchable_capacity():
     report = analyze_issues(
-        [issue("GRO-14", "Needs credential from Michael", ["agent:ned", "dispatch:ready"])]
+        [
+            issue(
+                "GRO-14",
+                "Needs credential from Michael",
+                ["agent:ned", "dispatch:ready"],
+            )
+        ]
     )
 
     action = actions_by_id(report)["GRO-14"]

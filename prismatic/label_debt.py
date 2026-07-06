@@ -41,7 +41,12 @@ COMPLETED_STATE_NAMES = {"done", "canceled", "cancelled", "duplicate", "archived
 REVIEW_STATE_NAMES = {"in review", "review", "needs review"}
 
 DUPLICATE_NEEDLES = ("duplicate", "dupe", "stale clone", "clone of", "superseded by")
-REVIEW_NOISE_NEEDLES = ("review noise", "stale review", "post-publish audit", "agent:ned-review")
+REVIEW_NOISE_NEEDLES = (
+    "review noise",
+    "stale review",
+    "post-publish audit",
+    "agent:ned-review",
+)
 ARCHIVE_NEEDLES = ("archived", "archive leftover", "legacy leftover")
 BLOCKED_NEEDLES = ("blocked", "waiting on", "needs human", "credential", "manual")
 
@@ -84,7 +89,11 @@ class IssueSnapshot:
 
     @property
     def agent_labels(self) -> tuple[str, ...]:
-        return tuple(sorted(label for label in self.labels if label.startswith(AGENT_LABEL_PREFIX)))
+        return tuple(
+            sorted(
+                label for label in self.labels if label.startswith(AGENT_LABEL_PREFIX)
+            )
+        )
 
     @property
     def has_dispatch_ready(self) -> bool:
@@ -108,7 +117,8 @@ class IssueSnapshot:
     @property
     def is_duplicate_or_clone(self) -> bool:
         return _contains_any(self.text, DUPLICATE_NEEDLES) or any(
-            label in {"duplicate", "stale-clone", "stale clone"} for label in self.labels
+            label in {"duplicate", "stale-clone", "stale clone"}
+            for label in self.labels
         )
 
     @property
@@ -121,12 +131,17 @@ class IssueSnapshot:
 
     @property
     def is_archived_leftover(self) -> bool:
-        return self.archived or _contains_any(self.text, ARCHIVE_NEEDLES) or "archived" in self.labels
+        return (
+            self.archived
+            or _contains_any(self.text, ARCHIVE_NEEDLES)
+            or "archived" in self.labels
+        )
 
     @property
     def is_blocked(self) -> bool:
         return _contains_any(self.text, BLOCKED_NEEDLES) or any(
-            label in {"blocked", "requires:human", "requires:credential", REQUIRES_TRIAGE}
+            label
+            in {"blocked", "requires:human", "requires:credential", REQUIRES_TRIAGE}
             for label in self.labels
         )
 
@@ -167,7 +182,9 @@ class HygieneAction:
         }
 
 
-def analyze_issues(raw_issues: Iterable[Mapping[str, Any] | IssueSnapshot]) -> dict[str, Any]:
+def analyze_issues(
+    raw_issues: Iterable[Mapping[str, Any] | IssueSnapshot],
+) -> dict[str, Any]:
     """Return queue-hygiene metrics and deterministic cleanup actions.
 
     The function is side-effect free by design.  A caller may apply the returned
@@ -175,7 +192,10 @@ def analyze_issues(raw_issues: Iterable[Mapping[str, Any] | IssueSnapshot]) -> d
     and classifies.
     """
 
-    issues = [issue if isinstance(issue, IssueSnapshot) else IssueSnapshot.from_mapping(issue) for issue in raw_issues]
+    issues = [
+        issue if isinstance(issue, IssueSnapshot) else IssueSnapshot.from_mapping(issue)
+        for issue in raw_issues
+    ]
     actions = [_recommend_action(issue) for issue in issues]
     actions = [action for action in actions if action is not None]
 
@@ -184,11 +204,19 @@ def analyze_issues(raw_issues: Iterable[Mapping[str, Any] | IssueSnapshot]) -> d
     stale_noise = [
         issue
         for issue in issues
-        if issue.is_duplicate_or_clone or issue.is_review_noise or issue.is_archived_leftover
+        if issue.is_duplicate_or_clone
+        or issue.is_review_noise
+        or issue.is_archived_leftover
     ]
-    backfill = [action for action in actions if action.action == "backfill_dispatch_ready"]
+    backfill = [
+        action for action in actions if action.action == "backfill_dispatch_ready"
+    ]
     quarantine = [action for action in actions if action.action == "quarantine_noise"]
-    cancel = [action for action in actions if action.action == "cancel_duplicate_or_stale_clone"]
+    cancel = [
+        action
+        for action in actions
+        if action.action == "cancel_duplicate_or_stale_clone"
+    ]
     park = [action for action in actions if action.action == "park_archived_leftover"]
 
     labeled_count = len(labeled)
@@ -218,7 +246,11 @@ def _recommend_action(issue: IssueSnapshot) -> HygieneAction | None:
     if not issue.is_labeled_work:
         return None
 
-    dispatch_labels = tuple(sorted(label for label in issue.labels if label.startswith(DISPATCH_LABEL_PREFIX)))
+    dispatch_labels = tuple(
+        sorted(
+            label for label in issue.labels if label.startswith(DISPATCH_LABEL_PREFIX)
+        )
+    )
 
     if issue.is_duplicate_or_clone:
         return HygieneAction(
@@ -284,7 +316,11 @@ def _contains_any(haystack: str, needles: Sequence[str]) -> bool:
 
 
 def _load_issues(path: str | None) -> list[Mapping[str, Any]]:
-    raw = sys.stdin.read() if path in (None, "-") else open(path, "r", encoding="utf-8").read()
+    raw = (
+        sys.stdin.read()
+        if path in (None, "-")
+        else open(path, "r", encoding="utf-8").read()
+    )
     data = json.loads(raw)
     if isinstance(data, Mapping):
         if "issues" in data:
@@ -294,14 +330,25 @@ def _load_issues(path: str | None) -> list[Mapping[str, Any]]:
         elif data.get("data", {}).get("issues", {}).get("nodes") is not None:
             data = data["data"]["issues"]["nodes"]
     if not isinstance(data, list):
-        raise SystemExit("expected a JSON list of issues or an object containing issues/nodes")
+        raise SystemExit(
+            "expected a JSON list of issues or an object containing issues/nodes"
+        )
     return data
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Measure Prismatic Linear label debt and queue hygiene")
-    parser.add_argument("issues_json", nargs="?", default="-", help="JSON file containing issues; defaults to stdin")
-    parser.add_argument("--pretty", action="store_true", help="Pretty-print JSON output")
+    parser = argparse.ArgumentParser(
+        description="Measure Prismatic Linear label debt and queue hygiene"
+    )
+    parser.add_argument(
+        "issues_json",
+        nargs="?",
+        default="-",
+        help="JSON file containing issues; defaults to stdin",
+    )
+    parser.add_argument(
+        "--pretty", action="store_true", help="Pretty-print JSON output"
+    )
     args = parser.parse_args(argv)
 
     result = analyze_issues(_load_issues(args.issues_json))
