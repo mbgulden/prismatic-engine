@@ -5,7 +5,7 @@ import textwrap
 from pathlib import Path
 
 import pytest
-from fastapi import APIRouter, FastAPI
+from fastapi import FastAPI
 
 from prismatic.plugins import PrismaticPlugin
 from prismatic.plugins.loader import (
@@ -17,7 +17,9 @@ from prismatic.plugins.loader import (
 
 
 def _write_plugin_module(path: Path, *, class_body: str | None = None) -> None:
-    body = class_body or '''
+    body = (
+        class_body
+        or """
 class Plugin(PrismaticPlugin):
     @property
     def name(self):
@@ -42,7 +44,8 @@ class Plugin(PrismaticPlugin):
             return {"ok": True}
 
         return [router]
-'''
+"""
+    )
     path.write_text(
         "from fastapi import APIRouter\n"
         "from prismatic.plugins.base import PrismaticPlugin\n\n"
@@ -60,7 +63,7 @@ def test_loader_instantiates_enabled_plugins_and_skips_disabled(tmp_path: Path) 
     _write_plugin_module(plugins_dir / "enabled_plugin.py")
     _write_plugin_module(
         plugins_dir / "disabled_plugin.py",
-        class_body='''
+        class_body="""
 class Plugin(PrismaticPlugin):
     @property
     def name(self):
@@ -73,13 +76,13 @@ class Plugin(PrismaticPlugin):
     @property
     def description(self):
         return "Disabled plugin"
-''',
+""",
     )
     (plugins_dir / "registry.json").write_text(
         '{"plugins": ['
         '{"name": "demo", "module": "enabled_plugin", "enabled": true},'
         '{"name": "disabled", "module": "disabled_plugin", "enabled": false}'
-        ']}'
+        "]}"
     )
 
     plugins = load_plugins(plugins_dir)

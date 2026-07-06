@@ -77,7 +77,9 @@ def load_plugins(plugins_dir: Path) -> list[PrismaticPlugin]:
             module = importlib.import_module(module_name)
             plugin_cls = getattr(module, "Plugin", None)
             if plugin_cls is None:
-                raise PluginLoadError(f"plugin module {module_name!r} has no Plugin class")
+                raise PluginLoadError(
+                    f"plugin module {module_name!r} has no Plugin class"
+                )
             plugin = plugin_cls()
             if not isinstance(plugin, PrismaticPlugin):
                 raise PluginLoadError(
@@ -119,7 +121,9 @@ def include_plugin_routes(app: Any, plugins: Iterable[PrismaticPlugin]) -> int:
     return mounted
 
 
-def load_and_include_plugin_routes(app: Any, plugins_dir: Path) -> list[PrismaticPlugin]:
+def load_and_include_plugin_routes(
+    app: Any, plugins_dir: Path
+) -> list[PrismaticPlugin]:
     """Load enabled plugins and mount their FastAPI routes onto ``app``."""
 
     plugins = load_plugins(plugins_dir)
