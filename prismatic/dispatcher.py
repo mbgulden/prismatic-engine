@@ -1975,6 +1975,24 @@ def main() -> None:
         help="Overwrite existing configuration files",
     )
 
+    # ── Queue Health Subcommand ────────────────────────────────
+    queue_parser = subparsers.add_parser(
+        "queue-health",
+        help="Show a concise per-lane queue/runtime health scorecard",
+    )
+    queue_parser.add_argument(
+        "--lane",
+        action="append",
+        default=None,
+        help="Agent label to include (repeatable, e.g. --lane agent:ned)",
+    )
+    queue_parser.add_argument(
+        "--stale-hours",
+        type=float,
+        default=72.0,
+        help="Queued issue age threshold for stale count (default: 72)",
+    )
+
     # ── Billing-Report Subcommand (Phase 4.4) ─────────────────
     billing_parser = subparsers.add_parser(
         "billing-report", help="Generate client cost attribution report"
@@ -2017,6 +2035,10 @@ def main() -> None:
 
     if args.command == "init":
         init_config(force=args.force)
+    elif args.command == "queue-health":
+        from .queue_health import cmd_queue_health
+
+        cmd_queue_health(args)
     elif args.command == "billing-report":
         cmd_billing_report(args)
     elif args.command == "serve":

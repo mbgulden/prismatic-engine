@@ -225,7 +225,17 @@ prismatic-engine init
 
 # Serve the coordinator
 prismatic-engine serve
+
+# Daily queue/runtime scorecard by agent lane
+prismatic-engine queue-health
+# Narrow to a lane or tune stale threshold
+prismatic-engine queue-health --lane agent:ned --stale-hours 48
 ```
+
+`queue-health` prints a concise operator table for the active lanes, including
+active, queued, blocked, stale, completed counts plus max/average queue age. It
+uses the same `LINEAR_API_KEY` environment variable as the dispatcher and is
+intended for daily queue triage before a full dispatch run.
 
 ### 2. Lock & Lane Git Validation Hook Setup
 Link the pre-push hook to check agent lanes before pushes:
