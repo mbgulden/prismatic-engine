@@ -5,6 +5,7 @@ cron profiles, or Telegram.  Callers hand it event dictionaries and callable
 checks; it produces deterministic replay records, smoke-test verdicts,
 stall alerts, and rollout stop/go decisions.
 """
+
 from __future__ import annotations
 
 import json
@@ -84,8 +85,12 @@ class ReplayQueue:
     def __init__(self, path: str | Path):
         self.path = Path(path)
 
-    def append(self, event_id: str, event_type: str, payload: dict[str, Any]) -> ReplayRecord:
-        record = ReplayRecord(event_id=event_id, event_type=event_type, payload=dict(payload))
+    def append(
+        self, event_id: str, event_type: str, payload: dict[str, Any]
+    ) -> ReplayRecord:
+        record = ReplayRecord(
+            event_id=event_id, event_type=event_type, payload=dict(payload)
+        )
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record.to_dict(), sort_keys=True) + "\n")
@@ -95,13 +100,17 @@ class ReplayQueue:
         if not self.path.exists():
             return []
         records: list[ReplayRecord] = []
-        for lineno, line in enumerate(self.path.read_text(encoding="utf-8").splitlines(), start=1):
+        for lineno, line in enumerate(
+            self.path.read_text(encoding="utf-8").splitlines(), start=1
+        ):
             if not line.strip():
                 continue
             try:
                 records.append(ReplayRecord.from_dict(json.loads(line)))
             except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-                raise ValueError(f"invalid replay record at {self.path}:{lineno}: {exc}") from exc
+                raise ValueError(
+                    f"invalid replay record at {self.path}:{lineno}: {exc}"
+                ) from exc
         return records
 
     def replay(
@@ -128,15 +137,33 @@ class ReplayQueue:
             processed += 1
             handler = handlers.get(record.event_type)
             if handler is None:
-                failed[record.event_id] = f"no handler registered for {record.event_type}"
-                rewritten.append(ReplayRecord(**{**record.to_dict(), "attempts": record.attempts + 1, "last_error": failed[record.event_id]}))
+                failed[record.event_id] = (
+                    f"no handler registered for {record.event_type}"
+                )
+                rewritten.append(
+                    ReplayRecord(
+                        **{
+                            **record.to_dict(),
+                            "attempts": record.attempts + 1,
+                            "last_error": failed[record.event_id],
+                        }
+                    )
+                )
                 continue
 
             try:
                 handler(record)
             except Exception as exc:  # caller-facing guardrail: record, don't mask
                 failed[record.event_id] = str(exc)
-                rewritten.append(ReplayRecord(**{**record.to_dict(), "attempts": record.attempts + 1, "last_error": str(exc)}))
+                rewritten.append(
+                    ReplayRecord(
+                        **{
+                            **record.to_dict(),
+                            "attempts": record.attempts + 1,
+                            "last_error": str(exc),
+                        }
+                    )
+                )
             else:
                 succeeded.append(record.event_id)
                 rewritten.append(record)
@@ -189,7 +216,10 @@ class SmokeSuite:
                 ok, detail = False, f"exception: {exc}"
             failed = failed or not ok
             results[check.name] = {"passed": ok, "detail": detail}
-        return SmokeSuiteResult(status=GuardrailStatus.FAIL if failed else GuardrailStatus.PASS, checks=results)
+        return SmokeSuiteResult(
+            status=GuardrailStatus.FAIL if failed else GuardrailStatus.PASS,
+            checks=results,
+        )
 
 
 @dataclass(frozen=True)
@@ -216,14 +246,18 @@ def detect_silent_stalls(
     """
 
     current = time.time() if now is None else now
-    stalled = sorted(key for key, ts in heartbeats.items() if current - float(ts) > max_age_seconds)
+    stalled = sorted(
+        key for key, ts in heartbeats.items() if current - float(ts) > max_age_seconds
+    )
     if stalled:
         return StallAlert(
             status=GuardrailStatus.FAIL,
             stalled_keys=stalled,
             message=f"silent stall detected for {len(stalled)} key(s); alert via {alert_path}",
         )
-    return StallAlert(status=GuardrailStatus.PASS, stalled_keys=[], message="all heartbeats fresh")
+    return StallAlert(
+        status=GuardrailStatus.PASS, stalled_keys=[], message="all heartbeats fresh"
+    )
 
 
 @dataclass(frozen=True)
@@ -260,7 +294,9 @@ def rollout_gate(
 
     if reasons:
         return RolloutDecision(status=GuardrailStatus.FAIL, go=False, reasons=reasons)
-    return RolloutDecision(status=GuardrailStatus.PASS, go=True, reasons=["all rollout gates passed"])
+    return RolloutDecision(
+        status=GuardrailStatus.PASS, go=True, reasons=["all rollout gates passed"]
+    )
 
 
 __all__ = [

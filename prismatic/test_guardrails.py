@@ -18,10 +18,16 @@ def test_replay_queue_backfills_in_original_order(tmp_path: Path) -> None:
     queue.append("2", "dispatch", {"agent": "ned"})
     seen: list[tuple[str, str]] = []
 
-    result = queue.replay({
-        "ingest": lambda record: seen.append((record.event_id, record.payload["issue"])),
-        "dispatch": lambda record: seen.append((record.event_id, record.payload["agent"])),
-    })
+    result = queue.replay(
+        {
+            "ingest": lambda record: seen.append(
+                (record.event_id, record.payload["issue"])
+            ),
+            "dispatch": lambda record: seen.append(
+                (record.event_id, record.payload["agent"])
+            ),
+        }
+    )
 
     assert result.status is GuardrailStatus.PASS
     assert result.succeeded == ["1", "2"]
@@ -32,7 +38,13 @@ def test_replay_queue_records_forced_failure(tmp_path: Path) -> None:
     queue = ReplayQueue(tmp_path / "replay.jsonl")
     queue.append("bad", "artifact", {"path": "missing"})
 
-    result = queue.replay({"artifact": lambda record: (_ for _ in ()).throw(RuntimeError("artifact offline"))})
+    result = queue.replay(
+        {
+            "artifact": lambda record: (_ for _ in ()).throw(
+                RuntimeError("artifact offline")
+            )
+        }
+    )
 
     assert result.status is GuardrailStatus.FAIL
     assert result.failed == {"bad": "artifact offline"}
@@ -42,17 +54,22 @@ def test_replay_queue_records_forced_failure(tmp_path: Path) -> None:
 
 
 def test_smoke_suite_proves_live_path_and_fails_fast() -> None:
-    suite = SmokeSuite([
-        SmokeCheck("ingest", lambda: (True, "webhook accepted")),
-        SmokeCheck("dispatch", lambda: (False, "no worker claimed task")),
-        SmokeCheck("artifact", lambda: True),
-        SmokeCheck("state_sync", lambda: (True, "linear updated")),
-    ])
+    suite = SmokeSuite(
+        [
+            SmokeCheck("ingest", lambda: (True, "webhook accepted")),
+            SmokeCheck("dispatch", lambda: (False, "no worker claimed task")),
+            SmokeCheck("artifact", lambda: True),
+            SmokeCheck("state_sync", lambda: (True, "linear updated")),
+        ]
+    )
 
     result = suite.run()
 
     assert result.status is GuardrailStatus.FAIL
-    assert result.checks["dispatch"] == {"passed": False, "detail": "no worker claimed task"}
+    assert result.checks["dispatch"] == {
+        "passed": False,
+        "detail": "no worker claimed task",
+    }
     assert result.checks["artifact"]["passed"] is True
 
 
@@ -69,7 +86,9 @@ def test_silent_stall_alert_has_concrete_path() -> None:
     assert "Linear comment + ops feed" in alert.message
 
 
-def test_rollout_gate_requires_green_smoke_replay_stalls_approval_and_rollback(tmp_path: Path) -> None:
+def test_rollout_gate_requires_green_smoke_replay_stalls_approval_and_rollback(
+    tmp_path: Path,
+) -> None:
     queue = ReplayQueue(tmp_path / "replay.jsonl")
     queue.append("ok", "ingest", {})
     replay = queue.replay({"ingest": lambda record: None})
