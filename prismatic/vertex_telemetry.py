@@ -744,9 +744,12 @@ class VertexBillingLedger:
             else None
         )
         sync_failed = bool(
-            last_error_at and (last_success_at is None or last_error_at >= last_success_at)
+            last_error_at
+            and (last_success_at is None or last_error_at >= last_success_at)
         )
-        failure_message = latest_error.get("error_message") if sync_failed and latest_error else None
+        failure_message = (
+            latest_error.get("error_message") if sync_failed and latest_error else None
+        )
 
         retry_action = {
             "label": "Retry Vertex quota sync",
@@ -879,7 +882,9 @@ def cmd_check() -> None:
     print(f"  Last quota sync: {freshness.get('last_successful_sync_at') or 'Never'}")
     print(f"  Last sync attempt: {freshness.get('last_sync_attempt_at') or 'Never'}")
     if freshness.get("sync_failed"):
-        print(f"  Sync status:   FAILED — {freshness.get('failure_message', 'unknown error')}")
+        print(
+            f"  Sync status:   FAILED — {freshness.get('failure_message', 'unknown error')}"
+        )
         print(
             f"  Retry:         {freshness.get('retry_action', {}).get('command', 'python3 -m prismatic.vertex_telemetry poll')}"
         )
