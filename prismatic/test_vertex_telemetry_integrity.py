@@ -77,7 +77,10 @@ def test_normalize_quota_payload_explains_unavailable_remaining_value():
     assert record is not None
     assert record["limit_value"] == 0.0
     assert "remaining_value" not in record
-    assert record["unavailable_reason"] == "quota limit unavailable from Cloud Quotas payload"
+    assert (
+        record["unavailable_reason"]
+        == "quota limit unavailable from Cloud Quotas payload"
+    )
     assert not _contains_nullish(record)
 
 
