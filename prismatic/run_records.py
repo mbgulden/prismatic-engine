@@ -12,9 +12,8 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-import time
 import uuid
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -25,6 +24,7 @@ import fcntl
 # Dataclass
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class AgentRunRecord:
     """Snapshot of a single agent run."""
@@ -32,9 +32,9 @@ class AgentRunRecord:
     run_id: str
     issue_id: str
     agent_name: str
-    status: str = "pending"           # pending | running | completed | failed
-    started_at: str = ""              # ISO-8601 string
-    completed_at: str | None = None   # ISO-8601 string
+    status: str = "pending"  # pending | running | completed | failed
+    started_at: str = ""  # ISO-8601 string
+    completed_at: str | None = None  # ISO-8601 string
     output_path: str | None = None
     error_message: str | None = None
 
@@ -46,6 +46,7 @@ class AgentRunRecord:
 # ---------------------------------------------------------------------------
 # JSON-file backed store
 # ---------------------------------------------------------------------------
+
 
 def _default_store_path() -> str:
     """Resolve the canonical run-history store path.
@@ -259,10 +260,7 @@ class AgentRunRecordStore:
         """Return all runs for a given *issue_id*, newest first."""
         if self._sqlite:
             self._load_from_disk()
-        matching = [
-            r for r in self._records.values()
-            if r.issue_id == issue_id
-        ]
+        matching = [r for r in self._records.values() if r.issue_id == issue_id]
         matching.sort(key=lambda r: r.started_at, reverse=True)
         return matching
 

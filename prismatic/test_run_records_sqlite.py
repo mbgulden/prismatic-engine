@@ -7,7 +7,9 @@ from prismatic.run_records import AgentRunRecordStore
 from prismatic.gateway.server import _run_record_to_dict
 
 
-def test_sqlite_store_reads_existing_runs_and_sorts_recent_first(tmp_path: Path) -> None:
+def test_sqlite_store_reads_existing_runs_and_sorts_recent_first(
+    tmp_path: Path,
+) -> None:
     db_path = tmp_path / "runs.db"
     with sqlite3.connect(db_path) as db:
         db.execute(

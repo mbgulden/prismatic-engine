@@ -21,22 +21,19 @@ import argparse
 import json
 import logging
 import os
-import sys
 import threading
 import time
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from prismatic.gateway.event_bus import get_event_bus, set_event_bus, EventBus
+from prismatic.gateway.event_bus import get_event_bus
 from prismatic.gateway.ipc_bridge import (
     UnixSocketListener,
     create_event_ingest_route,
-    DEFAULT_SOCKET_PATH,
 )
 from prismatic.gateway.ws_broadcaster import (
     start_ws_broadcaster,
@@ -90,7 +87,7 @@ async def startup() -> None:
     _started_at = time.time()
 
     # Initialize EventBus (ensure singleton)
-    bus = get_event_bus()
+    get_event_bus()
 
     # Start IPC bridge Unix socket listener
     _ipc_listener = UnixSocketListener()
@@ -403,13 +400,16 @@ def main() -> None:
     # Start gRPC in background thread if enabled
     grpc_thread: threading.Thread | None = None
     if args.grpc:
+
         def _run_grpc_loop(port: int) -> None:
             """Run the gRPC server in a dedicated event loop."""
             import asyncio
+
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
                 from prismatic.gateway.grpc_server import serve_grpc
+
                 loop.run_until_complete(serve_grpc(port=port))
             except KeyboardInterrupt:
                 pass
