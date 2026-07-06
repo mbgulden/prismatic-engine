@@ -1329,6 +1329,7 @@
     return h('div', { className: 'deck-container' }, [
       renderHeader(),
       renderNavTabs(),
+      renderOperatorFeedback(),
       h('div', { className: 'deck-dashboard-grid' }, gridChildren),
       isMobile && h('button', { className: 'deck-mobile-toggle', onClick: () => setMobileQueueOpen(true) }, '💼'),
       isMobile && renderQueuePanel(true),
