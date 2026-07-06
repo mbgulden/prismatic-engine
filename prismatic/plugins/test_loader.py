@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from prismatic.plugins import PrismaticPlugin
 from prismatic.plugins.loader import (
@@ -120,7 +121,9 @@ def test_include_plugin_routes_mounts_fastapi_router(tmp_path: Path) -> None:
     plugins = load_and_include_plugin_routes(app, plugins_dir)
 
     assert [plugin.name for plugin in plugins] == ["demo"]
-    assert any(getattr(route, "path", None) == "/demo" for route in app.routes)
+    response = TestClient(app).get("/demo")
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
 
 
 def test_include_plugin_routes_accepts_callable_installers() -> None:
@@ -150,4 +153,6 @@ def test_include_plugin_routes_accepts_callable_installers() -> None:
     mounted = include_plugin_routes(app, [CallableRoutePlugin()])
 
     assert mounted == 1
-    assert any(getattr(route, "path", None) == "/callable" for route in app.routes)
+    response = TestClient(app).get("/callable")
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
