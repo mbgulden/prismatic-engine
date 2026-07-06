@@ -745,7 +745,7 @@ class VertexBillingLedger:
         )
         sync_failed = bool(
             last_error_at
-            and (last_success_at is None or last_error_at >= last_success_at)
+            and (last_success_at is None or last_error_at > last_success_at)
         )
         failure_message = (
             latest_error.get("error_message") if sync_failed and latest_error else None
