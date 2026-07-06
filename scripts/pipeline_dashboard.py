@@ -49,9 +49,12 @@ DLQ_PATH = os.environ.get(
     "PRISMATIC_SUPERVISOR_DLQ",
     os.path.expanduser("~/.prismatic/supervisor/dlq.jsonl"),
 )
-HEARTBEAT_STALE_SECONDS = int(os.environ.get("PRISMATIC_DASHBOARD_HEARTBEAT_STALE_SEC", "600"))
+HEARTBEAT_STALE_SECONDS = int(
+    os.environ.get("PRISMATIC_DASHBOARD_HEARTBEAT_STALE_SEC", "600")
+)
 
 # ── Load metrics ────────────────────────────────────────────
+
 
 def load_metrics():
     """Load all metrics from known paths, deduplicate by issue_id."""
@@ -78,6 +81,7 @@ def load_metrics():
 
 
 # ── Compute per-task stats ──────────────────────────────────
+
 
 def compute_task_stats(metrics_list):
     """Aggregate per-task metrics."""
@@ -128,6 +132,7 @@ def compute_task_stats(metrics_list):
 
 
 # ── Compute per-session stats ───────────────────────────────
+
 
 def compute_session_stats(metrics_list):
     """Group metrics by session (UTC date) and compute per-session aggregates."""
@@ -187,12 +192,15 @@ def compute_session_stats(metrics_list):
         "avg_acceptance_rate": round(avg_acceptance, 2),
         "avg_credit_per_task": round(
             sum(t.get("credit_cost", 0) for t in metrics_list) / len(metrics_list), 2
-        ) if metrics_list else 0,
+        )
+        if metrics_list
+        else 0,
         "daily": session_summaries,
     }
 
 
 # ── Detect pipeline bypasses ─────────────────────────────────
+
 
 def detect_bypasses(metrics_list):
     """Detect tasks that bypassed pipeline stages (low review depth, no cycle count)."""
@@ -206,6 +214,7 @@ def detect_bypasses(metrics_list):
 
 
 # ── Recovery / watchdog state ─────────────────────────────────
+
 
 def _parse_timestamp(value):
     """Return epoch seconds for ISO or epoch timestamp values, else None."""
@@ -260,6 +269,7 @@ def load_supervisor_pool_stats():
     """Read bounded supervisor pool stats without requiring the service to be up."""
     try:
         from prismatic.supervisor.recovery import get_pool
+
         return {"ok": True, **get_pool().stats()}
     except Exception as exc:  # pragma: no cover - depends on deployment env
         return {"ok": False, "error": str(exc)}
@@ -287,7 +297,13 @@ def load_dlq_state(path=DLQ_PATH):
                 recent = recent[-5:]
         return {"path": str(dlq), "exists": True, "count": count, "recent": recent}
     except Exception as exc:
-        return {"path": str(dlq), "exists": True, "count": count, "error": str(exc), "recent": recent}
+        return {
+            "path": str(dlq),
+            "exists": True,
+            "count": count,
+            "error": str(exc),
+            "recent": recent,
+        }
 
 
 def load_heartbeat_state(paths=None, now=None):
@@ -314,7 +330,13 @@ def load_heartbeat_state(paths=None, now=None):
             "stale_after_seconds": HEARTBEAT_STALE_SECONDS,
             "state": data,
         }
-    return {"path": None, "exists": False, "ok": False, "age_seconds": None, "stale_after_seconds": HEARTBEAT_STALE_SECONDS}
+    return {
+        "path": None,
+        "exists": False,
+        "ok": False,
+        "age_seconds": None,
+        "stale_after_seconds": HEARTBEAT_STALE_SECONDS,
+    }
 
 
 def load_recovery_state():
@@ -342,7 +364,13 @@ def load_recovery_state():
     elif pool.get("live_count", 0) >= pool.get("max_concurrent", 1):
         status = "critical"
         reasons.append("supervisor pool is at capacity")
-    return {"status": status, "reasons": reasons, "pool": pool, "dlq": dlq, "heartbeat": heartbeat}
+    return {
+        "status": status,
+        "reasons": reasons,
+        "pool": pool,
+        "dlq": dlq,
+        "heartbeat": heartbeat,
+    }
 
 
 def recovery_recommendation(recovery):
@@ -357,10 +385,13 @@ def recovery_recommendation(recovery):
 
 
 def recovery_icon(status):
-    return {"healthy": "🟢", "warning": "🟡", "critical": "🔴", "unknown": "⚪"}.get(status, "⚪")
+    return {"healthy": "🟢", "warning": "🟡", "critical": "🔴", "unknown": "⚪"}.get(
+        status, "⚪"
+    )
 
 
 # ── Dashboard format ─────────────────────────────────────────
+
 
 def print_dashboard(metrics_list):
     """Print a human-readable health dashboard."""
@@ -381,23 +412,35 @@ def print_dashboard(metrics_list):
     # Recovery / replay state
     icon = recovery_icon(recovery["status"])
     print(f"\n── Recovery / Watchdog State: {icon} {recovery['status'].upper()} ──")
-    print("  Shows: consumer heartbeat freshness, bounded supervisor pool, and DLQ replay backlog.")
-    print("  Why:   recovery can look quiet while replay paths are stuck or dead-lettering work.")
+    print(
+        "  Shows: consumer heartbeat freshness, bounded supervisor pool, and DLQ replay backlog."
+    )
+    print(
+        "  Why:   recovery can look quiet while replay paths are stuck or dead-lettering work."
+    )
     print(f"  Next:  {recovery_recommendation(recovery)}")
     pool = recovery.get("pool", {})
     if pool.get("ok"):
-        print(f"  🧵 Supervisor pool:          {pool.get('live_count', 0)}/{pool.get('max_concurrent', '?')} live, {pool.get('total_skipped_dlq', 0)} skipped to DLQ")
+        print(
+            f"  🧵 Supervisor pool:          {pool.get('live_count', 0)}/{pool.get('max_concurrent', '?')} live, {pool.get('total_skipped_dlq', 0)} skipped to DLQ"
+        )
     else:
-        print(f"  🧵 Supervisor pool:          unavailable ({pool.get('error', 'unknown error')})")
+        print(
+            f"  🧵 Supervisor pool:          unavailable ({pool.get('error', 'unknown error')})"
+        )
     heartbeat = recovery.get("heartbeat", {})
     if heartbeat.get("exists"):
         age = heartbeat.get("age_seconds")
-        age_text = f"{age:.0f}s old" if isinstance(age, (int, float)) else "timestamp missing"
+        age_text = (
+            f"{age:.0f}s old" if isinstance(age, (int, float)) else "timestamp missing"
+        )
         print(f"  💓 Consumer heartbeat:       {age_text} via {heartbeat.get('path')}")
     else:
         print("  💓 Consumer heartbeat:       no state file found")
     dlq = recovery.get("dlq", {})
-    print(f"  🧯 DLQ backlog:              {dlq.get('count', 0)} item(s) at {dlq.get('path')}")
+    print(
+        f"  🧯 DLQ backlog:              {dlq.get('count', 0)} item(s) at {dlq.get('path')}"
+    )
     for reason in recovery.get("reasons", [])[:3]:
         print(f"  ⚠️  {reason}")
 
@@ -409,11 +452,17 @@ def print_dashboard(metrics_list):
 
     # Per-task metrics
     print("\n── Per-Task Metrics (averages) ──")
-    print(f"  ⏱️  Time to self-validate:  {task_stats['time_to_self_validate']['avg']} min (range: {task_stats['time_to_self_validate']['min']}–{task_stats['time_to_self_validate']['max']})")
-    print(f"  🔍 Peer review depth:       {task_stats['peer_review_depth']['avg']} findings/100 lines")
+    print(
+        f"  ⏱️  Time to self-validate:  {task_stats['time_to_self_validate']['avg']} min (range: {task_stats['time_to_self_validate']['min']}–{task_stats['time_to_self_validate']['max']})"
+    )
+    print(
+        f"  🔍 Peer review depth:       {task_stats['peer_review_depth']['avg']} findings/100 lines"
+    )
     print(f"  🔄 Fix cycle count:         {task_stats['fix_cycle_count']['avg']}")
     print(f"  ⏰ Time to approval:        {task_stats['time_to_approval']['avg']} min")
-    print(f"  💰 Credit cost:             {task_stats['credit_cost']['avg']} avg ({task_stats['credit_cost']['total']} total)")
+    print(
+        f"  💰 Credit cost:             {task_stats['credit_cost']['avg']} avg ({task_stats['credit_cost']['total']} total)"
+    )
 
     # Provider breakdown
     providers = task_stats.get("providers", {})
@@ -422,20 +471,24 @@ def print_dashboard(metrics_list):
         print(f"  🤖 Providers:               {prov_str}")
 
     # Per-session metrics
-    print(f"\n── Per-Session Metrics ──")
+    print("\n── Per-Session Metrics ──")
     print(f"  📅 Sessions:                {session_stats['sessions']}")
     print(f"  ✅ Total completed:         {session_stats['total_completed']}")
     print(f"  🎯 Total attempted:         {session_stats['total_attempted']}")
     print(f"  ✔️  Acceptance rate:         {session_stats['avg_acceptance_rate']:.0%}")
-    print(f"  💳 Credit/task:             {session_stats['avg_credit_per_task']} credits")
+    print(
+        f"  💳 Credit/task:             {session_stats['avg_credit_per_task']} credits"
+    )
 
     # Daily breakdown
     daily = session_stats.get("daily", {})
     if len(daily) > 1:
-        print(f"\n── Daily Breakdown ──")
+        print("\n── Daily Breakdown ──")
         for date_key, sess in sorted(daily.items()):
             bar = "█" * min(sess["completed"], 20)
-            print(f"  {date_key}: {bar} {sess['completed']} done, {sess['acceptance_rate']:.0%} acceptance, {sess['total_credits']} credits")
+            print(
+                f"  {date_key}: {bar} {sess['completed']} done, {sess['acceptance_rate']:.0%} acceptance, {sess['total_credits']} credits"
+            )
 
     # Bypasses
     if bypasses:
@@ -518,7 +571,9 @@ def summary_output(metrics_list):
     recovery = load_recovery_state()
     score = compute_health_score(task_stats, session_stats, bypasses, recovery)
     icon = "🟢" if score >= 80 else "🟡" if score >= 50 else "🔴"
-    recovery_badge = f"{recovery_icon(recovery['status'])} recovery:{recovery['status']}"
+    recovery_badge = (
+        f"{recovery_icon(recovery['status'])} recovery:{recovery['status']}"
+    )
 
     if task_stats["count"] == 0:
         print(f"📊 Pipeline: No metrics yet | {recovery_badge}")
