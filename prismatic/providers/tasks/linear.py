@@ -15,6 +15,7 @@ ENVIRONMENT VARIABLES
     Optional.  Default team key (e.g. ``"GRO"``) used when no ``team_id``
     is passed to the constructor.
 """
+
 from __future__ import annotations
 
 import json
@@ -76,11 +77,7 @@ class LinearTaskProvider(TaskProvider):
         if data is None:
             return []
 
-        nodes = (
-            data
-            .get("issues", {})
-            .get("nodes", [])
-        )
+        nodes = data.get("issues", {}).get("nodes", [])
         return [self._node_to_issue(n) for n in nodes]
 
     def add_comment(self, issue_id: str, body: str) -> bool:
@@ -96,11 +93,7 @@ class LinearTaskProvider(TaskProvider):
         data = self._graphql_data(query, variables)
         if data is None:
             return False
-        return (
-            data
-            .get("commentCreate", {})
-            .get("success", False)
-        )
+        return data.get("commentCreate", {}).get("success", False)
 
     def set_labels(self, issue_id: str, label_ids: list[str]) -> bool:
         """Replace labels on an issue."""
@@ -115,10 +108,184 @@ class LinearTaskProvider(TaskProvider):
         data = self._graphql_data(query, variables)
         if data is None:
             return False
-        return (
-            data
-            .get("issueUpdate", {})
-            .get("success", False)
+        return data.get("issueUpdate", {}).get("success", False)
+
+    def complete_issue(
+        self,
+        issue_id: str,
+        summary: str,
+        *,
+        final_state: str = "In Review",
+        add_label_names: list[str] | None = None,
+        remove_label_names: list[str] | None = None,
+    ) -> bool:
+        """Post a completion summary and move an issue to its final state.
+
+        The label update is intentionally merge-based: existing labels are
+        preserved unless their *names* are explicitly listed in
+        ``remove_label_names``. Labels in ``add_label_names`` are resolved by
+        name on the issue's team and appended to the preserved set. This keeps
+        completion handlers from clobbering unrelated routing, priority, or
+        project labels.
+        """
+        context = self._get_completion_context(issue_id)
+        if context is None:
+            return False
+
+        issue = context["issue"]
+        team = issue.get("team") or {}
+        team_id = team.get("id")
+        if not team_id:
+            return False
+
+        state_id = self._resolve_state_id(team_id, final_state)
+        if not state_id:
+            return False
+
+        label_ids = self._merge_label_ids(
+            current_labels=issue.get("labels", {}).get("nodes", []),
+            team_labels=context.get("teamLabels", []),
+            add_label_names=add_label_names or [],
+            remove_label_names=remove_label_names or [],
+        )
+        if label_ids is None:
+            return False
+
+        comment_body = self._completion_comment_body(
+            issue_identifier=issue.get("identifier") or issue_id,
+            summary=summary,
+            final_state=final_state,
+            add_label_names=add_label_names or [],
+            remove_label_names=remove_label_names or [],
+        )
+        if not self.add_comment(issue_id, comment_body):
+            return False
+
+        query = """
+        mutation CompleteIssue($id: String!, $stateId: String!, $labelIds: [String!]!) {
+          issueUpdate(id: $id, input: { stateId: $stateId, labelIds: $labelIds }) {
+            success
+          }
+        }
+        """
+        data = self._graphql_data(
+            query,
+            {"id": issue_id, "stateId": state_id, "labelIds": label_ids},
+        )
+        if data is None:
+            return False
+        return bool(data.get("issueUpdate", {}).get("success", False))
+
+    def _get_completion_context(self, issue_id: str) -> dict[str, Any] | None:
+        """Fetch issue, current label IDs, and team labels for completion."""
+        query = """
+        query CompletionContext($id: String!) {
+          issue(id: $id) {
+            id
+            identifier
+            labels { nodes { id name } }
+            team {
+              id
+              states { nodes { id name } }
+              labels { nodes { id name } }
+            }
+          }
+        }
+        """
+        data = self._graphql_data(query, {"id": issue_id})
+        if data is None:
+            return None
+        issue = data.get("issue")
+        if not isinstance(issue, dict):
+            return None
+        team = issue.get("team") or {}
+        team_labels = team.get("labels", {}).get("nodes", [])
+        return {"issue": issue, "teamLabels": team_labels}
+
+    def _resolve_state_id(self, team_id: str, state_name: str) -> str | None:
+        """Resolve a workflow state by name for the issue's team."""
+        query = """
+        query TeamStates($id: String!) {
+          team(id: $id) {
+            states { nodes { id name } }
+          }
+        }
+        """
+        data = self._graphql_data(query, {"id": team_id})
+        if data is None:
+            return None
+        states = data.get("team", {}).get("states", {}).get("nodes", [])
+        for state in states:
+            if state.get("name") == state_name:
+                return state.get("id")
+        return None
+
+    @staticmethod
+    def _merge_label_ids(
+        *,
+        current_labels: list[dict[str, Any]],
+        team_labels: list[dict[str, Any]],
+        add_label_names: list[str],
+        remove_label_names: list[str],
+    ) -> list[str] | None:
+        """Preserve current labels, remove by name, add by name."""
+        remove_names = set(remove_label_names)
+        label_ids: list[str] = []
+        seen: set[str] = set()
+
+        for label in current_labels:
+            label_id = label.get("id")
+            label_name = label.get("name")
+            if not label_id or label_name in remove_names:
+                continue
+            if label_id not in seen:
+                label_ids.append(label_id)
+                seen.add(label_id)
+
+        by_name = {label.get("name"): label.get("id") for label in team_labels}
+        for name in add_label_names:
+            label_id = by_name.get(name)
+            if not label_id:
+                return None
+            if label_id not in seen:
+                label_ids.append(label_id)
+                seen.add(label_id)
+
+        return label_ids
+
+    @staticmethod
+    def _completion_comment_body(
+        *,
+        issue_identifier: str,
+        summary: str,
+        final_state: str,
+        add_label_names: list[str],
+        remove_label_names: list[str],
+    ) -> str:
+        """Build the durable Linear completion comment."""
+        label_lines: list[str] = []
+        if add_label_names:
+            label_lines.append(
+                "- Added labels: " + ", ".join(f"`{n}`" for n in add_label_names)
+            )
+        if remove_label_names:
+            label_lines.append(
+                "- Removed labels: " + ", ".join(f"`{n}`" for n in remove_label_names)
+            )
+        if not label_lines:
+            label_lines.append(
+                "- Labels preserved; no explicit label changes requested."
+            )
+
+        return "\n".join(
+            [
+                f"## Completion summary — {issue_identifier}",
+                "",
+                summary.strip() or "Completion finished.",
+                "",
+                f"- Final state: `{final_state}`",
+                *label_lines,
+            ]
         )
 
     def get_issue(self, issue_id: str) -> Issue | None:
@@ -206,7 +373,7 @@ class LinearTaskProvider(TaskProvider):
             headers={
                 "Content-Type": "application/json",
                 "Accept": "application/json",
-                "Authorization": self._api_key,   # No "Bearer" prefix
+                "Authorization": self._api_key,  # No "Bearer" prefix
             },
             method="POST",
         )
@@ -226,9 +393,7 @@ class LinearTaskProvider(TaskProvider):
 
         except urllib.error.HTTPError as exc:
             body = exc.read().decode(errors="replace")[:500]
-            print(
-                f"[LinearTaskProvider] HTTP {exc.code}: {body}"
-            )
+            print(f"[LinearTaskProvider] HTTP {exc.code}: {body}")
             return None
 
         except (urllib.error.URLError, OSError, TimeoutError) as exc:
