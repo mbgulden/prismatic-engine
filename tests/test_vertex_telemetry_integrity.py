@@ -16,7 +16,13 @@ from prismatic.vertex_telemetry import (
 def _contains_nullish(value):
     if value is None:
         return True
-    if isinstance(value, str) and value.lower() in {"undefined", "null", "none", "nan", ""}:
+    if isinstance(value, str) and value.lower() in {
+        "undefined",
+        "null",
+        "none",
+        "nan",
+        "",
+    }:
         return True
     if isinstance(value, dict):
         return any(_contains_nullish(v) for v in value.values())
@@ -63,7 +69,10 @@ def test_poll_vertex_quota_status_returns_explicit_errors(monkeypatch):
             "quotas": [
                 {
                     "quotaId": "aiplatform.googleapis.com/gemini_predictions_per_minute_requests_per_base_model",
-                    "dimensions": {"region": "us-east4", "base_model": "gemini-2.5-flash"},
+                    "dimensions": {
+                        "region": "us-east4",
+                        "base_model": "gemini-2.5-flash",
+                    },
                     "metricInfos": [{"metricValue": 5}],
                     "limits": [{"maxLimit": {"value": 10}}],
                 }
@@ -71,7 +80,9 @@ def test_poll_vertex_quota_status_returns_explicit_errors(monkeypatch):
         }
 
     monkeypatch.setattr("prismatic.vertex_telemetry._gcp_api_call", fake_call)
-    status = poll_vertex_quota_status(project_id="project-x", locations=["us-central1", "us-east4"])
+    status = poll_vertex_quota_status(
+        project_id="project-x", locations=["us-central1", "us-east4"]
+    )
 
     assert len(status["records"]) == 1
     assert status["records"][0]["model"] == "gemini-2.5-flash"
@@ -127,7 +138,11 @@ def test_ledger_status_exposes_freshness_errors_and_metrics(tmp_path: Path):
     assert "prismatic_vertex_quota_poll_errors_total 1" in metrics
 
     with sqlite3.connect(db_path) as conn:
-        raw_snapshot = conn.execute("SELECT raw_payload FROM gcp_vertex_quota_snapshots").fetchone()[0]
-        raw_error = conn.execute("SELECT raw_payload FROM gcp_vertex_poll_errors").fetchone()[0]
+        raw_snapshot = conn.execute(
+            "SELECT raw_payload FROM gcp_vertex_quota_snapshots"
+        ).fetchone()[0]
+        raw_error = conn.execute(
+            "SELECT raw_payload FROM gcp_vertex_poll_errors"
+        ).fetchone()[0]
     assert json.loads(raw_snapshot) == {"keep": "yes"}
     assert json.loads(raw_error) == {"ok": "kept"}

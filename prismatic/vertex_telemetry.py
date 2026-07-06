@@ -29,7 +29,6 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-import time
 import urllib.request
 import urllib.error
 from contextlib import closing
@@ -42,10 +41,9 @@ DEFAULT_DB_PATH = os.path.join(
     "event_router.db",
 )
 
-GCP_VERTEX_LOCATIONS = (
-    os.environ.get("GCP_VERTEX_LOCATIONS", "us-central1,us-east4")
-    .split(",")
-)
+GCP_VERTEX_LOCATIONS = os.environ.get(
+    "GCP_VERTEX_LOCATIONS", "us-central1,us-east4"
+).split(",")
 
 # ── Vertex AI Quota Metrics ─────────────────────────────────────
 # Known Vertex AI model quota metric families:
@@ -169,6 +167,7 @@ INNER JOIN (
 #  GCP HTTP Client (minimal, no external deps)
 # ═══════════════════════════════════════════════════════════════════
 
+
 def _get_access_token() -> str:
     """Obtain GCP access token from ADC or env-var service account.
 
@@ -178,6 +177,7 @@ def _get_access_token() -> str:
     creds_b64 = os.environ.get("GCP_CREDENTIALS_BASE64", "")
     if creds_b64:
         import base64
+
         try:
             creds_json = json.loads(base64.b64decode(creds_b64).decode())
             # Use JWT assertion — simplified approach
@@ -187,10 +187,13 @@ def _get_access_token() -> str:
 
     # Try gcloud CLI
     import subprocess
+
     try:
         result = subprocess.run(
             ["gcloud", "auth", "print-access-token"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if result.returncode == 0:
             return result.stdout.strip()
@@ -288,7 +291,9 @@ def _extract_metric_type(quota_id: str, metric_name: str = "") -> str:
     return "custom"
 
 
-def normalize_quota_payload(raw_quota: dict[str, Any], location: str) -> dict[str, Any] | None:
+def normalize_quota_payload(
+    raw_quota: dict[str, Any], location: str
+) -> dict[str, Any] | None:
     """Normalize one Cloud Quotas payload into the pane-safe record shape.
 
     The Cloud Quotas API has returned a few subtly different shapes across
@@ -302,34 +307,58 @@ def normalize_quota_payload(raw_quota: dict[str, Any], location: str) -> dict[st
     if not isinstance(cleaned, dict):
         return None
 
-    quota_id = str(cleaned.get("quotaId") or cleaned.get("name") or cleaned.get("metric") or "")
-    metric_name = str(cleaned.get("metricName") or cleaned.get("metric_name") or quota_id)
+    quota_id = str(
+        cleaned.get("quotaId") or cleaned.get("name") or cleaned.get("metric") or ""
+    )
+    metric_name = str(
+        cleaned.get("metricName") or cleaned.get("metric_name") or quota_id
+    )
     dimensions_value = cleaned.get("dimensions")
-    dimensions: dict[str, Any] = dimensions_value if isinstance(dimensions_value, dict) else {}
-    model = _extract_model_from_dimensions(dimensions) or _extract_model_from_quota(quota_id)
+    dimensions: dict[str, Any] = (
+        dimensions_value if isinstance(dimensions_value, dict) else {}
+    )
+    model = _extract_model_from_dimensions(dimensions) or _extract_model_from_quota(
+        quota_id
+    )
     if not model:
         return None
 
     metric_type = _extract_metric_type(quota_id, metric_name)
     region = str(dimensions.get("region") or cleaned.get("region") or location)
 
-    metric_infos = cleaned.get("metricInfos") if isinstance(cleaned.get("metricInfos"), list) else []
-    usage_candidates = [cleaned.get("usage"), cleaned.get("metricValue"), cleaned.get("currentUsage")]
+    metric_infos = (
+        cleaned.get("metricInfos")
+        if isinstance(cleaned.get("metricInfos"), list)
+        else []
+    )
+    usage_candidates = [
+        cleaned.get("usage"),
+        cleaned.get("metricValue"),
+        cleaned.get("currentUsage"),
+    ]
     for mi in metric_infos:
         if isinstance(mi, dict):
-            usage_candidates.extend([mi.get("metricValue"), mi.get("value"), mi.get("usage")])
+            usage_candidates.extend(
+                [mi.get("metricValue"), mi.get("value"), mi.get("usage")]
+            )
     usage = _first_numeric(*usage_candidates)
 
     limits = cleaned.get("limits") if isinstance(cleaned.get("limits"), list) else []
-    limit_candidates = [cleaned.get("limit"), cleaned.get("limitValue"), cleaned.get("maxLimit")]
+    limit_candidates = [
+        cleaned.get("limit"),
+        cleaned.get("limitValue"),
+        cleaned.get("maxLimit"),
+    ]
     for limit in limits:
         if isinstance(limit, dict):
-            limit_candidates.extend([
-                limit.get("maxLimit"),
-                limit.get("effectiveLimit"),
-                limit.get("quotaValue"),
-                limit.get("value"),
-            ])
+            limit_candidates.extend(
+                [
+                    limit.get("maxLimit"),
+                    limit.get("effectiveLimit"),
+                    limit.get("quotaValue"),
+                    limit.get("value"),
+                ]
+            )
     limit_value = _first_numeric(*limit_candidates)
     utilization_pct = (usage / limit_value * 100.0) if limit_value > 0 else 0.0
 
@@ -361,7 +390,18 @@ def poll_vertex_quota_status(
     if not pid:
         message = "GCP_PROJECT_ID not set — skipping live quota poll"
         print(f"[gcp_vertex] WARN: {message}")
-        return {"records": records, "errors": [{"location": "", "error_type": "configuration", "error_message": message, "recorded_at": started_at}], "recorded_at": started_at}
+        return {
+            "records": records,
+            "errors": [
+                {
+                    "location": "",
+                    "error_type": "configuration",
+                    "error_message": message,
+                    "recorded_at": started_at,
+                }
+            ],
+            "recorded_at": started_at,
+        }
 
     for location in locs:
         url = (
@@ -372,25 +412,29 @@ def poll_vertex_quota_status(
             data = _gcp_api_call(url)
         except VertexQuotaError as e:
             message = str(e)
-            errors.append({
-                "location": location,
-                "error_type": type(e).__name__,
-                "error_message": message,
-                "recorded_at": datetime.now(timezone.utc).isoformat(),
-            })
+            errors.append(
+                {
+                    "location": location,
+                    "error_type": type(e).__name__,
+                    "error_message": message,
+                    "recorded_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
             print(f"[gcp_vertex] Quota API error for {location}: {message}")
             continue
 
         raw_quotas = data if isinstance(data, dict) else {}
         quotas = raw_quotas.get("quotas", []) if isinstance(raw_quotas, dict) else []
         if not isinstance(quotas, list):
-            errors.append({
-                "location": location,
-                "error_type": "InvalidQuotaPayload",
-                "error_message": "Cloud Quotas response did not contain a list at quotas",
-                "recorded_at": datetime.now(timezone.utc).isoformat(),
-                "raw_payload": _strip_nullish(raw_quotas) or {},
-            })
+            errors.append(
+                {
+                    "location": location,
+                    "error_type": "InvalidQuotaPayload",
+                    "error_message": "Cloud Quotas response did not contain a list at quotas",
+                    "recorded_at": datetime.now(timezone.utc).isoformat(),
+                    "raw_payload": _strip_nullish(raw_quotas) or {},
+                }
+            )
             continue
 
         for quota in quotas:
@@ -412,7 +456,9 @@ def poll_vertex_quota(
     locations: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Poll Vertex AI quota API and return normalized records only."""
-    return poll_vertex_quota_status(project_id=project_id, locations=locations)["records"]
+    return poll_vertex_quota_status(project_id=project_id, locations=locations)[
+        "records"
+    ]
 
 
 def _extract_model_from_quota(quota_id: str) -> str | None:
@@ -435,6 +481,7 @@ def _extract_model_from_quota(quota_id: str) -> str | None:
 #  Billing Balance Poller (GCP Cloud Billing API)
 # ═══════════════════════════════════════════════════════════════════
 
+
 def poll_billing_balance(
     billing_account_id: str | None = None,
 ) -> dict[str, Any] | None:
@@ -447,7 +494,9 @@ def poll_billing_balance(
     """
     bid = billing_account_id or os.environ.get("GCP_BILLING_ACCOUNT_ID", "")
     if not bid:
-        print("[gcp_vertex] WARN: GCP_BILLING_ACCOUNT_ID not set — skipping balance poll")
+        print(
+            "[gcp_vertex] WARN: GCP_BILLING_ACCOUNT_ID not set — skipping balance poll"
+        )
         return None
 
     url = f"https://cloudbilling.googleapis.com/v1/billingAccounts/{bid}"
@@ -468,6 +517,7 @@ def poll_billing_balance(
 #  Ledger Writer
 # ═══════════════════════════════════════════════════════════════════
 
+
 class VertexBillingLedger:
     """Persistence layer for the gcp_vertex_billing_ledger tables."""
 
@@ -486,7 +536,9 @@ class VertexBillingLedger:
             # existing cron state files.
             columns = {
                 row[1]
-                for row in conn.execute("PRAGMA table_info(gcp_vertex_quota_snapshots)").fetchall()
+                for row in conn.execute(
+                    "PRAGMA table_info(gcp_vertex_quota_snapshots)"
+                ).fetchall()
             }
             if "raw_payload" not in columns:
                 conn.execute(
@@ -545,7 +597,10 @@ class VertexBillingLedger:
                        (recorded_at, location, source, error_type, error_message, raw_payload)
                        VALUES (?, ?, ?, ?, ?, ?)""",
                     (
-                        str(err.get("recorded_at") or datetime.now(timezone.utc).isoformat()),
+                        str(
+                            err.get("recorded_at")
+                            or datetime.now(timezone.utc).isoformat()
+                        ),
                         str(err.get("location") or ""),
                         str(err.get("source") or "quota"),
                         str(err.get("error_type") or "UnknownError"),
@@ -565,7 +620,12 @@ class VertexBillingLedger:
             cur = conn.execute(
                 "INSERT INTO gcp_vertex_billing_ledger "
                 "(recorded_at, project, credits, currency) VALUES (?, ?, ?, ?)",
-                (now, pid, balance_data.get("balance", 0), balance_data.get("currency", "USD")),
+                (
+                    now,
+                    pid,
+                    balance_data.get("balance", 0),
+                    balance_data.get("currency", "USD"),
+                ),
             )
             ledger_id = cur.lastrowid
             conn.execute(
@@ -632,7 +692,11 @@ class VertexBillingLedger:
             high_util = [r for r in latest if r.get("utilization_pct", 0) >= 80]
             near_limit = [r for r in latest if r.get("utilization_pct", 0) >= 95]
 
-        last_quota_at = last_quota["recorded_at"] if last_quota and last_quota["recorded_at"] else None
+        last_quota_at = (
+            last_quota["recorded_at"]
+            if last_quota and last_quota["recorded_at"]
+            else None
+        )
         age_seconds = None
         if last_quota_at:
             try:
@@ -643,24 +707,26 @@ class VertexBillingLedger:
             except ValueError:
                 age_seconds = None
 
-        return _strip_nullish({
-            "generated_at": generated_at.isoformat(),
-            "quota_records": latest,
-            "high_utilization": len(high_util),
-            "near_limit": len(near_limit),
-            "quota_freshness": {
-                "last_recorded_at": last_quota_at,
-                "age_seconds": age_seconds,
-                "stale": age_seconds is None or age_seconds > 900,
-            },
-            "latest_errors": [dict(row) for row in errors],
-            "last_balance_checkpoint": {
-                "at": last_check["recorded_at"] if last_check else None,
-                "balance": dict(last_balance) if last_balance else None,
-            },
-            "total_regions": len(set(r.get("region") for r in latest)),
-            "total_models": len(set(r.get("model") for r in latest)),
-        })
+        return _strip_nullish(
+            {
+                "generated_at": generated_at.isoformat(),
+                "quota_records": latest,
+                "high_utilization": len(high_util),
+                "near_limit": len(near_limit),
+                "quota_freshness": {
+                    "last_recorded_at": last_quota_at,
+                    "age_seconds": age_seconds,
+                    "stale": age_seconds is None or age_seconds > 900,
+                },
+                "latest_errors": [dict(row) for row in errors],
+                "last_balance_checkpoint": {
+                    "at": last_check["recorded_at"] if last_check else None,
+                    "balance": dict(last_balance) if last_balance else None,
+                },
+                "total_regions": len(set(r.get("region") for r in latest)),
+                "total_models": len(set(r.get("model") for r in latest)),
+            }
+        )
 
     def metrics_text(self) -> str:
         """Return Prometheus exposition-format metrics text."""
@@ -678,12 +744,8 @@ class VertexBillingLedger:
             lines.append(
                 f"prismatic_vertex_quota_utilization_pct{{{labels}}} {r['utilization_pct']}"
             )
-            lines.append(
-                f"prismatic_vertex_quota_usage{{{labels}}} {r['usage']}"
-            )
-            lines.append(
-                f"prismatic_vertex_quota_limit{{{labels}}} {r['limit_value']}"
-            )
+            lines.append(f"prismatic_vertex_quota_usage{{{labels}}} {r['usage']}")
+            lines.append(f"prismatic_vertex_quota_limit{{{labels}}} {r['limit_value']}")
 
         # Balance checkpoint
         with closing(sqlite3.connect(self._db_path)) as conn:
@@ -692,7 +754,9 @@ class VertexBillingLedger:
                 "ORDER BY recorded_at DESC LIMIT 1"
             ).fetchone()
             if row:
-                lines.append("\n# HELP prismatic_vertex_billing_balance Current billing balance")
+                lines.append(
+                    "\n# HELP prismatic_vertex_billing_balance Current billing balance"
+                )
                 lines.append("# TYPE prismatic_vertex_billing_balance gauge")
                 lines.append(
                     f'prismatic_vertex_billing_balance{{currency="{row[3]}"}} {row[2]}'
@@ -701,16 +765,26 @@ class VertexBillingLedger:
                 "SELECT MAX(recorded_at) FROM gcp_vertex_quota_snapshots"
             ).fetchone()
             if last_quota and last_quota[0]:
-                parsed = datetime.fromisoformat(str(last_quota[0]).replace("Z", "+00:00"))
+                parsed = datetime.fromisoformat(
+                    str(last_quota[0]).replace("Z", "+00:00")
+                )
                 if parsed.tzinfo is None:
                     parsed = parsed.replace(tzinfo=timezone.utc)
-                lines.append("\n# HELP prismatic_vertex_quota_last_recorded_timestamp_seconds Last successful quota snapshot timestamp")
-                lines.append("# TYPE prismatic_vertex_quota_last_recorded_timestamp_seconds gauge")
-                lines.append(f"prismatic_vertex_quota_last_recorded_timestamp_seconds {parsed.timestamp()}")
+                lines.append(
+                    "\n# HELP prismatic_vertex_quota_last_recorded_timestamp_seconds Last successful quota snapshot timestamp"
+                )
+                lines.append(
+                    "# TYPE prismatic_vertex_quota_last_recorded_timestamp_seconds gauge"
+                )
+                lines.append(
+                    f"prismatic_vertex_quota_last_recorded_timestamp_seconds {parsed.timestamp()}"
+                )
             error_count = conn.execute(
                 "SELECT COUNT(*) FROM gcp_vertex_poll_errors"
             ).fetchone()[0]
-            lines.append("\n# HELP prismatic_vertex_quota_poll_errors_total Total persisted quota poll errors")
+            lines.append(
+                "\n# HELP prismatic_vertex_quota_poll_errors_total Total persisted quota poll errors"
+            )
             lines.append("# TYPE prismatic_vertex_quota_poll_errors_total counter")
             lines.append(f"prismatic_vertex_quota_poll_errors_total {error_count}")
 
@@ -720,6 +794,7 @@ class VertexBillingLedger:
 # ═══════════════════════════════════════════════════════════════════
 #  CLI Entry Points
 # ═══════════════════════════════════════════════════════════════════
+
 
 def cmd_check() -> None:
     """One-shot status: read latest from ledger and print summary."""
@@ -735,12 +810,14 @@ def cmd_check() -> None:
     print(f"  High util (>80%): {summary['high_utilization']}")
     print(f"  Near limit (>95%): {summary['near_limit']}")
     print(f"  Last balance:  {summary['last_balance_checkpoint']['at'] or 'Never'}")
-    if summary['last_balance_checkpoint']['balance']:
-        b = summary['last_balance_checkpoint']['balance']
+    if summary["last_balance_checkpoint"]["balance"]:
+        b = summary["last_balance_checkpoint"]["balance"]
         print(f"  Balance:       {b['balance_credits']} {b['currency']}")
     print()
     if records:
-        print(f"{'Region':<16} {'Model':<20} {'Metric':<8} {'Usage':<10} {'Limit':<10} {'Util%':<8}")
+        print(
+            f"{'Region':<16} {'Model':<20} {'Metric':<8} {'Usage':<10} {'Limit':<10} {'Util%':<8}"
+        )
         print("-" * 72)
         for r in records:
             print(
@@ -765,7 +842,9 @@ def cmd_poll() -> None:
         ledger.record_quota_snapshot(quota)
         print(f"[gcp_vertex] Recorded {len(quota)} quota metrics to ledger.")
     else:
-        print("[gcp_vertex] No quota data returned (GCP credentials may be unavailable).")
+        print(
+            "[gcp_vertex] No quota data returned (GCP credentials may be unavailable)."
+        )
     if errors:
         ledger.record_quota_errors(errors)
         print(f"[gcp_vertex] Recorded {len(errors)} quota poll error(s) to ledger.")
@@ -775,7 +854,9 @@ def cmd_poll() -> None:
     balance = poll_billing_balance()
     if balance:
         ledger.record_balance_checkpoint(balance)
-        print(f"[gcp_vertex] Recorded balance: {balance.get('balance')} {balance.get('currency')}")
+        print(
+            f"[gcp_vertex] Recorded balance: {balance.get('balance')} {balance.get('currency')}"
+        )
     else:
         print("[gcp_vertex] No balance data returned.")
 
@@ -788,6 +869,7 @@ def cmd_metrics() -> None:
 
 if __name__ == "__main__":
     import sys
+
     commands = {
         "check": cmd_check,
         "poll": cmd_poll,
@@ -797,5 +879,5 @@ if __name__ == "__main__":
     if cmd in commands:
         commands[cmd]()
     else:
-        print(f"Usage: python3 -m prismatic.vertex_telemetry <check|poll|metrics>")
+        print("Usage: python3 -m prismatic.vertex_telemetry <check|poll|metrics>")
         sys.exit(1)
