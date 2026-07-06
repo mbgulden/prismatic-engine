@@ -1253,6 +1253,7 @@ class EventRouterDedup:
         if db_dir and not os.path.exists(db_dir):
             os.makedirs(db_dir, exist_ok=True)
         self._conn = sqlite3.connect(self._db_path)
+        self._conn.row_factory = sqlite3.Row
         self._init_db()
 
     def _init_db(self) -> None:
@@ -1271,6 +1272,31 @@ class EventRouterDedup:
             """
             CREATE INDEX IF NOT EXISTS idx_dedup_cycle
             ON dedup_log(cycle_id)
+            """
+        )
+        # Durable dispatch ledger.  Unlike dedup_log, this is keyed by the
+        # logical event, not by the polling cycle, so restarts/replays cannot
+        # duplicate side effects and failed events remain inspectable.
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS dispatch_events (
+                event_key TEXT PRIMARY KEY,
+                issue_id TEXT NOT NULL,
+                agent_label TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('in_progress','processed','failed')),
+                attempts INTEGER NOT NULL DEFAULT 0,
+                first_seen TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                last_cycle_id TEXT,
+                last_error TEXT,
+                metadata TEXT
+            )
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_dispatch_events_status
+            ON dispatch_events(status, updated_at)
             """
         )
         # ── Label snapshots — track which labels issues had per cycle ──
@@ -1354,6 +1380,100 @@ class EventRouterDedup:
         )
         count = cursor.fetchone()[0]
         return count == len(label_names)
+
+    def dispatch_event_key(self, issue_id: str, agent_label: str) -> str:
+        """Stable key for a logical dispatch event across restarts/replays."""
+        return f"dispatch:{issue_id}:{agent_label}"
+
+    def begin_dispatch_event(
+        self,
+        issue_id: str,
+        agent_label: str,
+        cycle_id: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> bool:
+        """Acquire a durable dispatch slot.
+
+        Returns ``False`` when the logical event is already processed.  Failed
+        or interrupted ``in_progress`` events are retryable: the attempt count
+        and cycle marker are updated, but the same event key is reused.
+        """
+        event_key = self.dispatch_event_key(issue_id, agent_label)
+        now = datetime.now(timezone.utc).isoformat()
+        encoded = json.dumps(metadata or {}, sort_keys=True)
+        with self._conn:
+            self._conn.execute(
+                """
+                INSERT OR IGNORE INTO dispatch_events
+                    (event_key, issue_id, agent_label, status, attempts,
+                     first_seen, updated_at, last_cycle_id, metadata)
+                VALUES (?, ?, ?, 'in_progress', 0, ?, ?, ?, ?)
+                """,
+                (event_key, issue_id, agent_label, now, now, cycle_id, encoded),
+            )
+            row = self._conn.execute(
+                "SELECT status FROM dispatch_events WHERE event_key=?",
+                (event_key,),
+            ).fetchone()
+            if row and row[0] == "processed":
+                return False
+            self._conn.execute(
+                """
+                UPDATE dispatch_events
+                SET status='in_progress', attempts=attempts + 1,
+                    updated_at=?, last_cycle_id=?, last_error=NULL, metadata=?
+                WHERE event_key=? AND status != 'processed'
+                """,
+                (now, cycle_id, encoded, event_key),
+            )
+        return True
+
+    def mark_dispatch_processed(
+        self, issue_id: str, agent_label: str, cycle_id: str
+    ) -> None:
+        """Mark a logical dispatch as successfully processed."""
+        event_key = self.dispatch_event_key(issue_id, agent_label)
+        now = datetime.now(timezone.utc).isoformat()
+        with self._conn:
+            self._conn.execute(
+                """
+                UPDATE dispatch_events
+                SET status='processed', updated_at=?, last_cycle_id=?, last_error=NULL
+                WHERE event_key=?
+                """,
+                (now, cycle_id, event_key),
+            )
+
+    def mark_dispatch_failed(
+        self, issue_id: str, agent_label: str, cycle_id: str, error: str
+    ) -> None:
+        """Preserve a failed logical dispatch for retry/dead-letter analysis."""
+        event_key = self.dispatch_event_key(issue_id, agent_label)
+        now = datetime.now(timezone.utc).isoformat()
+        with self._conn:
+            self._conn.execute(
+                """
+                UPDATE dispatch_events
+                SET status='failed', updated_at=?, last_cycle_id=?, last_error=?
+                WHERE event_key=?
+                """,
+                (now, cycle_id, error[:2000], event_key),
+            )
+
+    def get_failed_dispatches(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Return recent failed events for operator retry/dead-letter review."""
+        cursor = self._conn.execute(
+            """
+            SELECT event_key, issue_id, agent_label, status, attempts,
+                   first_seen, updated_at, last_cycle_id, last_error, metadata
+            FROM dispatch_events
+            WHERE status='failed'
+            ORDER BY updated_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        return [dict(row) for row in cursor.fetchall()]
 
     def close(self) -> None:
         self._conn.close()
@@ -1586,19 +1706,31 @@ def dispatch_once(
 
     # 2. Dispatch to each agent
     for agent_name, config in AGENT_CONFIG.items():
-        label = f"agent::{agent_name}"
+        query_label = f"agent::{agent_name}"
+        dispatch_label = f"agent:{agent_name}"
         try:
-            issues = get_issues_with_label(label)
+            issues = get_issues_with_label(query_label)
         except Exception as exc:
-            print(f"[dispatcher] Error fetching issues for {label}: {exc}")
+            print(f"[dispatcher] Error fetching issues for {query_label}: {exc}")
             counts["errors"] += 1
             continue
 
         for issue in issues:
             issue_id = issue["id"]
 
-            # Skip if already dispatched this cycle
-            if dedup.is_processed(issue_id, label, cycle_id):
+            # Skip if already dispatched this cycle (legacy guard) or already
+            # completed in a previous cycle/restart (durable guard).
+            if dedup.is_processed(issue_id, dispatch_label, cycle_id):
+                continue
+            if not dedup.begin_dispatch_event(
+                issue_id,
+                dispatch_label,
+                cycle_id,
+                metadata={
+                    "identifier": issue.get("identifier", issue_id),
+                    "title": issue.get("title", ""),
+                },
+            ):
                 continue
 
             launcher = AGENT_LAUNCHERS.get(agent_name)
@@ -1606,9 +1738,8 @@ def dispatch_once(
                 continue
 
             # ── Credit policy enforcement ───────────────────────────
-            label = f"agent:{agent_name}" if not agent_name.startswith("agent:") else agent_name
             decision = evaluate_agent_launch(
-                label, issue_id, operation="code_generation"
+                dispatch_label, issue_id, operation="code_generation"
             )
             if decision.action == PolicyAction.DENY:
                 identifier = issue.get("identifier", issue_id)
@@ -1633,7 +1764,8 @@ def dispatch_once(
                     cost=decision.estimated_cost,
                 )
                 counts["blocked"] = counts.get("blocked", 0) + 1
-                dedup.mark_processed(issue_id, label, cycle_id)
+                dedup.mark_processed(issue_id, dispatch_label, cycle_id)
+                dedup.mark_dispatch_processed(issue_id, dispatch_label, cycle_id)
                 continue
             elif decision.action == PolicyAction.WARN:
                 identifier = issue.get("identifier", issue_id)
@@ -1649,7 +1781,8 @@ def dispatch_once(
                     f"{decision.reason}"
                 )
                 counts["pending_approval"] = counts.get("pending_approval", 0) + 1
-                dedup.mark_processed(issue_id, label, cycle_id)
+                dedup.mark_processed(issue_id, dispatch_label, cycle_id)
+                dedup.mark_dispatch_processed(issue_id, dispatch_label, cycle_id)
                 continue
             # ── Telemetry: record credit evaluation ──────────────
             try:
@@ -1672,7 +1805,8 @@ def dispatch_once(
                     time.sleep(5)
                 result = launcher(issue_id, title=issue.get("title", ""))
                 if result:
-                    dedup.mark_processed(issue_id, label, cycle_id)
+                    dedup.mark_processed(issue_id, dispatch_label, cycle_id)
+                    dedup.mark_dispatch_processed(issue_id, dispatch_label, cycle_id)
                     counts["dispatched"] += 1
                     agent_name_pretty = agent_name.capitalize()
                     identifier = issue.get("identifier", issue_id)
@@ -1703,11 +1837,17 @@ def dispatch_once(
                         )
                     except Exception:
                         pass  # Non-critical
+                else:
+                    dedup.mark_dispatch_failed(
+                        issue_id, dispatch_label, cycle_id, "launcher returned false"
+                    )
+                    counts["errors"] += 1
             except Exception as exc:
                 print(
                     f"[dispatcher] Error dispatching {agent_name} "
                     f"→ {issue.get('identifier', issue_id)}: {exc}"
                 )
+                dedup.mark_dispatch_failed(issue_id, dispatch_label, cycle_id, str(exc))
                 counts["errors"] += 1
 
     # 3. Clean up stale AGY processes
