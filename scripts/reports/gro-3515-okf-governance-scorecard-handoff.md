@@ -52,6 +52,12 @@ AD-HOC VERIFICATION PASSED: GRO-3515 rubric thresholds, baseline links, link res
 error: failed to push some refs to 'https://github.com/mbgulden/prismatic-engine.git'
 ```
 
+## Published in-lane handoff
+
+- PR: https://github.com/mbgulden/prismatic-engine/pull/165
+- Branch: `ned/GRO-3515`
+- Pushed artifact: this report only; no OKF paths were pushed from Ned's lane.
+
 ## Handoff required
 
 A docs/OKF-lane agent should cherry-pick or manually apply `3133a55907059a23a4ce55d5d2429bde38a7e55f` from `backup/gro-3515-full-okf-blocked`, then push through the appropriate lane. This report is the in-lane breadcrumb so the work is visible without bypassing lane governance.
