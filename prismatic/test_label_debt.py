@@ -122,3 +122,22 @@ def test_blocked_work_gets_triage_instead_of_launchable_capacity():
     assert action["add_labels"] == ["requires:triage"]
     assert action["remove_labels"] == ["dispatch:ready"]
     assert report["summary"]["launchable_work"] == 0
+
+
+def test_cleanup_epic_description_does_not_make_issue_noise():
+    report = analyze_issues(
+        [
+            issue(
+                "GRO-15",
+                "[EPIC] Label Debt Cleanup & Queue Hygiene",
+                ["agent:ned", "dispatch:ready"],
+                description=(
+                    "Backfill legitimate work, cancel duplicates and stale clones, "
+                    "and quarantine review noise."
+                ),
+            )
+        ]
+    )
+
+    assert report["summary"]["launchable_work"] == 1
+    assert report["actions"] == []

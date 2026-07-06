@@ -115,25 +115,34 @@ class IssueSnapshot:
         return self.state_name.lower() in REVIEW_STATE_NAMES
 
     @property
+    def title_text(self) -> str:
+        return self.title.lower()
+
+    @property
     def is_duplicate_or_clone(self) -> bool:
-        return _contains_any(self.text, DUPLICATE_NEEDLES) or any(
+        # Only title/labels are authoritative here. Epics often mention
+        # "cancel duplicates" in the description as desired behavior; scanning
+        # descriptions would classify the cleanup epic itself as a duplicate.
+        return _contains_any(self.title_text, DUPLICATE_NEEDLES) or any(
             label in {"duplicate", "stale-clone", "stale clone"}
             for label in self.labels
         )
 
     @property
     def is_review_noise(self) -> bool:
+        # Same title/label rule as duplicates: implementation scopes may mention
+        # "review noise" without being review noise.
         return (
             self.is_review_state
             or "agent:ned-review" in self.labels
-            or _contains_any(self.text, REVIEW_NOISE_NEEDLES)
+            or _contains_any(self.title_text, REVIEW_NOISE_NEEDLES)
         )
 
     @property
     def is_archived_leftover(self) -> bool:
         return (
             self.archived
-            or _contains_any(self.text, ARCHIVE_NEEDLES)
+            or _contains_any(self.title_text, ARCHIVE_NEEDLES)
             or "archived" in self.labels
         )
 
