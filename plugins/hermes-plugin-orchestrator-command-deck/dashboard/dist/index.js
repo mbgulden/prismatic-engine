@@ -301,11 +301,29 @@
       border-radius: var(--radius-sm);
       padding: 8px 10px;
       margin-top: 10px;
+      line-height: 1.45;
+    }
+
+    .deck-command-feedback.pending {
+      color: #ffd591;
+      border-color: rgba(243, 156, 18, 0.55);
+      background: rgba(243, 156, 18, 0.08);
+    }
+
+    .deck-command-feedback.success {
+      color: #9ff3c0;
+      border-color: rgba(46, 204, 113, 0.55);
+      background: rgba(46, 204, 113, 0.08);
     }
 
     .deck-command-feedback.error {
       color: #ffb3b3;
       border-color: rgba(231, 76, 60, 0.55);
+      background: rgba(231, 76, 60, 0.08);
+    }
+
+    .deck-command-feedback strong {
+      color: var(--text-primary);
     }
 
     .deck-mode-description {
@@ -763,6 +781,11 @@
     const [toast, setToast] = React.useState(null);
     const [apiState, setApiState] = React.useState({ loading: true, live: false, error: null, lastSync: null, pending: null });
     const [actionLoading, setActionLoading] = React.useState({});
+    const [lastCommand, setLastCommand] = React.useState({
+      status: 'idle',
+      label: 'Command Deck API',
+      message: 'No operator command has run in this session yet.'
+    });
 
     // Dynamic Form States
     const [dispatchAgent, setDispatchAgent] = React.useState('Antigravity');
@@ -870,20 +893,65 @@
       setToast({ message, type });
     };
 
+    const describeCommand = (commandKey) => {
+      if (commandKey.startsWith('mode-')) {
+        return `Mode switch → ${commandKey.replace('mode-', '').toUpperCase()}`;
+      }
+      if (commandKey === 'dispatch-task') return 'Queue dispatch';
+      if (commandKey.includes('-cancel')) return 'Queue cancel';
+      if (commandKey.includes('-up')) return 'Queue priority up';
+      if (commandKey.includes('-down')) return 'Queue priority down';
+      if (commandKey.startsWith('agent-')) {
+        const parts = commandKey.split('-');
+        return `Agent ${parts.slice(1, -1).join(' ')} → ${parts[parts.length - 1].toUpperCase()}`;
+      }
+      return commandKey;
+    };
+
+    const renderOperatorFeedback = () => {
+      const status = apiState.pending ? 'pending' : lastCommand.status;
+      const label = apiState.pending ? describeCommand(apiState.pending) : lastCommand.label;
+      const message = apiState.pending
+        ? 'Pending: waiting for the persistent Command Deck API to accept or reject this operation.'
+        : lastCommand.message;
+      const prefix = status === 'success' ? '✅ Success' : status === 'error' ? '🔴 Failed' : status === 'pending' ? '🟡 Pending' : 'ℹ️ Ready';
+      return h('div', { className: `deck-command-feedback ${status}` }, [
+        h('strong', null, `${prefix} · ${label}: `),
+        message
+      ]);
+    };
+
     // --------------------------------------------------
     // Event Handlers
     // --------------------------------------------------
     const runApiCommand = React.useCallback((commandKey, request, successMessage, afterSuccess) => {
+      const label = describeCommand(commandKey);
       setActionLoading(prev => ({ ...prev, [commandKey]: true }));
       setApiState(prev => ({ ...prev, pending: commandKey, error: null }));
+      setLastCommand({
+        status: 'pending',
+        label,
+        message: 'Pending: waiting for the backend to acknowledge the operator request.'
+      });
       return request()
         .then(result => {
-          showToast(successMessage(result), 'success');
+          const message = successMessage(result);
+          setLastCommand({
+            status: 'success',
+            label,
+            message: `Success: ${message}. Backend accepted the command and the dashboard refreshed persisted state.`
+          });
+          showToast(message, 'success');
           if (afterSuccess) afterSuccess(result);
           return fetchStatus(true).then(() => result);
         })
         .catch(err => {
           const message = err && err.message ? err.message : String(err);
+          setLastCommand({
+            status: 'error',
+            label,
+            message: `Failed: backend rejected or did not complete the command. ${message}`
+          });
           setApiState(prev => ({ ...prev, live: false, error: message, pending: null }));
           showToast(`Command failed: ${message}`, 'error');
           throw err;
@@ -1040,10 +1108,10 @@
           currentMode === 'collaborative' ? 'Collaborative Mode: Semi-autonomous swarm. Agents coordinate on branches autonomously, but synchronize plans on Linear at critical pipeline junctions (such as pull request proposals or risk level classifications).' :
           'Autonomous Mode: Unrestricted agentic flow. The swarm autonomously plans, assigns subagents, resolves files, runs builds, and updates issue tracking logs, requesting human intervention only upon critical build failures.'
         ),
-        h('div', { className: `deck-command-feedback ${apiState.error ? 'error' : ''}` },
-          apiState.pending ? `Executing command: ${apiState.pending}` :
-          apiState.error ? `Last command failed: ${apiState.error}` :
-          apiState.live ? 'Controls are committed to the persistent Command Deck API. Queue, modes, logs, and agent states survive refresh.' :
+        h('div', { className: `deck-command-feedback ${apiState.error ? 'error' : apiState.live ? 'success' : 'pending'}` },
+          apiState.pending ? `Pending backend response for ${describeCommand(apiState.pending)}.` :
+          apiState.error ? `Backend connection failed: ${apiState.error}` :
+          apiState.live ? 'Persistent Command Deck API connected. Operator actions will show explicit pending, success, or failure evidence below.' :
           'Connecting to Command Deck API… local fallback visible until backend responds.'
         )
       ]);

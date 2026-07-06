@@ -14,7 +14,7 @@ The dashboard must not present local-only button success as if the backend accep
 - `POST /tasks/{task_id}/cancel` removes a queue item and appends an agent log.
 - `GET /agent/{agent}/logs` refreshes the selected log console.
 
-The header shows a live/degraded/error API badge. The mode panel shows the current pending command, last command failure, or the persistent-control success contract so operators can tell whether they are driving the backend or only seeing fallback state.
+The header shows a live/degraded/error API badge. The mode panel shows the current backend connection contract, and the global operator feedback banner records the most recent control with explicit `Pending`, `Success`, or `Failed` copy. Success copy means the backend accepted the command and the dashboard refreshed persisted state; failure copy includes the backend error so operators do not confuse a local button click with a committed control-plane change.
 
 ## Verification
 
