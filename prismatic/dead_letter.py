@@ -6,6 +6,7 @@ metadata, and a replay claim flow.  It is safe to use from cron/drainer scripts
 because events are not deleted on replay; rows move through states so an
 interrupted replay can be retried without archaeology.
 """
+
 from __future__ import annotations
 
 import json
@@ -211,7 +212,9 @@ class DeadLetterStore:
             ).fetchall()
         return [_row_to_event(row) for row in rows]
 
-    def due_for_replay(self, *, limit: int = 50, now: float | None = None) -> list[DeadLetterEvent]:
+    def due_for_replay(
+        self, *, limit: int = 50, now: float | None = None
+    ) -> list[DeadLetterEvent]:
         """Return retryable/dead-letter rows that can be replayed now."""
 
         now_ts = time.time() if now is None else float(now)
@@ -282,7 +285,9 @@ class DeadLetterStore:
         return _row_to_event(updated)
 
 
-def replay(store: DeadLetterStore, handler, *, limit: int = 50, now: float | None = None) -> dict[str, int]:
+def replay(
+    store: DeadLetterStore, handler, *, limit: int = 50, now: float | None = None
+) -> dict[str, int]:
     """Replay due events through ``handler(event)``.
 
     ``handler`` receives a :class:`DeadLetterEvent` and should return truthy on

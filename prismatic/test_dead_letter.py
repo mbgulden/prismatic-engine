@@ -6,7 +6,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
 
 from prismatic.dead_letter import DeadLetterStore, replay
 
@@ -97,7 +96,9 @@ def test_replay_marks_success_without_deleting_payload(tmp_path):
     )
     seen = []
 
-    stats = replay(store, lambda event: seen.append(event.payload["identifier"]) or True, now=2.0)
+    stats = replay(
+        store, lambda event: seen.append(event.payload["identifier"]) or True, now=2.0
+    )
 
     assert stats == {"selected": 1, "replayed": 1, "failed": 0}
     assert seen == ["GRO-4"]
@@ -143,7 +144,9 @@ def test_cli_lists_retained_events(tmp_path):
         now=1.0,
     )
 
-    script = Path(__file__).resolve().parent.parent / "scripts" / "prismatic_dead_letter.py"
+    script = (
+        Path(__file__).resolve().parent.parent / "scripts" / "prismatic_dead_letter.py"
+    )
     result = subprocess.run(
         [sys.executable, str(script), "--db", str(db), "list"],
         text=True,

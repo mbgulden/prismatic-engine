@@ -9,6 +9,7 @@ Production replay handlers are intentionally caller-owned.  The CLI provides a
 safe inventory/dry-run path and a generic replay hook that marks events replayed
 when ``--mark-replayed`` is supplied after an operator has re-enqueued them.
 """
+
 from __future__ import annotations
 
 import argparse
