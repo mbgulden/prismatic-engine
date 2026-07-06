@@ -10,6 +10,7 @@
   const h = React.createElement;
   const api = sdk.fetchJSON || sdk.api;
   const C = sdk.components || {};
+  const API_BASE = '/api/plugins/hermes-plugin-orchestrator-command-deck';
 
   // Inject Stylesheet into Document Head
   const styleEl = document.createElement("style");
@@ -115,6 +116,33 @@
       display: flex;
       align-items: center;
       gap: 24px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .deck-operator-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      background: rgba(0,0,0,0.22);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: var(--text-secondary);
+    }
+
+    .deck-operator-status.live { border-color: rgba(46, 204, 113, 0.45); color: #9ff3c0; }
+    .deck-operator-status.degraded { border-color: rgba(243, 156, 18, 0.45); color: #ffd591; }
+    .deck-operator-status.error { border-color: rgba(231, 76, 60, 0.55); color: #ffb3b3; }
+
+    .deck-operator-status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+      box-shadow: 0 0 8px currentColor;
     }
 
     .deck-telemetry-item {
@@ -263,6 +291,22 @@
     .deck-mode-toggle-bar.interactive .deck-mode-btn.active { border-bottom: 2px solid var(--color-fred); }
     .deck-mode-toggle-bar.collaborative .deck-mode-btn.active { border-bottom: 2px solid var(--color-antigravity); }
     .deck-mode-toggle-bar.autonomous .deck-mode-btn.active { border-bottom: 2px solid var(--color-kai); }
+
+    .deck-command-feedback {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: var(--text-secondary);
+      background: rgba(0,0,0,0.24);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 8px 10px;
+      margin-top: 10px;
+    }
+
+    .deck-command-feedback.error {
+      color: #ffb3b3;
+      border-color: rgba(231, 76, 60, 0.55);
+    }
 
     .deck-mode-description {
       font-size: 12px;
@@ -678,7 +722,7 @@
         gap: 14px;
       }
 
-      .deck-dispatch-btn, .deck-nav-tab, .deck-mode-btn, .deck-agent-btn {
+      .deck-dispatch-btn, .deck-nav-tab, .deck-mode-btn, .deck-agent-btn, .deck-queue-btn {
         min-height: 48px; /* Large mobile tap targets */
       }
 
@@ -717,6 +761,8 @@
     const [activeLogAgent, setActiveLogAgent] = React.useState('Antigravity');
     const [mobileQueueOpen, setMobileQueueOpen] = React.useState(false);
     const [toast, setToast] = React.useState(null);
+    const [apiState, setApiState] = React.useState({ loading: true, live: false, error: null, lastSync: null, pending: null });
+    const [actionLoading, setActionLoading] = React.useState({});
 
     // Dynamic Form States
     const [dispatchAgent, setDispatchAgent] = React.useState('Antigravity');
@@ -749,67 +795,61 @@
       Antigravity: [], Jules: [], Codex: [], Kai: [], Fred: [], Ned: []
     });
 
-    const consoleRef = React.useRef(null);
-
-    // Seed logs on mount
-    React.useEffect(() => {
-      const levels = ['INFO', 'SUCCESS', 'WARN'];
-      const actions = {
-        Antigravity: ['Command resolved successfully', 'Permission safe check: ok', 'Broadcasted tab-sync composer state change', 'Reading manifest.json under orchestrator-command-deck'],
-        Jules: ['Checking commits on dev-branch', 'Linear event match detected: GRO-123', 'Rebasing workspace logs to local backup', 'Git fetch complete: origin'],
-        Codex: ['Parsing security abstract syntax trees', 'Safe directory audit: no violations found', 'Review completed for diff PR #12', 'VRAM watchdog check: 24% capacity'],
-        Kai: ['Autonomously balancing resource threads', 'Sentinel check: heartbeat response in 12ms', 'Flushing SQLite cached event log keys', 'K3s cluster telemetry matched baseline'],
-        Fred: ['Listening for local package release hook', 'Staging container setup: verified safe', 'Pty keepalive timeout updated to 120m', 'Safe gate checks passed'],
-        Ned: ['Research query finalized: Safe directory exceptions', 'Synthesizing report: agent-runs output', 'Linear ticket GRO-1222 re-labelled to agent:ned', 'Archived legacy configs']
-      };
-
-      const initialLogs = {};
-      Object.keys(actions).forEach(agent => {
-        initialLogs[agent] = [];
-        let baseTime = new Date();
-        baseTime.setMinutes(baseTime.getMinutes() - 40);
-        for(let i = 0; i < 35; i++) {
-          baseTime.setSeconds(baseTime.getSeconds() + 45);
-          const timeStr = baseTime.toTimeString().split(' ')[0];
-          const lvl = levels[Math.floor(Math.random() * levels.length)];
-          const act = actions[agent][i % actions[agent].length] + ' (' + i + ')';
-          initialLogs[agent].push({ time: timeStr, level: lvl, text: `[${lvl}] ${act}` });
-        }
-      });
-      setLogs(initialLogs);
+    const syncStatusFromApi = React.useCallback((data) => {
+      if (!data) return;
+      if (data.mode) setCurrentMode(data.mode);
+      if (data.ui_agents) setAgents(data.ui_agents);
+      if (Array.isArray(data.tasks)) setTasks(data.tasks);
+      setApiState(prev => ({
+        ...prev,
+        loading: false,
+        live: true,
+        error: null,
+        lastSync: data.last_sync || new Date().toTimeString().split(' ')[0],
+        pending: null
+      }));
     }, []);
 
-    // Periodic live log appender
-    React.useEffect(() => {
-      const interval = setInterval(() => {
-        // Find a running agent
-        const runningKeys = Object.keys(agents).filter(k => agents[k].status === 'Running');
-        if (runningKeys.length === 0) return;
-        const randomKey = runningKeys[Math.floor(Math.random() * runningKeys.length)];
-
-        const liveMessages = [
-          'Checking memory allocation profiles... OK',
-          'Syncing BroadcastChannel state across local storage tabs',
-          'Validating signature hashes on active tree namespaces',
-          'Executing safe subprocess execution context',
-          'Telemetry verified: K3s node state within limits',
-          'Polling webhook event buffer queue',
-          'Applying layout rendering updates to DOM frame'
-        ];
-        const msg = liveMessages[Math.floor(Math.random() * liveMessages.length)];
-        const level = Math.random() > 0.8 ? 'WARN' : 'INFO';
-        const timeStr = new Date().toTimeString().split(' ')[0];
-
-        setLogs(prev => {
-          const updated = { ...prev };
-          if (!updated[randomKey]) updated[randomKey] = [];
-          updated[randomKey] = [...updated[randomKey], { time: timeStr, level: level, text: `[${level}] ${msg}` }].slice(-50);
-          return updated;
+    const fetchStatus = React.useCallback((silent = false) => {
+      if (!silent) setApiState(prev => ({ ...prev, loading: true }));
+      return api(API_BASE + '/status')
+        .then(data => {
+          syncStatusFromApi(data);
+          return data;
+        })
+        .catch(err => {
+          const message = err && err.message ? err.message : String(err);
+          setApiState(prev => ({ ...prev, loading: false, live: false, error: message, lastSync: prev.lastSync, pending: null }));
+          if (!silent) showToast(`Command Deck API unavailable: ${message}`, 'error');
+          throw err;
         });
-      }, 3000);
+    }, [syncStatusFromApi]);
 
+    const fetchLogsForAgent = React.useCallback((agentName) => {
+      return api(`${API_BASE}/agent/${encodeURIComponent(agentName)}/logs?limit=50`)
+        .then(lines => {
+          if (Array.isArray(lines)) {
+            setLogs(prev => ({ ...prev, [agentName]: lines }));
+          }
+        })
+        .catch(() => {});
+    }, []);
+
+    const consoleRef = React.useRef(null);
+
+    // API-backed state polling. If the API is unavailable the seeded fallback stays visible,
+    // but every operator control shows the degraded state instead of pretending success.
+    React.useEffect(() => {
+      fetchStatus(false).catch(() => {});
+      const interval = setInterval(() => fetchStatus(true).catch(() => {}), 5000);
       return () => clearInterval(interval);
-    }, [agents]);
+    }, [fetchStatus]);
+
+    React.useEffect(() => {
+      fetchLogsForAgent(activeLogAgent);
+      const interval = setInterval(() => fetchLogsForAgent(activeLogAgent), 5000);
+      return () => clearInterval(interval);
+    }, [activeLogAgent, fetchLogsForAgent]);
 
     // Autoscroll log console
     React.useEffect(() => {
@@ -833,38 +873,60 @@
     // --------------------------------------------------
     // Event Handlers
     // --------------------------------------------------
+    const runApiCommand = React.useCallback((commandKey, request, successMessage, afterSuccess) => {
+      setActionLoading(prev => ({ ...prev, [commandKey]: true }));
+      setApiState(prev => ({ ...prev, pending: commandKey, error: null }));
+      return request()
+        .then(result => {
+          showToast(successMessage(result), 'success');
+          if (afterSuccess) afterSuccess(result);
+          return fetchStatus(true).then(() => result);
+        })
+        .catch(err => {
+          const message = err && err.message ? err.message : String(err);
+          setApiState(prev => ({ ...prev, live: false, error: message, pending: null }));
+          showToast(`Command failed: ${message}`, 'error');
+          throw err;
+        })
+        .finally(() => {
+          setActionLoading(prev => ({ ...prev, [commandKey]: false }));
+          setApiState(prev => ({ ...prev, pending: null }));
+        });
+    }, [fetchStatus]);
+
     const handleModeChange = (mode) => {
+      const priorMode = currentMode;
       setCurrentMode(mode);
-      showToast(`Orchestrator Mode switched to: ${mode.toUpperCase()}`, mode === 'autonomous' ? 'warn' : 'info');
+      runApiCommand(
+        `mode-${mode}`,
+        () => api(API_BASE + '/mode', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode })
+        }),
+        () => `Operator mode committed: ${mode.toUpperCase()}`,
+        () => fetchLogsForAgent('Antigravity')
+      ).catch(() => setCurrentMode(priorMode));
     };
 
     const handleFormSubmit = (e) => {
       e.preventDefault();
-      if (!dispatchDesc) return;
+      const description = dispatchDesc.trim();
+      if (!description) return;
 
-      const newTask = {
-        id: Date.now(),
-        agent: dispatchAgent,
-        desc: dispatchDesc,
-        priority: dispatchPriority,
-        age: 0
-      };
-
-      setTasks(prev => [...prev, newTask]);
-      setDispatchDesc('');
-      showToast(`Dispatched task to ${dispatchAgent}: "${dispatchDesc}"`, 'success');
-
-      // Add to log
-      const timeStr = new Date().toTimeString().split(' ')[0];
-      setLogs(prev => {
-        const updated = { ...prev };
-        updated[dispatchAgent] = [...(updated[dispatchAgent] || []), {
-          time: timeStr,
-          level: 'INFO',
-          text: `[INFO] Received new Sandbox Dispatch command: "${dispatchDesc}"`
-        }].slice(-50);
-        return updated;
-      });
+      runApiCommand(
+        'dispatch-task',
+        () => api(API_BASE + '/tasks/dispatch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agent: dispatchAgent, description, priority: dispatchPriority })
+        }),
+        result => `Dispatched task #${result.task ? result.task.id : 'new'} to ${dispatchAgent}`,
+        () => {
+          setDispatchDesc('');
+          fetchLogsForAgent(dispatchAgent);
+        }
+      ).catch(() => {});
     };
 
     const triggerAction = (agentName, action) => {
@@ -873,70 +935,43 @@
 
     const handleConfirmAction = () => {
       const { agentName, action } = modal;
-      setAgents(prev => {
-        const updated = { ...prev };
-        const agent = updated[agentName];
-        if (agent) {
-          if (action === 'start') {
-            agent.status = 'Running';
-            agent.task = 'Initializing active loop context...';
-          } else if (action === 'pause') {
-            agent.status = 'Paused';
-          } else if (action === 'resume') {
-            agent.status = 'Running';
-          } else if (action === 'kill') {
-            agent.status = 'Terminated';
-            agent.task = 'Terminated by operator signal';
-          }
-        }
-        return updated;
-      });
-
-      // Log the lifecycle change
-      const timeStr = new Date().toTimeString().split(' ')[0];
-      const lvl = action === 'kill' ? 'ERROR' : action === 'pause' ? 'WARN' : 'SUCCESS';
-      const txt = `[${lvl}] Lifecycle status transitioned to: ${action.toUpperCase()} via Command Deck`;
-      setLogs(prev => {
-        const updated = { ...prev };
-        updated[agentName] = [...(updated[agentName] || []), { time: timeStr, level: lvl, text: txt }].slice(-50);
-        return updated;
-      });
-
       setModal({ isOpen: false, agentName: '', action: '' });
-      showToast(`Agent ${agentName} lifecycle transitioned to ${action.toUpperCase()}`, 'success');
+      runApiCommand(
+        `agent-${agentName}-${action}`,
+        () => api(`${API_BASE}/agent/${encodeURIComponent(agentName)}/control`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action })
+        }),
+        result => `${result.agent || agentName} lifecycle committed: ${(result.status || action).toUpperCase()}`,
+        () => fetchLogsForAgent(agentName)
+      ).catch(() => {});
     };
 
     const handleCancelTask = (id) => {
       const task = tasks.find(t => t.id === id);
-      setTasks(prev => prev.filter(t => t.id !== id));
-      if (task) {
-        showToast(`Canceled task: "${task.desc}"`, 'error');
-        // Log cancel
-        const timeStr = new Date().toTimeString().split(' ')[0];
-        setLogs(prev => {
-          const updated = { ...prev };
-          updated[task.agent] = [...(updated[task.agent] || []), {
-            time: timeStr,
-            level: 'WARN',
-            text: `[WARN] Canceled queue task manually by user request`
-          }].slice(-50);
-          return updated;
-        });
-      }
+      if (!task) return;
+      runApiCommand(
+        `task-${id}-cancel`,
+        () => api(`${API_BASE}/tasks/${id}/cancel`, { method: 'POST' }),
+        () => `Canceled queue task: "${task.desc}"`,
+        () => fetchLogsForAgent(task.agent)
+      ).catch(() => {});
     };
 
     const handleShiftPriority = (id, direction) => {
-      const idx = tasks.findIndex(t => t.id === id);
-      if (idx === -1) return;
-      const targetIdx = idx + direction;
-      if (targetIdx < 0 || targetIdx >= tasks.length) return;
-
-      const newTasks = [...tasks];
-      const temp = newTasks[idx];
-      newTasks[idx] = newTasks[targetIdx];
-      newTasks[targetIdx] = temp;
-      setTasks(newTasks);
-      showToast('Task queue priority order shifted', 'info');
+      const task = tasks.find(t => t.id === id);
+      if (!task) return;
+      const apiDirection = direction < 0 ? 'up' : 'down';
+      runApiCommand(
+        `task-${id}-${apiDirection}`,
+        () => api(`${API_BASE}/tasks/${id}/reorder`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ direction: apiDirection })
+        }),
+        () => `Task queue priority moved ${apiDirection}`
+      ).catch(() => {});
     };
 
     // Calculate dynamic state metrics
@@ -955,6 +990,10 @@
           ])
         ]),
         h('div', { className: 'deck-header-info' }, [
+          h('div', { className: `deck-operator-status ${apiState.live ? 'live' : apiState.error ? 'error' : 'degraded'}`, title: apiState.error || (apiState.live ? 'Backend controls are connected' : 'Using local fallback state') }, [
+            h('span', { className: 'deck-operator-status-dot' }),
+            h('span', null, apiState.live ? `LIVE API · ${apiState.lastSync || 'syncing'}` : apiState.error ? `API ERROR · ${apiState.error}` : 'API SYNCING')
+          ]),
           h('div', { className: 'deck-telemetry-item' }, [
             h('span', { className: 'deck-telemetry-label' }, 'System Mode'),
             h('span', { className: 'deck-telemetry-value', style: { color: currentMode === 'autonomous' ? 'var(--color-kai)' : currentMode === 'collaborative' ? 'var(--color-antigravity)' : 'var(--color-fred)' } }, currentMode.toUpperCase())
@@ -1000,6 +1039,12 @@
           currentMode === 'interactive' ? 'Interactive Mode: High guardrail stance. Swarm agents run commands inside secure sandbox cages and must prompt for explicit user permission approvals before committing files, executing build commands, or running network tasks.' :
           currentMode === 'collaborative' ? 'Collaborative Mode: Semi-autonomous swarm. Agents coordinate on branches autonomously, but synchronize plans on Linear at critical pipeline junctions (such as pull request proposals or risk level classifications).' :
           'Autonomous Mode: Unrestricted agentic flow. The swarm autonomously plans, assigns subagents, resolves files, runs builds, and updates issue tracking logs, requesting human intervention only upon critical build failures.'
+        ),
+        h('div', { className: `deck-command-feedback ${apiState.error ? 'error' : ''}` },
+          apiState.pending ? `Executing command: ${apiState.pending}` :
+          apiState.error ? `Last command failed: ${apiState.error}` :
+          apiState.live ? 'Controls are committed to the persistent Command Deck API. Queue, modes, logs, and agent states survive refresh.' :
+          'Connecting to Command Deck API… local fallback visible until backend responds.'
         )
       ]);
     };
@@ -1034,7 +1079,7 @@
               h('option', { value: 'Critical' }, 'Critical')
             ])
           ]),
-          h('button', { type: 'submit', className: 'deck-dispatch-btn' }, 'Dispatch')
+          h('button', { type: 'submit', className: 'deck-dispatch-btn', disabled: actionLoading['dispatch-task'] }, actionLoading['dispatch-task'] ? 'Dispatching…' : 'Dispatch')
         ])
       ]);
     };
@@ -1063,10 +1108,10 @@
             ]),
             h('div', { className: 'deck-agent-task', title: agent.task }, `Task: ${agent.task}`),
             h('div', { className: 'deck-agent-actions' }, [
-              h('button', { className: 'deck-agent-btn', onClick: () => triggerAction(agent.name, 'start'), disabled: isRunning || isPaused }, 'Start'),
-              h('button', { className: 'deck-agent-btn', onClick: () => triggerAction(agent.name, 'pause'), disabled: !isRunning }, 'Pause'),
-              h('button', { className: 'deck-agent-btn', onClick: () => triggerAction(agent.name, 'resume'), disabled: !isPaused }, 'Resume'),
-              h('button', { className: 'deck-agent-btn btn-kill', onClick: () => triggerAction(agent.name, 'kill'), disabled: isTerminated || isIdle }, 'Kill')
+              h('button', { className: 'deck-agent-btn', onClick: () => triggerAction(agent.name, 'start'), disabled: actionLoading[`agent-${agent.name}-start`] || isRunning || isPaused }, actionLoading[`agent-${agent.name}-start`] ? '…' : 'Start'),
+              h('button', { className: 'deck-agent-btn', onClick: () => triggerAction(agent.name, 'pause'), disabled: actionLoading[`agent-${agent.name}-pause`] || !isRunning }, actionLoading[`agent-${agent.name}-pause`] ? '…' : 'Pause'),
+              h('button', { className: 'deck-agent-btn', onClick: () => triggerAction(agent.name, 'resume'), disabled: actionLoading[`agent-${agent.name}-resume`] || !isPaused }, actionLoading[`agent-${agent.name}-resume`] ? '…' : 'Resume'),
+              h('button', { className: 'deck-agent-btn btn-kill', onClick: () => triggerAction(agent.name, 'kill'), disabled: actionLoading[`agent-${agent.name}-kill`] || isTerminated || isIdle }, actionLoading[`agent-${agent.name}-kill`] ? '…' : 'Kill')
             ])
           ]);
         }))
@@ -1092,10 +1137,10 @@
           ]),
           h('div', { className: 'deck-queue-row', style: { marginTop: 4, borderTop: '1px solid rgba(255,255,255,0.03)', paddingTop: 6 } }, [
             h('div', { className: 'deck-queue-actions' }, [
-              h('button', { className: 'deck-queue-btn', onClick: () => handleShiftPriority(task.id, -1), disabled: index === 0 }, '▲ Up'),
-              h('button', { className: 'deck-queue-btn', onClick: () => handleShiftPriority(task.id, 1), disabled: index === tasks.length - 1 }, '▼ Down')
+              h('button', { className: 'deck-queue-btn', onClick: () => handleShiftPriority(task.id, -1), disabled: actionLoading[`task-${task.id}-up`] || index === 0 }, actionLoading[`task-${task.id}-up`] ? '…' : '▲ Up'),
+              h('button', { className: 'deck-queue-btn', onClick: () => handleShiftPriority(task.id, 1), disabled: actionLoading[`task-${task.id}-down`] || index === tasks.length - 1 }, actionLoading[`task-${task.id}-down`] ? '…' : '▼ Down')
             ]),
-            h('button', { className: 'deck-queue-btn btn-cancel', onClick: () => handleCancelTask(task.id) }, 'Cancel')
+            h('button', { className: 'deck-queue-btn btn-cancel', onClick: () => handleCancelTask(task.id), disabled: actionLoading[`task-${task.id}-cancel`] }, actionLoading[`task-${task.id}-cancel`] ? 'Canceling…' : 'Cancel')
           ])
         ]);
       });
