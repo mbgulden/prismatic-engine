@@ -35,7 +35,9 @@ def test_set_mode_persists_and_publishes_bus_event(tmp_path, monkeypatch):
         "previous_mode": "autonomous",
     }
     assert bus.get_history(limit=1)[0]["type"] == "system.mode_changed"
-    assert json.loads((tmp_path / "system_mode.json").read_text())["mode"] == "interactive"
+    assert (
+        json.loads((tmp_path / "system_mode.json").read_text())["mode"] == "interactive"
+    )
 
 
 def test_mode_change_reaches_fastapi_websocket_clients(tmp_path, monkeypatch):

@@ -44,10 +44,17 @@ DEFAULT_SOCKET_PATH: str = os.path.join(
 
 REQUIRED_FIELDS = {"type", "source"}
 VALID_TYPES = {
-    "lock", "unlock", "heartbeat", "telemetry",
-    "agent_launched", "agent_completed", "agent_failed",
-    "governor_allocate", "governor_release",
-    "circuit_breaker_trip", "circuit_breaker_reset",
+    "lock",
+    "unlock",
+    "heartbeat",
+    "telemetry",
+    "agent_launched",
+    "agent_completed",
+    "agent_failed",
+    "governor_allocate",
+    "governor_release",
+    "circuit_breaker_trip",
+    "circuit_breaker_reset",
     "system.mode_changed",
 }
 
@@ -64,8 +71,7 @@ def validate_event(data: dict[str, Any]) -> tuple[bool, str]:
     event_type = data.get("type", "")
     if event_type not in VALID_TYPES:
         return False, (
-            f"Unknown event type: {event_type!r}. "
-            f"Valid types: {sorted(VALID_TYPES)}"
+            f"Unknown event type: {event_type!r}. Valid types: {sorted(VALID_TYPES)}"
         )
 
     return True, ""
@@ -95,7 +101,8 @@ async def publish_event(data: dict[str, Any]) -> dict[str, Any]:
 
     logger.debug(
         "IPC bridge: published event type=%s source=%s",
-        data["type"], data["source"],
+        data["type"],
+        data["source"],
     )
     return {"ok": True, "event": event.to_dict()}
 
@@ -143,9 +150,7 @@ class UnixSocketListener:
             self._handle_connection,
             path=self._socket_path,
         )
-        logger.info(
-            "IPC bridge Unix socket listening on %s", self._socket_path
-        )
+        logger.info("IPC bridge Unix socket listening on %s", self._socket_path)
 
     async def stop(self) -> None:
         """Stop the Unix socket server and clean up."""
@@ -182,9 +187,7 @@ class UnixSocketListener:
                     event_data = json.loads(line)
                 except json.JSONDecodeError as exc:
                     self._total_rejected += 1
-                    logger.warning(
-                        "IPC bridge: invalid JSON from %s: %s", peer, exc
-                    )
+                    logger.warning("IPC bridge: invalid JSON from %s: %s", peer, exc)
                     continue
 
                 result = await publish_event(event_data)
@@ -232,7 +235,7 @@ def create_event_ingest_route():
         from prismatic.gateway.ipc_bridge import create_event_ingest_route
         app.include_router(create_event_ingest_route())
     """
-    from fastapi import APIRouter, Request, Response, Body
+    from fastapi import APIRouter, Body, Response
 
     router = APIRouter()
 
@@ -257,12 +260,14 @@ def create_event_ingest_route():
         status_code = 200 if fail_count == 0 else 207  # Multi-Status
         return Response(
             status_code=status_code,
-            content=json.dumps({
-                "total": len(results),
-                "ok": ok_count,
-                "failed": fail_count,
-                "results": results,
-            }),
+            content=json.dumps(
+                {
+                    "total": len(results),
+                    "ok": ok_count,
+                    "failed": fail_count,
+                    "results": results,
+                }
+            ),
             media_type="application/json",
         )
 
@@ -313,9 +318,9 @@ def send_event_via_socket(
     event = {
         "type": event_type,
         "source": source,
-        "timestamp": __import__("datetime").datetime.now(
-            __import__("datetime").timezone.utc
-        ).isoformat(),
+        "timestamp": __import__("datetime")
+        .datetime.now(__import__("datetime").timezone.utc)
+        .isoformat(),
         "payload": payload or {},
     }
 
