@@ -35,13 +35,27 @@ Part of GRO-1478 — Pipeline metrics dashboard.
 import json
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from collections import Counter
+from pathlib import Path
 
 METRICS_PATHS = [
     "/tmp/pipeline_metrics.jsonl",
     "pipeline_metrics.jsonl",
 ]
+
+RECOVERY_STATE_PATHS = [
+    os.environ.get("PRISMATIC_RECOVERY_STATE"),
+    os.environ.get("PRISMATIC_SUPERVISOR_HEARTBEAT"),
+    os.path.expanduser("~/.prismatic/supervisor/recovery_state.json"),
+    os.path.expanduser("~/.prismatic/supervisor/heartbeat.json"),
+]
+DLQ_PATH = os.environ.get(
+    "PRISMATIC_SUPERVISOR_DLQ",
+    os.path.expanduser("~/.prismatic/supervisor/dlq.jsonl"),
+)
+HEARTBEAT_STALE_SECONDS = int(os.environ.get("PRISMATIC_DASHBOARD_HEARTBEAT_STALE_SEC", "600"))
 
 # ── Load metrics ────────────────────────────────────────────
 
@@ -203,6 +217,161 @@ def detect_bypasses(metrics_list):
     return bypasses
 
 
+# ── Recovery / watchdog state ─────────────────────────────────
+
+def _parse_timestamp(value):
+    """Return epoch seconds for ISO or epoch timestamp values, else None."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            return float(text)
+        except ValueError:
+            pass
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            return datetime.fromisoformat(text).timestamp()
+        except ValueError:
+            return None
+    return None
+
+
+def _find_timestamp(data):
+    """Find the most useful heartbeat timestamp in a small state document."""
+    if not isinstance(data, dict):
+        return None, None
+    keys = (
+        "heartbeat",
+        "last_heartbeat",
+        "lastHeartbeat",
+        "heartbeat_at",
+        "updated_at",
+        "updatedAt",
+        "ts",
+        "timestamp",
+    )
+    for key in keys:
+        ts = _parse_timestamp(data.get(key))
+        if ts is not None:
+            return key, ts
+    nested = data.get("consumer") or data.get("watchdog") or data.get("supervisor")
+    if isinstance(nested, dict):
+        key, ts = _find_timestamp(nested)
+        if ts is not None:
+            return key, ts
+    return None, None
+
+
+def load_supervisor_pool_stats():
+    """Read bounded supervisor pool stats without requiring the service to be up."""
+    try:
+        from prismatic.supervisor.recovery import get_pool
+        return {"ok": True, **get_pool().stats()}
+    except Exception as exc:  # pragma: no cover - depends on deployment env
+        return {"ok": False, "error": str(exc)}
+
+
+def load_dlq_state(path=DLQ_PATH):
+    """Summarize the supervisor dead-letter queue."""
+    dlq = Path(path).expanduser()
+    if not dlq.exists():
+        return {"path": str(dlq), "exists": False, "count": 0, "recent": []}
+    recent = []
+    count = 0
+    try:
+        with dlq.open("r") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                count += 1
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    record = {"raw": line[:200], "parse_error": True}
+                recent.append(record)
+                recent = recent[-5:]
+        return {"path": str(dlq), "exists": True, "count": count, "recent": recent}
+    except Exception as exc:
+        return {"path": str(dlq), "exists": True, "count": count, "error": str(exc), "recent": recent}
+
+
+def load_heartbeat_state(paths=None, now=None):
+    """Read recovery heartbeat/watchdog state from the first existing state file."""
+    now = time.time() if now is None else now
+    candidates = [p for p in (paths or RECOVERY_STATE_PATHS) if p]
+    for raw_path in candidates:
+        path = Path(raw_path).expanduser()
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(path.read_text())
+        except Exception as exc:
+            return {"path": str(path), "exists": True, "ok": False, "error": str(exc)}
+        key, ts = _find_timestamp(data)
+        age = round(now - ts, 1) if ts is not None else None
+        stale = age is None or age > HEARTBEAT_STALE_SECONDS
+        return {
+            "path": str(path),
+            "exists": True,
+            "ok": not stale,
+            "timestamp_key": key,
+            "age_seconds": age,
+            "stale_after_seconds": HEARTBEAT_STALE_SECONDS,
+            "state": data,
+        }
+    return {"path": None, "exists": False, "ok": False, "age_seconds": None, "stale_after_seconds": HEARTBEAT_STALE_SECONDS}
+
+
+def load_recovery_state():
+    """Combine watchdog heartbeat, supervisor pool, and DLQ state for the dashboard."""
+    pool = load_supervisor_pool_stats()
+    dlq = load_dlq_state()
+    heartbeat = load_heartbeat_state()
+    status = "healthy"
+    reasons = []
+    if dlq.get("error"):
+        status = "warning"
+        reasons.append(f"DLQ unreadable: {dlq['error']}")
+    elif dlq.get("count", 0) > 0:
+        status = "warning"
+        reasons.append(f"{dlq['count']} DLQ item(s) need replay/disposition")
+    if heartbeat.get("exists") and not heartbeat.get("ok"):
+        status = "critical"
+        reasons.append("watchdog/consumer heartbeat is stale")
+    elif not heartbeat.get("exists"):
+        status = "unknown" if status == "healthy" else status
+        reasons.append("no heartbeat state file found")
+    if not pool.get("ok"):
+        status = "warning" if status == "healthy" else status
+        reasons.append(f"supervisor pool unavailable: {pool.get('error')}")
+    elif pool.get("live_count", 0) >= pool.get("max_concurrent", 1):
+        status = "critical"
+        reasons.append("supervisor pool is at capacity")
+    return {"status": status, "reasons": reasons, "pool": pool, "dlq": dlq, "heartbeat": heartbeat}
+
+
+def recovery_recommendation(recovery):
+    """Return the default operator action for recovery/watchdog state."""
+    if recovery["status"] == "critical":
+        return "Pause new dispatch, inspect consumer heartbeat, then replay or park DLQ items."
+    if recovery["status"] == "warning":
+        return "Review DLQ/retry reasons and confirm the supervisor pool is draining."
+    if recovery["status"] == "unknown":
+        return "Verify the watchdog writes heartbeat state; dashboard cannot prove recovery liveness yet."
+    return "No recovery action; keep watching heartbeat freshness and DLQ count."
+
+
+def recovery_icon(status):
+    return {"healthy": "🟢", "warning": "🟡", "critical": "🔴", "unknown": "⚪"}.get(status, "⚪")
+
+
 # ── Dashboard format ─────────────────────────────────────────
 
 
@@ -234,6 +403,7 @@ def print_dashboard(metrics_list):
     task_stats = compute_task_stats(metrics_list)
     session_stats = compute_session_stats(metrics_list)
     bypasses = detect_bypasses(metrics_list)
+    recovery = load_recovery_state()
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
@@ -249,6 +419,29 @@ def print_dashboard(metrics_list):
         "if the count is unexpectedly low, verify dispatch metrics are being written before acting on trends.",
     )
     print(f"  📊 Tasks Tracked: {task_stats['count']}")
+
+    # Recovery / replay state
+    icon = recovery_icon(recovery["status"])
+    print(f"\n── Recovery / Watchdog State: {icon} {recovery['status'].upper()} ──")
+    print("  Shows: consumer heartbeat freshness, bounded supervisor pool, and DLQ replay backlog.")
+    print("  Why:   recovery can look quiet while replay paths are stuck or dead-lettering work.")
+    print(f"  Next:  {recovery_recommendation(recovery)}")
+    pool = recovery.get("pool", {})
+    if pool.get("ok"):
+        print(f"  🧵 Supervisor pool:          {pool.get('live_count', 0)}/{pool.get('max_concurrent', '?')} live, {pool.get('total_skipped_dlq', 0)} skipped to DLQ")
+    else:
+        print(f"  🧵 Supervisor pool:          unavailable ({pool.get('error', 'unknown error')})")
+    heartbeat = recovery.get("heartbeat", {})
+    if heartbeat.get("exists"):
+        age = heartbeat.get("age_seconds")
+        age_text = f"{age:.0f}s old" if isinstance(age, (int, float)) else "timestamp missing"
+        print(f"  💓 Consumer heartbeat:       {age_text} via {heartbeat.get('path')}")
+    else:
+        print("  💓 Consumer heartbeat:       no state file found")
+    dlq = recovery.get("dlq", {})
+    print(f"  🧯 DLQ backlog:              {dlq.get('count', 0)} item(s) at {dlq.get('path')}")
+    for reason in recovery.get("reasons", [])[:3]:
+        print(f"  ⚠️  {reason}")
 
     if task_stats["count"] == 0:
         print("  No pipeline metrics collected yet.")
@@ -326,7 +519,7 @@ def print_dashboard(metrics_list):
             print(f"  ⚠️ {bid}")
 
     # Health score
-    score = compute_health_score(task_stats, session_stats, bypasses)
+    score = compute_health_score(task_stats, session_stats, bypasses, recovery)
     icon = "🟢" if score >= 80 else "🟡" if score >= 50 else "🔴"
     pane_context(
         f"Pipeline Health: {icon} {score}/100",
@@ -344,7 +537,7 @@ def print_dashboard(metrics_list):
     print("=" * 60)
 
 
-def compute_health_score(task_stats, session_stats, bypasses):
+def compute_health_score(task_stats, session_stats, bypasses, recovery=None):
     """Compute a 0-100 health score."""
     if task_stats["count"] == 0:
         return 0
@@ -375,6 +568,12 @@ def compute_health_score(task_stats, session_stats, bypasses):
     if credit_avg > 5:
         score -= 10
 
+    recovery_status = (recovery or {}).get("status")
+    if recovery_status == "critical":
+        score -= 25
+    elif recovery_status == "warning":
+        score -= 10
+
     return max(0, score)
 
 
@@ -383,7 +582,8 @@ def json_output(metrics_list):
     task_stats = compute_task_stats(metrics_list)
     session_stats = compute_session_stats(metrics_list)
     bypasses = detect_bypasses(metrics_list)
-    score = compute_health_score(task_stats, session_stats, bypasses)
+    recovery = load_recovery_state()
+    score = compute_health_score(task_stats, session_stats, bypasses, recovery)
 
     output = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -391,6 +591,7 @@ def json_output(metrics_list):
         "task_metrics": task_stats,
         "session_metrics": session_stats,
         "bypasses": bypasses,
+        "recovery": recovery,
     }
     print(json.dumps(output, indent=2, default=str))
 
@@ -400,18 +601,21 @@ def summary_output(metrics_list):
     task_stats = compute_task_stats(metrics_list)
     session_stats = compute_session_stats(metrics_list)
     bypasses = detect_bypasses(metrics_list)
-    score = compute_health_score(task_stats, session_stats, bypasses)
+    recovery = load_recovery_state()
+    score = compute_health_score(task_stats, session_stats, bypasses, recovery)
     icon = "🟢" if score >= 80 else "🟡" if score >= 50 else "🔴"
+    recovery_badge = f"{recovery_icon(recovery['status'])} recovery:{recovery['status']}"
 
     if task_stats["count"] == 0:
-        print("📊 Pipeline: No metrics yet")
+        print(f"📊 Pipeline: No metrics yet | {recovery_badge}")
     else:
         print(
             f"📊 Pipeline: {icon} {score}/100 | "
             f"{task_stats['count']} tasks | "
             f"{session_stats['avg_acceptance_rate']:.0%} acceptance | "
             f"{task_stats['credit_cost']['total']} credits | "
-            f"{len(bypasses)} bypasses"
+            f"{len(bypasses)} bypasses | "
+            f"{recovery_badge}"
         )
 
 
