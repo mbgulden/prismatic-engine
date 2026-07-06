@@ -45,6 +45,7 @@ from .credit_policy_engine import (
     AGENT_PROVIDER_MAP,
 )
 from .telemetry import get_collector
+from .lane_contracts import filter_dispatchable_issues, starvation_signal_for
 
 # ── IPC Bridge event emission (best-effort) ─────────────────────
 try:
@@ -925,8 +926,13 @@ def setup_pipeline_issues(max_issues: int = 20) -> list[dict[str, Any]]:
             ],
         }
 
-        # Skip if already has an agent label
-        if any(lab.startswith("agent::") for lab in issue_dict["labels"]):
+        # Skip if already has an agent label. Linear uses the single-colon
+        # ``agent:name`` form; keep the legacy double-colon check for older
+        # local fixtures.
+        if any(
+            lab.startswith("agent:") or lab.startswith("agent::")
+            for lab in issue_dict["labels"]
+        ):
             continue
 
         pipeline_type = detect_pipeline_type(issue_dict, pipelines)
@@ -1584,15 +1590,31 @@ def dispatch_once(
         print(f"[dispatcher] Credit tracking/alert error: {exc}")
     # ── End Credit Tracker ─────────────────────────────────
 
-    # 2. Dispatch to each agent
+    # 2. Dispatch to each agent. Use the explicit lane contract for each
+    #    queue instead of treating ``agent:*`` as a complete routing rule.
     for agent_name, config in AGENT_CONFIG.items():
-        label = f"agent::{agent_name}"
+        label = f"agent:{agent_name}"
         try:
             issues = get_issues_with_label(label)
         except Exception as exc:
             print(f"[dispatcher] Error fetching issues for {label}: {exc}")
             counts["errors"] += 1
             continue
+
+        issues, held_issues = filter_dispatchable_issues(issues, agent_name)
+        for held_issue, hold_reason in held_issues:
+            identifier = held_issue.get("identifier", held_issue.get("id", "<unknown>"))
+            print(
+                f"[dispatcher] ⏸️  Held {label} → {identifier}: "
+                f"{hold_reason}"
+            )
+            counts["held"] = counts.get("held", 0) + 1
+
+        if not issues:
+            print(
+                f"[dispatcher] Starvation signal: "
+                f"{starvation_signal_for(agent_name)}"
+            )
 
         for issue in issues:
             issue_id = issue["id"]
