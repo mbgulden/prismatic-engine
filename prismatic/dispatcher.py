@@ -45,6 +45,7 @@ from .credit_policy_engine import (
     AGENT_PROVIDER_MAP,
 )
 from .telemetry import get_collector
+from .capability_router import default_capability_registry, route_issue
 
 # ── IPC Bridge event emission (best-effort) ─────────────────────
 try:
@@ -1510,6 +1511,72 @@ def detect_origin_completions(
     return signalled
 
 
+def route_dispatch_ready_issues(max_issues: int = 50) -> int:
+    """Assign unclaimed ``dispatch:ready`` issues by capability and capacity.
+
+    This is the bridge from label-only dispatch to capability-aware routing:
+    issues that are ready but do not yet have an ``agent:*`` label are routed
+    to the least-loaded eligible worker lane.  Existing agent labels are
+    respected; this helper never steals already-claimed work.
+    """
+    try:
+        ready_issues = get_issues_with_label("dispatch:ready", max_issues=max_issues)
+    except Exception as exc:
+        print(f"[dispatcher] capability routing fetch failed: {exc}")
+        return 0
+
+    # Snapshot current load by counting active issues per configured lane.
+    loads: dict[str, int] = {}
+    for agent_name in AGENT_CONFIG:
+        try:
+            single_colon = len(get_issues_with_label(f"agent:{agent_name}", max_issues=100))
+            double_colon = len(get_issues_with_label(f"agent::{agent_name}", max_issues=100))
+            loads[agent_name] = max(single_colon, double_colon)
+        except Exception:
+            loads[agent_name] = 0
+
+    registry = default_capability_registry(AGENT_CONFIG).with_loads(loads)
+    routed = 0
+    for issue in ready_issues:
+        label_names = issue.get("labels", [])
+        if any(label.startswith("agent:") for label in label_names):
+            continue
+
+        decision = route_issue(issue, registry)
+        if not decision.selected or not decision.label:
+            identifier = issue.get("identifier", issue.get("id", ""))
+            print(f"[dispatcher] capability routing skipped {identifier}: {decision.reason}")
+            continue
+
+        issue_id = issue["id"]
+        try:
+            current_labels = get_issue_labels(issue_id)
+            current_ids = [label["id"] for label in current_labels]
+            selected_label_id = get_label_id(decision.label)
+            if not selected_label_id:
+                print(
+                    f"[dispatcher] capability routing could not resolve label "
+                    f"{decision.label!r} for {issue.get('identifier', issue_id)}"
+                )
+                continue
+            if selected_label_id not in current_ids:
+                set_labels(issue_id, [*current_ids, selected_label_id])
+            registry.reserve(decision.selected.name)
+            routed += 1
+            print(
+                f"[dispatcher] capability routed "
+                f"{issue.get('identifier', issue_id)} → {decision.label} "
+                f"({decision.reason})"
+            )
+        except Exception as exc:
+            print(
+                f"[dispatcher] capability routing failed for "
+                f"{issue.get('identifier', issue_id)}: {exc}"
+            )
+
+    return routed
+
+
 # ═══════════════════════════════════════════════════════════════
 # Main Dispatch Loop
 # ═══════════════════════════════════════════════════════════════
@@ -1541,6 +1608,7 @@ def dispatch_once(
     counts: dict[str, int] = {
         "dispatched": 0,
         "pipeline_setup": 0,
+        "capability_routed": 0,
         "stale_killed": 0,
         "errors": 0,
     }
@@ -1558,6 +1626,13 @@ def dispatch_once(
         counts["pipeline_setup"] = len(setup_issues)
     except Exception as exc:
         print(f"[dispatcher] setup_pipeline_issues error: {exc}")
+        counts["errors"] += 1
+
+    # 1b. Assign ready-but-unclaimed work by capability + capacity.
+    try:
+        counts["capability_routed"] = route_dispatch_ready_issues()
+    except Exception as exc:
+        print(f"[dispatcher] route_dispatch_ready_issues error: {exc}")
         counts["errors"] += 1
 
     # ── AI Ultra Credit Tracker ───────────────────────────
@@ -1786,6 +1861,7 @@ def main_loop(
                 f"[dispatcher] Cycle {cycle} summary: "
                 f"{counts['dispatched']} dispatched, "
                 f"{counts['pipeline_setup']} pipeline setups, "
+                f"{counts.get('capability_routed', 0)} capability-routed, "
                 f"{counts['stale_killed']} stale killed, "
                 f"{counts['errors']} errors"
             )
