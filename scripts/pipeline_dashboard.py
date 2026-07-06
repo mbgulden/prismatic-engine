@@ -45,6 +45,7 @@ METRICS_PATHS = [
 
 # ── Load metrics ────────────────────────────────────────────
 
+
 def load_metrics():
     """Load all metrics from known paths, deduplicate by issue_id."""
     metrics = {}
@@ -70,6 +71,7 @@ def load_metrics():
 
 
 # ── Compute per-task stats ──────────────────────────────────
+
 
 def compute_task_stats(metrics_list):
     """Aggregate per-task metrics."""
@@ -120,6 +122,7 @@ def compute_task_stats(metrics_list):
 
 
 # ── Compute per-session stats ───────────────────────────────
+
 
 def compute_session_stats(metrics_list):
     """Group metrics by session (UTC date) and compute per-session aggregates."""
@@ -179,12 +182,15 @@ def compute_session_stats(metrics_list):
         "avg_acceptance_rate": round(avg_acceptance, 2),
         "avg_credit_per_task": round(
             sum(t.get("credit_cost", 0) for t in metrics_list) / len(metrics_list), 2
-        ) if metrics_list else 0,
+        )
+        if metrics_list
+        else 0,
         "daily": session_summaries,
     }
 
 
 # ── Detect pipeline bypasses ─────────────────────────────────
+
 
 def detect_bypasses(metrics_list):
     """Detect tasks that bypassed pipeline stages (low review depth, no cycle count)."""
@@ -198,6 +204,7 @@ def detect_bypasses(metrics_list):
 
 
 # ── Dashboard format ─────────────────────────────────────────
+
 
 def pane_context(title, shows, why, next_action):
     """Print the context contract for a dashboard pane."""
@@ -246,7 +253,9 @@ def print_dashboard(metrics_list):
     if task_stats["count"] == 0:
         print("  No pipeline metrics collected yet.")
         print("  Metrics are logged automatically after each dispatch cycle.")
-        print("  Next action: run one dispatch cycle or inspect the metrics writer if this should not be empty.")
+        print(
+            "  Next action: run one dispatch cycle or inspect the metrics writer if this should not be empty."
+        )
         print("=" * 60)
         return
 
@@ -257,11 +266,17 @@ def print_dashboard(metrics_list):
         "these values expose whether individual tasks are cheap, reviewed, and converging quickly.",
         "investigate any high range/max value before scaling the same task class further.",
     )
-    print(f"  ⏱️  Time to self-validate:  {task_stats['time_to_self_validate']['avg']} min (range: {task_stats['time_to_self_validate']['min']}–{task_stats['time_to_self_validate']['max']})")
-    print(f"  🔍 Peer review depth:       {task_stats['peer_review_depth']['avg']} findings/100 lines")
+    print(
+        f"  ⏱️  Time to self-validate:  {task_stats['time_to_self_validate']['avg']} min (range: {task_stats['time_to_self_validate']['min']}–{task_stats['time_to_self_validate']['max']})"
+    )
+    print(
+        f"  🔍 Peer review depth:       {task_stats['peer_review_depth']['avg']} findings/100 lines"
+    )
     print(f"  🔄 Fix cycle count:         {task_stats['fix_cycle_count']['avg']}")
     print(f"  ⏰ Time to approval:        {task_stats['time_to_approval']['avg']} min")
-    print(f"  💰 Credit cost:             {task_stats['credit_cost']['avg']} avg ({task_stats['credit_cost']['total']} total)")
+    print(
+        f"  💰 Credit cost:             {task_stats['credit_cost']['avg']} avg ({task_stats['credit_cost']['total']} total)"
+    )
 
     # Provider breakdown
     providers = task_stats.get("providers", {})
@@ -280,7 +295,9 @@ def print_dashboard(metrics_list):
     print(f"  ✅ Total completed:         {session_stats['total_completed']}")
     print(f"  🎯 Total attempted:         {session_stats['total_attempted']}")
     print(f"  ✔️  Acceptance rate:         {session_stats['avg_acceptance_rate']:.0%}")
-    print(f"  💳 Credit/task:             {session_stats['avg_credit_per_task']} credits")
+    print(
+        f"  💳 Credit/task:             {session_stats['avg_credit_per_task']} credits"
+    )
 
     # Daily breakdown
     daily = session_stats.get("daily", {})
@@ -293,7 +310,9 @@ def print_dashboard(metrics_list):
         )
         for date_key, sess in sorted(daily.items()):
             bar = "█" * min(sess["completed"], 20)
-            print(f"  {date_key}: {bar} {sess['completed']} done, {sess['acceptance_rate']:.0%} acceptance, {sess['total_credits']} credits")
+            print(
+                f"  {date_key}: {bar} {sess['completed']} done, {sess['acceptance_rate']:.0%} acceptance, {sess['total_credits']} credits"
+            )
 
     # Bypasses
     if bypasses:
@@ -385,7 +404,7 @@ def summary_output(metrics_list):
     icon = "🟢" if score >= 80 else "🟡" if score >= 50 else "🔴"
 
     if task_stats["count"] == 0:
-        print(f"📊 Pipeline: No metrics yet")
+        print("📊 Pipeline: No metrics yet")
     else:
         print(
             f"📊 Pipeline: {icon} {score}/100 | "
