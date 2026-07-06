@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 ENV_FILE = "/home/ubuntu/.hermes/profiles/orchestrator/.env"
 LINEAR_API = "https://api.linear.app/graphql"
 TEAM_ID = "b6fb2651-5a1f-4714-9bcd-9eb6e759ffef"
+DEFAULT_LINEAR_PRIORITY = int(os.environ.get("PRISMATIC_DEFAULT_LINEAR_PRIORITY", "2"))
 
 
 def get_api_key() -> str:
@@ -76,6 +77,35 @@ REQUIRED_LABELS = [
     "epic", "prismatic-engine", "docs",
 ]
 
+REVIEW_ONLY_LABELS = {
+    "agent:peer-review",
+    "agent:ned-review",
+    "agent:needs-human-review",
+    "agent:post-publish-review",
+    "agent:post-publish-review-agy-approved",
+    "agent:post-publish-review-jules-approved",
+}
+REVIEW_TITLE_PATTERNS = (
+    "peer review",
+    "self-review",
+    "self review",
+    "review-only",
+    "review lane",
+    "pr review",
+    "post-publish review",
+    "needs human review",
+)
+
+
+def is_review_only_issue(*, title: str, description: str, labels: set[str], state: str) -> bool:
+    """Review lanes are routed outside the execution queue."""
+    if labels & REVIEW_ONLY_LABELS:
+        return True
+    if state.lower() == "in review":
+        return True
+    text = f"{title}\n{description}".lower()
+    return any(pattern in text for pattern in REVIEW_TITLE_PATTERNS)
+
 
 @dataclass
 class IssueClassification:
@@ -107,7 +137,8 @@ def classify_issue(issue: dict) -> IssueClassification:
     desc = (issue.get("description") or "").strip()
     labels = {l["name"] for l in issue.get("labels", {}).get("nodes", [])}
     state = issue.get("state", {}).get("name", "").lower()
-    priority = issue.get("priority", 0)
+    priority = issue.get("priority")
+    priority = int(priority or DEFAULT_LINEAR_PRIORITY)
 
     classification = IssueClassification(
         identifier=identifier,
@@ -118,6 +149,12 @@ def classify_issue(issue: dict) -> IssueClassification:
     # === Agent suggestion rules (priority order) ===
     title_lower = title.lower()
     desc_lower = desc.lower()
+
+    if is_review_only_issue(title=title, description=desc, labels=labels, state=state):
+        classification.suggested_engine_consumable = "false"
+        classification.should_dispatch = False
+        classification.reason = "review-only lane (not execution-dispatchable)"
+        return classification
 
     # Epic / doc tasks → fred (orchestration, infra, governance)
     if "epic" in labels or "docs" in labels or any(
