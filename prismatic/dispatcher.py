@@ -30,17 +30,14 @@ import sqlite3
 import subprocess
 import sys
 import time
-import threading
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
 # ── Relative package imports ──────────────────────────────────
-from .providers.signals import create_signal_provider, SignalPayload
+from .providers.signals import create_signal_provider
 from .credit_policy_engine import (
-    CreditPolicyEngine,
     PolicyAction,
-    PolicyDecision,
     evaluate_agent_launch,
     AGENT_PROVIDER_MAP,
 )
@@ -959,8 +956,6 @@ def cleanup_stale_agy(max_age_minutes: int = 5) -> int:
     import subprocess as _subprocess
 
     killed = 0
-    now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(minutes=max_age_minutes)
 
     try:
         # Use ps to find AGY processes with their start times
@@ -1964,7 +1959,7 @@ def cmd_billing_report(args: Any) -> None:
     if args.projection:
         proj = engine.project_costs(client_id=args.client, project_id=args.project)
         print(f"\n{'=' * 60}")
-        print(f"  Cost Projection (7-day rolling average)")
+        print("  Cost Projection (7-day rolling average)")
         print(f"{'=' * 60}")
         print(f"  Client:      {args.client or 'all'}")
         print(f"  Project:     {args.project or 'all'}")
@@ -2002,7 +1997,7 @@ def cmd_billing_report(args: Any) -> None:
             return
 
         print(f"\n{'=' * 70}")
-        print(f"  Client Cost Attribution Report")
+        print("  Client Cost Attribution Report")
         print(f"{'=' * 70}")
         for report in reports:
             print(f"\n  Client:  {report.client_id}")
@@ -2011,7 +2006,7 @@ def cmd_billing_report(args: Any) -> None:
             print(f"  Period:  {report.period_start[:10]} → {report.period_end[:10]}")
             print(f"  {'─' * 50}")
             if report.agent_breakdown:
-                print(f"  Agent Breakdown:")
+                print("  Agent Breakdown:")
                 for agent, adata in sorted(
                     report.agent_breakdown.items(),
                     key=lambda x: x[1]["cost_usd"],
@@ -2021,7 +2016,7 @@ def cmd_billing_report(args: Any) -> None:
                         f"    {agent:30s} ${adata['cost_usd']:10.6f}  ({adata['entries']} entries)"
                     )
             if report.model_breakdown:
-                print(f"  Model Breakdown:")
+                print("  Model Breakdown:")
                 for model, mdata in sorted(
                     report.model_breakdown.items(),
                     key=lambda x: x[1]["cost_usd"],
