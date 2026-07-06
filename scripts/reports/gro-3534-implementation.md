@@ -29,4 +29,11 @@ Focused verification command:
 PYTHONPATH=. pytest prismatic/test_vertex_telemetry_integrity.py -q
 ```
 
+Result on 2026-07-06:
+
+```text
+.....                                                                    [100%]
+5 passed in 0.15s
+```
+
 Expected scope: focused regression coverage for the quota pane payload and CLI-visible failure handling. This is the same-commit documentation update required for the implementation task.
