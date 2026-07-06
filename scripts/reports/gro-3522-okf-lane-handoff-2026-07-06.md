@@ -27,6 +27,7 @@ error: failed to push some refs to 'https://github.com/mbgulden/prismatic-engine
 
 The dashboard one-glance map update is retained because it is under Ned's `prismatic/` lane:
 
+- PR: https://github.com/mbgulden/prismatic-engine/pull/153
 - `prismatic/gateway/templates/dashboard.html`
 
 It adds the missing high-signal families to the dashboard card:
