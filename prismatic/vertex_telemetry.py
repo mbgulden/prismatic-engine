@@ -264,6 +264,23 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
     return converted
 
 
+def _parse_iso_datetime(value: Any) -> datetime | None:
+    """Parse ledger timestamps defensively for pane freshness comparisons."""
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _iso_timestamp(value: datetime | None) -> str | None:
+    return value.isoformat() if value else None
+
+
 def _first_numeric(*values: Any) -> float:
     for value in values:
         if isinstance(value, dict):
@@ -713,15 +730,33 @@ class VertexBillingLedger:
             if last_quota and last_quota["recorded_at"]
             else None
         )
-        age_seconds = None
-        if last_quota_at:
-            try:
-                parsed = datetime.fromisoformat(last_quota_at.replace("Z", "+00:00"))
-                if parsed.tzinfo is None:
-                    parsed = parsed.replace(tzinfo=timezone.utc)
-                age_seconds = max(0, int((generated_at - parsed).total_seconds()))
-            except ValueError:
-                age_seconds = None
+        latest_error = dict(errors[0]) if errors else None
+        last_success_at = _parse_iso_datetime(last_quota_at)
+        last_error_at = _parse_iso_datetime(
+            latest_error.get("recorded_at") if latest_error else None
+        )
+        last_attempt_at = max(
+            [ts for ts in (last_success_at, last_error_at) if ts], default=None
+        )
+        age_seconds = (
+            max(0, int((generated_at - last_success_at).total_seconds()))
+            if last_success_at
+            else None
+        )
+        sync_failed = bool(
+            last_error_at and (last_success_at is None or last_error_at >= last_success_at)
+        )
+        failure_message = latest_error.get("error_message") if sync_failed and latest_error else None
+
+        retry_action = {
+            "label": "Retry Vertex quota sync",
+            "command": "python3 -m prismatic.vertex_telemetry poll",
+            "refresh_command": "python3 -m prismatic.vertex_telemetry check",
+            "operator_hint": (
+                "Run poll to retry the Cloud Quotas sync; run check to refresh "
+                "the pane from the persisted ledger without making API calls."
+            ),
+        }
 
         return _strip_nullish(
             {
@@ -731,8 +766,22 @@ class VertexBillingLedger:
                 "near_limit": len(near_limit),
                 "quota_freshness": {
                     "last_recorded_at": last_quota_at,
+                    "last_successful_sync_at": last_quota_at,
+                    "last_failure_at": _iso_timestamp(last_error_at),
+                    "last_sync_attempt_at": _iso_timestamp(last_attempt_at),
                     "age_seconds": age_seconds,
                     "stale": age_seconds is None or age_seconds > 900,
+                    "sync_failed": sync_failed,
+                    "failure_message": failure_message,
+                    "retry_action": retry_action,
+                },
+                "quota_sync": {
+                    "last_successful_sync_at": last_quota_at,
+                    "last_failure_at": _iso_timestamp(last_error_at),
+                    "last_sync_attempt_at": _iso_timestamp(last_attempt_at),
+                    "sync_failed": sync_failed,
+                    "can_retry": True,
+                    "retry_action": retry_action,
                 },
                 "latest_errors": [dict(row) for row in errors],
                 "last_balance_checkpoint": {
@@ -826,6 +875,16 @@ def cmd_check() -> None:
     print(f"  High util (>80%): {summary['high_utilization']}")
     print(f"  Near limit (>95%): {summary['near_limit']}")
     print(f"  Last balance:  {summary['last_balance_checkpoint']['at'] or 'Never'}")
+    freshness = summary.get("quota_freshness", {})
+    print(f"  Last quota sync: {freshness.get('last_successful_sync_at') or 'Never'}")
+    print(f"  Last sync attempt: {freshness.get('last_sync_attempt_at') or 'Never'}")
+    if freshness.get("sync_failed"):
+        print(f"  Sync status:   FAILED — {freshness.get('failure_message', 'unknown error')}")
+        print(
+            f"  Retry:         {freshness.get('retry_action', {}).get('command', 'python3 -m prismatic.vertex_telemetry poll')}"
+        )
+    else:
+        print("  Sync status:   OK")
     if summary["last_balance_checkpoint"]["balance"]:
         b = summary["last_balance_checkpoint"]["balance"]
         print(f"  Balance:       {b['balance_credits']} {b['currency']}")

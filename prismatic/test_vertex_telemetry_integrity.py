@@ -152,8 +152,14 @@ def test_ledger_status_exposes_freshness_errors_and_metrics(tmp_path: Path):
     summary = ledger.get_status_summary()
     assert summary["generated_at"]
     assert summary["quota_freshness"]["last_recorded_at"] == recorded_at
+    assert summary["quota_freshness"]["last_successful_sync_at"] == recorded_at
+    assert summary["quota_freshness"]["last_sync_attempt_at"] == recorded_at
     assert summary["quota_freshness"]["age_seconds"] >= 0
     assert summary["quota_freshness"]["stale"] is False
+    assert summary["quota_freshness"]["sync_failed"] is False
+    assert summary["quota_freshness"]["retry_action"]["command"].endswith(" poll")
+    assert summary["quota_sync"]["can_retry"] is True
+    assert summary["quota_sync"]["retry_action"]["refresh_command"].endswith(" check")
     assert summary["latest_errors"][0]["error_message"] == "temporary upstream failure"
     assert summary["quota_records"][0]["utilization_pct"] == 50.0
     assert summary["quota_records"][0]["remaining_value"] == 4.0
@@ -171,3 +177,32 @@ def test_ledger_status_exposes_freshness_errors_and_metrics(tmp_path: Path):
         ).fetchone()[0]
     assert json.loads(raw_snapshot) == {"keep": "yes"}
     assert json.loads(raw_error) == {"ok": "kept"}
+
+
+def test_ledger_status_marks_sync_failed_when_latest_attempt_is_error(tmp_path: Path):
+    db_path = tmp_path / "event_router.db"
+    ledger = VertexBillingLedger(str(db_path))
+    failure_at = datetime.now(timezone.utc).isoformat()
+    ledger.record_quota_errors(
+        [
+            {
+                "location": "us-central1",
+                "source": "quota",
+                "error_type": "VertexQuotaError",
+                "error_message": "quota API unavailable",
+                "recorded_at": failure_at,
+            }
+        ]
+    )
+
+    summary = ledger.get_status_summary()
+
+    assert summary["quota_records"] == []
+    assert summary["quota_freshness"]["stale"] is True
+    assert summary["quota_freshness"]["sync_failed"] is True
+    assert summary["quota_freshness"]["last_failure_at"] == failure_at
+    assert summary["quota_freshness"]["last_sync_attempt_at"] == failure_at
+    assert summary["quota_freshness"]["failure_message"] == "quota API unavailable"
+    assert summary["quota_sync"]["sync_failed"] is True
+    assert summary["quota_sync"]["can_retry"] is True
+    assert "poll" in summary["quota_sync"]["retry_action"]["command"]
