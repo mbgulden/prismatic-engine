@@ -297,6 +297,88 @@ async def metrics() -> dict[str, Any]:
     }
 
 
+# ── Merge Backlog Triage Companion API ───────────────────────────────
+
+MERGE_BACKLOG_TRIAGE: dict[str, Any] = {
+    "status": "green_baseline_with_followups",
+    "source_issue": "GRO-3520",
+    "last_verified": "2026-07-06T14:32:49Z",
+    "snapshot": {
+        "pending_count": 84,
+        "merged_count": 266,
+        "drift_detected": False,
+        "last_apply": None,
+    },
+    "okf_artifacts": [
+        "okf/audits/merge-family-audit-2026-07-06.md",
+        "okf/audits/canonical-merge-winner-map-2026-07-06.md",
+        "okf/standards/prismatic-governance-scorecard.md",
+    ],
+    "canonical_winners": [
+        {
+            "family": "GRO-1567",
+            "winner": "prismatic/gateway/server.py",
+            "siblings": ["prismatic/gateway/ipc_bridge.py"],
+            "reason": "Gateway/server is the operator-facing control surface; IPC bridge remains derivative.",
+        },
+        {
+            "family": "GRO-1614",
+            "winner": "prismatic/core/hardware_profile.py",
+            "siblings": [
+                "prismatic/core/__init__.py",
+                "prismatic/core/registry.py",
+                "prismatic/interface/plugin.py",
+                "tests/test_hardware_profiles.py",
+            ],
+            "reason": "Hardware profile model is the source of truth for the registry cluster.",
+        },
+        {
+            "family": "GRO-2091",
+            "winner": "okf/index.md",
+            "siblings": ["downstream index copies", "cross-links"],
+            "reason": "Root OKF index remains canonical and should only point outward.",
+        },
+        {
+            "family": "GRO-2193/GRO-2305",
+            "winner": "plugins/hermes-plugin-prismatic-hub/src/index.js",
+            "siblings": ["plugins/hermes-plugin-prismatic-hub/dashboard/dist/index.html", "dashboard/manifest.json"],
+            "reason": "Source dashboard tree owns generated dist artifacts.",
+        },
+        {
+            "family": "GRO-2353/GRO-2355",
+            "winner": "plugins/pwp/plugin-manifest.yaml",
+            "siblings": [
+                "plugins/pwp/__init__.py",
+                "plugins/pwp/plugin.py",
+                "scripts/migrate_pwp.py",
+                "tests/test_pwp_hooks.py",
+            ],
+            "reason": "Manifest-first ownership keeps plugin wiring explicit and reviewable.",
+        },
+        {
+            "family": "GRO-2471",
+            "winner": ".gitignore",
+            "siblings": ["duplicate ignore fragments", "stale rule copies"],
+            "reason": "Low-footprint cleanup family with a single root ignore source.",
+        },
+    ],
+    "duplicate_families": ["GRO-2193/GRO-2305", "GRO-2353/GRO-2355"],
+    "contested_items": ["GRO-1567", "GRO-2353/GRO-2355"],
+    "next_actions": [
+        "Close or fold duplicate siblings into the listed canonical winners.",
+        "Keep dashboard/API merge visibility green while follow-up cleanup reduces pending_count.",
+        "Downgrade scorecard gate 7 if this endpoint or the linked OKF artifacts disappear.",
+    ],
+}
+
+
+@app.get("/api/governance/merge-backlog")
+@app.get("/api/gateway/governance/merge-backlog")
+async def governance_merge_backlog() -> dict[str, Any]:
+    """Expose the GRO-3520 merge backlog triage map for dashboards and operators."""
+    return MERGE_BACKLOG_TRIAGE
+
+
 @app.get("/events/recent")
 async def events_recent(limit: int = 50) -> dict[str, Any]:
     """Phase D.5 — return recent events from both in-memory history and SQLite bus.
