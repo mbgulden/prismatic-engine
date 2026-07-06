@@ -8,7 +8,9 @@ from prismatic.execution_proof import (
 )
 
 
-def test_assess_execution_proof_passes_with_artifact_and_linear_evidence(tmp_path: Path) -> None:
+def test_assess_execution_proof_passes_with_artifact_and_linear_evidence(
+    tmp_path: Path,
+) -> None:
     artifact = tmp_path / "GRO-3475-result.md"
     artifact.write_text("proof", encoding="utf-8")
 
@@ -83,7 +85,9 @@ def test_identity_mismatch_fails() -> None:
     report = assess_execution_proof(run, linear)
 
     assert report.status is ProofStatus.FAIL
-    assert "issue identity mismatch between worker run and Linear sync" in report.failures
+    assert (
+        "issue identity mismatch between worker run and Linear sync" in report.failures
+    )
 
 
 def test_missing_terminal_state_or_done_label_warns(tmp_path: Path) -> None:
@@ -166,4 +170,7 @@ def test_missing_comment_body_link_is_warning_not_failure(tmp_path: Path) -> Non
     report = assess_execution_proof(run, linear)
 
     assert report.status is ProofStatus.WARN
-    assert "Linear comment body does not link issue and artifact evidence" in report.warnings
+    assert (
+        "Linear comment body does not link issue and artifact evidence"
+        in report.warnings
+    )

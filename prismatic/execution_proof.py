@@ -52,7 +52,9 @@ class WorkerRunEvidence:
                     return str(value).strip()
             return None
 
-        raw_artifacts = payload.get("result_artifacts") or payload.get("artifacts") or ()
+        raw_artifacts = (
+            payload.get("result_artifacts") or payload.get("artifacts") or ()
+        )
         if isinstance(raw_artifacts, (str, Path)):
             artifacts = (str(raw_artifacts),)
         elif isinstance(raw_artifacts, Iterable):
@@ -97,10 +99,16 @@ class LinearSyncEvidence:
             labels = ()
         return cls(
             issue_id=str(payload.get("issue_id") or payload.get("identifier") or ""),
-            final_state=str(payload["final_state"]) if payload.get("final_state") else None,
+            final_state=str(payload["final_state"])
+            if payload.get("final_state")
+            else None,
             labels=labels,
-            final_comment_id=str(payload["final_comment_id"]) if payload.get("final_comment_id") else None,
-            final_comment_body=str(payload["final_comment_body"]) if payload.get("final_comment_body") else None,
+            final_comment_id=str(payload["final_comment_id"])
+            if payload.get("final_comment_id")
+            else None,
+            final_comment_body=str(payload["final_comment_body"])
+            if payload.get("final_comment_body")
+            else None,
         )
 
 
@@ -184,12 +192,17 @@ def assess_execution_proof(
     else:
         failures.append("worker completion timestamp missing")
 
-    if run.exit_code == 0 or (run.exit_code is None and str(run.status or "").lower() in {"completed", "done", "success"}):
+    if run.exit_code == 0 or (
+        run.exit_code is None
+        and str(run.status or "").lower() in {"completed", "done", "success"}
+    ):
         passed.append("worker completed successfully")
     else:
         failures.append("worker success exit/status missing")
 
-    existing_artifacts = [path for path in run.result_artifacts if _artifact_exists(path, root=root)]
+    existing_artifacts = [
+        path for path in run.result_artifacts if _artifact_exists(path, root=root)
+    ]
     if existing_artifacts:
         passed.append("result artifact exists")
     elif run.result_artifacts:
@@ -205,11 +218,16 @@ def assess_execution_proof(
     if require_comment_body_evidence:
         body = (linear.final_comment_body or "").lower()
         issue_token = run.issue_id.lower()
-        artifact_hit = any(Path(path).name.lower() in body or path.lower() in body for path in run.result_artifacts)
+        artifact_hit = any(
+            Path(path).name.lower() in body or path.lower() in body
+            for path in run.result_artifacts
+        )
         if issue_token and issue_token in body and artifact_hit:
             passed.append("Linear comment links issue and artifact evidence")
         else:
-            warnings.append("Linear comment body does not link issue and artifact evidence")
+            warnings.append(
+                "Linear comment body does not link issue and artifact evidence"
+            )
 
     labels = set(linear.labels)
     terminal_state_hit = linear.final_state in set(terminal_states)
@@ -219,7 +237,13 @@ def assess_execution_proof(
     else:
         warnings.append("Linear state/labels are not terminal for completed work")
 
-    status = ProofStatus.FAIL if failures else ProofStatus.WARN if warnings else ProofStatus.PASS
+    status = (
+        ProofStatus.FAIL
+        if failures
+        else ProofStatus.WARN
+        if warnings
+        else ProofStatus.PASS
+    )
     return ExecutionProofReport(
         issue_id=run.issue_id or linear.issue_id,
         lane=run.lane,
