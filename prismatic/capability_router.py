@@ -168,7 +168,9 @@ class CapacityAwareRouter:
         if not candidates:
             missing = ",".join(sorted(task.required_capabilities)) or "none"
             gpu = "; gpu required" if task.requires_gpu else ""
-            return RouteDecision(None, (), f"no eligible agent for capabilities={missing}{gpu}")
+            return RouteDecision(
+                None, (), f"no eligible agent for capabilities={missing}{gpu}"
+            )
 
         selected = min(
             candidates,
@@ -222,11 +224,23 @@ def infer_priority(labels: Sequence[str]) -> int:
     return 3
 
 
-def infer_capabilities(title: str, description: str, labels: Sequence[str]) -> frozenset[str]:
+def infer_capabilities(
+    title: str, description: str, labels: Sequence[str]
+) -> frozenset[str]:
     text = f"{title} {description} {' '.join(labels)}".lower()
     caps: set[str] = set()
     keyword_map = {
-        "code": ("build", "bug", "fix", "implement", "refactor", "test", "pytest", "router", "registry"),
+        "code": (
+            "build",
+            "bug",
+            "fix",
+            "implement",
+            "refactor",
+            "test",
+            "pytest",
+            "router",
+            "registry",
+        ),
         "docs": ("docs", "documentation", "readme", "spec"),
         "review": ("review", "audit", "validate", "second witness"),
         "content": ("content", "copy", "blog", "article", "landing page"),
@@ -290,7 +304,9 @@ def default_capability_registry(
     agents: list[AgentCapability] = []
     for name, legacy in config.items():
         merged = {**defaults.get(name, {"capabilities": {"general"}}), **dict(legacy)}
-        capabilities = frozenset(str(c).lower() for c in merged.get("capabilities", {"general"}))
+        capabilities = frozenset(
+            str(c).lower() for c in merged.get("capabilities", {"general"})
+        )
         label = str(merged.get("label") or f"agent:{name}")
         agents.append(
             AgentCapability(
