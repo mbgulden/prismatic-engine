@@ -9,7 +9,7 @@ emit when actionable work actually changes.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -55,7 +55,9 @@ class IssueSnapshot:
             state_name=state_name,
             state_type=state_type,
             labels=tuple(normalize_labels(issue.get("labels", ()))),
-            updated_at=parse_datetime(issue.get("updatedAt") or issue.get("updated_at")),
+            updated_at=parse_datetime(
+                issue.get("updatedAt") or issue.get("updated_at")
+            ),
             url=str(issue.get("url") or ""),
         )
 
@@ -72,7 +74,9 @@ class BoardHygieneConfig:
         {"epic", "umbrella", "noise:umbrella", "project:umbrella"}
     )
     actionable_label_prefixes: tuple[str, ...] = ("agent:",)
-    actionable_labels: frozenset[str] = frozenset({"dispatch:ready", "dispatch:priority"})
+    actionable_labels: frozenset[str] = frozenset(
+        {"dispatch:ready", "dispatch:priority"}
+    )
 
     @property
     def effective_now(self) -> datetime:
@@ -101,7 +105,9 @@ class BoardDelta:
         return {
             "should_emit": self.should_emit,
             "new_actionable": [issue.identifier for issue in self.new_actionable],
-            "changed_actionable": [issue.identifier for issue in self.changed_actionable],
+            "changed_actionable": [
+                issue.identifier for issue in self.changed_actionable
+            ],
             "resolved_actionable": list(self.resolved_actionable),
         }
 
@@ -144,7 +150,9 @@ class BoardHygieneWorker:
 
     def run(self, issues: Iterable[Mapping[str, Any] | IssueSnapshot]) -> HygieneResult:
         snapshots = tuple(
-            issue if isinstance(issue, IssueSnapshot) else IssueSnapshot.from_issue(issue)
+            issue
+            if isinstance(issue, IssueSnapshot)
+            else IssueSnapshot.from_issue(issue)
             for issue in issues
         )
         previous = self.load_state()
@@ -172,7 +180,9 @@ class BoardHygieneWorker:
             "updated_at": datetime.now(UTC).isoformat(),
             "fingerprints": dict(sorted(fingerprints.items())),
         }
-        self.state_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        self.state_path.write_text(
+            json.dumps(payload, indent=2) + "\n", encoding="utf-8"
+        )
 
 
 def analyze_board(
@@ -216,7 +226,9 @@ def analyze_board(
     )
 
 
-def classify_noise(issue: IssueSnapshot, config: BoardHygieneConfig | None = None) -> str | None:
+def classify_noise(
+    issue: IssueSnapshot, config: BoardHygieneConfig | None = None
+) -> str | None:
     """Return the suppression reason for an issue, or ``None`` if actionable."""
 
     config = config or BoardHygieneConfig()
@@ -238,7 +250,9 @@ def classify_noise(issue: IssueSnapshot, config: BoardHygieneConfig | None = Non
     return None
 
 
-def is_actionable(issue: IssueSnapshot, config: BoardHygieneConfig | None = None) -> bool:
+def is_actionable(
+    issue: IssueSnapshot, config: BoardHygieneConfig | None = None
+) -> bool:
     config = config or BoardHygieneConfig()
     labels = {label.lower() for label in issue.labels}
     if labels & config.actionable_labels:

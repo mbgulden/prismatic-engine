@@ -28,9 +28,13 @@ def issue(identifier, **overrides):
 def test_suppresses_completed_duplicate_umbrella_stale_and_unassigned_noise():
     old = (NOW - timedelta(days=30)).isoformat()
     snapshots = [
-        IssueSnapshot.from_issue(issue("GRO-1", state={"name": "Done", "type": "completed"})),
+        IssueSnapshot.from_issue(
+            issue("GRO-1", state={"name": "Done", "type": "completed"})
+        ),
         IssueSnapshot.from_issue(issue("GRO-2", labels=["agent:ned", "duplicate"])),
-        IssueSnapshot.from_issue(issue("GRO-3", title="Epic: Umbrella tracking", labels=["agent:ned"])),
+        IssueSnapshot.from_issue(
+            issue("GRO-3", title="Epic: Umbrella tracking", labels=["agent:ned"])
+        ),
         IssueSnapshot.from_issue(issue("GRO-4", updatedAt=old)),
         IssueSnapshot.from_issue(issue("GRO-5", labels=["prismatic-engine"])),
     ]
@@ -49,7 +53,9 @@ def test_first_actionable_snapshot_emits_only_actionable_items():
         [
             IssueSnapshot.from_issue(issue("GRO-10")),
             IssueSnapshot.from_issue(issue("GRO-11", labels=["duplicate"])),
-            IssueSnapshot.from_issue(issue("GRO-12", state={"name": "Done", "type": "completed"})),
+            IssueSnapshot.from_issue(
+                issue("GRO-12", state={"name": "Done", "type": "completed"})
+            ),
         ],
         config=CONFIG,
     )
@@ -127,7 +133,9 @@ def test_worker_persists_state_between_runs(tmp_path):
 
     first = worker.run([issue("GRO-40")])
     second = worker.run([issue("GRO-40"), issue("GRO-41", labels=["duplicate"])])
-    third = worker.run([issue("GRO-40", labels=["agent:ned", "dispatch:ready", "dispatch:priority"])])
+    third = worker.run(
+        [issue("GRO-40", labels=["agent:ned", "dispatch:ready", "dispatch:priority"])]
+    )
 
     assert first.should_emit is True
     assert second.should_emit is False
