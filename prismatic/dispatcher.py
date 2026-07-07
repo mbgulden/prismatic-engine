@@ -473,6 +473,86 @@ def add_comment(issue_id: str, body: str) -> bool:
     return data.get("commentCreate", {}).get("success", False)
 
 
+HOME_UBUNTU_MARKER = "/" + "home" + "/" + "ubuntu"
+
+HOST_LEVEL_PATH_PATTERNS: tuple[tuple[str, str], ...] = (
+    (
+        HOME_UBUNTU_MARKER,
+        rf"(?<![\w.-]){re.escape(HOME_UBUNTU_MARKER)}(?:/|\b)",
+    ),
+    ("/etc", r"(?<![\w.-])/etc(?:/|\b)"),
+    ("/root", r"(?<![\w.-])/root(?:/|\b)"),
+    ("/var", r"(?<![\w.-])/var(?:/(?:log|lib|spool|run|www|tmp)\b|\b)"),
+    ("/usr/local", r"(?<![\w.-])/usr/local(?:/|\b)"),
+    ("~/.config", r"(?:^|\s)~/\.config(?:/|\b)"),
+    ("~/.hermes", r"(?:^|\s)~/\.hermes(?:/|\b)"),
+    ("host crontab", r"\b(?:host\s+)?crontabs?\b|\bcrontab\b"),
+    ("systemd", r"\b/etc/systemd\b|\bsystemctl\b|\bsystemd\b"),
+)
+
+
+def detect_host_level_patterns(issue: dict[str, Any]) -> list[str]:
+    """Return host-level path markers found in an issue title/description.
+
+    Jules runs inside a repository-only sandbox. Issues that require host
+    paths or host schedulers should be routed away before the launcher starts.
+    """
+    text = "\n".join(
+        str(issue.get(field) or "") for field in ("title", "description")
+    )
+    matches: list[str] = []
+    for marker, pattern in HOST_LEVEL_PATH_PATTERNS:
+        if re.search(pattern, text, flags=re.IGNORECASE):
+            matches.append(marker)
+    return matches
+
+
+def reroute_jules_host_path_issue(
+    issue: dict[str, Any],
+    matches: list[str],
+    *,
+    target_label: str = "agent:ned-infra",
+) -> bool:
+    """Relabel a host-path Jules issue and post the routing explanation."""
+    issue_id = issue["id"]
+    identifier = issue.get("identifier") or issue_id
+    current = get_issue_labels(issue_id)
+    label_ids = [
+        lab["id"]
+        for lab in current
+        if lab.get("name") not in {"agent:jules", "agent::jules"}
+    ]
+    current_names = {lab.get("name") for lab in current}
+
+    if target_label not in current_names:
+        target_id = get_label_id(target_label)
+        if not target_id and target_label != "agent:agy":
+            target_label = "agent:agy"
+            target_id = get_label_id(target_label)
+        if target_id:
+            label_ids.append(target_id)
+
+    if not set_labels(issue_id, label_ids):
+        return False
+
+    marker_list = ", ".join(f"`{marker}`" for marker in matches)
+    body = (
+        "🛡️ **Jules host-path pre-screen**\n\n"
+        f"Skipped Jules launch for **{identifier}** because the title/description "
+        "mentions host-level access outside Jules' repository sandbox.\n\n"
+        f"Detected marker(s): {marker_list}.\n"
+        f"Routing change: removed `agent:jules`, added `{target_label}`.\n\n"
+        f"Jules runs in a repository-only sandbox; tasks requiring `{HOME_UBUNTU_MARKER}`, "
+        "`/etc`, host crontabs, `~/.config`, `~/.hermes`, or systemd access "
+        "need host-capable handling instead."
+    )
+    try:
+        add_comment(issue_id, body)
+    except Exception as exc:
+        print(f"[dispatcher] Host-path reroute comment failed for {identifier}: {exc}")
+    return True
+
+
 # ═══════════════════════════════════════════════════════════════
 # Agent Configuration
 # ═══════════════════════════════════════════════════════════════
@@ -1875,6 +1955,7 @@ def dispatch_once(
         "pipeline_setup": 0,
         "stale_killed": 0,
         "errors": 0,
+        "host_path_rerouted": 0,
     }
     cycle_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
 
@@ -1968,6 +2049,27 @@ def dispatch_once(
 
             try:
                 os.environ["PRISMATIC_CURRENT_AGENT_NAME"] = f"dispatcher.agent_{agent_name}"
+
+                # Host-path tasks cannot run in Jules' repository-only sandbox.
+                if agent_name == "jules":
+                    host_matches = detect_host_level_patterns(issue)
+                    if host_matches:
+                        identifier = issue.get("identifier", issue_id)
+                        if reroute_jules_host_path_issue(issue, host_matches):
+                            counts["host_path_rerouted"] += 1
+                            dedup.mark_processed(issue_id, label, cycle_id)
+                            print(
+                                f"[dispatcher] 🛡️ Rerouted Jules host-path issue "
+                                f"→ {identifier}: {', '.join(host_matches)}"
+                            )
+                            continue
+                        counts["errors"] += 1
+                        print(
+                            f"[dispatcher] Host-path reroute failed for "
+                            f"{identifier}; skipping Jules launch"
+                        )
+                        dedup.mark_processed(issue_id, label, cycle_id)
+                        continue
 
                 # ── Orchestration Mode Switch Gate ─────────────────────
                 from_state, to_state = _get_transition_states(agent_name)
