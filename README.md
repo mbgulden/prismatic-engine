@@ -243,6 +243,25 @@ npm run build
 ```
 This compiles assets into `dashboard/dist/index.js` which is loaded dynamically by the dashboard runtime.
 
+### 4. Gateway dynamic IP allowlisting
+The gateway can enforce a client-IP allowlist for internal `/api/gateway/*` routes while still letting an operator register a shifted client IP without restarting the service.
+
+```bash
+export PRISMATIC_ALLOWED_IPS="100.64.0.0/10,203.0.113.10"
+export PRISMATIC_TRUSTED_PROXIES="127.0.0.1,::1,100.64.0.0/10"
+export PRISMATIC_IP_WHITELIST_SECRET="temporary-one-time-secret"
+```
+
+Then the client whose IP changed can call:
+
+```bash
+curl -X POST http://<gateway>/api/gateway/auth/ip-whitelist \
+  -H 'Content-Type: application/json' \
+  -d '{"secret":"temporary-one-time-secret"}'
+```
+
+A successful request consumes the one-time secret and appends the resolved client IP to the running process allowlist immediately. Static IP/CIDR entries still belong in `PRISMATIC_ALLOWED_IPS`; runtime entries are intentionally process-local and disappear on gateway restart. Forwarded headers (`CF-Connecting-IP`, `X-Forwarded-For`, `X-Real-IP`) are trusted only when the immediate peer is in `PRISMATIC_TRUSTED_PROXIES`.
+
 ---
 
 ## 📄 License

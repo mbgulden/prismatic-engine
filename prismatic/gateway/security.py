@@ -16,8 +16,10 @@ Integration:
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
+import threading
 from pathlib import Path
 from typing import Callable
 
@@ -26,6 +28,9 @@ logger = logging.getLogger("prismatic.gateway.security")
 # ── Constants ──────────────────────────────────────────────────────────────
 
 _PRISMATIC_STATE_DIR_CACHED = os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state")
+_IP_REGISTRATION_LOCK = threading.RLock()
+_DYNAMIC_ALLOWED_IPS: set[str] = set()
+_USED_IP_WHITELIST_SECRETS: set[str] = set()
 
 
 def _get_state_dir() -> str:
@@ -35,6 +40,120 @@ def _get_state_dir() -> str:
     module import and have it take effect immediately.
     """
     return os.environ.get("PRISMATIC_STATE_DIR", _PRISMATIC_STATE_DIR_CACHED)
+
+
+def _parse_csv_env(name: str) -> list[str]:
+    """Return non-empty comma-separated values from an environment variable."""
+    return [part.strip() for part in os.environ.get(name, "").split(",") if part.strip()]
+
+
+def _configured_allowed_entries() -> list[str]:
+    """Configured static and runtime client-IP allowlist entries."""
+    with _IP_REGISTRATION_LOCK:
+        dynamic = sorted(_DYNAMIC_ALLOWED_IPS)
+    return _parse_csv_env("PRISMATIC_ALLOWED_IPS") + dynamic
+
+
+def _configured_trusted_proxies() -> list[str]:
+    return _parse_csv_env("PRISMATIC_TRUSTED_PROXIES")
+
+
+def _ip_matches_entries(ip_value: str, entries: list[str]) -> bool:
+    """Return True when ``ip_value`` belongs to any IP/CIDR entry."""
+    try:
+        candidate = ipaddress.ip_address(ip_value)
+    except ValueError:
+        return False
+
+    for entry in entries:
+        try:
+            network = ipaddress.ip_network(entry, strict=False)
+        except ValueError:
+            logger.warning("Ignoring invalid IP allowlist entry: %r", entry)
+            continue
+        if candidate in network:
+            return True
+    return False
+
+
+def is_ip_allowed(ip_value: str) -> bool:
+    """Return True when a client IP is statically or dynamically allowed.
+
+    An empty allowlist means IP gating is disabled. This preserves local/dev
+    gateway behavior until operators set ``PRISMATIC_ALLOWED_IPS`` or register
+    a runtime IP with the temporary endpoint.
+    """
+    entries = _configured_allowed_entries()
+    if not entries:
+        return True
+    return _ip_matches_entries(ip_value, entries)
+
+
+def _configured_registration_secrets() -> set[str]:
+    secrets = set(_parse_csv_env("PRISMATIC_IP_WHITELIST_SECRETS"))
+    single = os.environ.get("PRISMATIC_IP_WHITELIST_SECRET", "").strip()
+    if single:
+        secrets.add(single)
+    return secrets
+
+
+def register_dynamic_client_ip(secret: str, ip_value: str) -> dict[str, object]:
+    """Consume a one-time secret and append ``ip_value`` to the runtime allowlist.
+
+    The secret is process-local one-time state by design: it is consumed after a
+    successful registration and cannot be replayed to add additional IPs. Runtime
+    registrations survive until the gateway process restarts; static entries
+    still belong in ``PRISMATIC_ALLOWED_IPS``.
+    """
+    configured = _configured_registration_secrets()
+    if not configured:
+        raise PermissionError("dynamic IP registration is not configured")
+    if not secret or secret not in configured:
+        raise PermissionError("invalid IP registration secret")
+
+    try:
+        normalized_ip = str(ipaddress.ip_address(ip_value))
+    except ValueError as exc:
+        raise ValueError(f"invalid client IP: {ip_value!r}") from exc
+
+    with _IP_REGISTRATION_LOCK:
+        if secret in _USED_IP_WHITELIST_SECRETS:
+            raise RuntimeError("IP registration secret has already been used")
+        _USED_IP_WHITELIST_SECRETS.add(secret)
+        _DYNAMIC_ALLOWED_IPS.add(normalized_ip)
+        allowed_entries = _configured_allowed_entries()
+
+    logger.info("Registered dynamic gateway allowlist IP: %s", normalized_ip)
+    return {"registered_ip": normalized_ip, "allowed_ips": allowed_entries}
+
+
+def reset_dynamic_ip_allowlist_for_tests() -> None:
+    """Clear process-local allowlist state. Intended for unit tests only."""
+    with _IP_REGISTRATION_LOCK:
+        _DYNAMIC_ALLOWED_IPS.clear()
+        _USED_IP_WHITELIST_SECRETS.clear()
+
+
+def client_ip_from_request(request) -> str:
+    """Resolve the effective client IP for a FastAPI/Starlette request.
+
+    Forwarded headers are trusted only when the immediate peer is configured in
+    ``PRISMATIC_TRUSTED_PROXIES``. This prevents arbitrary clients from spoofing
+    ``X-Forwarded-For`` while still supporting Cloudflare/reverse-proxy deploys.
+    """
+    peer_host = request.client.host if request.client else ""
+    trusted_proxy_entries = _configured_trusted_proxies()
+    if peer_host and trusted_proxy_entries and _ip_matches_entries(peer_host, trusted_proxy_entries):
+        cf_ip = request.headers.get("cf-connecting-ip", "").strip()
+        if cf_ip:
+            return cf_ip
+        xff = request.headers.get("x-forwarded-for", "").strip()
+        if xff:
+            return xff.split(",", 1)[0].strip()
+        real_ip = request.headers.get("x-real-ip", "").strip()
+        if real_ip:
+            return real_ip
+    return peer_host
 
 
 # ── Public API ─────────────────────────────────────────────────────────────

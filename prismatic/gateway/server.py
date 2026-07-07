@@ -28,8 +28,14 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+
+from prismatic.gateway.security import (
+    client_ip_from_request,
+    is_ip_allowed,
+    register_dynamic_client_ip,
+)
 
 from prismatic.gateway.event_bus import get_event_bus, set_event_bus, EventBus
 from prismatic.gateway.ipc_bridge import (
@@ -63,6 +69,54 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def gateway_ip_allowlist_middleware(request: Request, call_next):
+    """Block gateway API calls from clients outside the configured allowlist.
+
+    ``POST /api/gateway/auth/ip-whitelist`` is deliberately exempt so a client
+    with a temporary one-time secret can register its current IP without a
+    systemd reload. Other ``/api/gateway/*`` routes are checked against static
+    ``PRISMATIC_ALLOWED_IPS`` plus runtime registrations.
+    """
+    path = request.url.path
+    if path.startswith("/api/gateway/") and path != "/api/gateway/auth/ip-whitelist":
+        client_ip = client_ip_from_request(request)
+        if not is_ip_allowed(client_ip):
+            logger.warning("Blocked gateway API call from non-allowlisted IP: %s path=%s", client_ip, path)
+            return Response(
+                status_code=403,
+                content=json.dumps({"error": "client IP not allowlisted", "client_ip": client_ip}),
+                media_type="application/json",
+            )
+    return await call_next(request)
+
+
+@app.post("/api/gateway/auth/ip-whitelist")
+async def register_ip_whitelist(request: Request, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Register the caller's IP with a one-time temporary secret.
+
+    Operators set ``PRISMATIC_IP_WHITELIST_SECRET`` or
+    ``PRISMATIC_IP_WHITELIST_SECRETS`` on the running gateway. A successful POST
+    consumes the supplied secret and appends the resolved client IP to the
+    process-local runtime allowlist immediately, without ``systemctl reload``.
+    """
+    payload = payload or {}
+    secret = (
+        str(payload.get("secret") or "").strip()
+        or request.headers.get("x-prismatic-ip-whitelist-secret", "").strip()
+    )
+    client_ip = client_ip_from_request(request)
+    try:
+        result = register_dynamic_client_ip(secret, client_ip)
+    except PermissionError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "ok", **result}
 
 # Mount the IPC bridge event ingest route (POST /events, GET /events/history)
 # The router's @router.post("/events") defines the full path — no prefix needed
