@@ -21,14 +21,19 @@ import argparse
 import json
 import logging
 import os
-import sys
 import threading
 import time
-from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
 
 from prismatic.gateway.security import (
@@ -37,11 +42,10 @@ from prismatic.gateway.security import (
     register_dynamic_client_ip,
 )
 
-from prismatic.gateway.event_bus import get_event_bus, set_event_bus, EventBus
+from prismatic.gateway.event_bus import get_event_bus
 from prismatic.gateway.ipc_bridge import (
     UnixSocketListener,
     create_event_ingest_route,
-    DEFAULT_SOCKET_PATH,
 )
 from prismatic.gateway.ws_broadcaster import (
     start_ws_broadcaster,
@@ -84,17 +88,25 @@ async def gateway_ip_allowlist_middleware(request: Request, call_next):
     if path.startswith("/api/gateway/") and path != "/api/gateway/auth/ip-whitelist":
         client_ip = client_ip_from_request(request)
         if not is_ip_allowed(client_ip):
-            logger.warning("Blocked gateway API call from non-allowlisted IP: %s path=%s", client_ip, path)
+            logger.warning(
+                "Blocked gateway API call from non-allowlisted IP: %s path=%s",
+                client_ip,
+                path,
+            )
             return Response(
                 status_code=403,
-                content=json.dumps({"error": "client IP not allowlisted", "client_ip": client_ip}),
+                content=json.dumps(
+                    {"error": "client IP not allowlisted", "client_ip": client_ip}
+                ),
                 media_type="application/json",
             )
     return await call_next(request)
 
 
 @app.post("/api/gateway/auth/ip-whitelist")
-async def register_ip_whitelist(request: Request, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+async def register_ip_whitelist(
+    request: Request, payload: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Register the caller's IP with a one-time temporary secret.
 
     Operators set ``PRISMATIC_IP_WHITELIST_SECRET`` or
@@ -117,6 +129,7 @@ async def register_ip_whitelist(request: Request, payload: dict[str, Any] | None
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"status": "ok", **result}
+
 
 # Mount the IPC bridge event ingest route (POST /events, GET /events/history)
 # The router's @router.post("/events") defines the full path — no prefix needed
@@ -143,7 +156,7 @@ async def startup() -> None:
     _started_at = time.time()
 
     # Initialize EventBus (ensure singleton)
-    bus = get_event_bus()
+    get_event_bus()
 
     # Start IPC bridge Unix socket listener
     _ipc_listener = UnixSocketListener()
@@ -326,16 +339,18 @@ async def get_run(run_id: str) -> Response:
             media_type="application/json",
         )
     return Response(
-        content=json.dumps({
-            "run_id": record.run_id,
-            "issue_id": record.issue_id,
-            "agent_name": record.agent_name,
-            "status": record.status,
-            "started_at": record.started_at,
-            "completed_at": record.completed_at,
-            "output_path": record.output_path,
-            "error_message": record.error_message,
-        }),
+        content=json.dumps(
+            {
+                "run_id": record.run_id,
+                "issue_id": record.issue_id,
+                "agent_name": record.agent_name,
+                "status": record.status,
+                "started_at": record.started_at,
+                "completed_at": record.completed_at,
+                "output_path": record.output_path,
+                "error_message": record.error_message,
+            }
+        ),
         media_type="application/json",
     )
 
@@ -447,13 +462,16 @@ def main() -> None:
     # Start gRPC in background thread if enabled
     grpc_thread: threading.Thread | None = None
     if args.grpc:
+
         def _run_grpc_loop(port: int) -> None:
             """Run the gRPC server in a dedicated event loop."""
             import asyncio
+
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
                 from prismatic.gateway.grpc_server import serve_grpc
+
                 loop.run_until_complete(serve_grpc(port=port))
             except KeyboardInterrupt:
                 pass

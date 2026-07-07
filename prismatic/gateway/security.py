@@ -20,7 +20,6 @@ import ipaddress
 import logging
 import os
 import threading
-from pathlib import Path
 from typing import Callable
 
 logger = logging.getLogger("prismatic.gateway.security")
@@ -44,7 +43,9 @@ def _get_state_dir() -> str:
 
 def _parse_csv_env(name: str) -> list[str]:
     """Return non-empty comma-separated values from an environment variable."""
-    return [part.strip() for part in os.environ.get(name, "").split(",") if part.strip()]
+    return [
+        part.strip() for part in os.environ.get(name, "").split(",") if part.strip()
+    ]
 
 
 def _configured_allowed_entries() -> list[str]:
@@ -143,7 +144,11 @@ def client_ip_from_request(request) -> str:
     """
     peer_host = request.client.host if request.client else ""
     trusted_proxy_entries = _configured_trusted_proxies()
-    if peer_host and trusted_proxy_entries and _ip_matches_entries(peer_host, trusted_proxy_entries):
+    if (
+        peer_host
+        and trusted_proxy_entries
+        and _ip_matches_entries(peer_host, trusted_proxy_entries)
+    ):
         cf_ip = request.headers.get("cf-connecting-ip", "").strip()
         if cf_ip:
             return cf_ip
@@ -293,8 +298,6 @@ def traversal_guard_middleware(app: ASGIApp) -> ASGIApp:
         app.add_middleware(traversal_guard_middleware)  # Starlette-style
     """
 
-    guard = PathTraversalGuard()
-
     async def middleware(scope, receive, send):
         if scope["type"] == "http":
             path = scope.get("path", "")
@@ -302,9 +305,12 @@ def traversal_guard_middleware(app: ASGIApp) -> ASGIApp:
 
             # Quick check: reject obvious traversal in path or query
             if ".." in path or ".." in query:
-                logger.warning("Blocked path traversal attempt: path=%r query=%r", path, query)
+                logger.warning(
+                    "Blocked path traversal attempt: path=%r query=%r", path, query
+                )
                 # Return 400
                 from starlette.responses import PlainTextResponse
+
                 response = PlainTextResponse("Path traversal detected", status_code=400)
                 await response(scope, receive, send)
                 return
