@@ -339,6 +339,31 @@ section { padding: 5rem 0; }
 .log-hermes { color: var(--color-hermes); }
 .log-codex { color: var(--color-codex); }
 .log-research { color: var(--color-research); }
+.briefing-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+.briefing-metric {
+  border: 1px solid var(--border-steel);
+  border-radius: 4px;
+  padding: 0.45rem;
+  color: var(--text-muted);
+  font-size: 0.65rem;
+  text-transform: uppercase;
+}
+.briefing-metric strong {
+  display: block;
+  color: var(--text-primary);
+  font-size: 1rem;
+  margin-top: 0.25rem;
+}
+.briefing-note {
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.briefing-note strong { color: var(--color-hermes); }
 .log-cursor {
   display: inline-block;
   width: 6px;
@@ -1141,6 +1166,14 @@ footer { border-top: 1px solid var(--border-steel); padding: 4rem 0 3rem; backgr
             <div class="sys-item"><span>LICENSE</span><span class="sys-val">AGPLv3</span></div>
           </div>
           <div class="terminal-divider"></div>
+          <div class="briefing-grid" id="overnight-briefing" aria-live="polite">
+            <div class="briefing-metric">Processed<strong id="briefing-processed">—</strong></div>
+            <div class="briefing-metric">Autonomous<strong id="briefing-autonomous">—</strong></div>
+            <div class="briefing-metric">Needs hand<strong id="briefing-needs-hand">—</strong></div>
+            <div class="briefing-metric">Cost<strong id="briefing-cost">—</strong></div>
+          </div>
+          <div class="briefing-note" id="briefing-note"><strong>Daily briefing:</strong> waiting for <code>/api/report/latest</code>.</div>
+          <div class="terminal-divider"></div>
           <div class="terminal-logs" id="terminal-logs">
             <!-- Simulated logs typewriter will print here -->
           </div>
@@ -1478,6 +1511,33 @@ const pipelineData = {
   }
 };
 
+// Overnight briefing card
+function initOvernightBriefing() {
+  const processed = document.getElementById('briefing-processed');
+  const autonomous = document.getElementById('briefing-autonomous');
+  const needsHand = document.getElementById('briefing-needs-hand');
+  const cost = document.getElementById('briefing-cost');
+  const note = document.getElementById('briefing-note');
+
+  if (!processed || !autonomous || !needsHand || !cost || !note) return;
+
+  fetch('/api/report/latest', { headers: { 'Accept': 'application/json' } })
+    .then(response => {
+      if (!response.ok) throw new Error(`report unavailable (${response.status})`);
+      return response.json();
+    })
+    .then(report => {
+      processed.textContent = report.tasks_processed ?? '0';
+      autonomous.textContent = report.tasks_autonomous ?? '0';
+      needsHand.textContent = report.tasks_need_human ?? '0';
+      cost.textContent = `$${Number(report.cost_dollars || 0).toFixed(2)}`;
+      note.innerHTML = `<strong>Daily briefing:</strong> ${report.factory_duration || 'window'} ending ${report.generated_at || 'now'}; ${report.deliverables?.length || 0} deliverable(s) found.`;
+    })
+    .catch(error => {
+      note.innerHTML = `<strong>Daily briefing:</strong> ${error.message}. Run <code>python3 -m prismatic.reports.overnight</code> to generate one.`;
+    });
+}
+
 // Clipboard Commands Copy Manager
 function initCopyCommands() {
   const copyButtons = document.querySelectorAll('.copy-btn');
@@ -1578,6 +1638,9 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // Initialize Copy helpers
   initCopyCommands();
+
+  // Load overnight briefing card
+  initOvernightBriefing();
   
   // Initialize Early Access
   initEarlyAccessForm();
