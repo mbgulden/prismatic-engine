@@ -14,10 +14,10 @@ def teardown_function() -> None:
 
 def test_dynamic_ip_registration_bypasses_gateway_api_block(monkeypatch):
     monkeypatch.setenv("PRISMATIC_ALLOWED_IPS", "198.51.100.7")
-    monkeypatch.setenv("PRISMATIC_TRUSTED_PROXIES", "testclient")
+    monkeypatch.setenv("PRISMATIC_TRUSTED_PROXIES", "127.0.0.1")
     monkeypatch.setenv("PRISMATIC_IP_WHITELIST_SECRET", "one-shot")
 
-    client = TestClient(app)
+    client = TestClient(app, client=("127.0.0.1", 50000))
     headers = {"x-forwarded-for": "203.0.113.9"}
 
     blocked = client.post("/api/gateway/github", headers=headers, content=b"{}")
@@ -39,10 +39,10 @@ def test_dynamic_ip_registration_bypasses_gateway_api_block(monkeypatch):
 
 def test_ip_registration_secret_is_one_time(monkeypatch):
     monkeypatch.setenv("PRISMATIC_ALLOWED_IPS", "198.51.100.7")
-    monkeypatch.setenv("PRISMATIC_TRUSTED_PROXIES", "testclient")
+    monkeypatch.setenv("PRISMATIC_TRUSTED_PROXIES", "127.0.0.1")
     monkeypatch.setenv("PRISMATIC_IP_WHITELIST_SECRET", "one-shot")
 
-    client = TestClient(app)
+    client = TestClient(app, client=("127.0.0.1", 50000))
     headers = {"x-forwarded-for": "203.0.113.10"}
 
     first = client.post(
