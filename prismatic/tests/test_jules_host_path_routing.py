@@ -9,7 +9,10 @@ class TestJulesHostPathRouting(unittest.TestCase):
         home_ubuntu = "/" + "home" + "/" + "ubuntu"
         issue = {
             "title": "Fix crontab dispatch failure",
-            "description": f"Needs access to {home_ubuntu}/.hermes and ~/.config on the host.",
+            "description": (
+                f"Needs access to {home_ubuntu}/.hermes and ~/.config on the host; "
+                "also inspect ~/.hermes state."
+            ),
         }
 
         matches = dispatcher.detect_host_level_patterns(issue)
@@ -24,7 +27,11 @@ class TestJulesHostPathRouting(unittest.TestCase):
     @patch("prismatic.dispatcher.get_label_id")
     @patch("prismatic.dispatcher.get_issue_labels")
     def test_reroute_removes_jules_adds_ned_infra_and_comments(
-        self, mock_get_issue_labels, mock_get_label_id, mock_set_labels, mock_add_comment
+        self,
+        mock_get_issue_labels,
+        mock_get_label_id,
+        mock_set_labels,
+        mock_add_comment,
     ):
         mock_get_issue_labels.return_value = [
             {"id": "label-jules", "name": "agent:jules"},
@@ -41,7 +48,9 @@ class TestJulesHostPathRouting(unittest.TestCase):
             "description": f"Read /etc/systemd/system and {home_ubuntu} logs.",
         }
 
-        self.assertTrue(dispatcher.reroute_jules_host_path_issue(issue, ["/etc", home_ubuntu]))
+        self.assertTrue(
+            dispatcher.reroute_jules_host_path_issue(issue, ["/etc", home_ubuntu])
+        )
 
         mock_get_label_id.assert_called_once_with("agent:ned-infra")
         mock_set_labels.assert_called_once_with(
@@ -72,16 +81,22 @@ class TestJulesHostPathRouting(unittest.TestCase):
         original_launchers = dispatcher.AGENT_LAUNCHERS.copy()
         home_ubuntu = "/" + "home" + "/" + "ubuntu"
         try:
-            dispatcher.AGENT_LAUNCHERS["jules"] = lambda *args, **kwargs: launches.append("jules")
-            mock_get_issues.side_effect = lambda label: [
-                {
-                    "id": "issue-uuid",
-                    "identifier": "GRO-3570",
-                    "title": "Host cron repair",
-                    "description": f"Requires crontab and {home_ubuntu}/.hermes access.",
-                    "labels": [label],
-                }
-            ] if label == "agent::jules" else []
+            dispatcher.AGENT_LAUNCHERS["jules"] = lambda *args, **kwargs: (
+                launches.append("jules")
+            )
+            mock_get_issues.side_effect = lambda label: (
+                [
+                    {
+                        "id": "issue-uuid",
+                        "identifier": "GRO-3570",
+                        "title": "Host cron repair",
+                        "description": f"Requires crontab and {home_ubuntu}/.hermes access.",
+                        "labels": [label],
+                    }
+                ]
+                if label == "agent::jules"
+                else []
+            )
 
             counts = dispatcher.dispatch_once(dedup, pipelines={"pipelines": {}})
         finally:
