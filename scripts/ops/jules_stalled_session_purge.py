@@ -50,6 +50,7 @@ SESSION_ID_KEYS = (
     "id",
 )
 DEFAULT_STATE_GLOBS = (
+    "/tmp/jules_dispatcher/*.json",
     "~/.hermes/profiles/orchestrator/state/jules*.json",
     "~/.hermes/profiles/orchestrator/logs/jules*.json",
     "~/.hermes/profiles/orchestrator/scripts/jules*.json",
