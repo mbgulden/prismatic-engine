@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import stat
 import subprocess
 import sys
@@ -20,7 +19,10 @@ def test_parse_jules_sessions_accepts_truncated_awaiting_status() -> None:
 
     sessions = purge.parse_jules_sessions(output)
 
-    assert [s.session_id for s in sessions] == ["772936427268296840", "15755719818385697302"]
+    assert [s.session_id for s in sessions] == [
+        "772936427268296840",
+        "15755719818385697302",
+    ]
     assert sessions[0].status == "Awaiting User Feedback"
     assert sessions[1].status == "Completed"
 
@@ -28,8 +30,16 @@ def test_parse_jules_sessions_accepts_truncated_awaiting_status() -> None:
 def test_decide_requires_tracked_json_and_threshold() -> None:
     now = datetime(2026, 7, 7, 12, tzinfo=timezone.utc)
     sessions = [
-        purge.JulesSession("111111111111111", "111111111111111 Awaiting User F", "Awaiting User Feedback"),
-        purge.JulesSession("222222222222222", "222222222222222 Awaiting User F", "Awaiting User Feedback"),
+        purge.JulesSession(
+            "111111111111111",
+            "111111111111111 Awaiting User F",
+            "Awaiting User Feedback",
+        ),
+        purge.JulesSession(
+            "222222222222222",
+            "222222222222222 Awaiting User F",
+            "Awaiting User Feedback",
+        ),
         purge.JulesSession("333333333333333", "333333333333333 Completed", "Completed"),
     ]
     tracked = {
@@ -59,7 +69,11 @@ def test_load_tracked_sessions_from_manifest_shape(tmp_path: Path) -> None:
                     {
                         "created_at": "2026-07-06T00:00:00Z",
                         "sessions": [
-                            {"system": "jules", "id": "444444444444444", "url": "https://jules.google.com/session/444444444444444"}
+                            {
+                                "system": "jules",
+                                "id": "444444444444444",
+                                "url": "https://jules.google.com/session/444444444444444",
+                            }
                         ],
                     }
                 ]
@@ -69,7 +83,9 @@ def test_load_tracked_sessions_from_manifest_shape(tmp_path: Path) -> None:
 
     tracked = purge.load_tracked_sessions([str(state)])
 
-    assert tracked["444444444444444"].launched_at == datetime(2026, 7, 6, tzinfo=timezone.utc)
+    assert tracked["444444444444444"].launched_at == datetime(
+        2026, 7, 6, tzinfo=timezone.utc
+    )
     assert tracked["444444444444444"].source_path == str(state)
 
 
@@ -85,7 +101,10 @@ def test_execute_mode_deletes_only_candidates(tmp_path: Path) -> None:
         json.dumps(
             [
                 {"session_id": "111111111111111", "created_at": "2026-07-06T00:00:00Z"},
-                {"session_id": "222222222222222", "created_at": datetime.now(timezone.utc).isoformat()},
+                {
+                    "session_id": "222222222222222",
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                },
                 {"session_id": "333333333333333", "created_at": "2026-07-06T00:00:00Z"},
             ]
         )

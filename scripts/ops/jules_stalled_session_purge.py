@@ -12,6 +12,7 @@ Candidate selection is intentionally conservative:
 - the tracked launch/created/start timestamp (or state-file mtime fallback) must be
   older than the configured threshold (24 hours by default).
 """
+
 from __future__ import annotations
 
 import argparse
@@ -41,7 +42,13 @@ TIMESTAMP_KEYS = (
     "submittedAt",
     "timestamp",
 )
-SESSION_ID_KEYS = ("session_id", "sessionId", "jules_session_id", "julesSessionId", "id")
+SESSION_ID_KEYS = (
+    "session_id",
+    "sessionId",
+    "jules_session_id",
+    "julesSessionId",
+    "id",
+)
 DEFAULT_STATE_GLOBS = (
     "~/.hermes/profiles/orchestrator/state/jules*.json",
     "~/.hermes/profiles/orchestrator/logs/jules*.json",
@@ -107,16 +114,26 @@ def parse_jules_sessions(output: str) -> list[JulesSession]:
             continue
         status = "Awaiting User Feedback" if AWAITING_RE.search(line) else ""
         if not status:
-            for known in ("Completed", "In Progress", "Planning", "Failed", "Awaiting Plan"):
+            for known in (
+                "Completed",
+                "In Progress",
+                "Planning",
+                "Failed",
+                "Awaiting Plan",
+            ):
                 if known.lower() in line.lower():
                     status = known
                     break
-        sessions.append(JulesSession(match.group(1), line.rstrip(), status or "Unknown"))
+        sessions.append(
+            JulesSession(match.group(1), line.rstrip(), status or "Unknown")
+        )
     return sessions
 
 
 def run_cmd(argv: list[str], timeout: int = 60) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
+    return subprocess.run(
+        argv, capture_output=True, text=True, timeout=timeout, check=False
+    )
 
 
 def walk_json(value: Any) -> Iterable[dict[str, Any]]:
@@ -181,7 +198,11 @@ def load_tracked_sessions(patterns: Iterable[str]) -> dict[str, TrackedSession]:
             for session_id in ids:
                 current = tracked.get(session_id)
                 candidate = TrackedSession(session_id, timestamp, str(path), kind)
-                if current is None or (candidate.launched_at and current.launched_at and candidate.launched_at < current.launched_at):
+                if current is None or (
+                    candidate.launched_at
+                    and current.launched_at
+                    and candidate.launched_at < current.launched_at
+                ):
                     tracked[session_id] = candidate
     return tracked
 
@@ -195,17 +216,37 @@ def decide(
     decisions: list[Decision] = []
     for session in sessions:
         state = tracked.get(session.session_id)
-        if not AWAITING_RE.search(session.status) and not AWAITING_RE.search(session.raw_line):
-            decisions.append(Decision(session, state, None, "skip", "status_not_awaiting_user_feedback"))
+        if not AWAITING_RE.search(session.status) and not AWAITING_RE.search(
+            session.raw_line
+        ):
+            decisions.append(
+                Decision(
+                    session, state, None, "skip", "status_not_awaiting_user_feedback"
+                )
+            )
             continue
         if state is None or state.launched_at is None:
-            decisions.append(Decision(session, state, None, "skip", "no_tracked_state_json"))
+            decisions.append(
+                Decision(session, state, None, "skip", "no_tracked_state_json")
+            )
             continue
         age_hours = (now - state.launched_at).total_seconds() / 3600
         if age_hours >= threshold_hours:
-            decisions.append(Decision(session, state, age_hours, "purge", "awaiting_feedback_older_than_threshold"))
+            decisions.append(
+                Decision(
+                    session,
+                    state,
+                    age_hours,
+                    "purge",
+                    "awaiting_feedback_older_than_threshold",
+                )
+            )
         else:
-            decisions.append(Decision(session, state, age_hours, "skip", "tracked_age_below_threshold"))
+            decisions.append(
+                Decision(
+                    session, state, age_hours, "skip", "tracked_age_below_threshold"
+                )
+            )
     return decisions
 
 
@@ -221,11 +262,25 @@ def format_decision(decision: Decision) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--jules-bin", default=os.environ.get("JULES_BIN", "jules"))
-    parser.add_argument("--state-glob", action="append", dest="state_globs", help="JSON state glob; may be repeated")
+    parser.add_argument(
+        "--state-glob",
+        action="append",
+        dest="state_globs",
+        help="JSON state glob; may be repeated",
+    )
     parser.add_argument("--threshold-hours", type=float, default=24.0)
-    parser.add_argument("--execute", action="store_true", help="Actually call jules remote delete for purge candidates")
-    parser.add_argument("--list-output-file", help="Use captured jules list output instead of invoking the CLI")
-    parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON summary")
+    parser.add_argument(
+        "--execute",
+        action="store_true",
+        help="Actually call jules remote delete for purge candidates",
+    )
+    parser.add_argument(
+        "--list-output-file",
+        help="Use captured jules list output instead of invoking the CLI",
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON summary"
+    )
     args = parser.parse_args(argv)
 
     state_globs = tuple(args.state_globs or DEFAULT_STATE_GLOBS)
@@ -240,7 +295,9 @@ def main(argv: list[str] | None = None) -> int:
 
     sessions = parse_jules_sessions(output)
     tracked = load_tracked_sessions(state_globs)
-    decisions = decide(sessions, tracked, args.threshold_hours, datetime.now(timezone.utc))
+    decisions = decide(
+        sessions, tracked, args.threshold_hours, datetime.now(timezone.utc)
+    )
 
     deleted: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
@@ -249,7 +306,16 @@ def main(argv: list[str] | None = None) -> int:
             continue
         if not args.execute:
             continue
-        result = run_cmd([args.jules_bin, "remote", "delete", "--session", decision.session.session_id], timeout=120)
+        result = run_cmd(
+            [
+                args.jules_bin,
+                "remote",
+                "delete",
+                "--session",
+                decision.session.session_id,
+            ],
+            timeout=120,
+        )
         row = {
             "session_id": decision.session.session_id,
             "returncode": result.returncode,
