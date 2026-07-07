@@ -146,6 +146,26 @@ def walk_json(value: Any) -> Iterable[dict[str, Any]]:
             yield from walk_json(child)
 
 
+def walk_json_with_timestamp(
+    value: Any, inherited_timestamp: datetime | None = None
+) -> Iterable[tuple[dict[str, Any], datetime | None]]:
+    """Yield dict records with the nearest parent timestamp inherited.
+
+    Jules manifests commonly store ``created_at`` on the work unit while the
+    nested ``sessions`` entry only contains the remote session id. Carrying the
+    nearest timestamp down lets the purge script cross-reference those entries
+    without requiring every nested dict to duplicate launch time.
+    """
+    if isinstance(value, dict):
+        current_timestamp = extract_timestamp(value) or inherited_timestamp
+        yield value, current_timestamp
+        for child in value.values():
+            yield from walk_json_with_timestamp(child, current_timestamp)
+    elif isinstance(value, list):
+        for child in value:
+            yield from walk_json_with_timestamp(child, inherited_timestamp)
+
+
 def extract_ids(record: dict[str, Any]) -> set[str]:
     ids: set[str] = set()
     for key in SESSION_ID_KEYS:
@@ -189,12 +209,17 @@ def load_tracked_sessions(patterns: Iterable[str]) -> dict[str, TrackedSession]:
             print(f"WARN skipped_state_file path={path} error={exc}", file=sys.stderr)
             continue
         fallback = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
-        for record in walk_json(data):
+        for record, inherited_timestamp in walk_json_with_timestamp(data):
             ids = extract_ids(record)
             if not ids:
                 continue
-            timestamp = extract_timestamp(record) or fallback
-            kind = "timestamp" if extract_timestamp(record) else "file_mtime"
+            record_timestamp = extract_timestamp(record)
+            timestamp = record_timestamp or inherited_timestamp or fallback
+            kind = (
+                "timestamp"
+                if (record_timestamp or inherited_timestamp)
+                else "file_mtime"
+            )
             for session_id in ids:
                 current = tracked.get(session_id)
                 candidate = TrackedSession(session_id, timestamp, str(path), kind)
