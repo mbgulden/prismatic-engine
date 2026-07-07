@@ -285,6 +285,28 @@ def format_decision(decision: Decision) -> str:
     )
 
 
+def jules_supports_remote_delete(jules_bin: str) -> bool:
+    result = run_cmd([jules_bin, "remote", "--help"])
+    help_text = result.stdout + result.stderr
+    return bool(re.search(r"^\s+delete\s+", help_text, re.MULTILINE))
+
+
+def delete_session(jules_bin: str, session_id: str) -> subprocess.CompletedProcess[str]:
+    return run_cmd(
+        [jules_bin, "remote", "delete", "--session", session_id], timeout=120
+    )
+
+
+def command_failed(result: subprocess.CompletedProcess[str]) -> bool:
+    text = (result.stdout + result.stderr).lower()
+    return (
+        result.returncode != 0
+        or "error:" in text
+        or "unknown command" in text
+        or "unknown flag" in text
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--jules-bin", default=os.environ.get("JULES_BIN", "jules"))
@@ -327,31 +349,35 @@ def main(argv: list[str] | None = None) -> int:
 
     deleted: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
+    delete_supported = True
+    if args.execute and any(d.action == "purge" for d in decisions):
+        delete_supported = jules_supports_remote_delete(args.jules_bin)
+        if not delete_supported:
+            errors.append(
+                {
+                    "session_id": None,
+                    "returncode": 1,
+                    "stdout": "",
+                    "stderr": "jules remote delete is not available in this Jules CLI build; cannot purge candidates automatically",
+                }
+            )
+
     for decision in decisions:
-        if decision.action != "purge":
+        if decision.action != "purge" or not delete_supported:
             continue
         if not args.execute:
             continue
-        result = run_cmd(
-            [
-                args.jules_bin,
-                "remote",
-                "delete",
-                "--session",
-                decision.session.session_id,
-            ],
-            timeout=120,
-        )
+        result = delete_session(args.jules_bin, decision.session.session_id)
         row = {
             "session_id": decision.session.session_id,
             "returncode": result.returncode,
             "stdout": result.stdout,
             "stderr": result.stderr,
         }
-        if result.returncode == 0:
-            deleted.append(row)
-        else:
+        if command_failed(result):
             errors.append(row)
+        else:
+            deleted.append(row)
 
     summary = {
         "mode": "execute" if args.execute else "dry-run",
