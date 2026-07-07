@@ -489,7 +489,7 @@ HOST_LEVEL_PATH_PATTERNS: tuple[tuple[str, str], ...] = (
     ("/usr/local", r"(?<![\w.-])/usr/local(?:/|\b)"),
     ("~/.config", r"(?:^|\s)~/\.config(?:/|\b)"),
     ("~/.hermes", r"(?:^|\s)~/\.hermes(?:/|\b)"),
-    ("host crontab", r"\b(?:host\s+)?crontabs?\b|\bcrontab\b"),
+    ("crontab", r"\b(?:host\s+)?crontabs?\b|\bcrontab\b"),
     ("systemd", r"\b/etc/systemd\b|\bsystemctl\b|\bsystemd\b"),
 )
 
