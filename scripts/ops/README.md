@@ -9,6 +9,7 @@ This directory contains the **operational layer** of the Prismatic Engine: the h
 | `factory_monitor.py` | Heartbeat health check. Runs every 15 min, reports on services/endpoints/bus/curator/pool/vault. Stdlib only. |
 | `factory_responder.py` | Action-taker. Reads monitor output, classifies alerts, takes automated action: service restart, Linear issue creation, AGY dispatch, Telegram notification with narrative messages. |
 | `clear_stale_escalations.py` | One-shot cleanup for the 6 stale escalations from the GRO-3035 rollback. |
+| `jules_stalled_session_purge.py` | Dry-run-by-default cleanup for legacy Jules sessions stuck in `Awaiting User Feedback`; cross-references tracked JSON state and deletes only with `--execute`. |
 | `systemd/factory-monitor.service` | Systemd unit: oneshot service that runs the monitor. |
 | `systemd/factory-monitor.timer` | Systemd timer: fires every 15 minutes (`OnCalendar=*:0/15`). |
 | `systemd/factory-responder.service` | Systemd unit: runs the responder. Called after the monitor in the same cycle (the responder invokes the monitor inline). |
