@@ -1,12 +1,13 @@
 # GRO-3274 — Tier-1 Silent Cron Failures Verification
 
-Timestamp: 2026-07-08T01:25Z
+Timestamp: 2026-07-08T13:42Z
 Agent: Ned
 Branch: `ned/GRO-3274`
+PR: https://github.com/mbgulden/prismatic-engine/pull/183
 
 ## Summary
 
-GRO-3274 was re-verified after a prior AGY/Fred handoff left Linear in `Todo` with no usable `RESULT.md` in the archived sandbox. The live Tier-1 watchdog state is now clean: no known silent failures and a dry-run JSON scan reports `silent_failures: 0` across 92 jobs.
+GRO-3274 was re-verified after a prior AGY/Fred handoff left Linear stuck in `In Progress` with stale `agent:ned`/`agent:fred` labels. The six original Jul 2 silent failures are resolved or intentionally disabled/paused and no longer counted by the Tier-1 watchdog. A later watchdog dry-run now reports a new unrelated live failure in `Hermes daily journal snapshot` because the live `/home/ubuntu/work/prismatic-engine` checkout is on an older AGY branch; the fix and regression test are already present on `origin/deploy-fresh` and this PR branch.
 
 ## Six original failures
 
@@ -31,18 +32,36 @@ bash -n /home/ubuntu/.hermes/profiles/orchestrator/scripts/gpt_oss_quota_probe.s
 python3 /home/ubuntu/.hermes/profiles/orchestrator/scripts/tier1_silent_failure_watchdog.py --dry-run --json
 ```
 
-Observed watchdog output:
+Observed focused regression output:
+
+```text
+PYTHONPATH=/tmp/prismatic-gro3274 python3 -m pytest /tmp/prismatic-gro3274/tests/test_journal_last_sync.py -q
+→ 4 passed in 0.10s
+
+PYTHONPATH=/tmp/prismatic-gro3274 python3 - <<'PY'
+from prismatic.journal import run_snapshot
+print(run_snapshot(force=True).keys())
+PY
+→ dict_keys(['changed', 'signals', 'today_file', 'lines'])
+```
+
+Observed watchdog output after the current rerun:
 
 ```json
 {
-  "total_jobs": 92,
-  "silent_failures": 0,
-  "new_failures": 0,
-  "recovered": [],
-  "failures": []
+  "total_jobs": 94,
+  "silent_failures": 2,
+  "new_failures": 1,
+  "recovered": ["ecc080d17c00"],
+  "failures": [
+    {"job_id": "ce3dd849ede5", "name": "Hermes daily journal snapshot", "root_cause": "linear (linear-api: endpoint or token issue, check graphQL response)"},
+    {"job_id": "0db3cc8a9c40", "name": "AGY Golden Thread Project Review", "root_cause": "unknown — needs investigation"}
+  ]
 }
 ```
 
+`AGY Golden Thread Project Review` passed on direct rerun and is listed as recovered. `Hermes daily journal snapshot` fails only when invoked through the live `/home/ubuntu/work/prismatic-engine` checkout, which is currently held on `feature/agy-gro-3212` and lacks the already-merged `_last_sync` string guard. The same snapshot path passes under this branch with `PYTHONPATH=/tmp/prismatic-gro3274`.
+
 ## Notes
 
-No production profile script changes were made in this pass. The required action was to repair the stale Linear/task handoff with durable verification evidence and then finalize the issue from a clean Ned-owned branch.
+No production profile script changes were made in this pass. The durable work is a clean Ned-owned verification branch/PR plus Linear label/state cleanup so peer review can close the foundational Jul 2 issue without another Fred/Ned redispatch loop.
