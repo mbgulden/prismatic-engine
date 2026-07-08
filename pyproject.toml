@@ -27,6 +27,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "packaging>=23.0",
     "pyyaml>=6.0",
 ]
 
@@ -55,4 +56,4 @@ prismatic-second-witness = "prismatic.journal:cli_second_witness"
 include = ["prismatic*"]
 
 [tool.setuptools.package-data]
-prismatic = ["skills/**/*", "templates/**/*"]
+prismatic = ["skills/**/*", "templates/**/*", "config/**/*"]

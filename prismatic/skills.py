@@ -11,7 +11,6 @@ Skills are self-contained agent capability packages stored in the
 
 from __future__ import annotations
 
-import os
 import shutil
 import sys
 from pathlib import Path
@@ -24,6 +23,7 @@ except ImportError:  # pragma: no cover
 
 
 # ── Path resolution ──────────────────────────────────────────────────
+
 
 def _engine_skills_dir() -> Path:
     """Return the built-in skills directory (shipped with the package)."""
@@ -44,6 +44,7 @@ def _user_skills_dir() -> Path:
 
 # ── Skill manifest loading ──────────────────────────────────────────
 
+
 def _load_manifest(skill_dir: Path) -> dict[str, Any] | None:
     """Load and validate a skill manifest from *skill_dir*."""
     manifest_path = skill_dir / "manifest.yaml"
@@ -63,6 +64,7 @@ def _load_manifest(skill_dir: Path) -> dict[str, Any] | None:
 
 
 # ── Public API ──────────────────────────────────────────────────────
+
 
 def list_skills(installed: bool = False) -> list[dict[str, Any]]:
     """Return all available (or installed) skills with their manifests.
@@ -122,6 +124,7 @@ def install_skill(name: str) -> bool:
     hook = dst / "hooks" / "install.py"
     if hook.is_file():
         import runpy
+
         runpy.run_path(str(hook), init_globals={"skill_dir": str(dst)})
 
     return True
@@ -140,6 +143,7 @@ def uninstall_skill(name: str) -> bool:
     hook = dst / "hooks" / "uninstall.py"
     if hook.is_file():
         import runpy
+
         runpy.run_path(str(hook), init_globals={"skill_dir": str(dst)})
 
     shutil.rmtree(dst)
@@ -185,6 +189,7 @@ def create_skill(name: str, *, force: bool = False) -> bool:
 
 # ── CLI subcommand ──────────────────────────────────────────────────
 
+
 def _print_table(rows: list[list[str]]) -> None:
     """Print a simple aligned table to stdout."""
     if not rows:
@@ -197,11 +202,13 @@ def _print_table(rows: list[list[str]]) -> None:
             print("  ".join("-" * w for w in widths))
 
 
-def cli_skills(args: list[str]) -> int:
+def cli_skills(args: list[str] | None = None) -> int:
     """Entry point for ``prismatic-engine skills <subcommand> ...``.
 
     Returns exit code (0 = success).
     """
+    if args is None:
+        args = sys.argv[1:]
     if not args or args[0] in ("-h", "--help", "help"):
         print("Usage: prismatic-engine skills <command> [options]")
         print()
@@ -226,12 +233,14 @@ def cli_skills(args: list[str]) -> int:
         header = ["Name", "Version", "Category", "Description"]
         rows = [header]
         for s in skills:
-            rows.append([
-                s.get("name", "?"),
-                s.get("version", "?"),
-                s.get("category", "?"),
-                s.get("description", "")[:60],
-            ])
+            rows.append(
+                [
+                    s.get("name", "?"),
+                    s.get("version", "?"),
+                    s.get("category", "?"),
+                    s.get("description", "")[:60],
+                ]
+            )
         _print_table(rows)
         return 0
 
@@ -244,7 +253,15 @@ def cli_skills(args: list[str]) -> int:
         if m is None:
             print(f"Skill '{name}' not found.")
             return 1
-        for key in ("name", "version", "description", "author", "category", "labels", "_path"):
+        for key in (
+            "name",
+            "version",
+            "description",
+            "author",
+            "category",
+            "labels",
+            "_path",
+        ):
             if key in m:
                 print(f"{key:20s}  {m[key]}")
         return 0
