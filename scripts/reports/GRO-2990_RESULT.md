@@ -24,8 +24,14 @@ python3 -m pytest prismatic/test_gro_2990_tokens_wiring.py prismatic/tests/test_
 Result:
 
 ```text
-16 passed in 1.67s
+16 passed in 1.52s
 ```
+
+## Review artifact
+
+- Branch: `ned/GRO-2990`
+- PR: https://github.com/mbgulden/prismatic-engine/pull/185
+- Head commit: `f030c3b5` before this report update; see branch HEAD for the final report-only commit.
 
 ## Notes
 
