@@ -60,7 +60,7 @@ Observed watchdog output after the current rerun:
 }
 ```
 
-`AGY Golden Thread Project Review` passed on direct rerun and is listed as recovered. `Hermes daily journal snapshot` fails only when invoked through the live `/home/ubuntu/work/prismatic-engine` checkout, which is currently held on `feature/agy-gro-3212` and lacks the already-merged `_last_sync` string guard. The same snapshot path passes under this branch with `PYTHONPATH=/tmp/prismatic-gro3274`.
+A direct rerun of `AGY Golden Thread Project Review` exits 0, but the watchdog still lists it until the next scheduled cron row records a healthy `last_status`. `Hermes daily journal snapshot` fails only when invoked through the live `/home/ubuntu/work/prismatic-engine` checkout, which is currently held on `feature/agy-gro-3212` and lacks the already-merged `_last_sync` string guard. The same snapshot path passes under this branch with `PYTHONPATH=/tmp/prismatic-gro3274`. Both current watchdog rows are newer live-checkout/cron-metadata noise, not unresolved members of the original Jul 2 six-failure batch.
 
 ## Notes
 
