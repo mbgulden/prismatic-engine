@@ -7,6 +7,7 @@ This directory contains the **operational layer** of the Prismatic Engine: the h
 | File | Purpose |
 |---|---|
 | `factory_monitor.py` | Heartbeat health check. Runs every 15 min, reports on services/endpoints/bus/curator/pool/vault. Stdlib only. |
+| `../silent_cron_detector.py` | Cron/factory digest source for silent-cron health. It suppresses paused, disabled, archived, and retired jobs so historical `last_status=error` records are listed as archive context, not active operator alerts. |
 | `factory_responder.py` | Action-taker. Reads monitor output, classifies alerts, takes automated action: service restart, Linear issue creation, AGY dispatch, Telegram notification with narrative messages. |
 | `clear_stale_escalations.py` | One-shot cleanup for the 6 stale escalations from the GRO-3035 rollback. |
 | `systemd/factory-monitor.service` | Systemd unit: oneshot service that runs the monitor. |
