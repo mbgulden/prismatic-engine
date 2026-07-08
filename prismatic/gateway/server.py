@@ -18,6 +18,8 @@ Integration:
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac as _hmac
 import json
 import logging
 import os
@@ -32,12 +34,8 @@ from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from prismatic.gateway.event_bus import get_event_bus, set_event_bus, EventBus
-from prismatic.gateway.ipc_bridge import (
-    UnixSocketListener,
-    create_event_ingest_route,
-    DEFAULT_SOCKET_PATH,
-)
+from prismatic.gateway.event_bus import get_event_bus
+from prismatic.gateway.ipc_bridge import UnixSocketListener, create_event_ingest_route
 from prismatic.gateway.ws_broadcaster import (
     start_ws_broadcaster,
     stop_ws_broadcaster,
@@ -64,6 +62,7 @@ async def _publish_webhook_auth_failed(source: str) -> None:
     """Publish a redacted webhook auth-failure event for curator escalation."""
     try:
         from prismatic.gateway.event_bus import get_event_bus
+
         bus = get_event_bus()
         if bus is not None:
             await bus.publish(
@@ -73,6 +72,7 @@ async def _publish_webhook_auth_failed(source: str) -> None:
             )
     except Exception as exc:
         logger.warning("webhook auth-failed bus publish failed: %s", exc)
+
 
 # ── FastAPI Application ──────────────────────────────────────────────
 
@@ -117,10 +117,15 @@ def _check_observability_auth(request: Request) -> bool:
 @app.middleware("http")
 async def _observability_auth_middleware(request: Request, call_next):
     path = request.url.path
-    if path == "/metrics" or path.startswith("/events/") or path.startswith("/curator/"):
+    if (
+        path == "/metrics"
+        or path.startswith("/events/")
+        or path.startswith("/curator/")
+    ):
         if not _check_observability_auth(request):
             return JSONResponse({"detail": "forbidden"}, status_code=403)
     return await call_next(request)
+
 
 # Mount the IPC bridge event ingest route (POST /events, GET /events/history)
 # The router's @router.post("/events") defines the full path — no prefix needed
@@ -148,7 +153,7 @@ async def startup() -> None:
     _server_started_at = _started_at
 
     # Initialize EventBus (ensure singleton)
-    bus = get_event_bus()
+    get_event_bus()
 
     # Start IPC bridge Unix socket listener
     _ipc_listener = UnixSocketListener()
@@ -278,6 +283,7 @@ async def list_locks() -> list[dict[str, Any]]:
 
 # ── D.5: Observability metrics ──────────────────────────────────
 
+
 @app.get("/metrics")
 async def metrics() -> dict[str, Any]:
     """Phase D.5 — observability metrics endpoint.
@@ -287,6 +293,7 @@ async def metrics() -> dict[str, Any]:
     uptime. Counters reset on process restart (in-process).
     """
     from prismatic.gateway.event_bus import get_event_bus
+
     bus = get_event_bus()
     bus_stats = bus.stats
     uptime_s = time.time() - _server_started_at if _server_started_at else 0.0
@@ -306,11 +313,19 @@ async def events_recent(limit: int = 50) -> dict[str, Any]:
     than in-memory ring buffer so the window is wider.
     """
     import sqlite3
+
     db_path = os.environ.get("PRISMATIC_BUS_DB") or ".prismatic/bus/event_log.sqlite"
     if not os.path.isabs(db_path):
-        db_path = os.path.join(os.environ.get("PRISMATIC_HOME") or os.path.expanduser("~"), db_path)
+        db_path = os.path.join(
+            os.environ.get("PRISMATIC_HOME") or os.path.expanduser("~"), db_path
+        )
     if not os.path.exists(db_path):
-        return {"events": [], "count": 0, "source": "sqlite", "note": "bus db not yet created"}
+        return {
+            "events": [],
+            "count": 0,
+            "source": "sqlite",
+            "note": "bus db not yet created",
+        }
     try:
         conn = sqlite3.connect(db_path, timeout=5)
         try:
@@ -326,13 +341,15 @@ async def events_recent(limit: int = 50) -> dict[str, Any]:
                     payload = json.loads(row[2])
                 except Exception:
                     payload = {"_raw": row[2][:200]}
-                events.append({
-                    "rowid": row[0],
-                    "topic": row[1],
-                    "ts": row[3],
-                    "processed": bool(row[4]),
-                    "payload": payload,
-                })
+                events.append(
+                    {
+                        "rowid": row[0],
+                        "topic": row[1],
+                        "ts": row[3],
+                        "processed": bool(row[4]),
+                        "payload": payload,
+                    }
+                )
             return {"events": events, "count": len(events), "source": "sqlite"}
         finally:
             conn.close()
@@ -344,9 +361,12 @@ async def events_recent(limit: int = 50) -> dict[str, Any]:
 async def events_bus_stats() -> dict[str, Any]:
     """SQLite bus durable stats: total events, processed, oldest, newest."""
     import sqlite3
+
     db_path = os.environ.get("PRISMATIC_BUS_DB") or ".prismatic/bus/event_log.sqlite"
     if not os.path.isabs(db_path):
-        db_path = os.path.join(os.environ.get("PRISMATIC_HOME") or os.path.expanduser("~"), db_path)
+        db_path = os.path.join(
+            os.environ.get("PRISMATIC_HOME") or os.path.expanduser("~"), db_path
+        )
     if not os.path.exists(db_path):
         return {"exists": False}
     try:
@@ -356,12 +376,8 @@ async def events_bus_stats() -> dict[str, Any]:
             processed = conn.execute(
                 "SELECT COUNT(*) FROM events WHERE processed = 1"
             ).fetchone()[0]
-            oldest = conn.execute(
-                "SELECT MIN(ts) FROM events"
-            ).fetchone()[0]
-            newest = conn.execute(
-                "SELECT MAX(ts) FROM events"
-            ).fetchone()[0]
+            oldest = conn.execute("SELECT MIN(ts) FROM events").fetchone()[0]
+            newest = conn.execute("SELECT MAX(ts) FROM events").fetchone()[0]
             return {
                 "exists": True,
                 "total": total,
@@ -386,6 +402,7 @@ async def curator_health() -> dict[str, Any]:
     Used by the morning digest generator + ad-hoc health checks.
     """
     import sqlite3
+
     curator_db = os.environ.get("PRISMATIC_CURATOR_DB")
     if not curator_db or not os.path.exists(curator_db):
         return {"exists": False, "error": "curator DB not found"}
@@ -395,11 +412,13 @@ async def curator_health() -> dict[str, Any]:
     try:
         engine_root = os.path.join(
             os.environ.get("PRISMATIC_HOME") or os.path.expanduser("~"),
-            "work", "prismatic-engine",
+            "work",
+            "prismatic-engine",
         )
         if os.path.isdir(engine_root) and engine_root not in sys.path:
             sys.path.insert(0, engine_root)
         from prismatic.supervisor.recovery import get_pool
+
         pool_stats = get_pool().stats()
     except Exception as e:
         pool_stats = {"error": str(e)}
@@ -410,6 +429,7 @@ async def curator_health() -> dict[str, Any]:
     if os.path.exists(budget_path):
         try:
             import json as _json
+
             with open(budget_path) as f:
                 budget = _json.load(f)
         except Exception:
@@ -419,9 +439,7 @@ async def curator_health() -> dict[str, Any]:
         conn = sqlite3.connect(curator_db, timeout=5)
         try:
             # Tag distribution
-            cur = conn.execute(
-                "SELECT tag, COUNT(*) FROM tagged_events GROUP BY tag"
-            )
+            cur = conn.execute("SELECT tag, COUNT(*) FROM tagged_events GROUP BY tag")
             tag_counts = {row[0]: row[1] for row in cur.fetchall()}
 
             # Last 10 escalations
@@ -505,6 +523,26 @@ async def get_lock(file_path: str) -> Response:
 # ── Agent Run Records API ────────────────────────────────────────────
 
 
+def _run_record_to_dict(record: Any) -> dict[str, Any]:
+    return {
+        "run_id": record.run_id,
+        "issue_id": record.issue_id,
+        "agent_name": record.agent_name,
+        "status": record.status,
+        "verification_status": getattr(record, "verification_status", "self_reported"),
+        "verification_scope": getattr(record, "verification_scope", "not_run"),
+        "failure_category": getattr(record, "failure_category", "none"),
+        "cleanup_status": getattr(record, "cleanup_status", "not_reported"),
+        "done_gate_result": getattr(record, "done_gate_result", "not_done"),
+        "done_gate_errors": getattr(record, "done_gate_errors", []),
+        "started_at": record.started_at,
+        "completed_at": record.completed_at,
+        "output_path": record.output_path,
+        "error_message": record.error_message,
+        "evidence": getattr(record, "evidence", None),
+    }
+
+
 @app.get("/runs")
 async def list_runs(status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
     """Return recent agent run records, optionally filtered by status."""
@@ -513,16 +551,7 @@ async def list_runs(status: str | None = None, limit: int = 50) -> list[dict[str
     records = _run_store.get_recent_runs(limit=limit)
     result = []
     for r in records:
-        d = {
-            "run_id": r.run_id,
-            "issue_id": r.issue_id,
-            "agent_name": r.agent_name,
-            "status": r.status,
-            "started_at": r.started_at,
-            "completed_at": r.completed_at,
-            "output_path": r.output_path,
-            "error_message": r.error_message,
-        }
+        d = _run_record_to_dict(r)
         if status is None or r.status == status:
             result.append(d)
     return result
@@ -545,22 +574,13 @@ async def get_run(run_id: str) -> Response:
             media_type="application/json",
         )
     return Response(
-        content=json.dumps({
-            "run_id": record.run_id,
-            "issue_id": record.issue_id,
-            "agent_name": record.agent_name,
-            "status": record.status,
-            "started_at": record.started_at,
-            "completed_at": record.completed_at,
-            "output_path": record.output_path,
-            "error_message": record.error_message,
-        }),
+        content=json.dumps(_run_record_to_dict(record)),
         media_type="application/json",
     )
 
 
 @app.post("/runs/{run_id}/complete")
-async def complete_run(run_id: str, payload: dict[str, Any] | None = None) -> Response:
+async def complete_run(run_id: str, payload: dict[str, Any] | None = None) -> Any:
     """Mark a run as completed or failed."""
     if _run_store is None:
         return Response(
@@ -576,8 +596,10 @@ async def complete_run(run_id: str, payload: dict[str, Any] | None = None) -> Re
             media_type="application/json",
         )
     status = (payload or {}).get("status", "completed")
-    _run_store.update_run(run_id, status=status)
-    return {"status": "ok"}
+    evidence = (payload or {}).get("evidence")
+    _run_store.update_run(run_id, status=status, evidence=evidence)
+    updated = _run_store.get_run(run_id)
+    return {"status": "ok", "run": _run_record_to_dict(updated) if updated else None}
 
 
 # ── Webhook Endpoints (stubs — full implementation in dedicated modules) ──
@@ -594,7 +616,6 @@ async def github_webhook(request: Request) -> dict[str, Any]:
     signature = request.headers.get("X-Hub-Signature-256", "")
     _webhook_counters["github_received"] += 1
     if signature:
-        import hashlib, hmac as _hmac
         secrets = get_github_secrets()
         if not secrets:
             logger.warning("GitHub webhook skipped: secret not set")
@@ -602,10 +623,14 @@ async def github_webhook(request: Request) -> dict[str, Any]:
         # GitHub HMAC algorithm: hmac_sha256(secret, "x-hub-signature-256:" + body)
         signed_payload = b"x-hub-signature-256:" + body
         # GitHub sends "sha256=<hex>"; compare_digest needs raw hex on both sides.
-        sig_hex = signature.split("=", 1)[1] if signature.startswith("sha256=") else signature
+        sig_hex = (
+            signature.split("=", 1)[1] if signature.startswith("sha256=") else signature
+        )
         expected = None
         for secret in secrets:
-            candidate = _hmac.new(secret.encode(), signed_payload, hashlib.sha256).hexdigest()
+            candidate = _hmac.new(
+                secret.encode(), signed_payload, hashlib.sha256
+            ).hexdigest()
             if _hmac.compare_digest(candidate, sig_hex):
                 expected = candidate
                 break
@@ -613,6 +638,7 @@ async def github_webhook(request: Request) -> dict[str, Any]:
             _webhook_counters["github_auth_failed"] += 1
             await _publish_webhook_auth_failed("github")
             from fastapi.responses import JSONResponse
+
             return JSONResponse({"status": "auth-failed"}, status_code=401)
     try:
         event = json.loads(body) if body else {}
@@ -620,10 +646,12 @@ async def github_webhook(request: Request) -> dict[str, Any]:
         event = {"raw": body.decode("utf-8", errors="replace")}
     try:
         from prismatic.gateway.event_bus import get_event_bus
+
         bus = get_event_bus()
         if bus is not None:
             await bus.publish(
-                event_type=request.headers.get("X-GitHub-Event") or event.get("action", "unknown"),
+                event_type=request.headers.get("X-GitHub-Event")
+                or event.get("action", "unknown"),
                 source="github",
                 payload=event,
             )
@@ -644,7 +672,6 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
     signature = request.headers.get("linear-signature", "")
     _webhook_counters["linear_received"] += 1
     if signature:
-        import hashlib, hmac as _hmac
         secrets = get_linear_secrets()
         if secrets:
             expected = None
@@ -657,6 +684,7 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
                 _webhook_counters["linear_auth_failed"] += 1
                 await _publish_webhook_auth_failed("linear")
                 from fastapi.responses import JSONResponse
+
                 return JSONResponse({"status": "auth-failed"}, status_code=401)
     try:
         event = json.loads(body) if body else {}
@@ -664,6 +692,7 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
         event = {"raw": body.decode("utf-8", errors="replace")}
     try:
         from prismatic.gateway.event_bus import get_event_bus
+
         bus = get_event_bus()
         if bus is not None:
             await bus.publish(
@@ -690,10 +719,12 @@ async def linear_webhook_alias(request: Request) -> dict[str, Any]:
 
 # ── Chat AGY Endpoints (v0.1) ──────────────────────────────────────
 
+
 @app.get("/chat/sessions")
 async def list_chat_sessions() -> list[dict[str, Any]]:
     """Get the list of active/known AGY chat sessions."""
     from prismatic.capabilities.chat_agy import ChatAGYCapability
+
     cap = ChatAGYCapability()
     return cap.list_sessions()
 
@@ -703,6 +734,7 @@ async def get_chat_session(session_id: str):
     """Get a single chat session by ID, or return 404 per v0.1 contract."""
     from prismatic.capabilities.chat_agy import ChatAGYCapability
     from fastapi import HTTPException
+
     cap = ChatAGYCapability()
     session = cap.get_session(session_id)
     if session is None:
@@ -710,18 +742,20 @@ async def get_chat_session(session_id: str):
             status_code=404,
             detail={
                 "error": "session_not_found",
-                "reason": f"Session '{session_id}' not found under the v0.1 contract (no live data path)."
-            }
+                "reason": f"Session '{session_id}' not found under the v0.1 contract (no live data path).",
+            },
         )
     return session
 
 
 # ── Schedule Observatory Endpoints ─────────────────────────────────
 
+
 @app.get("/schedules")
 async def list_schedules() -> list[dict[str, Any]]:
     """List all configured schedules across providers."""
     from prismatic.schedules import get_all_schedules
+
     return [s.to_dict() for s in get_all_schedules()]
 
 
@@ -729,6 +763,7 @@ async def list_schedules() -> list[dict[str, Any]]:
 async def schedules_chat_command(payload: dict[str, Any]) -> dict[str, Any]:
     """Parse a chat command to update a schedule."""
     from prismatic.schedules import process_chat_schedule_request
+
     message = payload.get("message", "")
     return process_chat_schedule_request(message)
 
@@ -738,21 +773,18 @@ async def mutate_schedule(schedule_id: str, payload: dict[str, Any]):
     """Mutate a schedule with owner-aware policy check."""
     from prismatic.schedules import request_schedule_mutation, UnauthorizedMutationError
     from fastapi.responses import JSONResponse
+
     enabled = payload.get("enabled")
     schedule_expr = payload.get("schedule_expr")
     try:
         res = request_schedule_mutation(
-            schedule_id=schedule_id,
-            enabled=enabled,
-            schedule_expr=schedule_expr
+            schedule_id=schedule_id, enabled=enabled, schedule_expr=schedule_expr
         )
         return res
     except UnauthorizedMutationError as e:
         return JSONResponse(status_code=403, content={"error": str(e)})
     except FileNotFoundError as e:
         return JSONResponse(status_code=404, content={"error": str(e)})
-
-
 
 
 def get_linear_secrets():
@@ -762,22 +794,34 @@ def get_linear_secrets():
     or next secret during rotation. Both are accepted for HMAC verification.
     """
     import os
+
     seen = set()
     out = []
-    for k in ("PRISMATIC_LINEAR_WEBHOOK_SECRET", "PRISMATIC_LINEAR_WEBHOOK_SECRET_SECONDARY",
-              "LINEAR_WEBHOOK_SIGNING_SECRET", "LINEAR_WEBHOOK_SIGNING_SECRET_SECONDARY"):
+    for k in (
+        "PRISMATIC_LINEAR_WEBHOOK_SECRET",
+        "PRISMATIC_LINEAR_WEBHOOK_SECRET_SECONDARY",
+        "LINEAR_WEBHOOK_SIGNING_SECRET",
+        "LINEAR_WEBHOOK_SIGNING_SECRET_SECONDARY",
+    ):
         v = os.environ.get(k, "")
         if v and v not in seen:
             out.append(v)
             seen.add(v)
     if not out:
-        env_file = Path(os.environ.get("PRISMATIC_ENV_FILE") or
-                        os.path.join(os.environ.get("PRISMATIC_HOME") or os.path.expanduser("~"),
-                                     ".hermes/profiles/orchestrator/.env"))
+        env_file = Path(
+            os.environ.get("PRISMATIC_ENV_FILE")
+            or os.path.join(
+                os.environ.get("PRISMATIC_HOME") or os.path.expanduser("~"),
+                ".hermes/profiles/orchestrator/.env",
+            )
+        )
         if env_file.exists():
             for line in env_file.read_text().splitlines():
-                if ("PRISMATIC_LINEAR_WEBHOOK_SECRET" in line or "LINEAR_WEBHOOK_SIGNING_SECRET" in line) and "=" in line:
-                    v = line.split("=", 1)[1].strip().strip('\'\"')
+                if (
+                    "PRISMATIC_LINEAR_WEBHOOK_SECRET" in line
+                    or "LINEAR_WEBHOOK_SIGNING_SECRET" in line
+                ) and "=" in line:
+                    v = line.split("=", 1)[1].strip().strip("'\"")
                     if v and v not in seen:
                         out.append(v)
                         seen.add(v)
@@ -788,6 +832,8 @@ def get_linear_secret():
     """Legacy single-secret accessor (returns first slot)."""
     secrets = get_linear_secrets()
     return secrets[0] if secrets else ""
+
+
 def get_github_secrets():
     """Read PRIMARY + SECONDARY GitHub webhook signing secrets.
 
@@ -796,9 +842,13 @@ def get_github_secrets():
     """
     import os
     import re as _re
+
     seen = set()
     out = []
-    for k in ("PRISMATIC_GITHUB_WEBHOOK_SECRET", "PRISMATIC_GITHUB_WEBHOOK_SECRET_SECONDARY"):
+    for k in (
+        "PRISMATIC_GITHUB_WEBHOOK_SECRET",
+        "PRISMATIC_GITHUB_WEBHOOK_SECRET_SECONDARY",
+    ):
         v = os.environ.get(k, "")
         if v and v not in seen:
             out.append(v)
@@ -807,7 +857,10 @@ def get_github_secrets():
         svc = Path("/etc/systemd/system/prismatic-gateway.service")
         if svc.exists():
             content = svc.read_text()
-            for k in ("PRISMATIC_GITHUB_WEBHOOK_SECRET", "PRISMATIC_GITHUB_WEBHOOK_SECRET_SECONDARY"):
+            for k in (
+                "PRISMATIC_GITHUB_WEBHOOK_SECRET",
+                "PRISMATIC_GITHUB_WEBHOOK_SECRET_SECONDARY",
+            ):
                 m = _re.search(k + "=(.*)", content)
                 if m:
                     v = m.group(1).strip()
@@ -821,6 +874,8 @@ def get_github_secret():
     """Legacy single-secret accessor (returns first slot)."""
     secrets = get_github_secrets()
     return secrets[0] if secrets else ""
+
+
 def _create_run_store() -> AgentRunRecordStore | None:
     """Initialize run store (used by gRPC server)."""
     state_dir = os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state/")
@@ -885,13 +940,16 @@ def main() -> None:
     # Start gRPC in background thread if enabled
     grpc_thread: threading.Thread | None = None
     if args.grpc:
+
         def _run_grpc_loop(port: int) -> None:
             """Run the gRPC server in a dedicated event loop."""
             import asyncio
+
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
                 from prismatic.gateway.grpc_server import serve_grpc
+
                 loop.run_until_complete(serve_grpc(port=port))
             except KeyboardInterrupt:
                 pass
