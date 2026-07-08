@@ -23,14 +23,18 @@ def test_parse_env_file_redacts_values_by_callers(tmp_path: pathlib.Path) -> Non
     assert "IGNORED" not in parsed
 
 
-def test_build_report_warns_when_honeybadger_repo_missing_but_keeps_json_safe(tmp_path: pathlib.Path) -> None:
+def test_build_report_warns_when_honeybadger_repo_missing_but_keeps_json_safe(
+    tmp_path: pathlib.Path,
+) -> None:
     repo = tmp_path / "repo"
     (repo / "docs").mkdir(parents=True)
     (repo / "reports").mkdir(parents=True)
     (repo / "network").mkdir(parents=True)
     (repo / "network" / "latency_report.md").write_text("RDMA baseline")
     (repo / "docs" / "provider-playbook-local-llm.md").write_text("vLLM")
-    (repo / "reports" / "agy-local-agent-architecture.md").write_text("vLLM architecture")
+    (repo / "reports" / "agy-local-agent-architecture.md").write_text(
+        "vLLM architecture"
+    )
     env_file = tmp_path / ".env"
     env_file.write_text(
         "CLOUDFLARE_GROWTHWEB_EMAIL=ops@example.com\n"
@@ -46,7 +50,10 @@ def test_build_report_warns_when_honeybadger_repo_missing_but_keeps_json_safe(tm
 
     assert report["issue"] == "GRO-149"
     assert report["overall_status"] in {"pass", "warn"}
-    assert any(check["name"] == "honeybadger_private_repo" and check["status"] == "warn" for check in checks)
+    assert any(
+        check["name"] == "honeybadger_private_repo" and check["status"] == "warn"
+        for check in checks
+    )
     assert "top-secret" not in encoded
     assert "tunnel-secret" not in encoded
     assert credential_presence["CLOUDFLARE_GROWTHWEB_API_KEY"]["present"] is True

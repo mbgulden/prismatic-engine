@@ -15,7 +15,6 @@ import os
 import pathlib
 import shutil
 import subprocess
-import sys
 from dataclasses import dataclass
 from typing import Any, Iterable, cast
 
@@ -63,7 +62,9 @@ def parse_env_file(path: pathlib.Path) -> dict[str, str]:
     return values
 
 
-def collect_env(paths: Iterable[pathlib.Path]) -> tuple[dict[str, str], dict[str, list[str]]]:
+def collect_env(
+    paths: Iterable[pathlib.Path],
+) -> tuple[dict[str, str], dict[str, list[str]]]:
     merged: dict[str, str] = dict(os.environ)
     sources: dict[str, list[str]] = {}
     for path in paths:
@@ -75,7 +76,9 @@ def collect_env(paths: Iterable[pathlib.Path]) -> tuple[dict[str, str], dict[str
     return merged, sources
 
 
-def redact_presence(keys: Iterable[str], env: dict[str, str], sources: dict[str, list[str]]) -> dict[str, dict[str, object]]:
+def redact_presence(
+    keys: Iterable[str], env: dict[str, str], sources: dict[str, list[str]]
+) -> dict[str, dict[str, object]]:
     return {
         key: {
             "present": bool(env.get(key)),
@@ -91,14 +94,18 @@ def command_available(name: str) -> bool:
 
 def probe_command(cmd: list[str], timeout: int = 3) -> tuple[bool, str]:
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout, check=False
+        )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return False, str(exc)
     output = (proc.stdout or proc.stderr).strip()
     return proc.returncode == 0, output[:300]
 
 
-def build_report(repo_root: pathlib.Path, env_paths: Iterable[pathlib.Path] = DEFAULT_ENV_FILES) -> dict[str, Any]:
+def build_report(
+    repo_root: pathlib.Path, env_paths: Iterable[pathlib.Path] = DEFAULT_ENV_FILES
+) -> dict[str, Any]:
     env, sources = collect_env(env_paths)
     checks: list[Check] = []
 
@@ -113,12 +120,21 @@ def build_report(repo_root: pathlib.Path, env_paths: Iterable[pathlib.Path] = DE
             )
         )
     else:
-        stable_copy = pathlib.Path("/home/ubuntu/work/prismatic-engine-stable/network/latency_report.md")
+        stable_copy = pathlib.Path(
+            "/home/ubuntu/work/prismatic-engine-stable/network/latency_report.md"
+        )
         status = "warn" if stable_copy.exists() else "fail"
         detail = "Current checkout lacks network/latency_report.md."
         if stable_copy.exists():
             detail += " Stable checkout has a copy that should be ported when Honeybadger repo is available."
-        checks.append(Check("40g_rdma_design_evidence", status, detail, str(stable_copy) if stable_copy.exists() else None))
+        checks.append(
+            Check(
+                "40g_rdma_design_evidence",
+                status,
+                detail,
+                str(stable_copy) if stable_copy.exists() else None,
+            )
+        )
 
     missing_cf = [key for key in REQUIRED_CLOUDFLARE_KEYS if not env.get(key)]
     checks.append(
@@ -174,7 +190,11 @@ def build_report(repo_root: pathlib.Path, env_paths: Iterable[pathlib.Path] = DE
         )
     )
 
-    tailscale_ok, tailscale_out = probe_command(["tailscale", "status", "--peers=false"]) if command_available("tailscale") else (False, "tailscale not installed")
+    tailscale_ok, tailscale_out = (
+        probe_command(["tailscale", "status", "--peers=false"])
+        if command_available("tailscale")
+        else (False, "tailscale not installed")
+    )
     checks.append(
         Check(
             "tailscale_control_plane",
@@ -186,7 +206,9 @@ def build_report(repo_root: pathlib.Path, env_paths: Iterable[pathlib.Path] = DE
     )
 
     status_rank = {"pass": 0, "warn": 1, "fail": 2}
-    overall = max((check.status for check in checks), key=lambda status: status_rank[status])
+    overall = max(
+        (check.status for check in checks), key=lambda status: status_rank[status]
+    )
     next_actions = [
         "Port or recreate Honeybadger ARCHITECTURE.md before implementation work; /home/ubuntu/work/honeybadger is absent in this runtime.",
         "Reuse GrowthWeb Cloudflare tunnel pattern from the Prismatic testbed; never print or commit token values.",
