@@ -95,6 +95,35 @@ verification_status=<status>
 verification_scope=<scope>
 failure_category=<category>
 cleanup_status=<cleanup_status>
+done_gate_result=<done|not_done>
 ```
 
 That gives Michael the distinction he keeps asking for: **ad hoc targeted verification vs canonical/full-suite green**, and **blocked vs failed vs self-reported**.
+
+## Run-record integration
+
+`AgentRunRecord` now stores the canonical evidence summary fields directly:
+
+- `verification_status`
+- `verification_scope`
+- `failure_category`
+- `cleanup_status`
+- `done_gate_result`
+- `done_gate_errors`
+- `evidence`
+
+A run may still have `status=completed`, but it is not operator-Done unless `done_gate_result=done`.
+Completed runs without evidence are surfaced as:
+
+```text
+verification_status=self_reported
+verification_scope=not_run
+done_gate_result=not_done
+done_gate_errors=Done requires execution evidence
+```
+
+Verify this integration with:
+
+```bash
+python3 scripts/verify_run_record_evidence.py --output-dir artifacts/run-record-evidence/latest --clean
+```

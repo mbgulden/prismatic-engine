@@ -10,12 +10,12 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from enum import StrEnum
+from enum import Enum
 from pathlib import Path
 from typing import Any, Literal
 
 
-class VerificationScope(StrEnum):
+class VerificationScope(str, Enum):
     """How broad the verification claim is."""
 
     AD_HOC_TARGETED = "ad_hoc_targeted"
@@ -24,7 +24,7 @@ class VerificationScope(StrEnum):
     NOT_RUN = "not_run"
 
 
-class VerificationStatus(StrEnum):
+class VerificationStatus(str, Enum):
     """Allowed final evidence verdicts."""
 
     VERIFIED = "verified"
@@ -34,7 +34,7 @@ class VerificationStatus(StrEnum):
     SELF_REPORTED = "self_reported"
 
 
-class FailureCategory(StrEnum):
+class FailureCategory(str, Enum):
     """Standard failure taxonomy for agent/proof-loop runs."""
 
     NONE = "none"
