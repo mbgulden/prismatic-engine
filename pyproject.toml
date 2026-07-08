@@ -55,4 +55,4 @@ prismatic-second-witness = "prismatic.journal:cli_second_witness"
 include = ["prismatic*"]
 
 [tool.setuptools.package-data]
-prismatic = ["skills/**/*", "templates/**/*"]
+prismatic = ["skills/**/*", "templates/**/*", "config/**/*"]

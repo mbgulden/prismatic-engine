@@ -9,7 +9,6 @@ WORKDIR /app
 # Install the package
 COPY pyproject.toml README.md ./
 COPY prismatic/ ./prismatic/
-COPY config/ ./config/
 
 RUN pip install --no-cache-dir .
 
