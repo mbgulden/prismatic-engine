@@ -42,7 +42,9 @@ def test_upgrade_preserves_real_tenant_token_overrides(tmp_path: Path) -> None:
         overrides,
         {
             "tokens": {
-                "color": {"background": {"page": {"$value": "#101827", "$type": "color"}}},
+                "color": {
+                    "background": {"page": {"$value": "#101827", "$type": "color"}}
+                },
                 "space": {"md": {"$value": "1rem", "$type": "dimension"}},
             }
         },
@@ -51,7 +53,10 @@ def test_upgrade_preserves_real_tenant_token_overrides(tmp_path: Path) -> None:
     plan = plan_theme_upgrade(before, after, overrides)
 
     assert not plan.errors
-    assert plan.preserved_overrides["tokens"]["color"]["background"]["page"]["$value"] == "#101827"
+    assert (
+        plan.preserved_overrides["tokens"]["color"]["background"]["page"]["$value"]
+        == "#101827"
+    )
     assert "space" not in plan.preserved_overrides["tokens"]
     assert any(
         conflict.path == "tokens.color.background.page"
@@ -68,13 +73,17 @@ def test_upgrade_flags_overrides_for_removed_targets(tmp_path: Path) -> None:
     del tokens["shadow"]
     _write_json(tokens_path, tokens)
     overrides = tmp_path / "tenant-overrides.json"
-    _write_json(overrides, {"tokens": {"shadow": {"sm": {"$value": "none", "$type": "shadow"}}}})
+    _write_json(
+        overrides, {"tokens": {"shadow": {"sm": {"$value": "none", "$type": "shadow"}}}}
+    )
 
     plan = plan_theme_upgrade(before, after, overrides)
 
     assert not plan.errors
     assert plan.preserved_overrides == {}
-    assert [conflict.reason for conflict in plan.conflicts] == ["override-target-removed"]
+    assert [conflict.reason for conflict in plan.conflicts] == [
+        "override-target-removed"
+    ]
     assert plan.conflicts[0].path == "tokens.shadow.sm"
 
 
@@ -87,7 +96,11 @@ def test_repo_local_pwp_theme_upgrade_command_emits_json(tmp_path: Path) -> None
     overrides = tmp_path / "tenant-overrides.json"
     _write_json(
         overrides,
-        {"tokens": {"color": {"text": {"primary": {"$value": "#222222", "$type": "color"}}}}},
+        {
+            "tokens": {
+                "color": {"text": {"primary": {"$value": "#222222", "$type": "color"}}}
+            }
+        },
     )
 
     completed = subprocess.run(
@@ -115,4 +128,7 @@ def test_repo_local_pwp_theme_upgrade_command_emits_json(tmp_path: Path) -> None
     assert completed.returncode == 0, completed.stdout + completed.stderr
     payload = json.loads(completed.stdout)
     assert payload["themeDiff"]["toVersion"] == "0.2.0"
-    assert payload["preservedOverrides"]["tokens"]["color"]["text"]["primary"]["$value"] == "#222222"
+    assert (
+        payload["preservedOverrides"]["tokens"]["color"]["text"]["primary"]["$value"]
+        == "#222222"
+    )

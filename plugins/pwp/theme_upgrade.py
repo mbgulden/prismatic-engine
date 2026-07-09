@@ -97,7 +97,9 @@ def _type(value: Any) -> Any:
     return None
 
 
-def _load_entrypoint_json(theme_root: Path, manifest: dict[str, Any], key: str) -> dict[str, Any]:
+def _load_entrypoint_json(
+    theme_root: Path, manifest: dict[str, Any], key: str
+) -> dict[str, Any]:
     entrypoints = manifest.get("entrypoints")
     if not isinstance(entrypoints, dict):
         return {}
@@ -126,11 +128,16 @@ def _read_manifest(root: Path, errors: list[str], label: str) -> dict[str, Any]:
     return loaded
 
 
-def _partition_overrides(overrides: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+def _partition_overrides(
+    overrides: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
     tokens = overrides.get("tokens")
     content = overrides.get("content")
     if isinstance(tokens, dict) or isinstance(content, dict):
-        return (tokens if isinstance(tokens, dict) else {}, content if isinstance(content, dict) else {})
+        return (
+            tokens if isinstance(tokens, dict) else {},
+            content if isinstance(content, dict) else {},
+        )
     return overrides, {}
 
 
@@ -281,7 +288,9 @@ def format_upgrade_plan(plan: ThemeUpgradePlan) -> str:
         lines.extend(f"- {error}" for error in plan.errors)
     if plan.conflicts:
         lines.append("Conflicts:")
-        lines.extend(f"- {conflict.path}: {conflict.reason}" for conflict in plan.conflicts)
+        lines.extend(
+            f"- {conflict.path}: {conflict.reason}" for conflict in plan.conflicts
+        )
     preserved = _flatten(plan.preserved_overrides)
     if preserved:
         lines.append("Preserved overrides:")
@@ -295,11 +304,25 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Plan a PWP theme upgrade while preserving tenant overrides."
     )
-    parser.add_argument("--from", dest="from_theme", required=True, help="Installed/source theme package path")
-    parser.add_argument("--to", dest="to_theme", required=True, help="Target theme package path")
-    parser.add_argument("--tenant-overrides", required=True, help="Tenant token/content overrides JSON")
-    parser.add_argument("--engine-version", help="Require target theme compatibility with this PWP engine version")
-    parser.add_argument("--json", action="store_true", help="Emit machine-readable upgrade plan")
+    parser.add_argument(
+        "--from",
+        dest="from_theme",
+        required=True,
+        help="Installed/source theme package path",
+    )
+    parser.add_argument(
+        "--to", dest="to_theme", required=True, help="Target theme package path"
+    )
+    parser.add_argument(
+        "--tenant-overrides", required=True, help="Tenant token/content overrides JSON"
+    )
+    parser.add_argument(
+        "--engine-version",
+        help="Require target theme compatibility with this PWP engine version",
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable upgrade plan"
+    )
     args = parser.parse_args(argv)
 
     plan = plan_theme_upgrade(
@@ -308,7 +331,9 @@ def main(argv: list[str] | None = None) -> int:
         args.tenant_overrides,
         engine_version=args.engine_version,
     )
-    print(json.dumps(plan.as_dict(), indent=2) if args.json else format_upgrade_plan(plan))
+    print(
+        json.dumps(plan.as_dict(), indent=2) if args.json else format_upgrade_plan(plan)
+    )
     return 0 if not plan.errors else 1
 
 
