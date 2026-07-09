@@ -584,6 +584,10 @@ Exit criteria:
 Deliverables:
 
 - Playwright test harness.
+  - Repo-local command: `python3 scripts/pwp theme fixtures <theme-package-path> --out <artifact-dir>`.
+  - The command writes deterministic fixture HTML, `pwp-playwright-fixtures.json`, and `pwp-theme-fixtures.spec.js`.
+  - The fixture matrix includes one full-page case per viewport plus every declared module variant across mobile/tablet/desktop viewports.
+  - Use `--run` only when Playwright browsers are installed; the generated manifest/spec are the portable CI artifact.
 - Axe-core accessibility tests.
 - Screenshot baselines per theme/module/variant.
 - Lighthouse CI budgets:

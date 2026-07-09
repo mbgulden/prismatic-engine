@@ -11,16 +11,20 @@ if str(REPO_ROOT) not in sys.path:
 
 from plugins.pwp.theme_diff import main as theme_diff_main  # noqa: E402
 from plugins.pwp.theme_validator import main as theme_validate_main  # noqa: E402
+from plugins.pwp.visual_fixture_harness import main as theme_fixtures_main  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if len(args) >= 2 and args[0] == "theme" and args[1] == "validate":
         return theme_validate_main(args[2:])
+    if len(args) >= 2 and args[0] == "theme" and args[1] == "fixtures":
+        return theme_fixtures_main(args[2:])
     if len(args) >= 2 and args[0] == "theme" and args[1] in {"diff", "check-compat"}:
         return theme_diff_main(args[1:])
     print(
         "Usage: pwp theme validate <path> [--json] | "
+        "pwp theme fixtures <path> [--out <dir>] [--json] [--run] | "
         "pwp theme diff --from <path> --to <path> [--engine-version <semver>] [--json] | "
         "pwp theme check-compat <path> --engine-version <semver> [--json]",
         file=sys.stderr,
