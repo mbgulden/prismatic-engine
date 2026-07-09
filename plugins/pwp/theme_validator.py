@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
@@ -75,19 +74,25 @@ def _iter_schema_refs(value: Any) -> Iterable[str]:
             yield from _iter_schema_refs(child)
 
 
-def _validate_with_jsonschema(instance: Any, schema_path: Path, label: str, result: ThemeValidationResult) -> None:
+def _validate_with_jsonschema(
+    instance: Any, schema_path: Path, label: str, result: ThemeValidationResult
+) -> None:
     if not schema_path.exists():
         result.add_error(f"Missing bundled schema: {schema_path.relative_to(PWP_DIR)}")
         return
     try:
         import jsonschema  # type: ignore
     except ImportError:
-        result.add_warning(f"jsonschema not installed; using structural checks for {label}")
+        result.add_warning(
+            f"jsonschema not installed; using structural checks for {label}"
+        )
         return
 
     try:
         jsonschema.validate(instance=instance, schema=load_json(schema_path))
-    except Exception as exc:  # jsonschema.ValidationError when installed; keep fallback import-free.
+    except (
+        Exception
+    ) as exc:  # jsonschema.ValidationError when installed; keep fallback import-free.
         message = getattr(exc, "message", str(exc))
         result.add_error(f"{label} failed schema validation: {message}")
 
@@ -114,12 +119,18 @@ def validate_theme_package(theme_path: str | Path) -> ThemeValidationResult:
         result.add_error(f"theme.json is not valid JSON: {exc}")
         return result
 
-    _validate_with_jsonschema(manifest, SCHEMAS_DIR / "pwp-theme.schema.json", "theme.json", result)
+    _validate_with_jsonschema(
+        manifest, SCHEMAS_DIR / "pwp-theme.schema.json", "theme.json", result
+    )
 
     schema_decl = manifest.get("$schema")
     if not schema_decl:
         result.add_error("theme.json missing $schema")
-    elif not isinstance(schema_decl, str) or "pwp" not in schema_decl or "theme" not in schema_decl:
+    elif (
+        not isinstance(schema_decl, str)
+        or "pwp" not in schema_decl
+        or "theme" not in schema_decl
+    ):
         result.add_error("theme.json $schema must reference the PWP theme schema")
 
     theme_id = manifest.get("id")
@@ -156,8 +167,14 @@ def validate_theme_package(theme_path: str | Path) -> ThemeValidationResult:
         if module_id in seen_modules:
             result.add_error(f"Duplicate module id in theme.json modules: {module_id}")
         seen_modules.add(module_id)
-        if not module_id or module_id != module_id.lower() or any(ch not in MODULE_ID_CHARS for ch in module_id):
-            result.add_error(f"Invalid module id '{module_id}'; use lowercase kebab-case")
+        if (
+            not module_id
+            or module_id != module_id.lower()
+            or any(ch not in MODULE_ID_CHARS for ch in module_id)
+        ):
+            result.add_error(
+                f"Invalid module id '{module_id}'; use lowercase kebab-case"
+            )
 
     module_manifest_dir = root / "modules"
     if module_manifest_dir.exists():
@@ -167,7 +184,9 @@ def validate_theme_package(theme_path: str | Path) -> ThemeValidationResult:
             try:
                 module_contract = load_json(module_file)
             except json.JSONDecodeError as exc:
-                result.add_error(f"Module contract {module_file.relative_to(root)} is not valid JSON: {exc}")
+                result.add_error(
+                    f"Module contract {module_file.relative_to(root)} is not valid JSON: {exc}"
+                )
                 continue
             _validate_with_jsonschema(
                 module_contract,
@@ -177,38 +196,59 @@ def validate_theme_package(theme_path: str | Path) -> ThemeValidationResult:
             )
             module_id = module_contract.get("id")
             if not isinstance(module_id, str):
-                result.add_error(f"Module contract {module_file.relative_to(root)} missing string id")
+                result.add_error(
+                    f"Module contract {module_file.relative_to(root)} missing string id"
+                )
                 continue
             module_contract_ids.add(module_id)
             if module_id not in seen_modules:
-                result.add_error(f"Module contract id not listed in theme.json modules: {module_id}")
+                result.add_error(
+                    f"Module contract id not listed in theme.json modules: {module_id}"
+                )
             component = module_contract.get("component")
             if isinstance(component, str) and _is_safe_relative_path(component):
                 component_path = root / "src" / "components" / component
                 if not component_path.exists():
-                    result.add_error(f"Module {module_id} component target missing: src/components/{component}")
+                    result.add_error(
+                        f"Module {module_id} component target missing: src/components/{component}"
+                    )
             else:
-                result.add_error(f"Module {module_id} component must be a safe relative path")
+                result.add_error(
+                    f"Module {module_id} component must be a safe relative path"
+                )
 
             props_schema = module_contract.get("propsSchema")
             if isinstance(props_schema, str):
-                if not _is_safe_relative_path(props_schema) or not (root / props_schema).exists():
-                    result.add_error(f"Module {module_id} propsSchema target missing or unsafe: {props_schema}")
+                if (
+                    not _is_safe_relative_path(props_schema)
+                    or not (root / props_schema).exists()
+                ):
+                    result.add_error(
+                        f"Module {module_id} propsSchema target missing or unsafe: {props_schema}"
+                    )
 
         for module_id in sorted(seen_modules - module_contract_ids):
-            result.add_error(f"theme.json module missing modules/<id>.json contract: {module_id}")
+            result.add_error(
+                f"theme.json module missing modules/<id>.json contract: {module_id}"
+            )
     else:
         result.add_error("Missing modules/ contract directory")
 
     token_rel = entrypoints.get("tokens")
-    if isinstance(token_rel, str) and _is_safe_relative_path(token_rel) and (root / token_rel).exists():
+    if (
+        isinstance(token_rel, str)
+        and _is_safe_relative_path(token_rel)
+        and (root / token_rel).exists()
+    ):
         try:
             tokens = load_json(root / token_rel)
         except json.JSONDecodeError as exc:
             result.add_error(f"Token file is not valid JSON: {exc}")
             tokens = None
         if isinstance(tokens, dict):
-            _validate_with_jsonschema(tokens, SCHEMAS_DIR / "pwp-token.schema.json", token_rel, result)
+            _validate_with_jsonschema(
+                tokens, SCHEMAS_DIR / "pwp-token.schema.json", token_rel, result
+            )
             missing_groups = sorted(REQUIRED_TOKEN_GROUPS - set(tokens))
             for group in missing_groups:
                 result.add_error(f"Token file missing required group: {group}")
@@ -218,14 +258,23 @@ def validate_theme_package(theme_path: str | Path) -> ThemeValidationResult:
 
     emdash_rel = entrypoints.get("emdashMap")
     emdash_block_ids: set[str] = set()
-    if isinstance(emdash_rel, str) and _is_safe_relative_path(emdash_rel) and (root / emdash_rel).exists():
+    if (
+        isinstance(emdash_rel, str)
+        and _is_safe_relative_path(emdash_rel)
+        and (root / emdash_rel).exists()
+    ):
         try:
             emdash_map = load_json(root / emdash_rel)
         except json.JSONDecodeError as exc:
             result.add_error(f"EmDash map is not valid JSON: {exc}")
             emdash_map = None
         if isinstance(emdash_map, dict):
-            _validate_with_jsonschema(emdash_map, SCHEMAS_DIR / "pwp-emdash-map.schema.json", emdash_rel, result)
+            _validate_with_jsonschema(
+                emdash_map,
+                SCHEMAS_DIR / "pwp-emdash-map.schema.json",
+                emdash_rel,
+                result,
+            )
             blocks = emdash_map.get("blocks")
             if not isinstance(blocks, list):
                 result.add_error("EmDash map blocks must be an array")
@@ -241,7 +290,9 @@ def validate_theme_package(theme_path: str | Path) -> ThemeValidationResult:
                         emdash_block_ids.add(block_id)
                     fields = block.get("fields")
                     if not isinstance(fields, dict) or not fields:
-                        result.add_error(f"EmDash block {block_id or '<unknown>'} must define fields")
+                        result.add_error(
+                            f"EmDash block {block_id or '<unknown>'} must define fields"
+                        )
 
     for module_id in sorted(seen_modules - emdash_block_ids):
         result.add_error(f"EmDash map missing block reference for module: {module_id}")
@@ -249,7 +300,11 @@ def validate_theme_package(theme_path: str | Path) -> ThemeValidationResult:
         result.add_error(f"EmDash map references unknown module blockId: {block_id}")
 
     for ref in _iter_schema_refs(manifest):
-        if ref.startswith("http://") or ref.startswith("https://") or ref.startswith("#"):
+        if (
+            ref.startswith("http://")
+            or ref.startswith("https://")
+            or ref.startswith("#")
+        ):
             continue
         if not _is_safe_relative_path(ref) or not (root / ref).exists():
             result.add_error(f"Schema reference target missing or unsafe: {ref}")
@@ -274,19 +329,30 @@ def format_result(result: ThemeValidationResult) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Validate a PWP theme package contract.")
-    parser.add_argument("path", help="Path to a theme package directory containing theme.json")
-    parser.add_argument("--json", action="store_true", help="Emit machine-readable validation result")
+    parser = argparse.ArgumentParser(
+        description="Validate a PWP theme package contract."
+    )
+    parser.add_argument(
+        "path", help="Path to a theme package directory containing theme.json"
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable validation result"
+    )
     args = parser.parse_args(argv)
 
     result = validate_theme_package(args.path)
     if args.json:
-        print(json.dumps({
-            "ok": result.ok,
-            "themePath": str(result.theme_path),
-            "errors": result.errors,
-            "warnings": result.warnings,
-        }, indent=2))
+        print(
+            json.dumps(
+                {
+                    "ok": result.ok,
+                    "themePath": str(result.theme_path),
+                    "errors": result.errors,
+                    "warnings": result.warnings,
+                },
+                indent=2,
+            )
+        )
     else:
         print(format_result(result))
     return 0 if result.ok else 1

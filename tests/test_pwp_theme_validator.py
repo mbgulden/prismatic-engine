@@ -6,14 +6,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
 
 _THIS_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _THIS_DIR.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from plugins.pwp.theme_validator import validate_theme_package
+from plugins.pwp.theme_validator import validate_theme_package  # noqa: E402
 
 VALID_THEME = _REPO_ROOT / "tests" / "fixtures" / "pwp_theme" / "valid_theme"
 
@@ -57,11 +56,13 @@ def test_validator_rejects_emdash_unknown_module_reference(tmp_path: Path) -> No
     shutil.copytree(VALID_THEME, theme)
     emdash_path = theme / "emdash" / "fields.json"
     emdash = json.loads(emdash_path.read_text(encoding="utf-8"))
-    emdash["blocks"].append({
-        "blockId": "ghost-module",
-        "component": "Ghost",
-        "fields": {"title": {"type": "string", "editable": True}},
-    })
+    emdash["blocks"].append(
+        {
+            "blockId": "ghost-module",
+            "component": "Ghost",
+            "fields": {"title": {"type": "string", "editable": True}},
+        }
+    )
     emdash_path.write_text(json.dumps(emdash, indent=2), encoding="utf-8")
 
     result = validate_theme_package(theme)
@@ -83,7 +84,9 @@ def test_repo_local_pwp_theme_validate_command_passes() -> None:
     assert "OK" in completed.stdout
 
 
-def test_repo_local_pwp_theme_validate_command_fails_for_bad_package(tmp_path: Path) -> None:
+def test_repo_local_pwp_theme_validate_command_fails_for_bad_package(
+    tmp_path: Path,
+) -> None:
     bad_theme = tmp_path / "bad-theme"
     bad_theme.mkdir()
     completed = subprocess.run(
