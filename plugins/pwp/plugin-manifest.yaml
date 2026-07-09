@@ -1,0 +1,22 @@
+schema_version: "1.0.0"
+
+name: "pwp-design-token-plugin"
+
+version: "1.0.0"
+
+description: >-
+  Design-token schema + 3 starter templates compiler and renderer.
+
+author: "Antigravity (agent:antigravity)"
+
+entry_point: "pwp.plugin:PWPDesignTokenPlugin"
+
+core_version_constraint: ">=1.0.0, <2.0.0"
+
+dependencies:
+  pip: []
+
+personas: []
+
+hooks:
+  - "on_init"
