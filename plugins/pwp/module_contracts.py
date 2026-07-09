@@ -41,7 +41,11 @@ def _assert_type(value: Any, expected: str, path: str) -> None:
     actual = _type_name(value)
     if expected == "integer" and isinstance(value, int) and not isinstance(value, bool):
         return
-    if expected == "number" and isinstance(value, (int, float)) and not isinstance(value, bool):
+    if (
+        expected == "number"
+        and isinstance(value, (int, float))
+        and not isinstance(value, bool)
+    ):
         return
     if actual != expected:
         raise ModuleContractError(f"{path}: expected {expected}, got {actual}")
@@ -53,19 +57,29 @@ def validate_schema_subset(value: Any, schema: dict[str, Any], path: str = "$") 
         _assert_type(value, expected_type, path)
 
     if "enum" in schema and value not in schema["enum"]:
-        raise ModuleContractError(f"{path}: {value!r} is not in enum {schema['enum']!r}")
+        raise ModuleContractError(
+            f"{path}: {value!r} is not in enum {schema['enum']!r}"
+        )
 
     if isinstance(value, str):
         if schema.get("minLength") and len(value) < schema["minLength"]:
-            raise ModuleContractError(f"{path}: string shorter than {schema['minLength']}")
+            raise ModuleContractError(
+                f"{path}: string shorter than {schema['minLength']}"
+            )
         if pattern := schema.get("pattern"):
             if not re.match(pattern, value):
-                raise ModuleContractError(f"{path}: {value!r} does not match {pattern!r}")
+                raise ModuleContractError(
+                    f"{path}: {value!r} does not match {pattern!r}"
+                )
 
     if isinstance(value, list):
         if schema.get("minItems") and len(value) < schema["minItems"]:
-            raise ModuleContractError(f"{path}: array shorter than {schema['minItems']}")
-        if schema.get("uniqueItems") and len(value) != len({json.dumps(item, sort_keys=True) for item in value}):
+            raise ModuleContractError(
+                f"{path}: array shorter than {schema['minItems']}"
+            )
+        if schema.get("uniqueItems") and len(value) != len(
+            {json.dumps(item, sort_keys=True) for item in value}
+        ):
             raise ModuleContractError(f"{path}: duplicate array items")
         if item_schema := schema.get("items"):
             for index, item in enumerate(value):
@@ -94,21 +108,31 @@ def validate_module_contract(contract: dict[str, Any]) -> None:
     validate_schema_subset(contract, pwp_module_schema())
     props_schema = contract["propsSchema"]
     if props_schema.get("type") != "object":
-        raise ModuleContractError(f"{contract['id']}: propsSchema must describe an object")
+        raise ModuleContractError(
+            f"{contract['id']}: propsSchema must describe an object"
+        )
     declared_props = set(props_schema.get("properties", {}))
     required_props = set(props_schema.get("required", []))
     missing_required_defs = sorted(required_props - declared_props)
     if missing_required_defs:
-        raise ModuleContractError(f"{contract['id']}: required props missing definitions {missing_required_defs}")
+        raise ModuleContractError(
+            f"{contract['id']}: required props missing definitions {missing_required_defs}"
+        )
     editable = set(contract["editableFields"])
     missing_editable_defs = sorted(editable - declared_props)
     if missing_editable_defs:
-        raise ModuleContractError(f"{contract['id']}: editable fields missing prop definitions {missing_editable_defs}")
+        raise ModuleContractError(
+            f"{contract['id']}: editable fields missing prop definitions {missing_editable_defs}"
+        )
     variants = set(contract["variants"])
     for fixture in contract["fixtures"]:
         if fixture["variant"] not in variants:
-            raise ModuleContractError(f"{contract['id']}: fixture {fixture['name']} uses unknown variant {fixture['variant']}")
-        validate_schema_subset(fixture["props"], props_schema, f"{contract['id']}.{fixture['name']}.props")
+            raise ModuleContractError(
+                f"{contract['id']}: fixture {fixture['name']} uses unknown variant {fixture['variant']}"
+            )
+        validate_schema_subset(
+            fixture["props"], props_schema, f"{contract['id']}.{fixture['name']}.props"
+        )
 
 
 def load_module_contracts(root: Path | None = None) -> list[dict[str, Any]]:

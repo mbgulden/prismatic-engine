@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from plugins.pwp.module_contracts import ModuleContractError, load_module_contracts, validate_module_contract
+from plugins.pwp.module_contracts import (
+    ModuleContractError,
+    load_module_contracts,
+    validate_module_contract,
+)
 from plugins.pwp.module_fixture_renderer import render_all_fixtures, render_fixture
 
 
@@ -44,14 +48,29 @@ def test_fixture_renderer_outputs_stable_module_markers() -> None:
 
 
 def test_unknown_fixture_variant_is_rejected() -> None:
-    contract = next(contract for contract in load_module_contracts() if contract["id"] == "hero")
-    bad_fixture = {"name": "bad", "variant": "interpretive-dance", "props": contract["fixtures"][0]["props"]}
+    contract = next(
+        contract for contract in load_module_contracts() if contract["id"] == "hero"
+    )
+    bad_fixture = {
+        "name": "bad",
+        "variant": "interpretive-dance",
+        "props": contract["fixtures"][0]["props"],
+    }
     with pytest.raises(ModuleContractError, match="unknown fixture variant"):
         render_fixture(contract, bad_fixture)
 
 
 def test_contract_rejects_editable_field_without_prop_definition() -> None:
-    contract = next(contract for contract in load_module_contracts() if contract["id"] == "card-grid")
-    broken = {**contract, "editableFields": [*contract["editableFields"], "inventedField"]}
-    with pytest.raises(ModuleContractError, match="editable fields missing prop definitions"):
+    contract = next(
+        contract
+        for contract in load_module_contracts()
+        if contract["id"] == "card-grid"
+    )
+    broken = {
+        **contract,
+        "editableFields": [*contract["editableFields"], "inventedField"],
+    }
+    with pytest.raises(
+        ModuleContractError, match="editable fields missing prop definitions"
+    ):
         validate_module_contract(broken)
