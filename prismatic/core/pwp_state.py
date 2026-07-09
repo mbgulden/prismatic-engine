@@ -152,11 +152,12 @@ class PWPRunStateStore:
     ) -> PWPRunState:
         self._load_from_disk()
 
-        # Find previous artifact sha for this client and target
+        # Find previous reversible artifact sha for this client and target.
+        # Non-reversible deployments cannot be used as rollback targets.
         existing = [
             r
             for r in self._records.values()
-            if r.client_id == client_id and r.target == target
+            if r.client_id == client_id and r.target == target and r.reversible
         ]
         previous_artifact_sha = None
         if existing:
