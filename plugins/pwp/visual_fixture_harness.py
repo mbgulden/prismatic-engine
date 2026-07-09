@@ -237,7 +237,7 @@ def _render_fixture_html(case: FixtureCase) -> str:
 
 
 def _playwright_spec() -> str:
-    return r"""const { test, expect } = require('@playwright/test');
+    return r"""const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
 
@@ -245,21 +245,41 @@ const manifestPath = process.env.PWP_FIXTURE_MANIFEST || path.join(__dirname, 'p
 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 const root = path.dirname(manifestPath);
 
-for (const fixture of manifest.cases) {
-  test(`${fixture.id} renders`, async ({ page }) => {
-    await page.setViewportSize({ width: fixture.viewport.width, height: fixture.viewport.height });
-    const target = path.join(root, fixture.html_file);
-    await page.goto(`file://${target}`);
-    await expect(page.locator('body')).toBeVisible();
-    await expect(page.locator('[data-fixture-id]')).toHaveAttribute('data-fixture-id', fixture.id);
-    if (fixture.kind === 'module') {
-      await expect(page.locator(`[data-module="${fixture.module_id}"][data-variant="${fixture.variant}"]`)).toBeVisible();
+async function run() {
+  const browser = await chromium.launch();
+  const results = [];
+  try {
+    for (const fixture of manifest.cases) {
+      const page = await browser.newPage({ viewport: { width: fixture.viewport.width, height: fixture.viewport.height } });
+      const target = path.join(root, fixture.html_file);
+      await page.goto(`file://${target}`);
+      const fixtureId = await page.locator('[data-fixture-id]').getAttribute('data-fixture-id');
+      if (fixtureId !== fixture.id) {
+        throw new Error(`fixture id mismatch for ${fixture.id}: ${fixtureId}`);
+      }
+      if (fixture.kind === 'module') {
+        const selector = `[data-module="${fixture.module_id}"][data-variant="${fixture.variant}"]`;
+        const count = await page.locator(selector).count();
+        if (count < 1) {
+          throw new Error(`missing module fixture selector ${selector}`);
+        }
+      }
+      const screenshotPath = path.join(root, fixture.screenshot_file);
+      fs.mkdirSync(path.dirname(screenshotPath), { recursive: true });
+      await page.screenshot({ path: screenshotPath, fullPage: true });
+      await page.close();
+      results.push({ id: fixture.id, screenshot: screenshotPath, ok: true });
     }
-    const screenshotPath = path.join(root, fixture.screenshot_file);
-    fs.mkdirSync(path.dirname(screenshotPath), { recursive: true });
-    await page.screenshot({ path: screenshotPath, fullPage: true });
-  });
+  } finally {
+    await browser.close();
+  }
+  console.log(JSON.stringify({ ok: true, cases: results.length, results }, null, 2));
 }
+
+run().catch((error) => {
+  console.error(error && error.stack ? error.stack : String(error));
+  process.exit(1);
+});
 """
 
 
@@ -283,7 +303,7 @@ def run_playwright(plan: HarnessPlan) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["PWP_FIXTURE_MANIFEST"] = plan.manifest_file
     return subprocess.run(
-        ["npx", "playwright", "test", str(spec_path)],
+        ["node", str(spec_path)],
         cwd=spec_path.parent,
         env=env,
         text=True,
@@ -308,7 +328,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--run",
         action="store_true",
-        help="Run `npx playwright test` against the generated spec after writing it",
+        help="Run the generated Playwright node harness after writing fixtures",
     )
     args = parser.parse_args(argv)
 

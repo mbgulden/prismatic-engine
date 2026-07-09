@@ -57,7 +57,7 @@ def test_write_harness_files_emits_manifest_html_and_playwright_spec(
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert payload["themeId"] == "pwp.theme.trust-light"
     assert len(payload["cases"]) == len(plan.cases)
-    assert "@playwright/test" in spec_path.read_text(encoding="utf-8")
+    assert "require('playwright')" in spec_path.read_text(encoding="utf-8")
     first_fixture = out / payload["cases"][0]["html_file"]
     assert first_fixture.exists()
     assert (
