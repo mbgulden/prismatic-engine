@@ -170,15 +170,6 @@ def _copy_if_safe(
         )
         return
 
-    claim = _unsupported_claim(value, allowed_claims)
-    if claim:
-        violations.append(
-            GuardViolation(
-                dotted, f"unsupported certification/compliance claim: {claim!r}", value
-            )
-        )
-        return
-
     if isinstance(value, Mapping):
         child: dict[str, Any] = {}
         for child_key, child_value in value.items():
@@ -194,6 +185,15 @@ def _copy_if_safe(
             )
         if child:
             target[key] = child
+        return
+
+    claim = _unsupported_claim(value, allowed_claims)
+    if claim:
+        violations.append(
+            GuardViolation(
+                dotted, f"unsupported certification/compliance claim: {claim!r}", value
+            )
+        )
         return
 
     target[key] = value
