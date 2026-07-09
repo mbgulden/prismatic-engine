@@ -9,7 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from plugins.pwp.theme_validator import main as theme_validate_main
+from plugins.pwp.theme_validator import main as theme_validate_main  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
