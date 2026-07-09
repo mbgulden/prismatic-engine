@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List
-from pathlib import Path
 
 from prismatic.interface.plugin import (
     PluginContext,
@@ -9,6 +8,7 @@ from prismatic.interface.plugin import (
 )
 
 from .compiler import render_template, get_tokens_for_tenant, set_tenant_tokens
+
 
 class PWPDesignTokenPlugin(PrismaticPlugin):
     """PWPDesignTokenPlugin — Compiles design tokens to CSS custom variables and renders starter templates."""
