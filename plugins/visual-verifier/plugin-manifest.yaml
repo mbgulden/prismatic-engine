@@ -1,0 +1,18 @@
+schema_version: "1.0.0"
+name: "visual-verifier"
+version: "0.1.0"
+description: >-
+  Visual verification plugin exposing MCP tools for URL/file screenshot capture,
+  Nano Banana 2 grading, and fallback heuristic visual checks.
+author: "Fred (agent:fred)"
+entry_point: "visual_verifier.plugin:VisualVerifierPlugin"
+core_version_constraint: ">=0.1.0, <2.0.0"
+dependencies:
+  pip:
+    - "mcp>=1.0"
+  npm:
+    - "@browsermcp/mcp@latest"
+    - "playwright>=1.40"
+personas: []
+hooks:
+  - "on_init"

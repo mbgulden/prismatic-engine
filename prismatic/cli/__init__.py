@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
 from typing import Sequence
 
 from prismatic.cli.doctor import run as doctor_cli_run
@@ -24,33 +23,61 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command")
 
-    status = subparsers.add_parser("status", help="Show engine status and capability diagnostics")
+    status = subparsers.add_parser(
+        "status", help="Show engine status and capability diagnostics"
+    )
     status.add_argument("--provider", default=None, help="Check a specific provider")
 
-    doctor = subparsers.add_parser("doctor", help="Alias for status with the same diagnostics")
+    doctor = subparsers.add_parser(
+        "doctor", help="Alias for status with the same diagnostics"
+    )
     doctor.add_argument("--provider", default=None, help="Check a specific provider")
 
-    init = subparsers.add_parser("init", help="Initialize default Prismatic configuration")
-    init.add_argument("--force", action="store_true", help="Overwrite existing configuration files")
+    init = subparsers.add_parser(
+        "init", help="Initialize default Prismatic configuration"
+    )
+    init.add_argument(
+        "--force", action="store_true", help="Overwrite existing configuration files"
+    )
 
     serve = subparsers.add_parser("serve", help="Run the dispatcher event loop")
-    serve.add_argument("--once", action="store_true", help="Run one dispatcher cycle and exit")
-    serve.add_argument("--interval", type=int, default=None, help="Polling interval in seconds")
-    serve.add_argument("--setup-pipelines", action="store_true", help="Set up pipeline issues and exit")
+    serve.add_argument(
+        "--once", action="store_true", help="Run one dispatcher cycle and exit"
+    )
+    serve.add_argument(
+        "--interval", type=int, default=None, help="Polling interval in seconds"
+    )
+    serve.add_argument(
+        "--setup-pipelines", action="store_true", help="Set up pipeline issues and exit"
+    )
 
     task = subparsers.add_parser("task", help="Manage local tasks")
     task_subparsers = task.add_subparsers(dest="task_command")
-    create = task_subparsers.add_parser("create", help="Create a local task without Linear")
+    create = task_subparsers.add_parser(
+        "create", help="Create a local task without Linear"
+    )
     create.add_argument("title", help="Task description/title")
-    create.add_argument("--agent", default="agy", help="Agent name to dispatch to (default: agy)")
-    create.add_argument("--workspace", default=".", help="Workspace path for the task (default: .)")
-    create.add_argument("--db-path", default=None, help="Override SQLite DB path for local tasks")
+    create.add_argument(
+        "--agent", default="agy", help="Agent name to dispatch to (default: agy)"
+    )
+    create.add_argument(
+        "--workspace", default=".", help="Workspace path for the task (default: .)"
+    )
+    create.add_argument(
+        "--db-path", default=None, help="Override SQLite DB path for local tasks"
+    )
 
     subparsers.add_parser("skills", help="Delegate to prismatic-engine-skills")
 
     journal = subparsers.add_parser("journal", help="Journal continuity commands")
     journal_subparsers = journal.add_subparsers(dest="journal_command")
     journal_subparsers.add_parser("snapshot", help="Create a journal snapshot")
+
+    visual_verify = subparsers.add_parser(
+        "visual-verify",
+        help="Capture multi-viewport screenshots and optionally run visual grading",
+    )
+    visual_verify.add_argument("args", nargs=argparse.REMAINDER)
 
     return parser
 
@@ -108,6 +135,11 @@ def run(argv: Sequence[str] | None = None) -> int:
         from prismatic.journal import cli_journal_snapshot
 
         return int(cli_journal_snapshot() or 0)
+
+    if args.command == "visual-verify":
+        from prismatic.cli.visual_verify import main as visual_verify_main
+
+        return int(visual_verify_main(args.args) or 0)
 
     parser.print_help()
     return 0
