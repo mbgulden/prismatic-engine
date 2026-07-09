@@ -6,7 +6,12 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from plugins.pwp.compiler import compile_tokens_to_css  # noqa: E402
+from plugins.pwp.compiler import (  # noqa: E402
+    controlled_page_overrides,
+    compile_tokens_to_css,
+    merge_dicts,
+    merge_token_layers,
+)
 
 
 def _tokens() -> dict:
@@ -76,3 +81,61 @@ def test_compile_tokens_to_css_is_stable_for_unsorted_tokens() -> None:
     assert lines[0] == "--pwp-animation-fade: a;"
     assert lines[-1] == "--pwp-spacing-xs: 1;"
     assert "--pwp-color-semantic-success: #11aa11;" in lines
+
+
+def test_merge_dicts_deep_copies_without_mutating_defaults() -> None:
+    defaults = {"colors": {"primary": "pwp", "semantic": {"success": "green"}}}
+    overrides = {"colors": {"semantic": {"warning": "gold"}}}
+
+    merged = merge_dicts(defaults, overrides)
+    merged["colors"]["semantic"]["success"] = "mutated"
+    overrides["colors"]["semantic"]["warning"] = "mutated"
+
+    assert defaults == {"colors": {"primary": "pwp", "semantic": {"success": "green"}}}
+    assert merged["colors"]["primary"] == "pwp"
+    assert merged["colors"]["semantic"]["warning"] == "gold"
+
+
+def test_merge_token_layers_uses_pwp_theme_tenant_page_precedence() -> None:
+    pwp_defaults = _tokens()
+    theme_defaults = {
+        "colors": {"primary": "theme", "semantic": {"success": "theme-success"}},
+        "spacing": {"md": "theme-md"},
+    }
+    tenant_overrides = {
+        "colors": {"primary": "tenant", "semantic": {"info": "tenant-info"}},
+        "spacing": {"lg": "tenant-lg"},
+    }
+    page_overrides = {
+        "colors": {"primary": "page", "accent": "blocked"},
+        "spacing": {"lg": "blocked"},
+    }
+    original = json.loads(json.dumps(pwp_defaults, sort_keys=True))
+
+    merged = merge_token_layers(
+        pwp_defaults,
+        theme_defaults=theme_defaults,
+        tenant_overrides=tenant_overrides,
+        page_overrides=page_overrides,
+        allowed_page_override_paths=["colors.primary"],
+    )
+
+    assert merged["colors"]["primary"] == "page"
+    assert merged["colors"]["accent"] == "#333333"
+    assert merged["colors"]["semantic"]["success"] == "theme-success"
+    assert merged["colors"]["semantic"]["info"] == "tenant-info"
+    assert merged["spacing"]["md"] == "theme-md"
+    assert merged["spacing"]["lg"] == "tenant-lg"
+    assert pwp_defaults == original
+    assert theme_defaults["colors"]["primary"] == "theme"
+    assert tenant_overrides["colors"]["primary"] == "tenant"
+    assert page_overrides["colors"]["primary"] == "page"
+
+
+def test_page_overrides_require_explicit_allowlist() -> None:
+    try:
+        controlled_page_overrides({"colors": {"primary": "page"}}, allowed_paths=None)
+    except ValueError as exc:
+        assert "require" in str(exc)
+    else:  # pragma: no cover - defensive; pytest.fail would add an import for one line
+        raise AssertionError("page overrides without allowlist should fail")

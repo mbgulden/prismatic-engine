@@ -393,6 +393,8 @@ Deliverables:
   2. theme family defaults,
   3. tenant/client overrides,
   4. page-level controlled overrides.
+- Override merges are recursive and non-mutating: each layer is deep-copied before higher-precedence values are applied, so default/theme/tenant fixtures remain safe to reuse for deploy hashes, diffs, and rollback.
+- Page-level overrides must be explicitly allowlisted by dot path (for example `colors.primary` or `typography.font_sizes`) before they are merged. Non-allowlisted page values are ignored; page renders should not become untracked private theme forks.
 - Token provenance metadata.
 - Backward-compatible adapter for current `tests/test_pwp_design_tokens.py` assumptions.
 

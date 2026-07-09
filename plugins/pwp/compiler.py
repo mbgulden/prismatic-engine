@@ -1,6 +1,7 @@
+from copy import deepcopy
 import json
 from pathlib import Path
-from typing import Any, Iterable, Tuple
+from typing import Any, Iterable, Mapping, Sequence, Tuple
 
 # Paths
 PWP_DIR = Path(__file__).resolve().parent
@@ -15,15 +16,93 @@ def load_json(path: Path) -> dict:
         return json.load(f)
 
 
-def merge_dicts(base: dict, overrides: dict) -> dict:
-    """Recursively merge overrides into base dictionary."""
-    result = base.copy()
-    for k, v in overrides.items():
-        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
-            result[k] = merge_dicts(result[k], v)
+def merge_dicts(base: Mapping[str, Any], overrides: Mapping[str, Any] | None) -> dict:
+    """Recursively merge overrides into base without mutating either input."""
+    result = deepcopy(dict(base))
+    if not overrides:
+        return result
+
+    for key, value in overrides.items():
+        base_value = result.get(key)
+        if isinstance(base_value, dict) and isinstance(value, Mapping):
+            result[key] = merge_dicts(base_value, value)
         else:
-            result[k] = v
+            result[key] = deepcopy(value)
     return result
+
+
+def _path_is_allowed(path: tuple[str, ...], allowed_paths: set[tuple[str, ...]]) -> bool:
+    """Return whether an override path is under, or leads to, an allowed path."""
+    return any(
+        path[: len(allowed)] == allowed or allowed[: len(path)] == path
+        for allowed in allowed_paths
+    )
+
+
+def _filter_page_overrides(
+    overrides: Mapping[str, Any],
+    allowed_paths: set[tuple[str, ...]],
+    path: tuple[str, ...] = (),
+) -> dict:
+    """Copy only page override leaves under allowlisted token paths."""
+    filtered: dict[str, Any] = {}
+    for key, value in overrides.items():
+        child_path = (*path, str(key))
+        if not _path_is_allowed(child_path, allowed_paths):
+            continue
+        if isinstance(value, Mapping):
+            child = _filter_page_overrides(value, allowed_paths, child_path)
+            if child:
+                filtered[key] = child
+        else:
+            filtered[key] = deepcopy(value)
+    return filtered
+
+
+def controlled_page_overrides(
+    overrides: Mapping[str, Any] | None,
+    allowed_paths: Sequence[str] | None,
+) -> dict:
+    """Return a non-mutating copy of page overrides limited to allowed dot paths.
+
+    Page overrides are intentionally opt-in. A caller must provide dot-paths such
+    as ``colors.primary`` or ``typography.font_sizes``; everything else is
+    ignored so page-local changes cannot silently become a private theme fork.
+    """
+    if not overrides:
+        return {}
+    if not allowed_paths:
+        raise ValueError("page overrides require at least one allowed token path")
+
+    parsed_paths = {tuple(part for part in path.split(".") if part) for path in allowed_paths}
+    parsed_paths.discard(())
+    if not parsed_paths:
+        raise ValueError("page override allowlist cannot be empty")
+    return _filter_page_overrides(overrides, parsed_paths)
+
+
+def merge_token_layers(
+    pwp_defaults: Mapping[str, Any],
+    theme_defaults: Mapping[str, Any] | None = None,
+    tenant_overrides: Mapping[str, Any] | None = None,
+    page_overrides: Mapping[str, Any] | None = None,
+    allowed_page_override_paths: Sequence[str] | None = None,
+) -> dict:
+    """Merge token layers using PWP's deterministic precedence contract.
+
+    Precedence, lowest to highest:
+    1. PWP defaults
+    2. theme family defaults
+    3. tenant/client overrides
+    4. controlled page-level overrides
+
+    Every layer is deep-copied on write, so the caller's defaults and override
+    fixtures remain reusable across renders, tests, deploy hashing, and rollback.
+    """
+    tokens = merge_dicts(pwp_defaults, theme_defaults)
+    tokens = merge_dicts(tokens, tenant_overrides)
+    page_layer = controlled_page_overrides(page_overrides, allowed_page_override_paths)
+    return merge_dicts(tokens, page_layer)
 
 
 def manual_validate(tokens: dict):
@@ -169,17 +248,30 @@ def compile_tokens_to_css(tokens: dict) -> str:
     return ":root {\n" + "\n".join(css_lines) + "\n}"
 
 
-def get_tokens_for_tenant(tenant_id: str = None) -> dict:
-    """Loads and merges tokens for a given tenant."""
+def get_tokens_for_tenant(
+    tenant_id: str | None = None,
+    *,
+    theme_defaults: Mapping[str, Any] | None = None,
+    page_overrides: Mapping[str, Any] | None = None,
+    allowed_page_override_paths: Sequence[str] | None = None,
+) -> dict:
+    """Loads and merges tokens for a tenant using PWP override precedence."""
     # Load default
-    tokens = load_json(DEFAULT_TOKENS_PATH)
+    pwp_defaults = load_json(DEFAULT_TOKENS_PATH)
+    tenant_overrides = None
 
     if tenant_id:
         tenant_path = TENANTS_DIR / tenant_id / "tokens.json"
         if tenant_path.exists():
-            overrides = load_json(tenant_path)
-            tokens = merge_dicts(tokens, overrides)
+            tenant_overrides = load_json(tenant_path)
 
+    tokens = merge_token_layers(
+        pwp_defaults,
+        theme_defaults=theme_defaults,
+        tenant_overrides=tenant_overrides,
+        page_overrides=page_overrides,
+        allowed_page_override_paths=allowed_page_override_paths,
+    )
     validate_tokens(tokens)
     return tokens
 
