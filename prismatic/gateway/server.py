@@ -222,6 +222,15 @@ async def plugin_health(plugin_name: str, request: Request) -> JSONResponse:
     return JSONResponse(payload)
 
 
+@app.get("/api/cost")
+async def get_cost_summary() -> dict[str, Any]:
+    """Return per-dispatch cost summary for dashboards."""
+    from prismatic.cost.tracker import cost_summary
+
+    return cost_summary()
+
+
+
 # ── WebSocket Endpoint ──────────────────────────────────────────────
 
 

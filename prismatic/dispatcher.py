@@ -2391,6 +2391,11 @@ def main() -> None:
     """
     import argparse
 
+    # optimize-workspace must emit raw machine-parseable JSON.
+    if len(sys.argv) > 1 and sys.argv[1] == "optimize-workspace":
+        from prismatic.workspace_optimizer import main as optimize_main
+        sys.exit(optimize_main(sys.argv[2:]))
+
     # ── Legacy support: Rewrite sys.argv ─────────────────────────
     # If the first argument is a legacy flag, insert 'serve' before it.
     legacy_flags = {"--once", "--interval", "--setup-pipelines"}
@@ -2427,6 +2432,18 @@ def main() -> None:
         "--force",
         action="store_true",
         help="Overwrite existing configuration files",
+    )
+
+    # ── Workspace Optimizer Subcommand ────────────────────────
+    optimize_parser = subparsers.add_parser(
+        "optimize-workspace",
+        help="Write agent ignore files and disable high-overhead AGY plugins",
+    )
+    optimize_parser.add_argument("workspace", help="Workspace directory to optimize")
+    optimize_parser.add_argument(
+        "--no-plugin-disable",
+        action="store_true",
+        help="Only write ignore files; skip AGY plugin disable attempts",
     )
 
     # ── Billing-Report Subcommand (Phase 4.4) ─────────────────
@@ -2499,6 +2516,12 @@ def main() -> None:
 
     if args.command == "init":
         init_config(force=args.force)
+    elif args.command == "optimize-workspace":
+        from prismatic.workspace_optimizer import main as optimize_main
+        opt_args = [args.workspace]
+        if args.no_plugin_disable:
+            opt_args.append("--no-plugin-disable")
+        sys.exit(optimize_main(opt_args))
     elif args.command == "billing-report":
         cmd_billing_report(args)
     elif args.command == "doctor":
