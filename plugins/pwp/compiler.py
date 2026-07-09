@@ -31,7 +31,9 @@ def merge_dicts(base: Mapping[str, Any], overrides: Mapping[str, Any] | None) ->
     return result
 
 
-def _path_is_allowed(path: tuple[str, ...], allowed_paths: set[tuple[str, ...]]) -> bool:
+def _path_is_allowed(
+    path: tuple[str, ...], allowed_paths: set[tuple[str, ...]]
+) -> bool:
     """Return whether an override path is under, or leads to, an allowed path."""
     return any(
         path[: len(allowed)] == allowed or allowed[: len(path)] == path
@@ -74,7 +76,9 @@ def controlled_page_overrides(
     if not allowed_paths:
         raise ValueError("page overrides require at least one allowed token path")
 
-    parsed_paths = {tuple(part for part in path.split(".") if part) for path in allowed_paths}
+    parsed_paths = {
+        tuple(part for part in path.split(".") if part) for path in allowed_paths
+    }
     parsed_paths.discard(())
     if not parsed_paths:
         raise ValueError("page override allowlist cannot be empty")
