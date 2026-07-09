@@ -53,9 +53,7 @@ class PluginLoader:
         files, validate requirements, and dynamically register plugins.
         """
         if not os.path.exists(self.plugins_dir):
-            logger.warning(
-                "Plugin directory does not exist: %s", self.plugins_dir
-            )
+            logger.warning("Plugin directory does not exist: %s", self.plugins_dir)
             return
 
         for entry in os.scandir(self.plugins_dir):
@@ -97,9 +95,7 @@ class PluginLoader:
 
     # ── internal ───────────────────────────────────────────────────────
 
-    def _load_plugin(
-        self, manifest_path: Path, context: PluginContext
-    ) -> None:
+    def _load_plugin(self, manifest_path: Path, context: PluginContext) -> None:
         with open(manifest_path, "r") as fh:
             manifest = yaml.safe_load(fh)
 
@@ -167,9 +163,7 @@ class PluginLoader:
             tools = plugin_instance.register_tools()
             self.registered_tools.extend(tools)
         except Exception:
-            logger.error(
-                "Plugin '%s' failed to register tools", name, exc_info=True
-            )
+            logger.error("Plugin '%s' failed to register tools", name, exc_info=True)
 
         logger.info("Successfully loaded plugin '%s' (v%s)", name, version)
 
@@ -234,7 +228,9 @@ class PWPPluginRunner:
         context: Dict[str, Any],
         stages: Iterable[Stage],
         deploy_target: Optional[str] = None,
-        deploy_artifact_provider: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
+        deploy_artifact_provider: Optional[
+            Callable[[Dict[str, Any]], Dict[str, Any]]
+        ] = None,
     ) -> Dict[str, Any]:
         """
         Run a PWP pipeline.
@@ -293,12 +289,77 @@ class PWPPluginRunner:
         if deploy_target is not None:
             if deploy_artifact_provider is None:
                 raise ValueError(
-                    "deploy_artifact_provider is required when "
-                    "deploy_target is set"
+                    "deploy_artifact_provider is required when deploy_target is set"
                 )
+
+            # GRO-3716: skip Cloudflare/PWP deploys when the latest run-state
+            # already recorded the same commit/theme/content hashes.  The
+            # check happens before artifact generation so idempotent pipeline
+            # replays do not upload or emit on_deploy side effects.
+            from prismatic.core.pwp_state import PWPRunStateStore
+
+            store = PWPRunStateStore()
+
+            client_id = context.get("client_id", "default_client")
+            commit_hash = context.get("commit_hash")
+            theme_hash = context.get("theme_hash")
+            content_hash = context.get("content_hash")
+            if store.should_skip_deploy(
+                client_id=client_id,
+                target=deploy_target,
+                commit_hash=commit_hash,
+                theme_hash=theme_hash,
+                content_hash=content_hash,
+            ):
+                result["deploy_skipped"] = True
+                result["deploy_target"] = deploy_target
+                result["deploy_skip_reason"] = "matching_commit_theme_content_hashes"
+                return result
+
             artifact = deploy_artifact_provider(result)
             self.loader.execute_hook(
                 HOOK_ON_DEPLOY, pipeline_id, deploy_target, artifact
             )
+
+            # GRO-3070: Record deploy state in PWPRunStateStore
+            client_id = context.get(
+                "client_id", artifact.get("client_id", "default_client")
+            )
+            deployed_by = context.get(
+                "deployed_by", artifact.get("deployed_by", "system")
+            )
+            artifact_sha = (
+                artifact.get("artifact_sha")
+                or artifact.get("commit_sha")
+                or context.get("artifact_sha")
+                or context.get("commit_hash")
+                or context.get("commit_sha")
+                or "unknown_sha"
+            )
+
+            reversible = False
+            for p in self.loader.loaded_plugins.values():
+                if hasattr(p, "on_deploy"):
+                    if getattr(p, "reversible", False):
+                        reversible = True
+                        break
+            if not reversible:
+                reversible = context.get(
+                    "reversible", artifact.get("reversible", False)
+                )
+
+            store.record_deploy(
+                run_id=pipeline_id,
+                client_id=client_id,
+                target=deploy_target,
+                artifact_sha=artifact_sha,
+                deployed_by=deployed_by,
+                reversible=reversible,
+                commit_hash=commit_hash,
+                theme_hash=theme_hash,
+                content_hash=content_hash,
+            )
+            result["deploy_skipped"] = False
+            result["deploy_target"] = deploy_target
 
         return result
