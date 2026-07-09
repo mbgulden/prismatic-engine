@@ -194,6 +194,162 @@ async def shutdown() -> None:
     logger.info("Gateway shutdown complete")
 
 
+# ── Agent Dashboard API ─────────────────────────────────────────────
+
+_AGENT_DEFAULTS: dict[str, dict[str, str]] = {
+    "agy": {"name": "AGY", "role": "Vision & Research CLI"},
+    "jules": {"name": "Jules", "role": "Async Git & PR Agent"},
+    "fred": {"name": "Fred", "role": "Nudge/Staging Governor"},
+    "ned": {"name": "Ned", "role": "Research & Synthesis"},
+    "kai": {"name": "Kai", "role": "Tourism Orchestrator"},
+    "codex": {"name": "Codex", "role": "Coding Executor"},
+}
+
+
+def _agent_key(name: str | None) -> str:
+    """Normalize agent/profile names for dashboard keys."""
+    key = (name or "unknown").strip().lower().replace("agent:", "")
+    aliases = {
+        "agy-cli": "agy",
+        "kai-content": "kai",
+        "kai-css": "kai",
+        "kai-js": "kai",
+    }
+    return aliases.get(key, key)
+
+
+def _read_agent_registry() -> dict[str, Any]:
+    """Read optional live agent registry without failing the dashboard."""
+    candidates = [
+        os.environ.get("PRISMATIC_AGENT_REGISTRY"),
+        str(Path.home() / ".prismatic" / "registry.json"),
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        path = Path(candidate).expanduser()
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(path.read_text())
+            return data if isinstance(data, dict) else {}
+        except Exception as exc:
+            logger.warning("Unable to read agent registry %s: %s", path, exc)
+    return {}
+
+
+def _seconds_between(started_at: str | None, completed_at: str | None) -> float | None:
+    if not started_at or not completed_at:
+        return None
+    try:
+        from datetime import datetime
+
+        start = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+        end = datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
+        return max(0.0, (end - start).total_seconds())
+    except Exception:
+        return None
+
+
+def _recent_agent_runs(limit: int = 200) -> list[Any]:
+    if _run_store is None:
+        return []
+    try:
+        _run_store.reload()
+        return _run_store.get_recent_runs(limit=limit)
+    except Exception as exc:
+        logger.warning("Unable to read recent run records: %s", exc)
+        return []
+
+
+@app.get("/api/agents")
+async def get_agents() -> dict[str, Any]:
+    """Return live agent status from registry plus recent run records."""
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    agents: dict[str, dict[str, Any]] = {
+        key: {
+            "name": meta["name"],
+            "role": meta["role"],
+            "status": "Unknown",
+            "last_seen": None,
+            "dispatched": 0,
+            "duration": "—",
+            "dedup": "—",
+            "queue": [],
+            "logs": [],
+        }
+        for key, meta in _AGENT_DEFAULTS.items()
+    }
+
+    registry = _read_agent_registry()
+    for raw_name, info in registry.items():
+        if not isinstance(info, dict):
+            continue
+        key = _agent_key(raw_name)
+        agents.setdefault(
+            key,
+            {
+                "name": raw_name,
+                "role": info.get("role", "Agent"),
+                "status": "Unknown",
+                "last_seen": None,
+                "dispatched": 0,
+                "duration": "—",
+                "dedup": "—",
+                "queue": [],
+                "logs": [],
+            },
+        )
+        status = info.get("status") or info.get("state") or agents[key]["status"]
+        agents[key]["status"] = str(status).title()
+        agents[key]["last_seen"] = info.get("last_heartbeat") or info.get("last_seen")
+        agents[key]["current_issue"] = info.get("issue") or info.get("task_id")
+
+    durations: dict[str, list[float]] = {}
+    for record in _recent_agent_runs():
+        key = _agent_key(getattr(record, "agent_name", None))
+        agent = agents.setdefault(
+            key,
+            {
+                "name": key.title(),
+                "role": "Agent",
+                "status": "Unknown",
+                "last_seen": None,
+                "dispatched": 0,
+                "duration": "—",
+                "dedup": "—",
+                "queue": [],
+                "logs": [],
+            },
+        )
+        agent["dispatched"] += 1
+        status = getattr(record, "status", "unknown")
+        issue_id = getattr(record, "issue_id", "unknown")
+        started_at = getattr(record, "started_at", "") or ""
+        completed_at = getattr(record, "completed_at", None)
+        seconds = _seconds_between(started_at, completed_at)
+        if seconds is not None:
+            durations.setdefault(key, []).append(seconds)
+        if status in {"pending", "running"}:
+            agent["queue"].append(f"{issue_id} — {status}")
+            agent["status"] = "Running" if status == "running" else "Queued"
+        if len(agent["logs"]) < 5:
+            agent["logs"].append(
+                {
+                    "ref": issue_id,
+                    "time": started_at[11:19] if len(started_at) >= 19 else "—",
+                    "status": str(status).title(),
+                    "dur": f"{seconds:.1f}s" if seconds is not None else "—",
+                }
+            )
+
+    for key, values in durations.items():
+        if values:
+            agents[key]["duration"] = f"{sum(values) / len(values):.1f}s"
+
+    return {"updated_at": now, "agents": agents}
+
+
 # ── Health ──────────────────────────────────────────────────────────
 
 
@@ -228,7 +384,6 @@ async def get_cost_summary() -> dict[str, Any]:
     from prismatic.cost.tracker import cost_summary
 
     return cost_summary()
-
 
 
 # ── WebSocket Endpoint ──────────────────────────────────────────────

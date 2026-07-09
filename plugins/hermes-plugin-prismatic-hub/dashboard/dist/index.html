@@ -1902,7 +1902,7 @@
   // --------------------------------------------------
   // 1. Data Store
   // --------------------------------------------------
-  const agentsData = {
+  let agentsData = {
     agy: {
       name: "AGY",
       role: "Vision & Research CLI",
@@ -2005,6 +2005,58 @@
   let currentlySelectedAgentId = null;
   let simulatedDuplicateCount = 189;
   let simulatedTotalHashes = 1424;
+
+  function mergeLiveAgentData(liveAgents) {
+    Object.entries(liveAgents || {}).forEach(([agentId, live]) => {
+      const existing = agentsData[agentId] || {};
+      agentsData[agentId] = {
+        ...existing,
+        ...live,
+        color: existing.color || `var(--color-${agentId})`,
+        colorGlow: existing.colorGlow || "rgba(255,255,255,0.15)",
+        queue: Array.isArray(live.queue) ? live.queue : (existing.queue || []),
+        logs: Array.isArray(live.logs) && live.logs.length ? live.logs : (existing.logs || []),
+        icon: existing.icon || ""
+      };
+    });
+  }
+
+  function refreshAgentCards() {
+    Object.entries(agentsData).forEach(([agentId, data]) => {
+      const card = document.querySelector(`.agent-card.${agentId}`);
+      if (!card) return;
+      const badge = card.querySelector(".badge");
+      const task = document.getElementById(`${agentId}-task`);
+      const dot = card.querySelector(".agent-dot");
+      const queueLength = Array.isArray(data.queue) ? data.queue.length : 0;
+      const isRunning = data.status === "Running";
+
+      card.classList.toggle("running", isRunning);
+      card.classList.toggle("has-tasks", queueLength > 0);
+      if (dot) dot.classList.toggle("pulse", isRunning);
+      if (badge) badge.textContent = queueLength > 0 ? String(queueLength) : "—";
+      if (task) {
+        task.textContent = queueLength > 0
+          ? data.queue[0]
+          : `${data.status || "Unknown"} · ${data.last_seen ? `last seen ${data.last_seen}` : "no queued work"}`;
+      }
+    });
+  }
+
+  async function loadLiveAgents() {
+    try {
+      const response = await fetch("/api/agents", { headers: { "Accept": "application/json" } });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const payload = await response.json();
+      mergeLiveAgentData(payload.agents || {});
+      refreshAgentCards();
+    } catch (error) {
+      console.warn("Unable to load /api/agents; using bundled fallback data", error);
+    }
+  }
+
+  loadLiveAgents();
+  setInterval(loadLiveAgents, 60000);
 
   // --------------------------------------------------
   // 2. Telemetry Clock
