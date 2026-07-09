@@ -8,13 +8,13 @@ from pathlib import Path
 
 
 _THIS_DIR = Path(__file__).resolve().parent
-_REPO_ROOT = _THIS_DIR.parent
+_REPO_ROOT = _THIS_DIR.parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
 from plugins.pwp.theme_validator import validate_theme_package  # noqa: E402
 
-VALID_THEME = _REPO_ROOT / "tests" / "fixtures" / "pwp_theme" / "valid_theme"
+VALID_THEME = _THIS_DIR / "fixtures" / "pwp_theme" / "valid_theme"
 
 
 def test_valid_theme_package_passes_contract_validation() -> None:
