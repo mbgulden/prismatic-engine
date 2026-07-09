@@ -70,7 +70,7 @@ def test_upgrade_flags_overrides_for_removed_targets(tmp_path: Path) -> None:
     after = _copy_theme(tmp_path, "after")
     tokens_path = after / "tokens" / "tokens.json"
     tokens = _read_json(tokens_path)
-    del tokens["shadow"]
+    del tokens["shadow"]["sm"]
     _write_json(tokens_path, tokens)
     overrides = tmp_path / "tenant-overrides.json"
     _write_json(
