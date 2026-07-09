@@ -10,7 +10,9 @@ from typing import Any
 from plugins.pwp.theme_validator import load_json, validate_theme_package
 
 _VERSION_RE = re.compile(r"^\s*(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[-+].*)?\s*$")
-_RANGE_RE = re.compile(r"^(>=|<=|>|<|==|=|\^|~)?\s*(\d+(?:\.\d+){0,2}(?:[-+][A-Za-z0-9.-]+)?)$")
+_RANGE_RE = re.compile(
+    r"^(>=|<=|>|<|==|=|\^|~)?\s*(\d+(?:\.\d+){0,2}(?:[-+][A-Za-z0-9.-]+)?)$"
+)
 
 
 @dataclass(frozen=True, order=True)
@@ -128,7 +130,11 @@ def _satisfies_constraint(version: Version, constraint: str) -> bool:
     if operator == "<":
         return version < target
     if operator == "^":
-        upper = Version(target.major + 1, 0, 0) if target.major else Version(0, target.minor + 1, 0)
+        upper = (
+            Version(target.major + 1, 0, 0)
+            if target.major
+            else Version(0, target.minor + 1, 0)
+        )
         return target <= version < upper
     if operator == "~":
         upper = Version(target.major, target.minor + 1, 0)
@@ -221,7 +227,14 @@ def _add_change(
 ) -> None:
     if before != after:
         changes.append(
-            ThemeChange(kind=kind, path=path, before=before, after=after, breaking=breaking, message=message)
+            ThemeChange(
+                kind=kind,
+                path=path,
+                before=before,
+                after=after,
+                breaking=breaking,
+                message=message,
+            )
         )
 
 
@@ -241,8 +254,12 @@ def diff_theme_packages(
         to_path=to_root,
         from_id=before.get("id") if isinstance(before.get("id"), str) else None,
         to_id=after.get("id") if isinstance(after.get("id"), str) else None,
-        from_version=before.get("version") if isinstance(before.get("version"), str) else None,
-        to_version=after.get("version") if isinstance(after.get("version"), str) else None,
+        from_version=before.get("version")
+        if isinstance(before.get("version"), str)
+        else None,
+        to_version=after.get("version")
+        if isinstance(after.get("version"), str)
+        else None,
         errors=errors,
     )
     if errors:
@@ -305,8 +322,12 @@ def diff_theme_packages(
 
     before_modules_value = before.get("modules")
     after_modules_value = after.get("modules")
-    before_modules = set(before_modules_value if isinstance(before_modules_value, list) else [])
-    after_modules = set(after_modules_value if isinstance(after_modules_value, list) else [])
+    before_modules = set(
+        before_modules_value if isinstance(before_modules_value, list) else []
+    )
+    after_modules = set(
+        after_modules_value if isinstance(after_modules_value, list) else []
+    )
     for module_id in sorted(before_modules - after_modules):
         result.changes.append(
             ThemeChange(
@@ -344,7 +365,9 @@ def diff_theme_packages(
                     before=before_group,
                     after=after_group,
                     breaking=removed,
-                    message="Token group removed." if removed else "Token group changed.",
+                    message="Token group removed."
+                    if removed
+                    else "Token group changed.",
                 )
             )
 
@@ -378,7 +401,9 @@ def diff_theme_packages(
                     breaking=True,
                     message=(
                         f"Target theme is not compatible with PWP engine {engine_version}: "
-                        + "; ".join(compat.errors or [f"range {compat.range} does not match"])
+                        + "; ".join(
+                            compat.errors or [f"range {compat.range} does not match"]
+                        )
                     ),
                 )
             )
@@ -399,8 +424,12 @@ def format_compatibility(result: ThemeCompatibilityResult) -> str:
 
 def format_diff(result: ThemeDiffResult) -> str:
     lines = [f"PWP theme diff: {result.from_path} -> {result.to_path}"]
-    lines.append(f"Theme: {result.from_id}@{result.from_version} -> {result.to_id}@{result.to_version}")
-    lines.append("FAILED" if result.errors else ("BREAKING" if result.breaking_changes else "OK"))
+    lines.append(
+        f"Theme: {result.from_id}@{result.from_version} -> {result.to_id}@{result.to_version}"
+    )
+    lines.append(
+        "FAILED" if result.errors else ("BREAKING" if result.breaking_changes else "OK")
+    )
     if result.errors:
         lines.append("Errors:")
         lines.extend(f"- {error}" for error in result.errors)
@@ -415,27 +444,52 @@ def format_diff(result: ThemeDiffResult) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Diff PWP theme packages and resolve engine compatibility.")
+    parser = argparse.ArgumentParser(
+        description="Diff PWP theme packages and resolve engine compatibility."
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    diff_parser = subparsers.add_parser("diff", help="Compare two theme package directories")
-    diff_parser.add_argument("--from", dest="from_theme", required=True, help="Source theme package path")
-    diff_parser.add_argument("--to", dest="to_theme", required=True, help="Target theme package path")
-    diff_parser.add_argument("--engine-version", help="Require target theme compatibility with this PWP engine version")
-    diff_parser.add_argument("--json", action="store_true", help="Emit machine-readable diff result")
+    diff_parser = subparsers.add_parser(
+        "diff", help="Compare two theme package directories"
+    )
+    diff_parser.add_argument(
+        "--from", dest="from_theme", required=True, help="Source theme package path"
+    )
+    diff_parser.add_argument(
+        "--to", dest="to_theme", required=True, help="Target theme package path"
+    )
+    diff_parser.add_argument(
+        "--engine-version",
+        help="Require target theme compatibility with this PWP engine version",
+    )
+    diff_parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable diff result"
+    )
 
-    compat_parser = subparsers.add_parser("check-compat", help="Check a theme against a PWP engine version")
+    compat_parser = subparsers.add_parser(
+        "check-compat", help="Check a theme against a PWP engine version"
+    )
     compat_parser.add_argument("path", help="Theme package path")
-    compat_parser.add_argument("--engine-version", required=True, help="PWP engine semantic version")
-    compat_parser.add_argument("--json", action="store_true", help="Emit machine-readable compatibility result")
+    compat_parser.add_argument(
+        "--engine-version", required=True, help="PWP engine semantic version"
+    )
+    compat_parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable compatibility result"
+    )
 
     args = parser.parse_args(argv)
     if args.command == "diff":
-        diff = diff_theme_packages(args.from_theme, args.to_theme, engine_version=args.engine_version)
+        diff = diff_theme_packages(
+            args.from_theme, args.to_theme, engine_version=args.engine_version
+        )
         print(json.dumps(diff.as_dict(), indent=2) if args.json else format_diff(diff))
         return 0 if not diff.errors else 1
     compat = check_theme_compatibility(args.path, args.engine_version)
-    print(json.dumps(compat.as_dict(), indent=2) if args.json else format_compatibility(compat))
+    print(
+        json.dumps(compat.as_dict(), indent=2)
+        if args.json
+        else format_compatibility(compat)
+    )
     return 0 if compat.ok else 1
 
 

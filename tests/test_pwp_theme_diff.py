@@ -51,7 +51,9 @@ def test_check_theme_compatibility_accepts_matching_engine_version() -> None:
     assert result.range == ">=0.2.0"
 
 
-def test_check_theme_compatibility_rejects_out_of_range_engine_version(tmp_path: Path) -> None:
+def test_check_theme_compatibility_rejects_out_of_range_engine_version(
+    tmp_path: Path,
+) -> None:
     theme = _copy_theme(tmp_path, "theme")
     manifest_path = theme / "theme.json"
     manifest = _read_json(manifest_path)
@@ -77,7 +79,9 @@ def test_diff_reports_added_module_as_safe_change(tmp_path: Path) -> None:
     module_contract["id"] = "testimonial"
     module_contract["component"] = "Testimonial.astro"
     _write_json(after / "modules" / "testimonial.json", module_contract)
-    (after / "src" / "components" / "Testimonial.astro").write_text("---\n---\n<section />\n", encoding="utf-8")
+    (after / "src" / "components" / "Testimonial.astro").write_text(
+        "---\n---\n<section />\n", encoding="utf-8"
+    )
     emdash_path = after / "emdash" / "fields.json"
     emdash = _read_json(emdash_path)
     emdash["blocks"].append(
@@ -92,7 +96,9 @@ def test_diff_reports_added_module_as_safe_change(tmp_path: Path) -> None:
     diff = diff_theme_packages(before, after)
 
     assert not diff.errors
-    module_changes = [change for change in diff.changes if change.path == "modules.testimonial"]
+    module_changes = [
+        change for change in diff.changes if change.path == "modules.testimonial"
+    ]
     assert module_changes
     assert module_changes[0].breaking is False
 
@@ -108,13 +114,18 @@ def test_diff_marks_removed_module_as_breaking(tmp_path: Path) -> None:
     (after / "modules" / "lead-capture.json").unlink()
     emdash_path = after / "emdash" / "fields.json"
     emdash = _read_json(emdash_path)
-    emdash["blocks"] = [block for block in emdash["blocks"] if block["blockId"] != "lead-capture"]
+    emdash["blocks"] = [
+        block for block in emdash["blocks"] if block["blockId"] != "lead-capture"
+    ]
     _write_json(emdash_path, emdash)
 
     diff = diff_theme_packages(before, after)
 
     assert not diff.errors
-    assert any(change.path == "modules.lead-capture" and change.breaking for change in diff.breaking_changes)
+    assert any(
+        change.path == "modules.lead-capture" and change.breaking
+        for change in diff.breaking_changes
+    )
     assert not diff.ok
 
 
@@ -130,7 +141,10 @@ def test_diff_marks_target_engine_incompatibility_as_breaking(tmp_path: Path) ->
     diff = diff_theme_packages(before, after, engine_version="0.3.0")
 
     assert not diff.errors
-    assert any(change.kind == "compatibility" and change.breaking for change in diff.breaking_changes)
+    assert any(
+        change.kind == "compatibility" and change.breaking
+        for change in diff.breaking_changes
+    )
 
 
 def test_repo_local_pwp_theme_diff_command_emits_json(tmp_path: Path) -> None:
