@@ -531,8 +531,28 @@ plugins/pwp/themes/
 - Theme install command:
 
 ```bash
-pwp theme install trust-light --tenant sentinelitad
+python3 scripts/pwp theme install trust-light --target ./site --tenant sentinelitad
 ```
+
+The installer validates the selected package, optionally checks `engineCompatibility`, then copies the theme into a tenant-scoped Astro project layout:
+
+```text
+site/
+  pwp/themes/<tenant>/
+    theme.json
+    install-manifest.json
+    tokens/tokens.json
+    emdash/fields.json
+    modules/*.json
+    schemas/modules/*.json
+  src/
+    styles/pwp-theme.css
+    layouts/PwpBaseLayout.astro
+    components/pwp/*
+    content.config.ts
+```
+
+`install-manifest.json` records `themeId`, `themeVersion`, tenant, copied files, and deterministic token/module/content-schema SHA-256 hashes so later deploy/rollback phases can compare installs without archaeology. Existing files are protected by default; pass `--force` for an explicit reinstall.
 
 - Theme diff command:
 
