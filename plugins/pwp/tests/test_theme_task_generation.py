@@ -88,13 +88,17 @@ def test_batch_generation_rejects_ambiguous_owner_routing():
             title="Review theme contract",
             lane="reviewer",
             phase="9.3",
-            verification_commands=("pytest plugins/pwp/tests/test_theme_task_generation.py -q",),
+            verification_commands=(
+                "pytest plugins/pwp/tests/test_theme_task_generation.py -q",
+            ),
         ),
         ThemeTaskSpec(
             title="Write SEO schema task",
             lane="seo-schema",
             phase="9.3",
-            verification_commands=("pytest plugins/pwp/tests/test_theme_task_generation.py -q",),
+            verification_commands=(
+                "pytest plugins/pwp/tests/test_theme_task_generation.py -q",
+            ),
         ),
     ]
 

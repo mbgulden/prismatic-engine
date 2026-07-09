@@ -8,7 +8,7 @@ back until the build has actually been initiated.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Iterable, Mapping, Sequence, TypedDict
 
 BASE_LABELS: tuple[str, ...] = ("plugin:pwp", "prismatic-engine", "Feature")
@@ -69,7 +69,9 @@ class ThemeTaskSpec:
     def __post_init__(self) -> None:
         if self.lane not in LANE_AGENT_LABELS:
             known = ", ".join(sorted(LANE_AGENT_LABELS))
-            raise ThemeTaskGenerationError(f"unknown PWP theme lane {self.lane!r}; known lanes: {known}")
+            raise ThemeTaskGenerationError(
+                f"unknown PWP theme lane {self.lane!r}; known lanes: {known}"
+            )
         agent_labels = [label for label in self.labels if label.startswith("agent:")]
         if agent_labels:
             raise ThemeTaskGenerationError(
@@ -104,7 +106,11 @@ def labels_for_theme_task(spec: ThemeTaskSpec) -> tuple[str, ...]:
     until Michael or the orchestrator explicitly starts the build window.
     """
 
-    labels: list[str] = [LANE_AGENT_LABELS[spec.lane], *BASE_LABELS, f"pwp-theme-phase:{spec.phase}"]
+    labels: list[str] = [
+        LANE_AGENT_LABELS[spec.lane],
+        *BASE_LABELS,
+        f"pwp-theme-phase:{spec.phase}",
+    ]
     labels.extend(spec.labels)
     if spec.build_initiated and spec.dispatch_ready:
         labels.append(DISPATCH_READY_LABEL)
@@ -124,7 +130,9 @@ def linear_issue_input(spec: ThemeTaskSpec) -> ThemeTaskPayload:
     return {
         "title": spec.title.strip(),
         "description": render_theme_task_description(spec),
-        "priority": spec.priority if spec.priority is not None else LANE_PRIORITIES[spec.lane],
+        "priority": spec.priority
+        if spec.priority is not None
+        else LANE_PRIORITIES[spec.lane],
         "labels": labels,
         "parentIdentifier": spec.parent_identifier,
         "dependencyIdentifiers": spec.dependency_identifiers,
@@ -161,12 +169,16 @@ def render_theme_task_description(spec: ThemeTaskSpec) -> str:
     return "\n".join(sections).strip() + "\n"
 
 
-def generate_theme_task_inputs(specs: Sequence[ThemeTaskSpec]) -> list[ThemeTaskPayload]:
+def generate_theme_task_inputs(
+    specs: Sequence[ThemeTaskSpec],
+) -> list[ThemeTaskPayload]:
     """Generate Linear issue payloads and reject ambiguous owner routing."""
 
     generated = [linear_issue_input(spec) for spec in specs]
     for payload in generated:
-        agent_labels = [label for label in payload["labels"] if str(label).startswith("agent:")]
+        agent_labels = [
+            label for label in payload["labels"] if str(label).startswith("agent:")
+        ]
         if len(agent_labels) != 1:
             raise ThemeTaskGenerationError(
                 f"generated task {payload['title']!r} has ambiguous agent labels: {agent_labels}"
