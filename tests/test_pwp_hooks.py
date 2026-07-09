@@ -18,7 +18,6 @@ Linear issue:
 
 from __future__ import annotations
 
-import os
 import sys
 import tempfile
 from pathlib import Path
@@ -33,8 +32,8 @@ _REPO_ROOT = _THIS_DIR.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from prismatic.core.registry import PWPPluginRunner, PluginLoader
-from prismatic.interface.hooks import (
+from prismatic.core.registry import PWPPluginRunner, PluginLoader  # noqa: E402
+from prismatic.interface.hooks import (  # noqa: E402
     HOOK_NAMES,
     HOOK_ON_DEPLOY,
     HOOK_ON_ERROR,
@@ -42,7 +41,7 @@ from prismatic.interface.hooks import (
     HOOK_ON_PRE_PIPELINE,
     PWP_HOOK_NAMES,
 )
-from prismatic.interface.plugin import PluginContext, PrismaticPlugin
+from prismatic.interface.plugin import PluginContext, PrismaticPlugin  # noqa: E402
 
 
 # ── 1. Hook-name constants exposed correctly ──────────────────────────────

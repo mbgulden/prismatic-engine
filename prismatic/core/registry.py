@@ -24,7 +24,6 @@ from packaging.version import Version
 
 from prismatic.interface.plugin import (
     PluginContext,
-    AgentContract,
     PrismaticPlugin,
     PluginValidationError,
 )
