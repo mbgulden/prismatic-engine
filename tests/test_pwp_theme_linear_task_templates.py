@@ -4,7 +4,9 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-TEMPLATE_PATH = ROOT / "plugins" / "pwp" / "linear_task_templates" / "pwp-theme-lane-templates.json"
+TEMPLATE_PATH = (
+    ROOT / "plugins" / "pwp" / "linear_task_templates" / "pwp-theme-lane-templates.json"
+)
 DOC_PATH = ROOT / "plugins" / "pwp" / "docs" / "pwp-theme-linear-task-templates.md"
 
 EXPECTED_LANES = {
@@ -36,14 +38,21 @@ def test_pwp_theme_lane_templates_do_not_dispatch_prematurely() -> None:
     for template in data["templates"]:
         assert "dispatch:ready" not in template["defaultLabels"]
         assert "dispatch:ready" in template["forbiddenLabelsBeforeHumanStart"]
-        assert any("No dispatch:ready" in item for item in template["completionChecklist"])
+        assert any(
+            "No dispatch:ready" in item for item in template["completionChecklist"]
+        )
 
 
 def test_pwp_theme_lane_templates_include_contracts_outputs_and_verification() -> None:
     data = load_templates()
     shared = data["sharedContracts"]
     assert shared["masterPlan"].endswith("pwp-ai-theme-system-master-plan.md")
-    for key in ("themeManifest", "moduleContract", "tokenContract", "emdashMapContract"):
+    for key in (
+        "themeManifest",
+        "moduleContract",
+        "tokenContract",
+        "emdashMapContract",
+    ):
         assert shared[key].startswith("plugins/pwp/")
 
     for template in data["templates"]:
