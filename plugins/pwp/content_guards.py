@@ -69,7 +69,9 @@ class LockedFieldViolation(ValueError):
     def __init__(self, violations: Iterable[GuardViolation]) -> None:
         self.violations = tuple(violations)
         details = "; ".join(f"{v.path}: {v.reason}" for v in self.violations)
-        super().__init__(f"PWP locked-field guard rejected {len(self.violations)} edit(s): {details}")
+        super().__init__(
+            f"PWP locked-field guard rejected {len(self.violations)} edit(s): {details}"
+        )
 
 
 def guard_emdash_edits(
@@ -105,7 +107,9 @@ def guard_emdash_edits(
     if system_routing_fields:
         routing.update(system_routing_fields)
 
-    allowed_claims = {_normalize_claim(c) for c in (allowed_compliance_claims or ()) if str(c).strip()}
+    allowed_claims = {
+        _normalize_claim(c) for c in (allowed_compliance_claims or ()) if str(c).strip()
+    }
     allowed_claims.update(_claims_from_edit_map(edit_map))
 
     safe: dict[str, Any] = {}
@@ -154,15 +158,25 @@ def _copy_if_safe(
 ) -> None:
     dotted = ".".join(path)
     if _matches_path(path, locked):
-        violations.append(GuardViolation(dotted, "locked field is owned by tenant/system contract", value))
+        violations.append(
+            GuardViolation(
+                dotted, "locked field is owned by tenant/system contract", value
+            )
+        )
         return
     if _matches_path(path, routing):
-        violations.append(GuardViolation(dotted, "routing/system field is not editor-editable", value))
+        violations.append(
+            GuardViolation(dotted, "routing/system field is not editor-editable", value)
+        )
         return
 
     claim = _unsupported_claim(value, allowed_claims)
     if claim:
-        violations.append(GuardViolation(dotted, f"unsupported certification/compliance claim: {claim!r}", value))
+        violations.append(
+            GuardViolation(
+                dotted, f"unsupported certification/compliance claim: {claim!r}", value
+            )
+        )
         return
 
     if isinstance(value, Mapping):

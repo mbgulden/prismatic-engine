@@ -49,10 +49,14 @@ def test_system_routing_fields_are_blocked_at_any_depth() -> None:
         "hero.component",
         "slug",
     ]
-    assert all("routing/system field" in violation.reason for violation in result.violations)
+    assert all(
+        "routing/system field" in violation.reason for violation in result.violations
+    )
 
 
-def test_unsupported_certification_claims_are_rejected_but_allowlisted_claims_pass() -> None:
+def test_unsupported_certification_claims_are_rejected_but_allowlisted_claims_pass() -> (
+    None
+):
     allowed = ["R2v3 certified"]
 
     result = guard_emdash_edits(
@@ -66,7 +70,9 @@ def test_unsupported_certification_claims_are_rejected_but_allowlisted_claims_pa
     )
 
     assert result.safe_edits == {
-        "trustPanel": {"approved": "Sentinel ITAD is R2v3 certified for downstream processing."}
+        "trustPanel": {
+            "approved": "Sentinel ITAD is R2v3 certified for downstream processing."
+        }
     }
     assert len(result.violations) == 1
     assert result.violations[0].path == "trustPanel.unsupported"
@@ -88,12 +94,19 @@ def test_edit_map_locked_fields_and_noneditable_fields_are_honored() -> None:
     }
 
     result = guard_emdash_edits(
-        {"title": "Editable", "eyebrow": "Do not edit", "schemaOrgType": "Organization"},
+        {
+            "title": "Editable",
+            "eyebrow": "Do not edit",
+            "schemaOrgType": "Organization",
+        },
         edit_map=edit_map,
     )
 
     assert result.safe_edits == {"title": "Editable"}
-    assert {violation.path for violation in result.violations} == {"eyebrow", "schemaOrgType"}
+    assert {violation.path for violation in result.violations} == {
+        "eyebrow",
+        "schemaOrgType",
+    }
 
 
 def test_assert_safe_emdash_edits_raises_for_atomic_api_handlers() -> None:
