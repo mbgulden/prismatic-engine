@@ -646,12 +646,14 @@ Deliverables:
 - task templates per lane,
 - prompt packs referencing module/schema contracts,
 - automatic Linear issue generation from phase outputs,
-- verifier artifacts attached to each issue.
+- verifier artifacts attached to each issue,
+- the [PWP verifier artifact attachment checklist](pwp-verifier-artifact-requirements.md) embedded in every generated implementation/verifier issue.
 
 Verification:
 
 - generated issues include exact files/contracts/tests,
-- agents cannot mark done without verification output,
+- generated issues include required build/test, accessibility, visual/regression, contract/schema, or deployment artifacts for the lane,
+- agents cannot mark done without verification output and `done_gate_result=done`,
 - peer review catches contract drift.
 
 Exit criteria:
