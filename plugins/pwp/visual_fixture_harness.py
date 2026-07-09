@@ -302,6 +302,14 @@ def run_playwright(plan: HarnessPlan) -> subprocess.CompletedProcess[str]:
     spec_path = Path(plan.spec_file)
     env = os.environ.copy()
     env["PWP_FIXTURE_MANIFEST"] = plan.manifest_file
+    repo_node_modules = Path.cwd() / "node_modules"
+    if repo_node_modules.exists():
+        prior_node_path = env.get("NODE_PATH")
+        env["NODE_PATH"] = (
+            str(repo_node_modules)
+            if not prior_node_path
+            else f"{repo_node_modules}{os.pathsep}{prior_node_path}"
+        )
     return subprocess.run(
         ["node", str(spec_path)],
         cwd=spec_path.parent,
