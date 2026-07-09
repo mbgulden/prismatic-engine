@@ -7,7 +7,12 @@ from prismatic.interface.plugin import (
     PrismaticPlugin,
 )
 
-from .compiler import render_template, get_tokens_for_tenant, set_tenant_tokens
+from .compiler import (
+    get_token_provenance_for_tenant,
+    get_tokens_for_tenant,
+    render_template,
+    set_tenant_tokens,
+)
 
 
 class PWPDesignTokenPlugin(PrismaticPlugin):
@@ -32,3 +37,7 @@ class PWPDesignTokenPlugin(PrismaticPlugin):
     def set_tokens(self, tenant_id: str, tokens: dict) -> None:
         """Set override tokens for tenant."""
         set_tenant_tokens(tenant_id, tokens)
+
+    def get_token_provenance(self, tenant_id: str | None = None) -> dict:
+        """Get deterministic token provenance for deploy metadata."""
+        return get_token_provenance_for_tenant(tenant_id)

@@ -1,4 +1,5 @@
 from copy import deepcopy
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence, Tuple
@@ -194,6 +195,110 @@ def validate_tokens(tokens: dict) -> None:
         jsonschema.validate(instance=tokens, schema=schema)
     except ImportError:
         manual_validate(tokens)
+
+
+def canonical_token_json(tokens: Mapping[str, Any]) -> str:
+    """Return the stable JSON representation used for token hashing."""
+    return json.dumps(tokens, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def sha256_text(value: str) -> str:
+    """Return a hex SHA-256 digest for UTF-8 text."""
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def hash_tokens(tokens: dict) -> str:
+    """Compute a deterministic hash for a validated token dictionary."""
+    validate_tokens(tokens)
+    return sha256_text(canonical_token_json(tokens))
+
+
+def _path_metadata(path: Path | None) -> str | None:
+    if path is None:
+        return None
+    try:
+        return str(path.relative_to(PWP_DIR))
+    except ValueError:
+        return str(path)
+
+
+def _token_source_record(
+    kind: str, path: Path | None, tokens: Mapping[str, Any]
+) -> dict[str, Any]:
+    return {
+        "kind": kind,
+        "path": _path_metadata(path),
+        "hash": sha256_text(canonical_token_json(tokens)),
+    }
+
+
+def build_token_provenance(
+    tokens: dict,
+    *,
+    tenant_id: str | None = None,
+    source_records: Sequence[Mapping[str, Any]] | None = None,
+    css: str | None = None,
+) -> dict[str, Any]:
+    """Build deterministic token provenance for deploy manifests and run-state."""
+    validate_tokens(tokens)
+    compiled_css = css if css is not None else compile_tokens_to_css(tokens)
+    return {
+        "schemaVersion": "pwp.token-provenance.v1",
+        "tenantId": tenant_id,
+        "algorithm": "sha256",
+        "canonicalFormat": "json.dumps(sort_keys=True,separators=(',',':'),ensure_ascii=False)",
+        "tokenHash": hash_tokens(tokens),
+        "cssHash": sha256_text(compiled_css),
+        "sections": sorted(tokens.keys()),
+        "sources": [dict(record) for record in (source_records or [])],
+    }
+
+
+def get_token_provenance_for_tenant(
+    tenant_id: str | None = None,
+    *,
+    theme_defaults: Mapping[str, Any] | None = None,
+    page_overrides: Mapping[str, Any] | None = None,
+    allowed_page_override_paths: Sequence[str] | None = None,
+) -> dict[str, Any]:
+    """Return deterministic provenance for the merged tenant token artifact."""
+    pwp_defaults = load_json(DEFAULT_TOKENS_PATH)
+    tenant_overrides = None
+    source_records: list[dict[str, Any]] = [
+        _token_source_record("pwp_default", DEFAULT_TOKENS_PATH, pwp_defaults)
+    ]
+
+    if theme_defaults:
+        source_records.append(
+            _token_source_record("theme_default", None, theme_defaults)
+        )
+
+    if tenant_id:
+        tenant_path = TENANTS_DIR / tenant_id / "tokens.json"
+        if tenant_path.exists():
+            tenant_overrides = load_json(tenant_path)
+            source_records.append(
+                _token_source_record("tenant_override", tenant_path, tenant_overrides)
+            )
+
+    filtered_page_overrides = controlled_page_overrides(
+        page_overrides, allowed_page_override_paths
+    )
+    if filtered_page_overrides:
+        source_records.append(
+            _token_source_record("page_override", None, filtered_page_overrides)
+        )
+
+    tokens = merge_token_layers(
+        pwp_defaults,
+        theme_defaults=theme_defaults,
+        tenant_overrides=tenant_overrides,
+        page_overrides=filtered_page_overrides,
+        allowed_page_override_paths=allowed_page_override_paths,
+    )
+    return build_token_provenance(
+        tokens, tenant_id=tenant_id, source_records=source_records
+    )
 
 
 TOKEN_PREFIXES = {
