@@ -1,0 +1,48 @@
+{
+  "a11yRules": [
+    "status-message-readable"
+  ],
+  "component": "WarningStrip.astro",
+  "contentSafetyRules": [
+    "no-unsupported-certification-claims"
+  ],
+  "description": "Compliance or trust boundary notice",
+  "editableFields": [
+    "message",
+    "tone"
+  ],
+  "fixtures": [
+    {
+      "name": "warning-strip-default",
+      "props": {
+        "message": "Certificates are verified before publication.",
+        "tone": "info"
+      },
+      "variant": "warning"
+    }
+  ],
+  "id": "warning-strip",
+  "name": "WarningStrip",
+  "propsSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "message": {
+        "type": "string"
+      },
+      "tone": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "message",
+      "tone"
+    ],
+    "type": "object"
+  },
+  "slots": [],
+  "variants": [
+    "warning",
+    "info",
+    "proof-note"
+  ]
+}

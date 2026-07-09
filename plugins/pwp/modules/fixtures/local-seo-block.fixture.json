@@ -1,0 +1,13 @@
+{
+  "module": "local-seo-block",
+  "name": "local-seo-block-fixture",
+  "props": {
+    "areas": [
+      "Honolulu",
+      "Kailua"
+    ],
+    "heading": "Service areas",
+    "schemaType": "LocalBusiness"
+  },
+  "variant": "mapless"
+}

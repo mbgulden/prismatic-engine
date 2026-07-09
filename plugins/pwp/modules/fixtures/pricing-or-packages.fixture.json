@@ -1,0 +1,13 @@
+{
+  "module": "pricing-or-packages",
+  "name": "pricing-or-packages-fixture",
+  "props": {
+    "disclaimer": "Final pricing depends on scope.",
+    "heading": "Packages",
+    "packages": [
+      "Pickup",
+      "Full audit"
+    ]
+  },
+  "variant": "card-tiers"
+}

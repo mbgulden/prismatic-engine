@@ -1,0 +1,57 @@
+{
+  "a11yRules": [
+    "area-links-readable",
+    "schema-type-valid"
+  ],
+  "component": "LocalSEOBlock.astro",
+  "contentSafetyRules": [
+    "no-unsupported-certification-claims"
+  ],
+  "description": "Service-area and local schema support without map dependency",
+  "editableFields": [
+    "heading",
+    "areas",
+    "schemaType"
+  ],
+  "fixtures": [
+    {
+      "name": "local-seo-block-default",
+      "props": {
+        "areas": [
+          "Honolulu",
+          "Kailua"
+        ],
+        "heading": "Service areas",
+        "schemaType": "LocalBusiness"
+      },
+      "variant": "mapless"
+    }
+  ],
+  "id": "local-seo-block",
+  "name": "LocalSEOBlock",
+  "propsSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "areas": {
+        "type": "array"
+      },
+      "heading": {
+        "type": "string"
+      },
+      "schemaType": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "heading",
+      "areas",
+      "schemaType"
+    ],
+    "type": "object"
+  },
+  "slots": [],
+  "variants": [
+    "mapless",
+    "city-grid"
+  ]
+}

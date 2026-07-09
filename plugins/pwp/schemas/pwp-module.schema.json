@@ -1,0 +1,103 @@
+{
+  "$id": "https://schemas.prismatic.dev/pwp/module.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "a11yRules": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "component": {
+      "pattern": "^[A-Z][A-Za-z0-9]+\\.astro$",
+      "type": "string"
+    },
+    "contentSafetyRules": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array",
+      "uniqueItems": true
+    },
+    "description": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "editableFields": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true
+    },
+    "fixtures": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "props": {
+            "type": "object"
+          },
+          "variant": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "variant",
+          "props"
+        ],
+        "type": "object"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "id": {
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "type": "string"
+    },
+    "name": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "propsSchema": {
+      "type": "object"
+    },
+    "slots": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array",
+      "uniqueItems": true
+    },
+    "variants": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "type": "array",
+      "uniqueItems": true
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "component",
+    "description",
+    "slots",
+    "propsSchema",
+    "editableFields",
+    "variants",
+    "a11yRules",
+    "contentSafetyRules",
+    "fixtures"
+  ],
+  "title": "PWP module contract",
+  "type": "object"
+}

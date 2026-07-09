@@ -1,0 +1,52 @@
+{
+  "a11yRules": [
+    "faq-question-answer-pairs"
+  ],
+  "component": "FAQ.astro",
+  "contentSafetyRules": [
+    "no-unsupported-certification-claims"
+  ],
+  "description": "Objections, support questions, and SEO FAQ content",
+  "editableFields": [
+    "heading",
+    "items"
+  ],
+  "fixtures": [
+    {
+      "name": "faq-default",
+      "props": {
+        "heading": "Questions",
+        "items": [
+          {
+            "answer": "Yes, each fixture includes required proof fields.",
+            "question": "Do you provide reports?"
+          }
+        ]
+      },
+      "variant": "accordion"
+    }
+  ],
+  "id": "faq",
+  "name": "FAQ",
+  "propsSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "heading": {
+        "type": "string"
+      },
+      "items": {
+        "type": "array"
+      }
+    },
+    "required": [
+      "heading",
+      "items"
+    ],
+    "type": "object"
+  },
+  "slots": [],
+  "variants": [
+    "accordion",
+    "static-list"
+  ]
+}

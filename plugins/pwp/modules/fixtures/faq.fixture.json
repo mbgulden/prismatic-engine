@@ -1,0 +1,14 @@
+{
+  "module": "faq",
+  "name": "faq-fixture",
+  "props": {
+    "heading": "Questions",
+    "items": [
+      {
+        "answer": "Yes, each fixture includes required proof fields.",
+        "question": "Do you provide reports?"
+      }
+    ]
+  },
+  "variant": "accordion"
+}

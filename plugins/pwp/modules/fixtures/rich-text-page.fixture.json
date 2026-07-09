@@ -1,0 +1,9 @@
+{
+  "module": "rich-text-page",
+  "name": "rich-text-page-fixture",
+  "props": {
+    "body": "Structured prose remains inside the theme shell.",
+    "title": "Policy fixture"
+  },
+  "variant": "prose"
+}
