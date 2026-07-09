@@ -19,7 +19,9 @@ from plugins.pwp.visual_fixture_harness import (  # noqa: E402
 VALID_THEME = _THIS_DIR / "fixtures" / "pwp_theme" / "valid_theme"
 
 
-def test_harness_plan_covers_pages_modules_variants_and_viewports(tmp_path: Path) -> None:
+def test_harness_plan_covers_pages_modules_variants_and_viewports(
+    tmp_path: Path,
+) -> None:
     plan = build_harness_plan(VALID_THEME, tmp_path / "fixtures")
 
     # 1 full-page fixture per viewport + 2 modules x 2 variants x 3 viewports.
@@ -40,7 +42,9 @@ def test_harness_plan_covers_pages_modules_variants_and_viewports(tmp_path: Path
     assert ("lead-capture", "mailto", "desktop") in module_matrix
 
 
-def test_write_harness_files_emits_manifest_html_and_playwright_spec(tmp_path: Path) -> None:
+def test_write_harness_files_emits_manifest_html_and_playwright_spec(
+    tmp_path: Path,
+) -> None:
     out = tmp_path / "pwp-fixtures"
     plan = build_harness_plan(VALID_THEME, out)
 
@@ -56,8 +60,9 @@ def test_write_harness_files_emits_manifest_html_and_playwright_spec(tmp_path: P
     assert "@playwright/test" in spec_path.read_text(encoding="utf-8")
     first_fixture = out / payload["cases"][0]["html_file"]
     assert first_fixture.exists()
-    assert 'data-fixture-id="pwp-theme-trust-light__page__default__mobile"' in first_fixture.read_text(
-        encoding="utf-8"
+    assert (
+        'data-fixture-id="pwp-theme-trust-light__page__default__mobile"'
+        in first_fixture.read_text(encoding="utf-8")
     )
 
 

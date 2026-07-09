@@ -73,7 +73,9 @@ def _slug(value: str) -> str:
     return slug or "fixture"
 
 
-def _normalize_viewports(viewports: Iterable[dict[str, Any]] | None = None) -> tuple[Viewport, ...]:
+def _normalize_viewports(
+    viewports: Iterable[dict[str, Any]] | None = None,
+) -> tuple[Viewport, ...]:
     normalized: list[Viewport] = []
     for raw in viewports or DEFAULT_VIEWPORTS:
         name = raw.get("name")
@@ -89,7 +91,9 @@ def _normalize_viewports(viewports: Iterable[dict[str, Any]] | None = None) -> t
     return tuple(normalized)
 
 
-def _read_module_contracts(theme_root: Path, module_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
+def _read_module_contracts(
+    theme_root: Path, module_ids: Iterable[str]
+) -> dict[str, dict[str, Any]]:
     contracts: dict[str, dict[str, Any]] = {}
     for module_id in module_ids:
         if not isinstance(module_id, str) or not MODULE_ID_RE.match(module_id):
@@ -295,7 +299,9 @@ def main(argv: list[str] | None = None) -> int:
         default=".pwp-playwright-fixtures",
         help="Directory for generated HTML fixtures, manifest, spec, and screenshots",
     )
-    parser.add_argument("--json", action="store_true", help="Print the fixture manifest JSON")
+    parser.add_argument(
+        "--json", action="store_true", help="Print the fixture manifest JSON"
+    )
     parser.add_argument(
         "--run",
         action="store_true",
