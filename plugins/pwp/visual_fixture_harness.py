@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -279,10 +280,12 @@ def write_harness_files(plan: HarnessPlan, clean: bool = True) -> HarnessPlan:
 
 def run_playwright(plan: HarnessPlan) -> subprocess.CompletedProcess[str]:
     spec_path = Path(plan.spec_file)
+    env = os.environ.copy()
+    env["PWP_FIXTURE_MANIFEST"] = plan.manifest_file
     return subprocess.run(
         ["npx", "playwright", "test", str(spec_path)],
         cwd=spec_path.parent,
-        env={"PWP_FIXTURE_MANIFEST": plan.manifest_file},
+        env=env,
         text=True,
         capture_output=True,
         check=False,
