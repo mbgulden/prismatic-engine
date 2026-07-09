@@ -375,6 +375,28 @@ The diff command compares two validated theme packages in the same family and em
 
 Added modules and version-only changes are reported as safe changes. Token group changes and entrypoint path changes are surfaced for review so tenant override preservation can be handled by the later upgrade workflow instead of hidden during install.
 
+### Tenant-safe theme upgrades
+
+Phase 4.4 adds an explicit upgrade planner:
+
+```bash
+python3 scripts/pwp theme upgrade \
+  --from <installed-theme-path> \
+  --to <target-theme-path> \
+  --tenant-overrides <tenant-overrides.json> \
+  [--engine-version <semver>] \
+  [--json]
+```
+
+The planner validates/diffs the two theme packages, reads the tenant override file, and emits a deterministic upgrade plan. Tenant overrides may be stored under top-level `tokens` and `content` objects; legacy token-only override files are also accepted. The planner preserves true tenant overrides, drops override entries that merely restate the old theme default, and flags conflicts for human review when:
+
+- the target theme removed the overridden token/content path,
+- the target default type changed under an override,
+- the override type no longer matches the target token type,
+- the target default changed under a tenant override and may need design review.
+
+This keeps client-specific token/content choices intact during package upgrades without silently freezing stale defaults or hiding migration conflicts.
+
 ### Theme compatibility matrix
 
 PWP should maintain a matrix:
