@@ -36,10 +36,24 @@ def test_install_theme_package_copies_contract_assets_into_astro_project(
 
     assert result.ok, result.errors
     assert (target / "pwp" / "themes" / "sentinelitad" / "theme.json").exists()
-    assert (target / "pwp" / "themes" / "sentinelitad" / "tokens" / "tokens.json").exists()
-    assert (target / "pwp" / "themes" / "sentinelitad" / "emdash" / "fields.json").exists()
-    assert (target / "pwp" / "themes" / "sentinelitad" / "modules" / "hero.json").exists()
-    assert (target / "pwp" / "themes" / "sentinelitad" / "schemas" / "modules" / "hero.schema.json").exists()
+    assert (
+        target / "pwp" / "themes" / "sentinelitad" / "tokens" / "tokens.json"
+    ).exists()
+    assert (
+        target / "pwp" / "themes" / "sentinelitad" / "emdash" / "fields.json"
+    ).exists()
+    assert (
+        target / "pwp" / "themes" / "sentinelitad" / "modules" / "hero.json"
+    ).exists()
+    assert (
+        target
+        / "pwp"
+        / "themes"
+        / "sentinelitad"
+        / "schemas"
+        / "modules"
+        / "hero.schema.json"
+    ).exists()
     assert (target / "src" / "styles" / "pwp-theme.css").exists()
     assert (target / "src" / "layouts" / "PwpBaseLayout.astro").exists()
     assert (target / "src" / "components" / "pwp" / "Hero.astro").exists()
@@ -88,7 +102,10 @@ def test_resolve_theme_reference_reads_registry_index(tmp_path: Path) -> None:
     (theme_dir / "theme.json").write_text("{}", encoding="utf-8")
 
     assert resolve_theme_reference("trust-light", registry) == theme_dir.resolve()
-    assert resolve_theme_reference("pwp.theme.trust-light@0.1.0", registry) == theme_dir.resolve()
+    assert (
+        resolve_theme_reference("pwp.theme.trust-light@0.1.0", registry)
+        == theme_dir.resolve()
+    )
 
 
 def test_repo_local_pwp_theme_install_command_emits_json(tmp_path: Path) -> None:
@@ -120,7 +137,9 @@ def test_repo_local_pwp_theme_install_command_emits_json(tmp_path: Path) -> None
     assert payload["ok"] is True
     assert payload["tenant"] == "sentinelitad"
     assert payload["themeId"] == "pwp.theme.trust-light"
-    assert (target / "pwp" / "themes" / "sentinelitad" / "install-manifest.json").exists()
+    assert (
+        target / "pwp" / "themes" / "sentinelitad" / "install-manifest.json"
+    ).exists()
 
 
 def test_repo_local_pwp_theme_install_rejects_invalid_package(tmp_path: Path) -> None:

@@ -80,16 +80,22 @@ def _sha256_tree(root: Path) -> str | None:
     return "sha256:" + digest.hexdigest()
 
 
-def _copy_file(src: Path, dest: Path, result: ThemeInstallResult, *, force: bool) -> None:
+def _copy_file(
+    src: Path, dest: Path, result: ThemeInstallResult, *, force: bool
+) -> None:
     if dest.exists() and not force:
-        result.errors.append(f"Refusing to overwrite existing file without --force: {dest}")
+        result.errors.append(
+            f"Refusing to overwrite existing file without --force: {dest}"
+        )
         return
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dest)
     result.copied_files.append(dest.relative_to(result.target_project).as_posix())
 
 
-def _copy_tree(src: Path, dest: Path, result: ThemeInstallResult, *, force: bool) -> None:
+def _copy_tree(
+    src: Path, dest: Path, result: ThemeInstallResult, *, force: bool
+) -> None:
     if not src.exists():
         return
     for path in sorted(p for p in src.rglob("*") if p.is_file()):
@@ -105,7 +111,9 @@ def _registry_candidates(registry_path: Path) -> list[dict[str, Any]]:
     return [theme for theme in themes or [] if isinstance(theme, dict)]
 
 
-def resolve_theme_reference(reference: str | Path, registry_path: str | Path | None = None) -> Path:
+def resolve_theme_reference(
+    reference: str | Path, registry_path: str | Path | None = None
+) -> Path:
     ref_text = str(reference)
     direct = Path(ref_text).expanduser()
     if direct.exists():
@@ -131,10 +139,16 @@ def resolve_theme_reference(reference: str | Path, registry_path: str | Path | N
         if ref_text in matches or requested in matches:
             rel = entry.get("path")
             if not _is_safe_relative_path(rel):
-                raise ValueError(f"Registry theme path is missing or unsafe for {ref_text}")
+                raise ValueError(
+                    f"Registry theme path is missing or unsafe for {ref_text}"
+                )
             rel_text = str(rel)
             manifest_path = (registry_root / rel_text).resolve()
-            return manifest_path.parent if manifest_path.name == "theme.json" else manifest_path
+            return (
+                manifest_path.parent
+                if manifest_path.name == "theme.json"
+                else manifest_path
+            )
 
     raise FileNotFoundError(
         f"Theme reference not found as a path or registry entry: {ref_text}"
@@ -199,8 +213,18 @@ def install_theme_package(
         return theme_root / str(rel)
 
     _copy_file(manifest_path, install_root / "theme.json", result, force=force)
-    _copy_file(entrypoint_path("tokens"), install_root / "tokens" / "tokens.json", result, force=force)
-    _copy_file(entrypoint_path("emdashMap"), install_root / "emdash" / "fields.json", result, force=force)
+    _copy_file(
+        entrypoint_path("tokens"),
+        install_root / "tokens" / "tokens.json",
+        result,
+        force=force,
+    )
+    _copy_file(
+        entrypoint_path("emdashMap"),
+        install_root / "emdash" / "fields.json",
+        result,
+        force=force,
+    )
     _copy_file(
         entrypoint_path("contentSchema"),
         target / "src" / "content.config.ts",
@@ -257,10 +281,14 @@ def install_theme_package(
     }
     manifest_dest = install_root / "install-manifest.json"
     if manifest_dest.exists() and not force:
-        result.errors.append(f"Refusing to overwrite existing file without --force: {manifest_dest}")
+        result.errors.append(
+            f"Refusing to overwrite existing file without --force: {manifest_dest}"
+        )
         return result
     manifest_dest.parent.mkdir(parents=True, exist_ok=True)
-    manifest_dest.write_text(json.dumps(install_manifest, indent=2) + "\n", encoding="utf-8")
+    manifest_dest.write_text(
+        json.dumps(install_manifest, indent=2) + "\n", encoding="utf-8"
+    )
     result.copied_files.append(manifest_dest.relative_to(target).as_posix())
     return result
 
@@ -294,13 +322,22 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
         help="Target Astro project root that will receive the theme files",
     )
-    parser.add_argument("--tenant", required=True, help="Tenant/client slug for install state")
-    parser.add_argument("--registry", help="Optional registry.json path for theme references")
     parser.add_argument(
-        "--engine-version", help="Require theme compatibility with this PWP engine version"
+        "--tenant", required=True, help="Tenant/client slug for install state"
     )
-    parser.add_argument("--force", action="store_true", help="Overwrite existing install files")
-    parser.add_argument("--json", action="store_true", help="Emit machine-readable result")
+    parser.add_argument(
+        "--registry", help="Optional registry.json path for theme references"
+    )
+    parser.add_argument(
+        "--engine-version",
+        help="Require theme compatibility with this PWP engine version",
+    )
+    parser.add_argument(
+        "--force", action="store_true", help="Overwrite existing install files"
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable result"
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -323,7 +360,11 @@ def main(argv: list[str] | None = None) -> int:
             install_root=target / "pwp" / "themes" / args.tenant,
             errors=[str(exc)],
         )
-    print(json.dumps(result.as_dict(), indent=2) if args.json else format_install_result(result))
+    print(
+        json.dumps(result.as_dict(), indent=2)
+        if args.json
+        else format_install_result(result)
+    )
     return 0 if result.ok else 1
 
 
