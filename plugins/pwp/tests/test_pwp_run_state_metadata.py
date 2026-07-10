@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from prismatic.core.pwp_state import PWPRunState, PWPRunStateStore
+from prismatic.core.pwp_state import PWPRunState, PWPRunStateStore, handle_rollback
 
 
 def test_run_state_preserves_theme_metadata(tmp_path):
@@ -217,3 +217,70 @@ def test_non_reversible_deploy_does_not_become_theme_rollback_target(tmp_path):
     assert run_3.previous_artifact_sha == "sha256:artifact-v1"
     assert run_3.previous_theme_version == "0.1.0"
     assert run_3.previous_token_hash == "sha256:tokens-v1"
+
+
+def test_handle_rollback_passes_restore_metadata_to_adapter(tmp_path, monkeypatch):
+    state_dir = tmp_path / "state"
+    monkeypatch.setenv("PRISMATIC_STATE_DIR", str(state_dir))
+    store = PWPRunStateStore(store_path=str(state_dir / "pwp_run_state.json"))
+    store.record_deploy(
+        run_id="run-1",
+        client_id="sentinelitad",
+        target="file",
+        artifact_sha="sha256:artifact-v1",
+        deployed_by="ned",
+        reversible=True,
+        theme_id="pwp.theme.trust-light",
+        theme_version="0.1.0",
+        theme_hash="sha256:theme-v1",
+        token_hash="sha256:tokens-v1",
+        module_hash="sha256:modules-v1",
+        content_hash="sha256:content-v1",
+    )
+    store.record_deploy(
+        run_id="run-2",
+        client_id="sentinelitad",
+        target="file",
+        artifact_sha="sha256:artifact-v2",
+        deployed_by="ned",
+        reversible=True,
+        theme_id="pwp.theme.trust-light",
+        theme_version="0.2.0",
+        theme_hash="sha256:theme-v2",
+        token_hash="sha256:tokens-v2",
+        module_hash="sha256:modules-v2",
+        content_hash="sha256:content-v2",
+    )
+
+    captured = {}
+
+    def fake_undo(previous_artifact_sha, context):
+        captured["previous_artifact_sha"] = previous_artifact_sha
+        captured["context"] = context
+        return True
+
+    from prismatic.core.deploy_adapters import file as file_adapter
+
+    monkeypatch.setattr(file_adapter, "undo", fake_undo)
+
+    handle_rollback("run-2", reason="test rollback")
+
+    assert captured["previous_artifact_sha"] == "sha256:artifact-v1"
+    assert captured["context"]["rollback_restore"] == {
+        "previous_run_id": "run-1",
+        "previous_artifact_sha": "sha256:artifact-v1",
+        "theme_id": "pwp.theme.trust-light",
+        "theme_version": "0.1.0",
+        "theme_hash": "sha256:theme-v1",
+        "token_hash": "sha256:tokens-v1",
+        "module_hash": "sha256:modules-v1",
+        "content_hash": "sha256:content-v1",
+        "theme_engine_compatibility": None,
+        "theme_schema_version": None,
+    }
+
+    audit_lines = (state_dir / "pwp_audit.log").read_text().splitlines()
+    audit_entry = json.loads(audit_lines[-1])
+    assert audit_entry["event"] == "rollback"
+    assert audit_entry["previous_artifact_sha"] == "sha256:artifact-v1"
+    assert audit_entry["rollback_restore"]["token_hash"] == "sha256:tokens-v1"
