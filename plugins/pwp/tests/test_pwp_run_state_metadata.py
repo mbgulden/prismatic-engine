@@ -110,3 +110,110 @@ def test_should_skip_deploy_compares_theme_token_module_and_content_hashes(tmp_p
         client_id="sentinelitad",
         target="cloudflare-pages",
     )
+
+
+def test_rollback_record_captures_prior_theme_token_and_content_state(tmp_path):
+    store_path = tmp_path / "pwp_run_state.json"
+    store = PWPRunStateStore(store_path=str(store_path))
+
+    store.record_deploy(
+        run_id="run-1",
+        client_id="sentinelitad",
+        target="cloudflare-pages",
+        artifact_sha="sha256:artifact-v1",
+        deployed_by="ned",
+        reversible=True,
+        theme_id="pwp.theme.trust-light",
+        theme_version="0.1.0",
+        theme_hash="sha256:theme-v1",
+        token_hash="sha256:tokens-v1",
+        module_hash="sha256:modules-v1",
+        content_hash="sha256:content-v1",
+        theme_engine_compatibility=">=0.2.0",
+        theme_schema_version="2026-07-09",
+    )
+
+    run_2 = store.record_deploy(
+        run_id="run-2",
+        client_id="sentinelitad",
+        target="cloudflare-pages",
+        artifact_sha="sha256:artifact-v2",
+        deployed_by="ned",
+        reversible=True,
+        theme_id="pwp.theme.trust-light",
+        theme_version="0.2.0",
+        theme_hash="sha256:theme-v2",
+        token_hash="sha256:tokens-v2",
+        module_hash="sha256:modules-v2",
+        content_hash="sha256:content-v2",
+        theme_engine_compatibility=">=0.3.0",
+        theme_schema_version="2026-07-10",
+    )
+
+    assert run_2.previous_run_id == "run-1"
+    assert run_2.previous_artifact_sha == "sha256:artifact-v1"
+    assert run_2.previous_theme_id == "pwp.theme.trust-light"
+    assert run_2.previous_theme_version == "0.1.0"
+    assert run_2.previous_theme_hash == "sha256:theme-v1"
+    assert run_2.previous_token_hash == "sha256:tokens-v1"
+    assert run_2.previous_module_hash == "sha256:modules-v1"
+    assert run_2.previous_content_hash == "sha256:content-v1"
+    assert run_2.previous_theme_engine_compatibility == ">=0.2.0"
+    assert run_2.previous_theme_schema_version == "2026-07-09"
+    assert run_2.rollback_restore_metadata() == {
+        "previous_run_id": "run-1",
+        "previous_artifact_sha": "sha256:artifact-v1",
+        "theme_id": "pwp.theme.trust-light",
+        "theme_version": "0.1.0",
+        "theme_hash": "sha256:theme-v1",
+        "token_hash": "sha256:tokens-v1",
+        "module_hash": "sha256:modules-v1",
+        "content_hash": "sha256:content-v1",
+        "theme_engine_compatibility": ">=0.2.0",
+        "theme_schema_version": "2026-07-09",
+    }
+
+    stored_json = json.loads(store_path.read_text())
+    assert stored_json["run-2"]["previous_run_id"] == "run-1"
+    assert stored_json["run-2"]["previous_token_hash"] == "sha256:tokens-v1"
+    assert stored_json["run-2"]["previous_content_hash"] == "sha256:content-v1"
+
+
+def test_non_reversible_deploy_does_not_become_theme_rollback_target(tmp_path):
+    store = PWPRunStateStore(store_path=str(tmp_path / "pwp_run_state.json"))
+    store.record_deploy(
+        run_id="run-1",
+        client_id="sentinelitad",
+        target="cloudflare-pages",
+        artifact_sha="sha256:artifact-v1",
+        deployed_by="ned",
+        reversible=True,
+        theme_version="0.1.0",
+        token_hash="sha256:tokens-v1",
+    )
+    store.record_deploy(
+        run_id="run-2",
+        client_id="sentinelitad",
+        target="cloudflare-pages",
+        artifact_sha="sha256:artifact-v2",
+        deployed_by="ned",
+        reversible=False,
+        theme_version="0.2.0",
+        token_hash="sha256:tokens-v2",
+    )
+
+    run_3 = store.record_deploy(
+        run_id="run-3",
+        client_id="sentinelitad",
+        target="cloudflare-pages",
+        artifact_sha="sha256:artifact-v3",
+        deployed_by="ned",
+        reversible=True,
+        theme_version="0.3.0",
+        token_hash="sha256:tokens-v3",
+    )
+
+    assert run_3.previous_run_id == "run-1"
+    assert run_3.previous_artifact_sha == "sha256:artifact-v1"
+    assert run_3.previous_theme_version == "0.1.0"
+    assert run_3.previous_token_hash == "sha256:tokens-v1"

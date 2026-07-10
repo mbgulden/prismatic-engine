@@ -30,6 +30,7 @@ class PWPRunState:
     deployed_at: str
     deployed_by: str
     previous_artifact_sha: Optional[str] = None
+    previous_run_id: Optional[str] = None
     reversible: bool = False
     commit_hash: Optional[str] = None
     theme_id: Optional[str] = None
@@ -40,10 +41,33 @@ class PWPRunState:
     content_hash: Optional[str] = None
     theme_engine_compatibility: Optional[str] = None
     theme_schema_version: Optional[str] = None
+    previous_theme_id: Optional[str] = None
+    previous_theme_version: Optional[str] = None
+    previous_theme_hash: Optional[str] = None
+    previous_token_hash: Optional[str] = None
+    previous_module_hash: Optional[str] = None
+    previous_content_hash: Optional[str] = None
+    previous_theme_engine_compatibility: Optional[str] = None
+    previous_theme_schema_version: Optional[str] = None
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> PWPRunState:
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
+    def rollback_restore_metadata(self) -> Dict[str, Optional[str]]:
+        """Return prior theme/token/content metadata restored by rollback."""
+        return {
+            "previous_run_id": self.previous_run_id,
+            "previous_artifact_sha": self.previous_artifact_sha,
+            "theme_id": self.previous_theme_id,
+            "theme_version": self.previous_theme_version,
+            "theme_hash": self.previous_theme_hash,
+            "token_hash": self.previous_token_hash,
+            "module_hash": self.previous_module_hash,
+            "content_hash": self.previous_content_hash,
+            "theme_engine_compatibility": self.previous_theme_engine_compatibility,
+            "theme_schema_version": self.previous_theme_schema_version,
+        }
 
 
 class PWPRunStateStore:
@@ -171,17 +195,17 @@ class PWPRunStateStore:
     ) -> PWPRunState:
         self._load_from_disk()
 
-        # Find previous reversible artifact sha for this client and target.
+        # Find previous reversible run for this client and target.
         # Non-reversible deployments cannot be used as rollback targets.
         existing = [
             r
             for r in self._records.values()
             if r.client_id == client_id and r.target == target and r.reversible
         ]
-        previous_artifact_sha = None
+        previous_run = None
         if existing:
             existing.sort(key=lambda r: r.deployed_at, reverse=True)
-            previous_artifact_sha = existing[0].artifact_sha
+            previous_run = existing[0]
 
         deployed_at = datetime.now(timezone.utc).isoformat()
 
@@ -192,7 +216,8 @@ class PWPRunStateStore:
             artifact_sha=artifact_sha,
             deployed_at=deployed_at,
             deployed_by=deployed_by,
-            previous_artifact_sha=previous_artifact_sha,
+            previous_artifact_sha=(previous_run.artifact_sha if previous_run else None),
+            previous_run_id=(previous_run.run_id if previous_run else None),
             reversible=reversible,
             commit_hash=commit_hash,
             theme_id=theme_id,
@@ -203,6 +228,18 @@ class PWPRunStateStore:
             content_hash=content_hash,
             theme_engine_compatibility=theme_engine_compatibility,
             theme_schema_version=theme_schema_version,
+            previous_theme_id=(previous_run.theme_id if previous_run else None),
+            previous_theme_version=(previous_run.theme_version if previous_run else None),
+            previous_theme_hash=(previous_run.theme_hash if previous_run else None),
+            previous_token_hash=(previous_run.token_hash if previous_run else None),
+            previous_module_hash=(previous_run.module_hash if previous_run else None),
+            previous_content_hash=(previous_run.content_hash if previous_run else None),
+            previous_theme_engine_compatibility=(
+                previous_run.theme_engine_compatibility if previous_run else None
+            ),
+            previous_theme_schema_version=(
+                previous_run.theme_schema_version if previous_run else None
+            ),
         )
         self._records[run_id] = record
 
@@ -248,6 +285,7 @@ def handle_rollback(run_id: str, reason: str = "Rollback requested via CLI") -> 
         "client_id": record.client_id,
         "deployed_by": record.deployed_by,
         "reason": reason,
+        "rollback_restore": record.rollback_restore_metadata(),
     }
 
     success = False
@@ -277,6 +315,8 @@ def handle_rollback(run_id: str, reason: str = "Rollback requested via CLI") -> 
         "run_id": run_id,
         "target": target,
         "previous_artifact_sha": previous_sha,
+        "previous_run_id": record.previous_run_id,
+        "rollback_restore": record.rollback_restore_metadata(),
         "reason": reason,
         "status": "success",
     }
