@@ -188,6 +188,32 @@
     }
 
     /* Navigation Menu */
+    .nav-shell {
+      position: relative;
+    }
+
+    .nav-shell::before,
+    .nav-shell::after {
+      content: '';
+      display: none;
+      position: absolute;
+      top: 1px;
+      bottom: 1px;
+      width: 28px;
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    .nav-shell::before {
+      left: 1px;
+      background: linear-gradient(90deg, var(--bg-industrial) 0%, rgba(20, 24, 34, 0) 100%);
+    }
+
+    .nav-shell::after {
+      right: 1px;
+      background: linear-gradient(270deg, var(--bg-industrial) 0%, rgba(20, 24, 34, 0) 100%);
+    }
+
     .nav-tabs {
       display: flex;
       background: var(--bg-industrial);
@@ -211,6 +237,10 @@
       display: flex;
       align-items: center;
       gap: 8px;
+    }
+
+    .mobile-bottom-nav {
+      display: none;
     }
 
     .nav-tab:hover {
@@ -1240,6 +1270,27 @@
         width: 100%;
         justify-content: space-between;
       }
+      .nav-shell::before,
+      .nav-shell::after {
+        display: block;
+      }
+      .nav-tabs {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        scroll-snap-type: x mandatory;
+        padding: 4px 32px;
+      }
+      .nav-tabs::-webkit-scrollbar {
+        display: none;
+      }
+      .nav-tab {
+        flex: 0 0 auto;
+        scroll-snap-align: start;
+        padding: 6px 10px;
+        font-size: 11px;
+        white-space: nowrap;
+      }
       .drawer {
         width: 100%;
         right: -100%;
@@ -1249,17 +1300,57 @@
       }
     }
 
-    /* <400px (Compact Mobile viewport) */
-    @media (max-width: 400px) {
+    /* <480px (Bottom nav mobile viewport) */
+    @media (max-width: 480px) {
+      body {
+        padding-bottom: calc(76px + env(safe-area-inset-bottom));
+      }
+      .nav-shell {
+        display: none;
+      }
+      .mobile-bottom-nav {
+        display: flex;
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: var(--bg-deep-space);
+        border-top: 1px solid var(--border-subtle);
+        z-index: 100;
+        padding: 8px 6px calc(8px + env(safe-area-inset-bottom));
+        gap: 4px;
+        box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.35);
+      }
+      .mobile-bottom-nav .nav-tab {
+        flex: 1 1 0;
+        justify-content: center;
+        flex-direction: column;
+        gap: 3px;
+        padding: 8px 4px;
+        font-size: 10px;
+      }
+      .mobile-bottom-nav .nav-tab svg {
+        width: 16px;
+        height: 16px;
+      }
+    }
+
+    /* <375px (iPhone SE/Mini compact viewport) */
+    @media (max-width: 375px) {
+      body {
+        padding-left: 8px;
+        padding-right: 8px;
+      }
       .spectrum-grid {
         grid-template-columns: 1fr;
       }
       .agent-card .agent-role {
         display: none;
       }
-      .nav-tab {
-        padding: 6px 10px;
-        font-size: 11px;
+      .mobile-bottom-nav .nav-tab {
+        font-size: 9px;
+        padding-left: 2px;
+        padding-right: 2px;
       }
     }
   </style>
@@ -1287,24 +1378,45 @@
   </header>
 
   <!-- Navigation Menu -->
-  <nav class="nav-tabs">
+  <div class="nav-shell">
+    <nav class="nav-tabs" aria-label="Primary dashboard sections">
+      <button class="nav-tab active" onclick="switchTab('dashboard')">
+        <!-- Layers Icon -->
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+        Dashboard
+      </button>
+      <button class="nav-tab" onclick="switchTab('workspaces')">
+        <!-- Briefcase Icon -->
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path></svg>
+        Workspaces
+      </button>
+      <button class="nav-tab" onclick="switchTab('skills')">
+        <!-- Cpu Icon -->
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="15" x2="23" y2="15"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="15" x2="4" y2="15"></line></svg>
+        Skills
+      </button>
+      <button class="nav-tab" onclick="switchTab('signals')">
+        <!-- Activity Icon -->
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
+        Signals
+      </button>
+    </nav>
+  </div>
+
+  <nav class="mobile-bottom-nav" aria-label="Primary dashboard sections on mobile">
     <button class="nav-tab active" onclick="switchTab('dashboard')">
-      <!-- Layers Icon -->
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
       Dashboard
     </button>
     <button class="nav-tab" onclick="switchTab('workspaces')">
-      <!-- Briefcase Icon -->
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path></svg>
       Workspaces
     </button>
     <button class="nav-tab" onclick="switchTab('skills')">
-      <!-- Cpu Icon -->
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="15" x2="23" y2="15"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="15" x2="4" y2="15"></line></svg>
       Skills
     </button>
     <button class="nav-tab" onclick="switchTab('signals')">
-      <!-- Activity Icon -->
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>
       Signals
     </button>
@@ -2074,14 +2186,12 @@
   // 3. Tab Switching
   // --------------------------------------------------
   function switchTab(tabId) {
-    // Nav highlight
+    // Nav highlight across desktop and mobile nav instances.
     const tabs = document.querySelectorAll(".nav-tab");
     tabs.forEach(tab => {
-      tab.classList.remove("active");
+      const targetMatch = tab.getAttribute("onclick")?.includes(`'${tabId}'`);
+      tab.classList.toggle("active", Boolean(targetMatch));
     });
-    
-    // Find active tab btn and mark
-    event.currentTarget.classList.add("active");
 
     // Hide all panels
     const panels = document.querySelectorAll(".panel-container");
