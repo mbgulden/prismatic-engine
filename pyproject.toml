@@ -36,6 +36,7 @@ http = ["requests>=2.31"]
 redis = ["redis>=5.0"]
 dev = [
     "pytest>=8.0",
+    "jsonschema>=4.0",
 ]
 all = ["prismatic-engine[http,redis]"]
 
