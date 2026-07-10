@@ -28,11 +28,15 @@ classifiers = [
 
 dependencies = [
     "pyyaml>=6.0",
+    "packaging>=23.0",
 ]
 
 [project.optional-dependencies]
 http = ["requests>=2.31"]
 redis = ["redis>=5.0"]
+dev = [
+    "pytest>=8.0",
+]
 all = ["prismatic-engine[http,redis]"]
 
 [project.urls]
