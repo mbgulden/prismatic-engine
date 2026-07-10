@@ -654,6 +654,12 @@ Verification:
 - agents cannot mark done without verification output,
 - peer review catches contract drift.
 
+Phase 9.5 dry-run fixture:
+
+- `plugins/pwp/dry_runs/e2e_theme_dry_run.py` runs the intake → route plan → module plan → Linear tree artifact → theme scaffold → verification report path against `plugins/pwp/dry_runs/fixtures/sentinel_itad_fixture.json`.
+- The dry-run is artifact-only: it does not mutate Linear, does not add `dispatch:ready`, and does not deploy.
+- Use it as the pre-autopilot smoke test before handing real generated tasks to agents.
+
 Exit criteria:
 
 - PWP reliably produces consistent websites through swarm execution.
