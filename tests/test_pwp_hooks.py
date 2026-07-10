@@ -18,7 +18,6 @@ Linear issue:
 
 from __future__ import annotations
 
-import os
 import sys
 import tempfile
 from pathlib import Path
@@ -129,9 +128,7 @@ def _build_loader_with_recording_plugin() -> PluginLoader:
         dst.mkdir()
         # Re-create the package marker so the loader can import it.
         (dst / "__init__.py").write_text("")
-        (dst / "plugin.py").write_text(
-            (plugin_dir / "plugin.py").read_text()
-        )
+        (dst / "plugin.py").write_text((plugin_dir / "plugin.py").read_text())
         (dst / "plugin-manifest.yaml").write_text(
             (plugin_dir / "plugin-manifest.yaml").read_text()
         )
@@ -179,7 +176,6 @@ def test_pwp_runner_fires_hooks_in_order_on_success() -> None:
         "on_post_pipeline",
         "on_deploy",
     ], f"Unexpected hook order: {hook_names}"
-
 
 
 def test_pwp_runner_attaches_theme_provenance_to_deployment_manifest() -> None:
@@ -254,6 +250,7 @@ def test_pwp_runner_accepts_snake_case_theme_provenance_aliases() -> None:
     assert manifest["contentHash"] == "sha256:content2"
     assert manifest["engineVersion"] == "1.0.0"
     assert manifest["sourceCommit"] == "def5678"
+
 
 def test_pwp_runner_fires_on_error_and_reraises() -> None:
     """GRO-2228 acceptance: on_error fires on failure, exception re-raises."""

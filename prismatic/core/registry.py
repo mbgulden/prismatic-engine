@@ -24,7 +24,6 @@ from packaging.version import Version
 
 from prismatic.interface.plugin import (
     PluginContext,
-    AgentContract,
     PrismaticPlugin,
     PluginValidationError,
 )
@@ -53,9 +52,7 @@ class PluginLoader:
         files, validate requirements, and dynamically register plugins.
         """
         if not os.path.exists(self.plugins_dir):
-            logger.warning(
-                "Plugin directory does not exist: %s", self.plugins_dir
-            )
+            logger.warning("Plugin directory does not exist: %s", self.plugins_dir)
             return
 
         for entry in os.scandir(self.plugins_dir):
@@ -97,9 +94,7 @@ class PluginLoader:
 
     # ── internal ───────────────────────────────────────────────────────
 
-    def _load_plugin(
-        self, manifest_path: Path, context: PluginContext
-    ) -> None:
+    def _load_plugin(self, manifest_path: Path, context: PluginContext) -> None:
         with open(manifest_path, "r") as fh:
             manifest = yaml.safe_load(fh)
 
@@ -167,9 +162,7 @@ class PluginLoader:
             tools = plugin_instance.register_tools()
             self.registered_tools.extend(tools)
         except Exception:
-            logger.error(
-                "Plugin '%s' failed to register tools", name, exc_info=True
-            )
+            logger.error("Plugin '%s' failed to register tools", name, exc_info=True)
 
         logger.info("Successfully loaded plugin '%s' (v%s)", name, version)
 
@@ -199,7 +192,13 @@ PWP_THEME_PROVENANCE_ALIASES: Dict[str, Tuple[str, ...]] = {
     "moduleHash": ("moduleHash", "module_hash"),
     "contentHash": ("contentHash", "content_hash"),
     "engineVersion": ("engineVersion", "engine_version"),
-    "sourceCommit": ("sourceCommit", "source_commit", "gitCommit", "git_commit", "commit"),
+    "sourceCommit": (
+        "sourceCommit",
+        "source_commit",
+        "gitCommit",
+        "git_commit",
+        "commit",
+    ),
 }
 
 
@@ -229,14 +228,10 @@ def build_pwp_deployment_manifest(
     """
 
     context_provenance = (
-        context.get("themeProvenance")
-        or context.get("theme_provenance")
-        or {}
+        context.get("themeProvenance") or context.get("theme_provenance") or {}
     )
     artifact_provenance = (
-        artifact.get("themeProvenance")
-        or artifact.get("theme_provenance")
-        or {}
+        artifact.get("themeProvenance") or artifact.get("theme_provenance") or {}
     )
     if not isinstance(context_provenance, dict):
         context_provenance = {}
@@ -339,7 +334,9 @@ class PWPPluginRunner:
         context: Dict[str, Any],
         stages: Iterable[Stage],
         deploy_target: Optional[str] = None,
-        deploy_artifact_provider: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
+        deploy_artifact_provider: Optional[
+            Callable[[Dict[str, Any]], Dict[str, Any]]
+        ] = None,
     ) -> Dict[str, Any]:
         """
         Run a PWP pipeline.
@@ -398,8 +395,7 @@ class PWPPluginRunner:
         if deploy_target is not None:
             if deploy_artifact_provider is None:
                 raise ValueError(
-                    "deploy_artifact_provider is required when "
-                    "deploy_target is set"
+                    "deploy_artifact_provider is required when deploy_target is set"
                 )
             artifact = deploy_artifact_provider(result)
             artifact = attach_pwp_deployment_manifest(
