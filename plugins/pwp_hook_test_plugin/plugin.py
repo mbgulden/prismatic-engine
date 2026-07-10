@@ -76,5 +76,6 @@ class PWPHookTestPlugin(PrismaticPlugin):
                 "hook": "on_deploy",
                 "pipeline_id": pipeline_id,
                 "target": target,
+                "artifact": artifact,
             }
         )

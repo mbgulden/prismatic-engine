@@ -181,6 +181,80 @@ def test_pwp_runner_fires_hooks_in_order_on_success() -> None:
     ], f"Unexpected hook order: {hook_names}"
 
 
+
+def test_pwp_runner_attaches_theme_provenance_to_deployment_manifest() -> None:
+    """GRO-3713: deploy artifacts carry canonical theme provenance."""
+    loader = _build_loader_with_recording_plugin()
+    runner = PWPPluginRunner(loader)
+
+    result = runner.run(
+        pipeline_id="GRO-3713-provenance",
+        context={
+            "themeProvenance": {
+                "themeId": "pwp.theme.trust-light",
+                "themeVersion": "0.1.0",
+                "tokenHash": "sha256:token",
+                "moduleHash": "sha256:module",
+                "contentHash": "sha256:content",
+                "sourceCommit": "abc1234",
+            }
+        },
+        stages=[("build", lambda _ctx: "ok")],
+        deploy_target="cloudflare-pages",
+        deploy_artifact_provider=lambda _r: {"url": "https://example.test"},
+    )
+
+    manifest = result["deploymentManifest"]
+    assert manifest == {
+        "pipelineId": "GRO-3713-provenance",
+        "themeId": "pwp.theme.trust-light",
+        "themeVersion": "0.1.0",
+        "tokenHash": "sha256:token",
+        "moduleHash": "sha256:module",
+        "contentHash": "sha256:content",
+        "engineVersion": "1.0.0",
+        "sourceCommit": "abc1234",
+    }
+
+    from pwp_hook_test_plugin.plugin import PWPHookTestPlugin
+
+    deploy_event = PWPHookTestPlugin.events[-1]
+    assert deploy_event["hook"] == "on_deploy"
+    assert deploy_event["artifact"]["deploymentManifest"] == manifest
+
+
+def test_pwp_runner_accepts_snake_case_theme_provenance_aliases() -> None:
+    """PWP callers can pass Pythonic snake_case and still get manifest JSON."""
+    loader = _build_loader_with_recording_plugin()
+    runner = PWPPluginRunner(loader)
+
+    result = runner.run(
+        pipeline_id="GRO-3713-aliases",
+        context={
+            "theme_provenance": {
+                "theme_id": "pwp.theme.saas-product",
+                "theme_version": "2.0.0",
+                "token_hash": "sha256:token2",
+                "module_hash": "sha256:module2",
+                "content_hash": "sha256:content2",
+                "source_commit": "def5678",
+            }
+        },
+        stages=[("build", lambda _ctx: "ok")],
+        deploy_target="cloudflare-pages",
+        deploy_artifact_provider=lambda _r: {"deployment_manifest": {"target": "cf"}},
+    )
+
+    manifest = result["deploymentManifest"]
+    assert manifest["target"] == "cf"
+    assert manifest["themeId"] == "pwp.theme.saas-product"
+    assert manifest["themeVersion"] == "2.0.0"
+    assert manifest["tokenHash"] == "sha256:token2"
+    assert manifest["moduleHash"] == "sha256:module2"
+    assert manifest["contentHash"] == "sha256:content2"
+    assert manifest["engineVersion"] == "1.0.0"
+    assert manifest["sourceCommit"] == "def5678"
+
 def test_pwp_runner_fires_on_error_and_reraises() -> None:
     """GRO-2228 acceptance: on_error fires on failure, exception re-raises."""
     loader = _build_loader_with_recording_plugin()
