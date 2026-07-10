@@ -11,12 +11,18 @@ core-version constraints with `packaging.specifiers.SpecifierSet` and
 `packaging.version.Version`, so the root package metadata must declare
 `packaging` as a runtime dependency.
 
-If CI reports `PluginLoader import failed: No module named 'packaging'`, install
-the current package from the branch and rerun:
+If CI reports `PluginLoader import failed: No module named 'packaging'`, the root
+runtime dependencies are incomplete.
+
+The GitHub `Plugin Load Gate` workflow installs the project with the `dev` extra
+before running the gate and its focused pytest module:
 
 ```bash
+pip install -e ".[dev]"
 python -m prismatic.quality.plugin_load
+python -m pytest tests/test_plugin_load_gate.py -v
 ```
 
-The gate should fail only for real shipped-plugin load failures, not for missing
-engine runtime dependencies.
+If CI reports `No module named pytest`, the `dev` extra is incomplete. The gate
+should fail only for real shipped-plugin load failures, not for missing
+engine/runtime/test harness dependencies.
