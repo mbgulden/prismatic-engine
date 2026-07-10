@@ -147,7 +147,9 @@ class PWPRunStateStore:
         if latest is None:
             return False
 
-        return all(getattr(latest, field) == value for field, value in supplied_hashes.items())
+        return all(
+            getattr(latest, field) == value for field, value in supplied_hashes.items()
+        )
 
     def record_deploy(
         self,
