@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 TEMPLATE_PATH = (
     ROOT / "plugins" / "pwp" / "linear_task_templates" / "pwp-theme-lane-templates.json"
 )
