@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 from prismatic.interface.plugin import (
+    AgentContract,
     PluginContext,
     PrismaticPlugin,
 )
@@ -37,12 +38,16 @@ class PWPHookTestPlugin(PrismaticPlugin):
     def register_tools(self) -> List[Dict[str, Any]]:
         return []
 
-    def on_pre_pipeline(self, pipeline_id: str, context: Dict[str, Any]) -> None:
+    def on_pre_pipeline(
+        self, pipeline_id: str, context: Dict[str, Any]
+    ) -> None:
         PWPHookTestPlugin.events.append(
             {"hook": "on_pre_pipeline", "pipeline_id": pipeline_id}
         )
 
-    def on_post_pipeline(self, pipeline_id: str, result: Dict[str, Any]) -> None:
+    def on_post_pipeline(
+        self, pipeline_id: str, result: Dict[str, Any]
+    ) -> None:
         PWPHookTestPlugin.events.append(
             {
                 "hook": "on_post_pipeline",
@@ -51,7 +56,9 @@ class PWPHookTestPlugin(PrismaticPlugin):
             }
         )
 
-    def on_error(self, pipeline_id: str, exc: BaseException, stage: str) -> None:
+    def on_error(
+        self, pipeline_id: str, exc: BaseException, stage: str
+    ) -> None:
         PWPHookTestPlugin.events.append(
             {
                 "hook": "on_error",
@@ -69,6 +76,5 @@ class PWPHookTestPlugin(PrismaticPlugin):
                 "hook": "on_deploy",
                 "pipeline_id": pipeline_id,
                 "target": target,
-                "artifact": artifact,
             }
         )
