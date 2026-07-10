@@ -229,7 +229,9 @@ class PWPRunStateStore:
             theme_engine_compatibility=theme_engine_compatibility,
             theme_schema_version=theme_schema_version,
             previous_theme_id=(previous_run.theme_id if previous_run else None),
-            previous_theme_version=(previous_run.theme_version if previous_run else None),
+            previous_theme_version=(
+                previous_run.theme_version if previous_run else None
+            ),
             previous_theme_hash=(previous_run.theme_hash if previous_run else None),
             previous_token_hash=(previous_run.token_hash if previous_run else None),
             previous_module_hash=(previous_run.module_hash if previous_run else None),
