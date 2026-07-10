@@ -9,7 +9,9 @@ Prismatic Engine artifacts in CI and release automation.
 the same plugin-loading path used by the engine. `PluginLoader` validates plugin
 core-version constraints with `packaging.specifiers.SpecifierSet` and
 `packaging.version.Version`, so the root package metadata must declare
-`packaging` as a runtime dependency.
+`packaging` as a runtime dependency. PWP theme validation uses JSON Schema for
+schema-contract checks, so `jsonschema` is also a runtime dependency rather than
+a local test-machine assumption.
 
 If CI reports `PluginLoader import failed: No module named 'packaging'`, the root
 runtime dependencies are incomplete.
