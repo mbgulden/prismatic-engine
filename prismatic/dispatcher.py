@@ -70,6 +70,151 @@ def _emit_agent_event(event_type: str, agent_name: str, issue_id: str, **extra) 
         pass  # Best-effort — don't break dispatch over event emission
 
 
+# ── Token metrics parsing (GRO-2980.1 / GRO-2990) ──────────────────────────
+#
+# Each agent provider prints token counts in its own stdout format.
+# We parse with regex so the dispatcher doesn't need provider-specific
+# SDK dependencies. Returns None if no token-like output is found.
+
+_TOKEN_PATTERNS: list[tuple[str, str, str]] = [
+    # (provider_prefix, prompt_pattern, completion_pattern)
+    # Ollama (used by local-llm agents: fred, kai, ned)
+    (
+        "ollama",
+        r'"prompt_eval_count"\s*:\s*(\d+)',
+        r'"eval_count"\s*:\s*(\d+)',
+    ),
+    # Anthropic (claude-code → Jules)
+    (
+        "anthropic",
+        r'"input_tokens"\s*:\s*(\d+)',
+        r'"output_tokens"\s*:\s*(\d+)',
+    ),
+    # OpenAI / GitHub Copilot (codex)
+    (
+        "openai",
+        r'"prompt_tokens"\s*:\s*(\d+)',
+        r'"completion_tokens"\s*:\s*(\d+)',
+    ),
+    # Google Antigravity (AGY / Gemini)
+    (
+        "google-antigravity",
+        r'"promptTokenCount"\s*:\s*(\d+)',
+        r'"candidatesTokenCount"\s*:\s*(\d+)',
+    ),
+]
+
+
+def _parse_token_metrics(provider: str, output: str) -> dict[str, int] | None:
+    """Parse token counts from agent stdout.
+
+    Args:
+        provider: One of the values in ``AGENT_PROVIDER_MAP`` —
+            e.g. ``"local-llm"``, ``"claude-code"``, ``"github-copilot"``,
+            ``"google-antigravity"``.  Falls back to generic Ollama-style
+            parsing when the provider is unknown.
+        output: Captured stdout/stderr from the agent process.
+
+    Returns:
+        Dict with ``prompt_tokens`` + ``completion_tokens`` (and any
+        matched ``total_tokens``) if found, else ``None``.
+    """
+    if not output:
+        return None
+
+    # Map AGENT_PROVIDER_MAP value → parser prefix
+    provider_to_prefix = {
+        "local-llm": "ollama",
+        "claude-code": "anthropic",
+        "github-copilot": "openai",
+        "google-antigravity": "google-antigravity",
+    }
+    prefix = provider_to_prefix.get(provider, "ollama")
+
+    prompt_pat: str | None = None
+    completion_pat: str | None = None
+    for pfx, p_pat, c_pat in _TOKEN_PATTERNS:
+        if pfx == prefix:
+            prompt_pat = p_pat
+            completion_pat = c_pat
+            break
+
+    if prompt_pat is None or completion_pat is None:
+        return None
+
+    prompt_m = re.search(prompt_pat, output)
+    completion_m = re.search(completion_pat, output)
+    if not prompt_m and not completion_m:
+        return None
+
+    return {
+        "prompt_tokens": int(prompt_m.group(1)) if prompt_m else 0,
+        "completion_tokens": int(completion_m.group(1)) if completion_m else 0,
+    }
+
+
+def _drain_and_record_tokens(
+    proc: "subprocess.Popen | None",
+    run_id: str,
+    agent_name: str,
+    provider: str,
+    timeout: float = 10.0,
+) -> None:
+    """Drain a finished agent process and emit a token-metrics event.
+
+    Best-effort — never raises.  Called from the dispatch_once flow
+    right after ``record_agent_run`` so that the agent_run row exists
+    alongside any tokens row that follows.
+
+    Args:
+        proc: The ``subprocess.Popen`` returned by a launcher.
+        run_id: Matches the ``record_agent_run`` run_id.
+        agent_name: ``"fred" | "kai" | "agy" | "jules" | "codex"``.
+        provider: From ``AGENT_PROVIDER_MAP``.
+        timeout: Seconds to wait for ``communicate`` to drain the pipe.
+    """
+    if proc is None:
+        return
+    try:
+        stdout_bytes, _ = proc.communicate(timeout=timeout)
+    except (subprocess.TimeoutExpired, OSError):
+        # Process didn't exit cleanly within timeout — kill and try one
+        # more time without blocking.
+        try:
+            proc.kill()
+            stdout_bytes, _ = proc.communicate(timeout=2.0)
+        except Exception:
+            return
+    except Exception:
+        return
+
+    if not stdout_bytes:
+        return
+
+    try:
+        output = stdout_bytes.decode("utf-8", errors="replace")
+    except Exception:
+        return
+
+    metrics = _parse_token_metrics(provider, output)
+    if metrics is None:
+        return
+
+    try:
+        from prismatic.telemetry import get_collector
+
+        collector = get_collector()
+        collector.record_tokens(
+            run_id=run_id,
+            agent=agent_name,
+            provider=provider,
+            prompt_tokens=metrics["prompt_tokens"],
+            completion_tokens=metrics["completion_tokens"],
+        )
+    except Exception:
+        pass  # Telemetry is best-effort
+
+
 # ═══════════════════════════════════════════════════════════════
 # Constants
 # ═══════════════════════════════════════════════════════════════
@@ -945,8 +1090,8 @@ def launch_agy(
 
         proc = subprocess.Popen(
             cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
         )
         run_id = record_launch_record(
@@ -998,8 +1143,8 @@ def launch_jules(
 
         proc = subprocess.Popen(
             cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
         )
         run_id = record_launch_record(
@@ -1051,8 +1196,8 @@ def launch_codex(
 
         proc = subprocess.Popen(
             cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
         )
         run_id = record_launch_record(
@@ -2095,16 +2240,30 @@ def dispatch_once(
                     )
                     # ── Telemetry: record agent run ──────────────────
                     run_id = f"{cycle_id}-{agent_name}-{identifier}"
+                    provider = AGENT_PROVIDER_MAP.get(agent_name, "")
                     collector = get_collector()
                     collector.record_agent_run(
                         run_id=run_id,
                         agent=agent_name,
                         issue_id=identifier,
-                        provider=AGENT_PROVIDER_MAP.get(agent_name, ""),
+                        provider=provider,
                         status="dispatched",
                         credits_spent=decision.estimated_cost,
                     )
                     # ── End telemetry ──────────────────────────────────
+                    # GRO-2980.1 / GRO-2990: drain the launched subprocess
+                    # and record token metrics if its stdout contains
+                    # provider-recognizable token counts. Best-effort,
+                    # never raises. Only meaningful for launch-style
+                    # agents (agy / jules / codex) whose launchers
+                    # return a Popen handle.
+                    if isinstance(result, subprocess.Popen):
+                        _drain_and_record_tokens(
+                            proc=result,
+                            run_id=run_id,
+                            agent_name=agent_name,
+                            provider=provider,
+                        )
                     # Emit agent_launched event to IPC bridge
                     _emit_agent_event(
                         "agent_launched", agent_name, identifier, cycle_id=cycle_id
