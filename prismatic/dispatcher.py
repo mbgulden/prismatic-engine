@@ -398,6 +398,52 @@ def get_issues_with_label(
     return results
 
 
+DISPATCH_READY_LABEL = "dispatch:ready"
+
+
+def issue_label_names(issue: dict[str, Any]) -> list[str]:
+    """Return label names from either normalized or raw Linear issue shapes."""
+    labels = issue.get("labels", [])
+    if isinstance(labels, list):
+        names: list[str] = []
+        for label in labels:
+            if isinstance(label, str):
+                names.append(label)
+            elif isinstance(label, dict):
+                name = label.get("name")
+                if name:
+                    names.append(str(name))
+        return names
+    if isinstance(labels, dict):
+        return [
+            str(label.get("name"))
+            for label in labels.get("nodes", [])
+            if isinstance(label, dict) and label.get("name")
+        ]
+    return []
+
+
+def is_dispatch_ready(issue: dict[str, Any]) -> bool:
+    """True only when the issue carries the explicit launch gate label."""
+    return DISPATCH_READY_LABEL in issue_label_names(issue)
+
+
+def report_lane_starvation(agent_name: str, candidate_count: int, gated_count: int) -> None:
+    """Emit a visible no-runnable-work signal for an agent lane."""
+    label = f"agent:{agent_name}"
+    if candidate_count == 0:
+        print(
+            f"[dispatcher] 🟡 STARVED {label}: no candidate issues found "
+            f"for this lane"
+        )
+        return
+    print(
+        f"[dispatcher] 🟡 STARVED {label}: {candidate_count} candidate "
+        f"issue(s), {gated_count} missing {DISPATCH_READY_LABEL}; "
+        "nothing runnable"
+    )
+
+
 def get_issue_labels(issue_id: str) -> list[dict[str, str]]:
     """Get the current labels on a specific issue.
 
@@ -1543,6 +1589,8 @@ def dispatch_once(
         "pipeline_setup": 0,
         "stale_killed": 0,
         "errors": 0,
+        "starved": 0,
+        "missing_dispatch_ready": 0,
     }
     cycle_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
 
@@ -1594,7 +1642,21 @@ def dispatch_once(
             counts["errors"] += 1
             continue
 
-        for issue in issues:
+        runnable_issues = [issue for issue in issues if is_dispatch_ready(issue)]
+        missing_gate = len(issues) - len(runnable_issues)
+        if not runnable_issues:
+            report_lane_starvation(agent_name, len(issues), missing_gate)
+            counts["starved"] += 1
+            counts["missing_dispatch_ready"] += missing_gate
+            continue
+        if missing_gate:
+            print(
+                f"[dispatcher] {agent_name}: skipping {missing_gate} issue(s) "
+                f"without {DISPATCH_READY_LABEL}"
+            )
+            counts["missing_dispatch_ready"] += missing_gate
+
+        for issue in runnable_issues:
             issue_id = issue["id"]
 
             # Skip if already dispatched this cycle
@@ -1787,6 +1849,8 @@ def main_loop(
                 f"{counts['dispatched']} dispatched, "
                 f"{counts['pipeline_setup']} pipeline setups, "
                 f"{counts['stale_killed']} stale killed, "
+                f"{counts.get('starved', 0)} starved lanes, "
+                f"{counts.get('missing_dispatch_ready', 0)} missing-ready, "
                 f"{counts['errors']} errors"
             )
             # ── GRO-3121: wakeup-empty metric ──────────────
