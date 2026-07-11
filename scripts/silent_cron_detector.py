@@ -23,13 +23,12 @@ Usage:
   python3 silent_cron_detector.py [--dry-run] [--json]
   python3 silent_cron_detector.py --stale-hours 24  # adjust threshold
 """
+
 import argparse
 import json
 import os
 import re
-import subprocess
 import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.request import Request, urlopen
@@ -96,11 +95,13 @@ def load_all_cron_jobs() -> list:
 
 def classify_root_cause(job: dict) -> str:
     """Guess the root-cause family from the script name + deliver pattern."""
-    text = " ".join([
-        job.get("name", ""),
-        job.get("script", "") or "",
-        job.get("paused_reason", "") or "",
-    ]).lower()
+    text = " ".join(
+        [
+            job.get("name", ""),
+            job.get("script", "") or "",
+            job.get("paused_reason", "") or "",
+        ]
+    ).lower()
     for family, pattern in ROOT_CAUSE_FAMILIES.items():
         if re.search(pattern, text, re.IGNORECASE):
             return family
@@ -115,8 +116,46 @@ def classify_root_cause(job: dict) -> str:
     return "unknown"
 
 
+ARCHIVAL_STATES = {"archived", "disabled", "paused", "retired"}
+
+
+def _truthy(value) -> bool:
+    """Return True for common truthy cron metadata values."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return False
+
+
+def is_archival_job(job: dict) -> bool:
+    """Return True for intentionally paused/retired cron records.
+
+    Health digests should report active failures only. A job can retain
+    `last_status=error` from before it was paused, disabled, or retired; that
+    historical failure is useful archive context, but it is not a current
+    operator alert.
+    """
+    state = str(job.get("state") or "").strip().lower()
+    if state in ARCHIVAL_STATES:
+        return True
+    if (
+        _truthy(job.get("paused"))
+        or _truthy(job.get("retired"))
+        or _truthy(job.get("archived"))
+    ):
+        return True
+    if job.get("enabled") is False:
+        return True
+    return False
+
+
 def is_silent_failure(job: dict) -> bool:
-    """A cron is a silent failure if it's failing AND not delivering to Michael."""
+    """A cron is a silent failure if it is actively failing and not delivering."""
+    if is_archival_job(job):
+        return False
     if job.get("last_status") != "error":
         return False
     deliver = job.get("deliver", "local")
@@ -134,6 +173,8 @@ def is_silent_failure(job: dict) -> bool:
 
 def is_stale(job: dict, stale_hours: int = 24) -> bool:
     """A cron is stale if it hasn't run in `stale_hours` and is enabled with an interval."""
+    if is_archival_job(job):
+        return False
     if not job.get("enabled", False):
         return False
     if job.get("state") == "disabled":
@@ -156,9 +197,12 @@ def detect_silent_failures(jobs: list, stale_hours: int) -> dict:
     error_not_silent = []
     blank_status = []
     healthy = []
+    archived_suppressed = []
 
     for j in jobs:
-        if is_silent_failure(j):
+        if is_archival_job(j):
+            archived_suppressed.append(j)
+        elif is_silent_failure(j):
             silent_failures.append(j)
         elif j.get("last_status") == "error":
             error_not_silent.append(j)
@@ -176,7 +220,9 @@ def detect_silent_failures(jobs: list, stale_hours: int) -> dict:
         "error_not_silent": error_not_silent,
         "blank_status": blank_status,
         "healthy": healthy,
+        "archived_suppressed": archived_suppressed,
         "total": len(jobs),
+        "active_total": len(jobs) - len(archived_suppressed),
     }
 
 
@@ -185,11 +231,12 @@ def build_digest(report: dict, stale_hours: int) -> str:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     lines = [
         f"# 🔕 Silent Cron Detector — {now}",
-        f"",
-        f"**Total jobs scanned:** {report['total']} • **Stale threshold:** {stale_hours}h",
-        f"",
-        f"## 🔴 Silent Failures (error + no Telegram delivery to Michael)",
-        f"",
+        "",
+        f"**Total jobs scanned:** {report['total']} • **Active jobs:** {report.get('active_total', report['total'])} • "
+        f"**Archived/paused suppressed:** {len(report.get('archived_suppressed', []))} • **Stale threshold:** {stale_hours}h",
+        "",
+        "## 🔴 Silent Failures (error + no Telegram delivery to Michael)",
+        "",
     ]
     if not report["silent_failures"]:
         lines.append("_None detected — all erroring crons are alerting somewhere._")
@@ -202,14 +249,16 @@ def build_digest(report: dict, stale_hours: int) -> str:
             last_run = j.get("last_run_at", "never")
             err = j.get("last_delivery_error", "")
             err_short = err[:80] if err else "(no delivery error)"
-            lines.extend([
-                f"### {name}",
-                f"- **ID:** `{job_id}` • **Profile:** `{profile}` • **Root cause family:** `{family}`",
-                f"- **Last run:** {last_run}",
-                f"- **Last delivery error:** `{err_short}`",
-                f"- **Action:** File Linear issue for this cron, classified by `{family}`",
-                f"",
-            ])
+            lines.extend(
+                [
+                    f"### {name}",
+                    f"- **ID:** `{job_id}` • **Profile:** `{profile}` • **Root cause family:** `{family}`",
+                    f"- **Last run:** {last_run}",
+                    f"- **Last delivery error:** `{err_short}`",
+                    f"- **Action:** File Linear issue for this cron, classified by `{family}`",
+                    "",
+                ]
+            )
 
     lines.append(f"## ⏰ Stale Crons (enabled, haven't run in {stale_hours}h)")
     lines.append("")
@@ -221,13 +270,17 @@ def build_digest(report: dict, stale_hours: int) -> str:
             name = j.get("name", "(no name)")
             last_run = j.get("last_run_at", "never")
             schedule = j.get("schedule", "unknown")
-            lines.append(f"- `{job_id}` **{name}** — schedule: `{schedule}`, last run: {last_run}")
+            lines.append(
+                f"- `{job_id}` **{name}** — schedule: `{schedule}`, last run: {last_run}"
+            )
 
-    lines.extend([
-        f"",
-        f"## ⚠️ Erroring (but delivering to a chat — not silent)",
-        f"",
-    ])
+    lines.extend(
+        [
+            "",
+            "## ⚠️ Erroring (but delivering to a chat — not silent)",
+            "",
+        ]
+    )
     if not report["error_not_silent"]:
         lines.append("_None._")
     else:
@@ -237,11 +290,13 @@ def build_digest(report: dict, stale_hours: int) -> str:
             deliver = j.get("deliver", "?")
             lines.append(f"- `{job_id}` **{name}** — deliver=`{deliver}`")
 
-    lines.extend([
-        f"",
-        f"## 📋 Blank Status (enabled, never run)",
-        f"",
-    ])
+    lines.extend(
+        [
+            "",
+            "## 📋 Blank Status (enabled, never run)",
+            "",
+        ]
+    )
     if not report["blank_status"]:
         lines.append("_None._")
     else:
@@ -250,13 +305,36 @@ def build_digest(report: dict, stale_hours: int) -> str:
             name = j.get("name", "(no name)")
             lines.append(f"- `{job_id}` **{name}**")
 
-    lines.extend([
-        f"",
-        f"## ✅ Healthy: {len(report['healthy'])} jobs",
-        f"",
-        f"---",
-        f"Generated by `silent_cron_detector.py` (GRO-2237 follow-up)",
-    ])
+    lines.extend(
+        [
+            "",
+            f"## 🗄️ Archived/Paused Suppressed: {len(report.get('archived_suppressed', []))} jobs",
+            "",
+        ]
+    )
+    if not report.get("archived_suppressed"):
+        lines.append("_None._")
+    else:
+        for j in report["archived_suppressed"][:10]:
+            job_id = j.get("job_id", "unknown")
+            name = j.get("name", "(no name)")
+            state = j.get("state") or (
+                "paused" if _truthy(j.get("paused")) else "disabled"
+            )
+            last_status = j.get("last_status", "unknown")
+            lines.append(
+                f"- `{job_id}` **{name}** — `{state}`, last_status=`{last_status}` (not a current alert)"
+            )
+
+    lines.extend(
+        [
+            "",
+            f"## ✅ Healthy: {len(report['healthy'])} jobs",
+            "",
+            "---",
+            "Generated by `silent_cron_detector.py` (GRO-2237 follow-up)",
+        ]
+    )
     return "\n".join(lines)
 
 
@@ -267,10 +345,18 @@ def send_telegram(message: str) -> bool:
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     # Telegram has a 4096 char limit per message; truncate
     if len(message) > 4000:
-        message = message[:3950] + "\n\n... (truncated, see /tmp/silent_cron_digest.md for full)"
+        message = (
+            message[:3950]
+            + "\n\n... (truncated, see /tmp/silent_cron_digest.md for full)"
+        )
     try:
-        data = json.dumps({"chat_id": TELEGRAM_HOME_CHAT_ID, "text": message,
-                          "parse_mode": "Markdown"}).encode()
+        data = json.dumps(
+            {
+                "chat_id": TELEGRAM_HOME_CHAT_ID,
+                "text": message,
+                "parse_mode": "Markdown",
+            }
+        ).encode()
         req = Request(url, data=data, headers={"Content-Type": "application/json"})
         with urlopen(req, timeout=15) as r:
             return json.loads(r.read()).get("ok", False)
@@ -334,11 +420,20 @@ def file_linear_issues(report: dict, dry_run: bool = True) -> list:
         }
         """
         try:
-            req = Request("https://api.linear.app/graphql",
-                data=json.dumps({"query": q,
-                    "variables": {"title": title, "desc": desc,
-                                  "team": "b6fb2651-5a1f-4714-9bcd-9eb6e759ffef"}}).encode(),
-                headers={"Authorization": api_key, "Content-Type": "application/json"})
+            req = Request(
+                "https://api.linear.app/graphql",
+                data=json.dumps(
+                    {
+                        "query": q,
+                        "variables": {
+                            "title": title,
+                            "desc": desc,
+                            "team": "b6fb2651-5a1f-4714-9bcd-9eb6e759ffef",
+                        },
+                    }
+                ).encode(),
+                headers={"Authorization": api_key, "Content-Type": "application/json"},
+            )
             r = json.loads(urlopen(req, timeout=15).read())
             if r.get("data", {}).get("issueCreate", {}).get("success"):
                 filed.append(r["data"]["issueCreate"]["issue"])
@@ -349,34 +444,53 @@ def file_linear_issues(report: dict, dry_run: bool = True) -> list:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--stale-hours", type=int, default=24,
-                       help="Hours without a run to consider a cron stale")
-    parser.add_argument("--dry-run", action="store_true",
-                       help="Don't file Linear issues, just report")
-    parser.add_argument("--json", action="store_true",
-                       help="Output report as JSON instead of markdown")
-    parser.add_argument("--no-telegram", action="store_true",
-                       help="Don't send to Telegram, just write local file")
+    parser.add_argument(
+        "--stale-hours",
+        type=int,
+        default=24,
+        help="Hours without a run to consider a cron stale",
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Don't file Linear issues, just report"
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="Output report as JSON instead of markdown"
+    )
+    parser.add_argument(
+        "--no-telegram",
+        action="store_true",
+        help="Don't send to Telegram, just write local file",
+    )
     args = parser.parse_args()
 
-    print(f"═══ Silent Cron Detector — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')} ═══\n")
+    print(
+        f"═══ Silent Cron Detector — {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')} ═══\n"
+    )
 
     jobs = load_all_cron_jobs()
     print(f"Loaded {len(jobs)} cron jobs from {PROFILES_DIR}")
 
     report = detect_silent_failures(jobs, args.stale_hours)
-    print(f"\nResults:")
+    print("\nResults:")
     print(f"  🔴 Silent failures:    {len(report['silent_failures'])}")
     print(f"  ⏰ Stale:              {len(report['stale'])}")
     print(f"  ⚠️ Error (not silent): {len(report['error_not_silent'])}")
     print(f"  📋 Blank status:       {len(report['blank_status'])}")
     print(f"  ✅ Healthy:            {len(report['healthy'])}")
+    print(f"  🗄️ Archived/paused:    {len(report['archived_suppressed'])} suppressed")
 
     digest = build_digest(report, args.stale_hours)
 
     if args.json:
         # Strip non-JSON-serializable
-        for k in ("silent_failures", "stale", "error_not_silent", "blank_status", "healthy"):
+        for k in (
+            "silent_failures",
+            "stale",
+            "error_not_silent",
+            "blank_status",
+            "healthy",
+            "archived_suppressed",
+        ):
             for j in report[k]:
                 j.pop("_source", None)
         print(json.dumps(report, indent=2, default=str))
@@ -390,18 +504,22 @@ def main():
         if sent:
             print(f"  ✅ Telegram digest sent to chat {TELEGRAM_HOME_CHAT_ID}")
         elif TELEGRAM_BOT_TOKEN and TELEGRAM_HOME_CHAT_ID:
-            print(f"  ⚠️ Telegram send failed")
+            print("  ⚠️ Telegram send failed")
         else:
-            print(f"  ℹ️  Telegram credentials not set; skipping send")
+            print("  ℹ️  Telegram credentials not set; skipping send")
 
-    # File Linear issues
-    if not args.json and not args.dry_run:
-        filed = file_linear_issues(report, dry_run=False)
-        print(f"\n📋 Filed {len(filed)} Linear issues:")
-        for i in filed:
-            print(f"  - {i.get('identifier', '?')}")
-    elif report["silent_failures"]:
-        print(f"\n(dry-run) Would file {len(report['silent_failures'])} Linear issues for silent failures")
+    # File Linear issues. Keep --json stdout machine-parseable: no trailing prose.
+    if not args.json:
+        if not args.dry_run:
+            filed = file_linear_issues(report, dry_run=False)
+            print(f"\n📋 Filed {len(filed)} Linear issues:")
+            for i in filed:
+                print(f"  - {i.get('identifier', '?')}")
+        elif report["silent_failures"]:
+            print(
+                f"\n(dry-run) Would file {len(report['silent_failures'])} "
+                "Linear issues for silent failures"
+            )
 
     return 0
 

@@ -7,6 +7,7 @@ This directory contains the **operational layer** of the Prismatic Engine: the h
 | File | Purpose |
 |---|---|
 | `factory_monitor.py` | Heartbeat health check. Runs every 15 min, reports on services/endpoints/bus/curator/pool/vault. Stdlib only. |
+| `../silent_cron_detector.py` | Cron/factory digest source for silent-cron health. It suppresses paused, disabled, archived, and retired jobs so historical `last_status=error` records are listed as archive context, not active operator alerts. |
 | `factory_responder.py` | Action-taker. Reads monitor output, classifies alerts, takes automated action: service restart, Linear issue creation, AGY dispatch, Telegram notification with narrative messages. |
 | `clear_stale_escalations.py` | One-shot cleanup for the 6 stale escalations from the GRO-3035 rollback. |
 | `jules_stalled_session_purge.py` | Dry-run-by-default cleanup for legacy Jules sessions stuck in `Awaiting User Feedback`; cross-references tracked JSON state (`/tmp/jules_dispatcher/*.json` plus manifest fallbacks), verifies the installed Jules CLI exposes `remote delete`, and deletes only with `--execute`. |
