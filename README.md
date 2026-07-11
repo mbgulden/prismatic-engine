@@ -4,23 +4,44 @@
 
 A FastAPI-based gateway that consumes Linear/GitHub webhooks, persists them to a SQLite bus, tags them via a curator lane, and dispatches them to bounded AGY supervisor pools with per-lane budget enforcement.
 
-## Quick Start
+## First-User Quick Start
+
+Use this path from a clean checkout. It does **not** require systemd, Michael-specific paths, or hosted infrastructure.
 
 ```bash
-# Check service health
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install .
+prismatic --help
+prismatic status
+```
+
+Expected first-user result: `prismatic --help` prints the CLI commands, and `prismatic status` reports local diagnostics plus any missing optional integration credentials.
+
+For development/editable installs:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e .
+python scripts/distribution_readiness_smoke.py --fresh-install
+```
+
+## Optional operator/systemd deployment
+
+The systemd services below are for operators running a long-lived local Prismatic deployment. They are **not** required for the first-user install path.
+
+```bash
+# Check service health on a configured operator host
 systemctl status prismatic-gateway prismatic-consumer prismatic-curator
 
-# View live curator state
+# View live curator state when the gateway service is running
 curl -s http://localhost:9000/curator/health | python3 -m json.tool
 
-# Read today's digest
-cat /home/ubuntu/.prismatic/curator/digests/2026-06-30.md
-
-# Run all tests
-PYTHONPATH=/home/ubuntu/.prismatic/venv_stable/lib/python3.12/site-packages:. \
-  /home/ubuntu/.prismatic/venv_stable/bin/python3 -m pytest \
-  prismatic/curator/tests/ prismatic/supervisor/tests/
-# Expected: 39 passed
+# Run all tests from an activated virtualenv
+python -m pytest prismatic/curator/tests/ prismatic/supervisor/tests/
 ```
 
 ## Architecture
@@ -102,7 +123,7 @@ Environment variables (set in `/etc/systemd/system/prismatic-*.service`):
 
 | Var | Default | Purpose |
 |---|---|---|
-| `PRISMATIC_HOME` | `/home/ubuntu` | base path |
+| `PRISMATIC_HOME` | user home directory | base path |
 | `PRISMATIC_BUS_DB` | `~/.prismatic/bus/event_log.sqlite` | bus location |
 | `PRISMATIC_CURATOR_DB` | `~/.prismatic/curator/state.sqlite` | curator state |
 | `PRISMATIC_DIGEST_DIR` | `~/.prismatic/curator/digests` | digest output dir |
@@ -135,14 +156,11 @@ The lane policy is enforced by `scripts/pre-push-hook.py`. Use `feature/*`, `con
 ## Tests
 
 ```bash
-# Run all tests
-PYTHONPATH=/home/ubuntu/.prismatic/venv_stable/lib/python3.12/site-packages:. \
-  /home/ubuntu/.prismatic/venv_stable/bin/python3 -m pytest prismatic/
+# Run all tests from an activated virtualenv
+python -m pytest prismatic/
 
 # Run specific suite
-PYTHONPATH=/home/ubuntu/.prismatic/venv_stable/lib/python3.12/site-packages:. \
-  /home/ubuntu/.prismatic/venv_stable/bin/python3 -m pytest \
-  prismatic/curator/tests/ prismatic/supervisor/tests/
+python -m pytest prismatic/curator/tests/ prismatic/supervisor/tests/
 ```
 
 **Current status:** 39/39 passing in ~1.2s.
@@ -150,10 +168,9 @@ PYTHONPATH=/home/ubuntu/.prismatic/venv_stable/lib/python3.12/site-packages:. \
 ## Documentation
 
 - [Curator Lane Spec (Doc #4)](prismatic/curator/SPEC.md) — The canonical spec
-- [Phase D Post-Publish Chain](docs/phase-d-post-publish-chain.md) — Architecture diagram
-- `/home/ubuntu/work/okf/operations/INDEX.md` — Top-level OKF docs index
-- `/home/ubuntu/work/okf/operations/API-REFERENCE.md` — HTTP API reference
-- `/home/ubuntu/work/okf/operations/2026-06-30-session-documentation.md` — What we built today
+- `docs/phase-d-post-publish-chain.md` — Architecture diagram
+- `docs/runbook.md` — Operator runbook
+- `docs/first-user-journey.md` — First-user journey and demo trail
 
 ## Linear
 
@@ -162,4 +179,4 @@ PYTHONPATH=/home/ubuntu/.prismatic/venv_stable/lib/python3.12/site-packages:. \
 
 ## License
 
-Internal to GrowthWebDev. See `LICENSE` (TBD).
+AGPL-3.0-only. See `LICENSE`.

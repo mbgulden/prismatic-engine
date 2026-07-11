@@ -24,8 +24,10 @@ __all__ = [
     "check_and_route_agy",
     "CircuitBreakerState",
     "MODEL_PRIORITY_CHAIN",
+    "DistributedComputeGovernor",
 ]
 
+from .governor import DistributedComputeGovernor
 from .registry import PluginLoader
 from .contracts import validate_path, SecurityException
 from .locking import SwarmLockManager

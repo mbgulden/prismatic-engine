@@ -161,11 +161,11 @@ class PluginLifecycleSandboxManager:
     def _load_from_db(self) -> None:
         """Load all plugin state records from SQLite into memory."""
         conn = sqlite3.connect(self._db_path)
-        conn.row_factory = sqlite3.Row
         try:
             rows = conn.execute("SELECT * FROM plugin_states").fetchall()
+            columns = [d[1] for d in conn.execute("PRAGMA table_info(plugin_states)").fetchall()]
             for row in rows:
-                record = PluginLifecycleRecord(**dict(row))
+                record = PluginLifecycleRecord(**dict(zip(columns, row)))
                 # Ensure state is an enum, not a raw string from DB
                 if isinstance(record.state, str):
                     record.state = PluginState(record.state)

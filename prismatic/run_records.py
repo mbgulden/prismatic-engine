@@ -8,20 +8,29 @@ operations are idempotent and thread-safe via file-level locking.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
-import time
 import uuid
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-import fcntl
+
+from prismatic.execution_evidence import (
+    ExecutionEvidence,
+    FailureCategory,
+    VerificationScope,
+    VerificationStatus,
+    done_gate,
+    validate_evidence,
+)
 
 
 # ---------------------------------------------------------------------------
 # Dataclass
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class AgentRunRecord:
@@ -30,11 +39,18 @@ class AgentRunRecord:
     run_id: str
     issue_id: str
     agent_name: str
-    status: str = "pending"           # pending | running | completed | failed
-    started_at: str = ""              # ISO-8601 string
-    completed_at: str | None = None   # ISO-8601 string
+    status: str = "pending"  # pending | running | completed | failed
+    started_at: str = ""  # ISO-8601 string
+    completed_at: str | None = None  # ISO-8601 string
     output_path: str | None = None
     error_message: str | None = None
+    evidence: dict[str, Any] | None = None
+    verification_status: str = VerificationStatus.SELF_REPORTED.value
+    verification_scope: str = VerificationScope.NOT_RUN.value
+    failure_category: str = FailureCategory.NONE.value
+    cleanup_status: str = "not_reported"
+    done_gate_result: str = "not_done"
+    done_gate_errors: list[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AgentRunRecord:
@@ -44,6 +60,7 @@ class AgentRunRecord:
 # ---------------------------------------------------------------------------
 # JSON-file backed store
 # ---------------------------------------------------------------------------
+
 
 def _default_store_path() -> str:
     """Resolve store directory from env or fallback."""
@@ -143,6 +160,7 @@ class AgentRunRecordStore:
         status: str,
         output_path: str | None = None,
         error: str | None = None,
+        evidence: ExecutionEvidence | dict[str, Any] | None = None,
     ) -> bool:
         """Update the status of an existing run.
 
@@ -157,6 +175,16 @@ class AgentRunRecordStore:
             record.output_path = output_path
         if error is not None:
             record.error_message = error
+        if evidence is not None:
+            self._apply_evidence(record, evidence)
+        elif status in ("completed", "failed") and record.evidence is None:
+            gate_result, gate_errors = done_gate(status, None)
+            record.verification_status = VerificationStatus.SELF_REPORTED.value
+            record.verification_scope = VerificationScope.NOT_RUN.value
+            record.failure_category = FailureCategory.NONE.value
+            record.cleanup_status = "not_reported"
+            record.done_gate_result = gate_result
+            record.done_gate_errors = gate_errors
 
         if status in ("completed", "failed"):
             record.completed_at = datetime.now(timezone.utc).isoformat()
@@ -164,16 +192,46 @@ class AgentRunRecordStore:
         self._flush_to_disk()
         return True
 
+    def attach_evidence(
+        self, run_id: str, evidence: ExecutionEvidence | dict[str, Any]
+    ) -> bool:
+        """Attach canonical execution evidence to an existing run."""
+        record = self._records.get(run_id)
+        if record is None:
+            return False
+        self._apply_evidence(record, evidence)
+        self._flush_to_disk()
+        return True
+
+    def _apply_evidence(
+        self,
+        record: AgentRunRecord,
+        evidence: ExecutionEvidence | dict[str, Any],
+    ) -> None:
+        parsed = (
+            evidence
+            if isinstance(evidence, ExecutionEvidence)
+            else ExecutionEvidence.from_dict(evidence)
+        )
+        errors = validate_evidence(parsed)
+        gate_result, gate_errors = done_gate(record.status, parsed)
+        record.evidence = parsed.to_dict()
+        record.verification_status = parsed.status.value
+        record.verification_scope = parsed.scope.value
+        record.failure_category = parsed.failure_category.value
+        record.cleanup_status = parsed.cleanup_status
+        record.done_gate_result = gate_result
+        record.done_gate_errors = errors + [
+            error for error in gate_errors if error not in errors
+        ]
+
     def get_run(self, run_id: str) -> AgentRunRecord | None:
         """Retrieve a single run record by its *run_id*."""
         return self._records.get(run_id)
 
     def get_runs_for_issue(self, issue_id: str) -> list[AgentRunRecord]:
         """Return all runs for a given *issue_id*, newest first."""
-        matching = [
-            r for r in self._records.values()
-            if r.issue_id == issue_id
-        ]
+        matching = [r for r in self._records.values() if r.issue_id == issue_id]
         matching.sort(key=lambda r: r.started_at, reverse=True)
         return matching
 
@@ -210,6 +268,14 @@ class AgentRunRecordStore:
             lines.append(f"## {status_emoji} Run `{r.run_id}`")
             lines.append(f"- **Agent:** {r.agent_name}")
             lines.append(f"- **Status:** {r.status}")
+            lines.append(f"- **Verification:** {r.verification_status}")
+            lines.append(f"- **Verification scope:** {r.verification_scope}")
+            lines.append(f"- **Failure category:** {r.failure_category}")
+            lines.append(f"- **Cleanup:** {r.cleanup_status}")
+            lines.append(f"- **Done gate:** {r.done_gate_result}")
+            if r.done_gate_errors:
+                joined_errors = "; ".join(r.done_gate_errors)
+                lines.append(f"- **Done gate errors:** {joined_errors}")
             lines.append(f"- **Started:** {r.started_at}")
             if r.completed_at:
                 lines.append(f"- **Completed:** {r.completed_at}")
