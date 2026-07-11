@@ -582,7 +582,10 @@ Deliverables:
 }
 ```
 
-- PWP run-state records include theme metadata.
+- PWP run-state records include theme metadata (see `plugins/pwp/docs/pwp-run-state-metadata.md`):
+  - `themeId` / `themeVersion` package provenance,
+  - `themeHash`, `tokenHash`, `moduleHash`, and `contentHash` idempotency inputs,
+  - `themeEngineCompatibility` and `themeSchemaVersion` compatibility claims.
 - Rollback can restore:
   - prior artifact,
   - prior theme version,
