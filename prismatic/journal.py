@@ -517,7 +517,10 @@ def git(repo: Path, cmd: list[str]) -> str:
         res = subprocess.run(
             ["git", "-C", str(repo), *cmd], capture_output=True, text=True, check=False
         )
-        return (res.stdout or res.stderr or "").strip()
+        output = (res.stdout or res.stderr or "").strip()
+        if res.returncode != 0 and "not a git repository" in output.lower():
+            return ""
+        return output
     except Exception:
         return ""
 
@@ -620,10 +623,27 @@ def extract_cron_signals(path: Path) -> list[dict[str, Any]]:
     ]
 
 
+def _parse_log_timestamp(line: str) -> dt.datetime | None:
+    match = re.match(r"(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})", line)
+    if not match:
+        return None
+    try:
+        return dt.datetime.fromisoformat(" ".join(match.groups())).replace(
+            tzinfo=dt.timezone.utc
+        )
+    except ValueError:
+        return None
+
+
 def extract_log_signals(path: Path) -> list[dict[str, Any]]:
     signals: list[dict[str, Any]] = []
     text = redact(read_text(path, 15000))
-    for line in text.splitlines():
+    cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=24)
+    recent_lines = [
+        line for line in text.splitlines()
+        if (seen := _parse_log_timestamp(line)) is not None and seen >= cutoff
+    ]
+    for line in recent_lines:
         if re.search(
             r"(?i)\b(gateway.*restart|starting|application started|press ctrl\+c)\b",
             line,
@@ -634,7 +654,7 @@ def extract_log_signals(path: Path) -> list[dict[str, Any]]:
             break
     error_lines = [
         line.strip()[:200]
-        for line in text.splitlines()[-50:]
+        for line in recent_lines[-50:]
         if re.search(
             r"(?i)\b(error|exception|traceback|failed|timeout|401|403|409|429|500|conflict)\b",
             line,
