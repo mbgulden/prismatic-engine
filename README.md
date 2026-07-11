@@ -223,9 +223,14 @@ pip install -e .
 # Initialize the configuration files
 prismatic-engine init
 
+# Install does this automatically; run manually after cloning if needed
+prismatic-engine optimize-workspace "$PWD"
+
 # Serve the coordinator
 prismatic-engine serve
 ```
+
+`install.sh` runs `prismatic-engine optimize-workspace` after installation so fresh clones get `.gitignore`, `.geminiignore`, `.antigravityignore`, and the first-run high-overhead plugin guard before dispatch. See [First-run workspace optimization](prismatic/docs/optimize_workspace_install.md) for details.
 
 ### 2. Lock & Lane Git Validation Hook Setup
 Link the pre-push hook to check agent lanes before pushes:
