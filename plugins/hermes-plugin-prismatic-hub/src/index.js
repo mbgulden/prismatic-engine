@@ -21,10 +21,10 @@
   ];
 
   const INITIAL_WORKSPACES = [
-    { id: 'linear-growth', name: 'Linear · GrowthWebDev', path: '/home/ubuntu/work/linear-growth-context', branch: 'main', status: 'connected', files: 142, size: '2.4 MB' },
-    { id: 'github-mbgulden', name: 'GitHub · mbgulden', path: '/home/ubuntu/work/agentic-swarm-ops', branch: 'main', status: 'connected', files: 89, size: '1.8 MB' },
-    { id: 'gdrive-context', name: 'Google Drive · Context', path: '/home/ubuntu/mounts/google-drive-context', branch: 'n/a', status: 'stalled', files: 34, size: '480 KB' },
-    { id: 'discord-aot', name: 'Discord · AOT Feed', path: '/home/ubuntu/work/discord-feed-adapter', branch: 'main', status: 'connected', files: 12, size: '150 KB' }
+    { id: 'linear-growth', name: 'Linear · GrowthWebDev', path: '$PRISMATIC_HOME/work/linear-growth-context', branch: 'main', status: 'connected', files: 142, size: '2.4 MB' },
+    { id: 'github-mbgulden', name: 'GitHub · mbgulden', path: '$PRISMATIC_HOME/work/agentic-swarm-ops', branch: 'main', status: 'connected', files: 89, size: '1.8 MB' },
+    { id: 'gdrive-context', name: 'Google Drive · Context', path: '$PRISMATIC_HOME/mounts/google-drive-context', branch: 'n/a', status: 'stalled', files: 34, size: '480 KB' },
+    { id: 'discord-aot', name: 'Discord · AOT Feed', path: '$PRISMATIC_HOME/work/discord-feed-adapter', branch: 'main', status: 'connected', files: 12, size: '150 KB' }
   ];
 
   const INITIAL_EVENTS = [
@@ -94,6 +94,12 @@
     const [skills, setSkills] = React.useState(INITIAL_SKILLS);
     const [runRecords, setRunRecords] = React.useState(INITIAL_RUN_RECORDS);
     const [drawerAgent, setDrawerAgent] = React.useState(null);
+    const [recoveryStatus, setRecoveryStatus] = React.useState({
+      last: 'No recovery action submitted from this dashboard session.',
+      action: null,
+      busy: null,
+      error: null
+    });
     
     // Skill loading spinner states
     const [loadingSkillId, setLoadingSkillId] = React.useState(null);
@@ -251,6 +257,57 @@
         triggerLiveDispatch();
       }, 100);
       setDrawerAgent(null);
+    };
+
+    const postRecoveryControl = async (payload) => {
+      try {
+        return await api('/api/dashboard/recovery-control', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+      } catch (sdkError) {
+        const res = await fetch('/api/dashboard/recovery-control', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || sdkError.message || `HTTP ${res.status}`);
+        return data;
+      }
+    };
+
+    const runRecoveryControl = async (agentId, action) => {
+      const target = agents.find(a => a.id === agentId);
+      if (!target || recoveryStatus.busy) return;
+      const ref = (AGENT_QUEUES[agentId] && AGENT_QUEUES[agentId][0] && AGENT_QUEUES[agentId][0].ref) || 'dashboard';
+      const busyLabel = `${action} ${target.name}`;
+      setRecoveryStatus({ last: `Submitting ${busyLabel}…`, action, busy: action, error: null });
+      try {
+        const result = await postRecoveryControl({ action, agent: target.name, ref });
+        const statusText = result.status || (result.entry && result.entry.status) || `${action} accepted`;
+        const now = new Date();
+        const timeStr = now.toTimeString().split(' ')[0];
+        const event = {
+          id: `recovery-${action}-${Date.now()}`,
+          time: timeStr,
+          source: 'Recovery Control',
+          ref,
+          title: statusText,
+          label: `agent:${target.id}`,
+          route: target.name.toUpperCase(),
+          status: 'Queued',
+          duration: 'server-ack'
+        };
+        setEvents(prev => [event, ...prev]);
+        setAgents(prev => prev.map(a => a.id === agentId ? { ...a, status: action === 'restart' ? 'working' : a.status, lastActive: 'Just now', task: statusText } : a));
+        setDrawerAgent(prev => prev && prev.id === agentId ? { ...prev, status: action === 'restart' ? 'working' : prev.status, lastActive: 'Just now', task: statusText } : prev);
+        setRecoveryStatus({ last: `${statusText} · server-side ledger updated`, action, busy: null, error: null });
+      } catch (err) {
+        const message = err && err.message ? err.message : String(err);
+        setRecoveryStatus({ last: `Recovery action failed: ${message}`, action, busy: null, error: message });
+      }
     };
 
     const filteredEvents = React.useMemo(() => {
@@ -950,6 +1007,30 @@
                   h('p', { className: 'q-title' }, qItem.title)
                 ]);
               }))
+            ]),
+
+            // Recovery Controls section
+            h('div', { className: 'drawer-section recovery-control-section' }, [
+              h('h4', null, 'Recovery Controls'),
+              h('p', { className: 'recovery-help-text' }, 'Restart, retry, and replay actions call the gateway and write a durable server-side action ledger.'),
+              h('div', { className: `recovery-status-line ${recoveryStatus.error ? 'error' : ''}` }, recoveryStatus.last),
+              h('div', { className: 'recovery-action-grid' }, [
+                h('button', {
+                  className: 'drawer-btn-secondary recovery-btn restart',
+                  onClick: () => runRecoveryControl(drawerAgent.id, 'restart'),
+                  disabled: !!recoveryStatus.busy
+                }, recoveryStatus.busy === 'restart' ? 'Restarting…' : 'Restart'),
+                h('button', {
+                  className: 'drawer-btn-secondary recovery-btn retry',
+                  onClick: () => runRecoveryControl(drawerAgent.id, 'retry'),
+                  disabled: !!recoveryStatus.busy
+                }, recoveryStatus.busy === 'retry' ? 'Retrying…' : 'Retry'),
+                h('button', {
+                  className: 'drawer-btn-secondary recovery-btn replay',
+                  onClick: () => runRecoveryControl(drawerAgent.id, 'replay'),
+                  disabled: !!recoveryStatus.busy
+                }, recoveryStatus.busy === 'replay' ? 'Replaying…' : 'Replay')
+              ])
             ]),
 
             // Run History section
@@ -2099,6 +2180,45 @@
       margin: 0;
       font-size: 12px;
       color: #fff;
+    }
+    .recovery-control-section {
+      background-color: rgba(108, 92, 231, 0.06);
+      border: 1px solid rgba(108, 92, 231, 0.14);
+      border-radius: 8px;
+      padding: 12px;
+    }
+    .recovery-help-text {
+      margin: 0 0 10px 0;
+      color: rgba(255,255,255,0.55);
+      font-size: 11px;
+      line-height: 1.4;
+    }
+    .recovery-status-line {
+      background-color: rgba(0,0,0,0.28);
+      border: 1px solid rgba(46, 204, 113, 0.22);
+      border-radius: 6px;
+      color: #2ECC71;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      line-height: 1.4;
+      margin-bottom: 10px;
+      padding: 8px 10px;
+    }
+    .recovery-status-line.error {
+      border-color: rgba(231, 76, 60, 0.28);
+      color: var(--color-codex);
+    }
+    .recovery-action-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+    .recovery-btn.restart { border-color: rgba(243, 156, 18, 0.45); color: var(--color-agy); }
+    .recovery-btn.retry { border-color: rgba(52, 152, 219, 0.45); color: var(--color-fred); }
+    .recovery-btn.replay { border-color: rgba(46, 204, 113, 0.45); color: var(--color-kai); }
+    .recovery-btn:disabled {
+      opacity: 0.55;
+      cursor: wait;
     }
     .log-list {
       display: flex;
