@@ -27,11 +27,14 @@ classifiers = [
 ]
 
 dependencies = [
+    "jsonschema>=4.0",
+    "packaging>=24.0",
     "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
 http = ["requests>=2.31"]
+dev = ["pytest>=8.0"]
 redis = ["redis>=5.0"]
 all = ["prismatic-engine[http,redis]"]
 

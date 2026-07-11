@@ -361,6 +361,10 @@ def normalize_quota_payload(
             )
     limit_value = _first_numeric(*limit_candidates)
     utilization_pct = (usage / limit_value * 100.0) if limit_value > 0 else 0.0
+    remaining_value = max(limit_value - usage, 0.0) if limit_value > 0 else None
+    unavailable_reason = None
+    if limit_value <= 0:
+        unavailable_reason = "quota limit unavailable from Cloud Quotas payload"
 
     record = {
         "region": region,
@@ -369,6 +373,8 @@ def normalize_quota_payload(
         "metric_name": metric_name or quota_id,
         "usage": usage,
         "limit_value": limit_value,
+        "remaining_value": remaining_value,
+        "unavailable_reason": unavailable_reason,
         "utilization_pct": round(utilization_pct, 2),
         "recorded_at": datetime.now(timezone.utc).isoformat(),
         "raw_payload": cleaned,
@@ -663,7 +669,17 @@ class VertexBillingLedger:
                 f"ORDER BY utilization_pct DESC LIMIT ?",
                 params + [limit],
             ).fetchall()
-            return [dict(r) for r in rows]
+            records = [dict(r) for r in rows]
+            for record in records:
+                limit_value = _safe_float(record.get("limit_value"))
+                usage = _safe_float(record.get("usage"))
+                if limit_value > 0:
+                    record["remaining_value"] = max(limit_value - usage, 0.0)
+                else:
+                    record["unavailable_reason"] = (
+                        "quota limit unavailable from persisted snapshot"
+                    )
+            return records
 
     def get_status_summary(self) -> dict[str, Any]:
         """Return a pane-safe status dict with freshness and poll errors."""

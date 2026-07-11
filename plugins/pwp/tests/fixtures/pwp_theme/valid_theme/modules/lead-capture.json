@@ -1,0 +1,15 @@
+{
+  "id": "lead-capture",
+  "component": "LeadCapture.astro",
+  "slots": [
+    "form"
+  ],
+  "propsSchema": "schemas/modules/lead-capture.schema.json",
+  "editableFields": [
+    "cta"
+  ],
+  "variants": [
+    "form",
+    "mailto"
+  ]
+}
