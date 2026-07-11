@@ -1,0 +1,533 @@
+{
+  "$schema": "https://schemas.prismatic.dev/pwp/linear-task-templates.schema.json",
+  "version": "0.1.0",
+  "sourcePlan": "plugins/pwp/docs/pwp-ai-theme-system-master-plan.md#phase-9--ai-agent-specialization-and-autopilot",
+  "buildPolicy": {
+    "initialState": "Todo",
+    "forbiddenLabelsBeforeHumanStart": [
+      "dispatch:ready"
+    ],
+    "requiresMichaelBuildStart": true,
+    "requiresDocsUpdate": true,
+    "requiresVerificationEvidence": true
+  },
+  "sharedContracts": {
+    "themeManifest": "plugins/pwp/schemas/pwp-theme.schema.json",
+    "moduleContract": "plugins/pwp/schemas/pwp-module.schema.json",
+    "tokenContract": "plugins/pwp/schemas/pwp-token.schema.json",
+    "emdashMapContract": "plugins/pwp/schemas/pwp-emdash-map.schema.json",
+    "masterPlan": "plugins/pwp/docs/pwp-ai-theme-system-master-plan.md"
+  },
+  "templates": [
+    {
+      "id": "pwp-theme-content-strategist",
+      "lane": "content strategist",
+      "agentLabel": "agent:kai-content",
+      "titleTemplate": "[PWP Theme {phase}] Plan content/module strategy: {site_or_theme}",
+      "descriptionTemplate": [
+        "## Scope",
+        "Map the client profile and content brief into a route manifest, page/module sequence, locked claims, editable fields, and handoff notes for implementation.",
+        "",
+        "## Required inputs",
+        "{{inputs}}",
+        "",
+        "## Files/contracts to use",
+        "{{contracts}}",
+        "",
+        "## Expected outputs",
+        "{{outputs}}",
+        "",
+        "## Verification evidence required",
+        "{{verification}}",
+        "",
+        "## Build policy",
+        "Keep this issue in Todo and do not add dispatch:ready until Michael explicitly starts the build process. Attach verifier artifacts before Done."
+      ],
+      "defaultLabels": [
+        "agent:kai-content",
+        "plugin:pwp",
+        "prismatic-engine",
+        "pwp-theme",
+        "Feature"
+      ],
+      "forbiddenLabelsBeforeHumanStart": [
+        "dispatch:ready"
+      ],
+      "inputArtifacts": [
+        "client profile or intake/distill artifact",
+        "selected theme family and required modules",
+        "PWP theme/module/token/EmDash contracts",
+        "acceptance criteria from the parent phase output",
+        "OKF intake/distill records",
+        "regulated-claim constraints"
+      ],
+      "allowedFileGlobs": [
+        "plugins/pwp/**",
+        "okf/standards/pwp-*.md"
+      ],
+      "blockedFileGlobs": [
+        "content/**",
+        "assets/**",
+        "designs/**",
+        "research/**",
+        "active-oahu/**"
+      ],
+      "outputArtifacts": [
+        "route/module plan",
+        "content safety notes",
+        "EmDash editable-field plan",
+        "SEO/schema handoff brief"
+      ],
+      "verificationCommands": [
+        "schema/fixture check for route/module plan",
+        "content-safety lint evidence"
+      ],
+      "completionChecklist": [
+        "Issue references exact files/contracts touched",
+        "Docs updated in the same branch",
+        "Verifier output or artifact is attached/commented",
+        "No dispatch:ready label was added before Michael's build-start signal",
+        "Every page has a module sequence using known PWP module ids"
+      ]
+    },
+    {
+      "id": "pwp-theme-design-theme",
+      "lane": "design/theme",
+      "agentLabel": "agent:fred",
+      "titleTemplate": "[PWP Theme {phase}] Select tokens and visual theme: {site_or_theme}",
+      "descriptionTemplate": [
+        "## Scope",
+        "Choose or adjust the theme family, W3C-style token set, module variants, and visual consistency rules without inventing incompatible component APIs.",
+        "",
+        "## Required inputs",
+        "{{inputs}}",
+        "",
+        "## Files/contracts to use",
+        "{{contracts}}",
+        "",
+        "## Expected outputs",
+        "{{outputs}}",
+        "",
+        "## Verification evidence required",
+        "{{verification}}",
+        "",
+        "## Build policy",
+        "Keep this issue in Todo and do not add dispatch:ready until Michael explicitly starts the build process. Attach verifier artifacts before Done."
+      ],
+      "defaultLabels": [
+        "agent:fred",
+        "plugin:pwp",
+        "prismatic-engine",
+        "pwp-theme",
+        "Feature"
+      ],
+      "forbiddenLabelsBeforeHumanStart": [
+        "dispatch:ready"
+      ],
+      "inputArtifacts": [
+        "client profile or intake/distill artifact",
+        "selected theme family and required modules",
+        "PWP theme/module/token/EmDash contracts",
+        "acceptance criteria from the parent phase output",
+        "design brief",
+        "brand constraints",
+        "existing theme package"
+      ],
+      "allowedFileGlobs": [
+        "plugins/pwp/themes/**",
+        "plugins/pwp/docs/**",
+        "plugins/pwp/schemas/**"
+      ],
+      "blockedFileGlobs": [
+        "content/**",
+        "assets/**",
+        "designs/**",
+        "research/**",
+        "active-oahu/**"
+      ],
+      "outputArtifacts": [
+        "token override set",
+        "theme manifest updates",
+        "variant rationale",
+        "visual regression notes"
+      ],
+      "verificationCommands": [
+        "python3 scripts/pwp theme validate <theme-package-path>",
+        "token compiler determinism test",
+        "visual snapshot evidence"
+      ],
+      "completionChecklist": [
+        "Issue references exact files/contracts touched",
+        "Docs updated in the same branch",
+        "Verifier output or artifact is attached/commented",
+        "No dispatch:ready label was added before Michael's build-start signal"
+      ]
+    },
+    {
+      "id": "pwp-theme-astro-implementation",
+      "lane": "Astro implementation",
+      "agentLabel": "agent:agy",
+      "titleTemplate": "[PWP Theme {phase}] Implement Astro theme/module changes: {site_or_theme}",
+      "descriptionTemplate": [
+        "## Scope",
+        "Implement Astro layouts, components, content collections, module fixtures, and build wiring that conform to the PWP contracts.",
+        "",
+        "## Required inputs",
+        "{{inputs}}",
+        "",
+        "## Files/contracts to use",
+        "{{contracts}}",
+        "",
+        "## Expected outputs",
+        "{{outputs}}",
+        "",
+        "## Verification evidence required",
+        "{{verification}}",
+        "",
+        "## Build policy",
+        "Keep this issue in Todo and do not add dispatch:ready until Michael explicitly starts the build process. Attach verifier artifacts before Done."
+      ],
+      "defaultLabels": [
+        "agent:agy",
+        "plugin:pwp",
+        "prismatic-engine",
+        "pwp-theme",
+        "Feature"
+      ],
+      "forbiddenLabelsBeforeHumanStart": [
+        "dispatch:ready"
+      ],
+      "inputArtifacts": [
+        "client profile or intake/distill artifact",
+        "selected theme family and required modules",
+        "PWP theme/module/token/EmDash contracts",
+        "acceptance criteria from the parent phase output",
+        "route/module plan",
+        "theme manifest",
+        "module contracts"
+      ],
+      "allowedFileGlobs": [
+        "plugins/pwp/**",
+        "tests/**"
+      ],
+      "blockedFileGlobs": [
+        "content/**",
+        "assets/**",
+        "designs/**",
+        "research/**",
+        "active-oahu/**"
+      ],
+      "outputArtifacts": [
+        "Astro component changes",
+        "module fixtures",
+        "theme manifest updates",
+        "implementation notes"
+      ],
+      "verificationCommands": [
+        "astro check or equivalent typecheck",
+        "astro build",
+        "module fixture render test"
+      ],
+      "completionChecklist": [
+        "Issue references exact files/contracts touched",
+        "Docs updated in the same branch",
+        "Verifier output or artifact is attached/commented",
+        "No dispatch:ready label was added before Michael's build-start signal"
+      ]
+    },
+    {
+      "id": "pwp-theme-accessibility-verifier",
+      "lane": "accessibility verifier",
+      "agentLabel": "agent:qa",
+      "titleTemplate": "[PWP Theme {phase}] Verify accessibility and semantics: {site_or_theme}",
+      "descriptionTemplate": [
+        "## Scope",
+        "Run semantic, keyboard, color contrast, heading hierarchy, alt text, and axe-core checks against the theme fixture or preview URL.",
+        "",
+        "## Required inputs",
+        "{{inputs}}",
+        "",
+        "## Files/contracts to use",
+        "{{contracts}}",
+        "",
+        "## Expected outputs",
+        "{{outputs}}",
+        "",
+        "## Verification evidence required",
+        "{{verification}}",
+        "",
+        "## Build policy",
+        "Keep this issue in Todo and do not add dispatch:ready until Michael explicitly starts the build process. Attach verifier artifacts before Done."
+      ],
+      "defaultLabels": [
+        "agent:qa",
+        "plugin:pwp",
+        "prismatic-engine",
+        "pwp-theme",
+        "Feature"
+      ],
+      "forbiddenLabelsBeforeHumanStart": [
+        "dispatch:ready"
+      ],
+      "inputArtifacts": [
+        "client profile or intake/distill artifact",
+        "selected theme family and required modules",
+        "PWP theme/module/token/EmDash contracts",
+        "acceptance criteria from the parent phase output",
+        "preview URL or fixture path",
+        "module/page list"
+      ],
+      "allowedFileGlobs": [
+        "plugins/pwp/**",
+        "tests/**",
+        "artifacts/**"
+      ],
+      "blockedFileGlobs": [
+        "content/**",
+        "assets/**",
+        "designs/**",
+        "research/**",
+        "active-oahu/**"
+      ],
+      "outputArtifacts": [
+        "a11y report",
+        "axe-core output",
+        "manual semantic checklist",
+        "fix-forward recommendations"
+      ],
+      "verificationCommands": [
+        "Playwright + axe-core report",
+        "keyboard navigation checklist",
+        "WCAG 2.2 AA contrast evidence"
+      ],
+      "completionChecklist": [
+        "Issue references exact files/contracts touched",
+        "Docs updated in the same branch",
+        "Verifier output or artifact is attached/commented",
+        "No dispatch:ready label was added before Michael's build-start signal"
+      ]
+    },
+    {
+      "id": "pwp-theme-seo-schema",
+      "lane": "SEO/schema",
+      "agentLabel": "agent:kai-seo",
+      "titleTemplate": "[PWP Theme {phase}] Generate metadata and structured data: {site_or_theme}",
+      "descriptionTemplate": [
+        "## Scope",
+        "Produce metadata, sitemap/link rules, canonical URL rules, and JSON-LD schema that match the content plan and avoid unsupported claims.",
+        "",
+        "## Required inputs",
+        "{{inputs}}",
+        "",
+        "## Files/contracts to use",
+        "{{contracts}}",
+        "",
+        "## Expected outputs",
+        "{{outputs}}",
+        "",
+        "## Verification evidence required",
+        "{{verification}}",
+        "",
+        "## Build policy",
+        "Keep this issue in Todo and do not add dispatch:ready until Michael explicitly starts the build process. Attach verifier artifacts before Done."
+      ],
+      "defaultLabels": [
+        "agent:kai-seo",
+        "plugin:pwp",
+        "prismatic-engine",
+        "pwp-theme",
+        "Feature"
+      ],
+      "forbiddenLabelsBeforeHumanStart": [
+        "dispatch:ready"
+      ],
+      "inputArtifacts": [
+        "client profile or intake/distill artifact",
+        "selected theme family and required modules",
+        "PWP theme/module/token/EmDash contracts",
+        "acceptance criteria from the parent phase output",
+        "content/module plan",
+        "business profile",
+        "service-area constraints"
+      ],
+      "allowedFileGlobs": [
+        "plugins/pwp/**",
+        "tests/**",
+        "okf/standards/**"
+      ],
+      "blockedFileGlobs": [
+        "content/**",
+        "assets/**",
+        "designs/**",
+        "research/**",
+        "active-oahu/**"
+      ],
+      "outputArtifacts": [
+        "metadata plan",
+        "JSON-LD schema records",
+        "sitemap/link checklist",
+        "SEO verification artifact"
+      ],
+      "verificationCommands": [
+        "schema validator output",
+        "sitemap/link crawler output",
+        "unsupported-claim lint evidence"
+      ],
+      "completionChecklist": [
+        "Issue references exact files/contracts touched",
+        "Docs updated in the same branch",
+        "Verifier output or artifact is attached/commented",
+        "No dispatch:ready label was added before Michael's build-start signal"
+      ]
+    },
+    {
+      "id": "pwp-theme-deploy",
+      "lane": "deploy",
+      "agentLabel": "agent:ned-infra",
+      "titleTemplate": "[PWP Theme {phase}] Deploy theme artifact safely: {site_or_theme}",
+      "descriptionTemplate": [
+        "## Scope",
+        "Deploy the verified PWP theme/site artifact through the target adapter while preserving Cloudflare idempotency, provenance, run-state, and rollback metadata.",
+        "",
+        "## Required inputs",
+        "{{inputs}}",
+        "",
+        "## Files/contracts to use",
+        "{{contracts}}",
+        "",
+        "## Expected outputs",
+        "{{outputs}}",
+        "",
+        "## Verification evidence required",
+        "{{verification}}",
+        "",
+        "## Build policy",
+        "Keep this issue in Todo and do not add dispatch:ready until Michael explicitly starts the build process. Attach verifier artifacts before Done."
+      ],
+      "defaultLabels": [
+        "agent:ned-infra",
+        "plugin:pwp",
+        "prismatic-engine",
+        "pwp-theme",
+        "Feature"
+      ],
+      "forbiddenLabelsBeforeHumanStart": [
+        "dispatch:ready"
+      ],
+      "inputArtifacts": [
+        "client profile or intake/distill artifact",
+        "selected theme family and required modules",
+        "PWP theme/module/token/EmDash contracts",
+        "acceptance criteria from the parent phase output",
+        "verified build artifact",
+        "deployment target",
+        "prior run-state record"
+      ],
+      "allowedFileGlobs": [
+        "plugins/pwp/**",
+        "prismatic/**",
+        "scripts/**",
+        "tests/**"
+      ],
+      "blockedFileGlobs": [
+        "content/**",
+        "assets/**",
+        "designs/**",
+        "research/**",
+        "active-oahu/**"
+      ],
+      "outputArtifacts": [
+        "deployment manifest",
+        "run-state/provenance record",
+        "rollback target",
+        "Cloudflare Pages deployment evidence"
+      ],
+      "verificationCommands": [
+        "deploy dry-run or preview deployment",
+        "theme/content/token hash comparison",
+        "rollback metadata check"
+      ],
+      "completionChecklist": [
+        "Issue references exact files/contracts touched",
+        "Docs updated in the same branch",
+        "Verifier output or artifact is attached/commented",
+        "No dispatch:ready label was added before Michael's build-start signal",
+        "Cloudflare deploy idempotency is preserved"
+      ]
+    },
+    {
+      "id": "pwp-theme-reviewer",
+      "lane": "reviewer",
+      "agentLabel": "agent:reviewer",
+      "titleTemplate": "[PWP Theme {phase}] Review theme contract compliance: {site_or_theme}",
+      "descriptionTemplate": [
+        "## Scope",
+        "Review diffs for contract drift, lane violations, missing verifier artifacts, unsafe editable-field exposure, and incomplete docs/tests before merge.",
+        "",
+        "## Required inputs",
+        "{{inputs}}",
+        "",
+        "## Files/contracts to use",
+        "{{contracts}}",
+        "",
+        "## Expected outputs",
+        "{{outputs}}",
+        "",
+        "## Verification evidence required",
+        "{{verification}}",
+        "",
+        "## Build policy",
+        "Keep this issue in Todo and do not add dispatch:ready until Michael explicitly starts the build process. Attach verifier artifacts before Done."
+      ],
+      "defaultLabels": [
+        "agent:reviewer",
+        "plugin:pwp",
+        "prismatic-engine",
+        "pwp-theme",
+        "Feature"
+      ],
+      "forbiddenLabelsBeforeHumanStart": [
+        "dispatch:ready"
+      ],
+      "inputArtifacts": [
+        "client profile or intake/distill artifact",
+        "selected theme family and required modules",
+        "PWP theme/module/token/EmDash contracts",
+        "acceptance criteria from the parent phase output",
+        "PR or branch diff",
+        "all lane issue artifacts"
+      ],
+      "allowedFileGlobs": [
+        "plugins/pwp/**",
+        "prismatic/**",
+        "scripts/**",
+        "tests/**",
+        "docs/**"
+      ],
+      "blockedFileGlobs": [
+        "content/**",
+        "assets/**",
+        "designs/**",
+        "research/**",
+        "active-oahu/**"
+      ],
+      "outputArtifacts": [
+        "review decision",
+        "contract drift notes",
+        "merge/block checklist",
+        "required follow-ups"
+      ],
+      "verificationCommands": [
+        "diff review checklist",
+        "verification artifact presence check",
+        "contract compatibility notes"
+      ],
+      "completionChecklist": [
+        "Issue references exact files/contracts touched",
+        "Docs updated in the same branch",
+        "Verifier output or artifact is attached/commented",
+        "No dispatch:ready label was added before Michael's build-start signal"
+      ]
+    }
+  ]
+}

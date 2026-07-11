@@ -336,6 +336,24 @@ Agents must produce:
 | SEO/link/sitemap | crawler + XML parser | yes |
 | compliance/safety lint | domain-specific copy rules | yes for regulated claims |
 
+### Theme validation command
+
+Theme packages are validated with the repo-local command:
+
+```bash
+python3 scripts/pwp theme validate <theme-package-path>
+```
+
+The validator checks the Phase 0 contracts before later build/a11y gates run:
+
+- `theme.json` exists and declares the PWP theme schema.
+- Required manifest entrypoints (`tokens`, `css`, `layout`, `components`, `contentSchema`, `emdashMap`) point to safe in-package files.
+- Module ids are unique lowercase kebab-case values and each module has a `modules/<id>.json` contract.
+- Token files include the canonical W3C-style PWP groups: `color`, `font`, `space`, `size`, `radius`, `shadow`, `motion`, `breakpoint`, and `zIndex`.
+- EmDash maps reference declared module ids only and provide editable field definitions for each block.
+
+The command exits `0` on a valid package and `1` with a concrete error list on invalid packages, making it suitable for theme fixture tests and CI.
+
 ### Theme compatibility matrix
 
 PWP should maintain a matrix:
@@ -448,7 +466,11 @@ Deliverables:
   - policy page,
   - offer/package page.
 - EmDash field maps per module.
-- Locked-field rules.
+- Locked-field rules backed by `plugins/pwp/content_guards.py`:
+  - `legalName`, `schemaOrgType`, and `complianceClaims` are contract-owned and must be rejected from editor patches.
+  - routing/system fields such as `route`, `slug`, `canonicalUrl`, `redirectTo`, `blockId`, `moduleId`, `component`, `templateId`, and `themeFamily` are system-owned at any nesting depth.
+  - module edit maps may add `lockedFields` and per-field `{ "editable": false }` constraints.
+  - certification/compliance language is rejected unless the claim is explicitly allowlisted by the tenant brief/edit map (for example a validated `R2v3 certified` claim).
 - Portable Text rendering adapter.
 - Edit-preview loop for Cloudflare staging.
 
@@ -582,7 +604,10 @@ Deliverables:
 }
 ```
 
-- PWP run-state records include theme metadata.
+- PWP run-state records include theme metadata (see `plugins/pwp/docs/pwp-run-state-metadata.md`):
+  - `themeId` / `themeVersion` package provenance,
+  - `themeHash`, `tokenHash`, `moduleHash`, and `contentHash` idempotency inputs,
+  - `themeEngineCompatibility` and `themeSchemaVersion` compatibility claims.
 - Rollback can restore:
   - prior artifact,
   - prior theme version,
@@ -646,13 +671,21 @@ Deliverables:
 - task templates per lane,
 - prompt packs referencing module/schema contracts,
 - automatic Linear issue generation from phase outputs,
-- verifier artifacts attached to each issue.
+- verifier artifacts attached to each issue,
+- the [PWP verifier artifact attachment checklist](pwp-verifier-artifact-requirements.md) embedded in every generated implementation/verifier issue.
 
 Verification:
 
 - generated issues include exact files/contracts/tests,
-- agents cannot mark done without verification output,
+- generated issues include required build/test, accessibility, visual/regression, contract/schema, or deployment artifacts for the lane,
+- agents cannot mark done without verification output and `done_gate_result=done`,
 - peer review catches contract drift.
+
+Phase 9.5 dry-run fixture:
+
+- `plugins/pwp/dry_runs/e2e_theme_dry_run.py` runs the intake → route plan → module plan → Linear tree artifact → theme scaffold → verification report path against `plugins/pwp/dry_runs/fixtures/sentinel_itad_fixture.json`.
+- The dry-run is artifact-only: it does not mutate Linear, does not add `dispatch:ready`, and does not deploy.
+- Use it as the pre-autopilot smoke test before handing real generated tasks to agents.
 
 Exit criteria:
 
