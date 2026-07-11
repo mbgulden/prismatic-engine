@@ -1,0 +1,13 @@
+{
+  "module": "card-grid",
+  "name": "card-grid-fixture",
+  "props": {
+    "cards": [
+      "Pickup",
+      "Audit",
+      "Destroy"
+    ],
+    "heading": "Services"
+  },
+  "variant": "3-up"
+}

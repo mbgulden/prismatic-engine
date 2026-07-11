@@ -1,0 +1,59 @@
+{
+  "a11yRules": [
+    "section-heading-required"
+  ],
+  "component": "SplitSection.astro",
+  "contentSafetyRules": [
+    "no-unsupported-certification-claims"
+  ],
+  "description": "Two-column compare, good-fit, or caution content",
+  "editableFields": [
+    "heading",
+    "body",
+    "items"
+  ],
+  "fixtures": [
+    {
+      "name": "split-section-default",
+      "props": {
+        "body": "Designed for regulated local services.",
+        "heading": "Good fit",
+        "items": [
+          "Clear scope",
+          "Safe claims"
+        ]
+      },
+      "variant": "text-list"
+    }
+  ],
+  "id": "split-section",
+  "name": "SplitSection",
+  "propsSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "body": {
+        "type": "string"
+      },
+      "heading": {
+        "type": "string"
+      },
+      "items": {
+        "type": "array"
+      }
+    },
+    "required": [
+      "heading",
+      "body",
+      "items"
+    ],
+    "type": "object"
+  },
+  "slots": [
+    "media"
+  ],
+  "variants": [
+    "text-list",
+    "image-text",
+    "good-vs-restricted"
+  ]
+}

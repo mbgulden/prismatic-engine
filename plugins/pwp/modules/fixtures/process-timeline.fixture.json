@@ -1,0 +1,13 @@
+{
+  "module": "process-timeline",
+  "name": "process-timeline-fixture",
+  "props": {
+    "heading": "Process",
+    "steps": [
+      "Book",
+      "Pickup",
+      "Report"
+    ]
+  },
+  "variant": "horizontal"
+}

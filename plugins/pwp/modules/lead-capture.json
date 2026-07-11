@@ -1,0 +1,66 @@
+{
+  "a11yRules": [
+    "form-labels-required",
+    "privacy-note-required"
+  ],
+  "component": "LeadCapture.astro",
+  "contentSafetyRules": [
+    "no-unsupported-certification-claims"
+  ],
+  "description": "CTA/contact/booking capture module",
+  "editableFields": [
+    "heading",
+    "fields",
+    "submitLabel",
+    "privacyNote"
+  ],
+  "fixtures": [
+    {
+      "name": "lead-capture-default",
+      "props": {
+        "fields": [
+          "name",
+          "email",
+          "asset count"
+        ],
+        "heading": "Request pickup",
+        "privacyNote": "We only use this to respond.",
+        "submitLabel": "Send request"
+      },
+      "variant": "form"
+    }
+  ],
+  "id": "lead-capture",
+  "name": "LeadCapture",
+  "propsSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "fields": {
+        "type": "array"
+      },
+      "heading": {
+        "type": "string"
+      },
+      "privacyNote": {
+        "type": "string"
+      },
+      "submitLabel": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "heading",
+      "fields",
+      "submitLabel",
+      "privacyNote"
+    ],
+    "type": "object"
+  },
+  "slots": [],
+  "variants": [
+    "form",
+    "mailto",
+    "booking-embed",
+    "crm-handoff"
+  ]
+}

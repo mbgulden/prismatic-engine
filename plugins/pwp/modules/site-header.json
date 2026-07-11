@@ -1,0 +1,65 @@
+{
+  "a11yRules": [
+    "nav-has-accessible-name",
+    "cta-label-required"
+  ],
+  "component": "SiteHeader.astro",
+  "contentSafetyRules": [
+    "no-unsupported-certification-claims"
+  ],
+  "description": "Navigation, logo, and primary CTA",
+  "editableFields": [
+    "logoText",
+    "navItems",
+    "cta"
+  ],
+  "fixtures": [
+    {
+      "name": "site-header-default",
+      "props": {
+        "cta": {
+          "href": "/contact/",
+          "label": "Book a call"
+        },
+        "logoText": "Prismatic",
+        "navItems": [
+          "Services",
+          "About",
+          "Contact"
+        ]
+      },
+      "variant": "simple"
+    }
+  ],
+  "id": "site-header",
+  "name": "SiteHeader",
+  "propsSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "cta": {
+        "type": "object"
+      },
+      "logoText": {
+        "type": "string"
+      },
+      "navItems": {
+        "type": "array"
+      }
+    },
+    "required": [
+      "logoText",
+      "navItems",
+      "cta"
+    ],
+    "type": "object"
+  },
+  "slots": [
+    "nav",
+    "actions"
+  ],
+  "variants": [
+    "simple",
+    "mega-lite",
+    "transparent-on-hero"
+  ]
+}

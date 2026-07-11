@@ -1,0 +1,10 @@
+{
+  "module": "base-layout",
+  "name": "base-layout-fixture",
+  "props": {
+    "description": "PWP fixture shell",
+    "lang": "en",
+    "title": "Fixture Page"
+  },
+  "variant": "default"
+}

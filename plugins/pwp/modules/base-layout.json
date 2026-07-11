@@ -1,0 +1,55 @@
+{
+  "a11yRules": [
+    "document-title-required",
+    "lang-attribute-required"
+  ],
+  "component": "BaseLayout.astro",
+  "contentSafetyRules": [
+    "no-unsupported-certification-claims"
+  ],
+  "description": "Document shell, metadata, and global theme wrapper",
+  "editableFields": [
+    "title",
+    "description",
+    "lang"
+  ],
+  "fixtures": [
+    {
+      "name": "base-layout-default",
+      "props": {
+        "description": "PWP fixture shell",
+        "lang": "en",
+        "title": "Fixture Page"
+      },
+      "variant": "default"
+    }
+  ],
+  "id": "base-layout",
+  "name": "BaseLayout",
+  "propsSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "description": {
+        "type": "string"
+      },
+      "lang": {
+        "type": "string"
+      },
+      "title": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "title",
+      "description",
+      "lang"
+    ],
+    "type": "object"
+  },
+  "slots": [],
+  "variants": [
+    "default",
+    "article",
+    "landing"
+  ]
+}

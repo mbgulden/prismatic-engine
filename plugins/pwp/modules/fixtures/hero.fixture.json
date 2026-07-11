@@ -1,0 +1,15 @@
+{
+  "module": "hero",
+  "name": "hero-fixture",
+  "props": {
+    "body": "Compliant pickup and verified destruction for local teams.",
+    "ctas": [
+      "Schedule pickup",
+      "View process"
+    ],
+    "eyebrow": "Trust-light fixture",
+    "imageAlt": "Technician scanning recovered hardware",
+    "title": "Secure IT asset recovery"
+  },
+  "variant": "split-media"
+}

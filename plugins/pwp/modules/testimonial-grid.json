@@ -1,0 +1,53 @@
+{
+  "a11yRules": [
+    "attribution-present",
+    "unsupported-claim-guard"
+  ],
+  "component": "TestimonialGrid.astro",
+  "contentSafetyRules": [
+    "no-unsupported-certification-claims"
+  ],
+  "description": "Social proof quotes or case-study teaser cards",
+  "editableFields": [
+    "heading",
+    "testimonials"
+  ],
+  "fixtures": [
+    {
+      "name": "testimonial-grid-default",
+      "props": {
+        "heading": "What clients say",
+        "testimonials": [
+          {
+            "attribution": "Fixture client",
+            "quote": "Clear reports, no surprises."
+          }
+        ]
+      },
+      "variant": "quote-cards"
+    }
+  ],
+  "id": "testimonial-grid",
+  "name": "TestimonialGrid",
+  "propsSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "heading": {
+        "type": "string"
+      },
+      "testimonials": {
+        "type": "array"
+      }
+    },
+    "required": [
+      "heading",
+      "testimonials"
+    ],
+    "type": "object"
+  },
+  "slots": [],
+  "variants": [
+    "quote-cards",
+    "case-study-teaser"
+  ]
+}

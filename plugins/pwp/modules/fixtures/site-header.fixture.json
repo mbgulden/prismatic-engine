@@ -1,0 +1,17 @@
+{
+  "module": "site-header",
+  "name": "site-header-fixture",
+  "props": {
+    "cta": {
+      "href": "/contact/",
+      "label": "Book a call"
+    },
+    "logoText": "Prismatic",
+    "navItems": [
+      "Services",
+      "About",
+      "Contact"
+    ]
+  },
+  "variant": "simple"
+}

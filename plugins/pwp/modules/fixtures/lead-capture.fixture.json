@@ -1,0 +1,15 @@
+{
+  "module": "lead-capture",
+  "name": "lead-capture-fixture",
+  "props": {
+    "fields": [
+      "name",
+      "email",
+      "asset count"
+    ],
+    "heading": "Request pickup",
+    "privacyNote": "We only use this to respond.",
+    "submitLabel": "Send request"
+  },
+  "variant": "form"
+}
