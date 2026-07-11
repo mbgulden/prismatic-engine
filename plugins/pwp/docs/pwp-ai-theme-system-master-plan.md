@@ -448,7 +448,11 @@ Deliverables:
   - policy page,
   - offer/package page.
 - EmDash field maps per module.
-- Locked-field rules.
+- Locked-field rules backed by `plugins/pwp/content_guards.py`:
+  - `legalName`, `schemaOrgType`, and `complianceClaims` are contract-owned and must be rejected from editor patches.
+  - routing/system fields such as `route`, `slug`, `canonicalUrl`, `redirectTo`, `blockId`, `moduleId`, `component`, `templateId`, and `themeFamily` are system-owned at any nesting depth.
+  - module edit maps may add `lockedFields` and per-field `{ "editable": false }` constraints.
+  - certification/compliance language is rejected unless the claim is explicitly allowlisted by the tenant brief/edit map (for example a validated `R2v3 certified` claim).
 - Portable Text rendering adapter.
 - Edit-preview loop for Cloudflare staging.
 
