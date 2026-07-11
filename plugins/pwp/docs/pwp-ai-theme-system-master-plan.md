@@ -336,6 +336,24 @@ Agents must produce:
 | SEO/link/sitemap | crawler + XML parser | yes |
 | compliance/safety lint | domain-specific copy rules | yes for regulated claims |
 
+### Theme validation command
+
+Theme packages are validated with the repo-local command:
+
+```bash
+python3 scripts/pwp theme validate <theme-package-path>
+```
+
+The validator checks the Phase 0 contracts before later build/a11y gates run:
+
+- `theme.json` exists and declares the PWP theme schema.
+- Required manifest entrypoints (`tokens`, `css`, `layout`, `components`, `contentSchema`, `emdashMap`) point to safe in-package files.
+- Module ids are unique lowercase kebab-case values and each module has a `modules/<id>.json` contract.
+- Token files include the canonical W3C-style PWP groups: `color`, `font`, `space`, `size`, `radius`, `shadow`, `motion`, `breakpoint`, and `zIndex`.
+- EmDash maps reference declared module ids only and provide editable field definitions for each block.
+
+The command exits `0` on a valid package and `1` with a concrete error list on invalid packages, making it suitable for theme fixture tests and CI.
+
 ### Theme compatibility matrix
 
 PWP should maintain a matrix:
