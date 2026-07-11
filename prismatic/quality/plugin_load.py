@@ -24,6 +24,14 @@ verification contracts.
 
 This module uses the same dataclass + to_markdown() pattern as
 SmokeTestResult so consumers can switch between them transparently.
+
+Packaging note
+--------------
+The gate imports ``prismatic.core.registry.PluginLoader`` before any
+plugin-specific code runs. That loader enforces version constraints with
+``packaging.specifiers.SpecifierSet`` and ``packaging.version.Version``,
+so ``packaging`` is a runtime dependency of the engine package, not just
+a test/dev dependency.
 """
 
 from __future__ import annotations

@@ -27,7 +27,8 @@ classifiers = [
 ]
 
 dependencies = [
-    "packaging>=23.0",
+    "jsonschema>=4.0",
+    "packaging>=24.0",
     "pyyaml>=6.0",
 ]
 
