@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.prismatic.dev/pwp/token.schema.json",
+  "title": "PWP Theme Tokens",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "color",
+    "font",
+    "space",
+    "size",
+    "radius",
+    "shadow",
+    "motion",
+    "breakpoint",
+    "zIndex"
+  ],
+  "properties": {
+    "color": {
+      "type": "object"
+    },
+    "font": {
+      "type": "object"
+    },
+    "space": {
+      "type": "object"
+    },
+    "size": {
+      "type": "object"
+    },
+    "radius": {
+      "type": "object"
+    },
+    "shadow": {
+      "type": "object"
+    },
+    "motion": {
+      "type": "object"
+    },
+    "breakpoint": {
+      "type": "object"
+    },
+    "zIndex": {
+      "type": "object"
+    }
+  }
+}

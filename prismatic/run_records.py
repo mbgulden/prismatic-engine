@@ -2,17 +2,18 @@
 prismatic/run_records.py - Agent run records for tracking the lifecycle of
 agent runs.
 
-Uses a simple JSON-file based store (upgradeable to SQLite later).  All
-operations are idempotent and thread-safe via file-level locking.
+Uses the shared SQLite runs database by default, with compatibility for the
+legacy JSON-file store. All operations are idempotent and thread-safe via
+file-level locking.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import time
+import sqlite3
 import uuid
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,7 @@ import fcntl
 # Dataclass
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class AgentRunRecord:
     """Snapshot of a single agent run."""
@@ -30,9 +32,9 @@ class AgentRunRecord:
     run_id: str
     issue_id: str
     agent_name: str
-    status: str = "pending"           # pending | running | completed | failed
-    started_at: str = ""              # ISO-8601 string
-    completed_at: str | None = None   # ISO-8601 string
+    status: str = "pending"  # pending | running | completed | failed
+    started_at: str = ""  # ISO-8601 string
+    completed_at: str | None = None  # ISO-8601 string
     output_path: str | None = None
     error_message: str | None = None
 
@@ -45,22 +47,35 @@ class AgentRunRecord:
 # JSON-file backed store
 # ---------------------------------------------------------------------------
 
+
 def _default_store_path() -> str:
-    """Resolve store directory from env or fallback."""
-    state_dir = os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state/")
-    return os.path.join(state_dir, "run_records.json")
+    """Resolve the canonical run-history store path.
+
+    Production writes and the gateway ``/runs`` endpoint share the SQLite
+    database at ``~/.prismatic/runs.db``.  ``PRISMATIC_RUN_RECORDS_PATH`` is
+    retained for tests or legacy JSON-file users; ``PRISMATIC_RUNS_DB`` can
+    override the SQLite location without changing the state directory.
+    """
+    if os.environ.get("PRISMATIC_RUN_RECORDS_PATH"):
+        return os.environ["PRISMATIC_RUN_RECORDS_PATH"]
+    return os.environ.get(
+        "PRISMATIC_RUNS_DB",
+        os.path.expanduser("~/.prismatic/runs.db"),
+    )
 
 
 class AgentRunRecordStore:
-    """Thread-safe JSON-file backed store for agent run records.
+    """Thread-safe store for agent run records.
 
-    The file is kept in memory and flushed on every mutation.  Reads are
-    served from the in-memory cache.  File-level advisory locking protects
-    against concurrent writer processes.
+    SQLite (``*.db``) is the production format used by the Runs panel.  The
+    older JSON list format remains supported for callers that pass an explicit
+    non-DB path.  SQLite reads reload from disk so the gateway sees supervisor
+    writes made by sibling processes after startup.
     """
 
     def __init__(self, store_path: str | None = None):
         self._store_path = store_path or _default_store_path()
+        self._sqlite = self._store_path.endswith(".db")
 
         # Ensure parent directory exists
         Path(self._store_path).parent.mkdir(parents=True, exist_ok=True)
@@ -86,8 +101,52 @@ class AgentRunRecordStore:
         fcntl.flock(fd, fcntl.LOCK_UN)
         os.close(fd)
 
+    def _ensure_sqlite_schema(self) -> None:
+        """Create the production SQLite schema if it is missing."""
+        with sqlite3.connect(self._store_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS runs (
+                    run_id TEXT PRIMARY KEY,
+                    issue_id TEXT,
+                    agent_name TEXT,
+                    status TEXT,
+                    started_at TEXT,
+                    completed_at TEXT,
+                    output_path TEXT,
+                    error_message TEXT
+                )
+                """
+            )
+            conn.commit()
+
     def _load_from_disk(self) -> None:
-        """Load records from the JSON file on disk, falling back to empty."""
+        """Load records from disk, falling back to empty on corrupt JSON."""
+        if self._sqlite:
+            self._ensure_sqlite_schema()
+            with sqlite3.connect(self._store_path) as conn:
+                rows = conn.execute(
+                    """
+                    SELECT run_id, issue_id, agent_name, status, started_at,
+                           completed_at, output_path, error_message
+                    FROM runs
+                    """
+                ).fetchall()
+            self._records = {
+                row[0]: AgentRunRecord(
+                    run_id=row[0],
+                    issue_id=row[1] or "",
+                    agent_name=row[2] or "",
+                    status=row[3] or "pending",
+                    started_at=row[4] or "",
+                    completed_at=row[5],
+                    output_path=row[6],
+                    error_message=row[7],
+                )
+                for row in rows
+            }
+            return
+
         if not os.path.exists(self._store_path):
             self._records = {}
             return
@@ -111,6 +170,33 @@ class AgentRunRecordStore:
         """Write the in-memory records to disk under a lock."""
         fd = self._acquire_lock()
         try:
+            if self._sqlite:
+                self._ensure_sqlite_schema()
+                with sqlite3.connect(self._store_path) as conn:
+                    conn.executemany(
+                        """
+                        INSERT OR REPLACE INTO runs (
+                            run_id, issue_id, agent_name, status, started_at,
+                            completed_at, output_path, error_message
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        [
+                            (
+                                r.run_id,
+                                r.issue_id,
+                                r.agent_name,
+                                r.status,
+                                r.started_at,
+                                r.completed_at,
+                                r.output_path,
+                                r.error_message,
+                            )
+                            for r in self._records.values()
+                        ],
+                    )
+                    conn.commit()
+                return
+
             serialised = [asdict(r) for r in self._records.values()]
             with open(self._store_path, "w") as f:
                 json.dump(serialised, f, indent=2, default=str)
@@ -166,19 +252,22 @@ class AgentRunRecordStore:
 
     def get_run(self, run_id: str) -> AgentRunRecord | None:
         """Retrieve a single run record by its *run_id*."""
+        if self._sqlite:
+            self._load_from_disk()
         return self._records.get(run_id)
 
     def get_runs_for_issue(self, issue_id: str) -> list[AgentRunRecord]:
         """Return all runs for a given *issue_id*, newest first."""
-        matching = [
-            r for r in self._records.values()
-            if r.issue_id == issue_id
-        ]
+        if self._sqlite:
+            self._load_from_disk()
+        matching = [r for r in self._records.values() if r.issue_id == issue_id]
         matching.sort(key=lambda r: r.started_at, reverse=True)
         return matching
 
     def get_recent_runs(self, limit: int = 10) -> list[AgentRunRecord]:
         """Return the most recent *limit* runs across all issues."""
+        if self._sqlite:
+            self._load_from_disk()
         sorted_records = sorted(
             self._records.values(),
             key=lambda r: r.started_at,
