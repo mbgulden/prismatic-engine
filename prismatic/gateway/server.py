@@ -24,6 +24,7 @@ import os
 import threading
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import uvicorn
@@ -134,6 +135,14 @@ async def health() -> dict[str, Any]:
         "uptime_seconds": round(uptime, 1),
         "started_at": _started_at,
     }
+
+
+@app.get("/api/harnesses")
+async def get_harnesses() -> list[dict[str, Any]]:
+    """Return the registered agent execution harness adapters."""
+    registry_path = Path(__file__).resolve().parents[1] / "harnesses" / "registry.json"
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    return registry["harnesses"]
 
 
 # ── WebSocket Endpoint ──────────────────────────────────────────────
