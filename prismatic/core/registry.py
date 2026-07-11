@@ -181,6 +181,113 @@ from prismatic.interface.hooks import (  # noqa: E402
 # value that will be stored under ``result["stages"][i]["output"]``.
 Stage = Tuple[str, Callable[[Dict[str, Any]], Any]]
 
+# GRO-3713: canonical PWP theme provenance fields recorded in deployment
+# manifests.  Keep the manifest keys camelCase to match the theme master plan
+# and generated JSON artifacts.  The alias lists accept common engine/Python
+# snake_case inputs so callers do not need to hard-code duplicate conventions.
+PWP_THEME_PROVENANCE_ALIASES: Dict[str, Tuple[str, ...]] = {
+    "themeId": ("themeId", "theme_id"),
+    "themeVersion": ("themeVersion", "theme_version"),
+    "tokenHash": ("tokenHash", "token_hash"),
+    "moduleHash": ("moduleHash", "module_hash"),
+    "contentHash": ("contentHash", "content_hash"),
+    "engineVersion": ("engineVersion", "engine_version"),
+    "sourceCommit": (
+        "sourceCommit",
+        "source_commit",
+        "gitCommit",
+        "git_commit",
+        "commit",
+    ),
+}
+
+
+def _first_present(*sources: Dict[str, Any], aliases: Tuple[str, ...]) -> Any:
+    """Return the first non-empty provenance value from *sources*."""
+    for source in sources:
+        for alias in aliases:
+            value = source.get(alias)
+            if value not in (None, ""):
+                return value
+    return None
+
+
+def build_pwp_deployment_manifest(
+    *,
+    core_version: str,
+    pipeline_id: str,
+    context: Dict[str, Any],
+    artifact: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Build the deployment manifest attached to PWP deploy artifacts.
+
+    Theme provenance may be supplied either flat in ``context``/``artifact`` or
+    under ``themeProvenance``/``theme_provenance``.  The returned manifest uses
+    canonical camelCase keys and preserves deploy traceability even before the
+    later run-state/rollback issues add persistence.
+    """
+
+    context_provenance = (
+        context.get("themeProvenance") or context.get("theme_provenance") or {}
+    )
+    artifact_provenance = (
+        artifact.get("themeProvenance") or artifact.get("theme_provenance") or {}
+    )
+    if not isinstance(context_provenance, dict):
+        context_provenance = {}
+    if not isinstance(artifact_provenance, dict):
+        artifact_provenance = {}
+
+    manifest: Dict[str, Any] = {
+        "pipelineId": pipeline_id,
+        "engineVersion": core_version,
+    }
+
+    for key, aliases in PWP_THEME_PROVENANCE_ALIASES.items():
+        value = _first_present(
+            context_provenance,
+            artifact_provenance,
+            context,
+            artifact,
+            aliases=aliases,
+        )
+        if value is not None:
+            manifest[key] = value
+
+    # ``engineVersion`` always falls back to the loader core version so every
+    # manifest can be traced to an engine compatibility boundary.
+    manifest.setdefault("engineVersion", core_version)
+    return manifest
+
+
+def attach_pwp_deployment_manifest(
+    *,
+    core_version: str,
+    pipeline_id: str,
+    context: Dict[str, Any],
+    artifact: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Return a copy of *artifact* with a PWP deployment manifest attached."""
+
+    enriched = dict(artifact)
+    existing_manifest = enriched.get("deploymentManifest")
+    if existing_manifest is None:
+        existing_manifest = enriched.get("deployment_manifest")
+    manifest: Dict[str, Any] = {}
+    if isinstance(existing_manifest, dict):
+        manifest.update(existing_manifest)
+    manifest.update(
+        build_pwp_deployment_manifest(
+            core_version=core_version,
+            pipeline_id=pipeline_id,
+            context=context,
+            artifact=artifact,
+        )
+    )
+    enriched["deploymentManifest"] = manifest
+    enriched.pop("deployment_manifest", None)
+    return enriched
+
 
 class PWPPluginRunner:
     """
@@ -316,6 +423,13 @@ class PWPPluginRunner:
                 return result
 
             artifact = deploy_artifact_provider(result)
+            artifact = attach_pwp_deployment_manifest(
+                core_version=self.loader.core_version,
+                pipeline_id=pipeline_id,
+                context=context,
+                artifact=artifact,
+            )
+            result["deploymentManifest"] = artifact["deploymentManifest"]
             self.loader.execute_hook(
                 HOOK_ON_DEPLOY, pipeline_id, deploy_target, artifact
             )
@@ -337,7 +451,8 @@ class PWPPluginRunner:
             )
 
             reversible = False
-            for p in self.loader.loaded_plugins.values():
+            loaded_plugins = getattr(self.loader, "loaded_plugins", {})
+            for p in loaded_plugins.values():
                 if hasattr(p, "on_deploy"):
                     if getattr(p, "reversible", False):
                         reversible = True

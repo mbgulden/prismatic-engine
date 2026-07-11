@@ -596,13 +596,22 @@ Deliverables:
 
 ```json
 {
+  "pipelineId": "pwp-deploy-2026-07-10T12:00:00Z",
   "themeId": "pwp.theme.trust-light",
   "themeVersion": "0.1.0",
   "tokenHash": "sha256:...",
   "moduleHash": "sha256:...",
-  "contentHash": "sha256:..."
+  "contentHash": "sha256:...",
+  "engineVersion": "1.0.0",
+  "sourceCommit": "abc1234"
 }
 ```
+
+Deployment adapters attach this manifest as `deploymentManifest` on the artifact
+passed to `on_deploy` and record the same object on the pipeline result. Inputs
+may come from `context.themeProvenance`/`context.theme_provenance` or flat
+artifact/context fields; manifest output stays camelCase so Cloudflare artifacts,
+run-state records, and rollback metadata share one JSON contract.
 
 - PWP run-state records include theme metadata (see `plugins/pwp/docs/pwp-run-state-metadata.md`):
   - `themeId` / `themeVersion` package provenance,
