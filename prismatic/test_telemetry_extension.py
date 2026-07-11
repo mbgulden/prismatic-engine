@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -406,7 +407,7 @@ class TestRecordMethodsExist:
 
 
 class TestCleanupExpired:
-    """Gap 12 tables appear in cleanup_expired's retention map."""
+    """Gap 12/state tables appear in cleanup_expired's retention map."""
 
     def test_cleanup_expired_returns_gap12_tables(self, collector):
         """cleanup_expired(dry_run=True) returns all 4 new tables in the result dict."""
@@ -416,6 +417,124 @@ class TestCleanupExpired:
         assert "telemetry_plugin_registered" in result
         assert "telemetry_hook_fired" in result
         assert "telemetry_pipeline_action" in result
+
+    def test_cleanup_expired_covers_state_retention_tables(self, collector):
+        """Dry-run counts old rows for state tables created by other subsystems."""
+        c, db_path = collector
+        old = (datetime.now(timezone.utc) - timedelta(days=45)).isoformat()
+        recent = datetime.now(timezone.utc).isoformat()
+
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS telemetry_media_artifacts (
+                    filepath TEXT PRIMARY KEY,
+                    media_type TEXT NOT NULL,
+                    engine TEXT NOT NULL,
+                    detected_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS label_snapshots (
+                    issue_id TEXT NOT NULL,
+                    label_name TEXT NOT NULL,
+                    cycle_id TEXT NOT NULL,
+                    seen_at TEXT NOT NULL,
+                    PRIMARY KEY (issue_id, label_name, cycle_id)
+                );
+                CREATE TABLE IF NOT EXISTS dedup_log (
+                    issue_id TEXT NOT NULL,
+                    agent_label TEXT NOT NULL,
+                    cycle_id TEXT NOT NULL,
+                    processed_at TEXT NOT NULL,
+                    PRIMARY KEY (issue_id, agent_label, cycle_id)
+                );
+                CREATE TABLE IF NOT EXISTS durable_events (
+                    id INTEGER PRIMARY KEY,
+                    topic TEXT,
+                    type TEXT,
+                    source TEXT,
+                    timestamp TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                """
+            )
+            conn.execute(
+                "INSERT INTO telemetry_media_artifacts "
+                "(filepath, media_type, engine, detected_at) VALUES (?, ?, ?, ?)",
+                ("/tmp/old.png", "image", "test", old),
+            )
+            conn.execute(
+                "INSERT INTO telemetry_media_artifacts "
+                "(filepath, media_type, engine, detected_at) VALUES (?, ?, ?, ?)",
+                ("/tmp/new.png", "image", "test", recent),
+            )
+            conn.execute(
+                "INSERT INTO label_snapshots VALUES (?, ?, ?, ?)",
+                ("GRO-1", "agent:ned", "old-cycle", old),
+            )
+            conn.execute(
+                "INSERT INTO label_snapshots VALUES (?, ?, ?, ?)",
+                ("GRO-2", "agent:ned", "new-cycle", recent),
+            )
+            conn.execute(
+                "INSERT INTO dedup_log VALUES (?, ?, ?, ?)",
+                ("GRO-1", "agent:ned", "old-cycle", old),
+            )
+            conn.execute(
+                "INSERT INTO dedup_log VALUES (?, ?, ?, ?)",
+                ("GRO-2", "agent:ned", "new-cycle", recent),
+            )
+            conn.execute(
+                "INSERT INTO durable_events "
+                "(topic, type, source, timestamp, payload) VALUES (?, ?, ?, ?, ?)",
+                ("test", "event", "pytest", old, "{}"),
+            )
+            conn.execute(
+                "INSERT INTO durable_events "
+                "(topic, type, source, timestamp, payload) VALUES (?, ?, ?, ?, ?)",
+                ("test", "event", "pytest", recent, "{}"),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        result = c.cleanup_expired(dry_run=True)
+        assert result["telemetry_media_artifacts"] == 1
+        assert result["label_snapshots"] == 1
+        assert result["dedup_log"] == 1
+        assert result["durable_events"] == 1
+
+        deleted = c.cleanup_expired(dry_run=False)
+        assert deleted["telemetry_media_artifacts"] == 1
+        assert deleted["label_snapshots"] == 1
+        assert deleted["dedup_log"] == 1
+        assert deleted["durable_events"] == 1
+
+        conn = sqlite3.connect(db_path)
+        try:
+            assert (
+                conn.execute(
+                    "SELECT COUNT(*) FROM telemetry_media_artifacts"
+                ).fetchone()[0]
+                == 1
+            )
+            assert (
+                conn.execute("SELECT COUNT(*) FROM label_snapshots").fetchone()[0] == 1
+            )
+            assert conn.execute("SELECT COUNT(*) FROM dedup_log").fetchone()[0] == 1
+            assert (
+                conn.execute("SELECT COUNT(*) FROM durable_events").fetchone()[0] == 1
+            )
+        finally:
+            conn.close()
+
+    def test_cleanup_expired_skips_absent_external_tables(self, collector):
+        """Missing dispatcher/billing tables do not abort cleanup on partial DBs."""
+        c, _ = collector
+        result = c.cleanup_expired(dry_run=True)
+        assert "telemetry_agent_runs" in result
+        assert "dedup_log" not in result
+        assert "durable_events" not in result
 
 
 # ── Deferred tests (Gap 11) ─────────────────────────────────────────────────
