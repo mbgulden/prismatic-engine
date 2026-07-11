@@ -14,8 +14,9 @@ set -euo pipefail
 PRISMATIC_HOME="${PRISMATIC_HOME:-/home/ubuntu}"
 STATE_DIR="${PRISMATIC_HOME}/.prismatic/run"
 FAILURE_FILE="${STATE_DIR}/watchdog_failures.txt"
-HEARTBEAT_SCRIPT="${PRISMATIC_HOME}/work/prismatic-engine/scripts/heartbeat.sh"
-ROLLBACK_SCRIPT="${PRISMATIC_HOME}/work/prismatic-engine/scripts/rollback.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HEARTBEAT_SCRIPT="${SCRIPT_DIR}/heartbeat.sh"
+ROLLBACK_SCRIPT="${SCRIPT_DIR}/rollback.sh"
 MAX_CONSECUTIVE_FAILURES=3
 HEALTH_PORT="${PRISMATIC_PORT:-9000}"
 
@@ -53,43 +54,49 @@ if [[ -f "$FAILURE_FILE" ]]; then
 fi
 
 HEALTHY=false
+SERVICE_ACTIVE=false
+HEARTBEAT_FRESH=false
 
-# Check 1: systemd service status
-if systemctl --user is-active --quiet prismatic-dispatcher.service 2>/dev/null; then
-    log "CHECK 1/3: systemd service is active — PASS"
-else
-    log "CHECK 1/3: systemd service is NOT active — FAIL"
-fi
-
-# Check 2: heartbeat file freshness
-if bash "$HEARTBEAT_SCRIPT" --check 2>/dev/null; then
-    log "CHECK 2/3: heartbeat is fresh — PASS"
-else
-    hb_result=$(bash "$HEARTBEAT_SCRIPT" --check 2>&1 || true)
-    log "CHECK 2/3: heartbeat check failed: $hb_result — FAIL"
-
-    # Also try systemd as fallback
-    if systemctl --user is-active --quiet prismatic-dispatcher.service 2>/dev/null; then
-        log "  (systemd says active, updating heartbeat)"
-        bash "$HEARTBEAT_SCRIPT" 2>/dev/null || true
-    fi
-fi
-
-# Check 3: health endpoint
+# Source of truth: the live gateway /health endpoint operators use.
+# systemd and heartbeat.pid are diagnostic signals only; they must not
+# turn a reachable gateway into a false-red report.
 HEALTH_URL="http://localhost:${HEALTH_PORT}/health"
 HEALTH_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "$HEALTH_URL" 2>/dev/null || echo "000")
 if [[ "$HEALTH_RESPONSE" == "200" ]]; then
-    log "CHECK 3/3: health endpoint $HEALTH_URL → $HEALTH_RESPONSE — PASS"
+    log "CHECK 1/3: live gateway health endpoint $HEALTH_URL → $HEALTH_RESPONSE — PASS (source=live_gateway)"
     HEALTHY=true
 else
-    log "CHECK 3/3: health endpoint $HEALTH_URL → $HEALTH_RESPONSE — FAIL"
+    log "CHECK 1/3: live gateway health endpoint $HEALTH_URL → $HEALTH_RESPONSE — FAIL (source=live_gateway)"
 fi
 
-# Check 4: systemd only (if health endpoint unavailable)
-if ! $HEALTHY; then
-    if systemctl --user is-active --quiet prismatic-dispatcher.service 2>/dev/null; then
-        log "CHECK (fallback): systemd says active despite health endpoint failure"
-        HEALTHY=true
+# Diagnostic 1: systemd service status.
+if systemctl --user is-active --quiet prismatic-dispatcher.service 2>/dev/null; then
+    SERVICE_ACTIVE=true
+    log "CHECK 2/3: systemd service prismatic-dispatcher.service active — PASS (diagnostic=service)"
+else
+    if $HEALTHY; then
+        log "CHECK 2/3: systemd service prismatic-dispatcher.service inactive/unavailable — DIAGNOSTIC ONLY (live gateway healthy)"
+    else
+        log "CHECK 2/3: systemd service prismatic-dispatcher.service inactive/unavailable — FAIL (diagnostic=service)"
+    fi
+fi
+
+# Diagnostic 2: heartbeat file freshness.
+hb_result=$(bash "$HEARTBEAT_SCRIPT" --check 2>&1) && hb_status=$? || hb_status=$?
+if [[ $hb_status -eq 0 ]]; then
+    HEARTBEAT_FRESH=true
+    log "CHECK 3/3: heartbeat file is fresh — PASS (diagnostic=heartbeat; $hb_result)"
+else
+    if $HEALTHY; then
+        log "CHECK 3/3: heartbeat file check failed: $hb_result — DIAGNOSTIC ONLY (live gateway healthy)"
+    else
+        log "CHECK 3/3: heartbeat file check failed: $hb_result — FAIL (diagnostic=heartbeat)"
+    fi
+
+    # Repair the diagnostic heartbeat when the service really is the owner.
+    if $SERVICE_ACTIVE; then
+        log "  (systemd says active, refreshing heartbeat diagnostic)"
+        bash "$HEARTBEAT_SCRIPT" 2>/dev/null || true
     fi
 fi
 

@@ -31,6 +31,7 @@ import subprocess
 import sys
 import time
 import threading
+import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Callable
@@ -43,10 +44,13 @@ from .credit_policy_engine import (
     AGENT_PROVIDER_MAP,
 )
 from .telemetry import get_collector
+from .capability_router import default_capability_registry, route_issue
+from .lane_contracts import filter_dispatchable_issues, starvation_signal_for
 
 # ── IPC Bridge event emission (best-effort) ─────────────────────
 try:
     from .gateway.ipc_bridge import send_event_via_socket
+
     _HAS_IPC_BRIDGE = True
 except ImportError:
     _HAS_IPC_BRIDGE = False
@@ -64,6 +68,151 @@ def _emit_agent_event(event_type: str, agent_name: str, issue_id: str, **extra) 
         )
     except Exception:
         pass  # Best-effort — don't break dispatch over event emission
+
+
+# ── Token metrics parsing (GRO-2980.1 / GRO-2990) ──────────────────────────
+#
+# Each agent provider prints token counts in its own stdout format.
+# We parse with regex so the dispatcher doesn't need provider-specific
+# SDK dependencies. Returns None if no token-like output is found.
+
+_TOKEN_PATTERNS: list[tuple[str, str, str]] = [
+    # (provider_prefix, prompt_pattern, completion_pattern)
+    # Ollama (used by local-llm agents: fred, kai, ned)
+    (
+        "ollama",
+        r'"prompt_eval_count"\s*:\s*(\d+)',
+        r'"eval_count"\s*:\s*(\d+)',
+    ),
+    # Anthropic (claude-code → Jules)
+    (
+        "anthropic",
+        r'"input_tokens"\s*:\s*(\d+)',
+        r'"output_tokens"\s*:\s*(\d+)',
+    ),
+    # OpenAI / GitHub Copilot (codex)
+    (
+        "openai",
+        r'"prompt_tokens"\s*:\s*(\d+)',
+        r'"completion_tokens"\s*:\s*(\d+)',
+    ),
+    # Google Antigravity (AGY / Gemini)
+    (
+        "google-antigravity",
+        r'"promptTokenCount"\s*:\s*(\d+)',
+        r'"candidatesTokenCount"\s*:\s*(\d+)',
+    ),
+]
+
+
+def _parse_token_metrics(provider: str, output: str) -> dict[str, int] | None:
+    """Parse token counts from agent stdout.
+
+    Args:
+        provider: One of the values in ``AGENT_PROVIDER_MAP`` —
+            e.g. ``"local-llm"``, ``"claude-code"``, ``"github-copilot"``,
+            ``"google-antigravity"``.  Falls back to generic Ollama-style
+            parsing when the provider is unknown.
+        output: Captured stdout/stderr from the agent process.
+
+    Returns:
+        Dict with ``prompt_tokens`` + ``completion_tokens`` (and any
+        matched ``total_tokens``) if found, else ``None``.
+    """
+    if not output:
+        return None
+
+    # Map AGENT_PROVIDER_MAP value → parser prefix
+    provider_to_prefix = {
+        "local-llm": "ollama",
+        "claude-code": "anthropic",
+        "github-copilot": "openai",
+        "google-antigravity": "google-antigravity",
+    }
+    prefix = provider_to_prefix.get(provider, "ollama")
+
+    prompt_pat: str | None = None
+    completion_pat: str | None = None
+    for pfx, p_pat, c_pat in _TOKEN_PATTERNS:
+        if pfx == prefix:
+            prompt_pat = p_pat
+            completion_pat = c_pat
+            break
+
+    if prompt_pat is None or completion_pat is None:
+        return None
+
+    prompt_m = re.search(prompt_pat, output)
+    completion_m = re.search(completion_pat, output)
+    if not prompt_m and not completion_m:
+        return None
+
+    return {
+        "prompt_tokens": int(prompt_m.group(1)) if prompt_m else 0,
+        "completion_tokens": int(completion_m.group(1)) if completion_m else 0,
+    }
+
+
+def _drain_and_record_tokens(
+    proc: "subprocess.Popen | None",
+    run_id: str,
+    agent_name: str,
+    provider: str,
+    timeout: float = 10.0,
+) -> None:
+    """Drain a finished agent process and emit a token-metrics event.
+
+    Best-effort — never raises.  Called from the dispatch_once flow
+    right after ``record_agent_run`` so that the agent_run row exists
+    alongside any tokens row that follows.
+
+    Args:
+        proc: The ``subprocess.Popen`` returned by a launcher.
+        run_id: Matches the ``record_agent_run`` run_id.
+        agent_name: ``"fred" | "kai" | "agy" | "jules" | "codex"``.
+        provider: From ``AGENT_PROVIDER_MAP``.
+        timeout: Seconds to wait for ``communicate`` to drain the pipe.
+    """
+    if proc is None:
+        return
+    try:
+        stdout_bytes, _ = proc.communicate(timeout=timeout)
+    except (subprocess.TimeoutExpired, OSError):
+        # Process didn't exit cleanly within timeout — kill and try one
+        # more time without blocking.
+        try:
+            proc.kill()
+            stdout_bytes, _ = proc.communicate(timeout=2.0)
+        except Exception:
+            return
+    except Exception:
+        return
+
+    if not stdout_bytes:
+        return
+
+    try:
+        output = stdout_bytes.decode("utf-8", errors="replace")
+    except Exception:
+        return
+
+    metrics = _parse_token_metrics(provider, output)
+    if metrics is None:
+        return
+
+    try:
+        from prismatic.telemetry import get_collector
+
+        collector = get_collector()
+        collector.record_tokens(
+            run_id=run_id,
+            agent=agent_name,
+            provider=provider,
+            prompt_tokens=metrics["prompt_tokens"],
+            completion_tokens=metrics["completion_tokens"],
+        )
+    except Exception:
+        pass  # Telemetry is best-effort
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -94,6 +243,12 @@ NUDGE_DIR: str = os.environ.get("PRISMATIC_NUDGE_DIR", "/tmp/prismatic")
 # Pipeline metrics log for dashboard consumption
 PIPELINE_METRICS_PATH: str = os.environ.get(
     "PRISMATIC_METRICS_PATH", "/tmp/pipeline_metrics.jsonl"
+)
+
+# Durable worker-launch ledger.  Stored beside the event-router state so a
+# launch can be traced after the dispatcher process exits.
+LAUNCH_RECORDS_DB_PATH: str = os.environ.get(
+    "PRISMATIC_LAUNCH_RECORDS_DB_PATH", DEFAULT_DB_PATH
 )
 
 # AGY model routing configuration
@@ -210,9 +365,7 @@ def _linear_api_key() -> str:
     """
     key = os.environ.get("LINEAR_API_KEY")
     if not key:
-        raise RuntimeError(
-            "LINEAR_API_KEY environment variable is required"
-        )
+        raise RuntimeError("LINEAR_API_KEY environment variable is required")
     return key
 
 
@@ -237,10 +390,12 @@ def gql(query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
     import urllib.error
 
     api_key = _linear_api_key()
-    payload = json.dumps({
-        "query": query,
-        "variables": variables or {},
-    }).encode("utf-8")
+    payload = json.dumps(
+        {
+            "query": query,
+            "variables": variables or {},
+        }
+    ).encode("utf-8")
 
     req = urllib.request.Request(
         "https://api.linear.app/graphql",
@@ -257,9 +412,7 @@ def gql(query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
             body = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body = exc.read().decode(errors="replace")
-        raise RuntimeError(
-            f"Linear API HTTP {exc.code}: {body[:500]}"
-        ) from exc
+        raise RuntimeError(f"Linear API HTTP {exc.code}: {body[:500]}") from exc
     except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"Linear API request failed: {exc}") from exc
 
@@ -291,7 +444,9 @@ def get_label_id(label_name: str, *, team_id: str | None = None) -> str | None:
     """
     tid = team_id or TEAM_ID
     if not tid:
-        raise RuntimeError("TEAM_ID is not set — provide team_id or set PRISMATIC_TEAM_ID")
+        raise RuntimeError(
+            "TEAM_ID is not set — provide team_id or set PRISMATIC_TEAM_ID"
+        )
 
     # Look up existing label
     query = """
@@ -377,23 +532,68 @@ def get_issues_with_label(
 
     results = []
     for issue in issues:
-        label_names = [
-            lab["name"]
-            for lab in issue.get("labels", {}).get("nodes", [])
-        ]
+        label_names = [lab["name"] for lab in issue.get("labels", {}).get("nodes", [])]
         if label_name in label_names:
-            results.append({
-                "id": issue["id"],
-                "identifier": issue.get("identifier", ""),
-                "title": issue.get("title", ""),
-                "description": issue.get("description", ""),
-                "state": issue.get("state", {}),
-                "assignee": issue.get("assignee"),
-                "labels": label_names,
-                "url": issue.get("url", ""),
-            })
+            results.append(
+                {
+                    "id": issue["id"],
+                    "identifier": issue.get("identifier", ""),
+                    "title": issue.get("title", ""),
+                    "description": issue.get("description", ""),
+                    "state": issue.get("state", {}),
+                    "assignee": issue.get("assignee"),
+                    "labels": label_names,
+                    "url": issue.get("url", ""),
+                }
+            )
 
     return results
+
+
+DISPATCH_READY_LABEL = "dispatch:ready"
+
+
+def issue_label_names(issue: dict[str, Any]) -> list[str]:
+    """Return label names from either normalized or raw Linear issue shapes."""
+    labels = issue.get("labels", [])
+    if isinstance(labels, list):
+        names: list[str] = []
+        for label in labels:
+            if isinstance(label, str):
+                names.append(label)
+            elif isinstance(label, dict):
+                name = label.get("name")
+                if name:
+                    names.append(str(name))
+        return names
+    if isinstance(labels, dict):
+        return [
+            str(label.get("name"))
+            for label in labels.get("nodes", [])
+            if isinstance(label, dict) and label.get("name")
+        ]
+    return []
+
+
+def is_dispatch_ready(issue: dict[str, Any]) -> bool:
+    """True only when the issue carries the explicit launch gate label."""
+    return DISPATCH_READY_LABEL in issue_label_names(issue)
+
+
+def report_lane_starvation(agent_name: str, candidate_count: int, gated_count: int) -> None:
+    """Emit a visible no-runnable-work signal for an agent lane."""
+    label = f"agent:{agent_name}"
+    if candidate_count == 0:
+        print(
+            f"[dispatcher] 🟡 STARVED {label}: no candidate issues found "
+            f"for this lane"
+        )
+        return
+    print(
+        f"[dispatcher] 🟡 STARVED {label}: {candidate_count} candidate "
+        f"issue(s), {gated_count} missing {DISPATCH_READY_LABEL}; "
+        "nothing runnable"
+    )
 
 
 def get_issue_labels(issue_id: str) -> list[dict[str, str]]:
@@ -413,11 +613,7 @@ def get_issue_labels(issue_id: str) -> list[dict[str, str]]:
     }
     """
     data = gql(query, {"issueId": issue_id})
-    return (
-        data.get("issue", {})
-        .get("labels", {})
-        .get("nodes", [])
-    )
+    return data.get("issue", {}).get("labels", {}).get("nodes", [])
 
 
 def set_labels(issue_id: str, label_ids: list[str]) -> bool:
@@ -468,11 +664,7 @@ def transition_label(
     current_names = [lab["name"] for lab in current]
 
     # Remove the old label
-    new_ids = [
-        lab["id"]
-        for lab in current
-        if lab["name"] != remove_label
-    ]
+    new_ids = [lab["id"] for lab in current if lab["name"] != remove_label]
 
     # Add the new label if not already present
     if add_label and add_label not in current_names:
@@ -507,6 +699,180 @@ def add_comment(issue_id: str, body: str) -> bool:
     """
     data = gql(query, {"issueId": issue_id, "body": body})
     return data.get("commentCreate", {}).get("success", False)
+
+
+# ═══════════════════════════════════════════════════════════════
+# Durable Launch Records
+# ═══════════════════════════════════════════════════════════════
+
+def _launch_records_db_path() -> str:
+    """Return the SQLite database path used for durable launch records."""
+    return os.environ.get("PRISMATIC_LAUNCH_RECORDS_DB_PATH", LAUNCH_RECORDS_DB_PATH)
+
+
+def _init_launch_records_table(conn: sqlite3.Connection) -> None:
+    """Create the durable launch-record table and indexes if needed."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS launch_records (
+            run_id TEXT PRIMARY KEY,
+            issue_id TEXT NOT NULL,
+            identifier TEXT,
+            agent_name TEXT NOT NULL,
+            pid INTEGER,
+            command_json TEXT NOT NULL,
+            handle_type TEXT NOT NULL,
+            handle TEXT NOT NULL,
+            sandbox_path TEXT,
+            worktree_path TEXT,
+            branch TEXT,
+            execution_context TEXT,
+            labels_json TEXT,
+            status TEXT NOT NULL DEFAULT 'launched',
+            created_at TEXT NOT NULL,
+            cycle_id TEXT,
+            request_id TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_launch_records_issue_created
+        ON launch_records(issue_id, created_at)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_launch_records_agent_created
+        ON launch_records(agent_name, created_at)
+        """
+    )
+    conn.commit()
+
+
+def _current_git_branch(worktree_path: str) -> str:
+    """Best-effort branch discovery for a launch worktree."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", worktree_path, "branch", "--show-current"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return os.environ.get("PRISMATIC_BRANCH", "")
+
+
+def _derive_launch_handle(
+    *,
+    agent_name: str,
+    issue_id: str,
+    cmd: list[str],
+    worktree_path: str,
+    branch: str,
+    sandbox_path: str | None = None,
+    execution_context: str | None = None,
+) -> tuple[str, str, str]:
+    """Return ``(handle_type, handle, execution_context)`` for a launch.
+
+    Preference order is explicit sandbox path, existing worktree path, then a
+    JSON execution-context fallback. This guarantees every row has a durable,
+    non-empty handle even for agents that do not use AGY-style sandboxes.
+    """
+    context = execution_context or json.dumps(
+        {
+            "agent": agent_name,
+            "issue_id": issue_id,
+            "cwd": worktree_path,
+            "branch": branch,
+            "cmd": cmd,
+        },
+        sort_keys=True,
+    )
+    if sandbox_path:
+        return "sandbox", sandbox_path, context
+    if worktree_path:
+        return "worktree", worktree_path, context
+    return "execution_context", context, context
+
+
+def record_launch_record(
+    *,
+    agent_name: str,
+    issue_id: str,
+    cmd: list[str],
+    pid: int | None = None,
+    identifier: str | None = None,
+    labels: list[str] | None = None,
+    cycle_id: str | None = None,
+    request_id: str | None = None,
+    sandbox_path: str | None = None,
+    worktree_path: str | None = None,
+    branch: str | None = None,
+    status: str = "launched",
+    db_path: str | None = None,
+) -> str:
+    """Persist a unique, traceable worker-launch record.
+
+    The returned ``run_id`` is globally unique and can be used to trace the
+    process PID, command, issue, branch/worktree, and sandbox/execution handle
+    after the dispatcher exits.
+    """
+    run_id = f"launch-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex}"
+    created_at = datetime.now(timezone.utc).isoformat()
+    wt_path = worktree_path or os.environ.get("PRISMATIC_WORKTREE_PATH") or os.getcwd()
+    branch_name = branch if branch is not None else _current_git_branch(wt_path)
+    sandbox = sandbox_path or os.environ.get("PRISMATIC_SANDBOX_PATH")
+    handle_type, handle, context = _derive_launch_handle(
+        agent_name=agent_name,
+        issue_id=issue_id,
+        cmd=cmd,
+        worktree_path=wt_path,
+        branch=branch_name,
+        sandbox_path=sandbox,
+    )
+    target_db = db_path or _launch_records_db_path()
+    db_dir = os.path.dirname(target_db)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+
+    with sqlite3.connect(target_db) as conn:
+        _init_launch_records_table(conn)
+        conn.execute(
+            """
+            INSERT INTO launch_records (
+                run_id, issue_id, identifier, agent_name, pid, command_json,
+                handle_type, handle, sandbox_path, worktree_path, branch,
+                execution_context, labels_json, status, created_at, cycle_id,
+                request_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run_id,
+                issue_id,
+                identifier or issue_id,
+                agent_name,
+                pid,
+                json.dumps(cmd),
+                handle_type,
+                handle,
+                sandbox,
+                wt_path,
+                branch_name,
+                context,
+                json.dumps(labels or []),
+                status,
+                created_at,
+                cycle_id,
+                request_id,
+            ),
+        )
+        conn.commit()
+    return run_id
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -564,10 +930,12 @@ def _get_signal_provider():
     """Lazy-init the default file-based signal provider."""
     global _signal_provider
     if _signal_provider is None:
-        _signal_provider = create_signal_provider({
-            "type": "file",
-            "directory": NUDGE_DIR,
-        })
+        _signal_provider = create_signal_provider(
+            {
+                "type": "file",
+                "directory": NUDGE_DIR,
+            }
+        )
     return _signal_provider
 
 
@@ -621,6 +989,7 @@ def signal_kai(
     if result:
         try:
             import uuid
+
             collector = get_collector()
             status = "dispatched" if signal_type != "agy_review_complete" else "review"
             collector.record_agent_run(
@@ -641,6 +1010,10 @@ def launch_agy(
     issue_id: str,
     task: str = "",
     labels: list[str] | None = None,
+    title: str = "",
+    identifier: str | None = None,
+    cycle_id: str | None = None,
+    request_id: str | None = None,
 ) -> subprocess.Popen | None:
     """Launch the AGY CLI in headless mode for the given issue.
 
@@ -668,10 +1041,13 @@ def launch_agy(
         return None
 
     try:
+        if not task and title:
+            task = title
         cmd = [
             AGY_PATH,
             "--headless",
-            "--issue", issue_id,
+            "--issue",
+            issue_id,
         ]
         if task:
             cmd.extend(["--task", task])
@@ -695,14 +1071,12 @@ def launch_agy(
                     break
             if not existing_model:
                 cmd.extend(["--model", model])
-                print(
-                    f"[dispatcher] AGY model routing: {issue_id} → "
-                    f"model={model}"
-                )
+                print(f"[dispatcher] AGY model routing: {issue_id} → model={model}")
 
         # ── Circuit breaker: check live telemetry for quota/cooldown ──
         try:
             from prismatic.core.router import check_and_route_agy
+
             cmd, cb_state = check_and_route_agy(issue_id, cmd)
             if cb_state.fallback_applied:
                 print(
@@ -716,19 +1090,37 @@ def launch_agy(
 
         proc = subprocess.Popen(
             cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
         )
+        run_id = record_launch_record(
+            agent_name="agy",
+            issue_id=issue_id,
+            identifier=identifier or issue_id,
+            cmd=cmd,
+            pid=proc.pid,
+            labels=labels,
+            cycle_id=cycle_id,
+            request_id=request_id,
+        )
         print(f"[dispatcher] Launched AGY (pid={proc.pid}) for issue {issue_id}")
-        _emit_agent_event("agent_launched", "agy", issue_id, pid=proc.pid)
+        _emit_agent_event("agent_launched", "agy", issue_id, pid=proc.pid, run_id=run_id)
         return proc
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"[dispatcher] Failed to launch AGY: {exc}")
         return None
 
 
-def launch_jules(issue_id: str, task: str = "") -> subprocess.Popen | None:
+def launch_jules(
+    issue_id: str,
+    task: str = "",
+    title: str = "",
+    identifier: str | None = None,
+    labels: list[str] | None = None,
+    cycle_id: str | None = None,
+    request_id: str | None = None,
+) -> subprocess.Popen | None:
     """Launch the Jules CLI for the given issue.
 
     Args:
@@ -743,25 +1135,45 @@ def launch_jules(issue_id: str, task: str = "") -> subprocess.Popen | None:
         return None
 
     try:
+        if not task and title:
+            task = title
         cmd = [JULES_PATH, "--issue", issue_id]
         if task:
             cmd.extend(["--task", task])
 
         proc = subprocess.Popen(
             cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
         )
+        run_id = record_launch_record(
+            agent_name="jules",
+            issue_id=issue_id,
+            identifier=identifier or issue_id,
+            cmd=cmd,
+            pid=proc.pid,
+            labels=labels,
+            cycle_id=cycle_id,
+            request_id=request_id,
+        )
         print(f"[dispatcher] Launched Jules (pid={proc.pid}) for issue {issue_id}")
-        _emit_agent_event("agent_launched", "jules", issue_id, pid=proc.pid)
+        _emit_agent_event("agent_launched", "jules", issue_id, pid=proc.pid, run_id=run_id)
         return proc
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"[dispatcher] Failed to launch Jules: {exc}")
         return None
 
 
-def launch_codex(issue_id: str, task: str = "") -> subprocess.Popen | None:
+def launch_codex(
+    issue_id: str,
+    task: str = "",
+    title: str = "",
+    identifier: str | None = None,
+    labels: list[str] | None = None,
+    cycle_id: str | None = None,
+    request_id: str | None = None,
+) -> subprocess.Popen | None:
     """Launch the Codex CLI for the given issue.
 
     Args:
@@ -776,18 +1188,30 @@ def launch_codex(issue_id: str, task: str = "") -> subprocess.Popen | None:
         return None
 
     try:
+        if not task and title:
+            task = title
         cmd = [CODEX_PATH, "--issue", issue_id]
         if task:
             cmd.extend(["--task", task])
 
         proc = subprocess.Popen(
             cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
         )
+        run_id = record_launch_record(
+            agent_name="codex",
+            issue_id=issue_id,
+            identifier=identifier or issue_id,
+            cmd=cmd,
+            pid=proc.pid,
+            labels=labels,
+            cycle_id=cycle_id,
+            request_id=request_id,
+        )
         print(f"[dispatcher] Launched Codex (pid={proc.pid}) for issue {issue_id}")
-        _emit_agent_event("agent_launched", "codex", issue_id, pid=proc.pid)
+        _emit_agent_event("agent_launched", "codex", issue_id, pid=proc.pid, run_id=run_id)
         return proc
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"[dispatcher] Failed to launch Codex: {exc}")
@@ -915,18 +1339,23 @@ def _observer_loop() -> None:
 # Pipeline Router (thin wrapper around prismatic.router)
 # ═══════════════════════════════════════════════════════════════
 
+
 def load_pipeline_templates(config_path: str = "") -> dict[str, Any]:
     """Load pipeline definitions from a YAML/JSON config file.
 
-    The default config path is ``~/.config/prismatic/pipelines.yaml``, 
+    The default config path is ``~/.config/prismatic/pipelines.yaml``,
     overridable via the ``PRISMATIC_PIPELINE_CONFIG`` env var.
 
     Delegates to :func:`prismatic.router.load_pipeline_templates`.
     """
     from .router import load_pipeline_templates as _load
 
-    default_config = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "prismatic" / "pipelines.yaml"
-    
+    default_config = (
+        Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+        / "prismatic"
+        / "pipelines.yaml"
+    )
+
     path = (
         config_path
         or os.environ.get("PRISMATIC_PIPELINE_CONFIG")
@@ -1024,14 +1453,16 @@ def setup_pipeline_issues(max_issues: int = 20) -> list[dict[str, Any]]:
             "identifier": issue.get("identifier", ""),
             "title": issue.get("title", ""),
             "description": issue.get("description", ""),
-            "labels": [
-                lab["name"]
-                for lab in issue.get("labels", {}).get("nodes", [])
-            ],
+            "labels": [lab["name"] for lab in issue.get("labels", {}).get("nodes", [])],
         }
 
-        # Skip if already has an agent label
-        if any(lab.startswith("agent::") for lab in issue_dict["labels"]):
+        # Skip if already has an agent label. Linear uses the single-colon
+        # ``agent:name`` form; keep the legacy double-colon check for older
+        # local fixtures.
+        if any(
+            lab.startswith("agent:") or lab.startswith("agent::")
+            for lab in issue_dict["labels"]
+        ):
             continue
 
         pipeline_type = detect_pipeline_type(issue_dict, pipelines)
@@ -1097,13 +1528,10 @@ def cleanup_stale_agy(max_age_minutes: int = 5) -> int:
                     os.kill(int(pid_str), signal.SIGTERM)
                     killed += 1
                     print(
-                        f"[dispatcher] Killed stale AGY pid={pid_str} "
-                        f"(age={etime_str})"
+                        f"[dispatcher] Killed stale AGY pid={pid_str} (age={etime_str})"
                     )
                 except (OSError, ValueError) as exc:
-                    print(
-                        f"[dispatcher] Failed to kill AGY pid={pid_str}: {exc}"
-                    )
+                    print(f"[dispatcher] Failed to kill AGY pid={pid_str}: {exc}")
 
     except (subprocess.SubprocessError, FileNotFoundError, OSError) as exc:
         print(f"[dispatcher] cleanup_stale_agy failed: {exc}")
@@ -1341,6 +1769,7 @@ def process_agent_commands(
 # Deduplication (stub)
 # ═══════════════════════════════════════════════════════════════
 
+
 class EventRouterDedup:
     """Deduplication tracker for event router cycles.
 
@@ -1502,11 +1931,10 @@ def detect_origin_completions(
 
     # 1. Snapshot: record current labels for issues the dispatcher
     #    has seen (builds label history over cycles)
-    agent_labels = [
-        f"agent::{name}" for name in AGENT_CONFIG
-    ] + [
+    agent_labels = [f"agent::{name}" for name in AGENT_CONFIG] + [
         # Also track single-colon variants (actual Linear label names)
-        f"agent:{name}" for name in AGENT_CONFIG
+        f"agent:{name}"
+        for name in AGENT_CONFIG
     ]
     for label_name in agent_labels:
         try:
@@ -1572,9 +2000,7 @@ def detect_origin_completions(
         ok = provider.send_work(
             target=origin_agent,
             issue_id=identifier,
-            title=(
-                f"Review complete: {issue.get('title', identifier)}"
-            ),
+            title=(f"Review complete: {issue.get('title', identifier)}"),
             priority=2,  # High priority — origin should act on this
             signal_type="review_complete",
             origin_agent=origin_agent,
@@ -1613,6 +2039,78 @@ def detect_origin_completions(
     return signalled
 
 
+def route_dispatch_ready_issues(max_issues: int = 50) -> int:
+    """Assign unclaimed ``dispatch:ready`` issues by capability and capacity.
+
+    This is the bridge from label-only dispatch to capability-aware routing:
+    issues that are ready but do not yet have an ``agent:*`` label are routed
+    to the least-loaded eligible worker lane.  Existing agent labels are
+    respected; this helper never steals already-claimed work.
+    """
+    try:
+        ready_issues = get_issues_with_label("dispatch:ready", max_issues=max_issues)
+    except Exception as exc:
+        print(f"[dispatcher] capability routing fetch failed: {exc}")
+        return 0
+
+    # Snapshot current load by counting active issues per configured lane.
+    loads: dict[str, int] = {}
+    for agent_name in AGENT_CONFIG:
+        try:
+            single_colon = len(
+                get_issues_with_label(f"agent:{agent_name}", max_issues=100)
+            )
+            double_colon = len(
+                get_issues_with_label(f"agent::{agent_name}", max_issues=100)
+            )
+            loads[agent_name] = max(single_colon, double_colon)
+        except Exception:
+            loads[agent_name] = 0
+
+    registry = default_capability_registry(AGENT_CONFIG).with_loads(loads)
+    routed = 0
+    for issue in ready_issues:
+        label_names = issue.get("labels", [])
+        if any(label.startswith("agent:") for label in label_names):
+            continue
+
+        decision = route_issue(issue, registry)
+        if not decision.selected or not decision.label:
+            identifier = issue.get("identifier", issue.get("id", ""))
+            print(
+                f"[dispatcher] capability routing skipped {identifier}: {decision.reason}"
+            )
+            continue
+
+        issue_id = issue["id"]
+        try:
+            current_labels = get_issue_labels(issue_id)
+            current_ids = [label["id"] for label in current_labels]
+            selected_label_id = get_label_id(decision.label)
+            if not selected_label_id:
+                print(
+                    f"[dispatcher] capability routing could not resolve label "
+                    f"{decision.label!r} for {issue.get('identifier', issue_id)}"
+                )
+                continue
+            if selected_label_id not in current_ids:
+                set_labels(issue_id, [*current_ids, selected_label_id])
+            registry.reserve(decision.selected.name)
+            routed += 1
+            print(
+                f"[dispatcher] capability routed "
+                f"{issue.get('identifier', issue_id)} → {decision.label} "
+                f"({decision.reason})"
+            )
+        except Exception as exc:
+            print(
+                f"[dispatcher] capability routing failed for "
+                f"{issue.get('identifier', issue_id)}: {exc}"
+            )
+
+    return routed
+
+
 # ═══════════════════════════════════════════════════════════════
 # Main Dispatch Loop
 # ═══════════════════════════════════════════════════════════════
@@ -1644,8 +2142,11 @@ def dispatch_once(
     counts: dict[str, int] = {
         "dispatched": 0,
         "pipeline_setup": 0,
+        "capability_routed": 0,
         "stale_killed": 0,
         "errors": 0,
+        "starved": 0,
+        "missing_dispatch_ready": 0,
     }
     cycle_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
 
@@ -1663,33 +2164,50 @@ def dispatch_once(
         print(f"[dispatcher] setup_pipeline_issues error: {exc}")
         counts["errors"] += 1
 
+    # 1b. Assign ready-but-unclaimed work by capability + capacity.
+    try:
+        counts["capability_routed"] = route_dispatch_ready_issues()
+    except Exception as exc:
+        print(f"[dispatcher] route_dispatch_ready_issues error: {exc}")
+        counts["errors"] += 1
+
     # ── AI Ultra Credit Tracker ───────────────────────────
     throttle_dispatch = False
     try:
         from .credit_tracker import AIUltraCreditTracker
+
         tracker = AIUltraCreditTracker()
-        
+
         # Scan workspace assets/designs/research for new media artifacts
         # (also scan /tmp for any temporary media generated during current run)
         workspace_root = os.getcwd()
         for media_dir in ["assets", "designs", "research", "/tmp"]:
-            full_path = os.path.join(workspace_root, media_dir) if media_dir != "/tmp" else "/tmp"
+            full_path = (
+                os.path.join(workspace_root, media_dir)
+                if media_dir != "/tmp"
+                else "/tmp"
+            )
             if os.path.exists(full_path):
-                tracker.parse_media_artifacts(full_path, run_id_prefix=f"cycle-{cycle_id}")
+                tracker.parse_media_artifacts(
+                    full_path, run_id_prefix=f"cycle-{cycle_id}"
+                )
 
         # Check burn velocity and exhaustion warning
         alert = tracker.evaluate_exhaustion_warning(lookback_hours=1.0)
         if alert:
             throttle_dispatch = True
-            print(f"[dispatcher] ⚠️ Credit exhaustion warning alert! Throttling active. Message: {alert['message']}")
+            print(
+                f"[dispatcher] ⚠️ Credit exhaustion warning alert! Throttling active. Message: {alert['message']}"
+            )
             # Post comment to Linear if any issues are active
     except Exception as exc:
         print(f"[dispatcher] Credit tracking/alert error: {exc}")
     # ── End Credit Tracker ─────────────────────────────────
 
-    # 2. Dispatch to each agent
+    # 2. Dispatch to each agent. Use the explicit lane contract for each
+    #    queue instead of treating ``agent:*`` as a complete routing rule.
     for agent_name, config in AGENT_CONFIG.items():
-        label = f"agent::{agent_name}"
+        label = f"agent:{agent_name}"
         try:
             issues = get_issues_with_label(label)
         except Exception as exc:
@@ -1697,7 +2215,36 @@ def dispatch_once(
             counts["errors"] += 1
             continue
 
-        for issue in issues:
+        runnable_issues = [issue for issue in issues if is_dispatch_ready(issue)]
+        missing_gate = len(issues) - len(runnable_issues)
+        if missing_gate:
+            print(
+                f"[dispatcher] {agent_name}: skipping {missing_gate} issue(s) "
+                f"without {DISPATCH_READY_LABEL}"
+            )
+            counts["missing_dispatch_ready"] += missing_gate
+
+        runnable_issues, held_issues = filter_dispatchable_issues(
+            runnable_issues, agent_name
+        )
+        for held_issue, hold_reason in held_issues:
+            identifier = held_issue.get("identifier", held_issue.get("id", "<unknown>"))
+            print(
+                f"[dispatcher] ⏸️  Held {label} → {identifier}: "
+                f"{hold_reason}"
+            )
+            counts["held"] = counts.get("held", 0) + 1
+
+        if not runnable_issues:
+            report_lane_starvation(agent_name, len(issues), missing_gate)
+            print(
+                f"[dispatcher] Starvation signal: "
+                f"{starvation_signal_for(agent_name)}"
+            )
+            counts["starved"] += 1
+            continue
+
+        for issue in runnable_issues:
             issue_id = issue["id"]
             identifier = issue.get("identifier", issue_id)
 
@@ -1743,7 +2290,11 @@ def dispatch_once(
                 continue
 
             # ── Credit policy enforcement ───────────────────────────
-            label = f"agent:{agent_name}" if not agent_name.startswith("agent:") else agent_name
+            label = (
+                f"agent:{agent_name}"
+                if not agent_name.startswith("agent:")
+                else agent_name
+            )
             decision = evaluate_agent_launch(
                 label, issue_id, operation="code_generation"
             )
@@ -1805,9 +2356,20 @@ def dispatch_once(
 
             try:
                 if throttle_dispatch:
-                    print(f"[dispatcher] ⚠️ Throttling dispatch of {agent_name} (5s delay) due to high credit burn velocity.")
+                    print(
+                        f"[dispatcher] ⚠️ Throttling dispatch of {agent_name} (5s delay) due to high credit burn velocity."
+                    )
                     time.sleep(5)
-                result = launcher(issue_id, title=issue.get("title", ""))
+                launch_kwargs: dict[str, Any] = {"title": issue.get("title", "")}
+                if config.get("mode") == "launch":
+                    launch_kwargs.update(
+                        {
+                            "identifier": issue.get("identifier", issue_id),
+                            "labels": issue.get("labels", []),
+                            "cycle_id": cycle_id,
+                        }
+                    )
+                result = launcher(issue_id, **launch_kwargs)
                 if result:
                     dedup.mark_processed(issue_id, label, cycle_id)
                     counts["dispatched"] += 1
@@ -1819,30 +2381,37 @@ def dispatch_once(
                     )
                     # ── Telemetry: record agent run ──────────────────
                     run_id = f"{cycle_id}-{agent_name}-{identifier}"
+                    provider = AGENT_PROVIDER_MAP.get(agent_name, "")
                     collector = get_collector()
                     collector.record_agent_run(
                         run_id=run_id,
                         agent=agent_name,
                         issue_id=identifier,
-                        provider=AGENT_PROVIDER_MAP.get(agent_name, ""),
+                        provider=provider,
                         status="dispatched",
                         credits_spent=decision.estimated_cost,
                     )
                     # ── End telemetry ──────────────────────────────────
                     # ── Process observer (GRO-2979) ──────────────────
                     # If the launcher returned a subprocess.Popen, register
-                    # it for closure observation. Signal-based launchers
-                    # (fred/kai) return bool — they don't need this.
-                    try:
-                        if isinstance(result, subprocess.Popen):
+                    # it for closure observation and token-drain metrics.
+                    # Signal-based launchers (fred/kai) return bool.
+                    if isinstance(result, subprocess.Popen):
+                        try:
                             register_proc_for_observation(run_id, result)
-                    except Exception as exc:
-                        # Observability is best-effort; never block dispatch
-                        print(
-                            f"[dispatcher] register_proc_for_observation "
-                            f"failed for {identifier}: {exc}"
+                        except Exception as exc:
+                            # Observability is best-effort; never block dispatch
+                            print(
+                                f"[dispatcher] register_proc_for_observation "
+                                f"failed for {identifier}: {exc}"
+                            )
+                        _drain_and_record_tokens(
+                            proc=result,
+                            run_id=run_id,
+                            agent_name=agent_name,
+                            provider=provider,
                         )
-                    # ── End process observer ──────────────────────────
+                    # ── End process observer/token drain ───────────────
                     # ── Dispatch counter (GRO-2979) ──────────────────
                     # Bump per-issue counter so the cap can detect storms.
                     try:
@@ -1851,7 +2420,9 @@ def dispatch_once(
                         print(f"[dispatcher] record_dispatch failed: {exc}")
                     # ── End dispatch counter ──────────────────────────
                     # Emit agent_launched event to IPC bridge
-                    _emit_agent_event("agent_launched", agent_name, identifier, cycle_id=cycle_id)
+                    _emit_agent_event(
+                        "agent_launched", agent_name, identifier, cycle_id=cycle_id
+                    )
                     # Post a comment tracking the dispatch
                     try:
                         add_comment(
@@ -1934,9 +2505,9 @@ def main_loop(
     while True:
         cycle += 1
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"[dispatcher] Cycle {cycle} — {now}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         try:
             counts = dispatch_once(dedup, pipelines)
@@ -1944,9 +2515,31 @@ def main_loop(
                 f"[dispatcher] Cycle {cycle} summary: "
                 f"{counts['dispatched']} dispatched, "
                 f"{counts['pipeline_setup']} pipeline setups, "
+                f"{counts.get('capability_routed', 0)} capability-routed, "
                 f"{counts['stale_killed']} stale killed, "
+                f"{counts.get('starved', 0)} starved lanes, "
+                f"{counts.get('missing_dispatch_ready', 0)} missing-ready, "
                 f"{counts['errors']} errors"
             )
+            # ── GRO-3121: wakeup-empty metric ──────────────
+            # When the dispatcher fires its polling loop but finds
+            # nothing to dispatch, log it as an empty wakeup. This is
+            # the polling-cost baseline Michael wants before deciding
+            # to replace polling with webhook subscription. One row per
+            # empty cycle — the factory digest surfaces the aggregate.
+            try:
+                if (
+                    counts.get("dispatched", 0) == 0
+                    and counts.get("errors", 0) == 0
+                ):
+                    collector.record_wakeup_empty(
+                        agent="dispatcher",
+                        cycle_id=datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"),
+                        reason="queue_empty",
+                    )
+            except Exception:
+                pass  # Telemetry is best-effort — never break the loop
+            # ── End wakeup-empty metric ──────────────────────────
             # ── Telemetry: log cycle metrics ─────────────────────
             if counts.get("dispatched", 0) > 0:
                 dashboard = collector.get_dashboard_data(hours=1)
@@ -1963,8 +2556,12 @@ def main_loop(
             break
         except Exception as exc:
             print(f"[dispatcher] Fatal error in cycle {cycle}: {exc}")
-            counts = {"dispatched": 0, "pipeline_setup": 0,
-                       "stale_killed": 0, "errors": 1}
+            counts = {
+                "dispatched": 0,
+                "pipeline_setup": 0,
+                "stale_killed": 0,
+                "errors": 1,
+            }
 
         if once:
             break
@@ -1977,7 +2574,9 @@ def main_loop(
 
 def init_config(force: bool = False) -> None:
     """Initialize default configuration files in the user's config directory."""
-    config_dir = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "prismatic"
+    config_dir = (
+        Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "prismatic"
+    )
     config_dir.mkdir(parents=True, exist_ok=True)
 
     template_dir = Path(__file__).parent / "templates" / "config"
@@ -1993,16 +2592,19 @@ def init_config(force: bool = False) -> None:
             print(f"[dispatcher] Skipping existing config: {target_file}")
             skipped += 1
             continue
-        
+
         try:
             import shutil
+
             shutil.copy2(template_file, target_file)
             print(f"[dispatcher] Initialized {target_file}")
             copied += 1
         except OSError as exc:
             print(f"[dispatcher] Error copying {template_file.name}: {exc}")
 
-    print(f"\n[dispatcher] Initialization complete: {copied} copied, {skipped} skipped.")
+    print(
+        f"\n[dispatcher] Initialization complete: {copied} copied, {skipped} skipped."
+    )
     print(f"[dispatcher] Config directory: {config_dir}")
 
 
@@ -2021,74 +2623,86 @@ def cmd_billing_report(args: Any) -> None:
 
     # ── Report mode ──
     if args.projection:
-        proj = engine.project_costs(
-            client_id=args.client, project_id=args.project
-        )
-        print(f"\n{'='*60}")
+        proj = engine.project_costs(client_id=args.client, project_id=args.project)
+        print(f"\n{'=' * 60}")
         print("  Cost Projection (7-day rolling average)")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         print(f"  Client:      {args.client or 'all'}")
         print(f"  Project:     {args.project or 'all'}")
-        print(f"  Days of data: {len([c for c in proj.daily_costs if c > 0])}/{len(proj.daily_costs)}")
+        print(
+            f"  Days of data: {len([c for c in proj.daily_costs if c > 0])}/{len(proj.daily_costs)}"
+        )
         print(f"  Avg daily:   ${proj.average_daily:.4f}")
         print(f"  Projected/mo: ${proj.projected_monthly:.4f}")
         print(f"  Trend:       {proj.trend} (confidence: {proj.confidence})")
-        print(f"{'='*60}\n")
+        print(f"{'=' * 60}\n")
         if proj.daily_costs:
             print("  Daily costs:")
             for i, cost in enumerate(proj.daily_costs):
-                day = (datetime.now(timezone.utc) - timedelta(days=len(proj.daily_costs) - 1 - i)).strftime("%Y-%m-%d")
+                day = (
+                    datetime.now(timezone.utc)
+                    - timedelta(days=len(proj.daily_costs) - 1 - i)
+                ).strftime("%Y-%m-%d")
                 bar = "█" * min(int(cost * 50), 50) if cost > 0 else ""
                 print(f"    {day}: ${cost:8.4f} {bar}")
             print()
 
     # ── Billing report ──
     if args.format == "json":
-        print(engine.generate_report_json(
-            client_id=args.client, project_id=args.project
-        ))
-    elif args.format == "csv":
-        print(engine.generate_report_csv(
-            client_id=args.client, project_id=args.project
-        ))
-    else:
-        reports = engine.generate_report(
-            client_id=args.client, project_id=args.project
+        print(
+            engine.generate_report_json(client_id=args.client, project_id=args.project)
         )
+    elif args.format == "csv":
+        print(
+            engine.generate_report_csv(client_id=args.client, project_id=args.project)
+        )
+    else:
+        reports = engine.generate_report(client_id=args.client, project_id=args.project)
         if not reports:
             print("\n  No billing data found for the specified period.")
             return
 
-        print(f"\n{'='*70}")
+        print(f"\n{'=' * 70}")
         print("  Client Cost Attribution Report")
-        print(f"{'='*70}")
+        print(f"{'=' * 70}")
         for report in reports:
             print(f"\n  Client:  {report.client_id}")
             print(f"  Project: {report.project_id}")
             print(f"  Total:   ${report.total_cost_usd:.6f}")
             print(f"  Period:  {report.period_start[:10]} → {report.period_end[:10]}")
-            print(f"  {'─'*50}")
+            print(f"  {'─' * 50}")
             if report.agent_breakdown:
                 print("  Agent Breakdown:")
-                for agent, adata in sorted(report.agent_breakdown.items(),
-                                           key=lambda x: x[1]["cost_usd"], reverse=True):
-                    print(f"    {agent:30s} ${adata['cost_usd']:10.6f}  ({adata['entries']} entries)")
+                for agent, adata in sorted(
+                    report.agent_breakdown.items(),
+                    key=lambda x: x[1]["cost_usd"],
+                    reverse=True,
+                ):
+                    print(
+                        f"    {agent:30s} ${adata['cost_usd']:10.6f}  ({adata['entries']} entries)"
+                    )
             if report.model_breakdown:
                 print("  Model Breakdown:")
-                for model, mdata in sorted(report.model_breakdown.items(),
-                                           key=lambda x: x[1]["cost_usd"], reverse=True):
-                    print(f"    {model:30s} ${mdata['cost_usd']:10.6f}  ({mdata['entries']} entries)")
-        print(f"{'='*70}\n")
+                for model, mdata in sorted(
+                    report.model_breakdown.items(),
+                    key=lambda x: x[1]["cost_usd"],
+                    reverse=True,
+                ):
+                    print(
+                        f"    {model:30s} ${mdata['cost_usd']:10.6f}  ({mdata['entries']} entries)"
+                    )
+        print(f"{'=' * 70}\n")
 
 
 def main() -> None:
     """Entry point: parse CLI arguments and start the dispatcher.
 
     Supports:
-        ``serve``     Start the dispatcher event loop.
-        ``init``      Initialize default configuration files.
-        ``skills``    Skill marketplace subcommands.
-        ``--help``    Show usage.
+        ``serve``                Start the dispatcher event loop.
+        ``init``                 Initialize default configuration files.
+        ``optimize-workspace``   Create first-run context guards.
+        ``skills``               Skill marketplace subcommands.
+        ``--help``               Show usage.
 
     Legacy Support (for backward compatibility):
         ``--once``, ``--interval``, ``--setup-pipelines`` work as before.
@@ -2107,7 +2721,9 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command", help="Subcommand to run")
 
     # ── Serve Subcommand ──────────────────────────────────────
-    serve_parser = subparsers.add_parser("serve", help="Start the dispatcher event loop")
+    serve_parser = subparsers.add_parser(
+        "serve", help="Start the dispatcher event loop"
+    )
     serve_parser.add_argument(
         "--once",
         action="store_true",
@@ -2126,11 +2742,30 @@ def main() -> None:
     )
 
     # ── Init Subcommand ───────────────────────────────────────
-    init_parser = subparsers.add_parser("init", help="Initialize default configuration files")
+    init_parser = subparsers.add_parser(
+        "init", help="Initialize default configuration files"
+    )
     init_parser.add_argument(
         "--force",
         action="store_true",
         help="Overwrite existing configuration files",
+    )
+
+    # ── Optimize Workspace Subcommand ─────────────────────────
+    optimize_parser = subparsers.add_parser(
+        "optimize-workspace",
+        help="Create first-run ignore files and disable high-overhead plugins",
+    )
+    optimize_parser.add_argument(
+        "workspace",
+        nargs="?",
+        default=os.environ.get("PRISMATIC_HOME", os.getcwd()),
+        help="Workspace root to optimize (default: PRISMATIC_HOME or current directory)",
+    )
+    optimize_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON",
     )
 
     # ── Billing-Report Subcommand (Phase 4.4) ─────────────────
@@ -2144,22 +2779,26 @@ def main() -> None:
         "--project", type=str, default=None, help="Filter by project ID"
     )
     billing_parser.add_argument(
-        "--format", type=str, default="table",
+        "--format",
+        type=str,
+        default="table",
         choices=["table", "json", "csv"],
-        help="Output format (default: table)"
+        help="Output format (default: table)",
     )
     billing_parser.add_argument(
-        "--projection", action="store_true",
-        help="Show rolling 7-day cost projection"
+        "--projection", action="store_true", help="Show rolling 7-day cost projection"
     )
     billing_parser.add_argument(
-        "--set-attribution", nargs=3,
+        "--set-attribution",
+        nargs=3,
         metavar=("ISSUE_ID", "CLIENT_ID", "PROJECT_ID"),
-        help="Map an issue to client/project for billing"
+        help="Map an issue to client/project for billing",
     )
 
     # ── Skills Subcommand ─────────────────────────────────────
-    subparsers.add_parser("skills", help="Skill marketplace subcommands (run 'skills --help' for details)")
+    subparsers.add_parser(
+        "skills", help="Skill marketplace subcommands (run 'skills --help' for details)"
+    )
 
     # ── Help / No Command ─────────────────────────────────────
     if len(sys.argv) == 1:
@@ -2169,12 +2808,16 @@ def main() -> None:
     # Handle 'skills' early to delegate to skills.py
     if sys.argv[1] == "skills":
         from .skills import cli_skills
+
         sys.exit(cli_skills(sys.argv[2:]))
 
     args = parser.parse_args()
 
     if args.command == "init":
         init_config(force=args.force)
+    elif args.command == "optimize-workspace":
+        from .workspace_optimizer import main as optimize_main
+        sys.exit(optimize_main([args.workspace] + (["--json"] if args.json else [])))
     elif args.command == "billing-report":
         cmd_billing_report(args)
     elif args.command == "serve":
