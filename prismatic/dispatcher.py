@@ -31,6 +31,7 @@ import subprocess
 import sys
 import time
 import threading
+import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Callable
@@ -97,6 +98,12 @@ NUDGE_DIR: str = os.environ.get("PRISMATIC_NUDGE_DIR", "/tmp/prismatic")
 # Pipeline metrics log for dashboard consumption
 PIPELINE_METRICS_PATH: str = os.environ.get(
     "PRISMATIC_METRICS_PATH", "/tmp/pipeline_metrics.jsonl"
+)
+
+# Durable worker-launch ledger.  Stored beside the event-router state so a
+# launch can be traced after the dispatcher process exits.
+LAUNCH_RECORDS_DB_PATH: str = os.environ.get(
+    "PRISMATIC_LAUNCH_RECORDS_DB_PATH", DEFAULT_DB_PATH
 )
 
 # AGY model routing configuration
@@ -399,6 +406,52 @@ def get_issues_with_label(
     return results
 
 
+DISPATCH_READY_LABEL = "dispatch:ready"
+
+
+def issue_label_names(issue: dict[str, Any]) -> list[str]:
+    """Return label names from either normalized or raw Linear issue shapes."""
+    labels = issue.get("labels", [])
+    if isinstance(labels, list):
+        names: list[str] = []
+        for label in labels:
+            if isinstance(label, str):
+                names.append(label)
+            elif isinstance(label, dict):
+                name = label.get("name")
+                if name:
+                    names.append(str(name))
+        return names
+    if isinstance(labels, dict):
+        return [
+            str(label.get("name"))
+            for label in labels.get("nodes", [])
+            if isinstance(label, dict) and label.get("name")
+        ]
+    return []
+
+
+def is_dispatch_ready(issue: dict[str, Any]) -> bool:
+    """True only when the issue carries the explicit launch gate label."""
+    return DISPATCH_READY_LABEL in issue_label_names(issue)
+
+
+def report_lane_starvation(agent_name: str, candidate_count: int, gated_count: int) -> None:
+    """Emit a visible no-runnable-work signal for an agent lane."""
+    label = f"agent:{agent_name}"
+    if candidate_count == 0:
+        print(
+            f"[dispatcher] 🟡 STARVED {label}: no candidate issues found "
+            f"for this lane"
+        )
+        return
+    print(
+        f"[dispatcher] 🟡 STARVED {label}: {candidate_count} candidate "
+        f"issue(s), {gated_count} missing {DISPATCH_READY_LABEL}; "
+        "nothing runnable"
+    )
+
+
 def get_issue_labels(issue_id: str) -> list[dict[str, str]]:
     """Get the current labels on a specific issue.
 
@@ -510,6 +563,180 @@ def add_comment(issue_id: str, body: str) -> bool:
     """
     data = gql(query, {"issueId": issue_id, "body": body})
     return data.get("commentCreate", {}).get("success", False)
+
+
+# ═══════════════════════════════════════════════════════════════
+# Durable Launch Records
+# ═══════════════════════════════════════════════════════════════
+
+def _launch_records_db_path() -> str:
+    """Return the SQLite database path used for durable launch records."""
+    return os.environ.get("PRISMATIC_LAUNCH_RECORDS_DB_PATH", LAUNCH_RECORDS_DB_PATH)
+
+
+def _init_launch_records_table(conn: sqlite3.Connection) -> None:
+    """Create the durable launch-record table and indexes if needed."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS launch_records (
+            run_id TEXT PRIMARY KEY,
+            issue_id TEXT NOT NULL,
+            identifier TEXT,
+            agent_name TEXT NOT NULL,
+            pid INTEGER,
+            command_json TEXT NOT NULL,
+            handle_type TEXT NOT NULL,
+            handle TEXT NOT NULL,
+            sandbox_path TEXT,
+            worktree_path TEXT,
+            branch TEXT,
+            execution_context TEXT,
+            labels_json TEXT,
+            status TEXT NOT NULL DEFAULT 'launched',
+            created_at TEXT NOT NULL,
+            cycle_id TEXT,
+            request_id TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_launch_records_issue_created
+        ON launch_records(issue_id, created_at)
+        """
+    )
+    conn.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_launch_records_agent_created
+        ON launch_records(agent_name, created_at)
+        """
+    )
+    conn.commit()
+
+
+def _current_git_branch(worktree_path: str) -> str:
+    """Best-effort branch discovery for a launch worktree."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", worktree_path, "branch", "--show-current"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return os.environ.get("PRISMATIC_BRANCH", "")
+
+
+def _derive_launch_handle(
+    *,
+    agent_name: str,
+    issue_id: str,
+    cmd: list[str],
+    worktree_path: str,
+    branch: str,
+    sandbox_path: str | None = None,
+    execution_context: str | None = None,
+) -> tuple[str, str, str]:
+    """Return ``(handle_type, handle, execution_context)`` for a launch.
+
+    Preference order is explicit sandbox path, existing worktree path, then a
+    JSON execution-context fallback. This guarantees every row has a durable,
+    non-empty handle even for agents that do not use AGY-style sandboxes.
+    """
+    context = execution_context or json.dumps(
+        {
+            "agent": agent_name,
+            "issue_id": issue_id,
+            "cwd": worktree_path,
+            "branch": branch,
+            "cmd": cmd,
+        },
+        sort_keys=True,
+    )
+    if sandbox_path:
+        return "sandbox", sandbox_path, context
+    if worktree_path:
+        return "worktree", worktree_path, context
+    return "execution_context", context, context
+
+
+def record_launch_record(
+    *,
+    agent_name: str,
+    issue_id: str,
+    cmd: list[str],
+    pid: int | None = None,
+    identifier: str | None = None,
+    labels: list[str] | None = None,
+    cycle_id: str | None = None,
+    request_id: str | None = None,
+    sandbox_path: str | None = None,
+    worktree_path: str | None = None,
+    branch: str | None = None,
+    status: str = "launched",
+    db_path: str | None = None,
+) -> str:
+    """Persist a unique, traceable worker-launch record.
+
+    The returned ``run_id`` is globally unique and can be used to trace the
+    process PID, command, issue, branch/worktree, and sandbox/execution handle
+    after the dispatcher exits.
+    """
+    run_id = f"launch-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex}"
+    created_at = datetime.now(timezone.utc).isoformat()
+    wt_path = worktree_path or os.environ.get("PRISMATIC_WORKTREE_PATH") or os.getcwd()
+    branch_name = branch if branch is not None else _current_git_branch(wt_path)
+    sandbox = sandbox_path or os.environ.get("PRISMATIC_SANDBOX_PATH")
+    handle_type, handle, context = _derive_launch_handle(
+        agent_name=agent_name,
+        issue_id=issue_id,
+        cmd=cmd,
+        worktree_path=wt_path,
+        branch=branch_name,
+        sandbox_path=sandbox,
+    )
+    target_db = db_path or _launch_records_db_path()
+    db_dir = os.path.dirname(target_db)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+
+    with sqlite3.connect(target_db) as conn:
+        _init_launch_records_table(conn)
+        conn.execute(
+            """
+            INSERT INTO launch_records (
+                run_id, issue_id, identifier, agent_name, pid, command_json,
+                handle_type, handle, sandbox_path, worktree_path, branch,
+                execution_context, labels_json, status, created_at, cycle_id,
+                request_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run_id,
+                issue_id,
+                identifier or issue_id,
+                agent_name,
+                pid,
+                json.dumps(cmd),
+                handle_type,
+                handle,
+                sandbox,
+                wt_path,
+                branch_name,
+                context,
+                json.dumps(labels or []),
+                status,
+                created_at,
+                cycle_id,
+                request_id,
+            ),
+        )
+        conn.commit()
+    return run_id
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -644,6 +871,10 @@ def launch_agy(
     issue_id: str,
     task: str = "",
     labels: list[str] | None = None,
+    title: str = "",
+    identifier: str | None = None,
+    cycle_id: str | None = None,
+    request_id: str | None = None,
 ) -> subprocess.Popen | None:
     """Launch the AGY CLI in headless mode for the given issue.
 
@@ -671,6 +902,8 @@ def launch_agy(
         return None
 
     try:
+        if not task and title:
+            task = title
         cmd = [
             AGY_PATH,
             "--headless",
@@ -723,15 +956,33 @@ def launch_agy(
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
         )
+        run_id = record_launch_record(
+            agent_name="agy",
+            issue_id=issue_id,
+            identifier=identifier or issue_id,
+            cmd=cmd,
+            pid=proc.pid,
+            labels=labels,
+            cycle_id=cycle_id,
+            request_id=request_id,
+        )
         print(f"[dispatcher] Launched AGY (pid={proc.pid}) for issue {issue_id}")
-        _emit_agent_event("agent_launched", "agy", issue_id, pid=proc.pid)
+        _emit_agent_event("agent_launched", "agy", issue_id, pid=proc.pid, run_id=run_id)
         return proc
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"[dispatcher] Failed to launch AGY: {exc}")
         return None
 
 
-def launch_jules(issue_id: str, task: str = "") -> subprocess.Popen | None:
+def launch_jules(
+    issue_id: str,
+    task: str = "",
+    title: str = "",
+    identifier: str | None = None,
+    labels: list[str] | None = None,
+    cycle_id: str | None = None,
+    request_id: str | None = None,
+) -> subprocess.Popen | None:
     """Launch the Jules CLI for the given issue.
 
     Args:
@@ -746,6 +997,8 @@ def launch_jules(issue_id: str, task: str = "") -> subprocess.Popen | None:
         return None
 
     try:
+        if not task and title:
+            task = title
         cmd = [JULES_PATH, "--issue", issue_id]
         if task:
             cmd.extend(["--task", task])
@@ -756,15 +1009,33 @@ def launch_jules(issue_id: str, task: str = "") -> subprocess.Popen | None:
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
         )
+        run_id = record_launch_record(
+            agent_name="jules",
+            issue_id=issue_id,
+            identifier=identifier or issue_id,
+            cmd=cmd,
+            pid=proc.pid,
+            labels=labels,
+            cycle_id=cycle_id,
+            request_id=request_id,
+        )
         print(f"[dispatcher] Launched Jules (pid={proc.pid}) for issue {issue_id}")
-        _emit_agent_event("agent_launched", "jules", issue_id, pid=proc.pid)
+        _emit_agent_event("agent_launched", "jules", issue_id, pid=proc.pid, run_id=run_id)
         return proc
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"[dispatcher] Failed to launch Jules: {exc}")
         return None
 
 
-def launch_codex(issue_id: str, task: str = "") -> subprocess.Popen | None:
+def launch_codex(
+    issue_id: str,
+    task: str = "",
+    title: str = "",
+    identifier: str | None = None,
+    labels: list[str] | None = None,
+    cycle_id: str | None = None,
+    request_id: str | None = None,
+) -> subprocess.Popen | None:
     """Launch the Codex CLI for the given issue.
 
     Args:
@@ -779,6 +1050,8 @@ def launch_codex(issue_id: str, task: str = "") -> subprocess.Popen | None:
         return None
 
     try:
+        if not task and title:
+            task = title
         cmd = [CODEX_PATH, "--issue", issue_id]
         if task:
             cmd.extend(["--task", task])
@@ -789,8 +1062,18 @@ def launch_codex(issue_id: str, task: str = "") -> subprocess.Popen | None:
             stderr=subprocess.DEVNULL,
             stdin=subprocess.DEVNULL,
         )
+        run_id = record_launch_record(
+            agent_name="codex",
+            issue_id=issue_id,
+            identifier=identifier or issue_id,
+            cmd=cmd,
+            pid=proc.pid,
+            labels=labels,
+            cycle_id=cycle_id,
+            request_id=request_id,
+        )
         print(f"[dispatcher] Launched Codex (pid={proc.pid}) for issue {issue_id}")
-        _emit_agent_event("agent_launched", "codex", issue_id, pid=proc.pid)
+        _emit_agent_event("agent_launched", "codex", issue_id, pid=proc.pid, run_id=run_id)
         return proc
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"[dispatcher] Failed to launch Codex: {exc}")
@@ -1549,6 +1832,8 @@ def dispatch_once(
         "pipeline_setup": 0,
         "stale_killed": 0,
         "errors": 0,
+        "starved": 0,
+        "missing_dispatch_ready": 0,
     }
     cycle_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
 
@@ -1601,7 +1886,18 @@ def dispatch_once(
             counts["errors"] += 1
             continue
 
-        issues, held_issues = filter_dispatchable_issues(issues, agent_name)
+        runnable_issues = [issue for issue in issues if is_dispatch_ready(issue)]
+        missing_gate = len(issues) - len(runnable_issues)
+        if missing_gate:
+            print(
+                f"[dispatcher] {agent_name}: skipping {missing_gate} issue(s) "
+                f"without {DISPATCH_READY_LABEL}"
+            )
+            counts["missing_dispatch_ready"] += missing_gate
+
+        runnable_issues, held_issues = filter_dispatchable_issues(
+            runnable_issues, agent_name
+        )
         for held_issue, hold_reason in held_issues:
             identifier = held_issue.get("identifier", held_issue.get("id", "<unknown>"))
             print(
@@ -1610,13 +1906,16 @@ def dispatch_once(
             )
             counts["held"] = counts.get("held", 0) + 1
 
-        if not issues:
+        if not runnable_issues:
+            report_lane_starvation(agent_name, len(issues), missing_gate)
             print(
                 f"[dispatcher] Starvation signal: "
                 f"{starvation_signal_for(agent_name)}"
             )
+            counts["starved"] += 1
+            continue
 
-        for issue in issues:
+        for issue in runnable_issues:
             issue_id = issue["id"]
 
             # Skip if already dispatched this cycle
@@ -1692,7 +1991,16 @@ def dispatch_once(
                 if throttle_dispatch:
                     print(f"[dispatcher] ⚠️ Throttling dispatch of {agent_name} (5s delay) due to high credit burn velocity.")
                     time.sleep(5)
-                result = launcher(issue_id, title=issue.get("title", ""))
+                launch_kwargs: dict[str, Any] = {"title": issue.get("title", "")}
+                if config.get("mode") == "launch":
+                    launch_kwargs.update(
+                        {
+                            "identifier": issue.get("identifier", issue_id),
+                            "labels": issue.get("labels", []),
+                            "cycle_id": cycle_id,
+                        }
+                    )
+                result = launcher(issue_id, **launch_kwargs)
                 if result:
                     dedup.mark_processed(issue_id, label, cycle_id)
                     counts["dispatched"] += 1
@@ -1809,8 +2117,29 @@ def main_loop(
                 f"{counts['dispatched']} dispatched, "
                 f"{counts['pipeline_setup']} pipeline setups, "
                 f"{counts['stale_killed']} stale killed, "
+                f"{counts.get('starved', 0)} starved lanes, "
+                f"{counts.get('missing_dispatch_ready', 0)} missing-ready, "
                 f"{counts['errors']} errors"
             )
+            # ── GRO-3121: wakeup-empty metric ──────────────
+            # When the dispatcher fires its polling loop but finds
+            # nothing to dispatch, log it as an empty wakeup. This is
+            # the polling-cost baseline Michael wants before deciding
+            # to replace polling with webhook subscription. One row per
+            # empty cycle — the factory digest surfaces the aggregate.
+            try:
+                if (
+                    counts.get("dispatched", 0) == 0
+                    and counts.get("errors", 0) == 0
+                ):
+                    collector.record_wakeup_empty(
+                        agent="dispatcher",
+                        cycle_id=datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"),
+                        reason="queue_empty",
+                    )
+            except Exception:
+                pass  # Telemetry is best-effort — never break the loop
+            # ── End wakeup-empty metric ──────────────────────────
             # ── Telemetry: log cycle metrics ─────────────────────
             if counts.get("dispatched", 0) > 0:
                 dashboard = collector.get_dashboard_data(hours=1)
@@ -1949,10 +2278,11 @@ def main() -> None:
     """Entry point: parse CLI arguments and start the dispatcher.
 
     Supports:
-        ``serve``     Start the dispatcher event loop.
-        ``init``      Initialize default configuration files.
-        ``skills``    Skill marketplace subcommands.
-        ``--help``    Show usage.
+        ``serve``                Start the dispatcher event loop.
+        ``init``                 Initialize default configuration files.
+        ``optimize-workspace``   Create first-run context guards.
+        ``skills``               Skill marketplace subcommands.
+        ``--help``               Show usage.
 
     Legacy Support (for backward compatibility):
         ``--once``, ``--interval``, ``--setup-pipelines`` work as before.
@@ -1997,6 +2327,23 @@ def main() -> None:
         help="Overwrite existing configuration files",
     )
 
+    # ── Optimize Workspace Subcommand ─────────────────────────
+    optimize_parser = subparsers.add_parser(
+        "optimize-workspace",
+        help="Create first-run ignore files and disable high-overhead plugins",
+    )
+    optimize_parser.add_argument(
+        "workspace",
+        nargs="?",
+        default=os.environ.get("PRISMATIC_HOME", os.getcwd()),
+        help="Workspace root to optimize (default: PRISMATIC_HOME or current directory)",
+    )
+    optimize_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON",
+    )
+
     # ── Billing-Report Subcommand (Phase 4.4) ─────────────────
     billing_parser = subparsers.add_parser(
         "billing-report", help="Generate client cost attribution report"
@@ -2039,6 +2386,9 @@ def main() -> None:
 
     if args.command == "init":
         init_config(force=args.force)
+    elif args.command == "optimize-workspace":
+        from .workspace_optimizer import main as optimize_main
+        sys.exit(optimize_main([args.workspace] + (["--json"] if args.json else [])))
     elif args.command == "billing-report":
         cmd_billing_report(args)
     elif args.command == "serve":

@@ -1,0 +1,17 @@
+{
+  "id": "hero",
+  "component": "Hero.astro",
+  "slots": [
+    "media",
+    "actions"
+  ],
+  "propsSchema": "schemas/modules/hero.schema.json",
+  "editableFields": [
+    "title",
+    "body"
+  ],
+  "variants": [
+    "default",
+    "split-media"
+  ]
+}
