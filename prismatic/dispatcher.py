@@ -473,6 +473,73 @@ def add_comment(issue_id: str, body: str) -> bool:
     return data.get("commentCreate", {}).get("success", False)
 
 
+HOME_UBUNTU_MARKER = "/" + "home" + "/" + "ubuntu"
+HOST_LEVEL_PATH_PATTERNS: tuple[tuple[str, str], ...] = (
+    (HOME_UBUNTU_MARKER, rf"(?<![\w.-]){re.escape(HOME_UBUNTU_MARKER)}(?:/|\b)"),
+    ("/etc", r"(?<![\w.-])/etc(?:/|\b)"),
+    ("/var", r"(?<![\w.-])/var(?:/|\b)"),
+    ("/opt", r"(?<![\w.-])/opt(?:/|\b)"),
+    ("~/.hermes", r"(?<![\w.-])~/\.hermes(?:/|\b)"),
+    ("~/.config", r"(?<![\w.-])~/\.config(?:/|\b)"),
+    ("systemd", r"\bsystemd\b"),
+    ("crontab", r"\bcrontab\b"),
+)
+
+
+def detect_host_level_patterns(issue: dict[str, Any]) -> list[str]:
+    """Return host-level markers that Jules' repository sandbox cannot access."""
+    text = "\n".join(str(issue.get(field) or "") for field in ("title", "description"))
+    matches: list[str] = []
+    for marker, pattern in HOST_LEVEL_PATH_PATTERNS:
+        if re.search(pattern, text, flags=re.IGNORECASE):
+            matches.append(marker)
+    return matches
+
+
+def reroute_jules_host_path_issue(
+    issue: dict[str, Any],
+    matches: list[str],
+    *,
+    target_label: str = "agent:ned",
+) -> bool:
+    """Move a host-level Jules issue to Ned instead of launching Jules.
+
+    Jules runs in a repository-only sandbox. Issues that name host paths or host
+    facilities should be routed to the infrastructure lane before launch, rather
+    than allowed to fail inside Jules.
+    """
+    issue_id = issue["id"]
+    current_labels = get_issue_labels(issue_id)
+    target_id = get_label_id(target_label)
+    if not target_id:
+        return False
+
+    new_ids = [
+        label["id"]
+        for label in current_labels
+        if label.get("name") not in {"agent:jules", "agent::jules"}
+    ]
+    if target_id not in new_ids:
+        new_ids.append(target_id)
+
+    if not set_labels(issue_id, new_ids):
+        return False
+
+    identifier = issue.get("identifier", issue_id)
+    marker_text = ", ".join(matches)
+    add_comment(
+        issue_id,
+        "🛡️ **Jules host-path pre-screen** — rerouted before Jules launch.\n\n"
+        f"Detected host-level markers: `{marker_text}`. Jules runs in a repository-only sandbox; "
+        f"this needs infrastructure access, so the issue was moved to `{target_label}`.",
+    )
+    print(
+        f"[dispatcher] 🛡️ Rerouted Jules host-path issue {identifier} "
+        f"to {target_label}: {marker_text}"
+    )
+    return True
+
+
 # ═══════════════════════════════════════════════════════════════
 # Agent Configuration
 # ═══════════════════════════════════════════════════════════════
@@ -1918,6 +1985,7 @@ def dispatch_once(
         "pipeline_setup": 0,
         "stale_killed": 0,
         "errors": 0,
+        "host_path_rerouted": 0,
     }
     cycle_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
 
@@ -2019,6 +2087,16 @@ def dispatch_once(
             launcher = AGENT_LAUNCHERS.get(agent_name)
             if not launcher:
                 continue
+
+            if agent_name == "jules":
+                host_matches = detect_host_level_patterns(issue)
+                if host_matches:
+                    if reroute_jules_host_path_issue(issue, host_matches):
+                        counts["host_path_rerouted"] += 1
+                        dedup.mark_processed(issue_id, label, cycle_id)
+                    else:
+                        counts["errors"] += 1
+                    continue
 
             try:
                 os.environ["PRISMATIC_CURRENT_AGENT_NAME"] = (
