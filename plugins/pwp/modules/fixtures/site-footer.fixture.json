@@ -1,0 +1,13 @@
+{
+  "module": "site-footer",
+  "name": "site-footer-fixture",
+  "props": {
+    "businessName": "Prismatic Fixture",
+    "legalText": "\u00a9 Fixture",
+    "links": [
+      "Privacy",
+      "Terms"
+    ]
+  },
+  "variant": "simple"
+}

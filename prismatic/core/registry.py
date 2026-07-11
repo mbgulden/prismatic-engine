@@ -397,6 +397,31 @@ class PWPPluginRunner:
                 raise ValueError(
                     "deploy_artifact_provider is required when deploy_target is set"
                 )
+
+            # GRO-3716: skip Cloudflare/PWP deploys when the latest run-state
+            # already recorded the same commit/theme/content hashes.  The
+            # check happens before artifact generation so idempotent pipeline
+            # replays do not upload or emit on_deploy side effects.
+            from prismatic.core.pwp_state import PWPRunStateStore
+
+            store = PWPRunStateStore()
+
+            client_id = context.get("client_id", "default_client")
+            commit_hash = context.get("commit_hash")
+            theme_hash = context.get("theme_hash")
+            content_hash = context.get("content_hash")
+            if store.should_skip_deploy(
+                client_id=client_id,
+                target=deploy_target,
+                commit_hash=commit_hash,
+                theme_hash=theme_hash,
+                content_hash=content_hash,
+            ):
+                result["deploy_skipped"] = True
+                result["deploy_target"] = deploy_target
+                result["deploy_skip_reason"] = "matching_commit_theme_content_hashes"
+                return result
+
             artifact = deploy_artifact_provider(result)
             artifact = attach_pwp_deployment_manifest(
                 core_version=self.loader.core_version,
@@ -408,5 +433,47 @@ class PWPPluginRunner:
             self.loader.execute_hook(
                 HOOK_ON_DEPLOY, pipeline_id, deploy_target, artifact
             )
+
+            # GRO-3070: Record deploy state in PWPRunStateStore
+            client_id = context.get(
+                "client_id", artifact.get("client_id", "default_client")
+            )
+            deployed_by = context.get(
+                "deployed_by", artifact.get("deployed_by", "system")
+            )
+            artifact_sha = (
+                artifact.get("artifact_sha")
+                or artifact.get("commit_sha")
+                or context.get("artifact_sha")
+                or context.get("commit_hash")
+                or context.get("commit_sha")
+                or "unknown_sha"
+            )
+
+            reversible = False
+            loaded_plugins = getattr(self.loader, "loaded_plugins", {})
+            for p in loaded_plugins.values():
+                if hasattr(p, "on_deploy"):
+                    if getattr(p, "reversible", False):
+                        reversible = True
+                        break
+            if not reversible:
+                reversible = context.get(
+                    "reversible", artifact.get("reversible", False)
+                )
+
+            store.record_deploy(
+                run_id=pipeline_id,
+                client_id=client_id,
+                target=deploy_target,
+                artifact_sha=artifact_sha,
+                deployed_by=deployed_by,
+                reversible=reversible,
+                commit_hash=commit_hash,
+                theme_hash=theme_hash,
+                content_hash=content_hash,
+            )
+            result["deploy_skipped"] = False
+            result["deploy_target"] = deploy_target
 
         return result

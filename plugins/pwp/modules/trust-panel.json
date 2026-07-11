@@ -1,0 +1,58 @@
+{
+  "a11yRules": [
+    "contrast-aa-required",
+    "claims-backed-by-source"
+  ],
+  "component": "TrustPanel.astro",
+  "contentSafetyRules": [
+    "no-unsupported-certification-claims"
+  ],
+  "description": "Proof, metrics, certificates, or dark trust section",
+  "editableFields": [
+    "heading",
+    "proofPoints",
+    "disclaimer"
+  ],
+  "fixtures": [
+    {
+      "name": "trust-panel-default",
+      "props": {
+        "disclaimer": "Claims require source evidence.",
+        "heading": "Verified chain of custody",
+        "proofPoints": [
+          "Serialized intake",
+          "Witnessed destruction"
+        ]
+      },
+      "variant": "numbered"
+    }
+  ],
+  "id": "trust-panel",
+  "name": "TrustPanel",
+  "propsSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "disclaimer": {
+        "type": "string"
+      },
+      "heading": {
+        "type": "string"
+      },
+      "proofPoints": {
+        "type": "array"
+      }
+    },
+    "required": [
+      "heading",
+      "proofPoints",
+      "disclaimer"
+    ],
+    "type": "object"
+  },
+  "slots": [],
+  "variants": [
+    "numbered",
+    "logo-strip",
+    "certificate-aware"
+  ]
+}

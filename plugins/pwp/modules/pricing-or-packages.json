@@ -1,0 +1,56 @@
+{
+  "a11yRules": [
+    "price-disclaimer-required"
+  ],
+  "component": "PricingOrPackages.astro",
+  "contentSafetyRules": [
+    "no-unsupported-certification-claims"
+  ],
+  "description": "Offer tiers, packages, or quote-based pricing",
+  "editableFields": [
+    "heading",
+    "packages",
+    "disclaimer"
+  ],
+  "fixtures": [
+    {
+      "name": "pricing-or-packages-default",
+      "props": {
+        "disclaimer": "Final pricing depends on scope.",
+        "heading": "Packages",
+        "packages": [
+          "Pickup",
+          "Full audit"
+        ]
+      },
+      "variant": "card-tiers"
+    }
+  ],
+  "id": "pricing-or-packages",
+  "name": "PricingOrPackages",
+  "propsSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "disclaimer": {
+        "type": "string"
+      },
+      "heading": {
+        "type": "string"
+      },
+      "packages": {
+        "type": "array"
+      }
+    },
+    "required": [
+      "heading",
+      "packages",
+      "disclaimer"
+    ],
+    "type": "object"
+  },
+  "slots": [],
+  "variants": [
+    "card-tiers",
+    "quote-based"
+  ]
+}

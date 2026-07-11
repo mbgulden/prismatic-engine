@@ -1,0 +1,52 @@
+{
+  "a11yRules": [
+    "ordered-steps-semantic"
+  ],
+  "component": "ProcessTimeline.astro",
+  "contentSafetyRules": [
+    "no-unsupported-certification-claims"
+  ],
+  "description": "Step-by-step process or workflow",
+  "editableFields": [
+    "heading",
+    "steps"
+  ],
+  "fixtures": [
+    {
+      "name": "process-timeline-default",
+      "props": {
+        "heading": "Process",
+        "steps": [
+          "Book",
+          "Pickup",
+          "Report"
+        ]
+      },
+      "variant": "horizontal"
+    }
+  ],
+  "id": "process-timeline",
+  "name": "ProcessTimeline",
+  "propsSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "heading": {
+        "type": "string"
+      },
+      "steps": {
+        "type": "array"
+      }
+    },
+    "required": [
+      "heading",
+      "steps"
+    ],
+    "type": "object"
+  },
+  "slots": [],
+  "variants": [
+    "horizontal",
+    "vertical",
+    "compact"
+  ]
+}

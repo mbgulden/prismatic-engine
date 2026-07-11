@@ -1,0 +1,13 @@
+{
+  "module": "trust-panel",
+  "name": "trust-panel-fixture",
+  "props": {
+    "disclaimer": "Claims require source evidence.",
+    "heading": "Verified chain of custody",
+    "proofPoints": [
+      "Serialized intake",
+      "Witnessed destruction"
+    ]
+  },
+  "variant": "numbered"
+}

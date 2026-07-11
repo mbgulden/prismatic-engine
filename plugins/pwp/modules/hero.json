@@ -1,0 +1,74 @@
+{
+  "a11yRules": [
+    "single-h1-per-page",
+    "image-alt-required"
+  ],
+  "component": "Hero.astro",
+  "contentSafetyRules": [
+    "no-unsupported-certification-claims"
+  ],
+  "description": "Primary page promise with optional media and calls to action",
+  "editableFields": [
+    "eyebrow",
+    "title",
+    "body",
+    "ctas",
+    "imageAlt"
+  ],
+  "fixtures": [
+    {
+      "name": "hero-default",
+      "props": {
+        "body": "Compliant pickup and verified destruction for local teams.",
+        "ctas": [
+          "Schedule pickup",
+          "View process"
+        ],
+        "eyebrow": "Trust-light fixture",
+        "imageAlt": "Technician scanning recovered hardware",
+        "title": "Secure IT asset recovery"
+      },
+      "variant": "split-media"
+    }
+  ],
+  "id": "hero",
+  "name": "Hero",
+  "propsSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "body": {
+        "type": "string"
+      },
+      "ctas": {
+        "type": "array"
+      },
+      "eyebrow": {
+        "type": "string"
+      },
+      "imageAlt": {
+        "type": "string"
+      },
+      "title": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "eyebrow",
+      "title",
+      "body",
+      "ctas",
+      "imageAlt"
+    ],
+    "type": "object"
+  },
+  "slots": [
+    "media",
+    "actions"
+  ],
+  "variants": [
+    "split-media",
+    "centered",
+    "service-detail",
+    "local-seo"
+  ]
+}

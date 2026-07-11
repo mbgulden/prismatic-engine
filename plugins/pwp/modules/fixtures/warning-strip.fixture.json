@@ -1,0 +1,9 @@
+{
+  "module": "warning-strip",
+  "name": "warning-strip-fixture",
+  "props": {
+    "message": "Certificates are verified before publication.",
+    "tone": "info"
+  },
+  "variant": "warning"
+}

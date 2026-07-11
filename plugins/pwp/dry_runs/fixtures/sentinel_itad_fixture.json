@@ -1,0 +1,27 @@
+{
+  "client_id": "sentinel-itad-fixture",
+  "business_name": "Sentinel IT Asset Disposal and Logistics",
+  "industry": "IT asset disposition and secure logistics",
+  "primary_goal": "Convert security-conscious businesses into qualified pickup and recycling inquiries",
+  "primary_keyword": "secure IT asset disposal Idaho",
+  "markets": ["Meridian ID", "Boise ID", "Treasure Valley", "Remote pickup coordination"],
+  "style_tags": ["trust", "security", "local", "compliance", "conversion"],
+  "linear_prefix": "PWP-3740-FIXTURE",
+  "services": [
+    {
+      "name": "Secure IT asset pickup",
+      "purpose": "Explain pickup logistics and chain-of-custody boundaries",
+      "primary_keyword": "secure IT asset pickup Idaho"
+    },
+    {
+      "name": "Business electronics recycling",
+      "purpose": "Position compliant recycling for small and mid-sized businesses",
+      "primary_keyword": "business electronics recycling Boise"
+    },
+    {
+      "name": "Inventory and disposition reporting",
+      "purpose": "Clarify reporting artifacts without overclaiming data destruction guarantees",
+      "primary_keyword": "ITAD inventory reporting"
+    }
+  ]
+}

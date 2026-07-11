@@ -1,0 +1,60 @@
+{
+  "a11yRules": [
+    "footer-landmark-required",
+    "links-have-discernible-text"
+  ],
+  "component": "SiteFooter.astro",
+  "contentSafetyRules": [
+    "no-unsupported-certification-claims"
+  ],
+  "description": "Footer contact, legal, social, and service-area links",
+  "editableFields": [
+    "businessName",
+    "links",
+    "legalText"
+  ],
+  "fixtures": [
+    {
+      "name": "site-footer-default",
+      "props": {
+        "businessName": "Prismatic Fixture",
+        "legalText": "\u00a9 Fixture",
+        "links": [
+          "Privacy",
+          "Terms"
+        ]
+      },
+      "variant": "simple"
+    }
+  ],
+  "id": "site-footer",
+  "name": "SiteFooter",
+  "propsSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "businessName": {
+        "type": "string"
+      },
+      "legalText": {
+        "type": "string"
+      },
+      "links": {
+        "type": "array"
+      }
+    },
+    "required": [
+      "businessName",
+      "links",
+      "legalText"
+    ],
+    "type": "object"
+  },
+  "slots": [
+    "legal",
+    "social"
+  ],
+  "variants": [
+    "simple",
+    "multi-column"
+  ]
+}

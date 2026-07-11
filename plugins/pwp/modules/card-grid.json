@@ -1,0 +1,54 @@
+{
+  "a11yRules": [
+    "card-headings-ordered",
+    "linked-cards-have-labels"
+  ],
+  "component": "CardGrid.astro",
+  "contentSafetyRules": [
+    "no-unsupported-certification-claims"
+  ],
+  "description": "Services, features, audiences, or linked-card grids",
+  "editableFields": [
+    "heading",
+    "cards"
+  ],
+  "fixtures": [
+    {
+      "name": "card-grid-default",
+      "props": {
+        "cards": [
+          "Pickup",
+          "Audit",
+          "Destroy"
+        ],
+        "heading": "Services"
+      },
+      "variant": "3-up"
+    }
+  ],
+  "id": "card-grid",
+  "name": "CardGrid",
+  "propsSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "cards": {
+        "type": "array"
+      },
+      "heading": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "heading",
+      "cards"
+    ],
+    "type": "object"
+  },
+  "slots": [],
+  "variants": [
+    "3-up",
+    "4-up",
+    "icon-card",
+    "linked-card"
+  ]
+}

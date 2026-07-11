@@ -18,7 +18,6 @@ Linear issue:
 
 from __future__ import annotations
 
-import os
 import sys
 import tempfile
 from pathlib import Path
@@ -33,8 +32,8 @@ _REPO_ROOT = _THIS_DIR.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from prismatic.core.registry import PWPPluginRunner, PluginLoader
-from prismatic.interface.hooks import (
+from prismatic.core.registry import PWPPluginRunner, PluginLoader  # noqa: E402
+from prismatic.interface.hooks import (  # noqa: E402
     HOOK_NAMES,
     HOOK_ON_DEPLOY,
     HOOK_ON_ERROR,
@@ -42,7 +41,7 @@ from prismatic.interface.hooks import (
     HOOK_ON_PRE_PIPELINE,
     PWP_HOOK_NAMES,
 )
-from prismatic.interface.plugin import PluginContext, PrismaticPlugin
+from prismatic.interface.plugin import PluginContext, PrismaticPlugin  # noqa: E402
 
 
 # ── 1. Hook-name constants exposed correctly ──────────────────────────────
@@ -129,9 +128,7 @@ def _build_loader_with_recording_plugin() -> PluginLoader:
         dst.mkdir()
         # Re-create the package marker so the loader can import it.
         (dst / "__init__.py").write_text("")
-        (dst / "plugin.py").write_text(
-            (plugin_dir / "plugin.py").read_text()
-        )
+        (dst / "plugin.py").write_text((plugin_dir / "plugin.py").read_text())
         (dst / "plugin-manifest.yaml").write_text(
             (plugin_dir / "plugin-manifest.yaml").read_text()
         )
@@ -231,6 +228,66 @@ def test_pwp_runner_skips_deploy_on_failure() -> None:
 
     hook_names = [e["hook"] for e in PWPHookTestPlugin.events]
     assert "on_deploy" not in hook_names
+
+
+def test_pwp_runner_skips_matching_hash_deploy_and_redeploys_on_hash_change(
+    monkeypatch,
+) -> None:
+    """GRO-3716: matching commit/theme/content hashes suppress deploy side effects."""
+    with tempfile.TemporaryDirectory() as tmp:
+        monkeypatch.setenv("PRISMATIC_STATE_DIR", tmp)
+        loader = _build_loader_with_recording_plugin()
+        runner = PWPPluginRunner(loader)
+
+        from pwp_hook_test_plugin.plugin import PWPHookTestPlugin
+
+        calls: list[str] = []
+        context = {
+            "client_id": "tenant-a",
+            "commit_hash": "commit-1",
+            "theme_hash": "theme-1",
+            "content_hash": "content-1",
+        }
+
+        def artifact_provider(_result: Dict[str, Any]) -> Dict[str, Any]:
+            calls.append("deploy")
+            return {"artifact_sha": "artifact-1", "url": "https://first.example"}
+
+        first = runner.run(
+            pipeline_id="GRO-3716-first",
+            context=context,
+            stages=[("build", lambda _ctx: "ok")],
+            deploy_target="cloudflare-pages",
+            deploy_artifact_provider=artifact_provider,
+        )
+        assert first["deploy_skipped"] is False
+        assert calls == ["deploy"]
+        assert [e["hook"] for e in PWPHookTestPlugin.events].count("on_deploy") == 1
+
+        PWPHookTestPlugin.events = []
+        second = runner.run(
+            pipeline_id="GRO-3716-second",
+            context=context,
+            stages=[("build", lambda _ctx: "ok")],
+            deploy_target="cloudflare-pages",
+            deploy_artifact_provider=artifact_provider,
+        )
+        assert second["deploy_skipped"] is True
+        assert second["deploy_skip_reason"] == "matching_commit_theme_content_hashes"
+        assert calls == ["deploy"]
+        assert "on_deploy" not in [e["hook"] for e in PWPHookTestPlugin.events]
+
+        changed = dict(context, theme_hash="theme-2")
+        third = runner.run(
+            pipeline_id="GRO-3716-third",
+            context=changed,
+            stages=[("build", lambda _ctx: "ok")],
+            deploy_target="cloudflare-pages",
+            deploy_artifact_provider=artifact_provider,
+        )
+        assert third["deploy_skipped"] is False
+        assert calls == ["deploy", "deploy"]
+        assert [e["hook"] for e in PWPHookTestPlugin.events].count("on_deploy") == 1
 
 
 # ── 4. Crash isolation: a plugin that throws must not abort the runner ─────

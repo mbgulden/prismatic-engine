@@ -1,0 +1,13 @@
+{
+  "module": "split-section",
+  "name": "split-section-fixture",
+  "props": {
+    "body": "Designed for regulated local services.",
+    "heading": "Good fit",
+    "items": [
+      "Clear scope",
+      "Safe claims"
+    ]
+  },
+  "variant": "text-list"
+}

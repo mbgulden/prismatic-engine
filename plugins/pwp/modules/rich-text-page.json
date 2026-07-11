@@ -1,0 +1,48 @@
+{
+  "a11yRules": [
+    "heading-order-valid",
+    "readable-line-length"
+  ],
+  "component": "RichTextPage.astro",
+  "contentSafetyRules": [
+    "no-unsupported-certification-claims"
+  ],
+  "description": "Policy, about, resource, and long-form prose pages",
+  "editableFields": [
+    "title",
+    "body"
+  ],
+  "fixtures": [
+    {
+      "name": "rich-text-page-default",
+      "props": {
+        "body": "Structured prose remains inside the theme shell.",
+        "title": "Policy fixture"
+      },
+      "variant": "prose"
+    }
+  ],
+  "id": "rich-text-page",
+  "name": "RichTextPage",
+  "propsSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "body": {
+        "type": "string"
+      },
+      "title": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "title",
+      "body"
+    ],
+    "type": "object"
+  },
+  "slots": [],
+  "variants": [
+    "prose",
+    "doc-like"
+  ]
+}

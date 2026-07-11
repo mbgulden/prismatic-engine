@@ -1,0 +1,14 @@
+{
+  "module": "testimonial-grid",
+  "name": "testimonial-grid-fixture",
+  "props": {
+    "heading": "What clients say",
+    "testimonials": [
+      {
+        "attribution": "Fixture client",
+        "quote": "Clear reports, no surprises."
+      }
+    ]
+  },
+  "variant": "quote-cards"
+}
