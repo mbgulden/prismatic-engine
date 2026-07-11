@@ -1,0 +1,33 @@
+{
+  "contentType": "landingPage",
+  "route": "/",
+  "blocks": [
+    {
+      "blockId": "hero",
+      "component": "Hero",
+      "fields": {
+        "title": {
+          "type": "string",
+          "editable": true
+        },
+        "body": {
+          "type": "portableText",
+          "editable": true
+        }
+      }
+    },
+    {
+      "blockId": "lead-capture",
+      "component": "LeadCapture",
+      "fields": {
+        "cta": {
+          "type": "string",
+          "editable": true
+        }
+      }
+    }
+  ],
+  "lockedFields": [
+    "schemaOrgType"
+  ]
+}

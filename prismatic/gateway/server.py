@@ -23,6 +23,7 @@ import logging
 import os
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -96,15 +97,14 @@ async def startup() -> None:
     # Start WebSocket broadcaster (daemon thread with its own event loop)
     start_ws_broadcaster()
 
-    # Initialize run records store
-    state_dir = os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state/")
-    store_path = os.path.join(state_dir, "run_records.json")
-    _run_store = AgentRunRecordStore(store_path)
+    # Initialize run records store. The default is the shared SQLite
+    # database used by supervisor processes: ~/.prismatic/runs.db.
+    _run_store = AgentRunRecordStore()
 
     logger.info(
         "Gateway started at %s, store=%s, ipc=%s",
         time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        store_path,
+        _run_store._store_path,
         _ipc_listener.socket_path,
     )
 
@@ -238,6 +238,36 @@ async def get_lock(file_path: str) -> Response:
 # ── Agent Run Records API ────────────────────────────────────────────
 
 
+def _parse_iso_timestamp(value: str | None) -> datetime | None:
+    """Parse persisted ISO timestamps, including trailing-Z UTC values."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _run_record_to_dict(record: Any) -> dict[str, Any]:
+    """Serialize a run record for the public Runs API."""
+    started = _parse_iso_timestamp(record.started_at)
+    completed = _parse_iso_timestamp(record.completed_at)
+    duration = None
+    if started is not None and completed is not None:
+        duration = max(0.0, (completed - started).total_seconds())
+    return {
+        "run_id": record.run_id,
+        "issue_id": record.issue_id,
+        "agent_name": record.agent_name,
+        "status": record.status,
+        "started_at": record.started_at,
+        "completed_at": record.completed_at,
+        "duration_seconds": duration,
+        "output_path": record.output_path,
+        "error_message": record.error_message,
+    }
+
+
 @app.get("/runs")
 async def list_runs(status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
     """Return recent agent run records, optionally filtered by status."""
@@ -246,16 +276,7 @@ async def list_runs(status: str | None = None, limit: int = 50) -> list[dict[str
     records = _run_store.get_recent_runs(limit=limit)
     result = []
     for r in records:
-        d = {
-            "run_id": r.run_id,
-            "issue_id": r.issue_id,
-            "agent_name": r.agent_name,
-            "status": r.status,
-            "started_at": r.started_at,
-            "completed_at": r.completed_at,
-            "output_path": r.output_path,
-            "error_message": r.error_message,
-        }
+        d = _run_record_to_dict(r)
         if status is None or r.status == status:
             result.append(d)
     return result
@@ -278,18 +299,7 @@ async def get_run(run_id: str) -> Response:
             media_type="application/json",
         )
     return Response(
-        content=json.dumps(
-            {
-                "run_id": record.run_id,
-                "issue_id": record.issue_id,
-                "agent_name": record.agent_name,
-                "status": record.status,
-                "started_at": record.started_at,
-                "completed_at": record.completed_at,
-                "output_path": record.output_path,
-                "error_message": record.error_message,
-            }
-        ),
+        content=json.dumps(_run_record_to_dict(record)),
         media_type="application/json",
     )
 
@@ -334,14 +344,162 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
     return {"status": "ok", "message": "webhook received"}
 
 
+# ── Merge Pipeline API ───────────────────────────────────────────────
+
+TERMINAL_LINEAR_STATE_NAMES = {"done", "canceled", "cancelled", "duplicate"}
+TERMINAL_LINEAR_STATE_TYPES = {"completed", "canceled"}
+
+
+def _linear_state_is_terminal(state: dict[str, Any] | None) -> bool:
+    if not state:
+        return False
+    name = str(state.get("name") or "").strip().lower()
+    state_type = str(state.get("type") or "").strip().lower()
+    return name in TERMINAL_LINEAR_STATE_NAMES or state_type in TERMINAL_LINEAR_STATE_TYPES
+
+
+def _terminal_pending_keep_rationale(details: Any) -> str | None:
+    if not isinstance(details, dict):
+        return None
+    if not any(details.get(key) for key in ("force_keep_terminal", "terminal_keep", "force_keep")):
+        return None
+    rationale = details.get("terminal_keep_rationale") or details.get("force_keep_rationale") or details.get("rationale")
+    return str(rationale or "force-kept terminal Linear issue").strip()
+
+
+def _prune_terminal_linear_pending(
+    pending: dict[str, Any],
+    linear_states: dict[str, dict[str, Any]],
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Drop terminal Linear issues from merge-pending state unless force-kept."""
+    active_pending: dict[str, Any] = {}
+    pruned: list[dict[str, Any]] = []
+    retained_terminal: list[dict[str, Any]] = []
+    for ticket, details in pending.items():
+        linear_state = linear_states.get(ticket)
+        if not _linear_state_is_terminal(linear_state):
+            active_pending[ticket] = details
+            continue
+        rationale = _terminal_pending_keep_rationale(details)
+        if rationale:
+            active_pending[ticket] = details
+            retained_terminal.append({"ticket": ticket, "linear_state": linear_state, "rationale": rationale})
+        else:
+            pruned.append({"ticket": ticket, "linear_state": linear_state})
+    return active_pending, pruned, retained_terminal
+
+
+def _fetch_linear_issue_states(tickets: list[str]) -> dict[str, dict[str, Any]]:
+    """Fetch Linear state for ticket identifiers using issue(id:) aliases."""
+    import urllib.request
+
+    api_key = os.environ.get("LINEAR_API_KEY")
+    if not api_key or not tickets:
+        return {}
+
+    states: dict[str, dict[str, Any]] = {}
+    for start in range(0, len(tickets), 40):
+        chunk = tickets[start:start + 40]
+        fields = []
+        for idx, ticket in enumerate(chunk):
+            safe_ticket = ticket.replace('"', '\\"')
+            fields.append(f'i{idx}: issue(id: "{safe_ticket}") {{ identifier state {{ name type }} }}')
+        payload = json.dumps({"query": "query { " + " ".join(fields) + " }"}).encode("utf-8")
+        request = urllib.request.Request(
+            "https://api.linear.app/graphql",
+            data=payload,
+            headers={"Authorization": api_key, "Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=10) as response:  # nosec B310 - fixed Linear API URL
+            data = json.loads(response.read().decode("utf-8"))
+        if data.get("errors"):
+            raise RuntimeError(data["errors"])
+        for node in (data.get("data") or {}).values():
+            if node and node.get("identifier"):
+                states[node["identifier"]] = node.get("state") or {}
+    return states
+
+
+@app.get("/api/merge/status")
+@app.get("/api/gateway/merge/status")
+def get_merge_status() -> dict[str, Any]:
+    home = Path.home()
+    merge_path = str(home / "work/prismatic-merge")
+    if merge_path not in sys.path:
+        sys.path.insert(0, merge_path)
+    try:
+        import prismatic_merge.config as merge_config
+        from prismatic_merge.core.state import StateManager
+
+        merge_config.STATE_DIR = home / ".prismatic/merge-pipeline"
+        state = StateManager(state_file=home / ".prismatic/merge-pipeline/state_v6.json")
+        state.load()
+        pending = dict(getattr(state, "pending", {}) or {})
+        linear_state_error = ""
+        try:
+            linear_states = _fetch_linear_issue_states(list(pending.keys()))
+        except Exception as exc:
+            logger.warning("Unable to prune terminal Linear pending entries: %s", exc)
+            linear_states = {}
+            linear_state_error = str(exc)
+        active_pending, pruned_terminal, retained_terminal = _prune_terminal_linear_pending(pending, linear_states)
+        if pruned_terminal:
+            state.pending = active_pending
+            try:
+                state.save()
+            except Exception as exc:
+                logger.warning("Unable to persist terminal pending prune: %s", exc)
+        pending_list = []
+        for ticket, details in active_pending.items():
+            linear_state = linear_states.get(ticket)
+            pending_list.append({
+                "ticket": ticket,
+                "tier": details.get("tier", 2),
+                "confidence": details.get("confidence", 80),
+                "files": details.get("files", []),
+                "modified": details.get("modified_files", 0),
+                "contention": details.get("contention_files", []),
+                "linear_state": linear_state,
+                "terminal_keep_rationale": _terminal_pending_keep_rationale(details),
+            })
+        merged_list = []
+        for ticket, details in getattr(state, "merged", {}).items():
+            commit = details if isinstance(details, str) else details.get("commit", "")
+            tier = 2 if isinstance(details, str) else details.get("tier", 2)
+            timestamp = getattr(state, "last_apply", "") if isinstance(details, str) else details.get("merged_at", details.get("at", ""))
+            merged_list.append({
+                "ticket": ticket,
+                "commit": commit,
+                "tier": tier,
+                "timestamp": timestamp
+            })
+        merged_list.reverse()
+        return {
+            "status": "ok",
+            "pending_count": len(pending_list),
+            "merged_count": len(merged_list),
+            "terminal_pruned_count": len(pruned_terminal),
+            "retained_terminal_count": len(retained_terminal),
+            "linear_state_lookup_error": linear_state_error,
+            "last_scan": getattr(state, "last_scan", ""),
+            "last_apply": getattr(state, "last_apply", ""),
+            "drift_detected": getattr(state, "drift_detected", False),
+            "pending": pending_list,
+            "pruned_terminal": pruned_terminal,
+            "retained_terminal": retained_terminal,
+            "merged": merged_list[:15]
+        }
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
 # ── CLI Entry Point ──────────────────────────────────────────────────
 
 
 def _create_run_store() -> AgentRunRecordStore | None:
     """Initialize run store (used by gRPC server)."""
-    state_dir = os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state/")
-    store_path = os.path.join(state_dir, "run_records.json")
-    return AgentRunRecordStore(store_path)
+    return AgentRunRecordStore()
 
 
 def main() -> None:

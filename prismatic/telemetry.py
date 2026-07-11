@@ -49,6 +49,16 @@ RETENTION_RESOURCE_SNAPSHOTS = int(
     os.environ.get("PRISMATIC_RETENTION_RESOURCE_SNAPSHOTS", "1")
 )
 RETENTION_CREDIT_LEDGER = int(os.environ.get("PRISMATIC_RETENTION_CREDIT_LEDGER", "90"))
+RETENTION_MEDIA_ARTIFACTS = int(
+    os.environ.get("PRISMATIC_RETENTION_MEDIA_ARTIFACTS", "30")
+)
+RETENTION_LABEL_SNAPSHOTS = int(
+    os.environ.get("PRISMATIC_RETENTION_LABEL_SNAPSHOTS", "14")
+)
+RETENTION_DEDUP_LOG = int(os.environ.get("PRISMATIC_RETENTION_DEDUP_LOG", "14"))
+RETENTION_DURABLE_EVENTS = int(
+    os.environ.get("PRISMATIC_RETENTION_DURABLE_EVENTS", "30")
+)
 
 
 class TelemetryCollector:
@@ -124,6 +134,30 @@ class TelemetryCollector:
             "recorded_at": datetime.now(timezone.utc).isoformat(),
         }
         self._push("tokens", event)
+
+    def record_wakeup_empty(
+        self,
+        agent: str,
+        cycle_id: str,
+        duration_sec: float = 0.0,
+        reason: str = "queue_empty",
+    ) -> None:
+        """Record a wakeup cycle that produced no work (the dispatcher
+        fired its event loop but found nothing to dispatch).
+
+        Backed by the ``telemetry_wakeup_empty`` table — one row per
+        empty wakeup. Queryable via :meth:`get_dashboard_data` under the
+        ``wakeup_empty`` block so the factory digest aggregator can
+        surface it. See GRO-3121.
+        """
+        event = {
+            "agent": agent,
+            "cycle_id": cycle_id,
+            "duration_sec": float(duration_sec),
+            "reason": reason,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._push("wakeup_empty", event)
 
     def record_validation(
         self,
@@ -492,6 +526,26 @@ class TelemetryCollector:
                 (cutoff_str,),
             ).fetchall()
 
+            # ── GRO-3121: Wakeup-empty block ──────────────
+            # Total + per-agent counts for cycles where the dispatcher
+            # fired but found nothing to dispatch. Surfaced in the
+            # factory digest so Michael can quantify polling cost.
+            wakeup_empty_total = conn.execute(
+                "SELECT COUNT(*) as cnt FROM telemetry_wakeup_empty "
+                "WHERE created_at >= ?",
+                (cutoff_str,),
+            ).fetchone()
+            wakeup_empty_by_agent = conn.execute(
+                "SELECT agent, COUNT(*) as cnt FROM telemetry_wakeup_empty "
+                "WHERE created_at >= ? GROUP BY agent "
+                "ORDER BY cnt DESC",
+                (cutoff_str,),
+            ).fetchall()
+            wakeup_empty_total_count = (
+                wakeup_empty_total["cnt"] if wakeup_empty_total else 0
+            )
+            wakeup_empty_per_hour = round(wakeup_empty_total_count / max(hours, 1), 3)
+
             # ── Gap 12: Hooks block ─────────────────────────────
             hooks_row = conn.execute(
                 "SELECT "
@@ -534,6 +588,12 @@ class TelemetryCollector:
                     "register_failed": (plugins_row["register_failed"] or 0)
                     if plugins_row
                     else 0,
+                },
+                # GRO-3121: factory-digest surface
+                "wakeup_empty": {
+                    "count": wakeup_empty_total_count,
+                    "per_hour": wakeup_empty_per_hour,
+                    "by_agent": [dict(r) for r in wakeup_empty_by_agent],
                 },
             }
         finally:
@@ -725,11 +785,17 @@ class TelemetryCollector:
           - credit_ledger > RETENTION_CREDIT_LEDGER days (default 90)
           - token_metrics > RETENTION_LOOP_EVENTS days (default 90)
           - validation_events > RETENTION_LOOP_EVENTS days (default 90)
+          - media_artifacts > RETENTION_MEDIA_ARTIFACTS days (default 30)
+          - label_snapshots > RETENTION_LABEL_SNAPSHOTS days (default 14)
+          - dedup_log > RETENTION_DEDUP_LOG days (default 14)
+          - durable_events > RETENTION_DURABLE_EVENTS days (default 30)
         """
         conn = sqlite3.connect(self._db_path)
         deleted: dict[str, int] = {}
 
-        # Map table → (column, retention_days)
+        # Map table → (column, retention_days). Some tables are created by
+        # dispatcher/billing subsystems rather than TelemetryCollector itself;
+        # skip absent tables so cleanup works against both live and test DBs.
         tables = {
             "telemetry_agent_runs": ("start_time", RETENTION_AGENT_RUNS),
             "telemetry_loop_events": ("created_at", RETENTION_LOOP_EVENTS),
@@ -741,10 +807,30 @@ class TelemetryCollector:
             "telemetry_plugin_registered": ("created_at", RETENTION_LOOP_EVENTS),
             "telemetry_hook_fired": ("created_at", RETENTION_LOOP_EVENTS),
             "telemetry_pipeline_action": ("created_at", RETENTION_LOOP_EVENTS),
+            # State/retention tables created outside TelemetryCollector
+            "telemetry_media_artifacts": ("detected_at", RETENTION_MEDIA_ARTIFACTS),
+            "label_snapshots": ("seen_at", RETENTION_LABEL_SNAPSHOTS),
+            "dedup_log": ("processed_at", RETENTION_DEDUP_LOG),
+            "durable_events": ("timestamp", RETENTION_DURABLE_EVENTS),
+            # GRO-3121: wakeup-empty cycle metric
+            "telemetry_wakeup_empty": ("created_at", RETENTION_LOOP_EVENTS),
         }
 
         try:
+            existing_tables = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                )
+            }
+            existing_columns = {
+                table: {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+                for table in existing_tables
+            }
             for table, (col, days) in tables.items():
+                if table not in existing_tables or col not in existing_columns[table]:
+                    continue
+
                 cutoff = datetime.now(timezone.utc).timestamp() - (days * 86400)
                 cutoff_str = datetime.fromtimestamp(cutoff, tz=timezone.utc).isoformat()
 
@@ -763,8 +849,8 @@ class TelemetryCollector:
                     deleted[table] = cursor.rowcount
 
             if not dry_run:
-                conn.execute("VACUUM")
                 conn.commit()
+                conn.execute("VACUUM")
         except Exception as exc:
             print(
                 f"prismatic.telemetry: cleanup failed: {exc}",
@@ -993,6 +1079,20 @@ class TelemetryCollector:
                             data.get("created_at", ""),
                         ),
                     )
+                elif event_type == "wakeup_empty":
+                    conn.execute(
+                        """INSERT INTO telemetry_wakeup_empty
+                           (agent, cycle_id, duration_sec, reason,
+                            created_at)
+                           VALUES (?, ?, ?, ?, ?)""",
+                        (
+                            data.get("agent", ""),
+                            data.get("cycle_id", ""),
+                            data.get("duration_sec", 0.0),
+                            data.get("reason", "queue_empty"),
+                            data.get("created_at", ""),
+                        ),
+                    )
 
                 conn.commit()
             except Exception:
@@ -1165,6 +1265,19 @@ class TelemetryCollector:
                 );
                 CREATE INDEX IF NOT EXISTS idx_pipeline_action_issue
                     ON telemetry_pipeline_action(issue_id, created_at);
+
+                CREATE TABLE IF NOT EXISTS telemetry_wakeup_empty (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    agent           TEXT NOT NULL,
+                    cycle_id        TEXT NOT NULL,
+                    duration_sec    REAL DEFAULT 0.0,
+                    reason          TEXT DEFAULT 'queue_empty',
+                    created_at      TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_wakeup_empty_agent
+                    ON telemetry_wakeup_empty(agent, created_at);
+                CREATE INDEX IF NOT EXISTS idx_wakeup_empty_time
+                    ON telemetry_wakeup_empty(created_at);
             """)
             # ── Phase 4.4 migration: add client_id/project_id to credit_ledger ──
             try:
