@@ -32,8 +32,14 @@ class PWPRunState:
     previous_artifact_sha: Optional[str] = None
     reversible: bool = False
     commit_hash: Optional[str] = None
+    theme_id: Optional[str] = None
+    theme_version: Optional[str] = None
     theme_hash: Optional[str] = None
+    token_hash: Optional[str] = None
+    module_hash: Optional[str] = None
     content_hash: Optional[str] = None
+    theme_engine_compatibility: Optional[str] = None
+    theme_schema_version: Optional[str] = None
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> PWPRunState:
@@ -116,6 +122,8 @@ class PWPRunStateStore:
         target: str,
         commit_hash: Optional[str] = None,
         theme_hash: Optional[str] = None,
+        token_hash: Optional[str] = None,
+        module_hash: Optional[str] = None,
         content_hash: Optional[str] = None,
     ) -> bool:
         """
@@ -125,17 +133,22 @@ class PWPRunStateStore:
         least one meaningful hash, the runner cannot prove the output is the
         same artifact, so it deploys rather than guessing.
         """
-        if commit_hash is None and theme_hash is None and content_hash is None:
+        supplied_hashes = {
+            "commit_hash": commit_hash,
+            "theme_hash": theme_hash,
+            "token_hash": token_hash,
+            "module_hash": module_hash,
+            "content_hash": content_hash,
+        }
+        if all(value is None for value in supplied_hashes.values()):
             return False
 
         latest = self.latest_deploy(client_id=client_id, target=target)
         if latest is None:
             return False
 
-        return (
-            latest.commit_hash == commit_hash
-            and latest.theme_hash == theme_hash
-            and latest.content_hash == content_hash
+        return all(
+            getattr(latest, field) == value for field, value in supplied_hashes.items()
         )
 
     def record_deploy(
@@ -147,8 +160,14 @@ class PWPRunStateStore:
         deployed_by: str,
         reversible: bool = False,
         commit_hash: Optional[str] = None,
+        theme_id: Optional[str] = None,
+        theme_version: Optional[str] = None,
         theme_hash: Optional[str] = None,
+        token_hash: Optional[str] = None,
+        module_hash: Optional[str] = None,
         content_hash: Optional[str] = None,
+        theme_engine_compatibility: Optional[str] = None,
+        theme_schema_version: Optional[str] = None,
     ) -> PWPRunState:
         self._load_from_disk()
 
@@ -176,8 +195,14 @@ class PWPRunStateStore:
             previous_artifact_sha=previous_artifact_sha,
             reversible=reversible,
             commit_hash=commit_hash,
+            theme_id=theme_id,
+            theme_version=theme_version,
             theme_hash=theme_hash,
+            token_hash=token_hash,
+            module_hash=module_hash,
             content_hash=content_hash,
+            theme_engine_compatibility=theme_engine_compatibility,
+            theme_schema_version=theme_schema_version,
         )
         self._records[run_id] = record
 
