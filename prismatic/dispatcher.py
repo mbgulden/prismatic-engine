@@ -1930,11 +1930,27 @@ def dispatch_local_tasks(
                     workspace=task.workspace,
                 )
                 if result:
-                    queue.update_status(
-                        task.id,
-                        "dispatched",
-                        metadata_patch={"cycle_id": cycle_id},
-                    )
+                    metadata_patch = {"cycle_id": cycle_id}
+                    if isinstance(result, dict):
+                        metadata_patch.update(result)
+
+                    result_status = ""
+                    if isinstance(result, dict):
+                        result_status = str(result.get("status") or "").strip().lower()
+
+                    if result_status in {"complete", "completed", "done", "success", "succeeded"}:
+                        queue.complete(
+                            task.id,
+                            artifact_path=result.get("artifact_path") or result.get("result_path"),
+                            completion_marker=result.get("completion_marker"),
+                            metadata_patch=metadata_patch,
+                        )
+                    else:
+                        queue.update_status(
+                            task.id,
+                            "dispatched",
+                            metadata_patch=metadata_patch,
+                        )
                     dedup.mark_processed(task.id, label, cycle_id)
                     dispatched += 1
                     print(
