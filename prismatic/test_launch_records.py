@@ -104,3 +104,111 @@ def test_launch_agy_persists_pid_command_and_worktree_handle(tmp_path, monkeypat
     cmd = json.loads(row["command_json"])
     assert cmd[:3] == ["/bin/echo", "--headless", "--issue"]
     assert "Persist launch records" in cmd
+
+
+def test_launch_agy_storage_pressure_tmp(monkeypatch):
+    class MockUsage:
+        def __init__(self, free):
+            self.free = free
+
+    def mock_disk_usage(path):
+        if path == "/tmp":
+            return MockUsage(5 * 1024 * 1024 * 1024)  # 5 GB (low)
+        return MockUsage(100 * 1024 * 1024 * 1024)  # 100 GB (ok)
+
+    import shutil
+    import pytest
+    monkeypatch.setattr(shutil, "disk_usage", mock_disk_usage)
+    monkeypatch.setenv("PRISMATIC_TMP_DIR", "/tmp")
+    monkeypatch.setenv("PRISMATIC_ARCHIVE_DIR", "/archive")
+
+    emitted_events = []
+    def mock_emit_agent_event(event_type, agent_name, issue_id, **extra):
+        emitted_events.append((event_type, agent_name, issue_id, extra))
+
+    monkeypatch.setattr(dispatcher, "_emit_agent_event", mock_emit_agent_event)
+    monkeypatch.setattr(dispatcher, "add_comment", lambda *args, **kwargs: True)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        dispatcher.launch_agy(issue_id="issue-123")
+
+    assert "Storage pressure gate triggered" in str(exc_info.value)
+    assert "/tmp free space" in str(exc_info.value)
+    assert len(emitted_events) == 1
+    event = emitted_events[0]
+    assert event[0] == "storage_pressure"
+    assert event[1] == "agy"
+    assert event[2] == "issue-123"
+    assert event[3]["tmp_free"] == 5 * 1024 * 1024 * 1024
+
+
+def test_launch_agy_storage_pressure_archive(monkeypatch):
+    class MockUsage:
+        def __init__(self, free):
+            self.free = free
+
+    def mock_disk_usage(path):
+        if path == "/archive":
+            return MockUsage(30 * 1024 * 1024 * 1024)  # 30 GB (low)
+        return MockUsage(100 * 1024 * 1024 * 1024)  # 100 GB (ok)
+
+    import shutil
+    import pytest
+    monkeypatch.setattr(shutil, "disk_usage", mock_disk_usage)
+    monkeypatch.setenv("PRISMATIC_TMP_DIR", "/tmp")
+    # Make sure archive path exists for the check to run
+    monkeypatch.setattr(dispatcher.os.path, "exists", lambda path: True if path == "/archive" else False)
+    monkeypatch.setenv("PRISMATIC_ARCHIVE_DIR", "/archive")
+
+    emitted_events = []
+    def mock_emit_agent_event(event_type, agent_name, issue_id, **extra):
+        emitted_events.append((event_type, agent_name, issue_id, extra))
+
+    monkeypatch.setattr(dispatcher, "_emit_agent_event", mock_emit_agent_event)
+    monkeypatch.setattr(dispatcher, "add_comment", lambda *args, **kwargs: True)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        dispatcher.launch_agy(issue_id="issue-123")
+
+    assert "Storage pressure gate triggered" in str(exc_info.value)
+    assert "/archive free space" in str(exc_info.value)
+    assert len(emitted_events) == 1
+    event = emitted_events[0]
+    assert event[0] == "storage_pressure"
+    assert event[1] == "agy"
+    assert event[2] == "issue-123"
+    assert event[3]["archive_free"] == 30 * 1024 * 1024 * 1024
+
+
+def test_launch_agy_storage_pressure_ok(monkeypatch):
+    class MockUsage:
+        def __init__(self, free):
+            self.free = free
+
+    def mock_disk_usage(path):
+        return MockUsage(100 * 1024 * 1024 * 1024)  # 100 GB (ok)
+
+    import shutil
+    monkeypatch.setattr(shutil, "disk_usage", mock_disk_usage)
+    monkeypatch.setenv("PRISMATIC_TMP_DIR", "/tmp")
+    monkeypatch.setenv("PRISMATIC_ARCHIVE_DIR", "/archive")
+    monkeypatch.setattr(dispatcher.os.path, "exists", lambda path: True)
+
+    monkeypatch.setattr(dispatcher, "AGY_PATH", "/bin/echo")
+    monkeypatch.setattr(dispatcher, "get_agy_model_from_labels", lambda labels: None)
+    monkeypatch.setattr(dispatcher, "record_launch_record", lambda *args, **kwargs: "run-ok")
+    monkeypatch.setattr(dispatcher, "add_comment", lambda *args, **kwargs: True)
+
+    proc = MagicMock()
+    proc.pid = 9999
+    popen = MagicMock(return_value=proc)
+    monkeypatch.setattr(dispatcher.subprocess, "Popen", popen)
+
+    emitted_events = []
+    def mock_emit_agent_event(event_type, agent_name, issue_id, **extra):
+        emitted_events.append((event_type, agent_name, issue_id, extra))
+    monkeypatch.setattr(dispatcher, "_emit_agent_event", mock_emit_agent_event)
+
+    result = dispatcher.launch_agy(issue_id="issue-123")
+    assert result is proc
+    assert not any(event[0] == "storage_pressure" for event in emitted_events)

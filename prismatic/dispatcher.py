@@ -1122,6 +1122,62 @@ def launch_agy(
     Returns:
         ``subprocess.Popen`` handle, or ``None`` if launch failed.
     """
+    # ── Storage pressure pre-flight check (GRO-3165) ─────────────
+    tmp_dir = os.environ.get("PRISMATIC_TMP_DIR", "/tmp")
+    archive_dir = os.environ.get("PRISMATIC_ARCHIVE_DIR", "/archive")
+
+    tmp_threshold = 10 * 1024 * 1024 * 1024       # 10 GB
+    archive_threshold = 50 * 1024 * 1024 * 1024   # 50 GB
+
+    import shutil
+
+    tmp_free = None
+    try:
+        tmp_free = shutil.disk_usage(tmp_dir).free
+    except Exception as e:
+        print(f"[dispatcher] Warning: Failed to check /tmp disk usage: {e}")
+
+    archive_free = None
+    try:
+        if os.path.exists(archive_dir):
+            archive_free = shutil.disk_usage(archive_dir).free
+    except Exception as e:
+        print(f"[dispatcher] Warning: Failed to check /archive disk usage: {e}")
+
+    under_pressure = False
+    reasons = []
+    if tmp_free is not None and tmp_free < tmp_threshold:
+        under_pressure = True
+        reasons.append(f"/tmp free space ({tmp_free / 1024**3:.2f} GB) is below 10.00 GB")
+    if archive_free is not None and archive_free < archive_threshold:
+        under_pressure = True
+        reasons.append(f"/archive free space ({archive_free / 1024**3:.2f} GB) is below 50.00 GB")
+
+    if under_pressure:
+        error_msg = f"Storage pressure gate triggered: {', '.join(reasons)}"
+        print(f"[dispatcher] {error_msg}")
+        try:
+            _emit_agent_event(
+                "storage_pressure",
+                "agy",
+                issue_id,
+                tmp_free=tmp_free,
+                archive_free=archive_free,
+                tmp_threshold=tmp_threshold,
+                archive_threshold=archive_threshold,
+                reasons=reasons,
+            )
+        except Exception:
+            pass
+        try:
+            add_comment(
+                issue_id,
+                f"🚫 **AGY launch blocked**: Storage pressure. {', '.join(reasons)}"
+            )
+        except Exception:
+            pass
+        raise RuntimeError(error_msg)
+
     try:
         from prismatic.providers.github import GitHubProvider
 

@@ -151,6 +151,42 @@ class LaneBudgetTracker:
 
 # === Dispatch decision ===
 
+MODEL_DAILY_DISPATCH_LIMIT = {
+    "opus": 14,
+}
+
+
+def get_daily_dispatch_count(model: str, db_path: Path | str | None = None) -> int:
+    """Query telemetry_credit_ledger for the count of dispatches for `model` today (since UTC midnight)."""
+    import sqlite3
+
+    if db_path is None:
+        db_path = os.path.join(
+            os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state"),
+            "event_router.db",
+        )
+
+    if not os.path.exists(db_path):
+        return 0
+
+    # UTC midnight cutoff
+    utc_midnight = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+
+    try:
+        with sqlite3.connect(str(db_path)) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """SELECT COUNT(*) FROM telemetry_credit_ledger
+                   WHERE model = ? AND operation = 'dispatch' AND recorded_at >= ?""",
+                (model, utc_midnight),
+            )
+            row = cursor.fetchone()
+            return row[0] if row else 0
+    except Exception:
+        # If database or table is missing/malformed, return 0
+        return 0
+
+
 @dataclass
 class DispatchDecision:
     should_dispatch: bool
@@ -158,6 +194,7 @@ class DispatchDecision:
     model: str = "sonnet"
     reason: str = ""
     budget_check: BudgetCheck | None = None
+    quota_paused: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -166,10 +203,15 @@ class DispatchDecision:
             "model": self.model,
             "reason": self.reason,
             "budget_check": self.budget_check.to_dict() if self.budget_check else None,
+            "quota_paused": self.quota_paused,
         }
 
 
-def decide_dispatch(lane_hint: str | None, budget_tracker: LaneBudgetTracker | None = None) -> DispatchDecision:
+def decide_dispatch(
+    lane_hint: str | None,
+    budget_tracker: LaneBudgetTracker | None = None,
+    db_path: Path | str | None = None,
+) -> DispatchDecision:
     """Given a lane hint from the curator's tag, decide whether to dispatch.
 
     Returns DispatchDecision with should_dispatch, lane, model, reason.
@@ -189,12 +231,25 @@ def decide_dispatch(lane_hint: str | None, budget_tracker: LaneBudgetTracker | N
             reason=f"unknown lane {lane_hint!r} — needs triage by fred",
         )
 
+    model = LANE_MODEL[lane_hint]
+    limit = MODEL_DAILY_DISPATCH_LIMIT.get(model)
+    if limit is not None:
+        dispatch_count = get_daily_dispatch_count(model, db_path=db_path)
+        if dispatch_count >= limit:
+            return DispatchDecision(
+                should_dispatch=False,
+                lane=lane_hint,
+                model=model,
+                reason=f"quota paused: {model} daily limit of {limit} dispatches reached ({dispatch_count} spent)",
+                quota_paused=True,
+            )
+
     budget_check = budget_tracker.check(lane_hint)
     if not budget_check.allowed:
         return DispatchDecision(
             should_dispatch=False,
             lane=lane_hint,
-            model=LANE_MODEL[lane_hint],
+            model=model,
             reason=budget_check.reason,
             budget_check=budget_check,
         )
@@ -202,7 +257,7 @@ def decide_dispatch(lane_hint: str | None, budget_tracker: LaneBudgetTracker | N
     return DispatchDecision(
         should_dispatch=True,
         lane=lane_hint,
-        model=LANE_MODEL[lane_hint],
+        model=model,
         reason=f"budget ok ({budget_check.reason})",
         budget_check=budget_check,
     )
