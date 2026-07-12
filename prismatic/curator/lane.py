@@ -622,6 +622,18 @@ class CuratorLane:
             if result.get("status") in {"spawned", "queued"}:
                 if result.get("status") == "spawned":
                     self._budget.charge(decision.lane)
+                try:
+                    from prismatic.telemetry import get_collector
+                    get_collector().record_credit(
+                        run_id=f"dispatch-{issue_id}-{int(datetime.now(timezone.utc).timestamp())}",
+                        agent=f"agent:{decision.lane}",
+                        provider="prismatic-dispatcher",
+                        credits_spent=0,
+                        model=decision.model,
+                        operation="dispatch",
+                    )
+                except Exception as e:
+                    print(f"[curator] Failed to record dispatch telemetry for {issue_id}: {e}")
                 self._mark_dispatched(tagged_rowid)
                 dispatched += 1
                 status_msg = f"PID={result.get('pid')}" if result.get("pid") else "queued"

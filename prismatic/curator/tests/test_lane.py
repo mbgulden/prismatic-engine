@@ -337,6 +337,8 @@ def test_github_webhook_publishes_header_event_type(monkeypatch):
         async def body(self):
             return json_module.dumps({"action": "opened"}).encode()
 
+    import prismatic.gateway.server as gateway_server
+    monkeypatch.setattr(gateway_server, "get_github_secrets", lambda: [])
     monkeypatch.setattr(event_bus, "get_event_bus", lambda: Bus())
     asyncio.run(github_webhook(Request()))  # type: ignore[arg-type]
 

@@ -14,6 +14,7 @@ from typing import Sequence
 
 from prismatic.cli.doctor import run as doctor_cli_run
 from prismatic.local_tasks import LocalTaskQueue
+from prismatic.observability import init_logging
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -95,6 +96,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def run(argv: Sequence[str] | None = None) -> int:
+    init_logging()
     parser = _build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
 

@@ -5,6 +5,7 @@ Provides JSON formatting for both structlog and standard library logging.
 
 from __future__ import annotations
 
+import builtins
 import logging
 import sys
 import structlog
@@ -12,9 +13,10 @@ from typing import Any
 
 # Global flag to track if logging has been initialized
 _initialized = False
+_original_print = builtins.print
 
 
-def init_logging(level: int | str = logging.INFO) -> None:
+def init_logging(level: int | str = logging.INFO, intercept_print: bool = True) -> None:
     """Initialize structured logging (structlog) with JSON output.
 
     Clears any existing root handlers and sets up a standard output handler
@@ -64,6 +66,32 @@ def init_logging(level: int | str = logging.INFO) -> None:
     root_logger.setLevel(level)
 
     _initialized = True
+
+    if intercept_print:
+        _setup_print_interception()
+
+
+def _setup_print_interception() -> None:
+    """Redirect standard prints to the structlog 'print' logger."""
+    logger = structlog.get_logger("print")
+
+    def intercepted_print(*args: Any, **kwargs: Any) -> None:
+        file = kwargs.get("file", sys.stdout)
+        
+        # Fall back to original print for custom targets (files, StringIO, etc.)
+        if file is not sys.stdout and file is not sys.stderr and not (hasattr(file, "name") and file.name in ("<stdout>", "<stderr>")):
+            _original_print(*args, **kwargs)
+            return
+
+        sep = kwargs.get("sep", " ")
+        message = sep.join(str(arg) for arg in args)
+
+        if file is sys.stderr or (hasattr(file, "name") and file.name == "<stderr>"):
+            logger.error(message)
+        else:
+            logger.info(message)
+
+    builtins.print = intercepted_print
 
 
 def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
