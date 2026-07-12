@@ -95,7 +95,9 @@ def run() -> None:
         except ImportError:
             logger.warning("python-dotenv not installed, skipping .env load")
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    from prismatic.observability import init_logging
+
+    init_logging(level=logging.INFO)
 
     logger.info("Starting Prismatic API Gateway on %s:%d", args.host, args.port)
     uvicorn.run(

@@ -1356,10 +1356,9 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    logging.basicConfig(
-        level=getattr(logging, args.log_level.upper()),
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    )
+    from prismatic.observability import init_logging
+
+    init_logging(level=args.log_level.upper())
 
     logger.info(
         "Starting Prismatic Gateway on %s:%d (reload=%s, grpc=%s)",

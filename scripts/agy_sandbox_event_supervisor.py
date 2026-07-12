@@ -26,6 +26,7 @@ import random
 import shutil
 import argparse
 import atexit
+import signal
 import subprocess
 import threading
 import re
@@ -36,6 +37,7 @@ import hashlib
 from pathlib import Path
 from queue import Queue, Empty
 from datetime import datetime, timezone, timedelta
+from typing import Any
 
 # Lock for event bus SQLite WAL writes
 _bus_sqlite_lock = threading.Lock()
@@ -70,6 +72,220 @@ def estimate_cost(issue_id: str, model: str, elapsed_sec: float) -> float:
 
     estimated = rate_per_sec * elapsed_sec
     return round(max(0.001, estimated), 4)
+
+
+def scan_fields(data):
+    results = []
+    pos = 0
+    while True:
+        pos = data.find(b"\x8a\x01", pos)
+        if pos == -1: break
+        try:
+            i = pos + 2
+            length = 0
+            shift = 0
+            while True:
+                b = data[i]
+                i += 1
+                length |= (b & 0x7f) << shift
+                if not (b & 0x80): break
+                shift += 7
+            sub_data = data[i:i+length]
+            pos2 = 0
+            while True:
+                pos2 = sub_data.find(b"\x12", pos2)
+                if pos2 == -1: break
+                try:
+                    j = pos2 + 1
+                    length2 = 0
+                    shift2 = 0
+                    while True:
+                        b = sub_data[j]
+                        j += 1
+                        length2 |= (b & 0x7f) << shift2
+                        if not (b & 0x80): break
+                        shift2 += 7
+                    sub2_data = sub_data[j:j+length2]
+                    fields = {}
+                    k = 0
+                    while k < len(sub2_data):
+                        tag_raw = 0
+                        shift_k = 0
+                        while True:
+                            b = sub2_data[k]
+                            k += 1
+                            tag_raw |= (b & 0x7f) << shift_k
+                            if not (b & 0x80): break
+                            shift_k += 7
+                        wire = tag_raw & 7
+                        fnum = tag_raw >> 3
+                        if wire == 0:
+                            val = 0
+                            shift_val = 0
+                            while True:
+                                b = sub2_data[k]
+                                k += 1
+                                val |= (b & 0x7f) << shift_val
+                                if not (b & 0x80): break
+                                shift_val += 7
+                            fields[fnum] = val
+                        elif wire == 1: k += 8
+                        elif wire == 2:
+                            l = 0
+                            shift_l = 0
+                            while True:
+                                b = sub2_data[k]
+                                k += 1
+                                l |= (b & 0x7f) << shift_l
+                                if not (b & 0x80): break
+                                shift_l += 7
+                            k += l
+                        elif wire == 5: k += 4
+                    if fields.get(1) == 1020:
+                        results.append((fields.get(2, 0), fields.get(3, 0)))
+                except Exception:
+                    pass
+                pos2 += 1
+        except Exception:
+            pass
+        pos += 2
+    return results
+
+
+def get_actual_tokens(issue_id: str, start_time: float) -> tuple[int, int]:
+    conv_dir = Path("/home/ubuntu/.gemini/antigravity-cli/conversations")
+    if not conv_dir.exists():
+        return 0, 0
+    candidates = []
+    for item in conv_dir.iterdir():
+        if not item.name.endswith(".db"):
+            continue
+        try:
+            mtime = item.stat().st_mtime
+            if mtime >= start_time - 30:
+                conn = sqlite3.connect(str(item))
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT 1 FROM steps WHERE CAST(metadata AS TEXT) LIKE ? OR CAST(task_details AS TEXT) LIKE ? LIMIT 1",
+                    (f"%{issue_id}%", f"%{issue_id}%")
+                )
+                res = cursor.fetchone()
+                conn.close()
+                if res:
+                    candidates.append((item, mtime))
+        except Exception:
+            pass
+    if not candidates:
+        return 0, 0
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    db_path = candidates[0][0]
+    try:
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+        cursor.execute("SELECT data FROM gen_metadata ORDER BY idx ASC")
+        tot_prompt = 0
+        tot_completion = 0
+        for (data,) in cursor.fetchall():
+            res = scan_fields(data)
+            for p, c in res:
+                tot_prompt += p
+                tot_completion += c
+        conn.close()
+        return tot_prompt, tot_completion
+    except Exception as e:
+        print(f"Error reading tokens from db {db_path}: {e}", flush=True)
+    return 0, 0
+
+
+def estimate_t_schemas_tokens(settings_path: str | Path = "/home/ubuntu/.gemini/antigravity-cli/settings.json") -> dict:
+    """Estimate AGY tool-schema token cost from permissions.allow actions."""
+    path = Path(settings_path)
+    metrics = {
+        "settings_path": str(path),
+        "settings_exists": path.exists(),
+        "allowed_action_count": 0,
+        "schemas_estimate": 0,
+        "schemas_estimate_min": 0,
+        "schemas_estimate_max": 0,
+        "tokens_per_action_estimate": 1000,
+    }
+    if not path.exists():
+        return metrics
+
+    with path.open("r", encoding="utf-8") as sf:
+        settings_data = json.load(sf)
+    allow_list = settings_data.get("permissions", {}).get("allow", [])
+    if not isinstance(allow_list, list):
+        allow_list = []
+    action_count = len(allow_list)
+    metrics.update({
+        "allowed_action_count": action_count,
+        "schemas_estimate": action_count * 1000,
+        "schemas_estimate_min": action_count * 500,
+        "schemas_estimate_max": action_count * 2000,
+    })
+    return metrics
+
+
+def parse_actual_tokens_from_log(log_path: Path) -> tuple[int, int]:
+    """Extract actual input/output token counts from an AGY result log."""
+    if not log_path.exists():
+        return 0, 0
+    text = log_path.read_text(errors="ignore")
+    patterns = [
+        (r"input[_\s-]*tokens?\D{0,20}(\d+).*?output[_\s-]*tokens?\D{0,20}(\d+)", re.I | re.S),
+        (r"prompt[_\s-]*tokens?\D{0,20}(\d+).*?completion[_\s-]*tokens?\D{0,20}(\d+)", re.I | re.S),
+        (r"tokens?\D{0,20}in\D{0,20}(\d+).*?out\D{0,20}(\d+)", re.I | re.S),
+        (r'"(?:input|prompt)_tokens"\s*:\s*(\d+).*?"(?:output|completion)_tokens"\s*:\s*(\d+)', re.I | re.S),
+    ]
+    for pattern, flags in patterns:
+        matches = re.findall(pattern, text, flags)
+        if not matches:
+            continue
+        last = matches[-1]
+        try:
+            return int(last[0]), int(last[1])
+        except (TypeError, ValueError):
+            continue
+    return 0, 0
+
+
+def publish_bus_event(topic: str, payload: dict) -> None:
+    try:
+        if os.environ.get("PRISMATIC_BUS_DB"):
+            db_path = os.environ["PRISMATIC_BUS_DB"]
+        else:
+            home = os.path.expanduser("~")
+            db_path = os.path.join(home, ".prismatic", "bus", "event_log.sqlite")
+        db_path = Path(db_path)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        dedup_key = f"{topic}:{int(time.time()*1000)}"
+        with _bus_sqlite_lock:
+            conn = sqlite3.connect(str(db_path), timeout=5)
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS events (
+                        rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+                        dedup_key TEXT UNIQUE,
+                        topic TEXT,
+                        payload_json TEXT,
+                        ts INTEGER,
+                        processed INTEGER DEFAULT 0
+                    )
+                    """
+                )
+                ts = int(time.time())
+                conn.execute(
+                    "INSERT OR IGNORE INTO events (dedup_key, topic, payload_json, ts) VALUES (?, ?, ?, ?)",
+                    (dedup_key, topic, json.dumps(payload), ts)
+                )
+                conn.commit()
+            finally:
+                conn.close()
+    except Exception as e:
+        print(f"Failed to publish to bus ({topic}): {e}", flush=True)
 
 
 def publish_agent_completed(issue_id: str, payload: dict) -> None:
@@ -306,6 +522,168 @@ CRON_JOBS_PATH = Path(os.environ.get("CRON_JOBS_PATH", str(Path.home() / ".herme
 AUTO_RESUME_ALERT_ISSUES = [x.strip() for x in os.environ.get("AGY_ALERT_ISSUES", "GRO-2492,GRO-2551").split(",") if x.strip()]
 CIRCUIT_BREAKER_FAILURE_LIMIT = int(os.environ.get("AGY_CIRCUIT_BREAKER_FAILURE_LIMIT", "2"))
 
+# ── Antigravity Ignore File Verification (GRO-3306) ───────────────────
+STANDARD_IGNORE_CONTENT = """# Standard Antigravity Ignore Rules
+.git/
+.venv/
+.venv_dev/
+venv/
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+prismatic_state/
+scratch/
+.wrangler/
+.env
+"""
+
+def write_ignore_async(ignore_path: Path, content: str):
+    def _write():
+        try:
+            ignore_path.write_text(content)
+        except Exception as e:
+            print(f"Error writing .antigravityignore async: {e}", flush=True)
+    threading.Thread(target=_write, daemon=True).start()
+
+def verify_antigravityignore(sandbox_path: Path, issue_id: str):
+    """Per-dispatch guard (GRO-3306): re-verify ignore files before each dispatch.
+
+    Checks if .antigravityignore exists, running the workspace optimizer async
+    if it is missing. Verifies that all standard ignore files have not been
+    modified by the agent and resets them to standard if they have.
+    """
+    ignore_path = sandbox_path / ".antigravityignore"
+    
+    # 1. Existence check (cheap, < 50ms)
+    if not ignore_path.exists():
+        print(f"  [{issue_id}] Pre-dispatch check: .antigravityignore is missing. Running optimizer async.", flush=True)
+        # 2. If not, runs the optimizer on it (async, doesn't block the dispatch)
+        def _run_optimizer():
+            try:
+                optimize_workspace_for_sandbox(issue_id, sandbox_path)
+            except Exception as e:
+                print(f"  [{issue_id}] Error running optimizer async: {e}", flush=True)
+        threading.Thread(target=_run_optimizer, daemon=True).start()
+        return
+
+    # 3. Modification check for ignore files (.antigravityignore, .geminiignore, .aiexclude)
+    try:
+        script_dir = Path(__file__).resolve().parent
+        if str(script_dir) not in sys.path:
+            sys.path.insert(0, str(script_dir))
+        import agy_workspace_optimizer
+        standard = agy_workspace_optimizer.managed_ignore_block()
+    except Exception as exc:
+        print(f"  [{issue_id}] ⚠️ ignore guard optimizer unavailable: {exc}", flush=True)
+        standard = STANDARD_IGNORE_CONTENT
+
+    modified_files = []
+    for file_name in (".antigravityignore", ".geminiignore", ".aiexclude"):
+        path = sandbox_path / file_name
+        try:
+            if path.exists() and path.read_text(encoding="utf-8", errors="replace") != standard:
+                modified_files.append(file_name)
+        except Exception as e:
+            print(f"  [{issue_id}] Error reading ignore file {file_name}: {e}", flush=True)
+
+    if modified_files:
+        print(f"  [{issue_id}] WARNING: ignore files modified by agent: {', '.join(modified_files)}! Resetting to standard rules.", flush=True)
+        # 4. Writes happen async if needed (doesn't block the dispatch)
+        def _reset_ignores():
+            try:
+                import agy_workspace_optimizer
+                agy_workspace_optimizer.enforce_standard_exclusions(sandbox_path)
+            except Exception as e:
+                print(f"  [{issue_id}] Error resetting standard exclusions async: {e}", flush=True)
+        threading.Thread(target=_reset_ignores, daemon=True).start()
+
+
+def optimize_workspace_for_sandbox(issue_id: str, sandbox: Path) -> dict:
+    """Run the workspace optimizer for a freshly created sandbox.
+
+    This hook is intentionally non-fatal: optimizer failures should be visible on
+    the bus, but must not prevent a worker from launching against a valid clone.
+    """
+    started = time.perf_counter()
+    payload = {
+        "issue_id": issue_id,
+        "sandbox": str(sandbox),
+        "status": "unknown",
+        "elapsed_ms": 0,
+    }
+    try:
+        script_dir = Path(__file__).resolve().parent
+        if str(script_dir) not in sys.path:
+            sys.path.insert(0, str(script_dir))
+        import agy_workspace_optimizer
+
+        exclusions = agy_workspace_optimizer.enforce_exclusions(sandbox)
+        plugin_timeout = float(os.environ.get("AGY_WORKSPACE_OPTIMIZER_PLUGIN_TIMEOUT", "0.05"))
+        plugins = agy_workspace_optimizer.strip_unnecessary_plugins(timeout=plugin_timeout)
+        # Plugin disabling is a best-effort global cleanup; sandbox readiness is
+        # determined by the per-sandbox exclusion files.
+        ok = bool(exclusions.get("ok"))
+        payload.update({
+            "status": "ok" if ok else "degraded",
+            "exclusions": exclusions,
+            "plugins": plugins,
+        })
+        if ok:
+            print(f"  [{issue_id}] workspace optimized: ignore files enforced", flush=True)
+        else:
+            print(f"  [{issue_id}] workspace optimizer degraded; continuing", flush=True)
+    except Exception as e:
+        payload.update({
+            "status": "error",
+            "error": f"{type(e).__name__}: {e}",
+        })
+        print(f"  [{issue_id}] workspace optimizer failed: {e}; continuing", flush=True)
+    finally:
+        payload["elapsed_ms"] = round((time.perf_counter() - started) * 1000, 3)
+        publish_bus_event("workspace.optimized", payload)
+    return payload
+
+
+def finalize_sandbox(issue_id: str, sandbox: Path) -> Path:
+    optimize_workspace_for_sandbox(issue_id, sandbox)
+    
+    # Install git pre-push hook in the sandbox to enforce governance (Rule 2, 3, 4, 5)
+    try:
+        import subprocess
+        import shutil
+        git_dir_res = subprocess.run(
+            ["git", "rev-parse", "--git-path", "hooks"],
+            cwd=sandbox, capture_output=True, text=True, timeout=5
+        )
+        if git_dir_res.returncode == 0:
+            hooks_dir = Path(git_dir_res.stdout.strip())
+            hooks_dir.mkdir(parents=True, exist_ok=True)
+            pre_push_hook = hooks_dir / "pre-push"
+            
+            source_script = sandbox / "scripts" / "pre-push-hook.py"
+            if source_script.exists():
+                if pre_push_hook.exists() or pre_push_hook.is_symlink():
+                    pre_push_hook.unlink()
+                try:
+                    pre_push_hook.symlink_to(source_script)
+                except OSError:
+                    shutil.copy(source_script, pre_push_hook)
+                pre_push_hook.chmod(0o755)
+                print(f"  [{issue_id}] Installed pre-push hook in sandbox", flush=True)
+    except Exception as e:
+        print(f"  [{issue_id}] Failed to install pre-push hook in sandbox: {e}", flush=True)
+        
+    return sandbox
+
 
 def _read_linear_api_key() -> str | None:
     key = os.environ.get("LINEAR_API_KEY")
@@ -320,6 +698,77 @@ def _read_linear_api_key() -> str | None:
     if fallback.exists():
         return fallback.read_text().strip()
     return None
+
+
+LINEAR_BUDGET_DB = Path(os.environ.get(
+    "LINEAR_BUDGET_DB",
+    "/home/ubuntu/work/prismatic-engine/prismatic_state/linear_budget.db",
+))
+LINEAR_GLOBAL_BUDGET_AGENT = os.environ.get("LINEAR_GLOBAL_BUDGET_AGENT", "global")
+LINEAR_RATE_LIMIT_COOLDOWN = Path(os.environ.get(
+    "LINEAR_RATE_LIMIT_COOLDOWN",
+    "/home/ubuntu/work/prismatic-engine/prismatic_state/linear_rate_limit_until.txt",
+))
+
+
+class LinearBudgetBlocked(RuntimeError):
+    """Raised before a Linear request when the shared local budget is exhausted."""
+
+
+def _linear_budget_check(source: str, cost: int = 1) -> None:
+    """Gate every supervisor Linear request through the shared tenant budget.
+
+    The previous event supervisor used direct urllib calls, so it could burn the
+    real Linear tenant quota without touching the engine's LinearBudget DB. This
+    check intentionally uses one shared `global` bucket in the canonical
+    prismatic_state DB so startup probes, initial fetches, and watchdog polls all
+    compete for the same local allowance before any network call is made.
+    """
+    if LINEAR_RATE_LIMIT_COOLDOWN.exists():
+        try:
+            until = float(LINEAR_RATE_LIMIT_COOLDOWN.read_text().strip())
+            if time.time() < until:
+                retry_in = int(until - time.time())
+                raise LinearBudgetBlocked(f"Linear API cooldown active for {source}; retry in {retry_in}s")
+        except ValueError:
+            LINEAR_RATE_LIMIT_COOLDOWN.unlink(missing_ok=True)
+    try:
+        sys.path.insert(0, "/home/ubuntu/work/prismatic-engine")
+        from prismatic.linear.budget import LinearBudget
+        budget = LinearBudget(db_path=str(LINEAR_BUDGET_DB))
+        if not budget.check_and_consume(LINEAR_GLOBAL_BUDGET_AGENT, cost=cost):
+            raise LinearBudgetBlocked(f"LinearBudget exhausted for {source}; skipped live Linear request")
+    except LinearBudgetBlocked:
+        raise
+    except Exception as e:
+        # Fail closed for the supervisor. Task management is critical enough
+        # that an unavailable budget gate should not silently fall back to
+        # unmetered Linear calls.
+        raise LinearBudgetBlocked(f"LinearBudget unavailable for {source}: {type(e).__name__}: {e}") from e
+
+
+def _mark_linear_rate_limited(cooldown_sec: int = 3600) -> None:
+    LINEAR_RATE_LIMIT_COOLDOWN.parent.mkdir(parents=True, exist_ok=True)
+    LINEAR_RATE_LIMIT_COOLDOWN.write_text(str(time.time() + cooldown_sec), encoding="utf-8")
+
+
+def _linear_graphql(query: str, variables: dict | None = None, *, source: str, timeout: int = 15) -> dict:
+    key = _read_linear_api_key()
+    if not key:
+        raise RuntimeError("LINEAR_API_KEY missing")
+    _linear_budget_check(source)
+    req = urllib.request.Request(
+        "https://api.linear.app/graphql",
+        data=json.dumps({"query": query, "variables": variables or {}}).encode(),
+        headers={"Authorization": key, "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        if e.code == 429:
+            _mark_linear_rate_limited()
+        raise
 
 
 def pause_supervisor_cron(reason: str) -> bool:
@@ -386,21 +835,13 @@ def check_storage_gate(pause_on_failure: bool = False) -> bool:
 
 
 def preflight_linear_api() -> tuple[bool, str]:
-    key = _read_linear_api_key()
-    if not key:
-        return False, "LINEAR_API_KEY missing"
-    payload = {"query": "query { viewer { id name } }"}
-    req = urllib.request.Request(
-        "https://api.linear.app/graphql",
-        data=json.dumps(payload).encode(),
-        headers={"Authorization": key, "Content-Type": "application/json"},
-    )
     try:
-        with urllib.request.urlopen(req, timeout=15) as r:
-            data = json.loads(r.read())
+        data = _linear_graphql("query { viewer { id name } }", source="agy_supervisor.preflight", timeout=15)
         if data.get("errors"):
             return False, "Linear GraphQL errors: " + str(data["errors"][:1])
         return True, "Linear API OK"
+    except LinearBudgetBlocked as e:
+        return False, str(e)
     except urllib.error.HTTPError as e:
         if e.code == 429:
             return False, "Linear API 429 rate limited"
@@ -413,6 +854,7 @@ def preflight_agy_backend(model: str) -> tuple[bool, str]:
     try:
         proc = subprocess.run(
             [AGY_BIN, "--print", "Reply with exactly: OK", "--print-timeout", "30s", "--model", model],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=45,
@@ -512,6 +954,101 @@ class TokenPool:
 
 
 # ── Sandbox creation (kept from original) ──
+def _checkout_issue_branch(sandbox: Path, issue_id: str) -> None:
+    branch_name = f"feature/{issue_id.lower()}"
+    subprocess.run([
+        "git", "checkout", "-B", branch_name
+    ], cwd=sandbox, capture_output=True, text=True, timeout=10)
+
+
+def refresh_warm_cache_if_needed(source: Path, warm_cache: Path) -> None:
+    """
+    Fetch the latest main SHA from remote origin. If different from the current
+    SHA of the warm cache, refresh/update the warm cache clone.
+    """
+    if not source.exists() or not warm_cache.exists():
+        return
+
+    # 1. Get the remote origin URL of the source repository
+    try:
+        url_res = subprocess.run(
+            ["git", "config", "--get", "remote.origin.url"],
+            cwd=source, capture_output=True, text=True, timeout=10
+        )
+        remote_url = url_res.stdout.strip()
+    except Exception as e:
+        print(f"  [cache-refresh] Failed to get remote URL for {source}: {e}", flush=True)
+        return
+
+    if not remote_url:
+        print(f"  [cache-refresh] No remote URL found for {source}", flush=True)
+        return
+
+    # 2. Get the latest main branch SHA from the remote repository
+    try:
+        ls_res = subprocess.run(
+            ["git", "ls-remote", remote_url, "refs/heads/main"],
+            capture_output=True, text=True, timeout=20
+        )
+        if ls_res.returncode != 0:
+            # Try master branch
+            ls_res = subprocess.run(
+                ["git", "ls-remote", remote_url, "refs/heads/master"],
+                capture_output=True, text=True, timeout=20
+            )
+
+        if ls_res.returncode == 0 and ls_res.stdout.strip():
+            latest_sha = ls_res.stdout.split()[0].strip()
+        else:
+            print(f"  [cache-refresh] Failed to query remote SHA for {remote_url}", flush=True)
+            return
+    except Exception as e:
+        print(f"  [cache-refresh] Failed to get latest remote SHA: {e}", flush=True)
+        return
+
+    # 3. Get the current SHA of the warm cache
+    try:
+        current_res = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=warm_cache, capture_output=True, text=True, timeout=10
+        )
+        current_sha = current_res.stdout.strip()
+    except Exception as e:
+        print(f"  [cache-refresh] Failed to get current warm cache SHA: {e}", flush=True)
+        current_sha = ""
+
+    # 4. If different, refresh the warm cache clone
+    if latest_sha != current_sha:
+        print(f"  [cache-refresh] Refreshing warm cache {warm_cache.name} from {current_sha[:8]} to {latest_sha[:8]}", flush=True)
+        try:
+            # Fetch the latest main/master from the remote URL
+            fetch_res = subprocess.run(
+                ["git", "fetch", remote_url, "main"],
+                cwd=warm_cache, capture_output=True, text=True, timeout=60
+            )
+            if fetch_res.returncode != 0:
+                fetch_res = subprocess.run(
+                    ["git", "fetch", remote_url, "master"],
+                    cwd=warm_cache, capture_output=True, text=True, timeout=60
+                )
+
+            if fetch_res.returncode == 0:
+                reset_res = subprocess.run(
+                    ["git", "reset", "--hard", "FETCH_HEAD"],
+                    cwd=warm_cache, capture_output=True, text=True, timeout=20
+                )
+                if reset_res.returncode == 0:
+                    print(f"  [cache-refresh] Warm cache {warm_cache.name} updated to {latest_sha[:8]} successfully", flush=True)
+                else:
+                    print(f"  [cache-refresh] Failed to reset warm cache: {reset_res.stderr}", flush=True)
+            else:
+                print(f"  [cache-refresh] Failed to fetch into warm cache: {fetch_res.stderr}", flush=True)
+        except Exception as e:
+            print(f"  [cache-refresh] Error during warm cache refresh: {e}", flush=True)
+    else:
+        print(f"  [cache-refresh] Warm cache {warm_cache.name} is already up-to-date ({latest_sha[:8]})", flush=True)
+
+
 def create_sandbox(issue_id: str, source: Path) -> Path:
     sandbox = SANDBOX_ROOT / issue_id
     if sandbox.is_symlink():
@@ -529,6 +1066,10 @@ def create_sandbox(issue_id: str, source: Path) -> Path:
 
     cache_name = source.name
     warm_cache = Path(os.environ.get("AGY_WARM_CACHE_ROOT", str(Path.home() / "work" / "agy_warm_cache"))) / cache_name
+    
+    # GRO-3161: Warm-cache refresh on ticket pickup
+    refresh_warm_cache_if_needed(source, warm_cache)
+
     if warm_cache.exists() and warm_cache.is_dir():
         result = subprocess.run(
             ["git", "clone", "--depth", "1", "--no-local", str(warm_cache), str(sandbox)],
@@ -536,7 +1077,8 @@ def create_sandbox(issue_id: str, source: Path) -> Path:
         )
         if result.returncode == 0:
             print(f"  [{issue_id}] warm-cache clone from {cache_name}", flush=True)
-            return sandbox
+            _checkout_issue_branch(sandbox, issue_id)
+            return finalize_sandbox(issue_id, sandbox)
         print(f"  [{issue_id}] warm-cache clone failed, falling back...", flush=True)
 
     try:
@@ -546,7 +1088,8 @@ def create_sandbox(issue_id: str, source: Path) -> Path:
         )
         if result.returncode == 0:
             print(f"  [{issue_id}] shallow-cloned from {source}", flush=True)
-            return sandbox
+            _checkout_issue_branch(sandbox, issue_id)
+            return finalize_sandbox(issue_id, sandbox)
     except (subprocess.TimeoutExpired, FileNotFoundError):
         pass
 
@@ -569,13 +1112,86 @@ def create_sandbox(issue_id: str, source: Path) -> Path:
                         "GIT_COMMITTER_EMAIL": "sandbox@local"},
                    timeout=30)
     print(f"  [{issue_id}] rsync'd + git init'd", flush=True)
-    return sandbox
+    _checkout_issue_branch(sandbox, issue_id)
+    return finalize_sandbox(issue_id, sandbox)
 
 
 def write_task_file(issue_id: str, task_content: str) -> Path:
     task_path = SANDBOX_ROOT / issue_id / "AGY_TASK.md"
     task_path.write_text(task_content)
     return task_path
+
+
+def reverify_sandbox_ignore_files(issue_id: str, sandbox: Path) -> dict[str, Any]:
+    """Per-launch guard: restore sandbox ignore files before AGY dispatch.
+
+    AGY can edit files inside its sandbox. Before each launch, do a cheap
+    existence/content check and restore canonical ignore constraints if the
+    agent deleted or modified them. This skips plugin optimization and any full
+    workspace scan so the hook stays on the hot launch path.
+    """
+
+    started = time.perf_counter()
+    try:
+        script_dir = Path(__file__).resolve().parent
+        if str(script_dir) not in sys.path:
+            sys.path.insert(0, str(script_dir))
+        import agy_workspace_optimizer
+    except Exception as exc:
+        print(f"  [{issue_id}] ⚠️ ignore guard unavailable: {exc}", flush=True)
+        return {"ok": False, "status": "warning", "error": f"{type(exc).__name__}: {exc}"}
+
+    standard = agy_workspace_optimizer.managed_ignore_block()
+    needs_rewrite: list[dict[str, str]] = []
+    for file_name in agy_workspace_optimizer.IGNORE_FILES:
+        path = sandbox / file_name
+        try:
+            if not path.exists():
+                needs_rewrite.append({"file": file_name, "status": "missing", "path": str(path)})
+            elif path.read_text(encoding="utf-8", errors="replace") != standard:
+                needs_rewrite.append({"file": file_name, "status": "modified", "path": str(path)})
+        except OSError as exc:
+            needs_rewrite.append({"file": file_name, "status": "unreadable", "path": str(path), "reason": str(exc)})
+
+    if not needs_rewrite:
+        return {"ok": True, "status": "unchanged", "elapsed_ms": round((time.perf_counter() - started) * 1000, 3)}
+
+    result: dict[str, Any] = {}
+    errors: list[Exception] = []
+
+    def _rewrite() -> None:
+        try:
+            result.update(agy_workspace_optimizer.enforce_standard_exclusions(sandbox))
+        except Exception as exc:  # pragma: no cover - defensive launch guard
+            errors.append(exc)
+
+    writer = threading.Thread(target=_rewrite, name=f"ignore-guard-{issue_id}", daemon=True)
+    writer.start()
+    writer.join(float(os.environ.get("AGY_IGNORE_GUARD_JOIN_SEC", "0.05")))
+
+    elapsed_ms = round((time.perf_counter() - started) * 1000, 3)
+    changed = ", ".join(f"{item['file']}:{item['status']}" for item in needs_rewrite)
+    if writer.is_alive():
+        print(
+            f"  [{issue_id}] ⚠️ ignore guard rewrite still running after {elapsed_ms}ms "
+            f"({changed}); dispatch will continue",
+            flush=True,
+        )
+        return {"ok": True, "status": "rewrite_pending", "elapsed_ms": elapsed_ms, "files": needs_rewrite}
+    if errors:
+        print(f"  [{issue_id}] ⚠️ ignore guard rewrite failed: {errors[0]}", flush=True)
+        return {"ok": False, "status": "warning", "elapsed_ms": elapsed_ms, "error": str(errors[0]), "files": needs_rewrite}
+
+    result["status"] = "restored"
+    result["elapsed_ms"] = elapsed_ms
+    print(f"  [{issue_id}] ⚠️ ignore guard restored constraints in {elapsed_ms}ms ({changed})", flush=True)
+    threading.Thread(
+        target=publish_bus_event,
+        args=("workspace.ignore_guard", {"issue_id": issue_id, "sandbox": str(sandbox), **result}),
+        name=f"ignore-guard-bus-{issue_id}",
+        daemon=True,
+    ).start()
+    return result
 
 
 def heartbeat_watcher(issue_id, sandbox, proc_pid,
@@ -720,11 +1336,11 @@ def _unregister_proc(issue_id: str) -> None:
     with _ACTIVE_PROCS_LOCK:
         _ACTIVE_PROCS.pop(issue_id, None)
 
-def terminate_all_active_procs(timeout: float = 5.0) -> int:
-    """Terminate every active agy-bin subprocess. Returns count killed.
+def terminate_all_active_procs(timeout: float = 5.0) -> list[str]:
+    """Terminate every active agy-bin subprocess. Returns list of issue_ids terminated/killed.
     Called from EventDrivenSupervisor.shutdown() to prevent orphans.
     """
-    killed = 0
+    interrupted = []
     with _ACTIVE_PROCS_LOCK:
         snapshot = list(_ACTIVE_PROCS.items())
     for issue_id, proc in snapshot:
@@ -738,19 +1354,20 @@ def terminate_all_active_procs(timeout: float = 5.0) -> int:
                     print(f"  [shutdown] agy-bin for {issue_id} did not exit, sending SIGKILL", flush=True)
                     proc.kill()
                     proc.wait()
-                killed += 1
+                interrupted.append(issue_id)
         except Exception as e:
             print(f"  [shutdown] failed to terminate agy-bin for {issue_id}: {e}", flush=True)
         finally:
             _unregister_proc(issue_id)
-    return killed
+    return interrupted
 
 # ── AGY session runner (kept from original) ──
 def run_agy_session(issue_id: str, sandbox: Path, task_path: Path, log_path: Path,
                     model: str, token_pool: TokenPool = None,
                     jitter_range: tuple = LAUNCH_JITTER_RANGE,
                     token: str = None,
-                    lane: str = "default") -> dict:
+                    lane: str = "default",
+                    schema_metrics: dict | None = None) -> dict:
     # Per-launch random jitter (independent per session)
     jitter = random.uniform(*jitter_range)
     print(f"  [{issue_id}] jitter: {jitter:.1f}s before launch", flush=True)
@@ -796,12 +1413,11 @@ def run_agy_session(issue_id: str, sandbox: Path, task_path: Path, log_path: Pat
 
     cmd = [
         AGY_BIN,
-        "--print",
-        "INJECTED_VIA_STDIN",
+        "--dir", str(sandbox),
+        "--print", prompt,
         "--dangerously-skip-permissions",
         "--print-timeout", PRINT_TIMEOUT,
         "--sandbox",
-        "--add-dir", str(sandbox),
         "--model", model,
     ]
 
@@ -852,27 +1468,45 @@ def run_agy_session(issue_id: str, sandbox: Path, task_path: Path, log_path: Pat
         # in real time (otherwise 4KB-buffered writes can sit idle for minutes while
         # AGY actively reasons — we'd incorrectly flag as stagnant).
         logf = open(log_path, "w", buffering=1)
+        if schema_metrics:
+            logf.write(
+                "dispatch.tokens.schemas_estimate="
+                f"{schema_metrics.get('schemas_estimate', 0)} "
+                f"actions={schema_metrics.get('allowed_action_count', 0)} "
+                f"range={schema_metrics.get('schemas_estimate_min', 0)}-"
+                f"{schema_metrics.get('schemas_estimate_max', 0)}\n"
+            )
         try:
-            stdin_pipe = subprocess.PIPE
+            # GRO-3310: deliver the bounded instruction prompt as the
+            # --print argument while --dir points AGY at the sandbox. Do not
+            # paste a signed payload over stdin; AGY should discover files via
+            # the sandbox path and task file.
             proc = subprocess.Popen(
                 cmd,
                 stdout=logf,
                 stderr=subprocess.STDOUT,
-                stdin=stdin_pipe,
+                stdin=None,
                 cwd=str(sandbox),
                 env={**os.environ, "HOME": os.environ.get("HOME", str(Path.home()))},
             )
-            if proc.stdin is not None:
-                import hmac
-                secret = os.environ.get("AGY_TASK_SIGNING_SECRET", "default_secret")
-                signature = hmac.new(secret.encode(), prompt.encode(), hashlib.sha256).hexdigest()
-                payload_data = json.dumps({
-                    "signature": signature,
-                    "payload": prompt
-                })
-                proc.stdin.write(payload_data.encode() + b"\n")
-                proc.stdin.flush()
             _register_proc(issue_id, proc)
+            
+            # Register in unified harness runs DB
+            try:
+                import sys
+                if "/home/ubuntu/work/prismatic-engine-stable" not in sys.path:
+                    sys.path.insert(0, "/home/ubuntu/work/prismatic-engine-stable")
+                from prismatic.harnesses.base import get_harness_db
+                run_id = f"agy-sb-{issue_id}-{int(time.time())}"
+                conn = get_harness_db()
+                conn.execute(
+                    "INSERT INTO harness_runs VALUES (?, 'agy-cli', ?, 'running', ?, ?, ?, 0, 0, 0.0, ?, ?, NULL, NULL)",
+                    (run_id, issue_id, proc.pid, str(log_path), model, time.time(), time.time())
+                )
+                conn.commit()
+                conn.close()
+            except Exception as db_err:
+                print(f"  [{issue_id}] Failed to log sandbox run to harness DB: {db_err}", flush=True)
         except Exception as e:
             logf.close()
             raise e
@@ -1098,6 +1732,8 @@ def run_agy_session(issue_id: str, sandbox: Path, task_path: Path, log_path: Pat
                         try:
                             proc.stdin.write(b"yes\n")
                             proc.stdin.flush()
+                            proc.stdin.close()
+                            proc.stdin = None
                             print(f"  [{issue_id}] Piped 'yes' to stdin", flush=True)
                         except Exception as stdin_err:
                             print(f"  [{issue_id}] Failed to pipe to stdin: {stdin_err}", flush=True)
@@ -1130,26 +1766,29 @@ def run_agy_session(issue_id: str, sandbox: Path, task_path: Path, log_path: Pat
                         logf.close()
                         logf = open(log_path, "a", buffering=1)
                         try:
-                            stdin_pipe = subprocess.PIPE
+                            # GRO-3310: relaunch with the same --dir-scoped
+                            # command shape. No stdin payload/text paste.
                             proc = subprocess.Popen(
                                 cmd,
                                 stdout=logf,
                                 stderr=subprocess.STDOUT,
-                                stdin=stdin_pipe,
+                                stdin=None,
                                 cwd=str(sandbox),
                                 env={**os.environ, "HOME": os.environ.get("HOME", str(Path.home()))},
                             )
-                            if proc.stdin is not None:
-                                import hmac
-                                secret = os.environ.get("AGY_TASK_SIGNING_SECRET", "default_secret")
-                                signature = hmac.new(secret.encode(), prompt.encode(), hashlib.sha256).hexdigest()
-                                payload_data = json.dumps({
-                                    "signature": signature,
-                                    "payload": prompt
-                                })
-                                proc.stdin.write(payload_data.encode() + b"\n")
-                                proc.stdin.flush()
                             _register_proc(issue_id, proc)
+                            
+                            # Update PID in harness DB on relaunch
+                            try:
+                                conn = get_harness_db()
+                                conn.execute(
+                                    "UPDATE harness_runs SET pid = ? WHERE issue_id = ? AND status = 'running'",
+                                    (proc.pid, issue_id)
+                                )
+                                conn.commit()
+                                conn.close()
+                            except Exception as db_err:
+                                print(f"  [{issue_id}] Failed to update sandbox PID on relaunch: {db_err}", flush=True)
                         except Exception as relaunch_err:
                             print(f"  [{issue_id}] Relaunch failed: {relaunch_err}", flush=True)
                             logf.close()
@@ -1176,6 +1815,21 @@ def run_agy_session(issue_id: str, sandbox: Path, task_path: Path, log_path: Pat
 
         logf.close()
         elapsed = time.time() - started_at
+        
+        # Update unified harness runs DB on process exit
+        try:
+            status_val = "completed" if (exit_code == 0 or has_done) else "failed"
+            if killed_for_inactivity:
+                status_val = "timeout"
+            conn = get_harness_db()
+            conn.execute(
+                "UPDATE harness_runs SET status = ?, finished_at = ?, exit_code = ? WHERE issue_id = ? AND status = 'running'",
+                (status_val, time.time(), exit_code, issue_id)
+            )
+            conn.commit()
+            conn.close()
+        except Exception as db_err:
+            print(f"  [{issue_id}] Failed to update sandbox run status in harness DB: {db_err}", flush=True)
 
         log_content = log_path.read_text() if log_path.exists() else ""
         result_path = sandbox / "RESULT.md"
@@ -1299,6 +1953,7 @@ AGY_LABELS_DEFAULT = [
     "agent:ned-code",
     "agent:ned-infra",
     "agent:ned-audit",
+    "agent:ned-review",
     "agent:jules",
     "agent:kai",
     "agent:kai-content",
@@ -1311,6 +1966,12 @@ AGY_LABELS_DEFAULT = [
     "agent:qwen-local",
     "agent:post-publish-doc-update",
     "agent:post-publish-done",
+    "agent:post-publish-review",
+    "agent:post-publish-review-agy-approved",
+    "agent:post-publish-review-jules-approved",
+    "agent:done",
+    "agent:peer-review",
+    "agent:needs-human-review",
     "agent:antigravity-cli",
 ]
 LANE_ORDER = ["on-demand", "priority", "project", "backlog"]
@@ -1340,13 +2001,21 @@ def _load_lane_caps_into_defaults():
 # Per-issue model routing: when an issue has an agent:agy-* label, override the
 # supervisor's default model. Mirrors agent_dispatcher.py:893-905 LABEL_TO_MODEL.
 # Source of truth: agy_pool_aware_router.py ANTHROPIC_TIERS / GEMINI_TIERS.
+# v3 fix (Jul 2 2026): use the ACTUAL API-returned model names (dashes, not dots).
+# The dot-version ("claude-sonnet-4.6-thinking") is a config name that AGY doesn't
+# recognize — workers would hang in `pipe_read` waiting for the model loader to
+# return. The API returns "claude-sonnet-4-6" (no -thinking suffix on Sonnet).
+# See git commit history for the full investigation.
 LABEL_TO_MODEL = {
+    "agent:agy-doc-summarizer": "google/gemini-3.1-flash-lite-preview",
+    "agent:agy-doc-writer": "chat_23310",
+
     "agent:agy":              "gemini-3.5-flash",
     "agent:agy-flash-high":   "gemini-3.5-flash",
     "agent:agy-pro":          "gemini-3.1-pro-high",
-    "agent:agy-sonnet":       "claude-sonnet-4.6-thinking",
-    "agent:agy-thinking":     "claude-opus-4.6-thinking",
-    "agent:agy-opus":         "claude-opus-4.6-thinking",
+    "agent:agy-sonnet":       "claude-sonnet-4-6",  # was: claude-sonnet-4.6-thinking
+    "agent:agy-thinking":     "claude-opus-4-6-thinking",
+    "agent:agy-opus":         "claude-opus-4-6-thinking",
     "agent:agy-gemini-pro":   "gemini-3.1-pro-high",
     "agent:agy-gpt-oss":      "gemini-3.5-flash",
     "agent:antigravity-cli":  "gemini-3.5-flash",
@@ -1383,10 +2052,8 @@ from prismatic.curator.issue_to_task import (
     BACKLOG_READY_LABELS,
     PRIORITY_LABELS,
     PROJECT_PWP_LABELS,
-    REVIEW_ONLY_LABELS,
     _parse_linear_datetime,
     issue_labels,
-    is_review_only_issue,
     task_priority_score,
     assign_lane,
     build_task_content_from_issue,
@@ -1615,79 +2282,92 @@ class LaneScheduler:
 
 # ── Linear fetcher (kept from original) ──
 def fetch_linear_issues(strict_opt_in: bool = False) -> list:
-    import urllib.request
-    key_path = Path(os.environ.get("HERMES_PROFILE_ENV", str(Path.home() / ".hermes" / "profiles" / "orchestrator" / ".env")))
-    if not key_path.exists():
+    if not _read_linear_api_key():
         return []
-    key = None
-    for line in key_path.read_text().split("\n"):
-        if "LINEAR" in line and "KEY" in line and "=" in line:
-            key = line.split("=", 1)[1].strip().strip("\"'")
+
+    labels = get_agy_labels()
+
+    all_nodes = []
+    after = None
+    has_next = True
+
+    while has_next:
+        after_clause = f', after: "{after}"' if after else ""
+        query = """
+        {
+          issues(filter: {
+            labels: {some: {name: {in: %s}}},
+            state: {name: {in: ["Todo", "Backlog"]}}
+          }, orderBy: createdAt, first: 50%s) {
+            nodes { id identifier title description createdAt priority state { name } labels { nodes { name } } }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+        """ % (json.dumps(labels), after_clause)
+
+        try:
+            data = _linear_graphql(query, source="agy_supervisor.fetch_issues", timeout=15)
+            
+            if data.get("errors"):
+                for err in data["errors"]:
+                    print(f"Linear fetch GraphQL error: {err.get('message')}")
+                break
+
+            issues_conn = data.get("data", {}).get("issues", {})
+            page_nodes = issues_conn.get("nodes", [])
+            all_nodes.extend(page_nodes)
+
+            if not page_nodes:
+                break
+
+            page_info = issues_conn.get("pageInfo", {})
+            has_next = page_info.get("hasNextPage", False)
+            after = page_info.get("endCursor")
+            if not after:
+                break
+        except LinearBudgetBlocked as e:
+            print(f"Linear fetch skipped: {e}")
             break
-    if not key:
-        return []
+        except Exception as e:
+            print(f"Linear fetch failed: {e}")
+            break
 
-    labels = [label for label in get_agy_labels() if label not in REVIEW_ONLY_LABELS]
-
-    query = """
-    {
-      issues(filter: {
-        labels: {some: {name: {in: %s}}},
-        state: {name: {in: ["Todo", "Backlog"]}}
-      }, orderBy: createdAt, first: 50) {
-        nodes { id identifier title description createdAt priority state { name } labels { nodes { name } } }
-      }
-    }
-    """ % json.dumps(labels)
-
-    req = urllib.request.Request(
-        "https://api.linear.app/graphql",
-        data=json.dumps({"query": query}).encode(),
-        headers={"Authorization": key, "Content-Type": "application/json"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=15) as r:
-            data = json.loads(r.read())
-        nodes = data.get("data", {}).get("issues", {}).get("nodes", [])
-        nodes = [node for node in nodes if not is_review_only_issue(node)]
-        if strict_opt_in:
-            # strict_opt_in (cron-mode) filter: only dispatch:ready or
-            # dispatch:priority. The lane-aware auto-eligibility in
-            # assign_lane() also accepts (lane label + prio 1 OR (prio 2 + recent)),
-            # but that's a SECOND filter applied AFTER this Linear fetch.
-            # To avoid the bypass, include the same lane+priority combinations
-            # here that assign_lane() would accept (Jul 1 2026 — Fred).
-            allowed = {"dispatch:ready", "dispatch:priority"}
-            PRIO1_OR_RECENT = []  # built below after we know priority + age
-            filtered = []
-            for node in nodes:
-                node_labels = {l["name"] for l in (node.get("labels") or {}).get("nodes", [])}
-                if node_labels & allowed:
-                    filtered.append(node)
-                    continue
-                # Auto-eligibility mirror: lane label + prio 1 OR (prio 2 + age < 14d)
-                has_lane = any(l.startswith("agent:") for l in node_labels)
-                priority = int(node.get("priority") or 0)
-                created_at = (node.get("createdAt") or "")
-                if has_lane and priority == 1:
-                    filtered.append(node)
-                    continue
-                if has_lane and priority == 2 and created_at:
-                    try:
-                        from datetime import datetime, timezone
-                        created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-                        age_days = (datetime.now(timezone.utc) - created).days
-                        if age_days < 14:
-                            filtered.append(node)
-                            continue
-                    except Exception:
-                        pass
-                print(f"  [auto-resume-gate] strict-opt-in skip {node.get('identifier')}: missing dispatch:ready/dispatch:priority and not auto-eligible", flush=True)
-            return filtered
-        return nodes
-    except Exception as e:
-        print(f"Linear fetch failed: {e}")
-        return []
+    nodes = all_nodes
+    if strict_opt_in:
+        # strict_opt_in (cron-mode) filter: only dispatch:ready or
+        # dispatch:priority. The lane-aware auto-eligibility in
+        # assign_lane() also accepts (lane label + prio 1 OR (prio 2 + recent)),
+        # but that's a SECOND filter applied AFTER this Linear fetch.
+        # To avoid the bypass, include the same lane+priority combinations
+        # here that assign_lane() would accept (Jul 1 2026 — Fred).
+        allowed = {"dispatch:ready", "dispatch:priority"}
+        PRIO1_OR_RECENT = []  # built below after we know priority + age
+        filtered = []
+        for node in nodes:
+            node_labels = {l["name"] for l in (node.get("labels") or {}).get("nodes", [])}
+            if node_labels & allowed:
+                filtered.append(node)
+                continue
+            # Auto-eligibility mirror: lane label + prio 1 OR (prio 2 + age < 14d)
+            has_lane = any(l.startswith("agent:") for l in node_labels)
+            priority = int(node.get("priority") or 0)
+            created_at = (node.get("createdAt") or "")
+            if has_lane and priority == 1:
+                filtered.append(node)
+                continue
+            if has_lane and priority == 2 and created_at:
+                try:
+                    from datetime import datetime, timezone
+                    created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                    age_days = (datetime.now(timezone.utc) - created).days
+                    if age_days < 14:
+                        filtered.append(node)
+                        continue
+                except Exception:
+                    pass
+            print(f"  [auto-resume-gate] strict-opt-in skip {node.get('identifier')}: missing dispatch:ready/dispatch:priority and not auto-eligible", flush=True)
+        return filtered
+    return nodes
 
 
 def fetch_single_linear_issue(identifier: str) -> dict | None:
@@ -1698,16 +2378,7 @@ def fetch_single_linear_issue(identifier: str) -> dict | None:
     no /tmp/issue-batches/<id>.txt cache, so AGY_TASK.md has the full
     issue description instead of a 16-byte placeholder.
     """
-    import urllib.request
-    key_path = Path(os.environ.get("HERMES_PROFILE_ENV", str(Path.home() / ".hermes" / "profiles" / "orchestrator" / ".env")))
-    if not key_path.exists():
-        return None
-    key = None
-    for line in key_path.read_text().split("\n"):
-        if "LINEAR" in line and "KEY" in line and "=" in line:
-            key = line.split("=", 1)[1].strip().strip("\"'")
-            break
-    if not key:
+    if not _read_linear_api_key():
         return None
 
     query = """
@@ -1719,15 +2390,12 @@ def fetch_single_linear_issue(identifier: str) -> dict | None:
       }
     }
     """
-    req = urllib.request.Request(
-        "https://api.linear.app/graphql",
-        data=json.dumps({"query": query, "variables": {"iid": identifier}}).encode(),
-        headers={"Authorization": key, "Content-Type": "application/json"},
-    )
     try:
-        with urllib.request.urlopen(req, timeout=15) as r:
-            data = json.loads(r.read())
+        data = _linear_graphql(query, {"iid": identifier}, source="agy_supervisor.fetch_single_issue", timeout=15)
         return data.get("data", {}).get("issue")
+    except LinearBudgetBlocked as e:
+        print(f"  [linear-fetch] {identifier} skipped: {e}", flush=True)
+        return None
     except Exception as e:
         print(f"  [linear-fetch] {identifier} failed: {e}", flush=True)
         return None
@@ -1918,6 +2586,7 @@ class EventDrivenSupervisor:
         self.active_count = 0
         self.active_lock = threading.Lock()
         self.idle_event = threading.Event()  # Set when no workers are active
+        self.new_work_event = threading.Event()  # Set when new work is added
         self.consecutive_failures = 0
         self.circuit_lock = threading.Lock()
         self.circuit_tripped = False
@@ -1979,6 +2648,7 @@ class EventDrivenSupervisor:
         if added:
             # Wake up the main loop from long-run idle wait
             self.idle_event.clear()
+            self.new_work_event.set()
             snap = self.scheduler.snapshot()
             lane = task.get("lane", "default")
             print(f"  [queue:{lane}] + {issue_id} (snapshot: {snap})", flush=True)
@@ -1996,12 +2666,13 @@ class EventDrivenSupervisor:
         log_path = LOGS_ROOT / f"{issue_id}.log"
         return sandbox, task_path, log_path
 
-    def run_session(self, issue_id: str, sandbox: Path, task_path: Path, log_path: Path, run_model: str, token_name: str, lane: str) -> dict:
+    def run_session(self, issue_id: str, sandbox: Path, task_path: Path, log_path: Path, run_model: str, token_name: str, lane: str, schema_metrics: dict | None = None) -> dict:
         return run_agy_session(
             issue_id, sandbox, task_path, log_path,
             run_model, jitter_range=self.launch_jitter_range,
             token=token_name,
-            lane=lane
+            lane=lane,
+            schema_metrics=schema_metrics
         )
 
     def post_gate_alert(self, reason: str, detail: str = "") -> None:
@@ -2078,6 +2749,7 @@ class EventDrivenSupervisor:
                     self.mark_completed(issue_id)
                     continue
 
+
                 # At task pickup (before run_agy_session):
                 token_info = None
                 if self.token_pool:
@@ -2146,11 +2818,83 @@ class EventDrivenSupervisor:
 
                 # Run the session
                 print(f"  [worker-{worker_id}:{lane}] picked up {issue_id}", flush=True)
+                
+                # Pre-dispatch Hook 1: verify .antigravityignore exists and is unmodified (GRO-3306)
+                try:
+                    verify_antigravityignore(sandbox, issue_id)
+                except Exception as ign_ex:
+                    print(f"ERROR: Pre-dispatch ignore verification hook failed: {ign_ex}", flush=True)
+
+                # Pre-dispatch Hook 2: read settings.json, count permissions.allow,
+                # estimate T_schemas token cost, and log to bus.
+                schema_metrics = {"schemas_estimate": 0, "allowed_action_count": 0, "schemas_estimate_min": 0, "schemas_estimate_max": 0}
+                try:
+                    schema_metrics = estimate_t_schemas_tokens()
+                    print(
+                        "dispatch.tokens.schemas_estimate="
+                        f"{schema_metrics['schemas_estimate']} "
+                        f"actions={schema_metrics['allowed_action_count']} "
+                        f"range={schema_metrics['schemas_estimate_min']}-{schema_metrics['schemas_estimate_max']}",
+                        flush=True,
+                    )
+                    publish_bus_event("dispatch.tokens.schemas_estimate", {
+                        "issue_id": issue_id,
+                        **schema_metrics,
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    })
+                except Exception as pre_ex:
+                    print(f"ERROR: Pre-dispatch hook failed: {pre_ex}", flush=True)
+
+                # Pre-dispatch Hook 3: Run Universal Environment Guard (GRO-3295)
+                try:
+                    script_dir = Path(__file__).resolve().parent
+                    guard_path = script_dir / "agy_env_guard.py"
+                    if guard_path.exists():
+                        print(f"  [{issue_id}] Pre-dispatch check: running environment guard on {sandbox}", flush=True)
+                        res = subprocess.run(
+                            [sys.executable, str(guard_path), str(sandbox)],
+                            capture_output=True,
+                            text=True,
+                            check=False
+                        )
+                        if res.returncode != 0:
+                            print(f"  [{issue_id}] ❌ Environment guard check failed (rc={res.returncode}):", flush=True)
+                            print(res.stdout, flush=True)
+                        else:
+                            print(f"  [{issue_id}] ✅ Environment guard check passed for {sandbox}", flush=True)
+                except Exception as guard_ex:
+                    print(f"ERROR: Pre-dispatch environment guard hook failed: {guard_ex}", flush=True)
+
+                start_time = time.time()
                 result = self.run_session(
                     issue_id, sandbox, task_path, log_path,
-                    run_model, token_name, lane
+                    run_model, token_name, lane, schema_metrics
                 )
                 result["worker_id"] = worker_id
+                
+                # Post-dispatch Hook: report actual tokens and log to bus
+                try:
+                    actual_in, actual_out = parse_actual_tokens_from_log(log_path)
+                    if actual_in == 0 and actual_out == 0:
+                        actual_in, actual_out = get_actual_tokens(issue_id, start_time)
+                    result["actual_input_tokens"] = actual_in
+                    result["actual_output_tokens"] = actual_out
+                    print(f"dispatch.tokens.actual_input={actual_in}", flush=True)
+                    print(f"dispatch.tokens.actual_output={actual_out}", flush=True)
+                    if log_path.exists():
+                        with open(log_path, "a") as lf:
+                            lf.write(f"\ndispatch.tokens.actual_input={actual_in}\n")
+                            lf.write(f"dispatch.tokens.actual_output={actual_out}\n")
+                    publish_bus_event("dispatch.tokens.actual_tokens", {
+                        "issue_id": issue_id,
+                        "actual_input": actual_in,
+                        "actual_output": actual_out,
+                        "schemas_estimate": schema_metrics.get("schemas_estimate", 0),
+                        "schemas_estimate_delta": actual_in - schema_metrics.get("schemas_estimate", 0) if actual_in else None,
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    })
+                except Exception as post_ex:
+                    print(f"ERROR: Post-dispatch hook failed: {post_ex}", flush=True)
                 result["lane"] = lane
 
                 # Post-condition check: did AGY write RESULT.md?
@@ -2219,6 +2963,9 @@ class EventDrivenSupervisor:
                         "result_path": str(result_path),
                         "has_result_file": result.get("has_result_file", False),
                         "cost_usd_estimated": cost_usd_estimated,
+                        "schemas_estimate": schema_metrics.get("schemas_estimate", 0),
+                        "actual_input_tokens": result.get("actual_input_tokens", 0),
+                        "actual_output_tokens": result.get("actual_output_tokens", 0),
                         "attempt": attempt
                     }
                     self.bus_client.publish_completed(issue_id, payload)
@@ -2238,7 +2985,7 @@ class EventDrivenSupervisor:
                         # agent:done label. The webhook_event_bridge listens for this
                         # label and runs post_publish_review_orchestrator.py.
                         try:
-                            self.linear_client.add_labels(issue_id, ["agent:done"])
+                            self.linear_client.add_labels(issue_id, ["agent:done", "agent:peer-review"])
                         except Exception as _e:
                             # Don't fail the run on label-write error
                             pass
@@ -2279,6 +3026,14 @@ class EventDrivenSupervisor:
                 except Exception as ex:
                     print(f"  [{issue_id}] Linear transition failed (completion): {ex}", flush=True)
 
+                promotion_eligible = bool(
+                    result.get("has_done") or (
+                        result.get("has_partial_result")
+                        and result_path.exists()
+                        and result_path.stat().st_size >= 1024
+                    )
+                )
+
                 with self.results_lock:
                     self.results.append(result)
                 self.record_result_for_circuit(issue_id, result)
@@ -2291,7 +3046,6 @@ class EventDrivenSupervisor:
                     sandbox_dir = SANDBOX_ROOT / issue_id
                     result_md = sandbox_dir / "RESULT.md"
                     if result_md.exists() and result.get("has_result"):
-                        import subprocess
                         validator = (
                             os.environ.get("HERMES_PROFILE_ROOT", str(Path.home() / ".hermes" / "profiles" / "orchestrator")) + "/"
                             "scripts/agent_output_validator.py"
@@ -2306,6 +3060,26 @@ class EventDrivenSupervisor:
                         print(f"  [{issue_id}] ✅ quality-gate fired", flush=True)
                 except Exception as e:
                     # Quality gate fail is non-fatal
+                    pass
+
+                # Completed work promotion: only promote genuine completions,
+                # not abandonment stubs. The promoter refuses main-branch or
+                # no-commit sandboxes, so this is safe to run fire-and-forget.
+                try:
+                    if promotion_eligible:
+                        promoter = (
+                            os.environ.get("HERMES_PROFILE_ROOT", str(Path.home() / ".hermes" / "profiles" / "orchestrator")) + "/"
+                            "scripts/agy_result_promoter.py"
+                        )
+                        subprocess.Popen(
+                            ["python3", promoter, "--issue", issue_id],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            start_new_session=True,
+                        )
+                        print(f"  [{issue_id}] ✅ promotion hook fired", flush=True)
+                except Exception as e:
+                    # Promotion fail is non-fatal
                     pass
 
                 # Per-completion randomized backoff — the heart of organic scaling
@@ -2366,6 +3140,7 @@ class EventDrivenSupervisor:
         # Wait for all queued tasks + active workers to drain. LaneScheduler replaces Queue.join().
         # Initial cap: 1 hour. If workers are still active but sandboxes have
         # recent activity, raise the roof (extend) and keep waiting.
+        self.new_work_event.clear()
         while True:
             if not self.idle_event.wait(timeout=max_cap_sec):
                 # At the cap. Check if any worker is making progress.
@@ -2409,12 +3184,13 @@ class EventDrivenSupervisor:
                 # All workers idle. Wait a bit more in case watchdog adds more.
                 print(f"  All workers idle. Waiting {idle_timeout}s for new arrivals...",
                       flush=True)
-                if not self.idle_event.wait(timeout=idle_timeout):
+                if self.new_work_event.wait(timeout=idle_timeout):
+                    self.new_work_event.clear()
                     # New work arrived during the wait — loop again
                     continue
                 # No new work during the wait. In long_run mode, keep looping
                 # forever (the bus-subscriber thread is the primary dispatch
-                # mechanism and can wake us via idle_event when a new bus
+                # mechanism and can wake us via new_work_event when a new bus
                 # event arrives). The only clean exit is shutdown_event.
                 if long_run:
                     print(f"  🔁 long_run: idle but staying alive. "
@@ -2422,8 +3198,9 @@ class EventDrivenSupervisor:
                     # Block until either shutdown is requested or new work arrives
                     while not self.shutdown_event.is_set():
                         # Wait with periodic check (1min granularity for log heartbeat)
-                        woke = self.idle_event.wait(timeout=60.0)
+                        woke = self.new_work_event.wait(timeout=60.0)
                         if woke:
+                            self.new_work_event.clear()
                             # New work arrived — go back to the top of the loop
                             print(f"  ⚡ New work arrived during long-run idle wait", flush=True)
                             break
@@ -2436,12 +3213,29 @@ class EventDrivenSupervisor:
 
     def shutdown(self):
         self.shutdown_event.set()
-        # Terminate any in-flight agy-bin subprocesses before joining threads.
+        
+        # Wait up to 60s for active AGY processes to finish
+        start_wait = time.time()
+        print(f"  [shutdown] waiting up to 60s for active AGY processes to finish...", flush=True)
+        while time.time() - start_wait < 60.0:
+            with _ACTIVE_PROCS_LOCK:
+                still_running = [issue_id for issue_id, proc in _ACTIVE_PROCS.items() if proc.poll() is None]
+            if not still_running:
+                break
+            time.sleep(0.5)
+
+        # Terminate any remaining in-flight agy-bin subprocesses before joining threads.
         # Without this, a circuit-trip mid-run would leave orphans because
         # worker threads die without sending SIGTERM to their children.
-        killed = terminate_all_active_procs(timeout=5.0)
-        if killed:
-            print(f"  [shutdown] terminated {killed} active agy-bin subprocess(es)", flush=True)
+        interrupted = terminate_all_active_procs(timeout=5.0)
+        if interrupted:
+            print(f"  [shutdown] terminated {len(interrupted)} active agy-bin subprocess(es): {interrupted}", flush=True)
+            for issue_id in interrupted:
+                try:
+                    print(f"  [shutdown] marking interrupted ticket {issue_id} with 'supervisor:interrupted' label", flush=True)
+                    self.linear_client.add_labels(issue_id, ["supervisor:interrupted"])
+                except Exception as e:
+                    print(f"  [shutdown] failed to add 'supervisor:interrupted' label to {issue_id}: {e}", flush=True)
         for t in self.workers:
             t.join(timeout=10)
 
@@ -2554,6 +3348,200 @@ def bus_event_subscriber_loop(supervisor, stop_event: threading.Event, poll_inte
 SUPERVISOR_LOCK_PATH = os.path.join(
     os.path.expanduser("~"), ".prismatic", "run", "supervisor.lock"
 )
+_PREVIOUS_SUPERVISOR_START_EPOCH = None
+
+
+def ensure_supervisor_process_group():
+    """Make this supervisor the leader of its own process group when possible.
+
+    A supervisor launched from an interactive shell otherwise inherits the
+    shell's process group. As group leader, it can be stopped with
+    `kill -TERM -<pgid>`, and AGY workers inherit that group instead of being
+    left behind when a watchdog targets the supervisor tree.
+    """
+    if os.name != "posix":
+        return None
+    try:
+        pid = os.getpid()
+        pgid = os.getpgrp()
+        if pid != pgid:
+            os.setpgrp()
+            pgid = os.getpgrp()
+        print(f"  [process-group] supervisor pid={pid} pgid={pgid}", flush=True)
+        return pgid
+    except OSError as e:
+        print(f"  [process-group] could not become process-group leader: {e}", flush=True)
+        try:
+            return os.getpgrp()
+        except OSError:
+            return None
+
+
+def _extract_issue_id_from_event_payload(payload):
+    nested = payload.get("payload") if isinstance(payload.get("payload"), dict) else payload
+    return str(nested.get("issue_id") or nested.get("identifier") or nested.get("issue") or "")
+
+
+def publish_agent_orphan(issue_id: str, payload: dict) -> None:
+    """Publish an agent.orphan event to the canonical bus (best effort)."""
+    if not issue_id:
+        return
+    db_path = Path(get_canonical_bus_path())
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    event_dict = {
+        "type": "agent.orphan",
+        "source": "supervisor",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "payload": {"issue_id": issue_id, **payload},
+    }
+    dedup_key = payload.get("dedup_key") or f"agent.orphan:{issue_id}:{payload.get('launched_rowid', int(time.time()))}"
+    with _bus_sqlite_lock:
+        conn = sqlite3.connect(str(db_path), timeout=5)
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS events (
+                    rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+                    dedup_key TEXT UNIQUE,
+                    topic TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    ts REAL NOT NULL,
+                    processed INTEGER DEFAULT 0
+                )
+                """
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO events (dedup_key, topic, payload_json, ts) VALUES (?, ?, ?, ?)",
+                (dedup_key, "agent.orphan", json.dumps(event_dict, default=str), time.time()),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def reap_orphan_agy_workers(previous_supervisor_started_at) -> int:
+    """Terminate agy-bin processes older than the previous supervisor start."""
+    if previous_supervisor_started_at is None:
+        return 0
+    try:
+        ps = subprocess.run(
+            ["ps", "-eo", "pid=,ppid=,etimes=,comm=,args="],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except Exception as e:
+        print(f"  [orphan-reaper] ps scan failed: {e}", flush=True)
+        return 0
+
+    now = time.time()
+    victims = []
+    agy_bin_name = os.path.basename(AGY_BIN)
+    for line in ps.stdout.splitlines():
+        parts = line.strip().split(None, 4)
+        if len(parts) < 5:
+            continue
+        try:
+            pid = int(parts[0]); ppid = int(parts[1]); etimes = int(parts[2])
+        except ValueError:
+            continue
+        comm = parts[3]
+        args = parts[4]
+        argv0 = os.path.basename(args.split()[0]) if args.split() else comm
+        if pid == os.getpid():
+            continue
+        if comm not in {"agy", "agy-bin"} and argv0 not in {agy_bin_name, "agy-bin"} and "agy-bin" not in args:
+            continue
+        if now - etimes <= previous_supervisor_started_at:
+            victims.append((pid, ppid, etimes, args[:160]))
+
+    if not victims:
+        print("  [orphan-reaper] no stale agy-bin workers found", flush=True)
+        return 0
+
+    killed = 0
+    print(f"  [orphan-reaper] found {len(victims)} stale agy-bin worker(s)", flush=True)
+    for pid, ppid, etimes, args in victims:
+        print(f"  [orphan-reaper] terminating pid={pid} ppid={ppid} age={etimes}s cmd={args}", flush=True)
+        try:
+            os.kill(pid, signal.SIGTERM)
+            deadline = time.time() + 5.0
+            while time.time() < deadline:
+                try:
+                    os.kill(pid, 0)
+                except OSError:
+                    break
+                time.sleep(0.1)
+            else:
+                print(f"  [orphan-reaper] pid={pid} ignored SIGTERM; sending SIGKILL", flush=True)
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except OSError:
+                    pass
+            killed += 1
+        except OSError as e:
+            print(f"  [orphan-reaper] pid={pid} already gone or inaccessible: {e}", flush=True)
+    return killed
+
+
+def emit_stale_agent_launch_orphans(max_age_sec: float = 1800.0) -> int:
+    """Emit agent.orphan for stale agent_launched bus rows lacking completion."""
+    db_path = get_canonical_bus_path()
+    if not os.path.exists(db_path):
+        return 0
+    cutoff = time.time() - max_age_sec
+    emitted = 0
+    try:
+        conn = sqlite3.connect(db_path, timeout=2)
+        try:
+            rows = conn.execute(
+                """
+                SELECT rowid, topic, payload_json, ts FROM events
+                WHERE topic IN ('agent_launched', 'agent.launched') AND ts < ?
+                ORDER BY rowid ASC LIMIT 200
+                """,
+                (cutoff,),
+            ).fetchall()
+            for rowid, topic, payload_json, launched_ts in rows:
+                try:
+                    payload = json.loads(payload_json)
+                except Exception:
+                    payload = {}
+                issue_id = _extract_issue_id_from_event_payload(payload)
+                if not issue_id:
+                    continue
+                completed = conn.execute(
+                    """
+                    SELECT 1 FROM events
+                    WHERE topic = 'agent.completed' AND ts >= ? AND payload_json LIKE ?
+                    LIMIT 1
+                    """,
+                    (launched_ts, f"%{issue_id}%"),
+                ).fetchone()
+                orphan = conn.execute(
+                    "SELECT 1 FROM events WHERE topic = 'agent.orphan' AND dedup_key = ? LIMIT 1",
+                    (f"agent.orphan:{issue_id}:{rowid}",),
+                ).fetchone()
+                if completed or orphan:
+                    continue
+                publish_agent_orphan(issue_id, {
+                    "launched_rowid": rowid,
+                    "launched_topic": topic,
+                    "launched_ts": launched_ts,
+                    "age_sec": int(time.time() - launched_ts),
+                    "reason": "agent_launched_without_agent_completed",
+                    "dedup_key": f"agent.orphan:{issue_id}:{rowid}",
+                })
+                emitted += 1
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"  [orphan-reaper] stale bus scan failed: {e}", flush=True)
+    if emitted:
+        print(f"  [orphan-reaper] emitted {emitted} agent.orphan event(s) for stale launches", flush=True)
+    return emitted
 
 
 def acquire_supervisor_lock() -> bool:
@@ -2563,6 +3551,7 @@ def acquire_supervisor_lock() -> bool:
     treated as dead and overwritten — this handles the case where a
     supervisor crashed without releasing the lock.
     """
+    global _PREVIOUS_SUPERVISOR_START_EPOCH
     import fcntl
     lock_path = SUPERVISOR_LOCK_PATH
     os.makedirs(os.path.dirname(lock_path), exist_ok=True)
@@ -2570,6 +3559,7 @@ def acquire_supervisor_lock() -> bool:
         # Check for stale lock
         if os.path.exists(lock_path):
             try:
+                previous_mtime = os.path.getmtime(lock_path)
                 with open(lock_path) as f:
                     old_pid = int(f.read().strip() or "0")
                 # Is the old PID still alive?
@@ -2578,6 +3568,7 @@ def acquire_supervisor_lock() -> bool:
                     if old_pid != os.getpid():
                         return False  # Held by another live process
                 except OSError:
+                    _PREVIOUS_SUPERVISOR_START_EPOCH = previous_mtime
                     pass  # Stale
             except (ValueError, OSError):
                 pass
@@ -2636,6 +3627,9 @@ def main():
         print(f"  [lock] another supervisor holds {SUPERVISOR_LOCK_PATH} — exiting", flush=True)
         sys.exit(0)
     atexit.register(release_supervisor_lock)
+    ensure_supervisor_process_group()
+    reap_orphan_agy_workers(_PREVIOUS_SUPERVISOR_START_EPOCH)
+    emit_stale_agent_launch_orphans(max_age_sec=1800.0)
     # Note: --issue and --issues modes (one-shot dispatches) bypass the lock
     # so multiple ad-hoc invocations can still run in parallel.
 
@@ -2665,7 +3659,7 @@ def main():
                         help=f"Watchdog poll interval (default {LINEAR_POLL_INTERVAL}s)")
     parser.add_argument("--lane-mode", choices=["off", "auto"], default="off",
                         help="Enable lane-aware dispatch v2 (default off for compatibility)")
-    parser.add_argument("--active-project", default="pwp",
+    parser.add_argument("--active-project", default="all",
                         help="Active project for project lane routing (default pwp)")
     parser.add_argument("--backlog-age-days", type=int, default=30,
                         help="Skip backlog issues older than N days unless explicitly ready/backlog (default 30)")
@@ -2693,10 +3687,12 @@ def main():
                 if model and model in (
                     "gemini-3.5-flash-high", "gemini-3.5-flash",
                     "gemini-3.1-pro-high", "gemini-3.1-flash-lite",
-                    # Anthropic strings (verified working in agent_dispatcher.py
-                    # line 893, used in production Jun 28-29)
-                    "claude-sonnet-4.6-thinking",
-                    "claude-opus-4.6-thinking",
+                    # Anthropic strings — use the ACTUAL API-returned names (dashes,
+                    # no -thinking suffix on Sonnet). The dot-version was a config
+                    # name that AGY doesn't recognize, causing workers to hang
+                    # in pipe_read waiting for the model loader. Jul 2 2026 fix.
+                    "claude-sonnet-4-6",
+                    "claude-opus-4-6-thinking",
                 ):
                     args.model = model
                 else:
@@ -2743,6 +3739,11 @@ def main():
     launch_jitter_range = (jitter_lo, jitter_hi)
     backoff_range = (backoff_lo, backoff_hi)
 
+    # Apply CLI watchdog interval to the global used by linear_watchdog_loop.
+    # Before this, --watchdog-interval was printed but ignored, making it hard
+    # to reason about actual Linear polling cadence.
+    globals()["LINEAR_POLL_INTERVAL"] = max(int(args.watchdog_interval), 60)
+
     # Random concurrency if requested
     if args.random_concurrency:
         args.max_concurrent = random.randint(1, 3)
@@ -2752,6 +3753,24 @@ def main():
     SANDBOX_ROOT.mkdir(parents=True, exist_ok=True)
     LOGS_ROOT.mkdir(parents=True, exist_ok=True)
     RESULTS_ROOT.mkdir(parents=True, exist_ok=True)
+
+    # Auto-run environment guard on supervisor startup (GRO-3295)
+    try:
+        script_dir = Path(__file__).resolve().parent
+        guard_path = script_dir / "agy_env_guard.py"
+        if guard_path.exists():
+            print(f"[supervisor-startup] Running Universal Environment Guard...", flush=True)
+            res = subprocess.run(
+                [sys.executable, str(guard_path), "."],
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            print(res.stdout, flush=True)
+            if res.stderr:
+                print(res.stderr, file=sys.stderr, flush=True)
+    except Exception as e:
+        print(f"[supervisor-startup] ⚠️ Failed to run environment guard on startup: {e}", flush=True)
 
     if args.cron_mode:
         if not run_auto_resume_gates(args.model, cron_mode=True, skip_agy_probe=args.skip_agy_preflight or args.dry_run):
@@ -2973,6 +3992,7 @@ def main():
             # Wake the main loop if it's idle-waiting
             try:
                 supervisor.idle_event.set()
+                supervisor.new_work_event.set()
             except Exception:
                 pass
             if watchdog_thread:
@@ -2996,9 +4016,9 @@ def main():
     # Stop watchdog + bus subscriber
     if watchdog_thread:
         watchdog_stop.set()
+        watchdog_thread.join(timeout=5)
     if bus_subscriber_thread:
         pass  # daemon thread, dies with the process
-        watchdog_thread.join(timeout=5)
 
     # Summary
     # Note: a single run may match multiple flags (e.g. log contains both
