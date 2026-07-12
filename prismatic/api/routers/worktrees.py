@@ -16,7 +16,8 @@ class JanitorRequest(BaseModel):
     base_ref: str = Field(default="origin/main", description="Reference used to determine merged worktrees")
     archive_dir: str | None = Field(default=None, description="Optional archive destination")
     apply: bool = Field(default=False, description="Actually remove planned worktrees; false is dry-run")
-    include_dirty: bool = Field(default=False, description="Archive and remove dirty worktrees too")
+    include_dirty: bool = Field(default=False, description="Include dirty worktrees in the manifest; deletion still requires confirm_dirty_token")
+    confirm_dirty_token: str | None = Field(default=None, description="Exact token from the manifest; required to delete dirty worktrees")
     stale_hours: float = Field(default=24.0, ge=0.0, description="Age threshold for stale clean worktrees")
 
 
@@ -39,8 +40,9 @@ async def post_worktree_janitor(
 ):
     """Plan or run the core worktree janitor.
 
-    The endpoint is dry-run by default. Set ``apply=true`` to mutate; dirty
-    worktrees are archived before removal when ``include_dirty=true``.
+    The endpoint is dry-run by default. Set ``apply=true`` to mutate. Dirty
+    worktrees are archived but not deleted unless the caller also supplies the
+    exact ``confirm_dirty_token`` emitted by the manifest.
     """
     result = run_janitor(
         request.repo,
@@ -48,6 +50,7 @@ async def post_worktree_janitor(
         archive_dir=request.archive_dir,
         dry_run=not request.apply,
         include_dirty=request.include_dirty,
+        confirm_dirty_token=request.confirm_dirty_token,
         stale_seconds=int(request.stale_hours * 3600),
     )
     return result.to_dict()

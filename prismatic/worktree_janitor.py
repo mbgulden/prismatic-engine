@@ -33,6 +33,10 @@ class WorktreeRecord:
     merged_to_base: bool = False
     ahead_behind: str | None = None
     age_seconds: float | None = None
+    changed_paths: int = 0
+    untracked_paths: int = 0
+    safety_class: str = "unknown"
+    safety_reasons: list[str] = dataclasses.field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return dataclasses.asdict(self)
@@ -44,6 +48,8 @@ class JanitorResult:
     base_ref: str
     archive_dir: str
     dry_run: bool
+    manifest_path: str
+    dirty_confirm_token: str
     total: int
     canonical: str
     removable: list[dict[str, Any]]
@@ -98,6 +104,7 @@ def list_worktrees(
     repo: str | os.PathLike[str] | None = None,
     *,
     base_ref: str = "origin/main",
+    stale_seconds: int = 24 * 3600,
 ) -> list[WorktreeRecord]:
     """Return registered Git worktrees with dirty/merge hygiene metadata."""
     repo_root = resolve_repo(repo)
@@ -122,7 +129,10 @@ def list_worktrees(
         status = _run(["git", "status", "--short", "--branch"], cwd=path).stdout
         lines = status.splitlines()
         record.status_header = lines[0] if lines else ""
-        record.dirty = any(line.strip() for line in lines[1:])
+        status_entries = [line for line in lines[1:] if line.strip()]
+        record.dirty = bool(status_entries)
+        record.changed_paths = len(status_entries)
+        record.untracked_paths = sum(1 for line in status_entries if line.startswith("??"))
         record.unmerged = bool(
             _run(["git", "diff", "--name-only", "--diff-filter=U"], cwd=path).stdout.strip()
         )
@@ -134,7 +144,7 @@ def list_worktrees(
             record.age_seconds = max(0.0, now - path.stat().st_mtime)
         except OSError:
             record.age_seconds = None
-        out.append(record)
+        out.append(classify_worktree(record, canonical=str(repo_root), stale_seconds=stale_seconds))
     return out
 
 
@@ -182,6 +192,57 @@ def archive_worktree(path: str | os.PathLike[str], archive_root: str | os.PathLi
     return dest
 
 
+
+def classify_worktree(
+    record: WorktreeRecord,
+    *,
+    canonical: str,
+    stale_seconds: int,
+) -> WorktreeRecord:
+    """Classify a worktree using enforceable safety gates.
+
+    ``safe-remove`` is deliberately narrow: the worktree must be clean,
+    conflict-free, merged to the base ref, stale enough, and not the canonical
+    checkout. Everything else is ``keep`` or ``manual-review``.
+    """
+    canonical_path = str(Path(canonical).resolve())
+    reasons: list[str] = []
+    if str(Path(record.path).resolve()) == canonical_path:
+        record.safety_class = "keep"
+        record.safety_reasons = ["canonical checkout"]
+        return record
+    if not record.exists:
+        record.safety_class = "safe-prune-metadata"
+        record.safety_reasons = ["registered worktree path missing"]
+        return record
+    if record.unmerged:
+        record.safety_class = "manual-review"
+        record.safety_reasons = ["unmerged/conflicted files"]
+        return record
+    if record.dirty:
+        record.safety_class = "manual-review"
+        record.safety_reasons = [
+            f"dirty checkout ({record.changed_paths} changed paths, {record.untracked_paths} untracked)",
+            "dirty work is never removed by cron or ordinary --apply",
+        ]
+        return record
+    if not record.merged_to_base:
+        record.safety_class = "keep"
+        record.safety_reasons = ["HEAD is not an ancestor of base ref"]
+        return record
+    stale = record.age_seconds is not None and record.age_seconds >= stale_seconds
+    if not stale:
+        record.safety_class = "keep"
+        record.safety_reasons = ["clean+merged but not stale yet"]
+        return record
+    record.safety_class = "safe-remove"
+    reasons.append("clean checkout")
+    reasons.append("HEAD merged to base ref")
+    reasons.append(f"older than stale threshold ({stale_seconds}s)")
+    record.safety_reasons = reasons
+    return record
+
+
 def plan_removals(
     records: Iterable[WorktreeRecord],
     *,
@@ -189,30 +250,57 @@ def plan_removals(
     include_dirty: bool = False,
     stale_seconds: int = 24 * 3600,
 ) -> tuple[list[WorktreeRecord], list[WorktreeRecord]]:
-    """Split records into removable/kept sets.
-
-    Clean worktrees are removable when merged to base or older than stale_seconds.
-    Dirty worktrees require include_dirty=True and are always archived first.
-    """
+    """Split records into removable/kept sets using code-level safety classes."""
     removable: list[WorktreeRecord] = []
     kept: list[WorktreeRecord] = []
-    canonical_path = str(Path(canonical).resolve())
-    for record in records:
-        if str(Path(record.path).resolve()) == canonical_path:
-            kept.append(record)
-            continue
-        if record.unmerged:
-            kept.append(record)
-            continue
-        stale = record.age_seconds is not None and record.age_seconds >= stale_seconds
-        if record.dirty and not include_dirty:
-            kept.append(record)
-            continue
-        if record.merged_to_base or stale or record.dirty:
+    for raw_record in records:
+        record = classify_worktree(raw_record, canonical=canonical, stale_seconds=stale_seconds)
+        if record.safety_class == "safe-remove":
+            removable.append(record)
+        elif include_dirty and record.dirty and not record.unmerged:
+            # Include dirty non-conflicted worktrees in the manifest for human
+            # review, but still require the explicit dirty confirmation token
+            # before deletion in run_janitor. Conflicts are never planned.
             removable.append(record)
         else:
             kept.append(record)
     return removable, kept
+
+
+
+def write_manifest(
+    *,
+    repo_root: Path,
+    archive_root: Path,
+    dry_run: bool,
+    dirty_confirm_token: str,
+    removable: list[WorktreeRecord],
+    kept: list[WorktreeRecord],
+) -> Path:
+    """Write a machine-readable decision manifest before any removal."""
+    archive_root.mkdir(parents=True, exist_ok=True)
+    manifest = archive_root / "manifest.json"
+    payload = {
+        "repo": str(repo_root),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "dry_run": dry_run,
+        "dirty_confirm_token": dirty_confirm_token,
+        "policy": {
+            "safe_remove_requires": [
+                "not canonical checkout",
+                "exists",
+                "no unmerged files",
+                "clean git status",
+                "HEAD is ancestor of base ref",
+                "older than stale threshold",
+            ],
+            "dirty_requires_explicit_token": True,
+        },
+        "removable": [r.to_dict() for r in removable],
+        "kept": [r.to_dict() for r in kept],
+    }
+    manifest.write_text(json.dumps(payload, indent=2, sort_keys=True))
+    return manifest
 
 
 def run_janitor(
@@ -222,6 +310,7 @@ def run_janitor(
     archive_dir: str | os.PathLike[str] | None = None,
     dry_run: bool = True,
     include_dirty: bool = False,
+    confirm_dirty_token: str | None = None,
     stale_seconds: int = 24 * 3600,
     prune: bool = True,
 ) -> JanitorResult:
@@ -233,6 +322,7 @@ def run_janitor(
         or os.environ.get("PRISMATIC_WORKTREE_JANITOR_ARCHIVE")
         or (repo_root / ".prismatic" / "worktree-archives" / timestamp)
     ).resolve()
+    dirty_confirm_token = f"DELETE-DIRTY-WORKTREES:{base_ref}"
     records = list_worktrees(repo_root, base_ref=base_ref)
     removable, kept = plan_removals(
         records,
@@ -240,14 +330,33 @@ def run_janitor(
         include_dirty=include_dirty,
         stale_seconds=stale_seconds,
     )
+    manifest_path = write_manifest(
+        repo_root=repo_root,
+        archive_root=archive_root,
+        dry_run=dry_run,
+        dirty_confirm_token=dirty_confirm_token,
+        removable=removable,
+        kept=kept,
+    )
     removed: list[dict[str, Any]] = []
     for record in removable:
         archived_to = None
-        if record.dirty or include_dirty:
+        if record.dirty:
             archived_to = str(archive_worktree(record.path, archive_root))
+            if not dry_run and confirm_dirty_token != dirty_confirm_token:
+                entry = record.to_dict() | {
+                    "archive": archived_to,
+                    "remove_returncode": None,
+                    "remove_stderr": "dirty worktree archived but not removed; pass exact confirm_dirty_token",
+                }
+                removed.append(entry)
+                continue
         entry = record.to_dict() | {"archive": archived_to}
         if not dry_run:
-            rm = _run(["git", "worktree", "remove", "--force", record.path], cwd=repo_root)
+            cmd = ["git", "worktree", "remove", record.path]
+            if record.dirty:
+                cmd.insert(3, "--force")
+            rm = _run(cmd, cwd=repo_root)
             entry["remove_returncode"] = rm.returncode
             entry["remove_stderr"] = rm.stderr[-1000:]
         removed.append(entry)
@@ -258,6 +367,8 @@ def run_janitor(
         base_ref=base_ref,
         archive_dir=str(archive_root),
         dry_run=dry_run,
+        manifest_path=str(manifest_path),
+        dirty_confirm_token=dirty_confirm_token,
         total=len(records),
         canonical=str(repo_root),
         removable=[r.to_dict() for r in removable],
@@ -273,8 +384,8 @@ def default_core_crons() -> list[dict[str, Any]]:
             "id": "prismatic.worktree-janitor.hourly",
             "name": "Prismatic Worktree Janitor",
             "schedule": "17 * * * *",
-            "command": "prismatic worktrees janitor --repo ${PRISMATIC_REPO_DIR:-.} --include-dirty --quiet",
-            "description": "Archives dirty/stale Git worktrees and prunes registered worktree metadata.",
+            "command": "prismatic worktrees janitor --repo ${PRISMATIC_REPO_DIR:-.} --quiet",
+            "description": "Removes only clean+merged stale worktrees; dirty work is reported/manifested, never deleted by cron.",
             "silent_when_clean": True,
         }
     ]
@@ -301,18 +412,20 @@ def cli(argv: Sequence[str] | None = None) -> int:
     status = sub.add_parser("status", help="List registered worktrees as JSON")
     status.add_argument("--repo", default=None)
     status.add_argument("--base-ref", default="origin/main")
+    status.add_argument("--stale-hours", type=float, default=24.0)
     janitor = sub.add_parser("janitor", help="Archive/remove stale worktrees")
     janitor.add_argument("--repo", default=None)
     janitor.add_argument("--base-ref", default="origin/main")
     janitor.add_argument("--archive-dir", default=None)
     janitor.add_argument("--apply", action="store_true", help="Actually remove planned worktrees")
-    janitor.add_argument("--include-dirty", action="store_true", help="Archive and remove dirty worktrees too")
+    janitor.add_argument("--include-dirty", action="store_true", help="Include dirty worktrees in the manifest; deletion still requires --confirm-dirty-token")
+    janitor.add_argument("--confirm-dirty-token", default=None, help="Exact token printed in manifest; required to delete dirty worktrees")
     janitor.add_argument("--stale-hours", type=float, default=24.0)
     janitor.add_argument("--quiet", action="store_true", help="Emit nothing when no removal occurred")
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     if args.command == "status":
-        print(json.dumps([r.to_dict() for r in list_worktrees(args.repo, base_ref=args.base_ref)], indent=2))
+        print(json.dumps([r.to_dict() for r in list_worktrees(args.repo, base_ref=args.base_ref, stale_seconds=int(args.stale_hours * 3600))], indent=2))
         return 0
     if args.command == "janitor":
         result = run_janitor(
@@ -321,6 +434,7 @@ def cli(argv: Sequence[str] | None = None) -> int:
             archive_dir=args.archive_dir,
             dry_run=not args.apply,
             include_dirty=args.include_dirty,
+            confirm_dirty_token=args.confirm_dirty_token,
             stale_seconds=int(args.stale_hours * 3600),
         )
         payload = result.to_dict()
