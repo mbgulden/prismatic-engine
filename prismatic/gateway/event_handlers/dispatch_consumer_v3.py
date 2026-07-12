@@ -250,13 +250,15 @@ def fetch_issue(issue_id: str) -> dict | None:
         f'{{ issue(id: "{issue_id}") {{ identifier title priority '
         f"state {{name}} labels {{nodes {{name}}}} description }} }}"
     )
-    req = urllib.request.Request(
-        "https://api.linear.app/graphql",
-        data=json.dumps({"query": query}).encode(),
-        headers={"Authorization": api_key, "Content-Type": "application/json"},
-    )
+    from prismatic.linear.retry import execute_linear_request
     try:
-        with urllib.request.urlopen(req, timeout=15) as r:
+        with execute_linear_request(
+            "https://api.linear.app/graphql",
+            data=json.dumps({"query": query}).encode(),
+            headers={"Authorization": api_key, "Content-Type": "application/json"},
+            method="POST",
+            timeout=15.0,
+        ) as r:
             d = json.loads(r.read())
         return d.get("data", {}).get("issue")
     except Exception as e:

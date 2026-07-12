@@ -39,12 +39,11 @@ from typing import Any, Dict, Optional
 import jsonschema
 import yaml
 
+from prismatic.observability import init_logging, get_logger
+
 # Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-)
-logger = logging.getLogger("master-build-orchestrator")
+init_logging(level=logging.INFO)
+logger = get_logger("master-build-orchestrator")
 
 
 class MasterBuildOrchestrator:
