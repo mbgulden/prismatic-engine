@@ -687,6 +687,9 @@ def validate_agent_output(issue_identifier: str | None = None, log_path: str | N
 
 
 def cli_journal(argv: list[str] | None = None) -> int:
+    from prismatic.observability import init_logging
+
+    init_logging()
     parser = argparse.ArgumentParser(prog="prismatic-journal")
     sub = parser.add_subparsers(dest="cmd")
     inv = sub.add_parser("inventory", help="Build bounded source inventory")
@@ -711,6 +714,9 @@ def cli_journal(argv: list[str] | None = None) -> int:
 
 
 def cli_journal_snapshot(argv: list[str] | None = None) -> int:
+    from prismatic.observability import init_logging
+
+    init_logging()
     parser = argparse.ArgumentParser(prog="prismatic-journal-snapshot")
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args(argv)
@@ -720,6 +726,9 @@ def cli_journal_snapshot(argv: list[str] | None = None) -> int:
 
 
 def cli_linear_import(argv: list[str] | None = None) -> int:
+    from prismatic.observability import init_logging
+
+    init_logging()
     parser = argparse.ArgumentParser(prog="prismatic-linear-import")
     parser.add_argument("--period", default="initial")
     parser.add_argument("--execute", action="store_true", help="Reserved for Phase 2; Phase 1 remains readiness-only")
@@ -730,6 +739,9 @@ def cli_linear_import(argv: list[str] | None = None) -> int:
 
 
 def cli_second_witness(argv: list[str] | None = None) -> int:
+    from prismatic.observability import init_logging
+
+    init_logging()
     parser = argparse.ArgumentParser(prog="prismatic-second-witness")
     parser.add_argument("--issue", help="Issue identifier, e.g. GRO-1954")
     parser.add_argument("--log-path")
