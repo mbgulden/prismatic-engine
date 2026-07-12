@@ -17,16 +17,20 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     op.execute("""
     CREATE TABLE IF NOT EXISTS dispatch_costs (
-        issue_id TEXT PRIMARY KEY,
-        run_id TEXT,
-        prompt_tokens INTEGER,
-        completion_tokens INTEGER,
-        cost_usd REAL,
-        provider TEXT,
-        model TEXT,
-        created_at TEXT
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id TEXT NOT NULL,
+        issue_id TEXT,
+        agent TEXT NOT NULL,
+        model TEXT NOT NULL,
+        tokens_in INTEGER NOT NULL,
+        tokens_out INTEGER NOT NULL,
+        cost_dollars REAL NOT NULL,
+        created_at REAL NOT NULL
     );
     """)
+    op.execute("CREATE INDEX IF NOT EXISTS idx_dispatch_costs_created_at ON dispatch_costs(created_at);")
+    op.execute("CREATE INDEX IF NOT EXISTS idx_dispatch_costs_agent ON dispatch_costs(agent);")
+    op.execute("CREATE INDEX IF NOT EXISTS idx_dispatch_costs_model ON dispatch_costs(model);")
 
     op.execute("""
     CREATE TABLE IF NOT EXISTS billing_mapping (

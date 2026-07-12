@@ -25,30 +25,9 @@ def init_db(db_path: Path | None = None) -> sqlite3.Connection:
     """Initialize and return the cost database connection."""
     path = (db_path or COST_DB).expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
+    from prismatic.admin import cmd_db_upgrade
+    cmd_db_upgrade(str(path))
     conn = sqlite3.connect(str(path))
-    conn.execute(
-        """CREATE TABLE IF NOT EXISTS dispatch_costs (
-            id INTEGER PRIMARY KEY,
-            run_id TEXT NOT NULL,
-            issue_id TEXT,
-            agent TEXT NOT NULL,
-            model TEXT NOT NULL,
-            tokens_in INTEGER NOT NULL,
-            tokens_out INTEGER NOT NULL,
-            cost_dollars REAL NOT NULL,
-            created_at REAL NOT NULL
-        )"""
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_dispatch_costs_created_at ON dispatch_costs(created_at)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_dispatch_costs_agent ON dispatch_costs(agent)"
-    )
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_dispatch_costs_model ON dispatch_costs(model)"
-    )
-    conn.commit()
     return conn
 
 
