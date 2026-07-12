@@ -104,14 +104,7 @@ class AgentRunRecordStore:
                     started_at TEXT,
                     completed_at TEXT,
                     output_path TEXT,
-                    error_message TEXT,
-                    evidence TEXT,
-                    verification_status TEXT,
-                    verification_scope TEXT,
-                    failure_category TEXT,
-                    cleanup_status TEXT,
-                    done_gate_result TEXT,
-                    done_gate_errors TEXT
+                    error_message TEXT
                 )
                 """
             )
