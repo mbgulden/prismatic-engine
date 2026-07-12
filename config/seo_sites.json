@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "sites": [
+    {
+      "slug": "active-oahu",
+      "name": "Active Oahu Tours",
+      "domain": "activeoahutours.com",
+      "origin": "https://activeoahutours.com",
+      "gsc_property": "sc-domain:activeoahutours.com",
+      "sitemap_url": "https://activeoahutours.com/sitemap.xml",
+      "site_dir_candidates": [
+        "/home/ubuntu/work/active-oahu-tours-mirror/site",
+        "/home/ubuntu/work/active-oahu-tours-mirror-1251/site"
+      ],
+      "ga4_property_env": "AOT_GA4_PROPERTY_ID",
+      "ga4_property_id": null,
+      "booking_provider": "FareHarbor",
+      "booking_revenue_notes": "GA4 revenue requires purchase/generate_lead/booking events to be emitted from the booking flow or imported from FareHarbor. If booking completes off-site, configure cross-domain tracking and/or server-side Measurement Protocol/imports."
+    }
+  ]
+}
