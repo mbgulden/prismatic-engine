@@ -200,19 +200,20 @@ class LinearTaskProvider(TaskProvider):
 
         data = json.dumps(payload).encode("utf-8")
 
-        req = urllib.request.Request(
-            LINEAR_API_URL,
-            data=data,
-            headers={
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-                "Authorization": self._api_key,   # No "Bearer" prefix
-            },
-            method="POST",
-        )
+        from prismatic.linear.retry import execute_linear_request
 
         try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
+            with execute_linear_request(
+                LINEAR_API_URL,
+                data=data,
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "Authorization": self._api_key,   # No "Bearer" prefix
+                },
+                method="POST",
+                timeout=30.0,
+            ) as resp:
                 body = resp.read().decode("utf-8")
                 result: dict[str, Any] = json.loads(body)
 
