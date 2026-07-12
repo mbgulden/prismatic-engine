@@ -1,46 +1,67 @@
-# Linear API Exponential Backoff on 429 (GRO-3164)
+# GRO-3075: PWP Marketing - Analytics Injection (Plausible Default, GTAG Fallback)
 
-## Problem
-Under load, the Linear API returns `HTTP 429 Too Many Requests`. The previous implementation had no rate-limiting backoff mechanism at the HTTP request layer and failed immediately after 3 immediate retries or raised an error immediately.
+## Overview
+Every client site built via the Prismatic Web Plugin (PWP) stage requires analytics. This implementation adds a modular injection step to the template compiler that checks for a tenant's analytics configuration and inserts the appropriate analytics script tag into the HTML `<head>`.
 
-## Fix
-We implemented a resilient HTTP retry helper with exponential backoff on HTTP 429, supporting up to 10 retries, randomized jitter, and respect for rate limit headers (both `Retry-After` and `X-RateLimit-Requests-Reset`).
+## Implementation Details
 
-### 1. Unified Retry Helper
-Created [prismatic/linear/retry.py](file:///home/ubuntu/work/prismatic-engine/prismatic/linear/retry.py) which contains the core request dispatcher:
-- **Rate Limit Headers Resolution**: Checks the `Retry-After` header (seconds or HTTP date format) and the `X-RateLimit-Requests-Reset` / `x-ratelimit-reset` headers (epoch milliseconds/seconds), falling back to exponential backoff with jitter if headers are not present.
-- **Exponential Backoff**: Generates backoff delay `2 ** attempt + random.uniform(0, 1)` to prevent synchronization.
-- **Max Retries Gating**: Caps retries at 10 (11 total attempts).
-- **Bubble Up**: Immediately bubbles up non-429 exceptions to keep client exception-handling unchanged.
+### 1. Per-Tenant Configuration
+The configuration is loaded from:
+`plugins/pwp/tenants/<id>/analytics.json`
 
-### 2. Provider Integration
-Modified all four urllib-based GraphQL endpoints to use the retry helper:
-- [prismatic/providers/tasks/linear.py](file:///home/ubuntu/work/prismatic-engine/prismatic/providers/tasks/linear.py)
-- [prismatic/dispatcher.py](file:///home/ubuntu/work/prismatic-engine/prismatic/dispatcher.py)
-- [prismatic/journal.py](file:///home/ubuntu/work/prismatic-engine/prismatic/journal.py)
-- [prismatic/gateway/event_handlers/dispatch_consumer_v3.py](file:///home/ubuntu/work/prismatic-engine/prismatic/gateway/event_handlers/dispatch_consumer_v3.py)
+Supported configurations:
+- **Plausible (Default)**: Used if no config exists, or if neither `gtag_id` nor `zaraz: true` is configured.
+  - Snippet: `<script defer data-domain="<domain>" src="https://plausible.io/js/script.js"></script>`
+  - Domain resolves to the configured `domain` or `plausible_domain` in the JSON, falling back to `<tenant_id>.com` (or `default.com` if no tenant ID is provided).
+- **GTAG (Google Analytics 4 Fallback)**: Used if the configuration provides a `gtag_id`.
+  - Snippet: Injects the standard global site tag snippet asynchronously loaded for the specified `gtag_id`.
+- **Cloudflare Zaraz (Server-side/No-JS)**: Used if `zaraz: true` is set in the configuration.
+  - Snippet: `<script src="/cdn-cgi/zaraz/i.js" referrerpolicy="origin"></script>`
+  - This allows executing third-party scripts at the edge server-side, removing client-side execution overhead.
+
+### 2. Injection Hook
+The injection is wired directly into `render_template` within [plugins/pwp/compiler.py](file:///home/ubuntu/work/prismatic-engine/plugins/pwp/compiler.py). The compiled analytics script snippet is appended directly before the closing `</head>` tag.
 
 ---
 
 ## Verification & Testing
-Added a robust test suite at [tests/test_linear_retry.py](file:///home/ubuntu/work/prismatic-engine/tests/test_linear_retry.py) with the following tests:
-1. `test_execute_linear_request_success` - Verifies no backoff/retry is run when request succeeds on 1st attempt.
-2. `test_execute_linear_request_retry_then_success` - Verifies retrying multiple times on 429 then succeeding.
-3. `test_execute_linear_request_retry_after_header` - Verifies the `Retry-After` header is parsed and respected.
-4. `test_execute_linear_request_x_ratelimit_reset_header` - Verifies the `X-RateLimit-Requests-Reset` (epoch ms) header is parsed and respected.
-5. `test_execute_linear_request_max_retries` - Verifies that the loop fails after exceeding 10 retries.
-6. `test_execute_linear_request_other_error` - Verifies that non-429 errors (e.g. 500) fail immediately.
+A robust test suite has been implemented at [tests/test_pwp_analytics.py](file:///home/ubuntu/work/prismatic-engine/tests/test_pwp_analytics.py), covering the following scenarios:
+1. **Plausible Default (No Config)**: Verifies default Plausible script injection using the `<tenant_id>.com` domain.
+2. **Plausible with Config**: Verifies Plausible injection using the explicitly configured domain/plausible_domain.
+3. **GTAG Fallback**: Verifies GTAG injection and configuration of the measurement ID when `gtag_id` is defined.
+4. **Zaraz Injection**: Verifies Zaraz script injection when `"zaraz": true` is defined.
+5. **No Tenant Defaults**: Verifies Plausible injection with `default.com` domain when no `tenant_id` is supplied.
 
-### Test execution output:
-```
+### Test Execution Output:
+```bash
+$ .venv_dev/bin/python -m pytest tests/test_pwp_analytics.py
 ============================= test session starts ==============================
 platform linux -- Python 3.12.3, pytest-9.1.1, pluggy-1.6.0
 rootdir: /home/ubuntu/work/prismatic-engine
 configfile: pyproject.toml
 plugins: anyio-4.14.1
-collecting ... collected 6 items                                                              
+collecting ... collected 5 items
 
-tests/test_linear_retry.py ......                                        [100%]
+tests/test_pwp_analytics.py .....                                        [100%]
 
-============================== 6 passed in 0.14s ===============================
+============================== 5 passed in 0.46s ===============================
+```
+
+### Full PWP test suite verification:
+```bash
+$ .venv_dev/bin/python -m pytest plugins/pwp/tests/ tests/test_pwp_analytics.py
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/ubuntu/work/prismatic-engine
+configfile: pyproject.toml
+plugins: anyio-4.14.1
+collecting ... collected 28 items
+
+plugins/pwp/tests/test_compiler_determinism.py .                         [  3%]
+plugins/pwp/tests/test_oauth_credentials.py ........                     [ 32%]
+plugins/pwp/tests/test_theme_diff.py ........                            [ 60%]
+plugins/pwp/tests/test_theme_validator.py ......                         [ 82%]
+tests/test_pwp_analytics.py .....                                        [100%]
+
+============================== 28 passed in 2.74s ==============================
 ```

@@ -1,6 +1,7 @@
 import os
 import yaml
 import markdown
+import json
 from datetime import datetime
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
@@ -38,79 +39,91 @@ def prettify(elem):
     reparsed = minidom.parseString(rough_string)
     return reparsed.toprettyxml(indent="  ")
 
-def generate_rss(posts, config, output_path):
-    site_cfg = config['site']
-    blog_cfg = config['blog']
-    
-    rss = ET.Element('rss', version='2.0')
-    channel = ET.SubElement(rss, 'channel')
-    
-    ET.SubElement(channel, 'title').text = site_cfg['title']
-    ET.SubElement(channel, 'link').text = f"{site_cfg['url']}{blog_cfg['base_path']}"
-    ET.SubElement(channel, 'description').text = site_cfg['description']
-    ET.SubElement(channel, 'language').text = site_cfg['language']
-    
-    for post in posts:
-        item = ET.SubElement(channel, 'item')
-        ET.SubElement(item, 'title').text = post.get('title')
-        post_url = f"{site_cfg['url']}{blog_cfg['base_path']}/{post.get('slug')}"
-        ET.SubElement(item, 'link').text = post_url
-        
-        # RSS description often contains HTML content
-        ET.SubElement(item, 'description').text = post.get('excerpt', post.get('body_html')[:500] + '...')
-        
-        # Format date for RSS: Mon, 02 Jan 2006 15:04:05 +0000
-        try:
-            dt = datetime.strptime(post.get('date'), '%Y-%m-%d')
-            ET.SubElement(item, 'pubDate').text = dt.strftime('%a, %d %b %Y %H:%M:%S +0000')
-        except ValueError:
-            pass # Skip if date format is invalid
-
-        ET.SubElement(item, 'guid').text = post_url
-        ET.SubElement(item, 'author').text = post.get('author', site_cfg['author'])
-
-    with open(output_path, 'w', encoding='utf-8') as f:
-        f.write(prettify(rss))
-
 def generate_atom(posts, config, output_path):
     site_cfg = config['site']
     blog_cfg = config['blog']
     
-    atom = ET.Element('feed', xmlns='http://www.w3.org/2005/Atom')
+    NS = 'http://www.w3.org/2005/Atom'
+    ET.register_namespace('', NS)
     
-    ET.SubElement(atom, 'title').text = site_cfg['title']
+    atom = ET.Element(f'{{{NS}}}feed')
+    
+    ET.SubElement(atom, f'{{{NS}}}title').text = site_cfg['title']
     if 'subtitle' in site_cfg:
-        ET.SubElement(atom, 'subtitle').text = site_cfg['subtitle']
+        ET.SubElement(atom, f'{{{NS}}}subtitle').text = site_cfg['subtitle']
     
-    atom_url = f"{site_cfg['url']}/atom.xml"
-    ET.SubElement(atom, 'link', href=atom_url, rel='self')
-    ET.SubElement(atom, 'link', href=f"{site_cfg['url']}{blog_cfg['base_path']}")
-    ET.SubElement(atom, 'id').text = f"{site_cfg['url']}{blog_cfg['base_path']}"
-    ET.SubElement(atom, 'updated').text = datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ')
+    atom_url = f"{site_cfg['url']}/feed.xml"
+    ET.SubElement(atom, f'{{{NS}}}link', href=atom_url, rel='self')
+    ET.SubElement(atom, f'{{{NS}}}link', href=f"{site_cfg['url']}{blog_cfg['base_path']}")
+    ET.SubElement(atom, f'{{{NS}}}id').text = f"{site_cfg['url']}{blog_cfg['base_path']}"
+    ET.SubElement(atom, f'{{{NS}}}updated').text = datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ')
     
-    author = ET.SubElement(atom, 'author')
-    ET.SubElement(author, 'name').text = site_cfg['author']
+    author = ET.SubElement(atom, f'{{{NS}}}author')
+    ET.SubElement(author, f'{{{NS}}}name').text = site_cfg['author']
 
     for post in posts:
-        entry = ET.SubElement(atom, 'entry')
-        ET.SubElement(entry, 'title').text = post.get('title')
+        entry = ET.SubElement(atom, f'{{{NS}}}entry')
+        ET.SubElement(entry, f'{{{NS}}}title').text = post.get('title')
         post_url = f"{site_cfg['url']}{blog_cfg['base_path']}/{post.get('slug')}"
-        ET.SubElement(entry, 'link', href=post_url)
-        ET.SubElement(entry, 'id').text = post_url
+        ET.SubElement(entry, f'{{{NS}}}link', href=post_url)
+        ET.SubElement(entry, f'{{{NS}}}id').text = post_url
         
         try:
             dt = datetime.strptime(post.get('date'), '%Y-%m-%d')
-            ET.SubElement(entry, 'updated').text = dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+            formatted_date = dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+            ET.SubElement(entry, f'{{{NS}}}updated').text = formatted_date
+            ET.SubElement(entry, f'{{{NS}}}published').text = formatted_date
         except ValueError:
             pass
 
-        ET.SubElement(entry, 'summary').text = post.get('excerpt', post.get('body_html')[:200] + '...')
+        ET.SubElement(entry, f'{{{NS}}}summary').text = post.get('excerpt', post.get('body_html')[:200] + '...')
         
-        content = ET.SubElement(entry, 'content', type='html')
+        # Author details
+        entry_author = ET.SubElement(entry, f'{{{NS}}}author')
+        ET.SubElement(entry_author, f'{{{NS}}}name').text = post.get('author', site_cfg['author'])
+        
+        content = ET.SubElement(entry, f'{{{NS}}}content', type='html')
         content.text = post.get('body_html')
 
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(prettify(atom))
+
+def generate_json_feed(posts, config, output_path):
+    site_cfg = config['site']
+    blog_cfg = config['blog']
+    
+    feed = {
+        "version": "https://jsonfeed.org/version/1.1",
+        "title": site_cfg['title'],
+        "home_page_url": f"{site_cfg['url']}{blog_cfg['base_path']}",
+        "feed_url": f"{site_cfg['url']}/feed.json",
+        "description": site_cfg['description'],
+        "items": []
+    }
+    
+    for post in posts:
+        post_url = f"{site_cfg['url']}{blog_cfg['base_path']}/{post.get('slug')}"
+        item = {
+            "id": post_url,
+            "url": post_url,
+            "title": post.get('title'),
+            "summary": post.get('excerpt', post.get('body_html')[:200] + '...'),
+            "content_html": post.get('body_html'),
+        }
+        
+        try:
+            dt = datetime.strptime(post.get('date'), '%Y-%m-%d')
+            item["date_published"] = dt.strftime('%Y-%m-%dT%H:%M:%SZ')
+        except ValueError:
+            pass
+            
+        author_name = post.get('author', site_cfg['author'])
+        item["authors"] = [{"name": author_name}]
+        
+        feed["items"].append(item)
+        
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(feed, f, indent=2, ensure_ascii=False)
 
 def main():
     config_path = os.environ.get("MARKETING_CONFIG", "config/marketing.yaml")
@@ -136,9 +149,9 @@ def main():
     posts.sort(key=lambda x: x.get('date', ''), reverse=True)
     
     os.makedirs(public_dir, exist_ok=True)
-    generate_rss(posts, config, os.path.join(public_dir, 'rss.xml'))
-    generate_atom(posts, config, os.path.join(public_dir, 'atom.xml'))
-    print(f"Generated feeds for {len(posts)} posts in '{public_dir}/' directory.")
+    generate_atom(posts, config, os.path.join(public_dir, 'feed.xml'))
+    generate_json_feed(posts, config, os.path.join(public_dir, 'feed.json'))
+    print(f"Generated feeds in '{public_dir}/' directory.")
 
 if __name__ == '__main__':
     main()

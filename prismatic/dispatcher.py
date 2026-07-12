@@ -3085,6 +3085,8 @@ def main() -> None:
             issues = setup_pipeline_issues()
             print(f"Set up {len(issues)} pipeline issues")
             return
+        from prismatic.admin import cmd_db_upgrade
+        cmd_db_upgrade()
         main_loop(interval=args.interval, once=args.once)
     else:
         # Default fallback
