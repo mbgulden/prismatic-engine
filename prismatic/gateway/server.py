@@ -522,6 +522,42 @@ _RECOVERY_CONTROL_ACTIONS: dict[str, dict[str, str]] = {
     },
 }
 
+_DISPATCHER_CONTROL_ACTIONS: dict[str, dict[str, str]] = {
+    "start": {
+        "label": "Start dispatcher",
+        "status": "start queued",
+        "detail": "Server recorded a dispatcher start request.",
+        "severity": "success",
+    },
+    "stop": {
+        "label": "Stop dispatcher",
+        "status": "stop queued",
+        "detail": "Server recorded a dispatcher stop request.",
+        "severity": "warning",
+    },
+    "restart": {
+        "label": "Restart dispatcher",
+        "status": "restart queued",
+        "detail": "Server recorded a dispatcher restart request.",
+        "severity": "success",
+    },
+}
+
+_QUEUE_CONTROL_ACTIONS: dict[str, dict[str, str]] = {
+    "retry": {
+        "label": "Retry queue task",
+        "status": "retry queued",
+        "detail": "Server recorded a queue retry request.",
+        "severity": "success",
+    },
+    "purge": {
+        "label": "Purge queue history",
+        "status": "purge queued",
+        "detail": "Server recorded a queue purge request.",
+        "severity": "warning",
+    },
+}
+
 
 def _dashboard_recovery_state_path() -> Path:
     state_dir = Path(os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state/"))
