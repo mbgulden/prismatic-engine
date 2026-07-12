@@ -596,6 +596,27 @@ class SandboxPodManager:
                 f"outside allowed base directories: {[str(b) for b in allowed_bases]}"
             )
 
+        # Block sensitive paths: ~/.ssh, ~/.aws, ~/.kube, ~/.gemini, ~/mounts
+        home = Path.home().resolve()
+        sensitive_bases = [
+            home / ".ssh",
+            home / ".aws",
+            home / ".kube",
+            home / ".gemini",
+            home / "mounts",
+            Path("/home/ubuntu/.ssh"),
+            Path("/home/ubuntu/.aws"),
+            Path("/home/ubuntu/.kube"),
+            Path("/home/ubuntu/.gemini"),
+            Path("/home/ubuntu/mounts"),
+        ]
+        for sb in sensitive_bases:
+            if resolved == sb or str(resolved).startswith(str(sb) + os.path.sep):
+                raise PodManagerError(
+                    f"Access to sensitive path blocked: {volume_spec!r} "
+                    f"resolves to {str(resolved)!r} which is inside a forbidden sensitive path."
+                )
+
         if seccomp_profile_name:
             logger.debug("Volume mount %r passed validation (seccomp=%s)", volume_spec, seccomp_profile_name)
         return volume_spec

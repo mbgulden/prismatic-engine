@@ -192,6 +192,29 @@ def test_traversal_deep():
     assert_raises(Exception, validator, "/../../../../../etc/passwd:/data")
 
 
+@test("Path Traversal: blocks sensitive paths")
+def test_traversal_sensitive_paths():
+    validator = _get_volume_validator()
+    home = Path.home().resolve()
+    sensitive_paths = [
+        home / ".ssh",
+        home / ".aws",
+        home / ".kube",
+        home / ".gemini",
+        home / "mounts",
+        Path("/home/ubuntu/.ssh"),
+        Path("/home/ubuntu/.aws"),
+        Path("/home/ubuntu/.kube"),
+        Path("/home/ubuntu/.gemini"),
+        Path("/home/ubuntu/mounts"),
+    ]
+    for p in sensitive_paths:
+        # Test exact path blocking
+        assert_raises(Exception, validator, f"{p}:/container:ro")
+        # Test sub-path blocking
+        assert_raises(Exception, validator, f"{p}/subpath:/container:ro")
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Test 3: Symlink-based escape prevention
 # ═══════════════════════════════════════════════════════════════════════════
@@ -381,6 +404,7 @@ def main():
         test_traversal_double_url_encoded,
         test_traversal_allows_tmp,
         test_traversal_deep,
+        test_traversal_sensitive_paths,
         test_symlink_escape_allowed_bases,
         test_cgroup_detect,
         test_cgroup_memory_parsing,
