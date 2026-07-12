@@ -1,0 +1,87 @@
+schema_version: 1.1.0
+name: prismatic-prismatic-game-assets
+version: 0.1.0
+description: Prismatic game-assets plugin scaffold.
+plugin_type: creative-media
+entry_point: prismatic_game_assets.plugin:PrismaticGameAssetsPlugin
+core_version_constraint: '>=0.2.0, <2.0.0'
+categories:
+- creative-media
+- game-assets
+required_capabilities:
+- network
+- filesystem-write
+asset_domains:
+- game-asset
+- sprite
+- prefab
+- material
+- level
+artifact_types:
+- model/gltf-binary
+- application/x-prismatic-prefab+json
+- application/x-unitypackage
+- application/x-godot-resource
+integration_points:
+- manifest
+- loader
+- tools
+- api
+- dashboard
+- mcp
+- asset-index
+- artifact-store
+- governance
+automation_surfaces:
+- agent-tools
+- gateway-api
+- dashboard
+- native-cron
+- mcp-server
+capabilities:
+- id: game-assets.generation
+  label: game-assets generation and management
+  category: game-assets
+  tools: &id001
+  - generate_game_asset
+  - validate_game_asset
+  - pack_asset_bundle
+  - export_engine_asset
+endpoints:
+- method: GET
+  path: /api/plugins/prismatic-game-assets/status
+  description: Read plugin/service readiness.
+- method: POST
+  path: /api/plugins/prismatic-game-assets/jobs
+  description: Create an AI automation job.
+- method: GET
+  path: /api/plugins/prismatic-game-assets/assets
+  description: List generated/imported assets.
+mcp_servers:
+- name: prismatic-game-assets-mcp
+  transport: stdio
+  command: python3 -m prismatic_game_assets.mcp_server
+  url: null
+  resources:
+  - game.assets
+  - game.bundles
+  - game.engine_exports
+  tools: *id001
+  auth_env: []
+dashboard_surfaces:
+- game-assets jobs
+- game-assets asset library
+- provider health
+governance:
+- secret-redacted status
+- artifact provenance required
+- agent jobs must emit durable asset IDs
+connect_points:
+- PluginLoader validates and loads this manifest.
+- Gateway exposes status/job/asset endpoints.
+- Agents use registered tools or MCP tools to automate jobs.
+- Generated assets enter the universal asset index with provenance.
+disconnect_points:
+- Disconnect hides readiness/job creation without deleting assets.
+- Core PE queues and unrelated plugins continue operating.
+external_service: null

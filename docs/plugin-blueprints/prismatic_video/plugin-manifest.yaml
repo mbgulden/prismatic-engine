@@ -1,0 +1,84 @@
+schema_version: 1.1.0
+name: prismatic-prismatic-video
+version: 0.1.0
+description: Prismatic video plugin scaffold.
+plugin_type: creative-media
+entry_point: prismatic_video.plugin:PrismaticVideoPlugin
+core_version_constraint: '>=0.2.0, <2.0.0'
+categories:
+- creative-media
+- video
+required_capabilities:
+- network
+- filesystem-write
+asset_domains:
+- video
+- motion
+- timeline
+artifact_types:
+- video/mp4
+- video/webm
+- application/x-prismatic-timeline+json
+integration_points:
+- manifest
+- loader
+- tools
+- api
+- dashboard
+- mcp
+- asset-index
+- artifact-store
+- governance
+automation_surfaces:
+- agent-tools
+- gateway-api
+- dashboard
+- native-cron
+- mcp-server
+capabilities:
+- id: video.generation
+  label: video generation and management
+  category: video
+  tools: &id001
+  - generate_video
+  - edit_video
+  - transcode_video
+  - analyze_video
+endpoints:
+- method: GET
+  path: /api/plugins/prismatic-video/status
+  description: Read plugin/service readiness.
+- method: POST
+  path: /api/plugins/prismatic-video/jobs
+  description: Create an AI automation job.
+- method: GET
+  path: /api/plugins/prismatic-video/assets
+  description: List generated/imported assets.
+mcp_servers:
+- name: prismatic-video-mcp
+  transport: stdio
+  command: python3 -m prismatic_video.mcp_server
+  url: null
+  resources:
+  - video.jobs
+  - video.assets
+  - video.timeline
+  tools: *id001
+  auth_env: []
+dashboard_surfaces:
+- video jobs
+- video asset library
+- provider health
+governance:
+- secret-redacted status
+- artifact provenance required
+- agent jobs must emit durable asset IDs
+connect_points:
+- PluginLoader validates and loads this manifest.
+- Gateway exposes status/job/asset endpoints.
+- Agents use registered tools or MCP tools to automate jobs.
+- Generated assets enter the universal asset index with provenance.
+disconnect_points:
+- Disconnect hides readiness/job creation without deleting assets.
+- Core PE queues and unrelated plugins continue operating.
+external_service: null

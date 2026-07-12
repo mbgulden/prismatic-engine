@@ -52,6 +52,21 @@ _KNOWN_CAPABILITIES: frozenset[str] = frozenset(
         "network",
         "filesystem-write",
         "process-spawn",
+        # Future creative/media/asset service capabilities:
+        "video-generation",
+        "image-generation",
+        "audio-generation",
+        "music-generation",
+        "sfx-generation",
+        "game-asset-generation",
+        "3d-asset-generation",
+        "asset-forge-3d",
+        "mcp-server",
+        "external-service",
+        "artifact-store",
+        "asset-index",
+        "dashboard-surface",
+        "gateway-api",
     }
 )
 
@@ -73,6 +88,10 @@ class PluginLoader:
         self.loaded_plugins: Dict[str, PrismaticPlugin] = {}
         self.registered_personas: Dict[str, Dict[str, Any]] = {}
         self.registered_tools: List[Dict[str, Any]] = []
+        self.registered_mcp_servers: List[Dict[str, Any]] = []
+        self.registered_api_routes: List[Dict[str, Any]] = []
+        self.registered_artifact_types: List[Dict[str, Any]] = []
+        self.registered_capability_contracts: Dict[str, Dict[str, Any]] = {}
         self.hardware_registry = hardware_registry
 
     # ── public API ─────────────────────────────────────────────────────
@@ -379,6 +398,34 @@ class PluginLoader:
             logger.error(
                 "Plugin '%s' failed to register tools", name, exc_info=True
             )
+
+        # 6. Register optional discovery/integration surfaces. These are
+        # best-effort so old plugins remain compatible and experimental
+        # media/service plugins can progressively declare more surfaces.
+        try:
+            contract = plugin_instance.capability_contract()
+            if contract:
+                self.registered_capability_contracts[name] = contract
+        except Exception:
+            logger.error("Plugin '%s' failed to expose capability contract", name, exc_info=True)
+        try:
+            for server in plugin_instance.register_mcp_servers():
+                if isinstance(server, dict):
+                    self.registered_mcp_servers.append({"plugin": name, **server})
+        except Exception:
+            logger.error("Plugin '%s' failed to register MCP servers", name, exc_info=True)
+        try:
+            for route in plugin_instance.register_api_routes():
+                if isinstance(route, dict):
+                    self.registered_api_routes.append({"plugin": name, **route})
+        except Exception:
+            logger.error("Plugin '%s' failed to register API routes", name, exc_info=True)
+        try:
+            for artifact in plugin_instance.register_artifact_types():
+                if isinstance(artifact, dict):
+                    self.registered_artifact_types.append({"plugin": name, **artifact})
+        except Exception:
+            logger.error("Plugin '%s' failed to register artifact types", name, exc_info=True)
 
         logger.info("Successfully loaded plugin '%s' (v%s)", name, version)
 

@@ -101,6 +101,38 @@ class PrismaticPlugin(ABC):
         """
         return []
 
+    # ── optional discovery / integration hooks ──────────────────────────
+
+    def capability_contract(self) -> Dict[str, Any]:
+        """Return machine-readable capabilities contributed by this plugin.
+
+        Media/service plugins should include asset domains, tool names,
+        governance rules, and connect/disconnect semantics here so agents
+        and dashboards do not scrape docs or implementation details.
+        """
+        return {}
+
+    def connection_contract(self) -> Dict[str, Any]:
+        """Return explicit connect/disconnect behavior for operator surfaces."""
+        return {}
+
+    def register_mcp_servers(self) -> List[Dict[str, Any]]:
+        """Return MCP server descriptors exposed by this plugin.
+
+        Descriptors may use stdio, HTTP, or SSE transports and should name
+        resources/tools plus redacted auth env var names. Core PE never
+        stores raw secret material in these descriptors.
+        """
+        return []
+
+    def register_api_routes(self) -> List[Dict[str, Any]]:
+        """Return API route descriptors the plugin expects PE Gateway to expose."""
+        return []
+
+    def register_artifact_types(self) -> List[Dict[str, Any]]:
+        """Return artifact MIME/types emitted by this plugin for indexing."""
+        return []
+
     # ── optional lifecycle hooks ─────────────────────────────────────────
 
     def before_task_execution(self, contract: AgentContract) -> None:
