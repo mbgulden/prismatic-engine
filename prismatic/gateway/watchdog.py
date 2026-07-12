@@ -206,11 +206,10 @@ def check_gateway_health(
         "alerts_fired": [],
     }
 
-
 def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-    )
+    from prismatic.observability import init_logging
+
+    init_logging(level=logging.INFO)
     res = check_gateway_health()
     if res["alerts_fired"]:
         print(f"Watchdog failed: {res['status']}. Alerts fired: {res['alerts_fired']}")

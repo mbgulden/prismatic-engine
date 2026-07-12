@@ -474,6 +474,7 @@ def gql(query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
     """
     import urllib.request
     import urllib.error
+    from prismatic.linear.retry import execute_linear_request
 
     api_key = _linear_api_key()
     payload = json.dumps(
@@ -483,18 +484,17 @@ def gql(query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
         }
     ).encode("utf-8")
 
-    req = urllib.request.Request(
-        "https://api.linear.app/graphql",
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": api_key,  # No "Bearer" prefix
-        },
-        method="POST",
-    )
-
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with execute_linear_request(
+            "https://api.linear.app/graphql",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": api_key,  # No "Bearer" prefix
+            },
+            method="POST",
+            timeout=30.0,
+        ) as resp:
             body = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body = exc.read().decode(errors="replace")

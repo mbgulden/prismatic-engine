@@ -3141,7 +3141,7 @@ class EventDrivenSupervisor:
         # Initial cap: 1 hour. If workers are still active but sandboxes have
         # recent activity, raise the roof (extend) and keep waiting.
         self.new_work_event.clear()
-        while True:
+        while not self.shutdown_event.is_set():
             if not self.idle_event.wait(timeout=max_cap_sec):
                 # At the cap. Check if any worker is making progress.
                 # If sandboxes have been modified in the last 90s, RAISE THE ROOF
@@ -3165,9 +3165,7 @@ class EventDrivenSupervisor:
                 if stuck_workers and not active_workers:
                     # All stuck, no activity — force-shutdown truly stuck workers
                     print(f"  ⚠️  {len(stuck_workers)} stuck worker(s) at {int(max_cap_sec/60)}min cap — force-shutting down: {stuck_workers[:5]}", flush=True)
-                    self.shutdown_event.set()
-                    for t in self.workers:
-                        t.join(timeout=10)
+                    self.shutdown()
                     return
                 elif stuck_workers and active_workers:
                     # Mixed: kill only the stuck ones, let the active ones keep going
@@ -3181,11 +3179,16 @@ class EventDrivenSupervisor:
                     max_cap_sec += 3600
                     print(f"  🔄 New cap: {int(max_cap_sec/60)} min", flush=True)
             else:
+                if self.shutdown_event.is_set():
+                    break
                 # All workers idle. Wait a bit more in case watchdog adds more.
                 print(f"  All workers idle. Waiting {idle_timeout}s for new arrivals...",
                       flush=True)
-                if self.new_work_event.wait(timeout=idle_timeout):
+                woke = self.new_work_event.wait(timeout=idle_timeout)
+                if woke:
                     self.new_work_event.clear()
+                    if self.shutdown_event.is_set():
+                        break
                     # New work arrived during the wait — loop again
                     continue
                 # No new work during the wait. In long_run mode, keep looping
@@ -3198,9 +3201,11 @@ class EventDrivenSupervisor:
                     # Block until either shutdown is requested or new work arrives
                     while not self.shutdown_event.is_set():
                         # Wait with periodic check (1min granularity for log heartbeat)
-                        woke = self.new_work_event.wait(timeout=60.0)
-                        if woke:
+                        woke_long = self.new_work_event.wait(timeout=60.0)
+                        if woke_long:
                             self.new_work_event.clear()
+                            if self.shutdown_event.is_set():
+                                break
                             # New work arrived — go back to the top of the loop
                             print(f"  ⚡ New work arrived during long-run idle wait", flush=True)
                             break

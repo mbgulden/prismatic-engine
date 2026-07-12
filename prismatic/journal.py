@@ -266,14 +266,15 @@ def gql(query: str, variables: dict[str, Any] | None = None, config: JournalConf
     key = _load_key(config)
     if not key:
         return {"errors": [{"message": "LINEAR_API_KEY missing"}]}
-    req = urllib.request.Request(
-        config.linear_url,
-        data=json.dumps({"query": query, "variables": variables or {}}).encode(),
-        headers={"Authorization": key, "Content-Type": "application/json"},
-        method="POST",
-    )
+    from prismatic.linear.retry import execute_linear_request
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with execute_linear_request(
+            config.linear_url,
+            data=json.dumps({"query": query, "variables": variables or {}}).encode(),
+            headers={"Authorization": key, "Content-Type": "application/json"},
+            method="POST",
+            timeout=30.0,
+        ) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as exc:
         try:
