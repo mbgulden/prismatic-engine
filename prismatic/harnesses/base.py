@@ -1,9 +1,4 @@
-"""
-Prismatic Engine harness base contracts.
-
-Harnesses adapt concrete agent runtimes (Hermes/systemd, AGY CLI, local
-model servers, etc.) to one small dispatcher-facing interface.
-"""
+"""Base contracts for Prismatic Engine agent harness adapters."""
 
 from __future__ import annotations
 
@@ -41,11 +36,20 @@ class HarnessCapabilities:
 class AgentHarness(ABC):
     """Abstract base class for agent-runtime adapters."""
 
-    name: str = ""
-    models: list[str] = []
-
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         self._config = config or {}
+
+    @property
+    @abstractmethod
+    def name(self) -> str:
+        """Stable harness adapter name."""
+        raise NotImplementedError
+
+    @property
+    @abstractmethod
+    def models(self) -> list[str]:
+        """Model/runtime identifiers supported by this harness."""
+        raise NotImplementedError
 
     @abstractmethod
     def dispatch(self, task: dict[str, Any]) -> str:
@@ -54,12 +58,12 @@ class AgentHarness(ABC):
 
     @abstractmethod
     def status(self, run_id: str) -> dict[str, Any]:
-        """Return normalized status metadata for a run."""
+        """Return ``{status, started_at, completed_at, error}`` for a run."""
         raise NotImplementedError
 
     @abstractmethod
     def cancel(self, run_id: str) -> bool:
-        """Attempt to cancel/stop a run."""
+        """Request cancellation for a run."""
         raise NotImplementedError
 
     @abstractmethod
@@ -69,8 +73,12 @@ class AgentHarness(ABC):
 
     @abstractmethod
     def cost(self, run_id: str) -> dict[str, Any]:
-        """Return usage/cost metadata for a run."""
+        """Return ``{tokens_in, tokens_out, dollars}`` for a run."""
         raise NotImplementedError
+
+    def health(self) -> dict[str, str]:
+        """Return a conservative default health payload."""
+        return {"status": "ok", "harness": self.name}
 
     def capabilities(self) -> HarnessCapabilities:
         """Return conservative default capabilities."""

@@ -110,13 +110,22 @@ class PluginLoader:
         Execute *hook_name* across every registered plugin in try-catch
         isolation.  A single plugin failure is logged but does not
         interrupt the dispatcher event loop.
+
+        GRO-2991: also push a telemetry event to telemetry_hook_fired via
+        TelemetryCollector.record_hook_fired() — fire-and-forget so a
+        telemetry outage never breaks the hook bus.
         """
+        import time as _time
+
+        start = _time.monotonic()
+        fired_count = 0
         for name, plugin in self.loaded_plugins.items():
             if not hasattr(plugin, hook_name):
                 continue
             try:
                 hook_func = getattr(plugin, hook_name)
                 hook_func(*args, **kwargs)
+                fired_count += 1
             except Exception:
                 logger.error(
                     "Plugin '%s' failed during hook '%s'",
@@ -124,6 +133,26 @@ class PluginLoader:
                     hook_name,
                     exc_info=True,
                 )
+        duration_ms = (_time.monotonic() - start) * 1000.0
+
+        # ── Telemetry: GRO-2991 wire record_hook_fired ───────────────
+        # Best-effort. Pull run_id/issue_id from kwargs if available so
+        # the operator dashboard can join hook fires against pipeline runs.
+        try:
+            from prismatic.telemetry import get_collector
+            collector = get_collector()
+            run_id = kwargs.get("run_id") if isinstance(kwargs, dict) else None
+            issue_id = kwargs.get("issue_id") if isinstance(kwargs, dict) else None
+            collector.record_hook_fired(
+                hook_name=hook_name,
+                event_type="plugin.execute_hook",
+                run_id=run_id,
+                issue_id=issue_id,
+                success=fired_count > 0 or not self.loaded_plugins,
+                duration_ms=duration_ms,
+            )
+        except Exception:
+            pass  # best-effort
 
     # ── internal ───────────────────────────────────────────────────────
 

@@ -177,6 +177,95 @@ class EventRouterDedup:
         """Convenience: check if a /command comment was processed."""
         return self.is_processed(command_key(issue_id, comment_id))
 
+    # -- Dispatch cap (GRO-2979) --------------------------------------------
+
+    def _count_dispatches(self, issue_id: str) -> int:
+        """Return the total recorded dispatch count for *issue_id*.
+
+        Reads from the ``dispatch_counts`` table; creates the table if it
+        doesn't exist. Returns 0 if the issue has never been dispatched.
+        """
+        with self._lock:
+            self._conn.execute(
+                """CREATE TABLE IF NOT EXISTS dispatch_counts (
+                    issue_id TEXT PRIMARY KEY,
+                    count INTEGER NOT NULL DEFAULT 0,
+                    last_dispatched_at REAL,
+                    first_dispatched_at REAL
+                )"""
+            )
+            row = self._conn.execute(
+                "SELECT count FROM dispatch_counts WHERE issue_id = ?",
+                (issue_id,),
+            ).fetchone()
+            return row["count"] if row else 0
+
+    def record_dispatch(self, issue_id: str) -> int:
+        """Bump the dispatch counter for *issue_id*. Returns new count.
+
+        Idempotent against back-to-back calls: every dispatch increments
+        exactly once.
+        """
+        with self._lock:
+            self._conn.execute(
+                """CREATE TABLE IF NOT EXISTS dispatch_counts (
+                    issue_id TEXT PRIMARY KEY,
+                    count INTEGER NOT NULL DEFAULT 0,
+                    last_dispatched_at REAL,
+                    first_dispatched_at REAL
+                )"""
+            )
+            now = time.time()
+            self._conn.execute(
+                """INSERT INTO dispatch_counts (issue_id, count, last_dispatched_at, first_dispatched_at)
+                   VALUES (?, 1, ?, ?)
+                   ON CONFLICT(issue_id) DO UPDATE SET
+                       count = count + 1,
+                       last_dispatched_at = ?""",
+                (issue_id, now, now, now),
+            )
+            self._conn.commit()
+            row = self._conn.execute(
+                "SELECT count FROM dispatch_counts WHERE issue_id = ?",
+                (issue_id,),
+            ).fetchone()
+            return row["count"] if row else 0
+
+    def is_over_dispatch_cap(
+        self, issue_id: str, *, window_hours: int | None = None
+    ) -> bool:
+        """True if *issue_id* has exceeded the dispatch cap inside the window.
+
+        Reads ``dispatch_counts.count`` and ``last_dispatched_at``; returns
+        True when both:
+          (a) count >= ``MAX_DISPATCH_COUNT_PER_ISSUE``, AND
+          (b) last_dispatched_at is within ``window_hours`` (default
+              ``MAX_DISPATCH_WINDOW_HOURS``).
+        """
+        if window_hours is None:
+            window_hours = MAX_DISPATCH_WINDOW_HOURS
+        with self._lock:
+            self._conn.execute(
+                """CREATE TABLE IF NOT EXISTS dispatch_counts (
+                    issue_id TEXT PRIMARY KEY,
+                    count INTEGER NOT NULL DEFAULT 0,
+                    last_dispatched_at REAL,
+                    first_dispatched_at REAL
+                )"""
+            )
+            row = self._conn.execute(
+                "SELECT count, last_dispatched_at FROM dispatch_counts WHERE issue_id = ?",
+                (issue_id,),
+            ).fetchone()
+        if not row:
+            return False
+        count = row["count"]
+        last_at = row["last_dispatched_at"] or 0.0
+        if count < MAX_DISPATCH_COUNT_PER_ISSUE:
+            return False
+        window_seconds = window_hours * 3600
+        return (time.time() - last_at) <= window_seconds
+
     # -- Cleanup -------------------------------------------------------------
 
     def cleanup_expired(self) -> int:
@@ -244,6 +333,23 @@ def get_dedup(db_path: str | None = None) -> EventRouterDedup:
             if _global_dedup is None:
                 _global_dedup = EventRouterDedup(db_path=db_path)
     return _global_dedup
+
+
+# ---------------------------------------------------------------------------
+# Max dispatch caps (GRO-2979 regression prevention)
+# ---------------------------------------------------------------------------
+
+# Hard cap on dispatches per issue — anything beyond is auto-marked stuck.
+# Defends against retry storms (GRO-2051 re-dispatched 178 times).
+MAX_DISPATCH_COUNT_PER_ISSUE = int(
+    os.environ.get("PRISMATIC_MAX_DISPATCH_PER_ISSUE", "20")
+)
+
+# Window for the "stuck in <48h" rule. If dispatches >= cap within this
+# many hours AND no closure row exists, mark stuck.
+MAX_DISPATCH_WINDOW_HOURS = int(
+    os.environ.get("PRISMATIC_MAX_DISPATCH_WINDOW_HOURS", "48")
+)
 
 
 # ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@ author: "Antigravity (agent:antigravity)"
 
 entry_point: "pwp.plugin:PWPDesignTokenPlugin"
 
-core_version_constraint: ">=1.0.0, <2.0.0"
+core_version_constraint: ">=0.2.0, <2.0.0"
 
 dependencies:
   pip: []

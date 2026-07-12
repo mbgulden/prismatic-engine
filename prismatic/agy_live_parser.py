@@ -66,13 +66,17 @@ def parse_status_line(line: str) -> dict[str, Any] | None:
     try:
         data = json.loads(line)
     except json.JSONDecodeError:
-        print(f"[agy_live_parser] WARNING: malformed JSON, skipping: {line[:120]}...",
-              file=sys.stderr)
+        print(
+            f"[agy_live_parser] WARNING: malformed JSON, skipping: {line[:120]}...",
+            file=sys.stderr,
+        )
         return None
 
     if not isinstance(data, dict):
-        print(f"[agy_live_parser] WARNING: expected JSON object, got {type(data).__name__}, skipping",
-              file=sys.stderr)
+        print(
+            f"[agy_live_parser] WARNING: expected JSON object, got {type(data).__name__}, skipping",
+            file=sys.stderr,
+        )
         return None
 
     # Extract .active_model
@@ -133,11 +137,33 @@ def main() -> None:
             rate_limits=parsed["rate_limits"],
             raw_payload=parsed["raw_payload"],
         )
+        # ── Telemetry: also push to telemetry_token_metrics ──────
+        # GRO-2990: record_tokens() previously had 0 production callers —
+        # agy_live_parser was the natural ingestion site (already parses
+        # prompt_tokens / completion_tokens / context_pct). Fire-and-forget
+        # on failure so a telemetry outage never breaks the parser loop.
+        try:
+            collector.record_tokens(
+                run_id=run_id,
+                agent="agy",
+                provider="google-antigravity",
+                model=parsed["active_model"],
+                prompt_tokens=parsed["prompt_tokens"],
+                completion_tokens=parsed["completion_tokens"],
+                ttft_ms=0.0,
+                tps=0.0,
+                context_pct=parsed["context_usage_pct"],
+                vram_mb=0,
+            )
+        except Exception:
+            pass  # best-effort, mirror record_agy_live_state behavior
         lines_processed += 1
 
-    print(f"[agy_live_parser] Done. Processed: {lines_processed}, "
-          f"Failed: {lines_failed}, Run ID: {run_id}",
-          file=sys.stderr)
+    print(
+        f"[agy_live_parser] Done. Processed: {lines_processed}, "
+        f"Failed: {lines_failed}, Run ID: {run_id}",
+        file=sys.stderr,
+    )
 
 
 if __name__ == "__main__":

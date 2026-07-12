@@ -160,6 +160,25 @@ _POLICIES: dict[OrchestrationMode, ModePolicy] = {
 }
 
 
+
+# Backward-compatible string state sequence used by legacy transition tests.
+STATES = [
+    "decompose",
+    "dispatch",
+    "execute",
+    "review",
+    "feedback",
+    "refine",
+    "integrate",
+    "done",
+]
+_MAJOR_COLLABORATIVE_TRANSITIONS = {
+    ("decompose", "dispatch"),
+    ("dispatch", "execute"),
+    ("review", "feedback"),
+    ("refine", "integrate"),
+}
+
 # ═══════════════════════════════════════════════════════════════
 # Mode Switch
 # ═══════════════════════════════════════════════════════════════
@@ -183,6 +202,8 @@ class ModeSwitch:
         self._mode = mode
         self._policy = _POLICIES[mode]
         self._mode_history: list[dict[str, str]] = []
+        self._pending_transitions: set[tuple[str, str]] = set()
+        self._escalation_hooks: list[Any] = []
 
     # ── Mode Accessors ──────────────────────────────────────
 
@@ -218,6 +239,45 @@ class ModeSwitch:
             "to": new_mode.value,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
+
+
+    # ── Legacy transition approval API ───────────────────────
+
+    def register_escalation_hook(self, hook: Any) -> None:
+        self._escalation_hooks.append(hook)
+
+    def request_approval(
+        self,
+        from_state: str,
+        to_state: str,
+        is_escalation: bool = False,
+        reason: str = "",
+    ) -> bool:
+        transition = (from_state, to_state)
+        if is_escalation:
+            self._pending_transitions.add(transition)
+            for hook in self._escalation_hooks:
+                hook(from_state, to_state, reason)
+            return False
+        if self._mode == OrchestrationMode.AUTONOMOUS:
+            return True
+        if self._mode == OrchestrationMode.INTERACTIVE:
+            self._pending_transitions.add(transition)
+            return False
+        if transition in _MAJOR_COLLABORATIVE_TRANSITIONS:
+            self._pending_transitions.add(transition)
+            return False
+        return True
+
+    def is_pending(self, from_state: str, to_state: str) -> bool:
+        return (from_state, to_state) in self._pending_transitions
+
+    def approve_transition(self, from_state: str, to_state: str) -> bool:
+        transition = (from_state, to_state)
+        if transition in self._pending_transitions:
+            self._pending_transitions.remove(transition)
+            return True
+        return False
 
     # ── Decision Methods ────────────────────────────────────
 

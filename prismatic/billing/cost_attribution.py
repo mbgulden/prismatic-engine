@@ -20,7 +20,6 @@ import sqlite3
 from contextlib import closing
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
-from pathlib import Path
 from typing import Any
 
 # ── Default paths ──────────────────────────────────────────
@@ -33,29 +32,30 @@ DEFAULT_DB_PATH = os.path.join(
 # Values are per-token costs. Multiply by token count directly.
 # Example: gpt-4 prompt = $0.03/1K tokens → $0.00003/token
 MODEL_PRICING: dict[str, dict[str, float]] = {
-    "gpt-4":              {"prompt": 0.00003, "completion": 0.00006},
-    "gpt-4-turbo":        {"prompt": 0.00001, "completion": 0.00003},
-    "gpt-4o":             {"prompt": 0.000005, "completion": 0.000015},
-    "gpt-4o-mini":        {"prompt": 0.00000015, "completion": 0.0000006},
-    "gpt-3.5-turbo":      {"prompt": 0.0000015, "completion": 0.000002},
-    "claude-3-opus":      {"prompt": 0.000015, "completion": 0.000075},
-    "claude-3-sonnet":    {"prompt": 0.000003, "completion": 0.000015},
-    "claude-3-haiku":     {"prompt": 0.00000025, "completion": 0.00000125},
-    "claude-3.5-sonnet":  {"prompt": 0.000003, "completion": 0.000015},
-    "gemini-1.5-pro":     {"prompt": 0.000007, "completion": 0.000021},
-    "gemini-1.5-flash":   {"prompt": 0.00000015, "completion": 0.0000006},
-    "gemini-2.5-pro":     {"prompt": 0.00000125, "completion": 0.00001},
-    "gemini-2.5-flash":   {"prompt": 0.00000015, "completion": 0.0000006},
-    "deepseek-v3":        {"prompt": 0.00000027, "completion": 0.0000011},
-    "deepseek-r1":        {"prompt": 0.00000055, "completion": 0.00000219},
-    "llama-3-70b":        {"prompt": 0.00000059, "completion": 0.00000079},
-    "llama-3-8b":         {"prompt": 0.00000006, "completion": 0.00000006},
+    "gpt-4": {"prompt": 0.00003, "completion": 0.00006},
+    "gpt-4-turbo": {"prompt": 0.00001, "completion": 0.00003},
+    "gpt-4o": {"prompt": 0.000005, "completion": 0.000015},
+    "gpt-4o-mini": {"prompt": 0.00000015, "completion": 0.0000006},
+    "gpt-3.5-turbo": {"prompt": 0.0000015, "completion": 0.000002},
+    "claude-3-opus": {"prompt": 0.000015, "completion": 0.000075},
+    "claude-3-sonnet": {"prompt": 0.000003, "completion": 0.000015},
+    "claude-3-haiku": {"prompt": 0.00000025, "completion": 0.00000125},
+    "claude-3.5-sonnet": {"prompt": 0.000003, "completion": 0.000015},
+    "gemini-1.5-pro": {"prompt": 0.000007, "completion": 0.000021},
+    "gemini-1.5-flash": {"prompt": 0.00000015, "completion": 0.0000006},
+    "gemini-2.5-pro": {"prompt": 0.00000125, "completion": 0.00001},
+    "gemini-2.5-flash": {"prompt": 0.00000015, "completion": 0.0000006},
+    "deepseek-v3": {"prompt": 0.00000027, "completion": 0.0000011},
+    "deepseek-r1": {"prompt": 0.00000055, "completion": 0.00000219},
+    "llama-3-70b": {"prompt": 0.00000059, "completion": 0.00000079},
+    "llama-3-8b": {"prompt": 0.00000006, "completion": 0.00000006},
 }
 
 
 @dataclass
 class BillingReport:
     """Aggregated billing data for a client/project."""
+
     client_id: str
     project_id: str
     total_prompt_tokens: int = 0
@@ -70,6 +70,7 @@ class BillingReport:
 @dataclass
 class CostProjection:
     """Rolling 7-day cost projection."""
+
     daily_costs: list[float] = field(default_factory=list)
     projected_monthly: float = 0.0
     average_daily: float = 0.0
@@ -134,13 +135,11 @@ class CostAttributionEngine:
             existing_cols = {row[1] for row in cursor.fetchall()}
             if "client_id" not in existing_cols:
                 conn.execute(
-                    "ALTER TABLE telemetry_credit_ledger "
-                    "ADD COLUMN client_id TEXT"
+                    "ALTER TABLE telemetry_credit_ledger ADD COLUMN client_id TEXT"
                 )
             if "project_id" not in existing_cols:
                 conn.execute(
-                    "ALTER TABLE telemetry_credit_ledger "
-                    "ADD COLUMN project_id TEXT"
+                    "ALTER TABLE telemetry_credit_ledger ADD COLUMN project_id TEXT"
                 )
             conn.commit()
         finally:
@@ -148,9 +147,7 @@ class CostAttributionEngine:
 
     # ── Issue Attribution ──────────────────────────────────
 
-    def set_attribution(
-        self, issue_id: str, client_id: str, project_id: str
-    ) -> None:
+    def set_attribution(self, issue_id: str, client_id: str, project_id: str) -> None:
         """Map an issue to a client and project billing profile."""
         with closing(sqlite3.connect(self._db_path)) as conn:
             conn.execute(
@@ -168,8 +165,7 @@ class CostAttributionEngine:
         """
         with closing(sqlite3.connect(self._db_path)) as conn:
             cursor = conn.execute(
-                "SELECT client_id, project_id FROM billing_mapping "
-                "WHERE issue_id = ?",
+                "SELECT client_id, project_id FROM billing_mapping WHERE issue_id = ?",
                 (issue_id,),
             )
             row = cursor.fetchone()
@@ -190,9 +186,7 @@ class CostAttributionEngine:
     # ── Cost Calculation ───────────────────────────────────
 
     @staticmethod
-    def calculate_cost(
-        model: str, prompt_tokens: int, completion_tokens: int
-    ) -> float:
+    def calculate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
         """Calculate USD cost for token usage by model.
 
         MODEL_PRICING stores per-token rates. Multiply directly.
@@ -244,7 +238,8 @@ class CostAttributionEngine:
                     operation, recorded_at, client_id, project_id)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    run_id or f"billing-{issue_id}-{datetime.now(timezone.utc).timestamp()}",
+                    run_id
+                    or f"billing-{issue_id}-{datetime.now(timezone.utc).timestamp()}",
                     agent_id,
                     provider or "billing-engine",
                     model,
@@ -260,11 +255,35 @@ class CostAttributionEngine:
         # ── Update Prometheus counter ──
         try:
             from prismatic.telemetry.metrics import TOKEN_SPEND_USD
+
             TOKEN_SPEND_USD.labels(
                 agent_id=agent_id, model=model, client=client_id
             ).inc(cost)
         except Exception:
             pass
+
+        # ── Telemetry: GRO-2990 — also push to telemetry_token_metrics ──
+        # record_usage() is the canonical LLM-billing ingestion site for the
+        # engine's non-AGY providers (hermes, kai, etc.). record_tokens() was
+        # previously test-only — wire it here so cost-attributed runs surface
+        # in the token metrics table.
+        try:
+            from prismatic.telemetry import get_collector
+
+            get_collector().record_tokens(
+                run_id=run_id or f"billing-{issue_id}",
+                agent=agent_id,
+                provider=provider or "billing-engine",
+                model=model,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                ttft_ms=0.0,
+                tps=0.0,
+                context_pct=0.0,
+                vram_mb=0,
+            )
+        except Exception:
+            pass  # best-effort
 
         return cost
 
@@ -322,9 +341,7 @@ class CostAttributionEngine:
             List of BillingReport dataclasses, one per client/project combo.
         """
         if not start_date:
-            start_date = (
-                datetime.now(timezone.utc) - timedelta(days=30)
-            ).isoformat()
+            start_date = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
         if not end_date:
             end_date = datetime.now(timezone.utc).isoformat()
 
@@ -391,56 +408,85 @@ class CostAttributionEngine:
 
         return sorted(reports.values(), key=lambda r: r.total_cost_usd, reverse=True)
 
-    def generate_report_csv(self, client_id: str | None = None,
-                            project_id: str | None = None) -> str:
+    def generate_report_csv(
+        self, client_id: str | None = None, project_id: str | None = None
+    ) -> str:
         """Generate billing report as CSV string."""
         reports = self.generate_report(client_id=client_id, project_id=project_id)
 
         output = io.StringIO()
         writer = csv.writer(output)
-        writer.writerow([
-            "client_id", "project_id", "agent", "model",
-            "cost_usd", "entries", "period_start", "period_end"
-        ])
+        writer.writerow(
+            [
+                "client_id",
+                "project_id",
+                "agent",
+                "model",
+                "cost_usd",
+                "entries",
+                "period_start",
+                "period_end",
+            ]
+        )
 
         for report in reports:
             for agent, adata in report.agent_breakdown.items():
                 # Find primary model for this agent
-                primary_model = max(
-                    report.model_breakdown.items(),
-                    key=lambda x: x[1]["cost_usd"],
-                )[0] if report.model_breakdown else "unknown"
+                primary_model = (
+                    max(
+                        report.model_breakdown.items(),
+                        key=lambda x: x[1]["cost_usd"],
+                    )[0]
+                    if report.model_breakdown
+                    else "unknown"
+                )
 
-                writer.writerow([
-                    report.client_id, report.project_id, agent, primary_model,
-                    f"{adata['cost_usd']:.6f}", adata["entries"],
-                    report.period_start, report.period_end,
-                ])
+                writer.writerow(
+                    [
+                        report.client_id,
+                        report.project_id,
+                        agent,
+                        primary_model,
+                        f"{adata['cost_usd']:.6f}",
+                        adata["entries"],
+                        report.period_start,
+                        report.period_end,
+                    ]
+                )
 
         return output.getvalue()
 
-    def generate_report_json(self, client_id: str | None = None,
-                             project_id: str | None = None) -> str:
+    def generate_report_json(
+        self, client_id: str | None = None, project_id: str | None = None
+    ) -> str:
         """Generate billing report as JSON string."""
         reports = self.generate_report(client_id=client_id, project_id=project_id)
 
         result = []
         for report in reports:
-            result.append({
-                "client_id": report.client_id,
-                "project_id": report.project_id,
-                "total_cost_usd": round(report.total_cost_usd, 6),
-                "agent_breakdown": {
-                    k: {"cost_usd": round(v["cost_usd"], 6), "entries": v["entries"]}
-                    for k, v in report.agent_breakdown.items()
-                },
-                "model_breakdown": {
-                    k: {"cost_usd": round(v["cost_usd"], 6), "entries": v["entries"]}
-                    for k, v in report.model_breakdown.items()
-                },
-                "period_start": report.period_start,
-                "period_end": report.period_end,
-            })
+            result.append(
+                {
+                    "client_id": report.client_id,
+                    "project_id": report.project_id,
+                    "total_cost_usd": round(report.total_cost_usd, 6),
+                    "agent_breakdown": {
+                        k: {
+                            "cost_usd": round(v["cost_usd"], 6),
+                            "entries": v["entries"],
+                        }
+                        for k, v in report.agent_breakdown.items()
+                    },
+                    "model_breakdown": {
+                        k: {
+                            "cost_usd": round(v["cost_usd"], 6),
+                            "entries": v["entries"],
+                        }
+                        for k, v in report.model_breakdown.items()
+                    },
+                    "period_start": report.period_start,
+                    "period_end": report.period_end,
+                }
+            )
 
         return json.dumps(result, indent=2)
 
@@ -492,8 +538,7 @@ class CostAttributionEngine:
         # Fill in all days in the window (even zero-cost days)
         daily_costs: list[float] = []
         day_map: dict[str, float] = {
-            row["day"]: (row["daily_credits"] or 0) / 100000.0
-            for row in rows
+            row["day"]: (row["daily_credits"] or 0) / 100000.0 for row in rows
         }
 
         current = start_date
@@ -555,9 +600,7 @@ class CostAttributionEngine:
 
     # ── Telemetry Dimension Helpers ────────────────────────
 
-    def enrich_credit_event(
-        self, event: dict[str, Any]
-    ) -> dict[str, Any]:
+    def enrich_credit_event(self, event: dict[str, Any]) -> dict[str, Any]:
         """Enrich a credit event dict with client_id/project_id.
 
         If the event has an issue_id, resolves attribution automatically.
