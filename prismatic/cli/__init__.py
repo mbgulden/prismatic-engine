@@ -79,6 +79,18 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     visual_verify.add_argument("args", nargs=argparse.REMAINDER)
 
+    worktrees = subparsers.add_parser(
+        "worktrees",
+        help="Inspect/archive/remove stale Git worktrees",
+    )
+    worktrees.add_argument("args", nargs=argparse.REMAINDER)
+
+    crons = subparsers.add_parser(
+        "crons",
+        help="Emit or install Prismatic Engine core cron manifests",
+    )
+    crons.add_argument("args", nargs=argparse.REMAINDER)
+
     return parser
 
 
@@ -140,6 +152,16 @@ def run(argv: Sequence[str] | None = None) -> int:
         from prismatic.cli.visual_verify import main as visual_verify_main
 
         return int(visual_verify_main(args.args) or 0)
+
+    if args.command == "worktrees":
+        from prismatic.worktree_janitor import cli as worktree_cli
+
+        return int(worktree_cli(args.args) or 0)
+
+    if args.command == "crons":
+        from prismatic.core_crons import cli as crons_cli
+
+        return int(crons_cli(args.args) or 0)
 
     parser.print_help()
     return 0
