@@ -2,6 +2,15 @@
 
 This repo supports a portable managed-site registry so Active Oahu-style SEO automation can be turned on for every managed website without hardcoding one domain per script.
 
+## Golden path
+
+```text
+Site installs GTM once.
+Site pushes clean business events to dataLayer.
+GTM maps those events into GA4/Ads/etc.
+PE crons pull GA4 + GSC and turn it into action.
+```
+
 ## Site registry
 
 Default config:
