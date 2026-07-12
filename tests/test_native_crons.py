@@ -28,6 +28,8 @@ def test_native_cron_seed_contains_portable_seo_jobs(tmp_path: Path) -> None:
         "seo.aot-weekly-rankings",
         "seo.aot-competitor-velocity",
         "seo.aot-full-sweep",
+        "seo.managed-sites-setup-audit",
+        "seo.managed-sites-ga4-insights",
         "seo.gsc-query-page-export",
         "seo.aot-counter-content-briefs",
         "seo.aot-internal-link-orphan-audit",
@@ -88,6 +90,8 @@ def test_export_system_crontab_omits_paused_deactivated_deleted_and_manual(tmp_p
     assert "aot_kpi_tracker" not in joined
     assert "competitor_velocity" not in joined
     assert "scripts/pwp" in joined
+    assert "managed_site_setup_audit.py" in joined
+    assert "ga4_insights.py" in joined
     assert "gsc_query_page_export.py" in joined
     assert "gsc_ubersuggest_countercontent.py" in joined
     assert "internal_link_orphan_audit.py" in joined
