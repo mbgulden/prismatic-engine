@@ -69,25 +69,92 @@ def _default_store_path() -> str:
 
 
 class AgentRunRecordStore:
-    """Thread-safe JSON-file backed store for agent run records.
+    """Thread-safe JSON or SQLite backed store for agent run records.
 
-    The file is kept in memory and flushed on every mutation.  Reads are
-    served from the in-memory cache.  File-level advisory locking protects
-    against concurrent writer processes.
+    If store_path has a SQLite extension (e.g. .db), it delegates to SQLite.
+    Otherwise, it defaults to JSON-file backing.
     """
 
     def __init__(self, store_path: str | None = None):
         self._store_path = store_path or _default_store_path()
+        self._is_sqlite = self._store_path.endswith(".db") or "sqlite" in self._store_path
 
         # Ensure parent directory exists
         Path(self._store_path).parent.mkdir(parents=True, exist_ok=True)
 
-        self._records: dict[str, AgentRunRecord] = {}  # run_id -> record
-        self._lock_file_path = self._store_path + ".lock"
+        if self._is_sqlite:
+            self._init_sqlite()
+        else:
+            self._records: dict[str, AgentRunRecord] = {}  # run_id -> record
+            self._lock_file_path = self._store_path + ".lock"
+            self._load_from_disk()
 
-        self._load_from_disk()
+    # -- SQLite helpers ------------------------------------------------------
 
-    # -- Internal helpers ----------------------------------------------------
+    def _init_sqlite(self) -> None:
+        import sqlite3
+        with sqlite3.connect(self._store_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS runs (
+                    run_id TEXT PRIMARY KEY,
+                    issue_id TEXT,
+                    agent_name TEXT,
+                    status TEXT,
+                    started_at TEXT,
+                    completed_at TEXT,
+                    output_path TEXT,
+                    error_message TEXT,
+                    evidence TEXT,
+                    verification_status TEXT,
+                    verification_scope TEXT,
+                    failure_category TEXT,
+                    cleanup_status TEXT,
+                    done_gate_result TEXT,
+                    done_gate_errors TEXT
+                )
+                """
+            )
+
+    def _get_columns(self) -> list[str]:
+        import sqlite3
+        with sqlite3.connect(self._store_path) as conn:
+            cursor = conn.execute("PRAGMA table_info(runs)")
+            return [row[1] for row in cursor.fetchall()]
+
+    def _row_to_record(self, row: tuple, columns: list[str]) -> AgentRunRecord:
+        row_dict = dict(zip(columns, row))
+        evidence = None
+        if row_dict.get("evidence"):
+            try:
+                evidence = json.loads(row_dict["evidence"])
+            except Exception:
+                pass
+        done_gate_errors = []
+        if row_dict.get("done_gate_errors"):
+            try:
+                done_gate_errors = json.loads(row_dict["done_gate_errors"])
+            except Exception:
+                pass
+        return AgentRunRecord(
+            run_id=row_dict.get("run_id"),
+            issue_id=row_dict.get("issue_id"),
+            agent_name=row_dict.get("agent_name"),
+            status=row_dict.get("status", "pending"),
+            started_at=row_dict.get("started_at", ""),
+            completed_at=row_dict.get("completed_at"),
+            output_path=row_dict.get("output_path"),
+            error_message=row_dict.get("error_message"),
+            evidence=evidence,
+            verification_status=row_dict.get("verification_status", "self_reported"),
+            verification_scope=row_dict.get("verification_scope", "not_run"),
+            failure_category=row_dict.get("failure_category", "none"),
+            cleanup_status=row_dict.get("cleanup_status", "not_reported"),
+            done_gate_result=row_dict.get("done_gate_result", "not_done"),
+            done_gate_errors=done_gate_errors,
+        )
+
+    # -- Internal helpers (JSON only) ----------------------------------------
 
     def _acquire_lock(self) -> int:
         """Acquire an exclusive advisory lock on the lock file.
@@ -143,6 +210,26 @@ class AgentRunRecordStore:
         """
         run_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
+
+        if self._is_sqlite:
+            import sqlite3
+            columns = self._get_columns()
+            val_map = {
+                "run_id": run_id,
+                "issue_id": issue_id,
+                "agent_name": agent_name,
+                "status": "pending",
+                "started_at": now,
+            }
+            insert_cols = [c for c in columns if c in val_map]
+            placeholders = ", ".join(["?"] * len(insert_cols))
+            sql = f"INSERT INTO runs ({', '.join(insert_cols)}) VALUES ({placeholders})"
+            params = [val_map[c] for c in insert_cols]
+            with sqlite3.connect(self._store_path) as conn:
+                conn.execute(sql, params)
+                conn.commit()
+            return run_id
+
         record = AgentRunRecord(
             run_id=run_id,
             issue_id=issue_id,
@@ -166,6 +253,58 @@ class AgentRunRecordStore:
 
         Returns ``True`` if the run was found and updated, ``False`` otherwise.
         """
+        if self._is_sqlite:
+            import sqlite3
+            record = self.get_run(run_id)
+            if record is None:
+                return False
+
+            record.status = status
+            if output_path is not None:
+                record.output_path = output_path
+            if error is not None:
+                record.error_message = error
+            if evidence is not None:
+                self._apply_evidence(record, evidence)
+            elif status in ("completed", "failed") and record.evidence is None:
+                gate_result, gate_errors = done_gate(status, None)
+                record.verification_status = VerificationStatus.SELF_REPORTED.value
+                record.verification_scope = VerificationScope.NOT_RUN.value
+                record.failure_category = FailureCategory.NONE.value
+                record.cleanup_status = "not_reported"
+                record.done_gate_result = gate_result
+                record.done_gate_errors = gate_errors
+
+            if status in ("completed", "failed"):
+                record.completed_at = datetime.now(timezone.utc).isoformat()
+
+            columns = self._get_columns()
+            val_map = {
+                "status": record.status,
+                "output_path": record.output_path,
+                "error_message": record.error_message,
+                "completed_at": record.completed_at,
+                "evidence": json.dumps(record.evidence) if record.evidence else None,
+                "verification_status": record.verification_status,
+                "verification_scope": record.verification_scope,
+                "failure_category": record.failure_category,
+                "cleanup_status": record.cleanup_status,
+                "done_gate_result": record.done_gate_result,
+                "done_gate_errors": json.dumps(record.done_gate_errors) if record.done_gate_errors else None,
+            }
+            update_pairs = []
+            params = []
+            for c in columns:
+                if c in val_map and c != "run_id":
+                    update_pairs.append(f"{c} = ?")
+                    params.append(val_map[c])
+            params.append(run_id)
+            sql = f"UPDATE runs SET {', '.join(update_pairs)} WHERE run_id = ?"
+            with sqlite3.connect(self._store_path) as conn:
+                conn.execute(sql, params)
+                conn.commit()
+            return True
+
         record = self._records.get(run_id)
         if record is None:
             return False
@@ -196,6 +335,36 @@ class AgentRunRecordStore:
         self, run_id: str, evidence: ExecutionEvidence | dict[str, Any]
     ) -> bool:
         """Attach canonical execution evidence to an existing run."""
+        if self._is_sqlite:
+            import sqlite3
+            record = self.get_run(run_id)
+            if record is None:
+                return False
+            self._apply_evidence(record, evidence)
+
+            columns = self._get_columns()
+            val_map = {
+                "evidence": json.dumps(record.evidence) if record.evidence else None,
+                "verification_status": record.verification_status,
+                "verification_scope": record.verification_scope,
+                "failure_category": record.failure_category,
+                "cleanup_status": record.cleanup_status,
+                "done_gate_result": record.done_gate_result,
+                "done_gate_errors": json.dumps(record.done_gate_errors) if record.done_gate_errors else None,
+            }
+            update_pairs = []
+            params = []
+            for c in columns:
+                if c in val_map and c != "run_id":
+                    update_pairs.append(f"{c} = ?")
+                    params.append(val_map[c])
+            params.append(run_id)
+            sql = f"UPDATE runs SET {', '.join(update_pairs)} WHERE run_id = ?"
+            with sqlite3.connect(self._store_path) as conn:
+                conn.execute(sql, params)
+                conn.commit()
+            return True
+
         record = self._records.get(run_id)
         if record is None:
             return False
@@ -227,16 +396,42 @@ class AgentRunRecordStore:
 
     def get_run(self, run_id: str) -> AgentRunRecord | None:
         """Retrieve a single run record by its *run_id*."""
+        if self._is_sqlite:
+            import sqlite3
+            columns = self._get_columns()
+            sql = f"SELECT {', '.join(columns)} FROM runs WHERE run_id = ?"
+            with sqlite3.connect(self._store_path) as conn:
+                row = conn.execute(sql, (run_id,)).fetchone()
+                if row:
+                    return self._row_to_record(row, columns)
+                return None
+
         return self._records.get(run_id)
 
     def get_runs_for_issue(self, issue_id: str) -> list[AgentRunRecord]:
         """Return all runs for a given *issue_id*, newest first."""
+        if self._is_sqlite:
+            import sqlite3
+            columns = self._get_columns()
+            sql = f"SELECT {', '.join(columns)} FROM runs WHERE issue_id = ? ORDER BY started_at DESC"
+            with sqlite3.connect(self._store_path) as conn:
+                rows = conn.execute(sql, (issue_id,)).fetchall()
+                return [self._row_to_record(r, columns) for r in rows]
+
         matching = [r for r in self._records.values() if r.issue_id == issue_id]
         matching.sort(key=lambda r: r.started_at, reverse=True)
         return matching
 
     def get_recent_runs(self, limit: int = 10) -> list[AgentRunRecord]:
         """Return the most recent *limit* runs across all issues."""
+        if self._is_sqlite:
+            import sqlite3
+            columns = self._get_columns()
+            sql = f"SELECT {', '.join(columns)} FROM runs ORDER BY started_at DESC LIMIT ?"
+            with sqlite3.connect(self._store_path) as conn:
+                rows = conn.execute(sql, (limit,)).fetchall()
+                return [self._row_to_record(r, columns) for r in rows]
+
         sorted_records = sorted(
             self._records.values(),
             key=lambda r: r.started_at,
@@ -246,7 +441,10 @@ class AgentRunRecordStore:
 
     def reload(self) -> None:
         """Reload records from disk (useful after external writes)."""
-        self._load_from_disk()
+        if self._is_sqlite:
+            pass
+        else:
+            self._load_from_disk()
 
     # -- Reporting -----------------------------------------------------------
 
@@ -292,9 +490,23 @@ class AgentRunRecordStore:
     @property
     def all_records(self) -> list[AgentRunRecord]:
         """Return all stored records."""
+        if self._is_sqlite:
+            import sqlite3
+            columns = self._get_columns()
+            sql = f"SELECT {', '.join(columns)} FROM runs"
+            with sqlite3.connect(self._store_path) as conn:
+                rows = conn.execute(sql).fetchall()
+                return [self._row_to_record(r, columns) for r in rows]
+
         return list(self._records.values())
 
     @property
     def record_count(self) -> int:
         """Return the total number of stored records."""
+        if self._is_sqlite:
+            import sqlite3
+            with sqlite3.connect(self._store_path) as conn:
+                row = conn.execute("SELECT COUNT(*) FROM runs").fetchone()
+                return row[0] if row else 0
+
         return len(self._records)

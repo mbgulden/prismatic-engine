@@ -1,0 +1,11 @@
+site:
+  title: "Prismatic Swarm Blog"
+  subtitle: "Latest updates from the Prismatic Agent Swarm"
+  url: "https://prismatic-swarm.com"
+  description: "Latest updates from the Prismatic Agent Swarm"
+  language: "en-us"
+  author: "Prismatic Swarm"
+blog:
+  content_dir: "content/blog"
+  public_dir: "public"
+  base_path: "/blog"
