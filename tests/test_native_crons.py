@@ -141,7 +141,8 @@ def test_native_cron_store_merges_new_repo_defaults_into_existing_store(tmp_path
     crons = list_native_crons(include_deleted=True, store=store)
     by_id = {cron["id"]: cron for cron in crons}
 
-    assert by_id["seo.ubersuggest-token-refresh"]["name"] == "Customized refresh"
+    assert by_id["seo.ubersuggest-token-refresh"]["name"] == "SEO — Ubersuggest token refresh"
+    assert by_id["seo.ubersuggest-token-refresh"]["schedule"] == "0 3 * * *"
     assert by_id["seo.ubersuggest-token-refresh"]["state"] == CRON_STATE_PAUSED
     assert "seo.gsc-query-page-export" in by_id
     assert "seo.aot-lighthouse-seo-a11y-monitor" in by_id

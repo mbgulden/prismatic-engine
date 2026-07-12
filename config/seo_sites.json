@@ -14,6 +14,17 @@
       ],
       "ga4_property_env": "AOT_GA4_PROPERTY_ID",
       "ga4_property_id": null,
+      "gtm_container_id": null,
+      "gtm_container_env": "AOT_GTM_CONTAINER_ID",
+      "ga4_measurement_id": null,
+      "ga4_measurement_env": "AOT_GA4_MEASUREMENT_ID",
+      "expected_data_layer_events": [
+        "booking_click",
+        "booking_start",
+        "begin_checkout",
+        "purchase",
+        "generate_lead"
+      ],
       "booking_provider": "FareHarbor",
       "booking_revenue_notes": "GA4 revenue requires purchase/generate_lead/booking events to be emitted from the booking flow or imported from FareHarbor. If booking completes off-site, configure cross-domain tracking and/or server-side Measurement Protocol/imports."
     }

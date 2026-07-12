@@ -21,6 +21,11 @@ class ManagedSite:
     site_dir_candidates: tuple[str, ...] = ()
     ga4_property_id: str | None = None
     ga4_property_env: str | None = None
+    gtm_container_id: str | None = None
+    gtm_container_env: str | None = None
+    ga4_measurement_id: str | None = None
+    ga4_measurement_env: str | None = None
+    expected_data_layer_events: tuple[str, ...] = ()
     booking_provider: str | None = None
     booking_revenue_notes: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
@@ -31,6 +36,24 @@ class ManagedSite:
             return str(self.ga4_property_id)
         if self.ga4_property_env:
             value = os.environ.get(self.ga4_property_env)
+            return value.strip() if value and value.strip() else None
+        return None
+
+    @property
+    def effective_gtm_container_id(self) -> str | None:
+        if self.gtm_container_id:
+            return str(self.gtm_container_id)
+        if self.gtm_container_env:
+            value = os.environ.get(self.gtm_container_env)
+            return value.strip() if value and value.strip() else None
+        return None
+
+    @property
+    def effective_ga4_measurement_id(self) -> str | None:
+        if self.ga4_measurement_id:
+            return str(self.ga4_measurement_id)
+        if self.ga4_measurement_env:
+            value = os.environ.get(self.ga4_measurement_env)
             return value.strip() if value and value.strip() else None
         return None
 
@@ -57,6 +80,11 @@ class ManagedSite:
             "resolved_site_dir": str(self.resolve_site_dir()) if self.resolve_site_dir() else None,
             "ga4_property_id": self.effective_ga4_property_id,
             "ga4_property_env": self.ga4_property_env,
+            "gtm_container_id": self.effective_gtm_container_id,
+            "gtm_container_env": self.gtm_container_env,
+            "ga4_measurement_id": self.effective_ga4_measurement_id,
+            "ga4_measurement_env": self.ga4_measurement_env,
+            "expected_data_layer_events": list(self.expected_data_layer_events),
             "booking_provider": self.booking_provider,
             "booking_revenue_notes": self.booking_revenue_notes,
             **self.extra,
@@ -75,7 +103,8 @@ def load_managed_sites(path: Path | None = None) -> list[ManagedSite]:
         known = {
             "slug", "name", "domain", "origin", "gsc_property", "sitemap_url",
             "site_dir_candidates", "ga4_property_id", "ga4_property_env",
-            "booking_provider", "booking_revenue_notes",
+            "gtm_container_id", "gtm_container_env", "ga4_measurement_id", "ga4_measurement_env",
+            "expected_data_layer_events", "booking_provider", "booking_revenue_notes",
         }
         extra = {k: v for k, v in item.items() if k not in known}
         sites.append(ManagedSite(
@@ -88,6 +117,11 @@ def load_managed_sites(path: Path | None = None) -> list[ManagedSite]:
             site_dir_candidates=tuple(item.get("site_dir_candidates") or ()),
             ga4_property_id=str(item["ga4_property_id"]) if item.get("ga4_property_id") else None,
             ga4_property_env=item.get("ga4_property_env"),
+            gtm_container_id=str(item["gtm_container_id"]) if item.get("gtm_container_id") else None,
+            gtm_container_env=item.get("gtm_container_env"),
+            ga4_measurement_id=str(item["ga4_measurement_id"]) if item.get("ga4_measurement_id") else None,
+            ga4_measurement_env=item.get("ga4_measurement_env"),
+            expected_data_layer_events=tuple(item.get("expected_data_layer_events") or ()),
             booking_provider=item.get("booking_provider"),
             booking_revenue_notes=item.get("booking_revenue_notes"),
             extra=extra,
@@ -115,6 +149,11 @@ def scaffold_site(domain: str, slug: str | None = None, name: str | None = None)
         "site_dir_candidates": [f"/home/ubuntu/work/{slug}/site"],
         "ga4_property_env": f"{slug.upper().replace('-', '_')}_GA4_PROPERTY_ID",
         "ga4_property_id": None,
+        "gtm_container_env": f"{slug.upper().replace('-', '_')}_GTM_CONTAINER_ID",
+        "gtm_container_id": None,
+        "ga4_measurement_env": f"{slug.upper().replace('-', '_')}_GA4_MEASUREMENT_ID",
+        "ga4_measurement_id": None,
+        "expected_data_layer_events": ["booking_click", "booking_start", "begin_checkout", "purchase", "generate_lead"],
         "booking_provider": None,
         "booking_revenue_notes": "Set GA4 ecommerce/key-event tracking for booking starts, booking completions, and booking revenue before relying on revenue metrics.",
     }
