@@ -32,7 +32,7 @@ from typing import Any
 import uvicorn
 from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from prismatic.gateway.event_bus import get_event_bus
 from prismatic.gateway.ipc_bridge import UnixSocketListener, create_event_ingest_route
@@ -91,6 +91,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+_DASHBOARD_TEMPLATE = Path(__file__).resolve().parent / "templates" / "dashboard.html"
+
+
+@app.get("/", response_class=HTMLResponse)
+@app.get("/dashboard", response_class=HTMLResponse)
+async def serve_dashboard() -> HTMLResponse:
+    """Serve the canonical governance dashboard."""
+    if not _DASHBOARD_TEMPLATE.exists():
+        return HTMLResponse("Dashboard template not found", status_code=404)
+    return HTMLResponse(_DASHBOARD_TEMPLATE.read_text(encoding="utf-8"))
 
 # Auth check for observability endpoints (re-added 2026-06-30 after Phase D
 # cherry-pick conflict dropped it). Reuses the IP allowlist from

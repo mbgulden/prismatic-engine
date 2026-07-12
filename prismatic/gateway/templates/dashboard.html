@@ -1098,12 +1098,7 @@
             { id: "docs-generator", name: "Docs Generator", desc: "Reads project classes, functions, and docstrings to auto-generate markdown.", version: "v0.9", status: "Active" },
             { id: "research-synthesizer", name: "Research Synthesizer", desc: "Scrapes Synology NAS backups and compiles historical event summaries.", version: "v1.0", status: "Available" }
         ];
-
-        const mockSignals = [
-            { time: "14:41:22", source: "Linear", text: "Linear issue webhook received for GRO-675", type: "info" },
-            { time: "14:39:10", source: "GitHub", text: "GitHub PR merge proposal #24 detected", type: "success" },
-            { time: "14:36:55", source: "Cron", text: "Watcher daily backup completed successfully", type: "success" }
-        ];
+        let timelineCache = [];
 
         // Theme Management
         function toggleTheme() {
@@ -1547,7 +1542,7 @@
             await fetchTelemetryData();
             
             if (activeTab === 'dashboard') {
-                renderDashboardSummary();
+                await renderDashboardSummary();
                 await fetchQuotaSummary();
                 await fetchMorningBriefing();
             } else if (activeTab === 'merge') {
@@ -1677,18 +1672,55 @@
             }
         }
 
-        function renderDashboardSummary() {
+        function escapeHtml(value) {
+            return String(value ?? "").replace(/[&<>'\"]/g, ch => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '\"': '&quot;'
+            }[ch]));
+        }
+
+        async function fetchTimeline(limit = 50) {
+            const res = await fetch(`/api/timeline?limit=${encodeURIComponent(limit)}`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            timelineCache = data.items || [];
+            return data;
+        }
+
+        function timelineSeverityClass(severity) {
+            const palette = {
+                success: 'text-emerald-400',
+                error: 'text-rose-400',
+                warning: 'text-amber-400',
+                info: 'text-indigo-400',
+            };
+            return palette[severity] || 'text-slate-400';
+        }
+
+        async function renderDashboardSummary() {
             // Activity Feed
             const actFeed = document.getElementById("dashboard-activity");
-            actFeed.innerHTML = mockSignals.map(sig => `
-                <div class="activity-item">
-                    <div class="activity-text-row">
-                        <span class="time">${sig.time}</span>
-                        <span class="source-badge">${sig.source}</span>
-                        <span class="title text-slate-200">${sig.text}</span>
-                    </div>
-                </div>
-            `).join("");
+            actFeed.innerHTML = `<div class="text-slate-500 italic">Loading operational timeline…</div>`;
+            try {
+                const data = await fetchTimeline(8);
+                const items = data.items || [];
+                if (items.length === 0) {
+                    actFeed.innerHTML = `<div class="text-slate-500 italic">No operational timeline events recorded yet.</div>`;
+                } else {
+                    actFeed.innerHTML = items.map(item => `
+                        <div class="activity-item">
+                            <div class="activity-text-row">
+                                <span class="time">${escapeHtml(formatDate(item.timestamp))}</span>
+                                <span class="source-badge">${escapeHtml(item.source || item.kind || 'Timeline')}</span>
+                                <span class="title text-slate-200">${escapeHtml(item.title || item.message || 'Timeline event')}</span>
+                            </div>
+                            <div class="text-[10px] ${timelineSeverityClass(item.severity)} uppercase font-bold mt-1">${escapeHtml(item.kind || 'event')} · ${escapeHtml(item.severity || 'info')}</div>
+                        </div>
+                    `).join("");
+                }
+            } catch (err) {
+                console.error("Error loading operational timeline:", err);
+                actFeed.innerHTML = `<div class="text-rose-400 italic">Timeline API unavailable: ${escapeHtml(err.message || err)}</div>`;
+            }
             
             // Workspaces List Summary
             const wsSummary = document.getElementById("dashboard-workspaces");
@@ -2084,16 +2116,7 @@
             fetchData();
             connectWS();
             pollingInterval = setInterval(fetchData, 4000);
-            
-            // Populate mock signals initial data
-            const container = document.getElementById("signals-log-box");
-            mockSignals.forEach(sig => {
-                const div = document.createElement("div");
-                div.className = "text-slate-400";
-                div.innerHTML = `<span class="text-slate-500 font-bold">[${sig.time}]</span> <span class="text-indigo-400 font-semibold">[${sig.source}]</span> ${sig.text}`;
-                container.appendChild(div);
-            });
-            
+
             // Close modal on click outside
             window.onclick = function(event) {
                 const modal = document.getElementById("modal-container");
