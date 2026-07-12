@@ -974,14 +974,36 @@
         <div id="section-quota" class="hidden space-y-6">
             <div class="glass-panel p-5 rounded-xl space-y-4">
                 <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-3 flex justify-between items-center">
-                    <span>Vertex AI GCP Quota Utilization</span>
+                    <span>GCP / Model / Subscription Quota Pressure</span>
                     <button onclick="pollQuota()" class="bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 border border-indigo-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">
-                        Trigger Sync
+                        Record Poll Intent
                     </button>
                 </h2>
                 <div class="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
-                    <div id="quota-sync-status">Awaiting quota snapshot</div>
+                    <div id="quota-sync-status">Loading quota and subscription pressure…</div>
                     <div id="quota-sync-age" class="font-mono">—</div>
+                </div>
+                <div id="quota-state-panel" class="rounded-xl border border-slate-800/70 bg-slate-950/40 p-4 space-y-2">
+                    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                        <div id="quota-source-line" class="text-xs text-slate-300">Waiting for quota source evidence.</div>
+                        <span id="quota-pressure-badge" class="self-start sm:self-auto px-2 py-0.5 rounded-full text-[10px] font-bold border border-slate-700 text-slate-400 bg-slate-800/80">LOADING</span>
+                    </div>
+                    <div id="quota-cost-line" class="text-[11px] text-slate-500">Cost and credit summary pending.</div>
+                    <div id="quota-poll-line" class="text-[11px] text-slate-500">Last poll: none recorded.</div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">AI Ultra Credits</div>
+                        <div id="quota-ai-ultra" class="mt-1 text-lg font-bold text-indigo-300">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Today Cost</div>
+                        <div id="quota-cost-today" class="mt-1 text-lg font-bold text-emerald-300">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Known Quota Items</div>
+                        <div id="quota-known-items" class="mt-1 text-lg font-bold text-slate-200">—</div>
+                    </div>
                 </div>
                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="quota-cards-grid">
                     <!-- Populated dynamically -->
@@ -1516,16 +1538,23 @@
 
         // Quotas poll hook
         async function pollQuota() {
+            const pollLine = document.getElementById("quota-poll-line");
+            if (pollLine) pollLine.textContent = "Recording quota poll operator intent…";
             try {
                 const r = await fetch("/api/quota/poll", { method: "POST" });
-                if (r.ok) {
-                    showToast("Quota sync initiated");
-                    setTimeout(fetchData, 2000);
+                const data = await r.json().catch(() => ({}));
+                if (r.ok && data.ok) {
+                    showToast("Quota poll intent recorded");
+                    if (pollLine) pollLine.textContent = `Last poll: ${data.entry?.requested_at ? formatDate(data.entry.requested_at) : 'recorded'} · ${data.timeline_item?.source || 'QuotaControl'}`;
+                    await fetchQuotaData();
+                    await fetchQuotaSummary();
                 } else {
-                    showToast("Sync failed", true);
+                    showToast(data.error || data.message || "Quota poll failed", true);
+                    if (pollLine) pollLine.textContent = `Quota poll API error: ${data.error || data.message || r.status}`;
                 }
             } catch (err) {
-                showToast("Network error", true);
+                showToast("Quota poll network error", true);
+                if (pollLine) pollLine.textContent = `Quota poll API unavailable: ${err.message || err}`;
             }
         }
 
@@ -2110,21 +2139,28 @@
         async function fetchQuotaSummary() {
             try {
                 const quotaRes = await fetch("/api/quota");
-                if (quotaRes.ok) {
-                    const data = await quotaRes.json();
-                    const activeModels = (data.current || []).length;
-                    const freshness = data.snapshot_age_sec !== null && data.snapshot_age_sec !== undefined ? formatAge(data.snapshot_age_sec) : "Freshness unknown";
-                    const tone = data.snapshot_age_sec !== null && data.snapshot_age_sec !== undefined && data.snapshot_age_sec < 300 ? "green" : data.snapshot_age_sec !== null && data.snapshot_age_sec !== undefined && data.snapshot_age_sec < 900 ? "amber" : "red";
-                    setSummaryBadge(
-                        "summary-quota-badge",
-                        "summary-quota-meta",
-                        tone,
-                        tone === "green" ? "FRESH" : tone === "amber" ? "STALE" : "OLD",
-                        `${freshness} · ${activeModels} active model${activeModels === 1 ? "" : "s"}`
-                    );
-                }
+                if (!quotaRes.ok) throw new Error(`Quota API HTTP ${quotaRes.status}`);
+                const data = await quotaRes.json();
+                const activeItems = (data.current || []).length;
+                const freshness = data.snapshot_age_sec !== null && data.snapshot_age_sec !== undefined ? formatAge(data.snapshot_age_sec) : "Freshness unknown";
+                const pressure = data.pressure || "unknown";
+                const tone = pressure === "ok" ? "green" : pressure === "warning" ? "amber" : pressure === "critical" || pressure === "exhausted" ? "red" : "amber";
+                setSummaryBadge(
+                    "summary-quota-badge",
+                    "summary-quota-meta",
+                    tone,
+                    pressure.toUpperCase(),
+                    `${freshness} · ${activeItems} quota item${activeItems === 1 ? "" : "s"}`
+                );
             } catch (err) {
                 console.error("Error loading quota summary:", err);
+                setSummaryBadge(
+                    "summary-quota-badge",
+                    "summary-quota-meta",
+                    "red",
+                    "ERROR",
+                    "Quota summary API unavailable"
+                );
             }
         }
 
@@ -2204,72 +2240,111 @@
         }
 
         async function fetchQuotaData() {
+            const syncStatus = document.getElementById("quota-sync-status");
+            const syncAge = document.getElementById("quota-sync-age");
+            const grid = document.getElementById("quota-cards-grid");
+            const eventsTbody = document.getElementById("quota-events-tbody");
+            const sourceLine = document.getElementById("quota-source-line");
+            const costLine = document.getElementById("quota-cost-line");
+            const pollLine = document.getElementById("quota-poll-line");
+            const pressureBadge = document.getElementById("quota-pressure-badge");
+            if (syncStatus) syncStatus.textContent = "Loading quota and subscription pressure…";
+            if (syncAge) syncAge.textContent = "—";
+            if (grid) grid.innerHTML = `<div class="col-span-3 text-center text-slate-500 italic py-6">Loading quota ledger and subscription caps…</div>`;
+            if (eventsTbody) eventsTbody.innerHTML = `<tr><td colspan="3" class="py-4 text-center text-slate-500 italic">Loading quota events…</td></tr>`;
             try {
                 const quotaRes = await fetch("/api/quota");
-                if (quotaRes.ok) {
-                    const data = await quotaRes.json();
-                    
-                    const syncStatus = document.getElementById("quota-sync-status");
-                    const syncAge = document.getElementById("quota-sync-age");
-                    if (syncStatus) {
-                        const snapshotAt = data.snapshot_at ? formatDate(data.snapshot_at) : "unknown";
-                        syncStatus.textContent = `Snapshot captured ${snapshotAt}`;
-                    }
-                    if (syncAge) {
-                        syncAge.textContent = data.snapshot_age_sec !== null && data.snapshot_age_sec !== undefined ? formatAge(data.snapshot_age_sec) : "Freshness: unknown";
-                    }
-                    
-                    // Render Cards
-                    const grid = document.getElementById("quota-cards-grid");
-                    const current = data.current || [];
-                    if (current.length === 0) {
-                        grid.innerHTML = `<div class="col-span-3 text-center text-slate-500 italic py-6">No active region quotas snapshot ledger details found.</div>`;
-                    } else {
-                        grid.innerHTML = current.map(item => {
-                            const pct = Number(item.remaining_pct);
-                            const hasPct = !Number.isNaN(pct);
-                            const effectivePct = hasPct ? pct : 0;
-                            const barColor = effectivePct < 20 ? 'bg-red-500' : effectivePct < 50 ? 'bg-amber-500' : 'bg-emerald-500';
-                            const labelColor = effectivePct < 20 ? 'text-red-400' : effectivePct < 50 ? 'text-amber-400' : 'text-emerald-400';
-                            const status = quotaStatusLabel(item);
-                            return `
-                                <div class="glass-panel p-4 rounded-xl space-y-3 flex flex-col justify-between">
-                                    <div class="flex justify-between items-start gap-2">
-                                        <h3 class="font-bold text-xs uppercase text-slate-400">${item.display_name || item.model}</h3>
-                                        <span class="text-xs font-bold font-mono ${hasPct ? labelColor : 'text-slate-400'}">${formatQuotaPct(item.remaining_pct)} remaining</span>
-                                    </div>
-                                    <div class="w-full bg-slate-950 h-2 rounded-full overflow-hidden">
-                                        <div class="h-full ${barColor}" style="width: ${effectivePct}%"></div>
-                                    </div>
-                                    <div class="flex justify-between items-center text-[10px] text-slate-500 gap-2">
-                                        <span>Reset in ${formatDate(item.reset_time)}</span>
-                                        <span class="font-mono">${status}</span>
-                                    </div>
+                if (!quotaRes.ok) throw new Error(`Quota API HTTP ${quotaRes.status}`);
+                const data = await quotaRes.json();
+                const snapshotAt = data.snapshot_at ? formatDate(data.snapshot_at) : "no provider snapshot yet";
+                if (syncStatus) syncStatus.textContent = data.empty ? "No live quota usage yet; subscription caps are still tracked." : `Snapshot captured ${snapshotAt}`;
+                if (syncAge) syncAge.textContent = data.snapshot_age_sec !== null && data.snapshot_age_sec !== undefined ? formatAge(data.snapshot_age_sec) : "Freshness: unknown";
+                const pressure = data.pressure || "unknown";
+                const badgeClasses = {
+                    ok: "border-emerald-500/20 text-emerald-400 bg-emerald-500/10",
+                    warning: "border-amber-500/20 text-amber-400 bg-amber-500/10",
+                    critical: "border-rose-500/20 text-rose-400 bg-rose-500/10",
+                    exhausted: "border-red-500/30 text-red-300 bg-red-500/10",
+                    unknown: "border-slate-700 text-slate-400 bg-slate-800/80"
+                };
+                if (pressureBadge) {
+                    pressureBadge.textContent = pressure.toUpperCase();
+                    pressureBadge.className = `self-start sm:self-auto px-2 py-0.5 rounded-full text-[10px] font-bold border ${badgeClasses[pressure] || badgeClasses.unknown}`;
+                }
+                const evidence = data.evidence || {};
+                if (sourceLine) sourceLine.textContent = `${data.source || 'quota_status'} · Vertex records: ${evidence.vertex_quota_records ?? 0} · subscription caps: ${evidence.subscription_caps ?? 0}`;
+                const ai = data.ai_ultra_credits || {};
+                const cost = data.cost_summary || {};
+                document.getElementById("quota-ai-ultra").textContent = ai.available ? `${ai.remaining ?? '—'} / ${ai.limit ?? 25000}` : "not available";
+                document.getElementById("quota-cost-today").textContent = cost.available ? `$${Number(cost.today || 0).toFixed(2)}` : "not available";
+                document.getElementById("quota-known-items").textContent = `${(data.current || []).length}`;
+                if (costLine) costLine.textContent = `AI Ultra: ${ai.available ? `${ai.spent ?? 0} spent · ${ai.remaining ?? 0} remaining` : ai.reason || 'not available'} · Cost DB: ${cost.available ? 'available' : cost.reason || 'not available'}`;
+                if (pollLine) pollLine.textContent = `Last poll: ${data.last_poll?.requested_at ? formatDate(data.last_poll.requested_at) : 'none recorded'} · ${evidence.poll_mode || 'intent ledger'}`;
+
+                const current = data.current || [];
+                if (current.length === 0) {
+                    grid.innerHTML = `<div class="col-span-3 text-center text-slate-500 italic py-6">No quota data or subscription cap definitions returned. No fallback data rendered.</div>`;
+                } else {
+                    grid.innerHTML = current.map(item => {
+                        const pct = Number(item.remaining_pct);
+                        const usagePct = Number(item.usage_pct);
+                        const hasPct = !Number.isNaN(pct);
+                        const effectivePct = hasPct ? pct : 0;
+                        const barColor = !hasPct ? 'bg-slate-600' : effectivePct < 10 ? 'bg-red-500' : effectivePct < 25 ? 'bg-amber-500' : 'bg-emerald-500';
+                        const labelColor = !hasPct ? 'text-slate-400' : effectivePct < 10 ? 'text-red-400' : effectivePct < 25 ? 'text-amber-400' : 'text-emerald-400';
+                        const status = quotaStatusLabel(item);
+                        const used = item.usage !== null && item.usage !== undefined ? item.usage : 'unknown';
+                        const limit = item.limit_value !== null && item.limit_value !== undefined ? item.limit_value : 'unknown';
+                        return `
+                            <div class="glass-panel p-4 rounded-xl space-y-3 flex flex-col justify-between">
+                                <div class="flex justify-between items-start gap-2">
+                                    <h3 class="font-bold text-xs uppercase text-slate-400">${item.display_name || item.model || item.provider}</h3>
+                                    <span class="text-xs font-bold font-mono ${hasPct ? labelColor : 'text-slate-400'}">${formatQuotaPct(item.remaining_pct)} remaining</span>
                                 </div>
-                            `;
-                        }).join("");
-                    }
-                    
-                    // Render History Events
-                    const eventsTbody = document.getElementById("quota-events-tbody");
-                    const events = data.recent_events || [];
-                    if (events.length === 0) {
-                        eventsTbody.innerHTML = `<tr><td colspan="3" class="py-4 text-center text-slate-500 italic">No quota breaches reported within the last 24 hours.</td></tr>`;
-                    } else {
-                        eventsTbody.innerHTML = events.map(ev => {
-                            const details = ev.details || ev.event_type || 'No details available';
-                            return `
+                                <div class="w-full bg-slate-950 h-2 rounded-full overflow-hidden">
+                                    <div class="h-full ${barColor}" style="width: ${effectivePct}%"></div>
+                                </div>
+                                <div class="text-[10px] text-slate-500 leading-relaxed">
+                                    <div>${item.provider || 'provider'} · ${item.quota_type || item.metric_type || 'quota'} · ${item.period || 'window'}</div>
+                                    <div>Used: ${used} / ${limit} ${item.unit || ''}${!Number.isNaN(usagePct) ? ` · ${usagePct.toFixed(1)}% used` : ''}</div>
+                                    <div>${item.subscription || item.source || ''}</div>
+                                </div>
+                                <div class="flex justify-between items-center text-[10px] text-slate-500 gap-2">
+                                    <span>Reset ${item.reset_time ? formatDate(item.reset_time) : 'provider-defined'}</span>
+                                    <span class="font-mono">${status}</span>
+                                </div>
+                            </div>
+                        `;
+                    }).join("");
+                }
+
+                const events = data.recent_events || [];
+                if (events.length === 0) {
+                    eventsTbody.innerHTML = `<tr><td colspan="3" class="py-4 text-center text-slate-500 italic">No quota breaches or poll errors reported in the current ledger.</td></tr>`;
+                } else {
+                    eventsTbody.innerHTML = events.map(ev => {
+                        const details = ev.details || ev.event_type || 'No details available';
+                        return `
                             <tr class="border-b border-slate-800/40 hover:bg-slate-900/10 transition">
                                 <td class="py-2.5 px-3 text-slate-500 font-mono">${formatDate(ev.timestamp)}</td>
                                 <td class="py-2.5 px-3 font-semibold text-slate-200">${ev.model || 'Unknown model'}</td>
                                 <td class="py-2.5 px-3 text-red-400 font-medium">${details}</td>
                             </tr>
                         `;
-                        }).join("");
-                    }
+                    }).join("");
                 }
             } catch (err) {
                 console.error("Error loading quota data:", err);
+                if (syncStatus) syncStatus.textContent = `Quota API unavailable: ${err.message || err}`;
+                if (syncAge) syncAge.textContent = "ERROR";
+                if (sourceLine) sourceLine.textContent = "No fallback data rendered.";
+                if (costLine) costLine.textContent = "Cost and credit summary unavailable.";
+                if (pressureBadge) {
+                    pressureBadge.textContent = "ERROR";
+                    pressureBadge.className = "self-start sm:self-auto px-2 py-0.5 rounded-full text-[10px] font-bold border border-rose-500/20 text-rose-400 bg-rose-500/10";
+                }
+                if (grid) grid.innerHTML = `<div class="col-span-3 text-center text-rose-400 italic py-6">Quota API unavailable. No fallback data rendered.</div>`;
+                if (eventsTbody) eventsTbody.innerHTML = `<tr><td colspan="3" class="py-4 text-center text-rose-400 italic">Quota events unavailable.</td></tr>`;
             }
         }
 

@@ -26,6 +26,7 @@ import os
 import sys
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -454,6 +455,63 @@ async def get_cost_summary() -> dict[str, Any]:
     return cost_summary()
 
 
+@app.get("/api/quota")
+async def get_quota_status() -> dict[str, Any]:
+    """Return normalized GCP/model/subscription quota and cost pressure."""
+    from prismatic.quota_status import build_quota_status
+
+    return build_quota_status(_read_dashboard_quota_state())
+
+
+@app.post("/api/quota/poll")
+async def poll_quota_status() -> dict[str, Any]:
+    """Record quota poll operator intent without shelling out from the browser."""
+    now = datetime.now(timezone.utc).isoformat()
+    state = _read_dashboard_quota_state()
+    actions = list(state.get("actions", []))
+    entry = {
+        "id": f"quota-poll-{int(time.time())}",
+        "action": "poll",
+        "requested_at": now,
+        "mode": "intent-recorded",
+        "message": "Quota poll intent recorded; no shell command executed from browser request.",
+    }
+    actions.append(entry)
+    state["actions"] = actions[-50:]
+    state["last_poll"] = entry
+    state["updated_at"] = now
+    _write_dashboard_quota_state(state)
+    timeline_item = _record_control_timeline_event(
+        source="QuotaControl",
+        severity="info",
+        title="Quota poll requested",
+        message=entry["message"],
+        entity_id="quota-poll",
+        metadata=entry,
+    )
+    try:
+        event_bus = get_event_bus()
+        if event_bus is not None:
+            await event_bus.publish(
+                event_type="dashboard.quota.poll",
+                source="prismatic-hub",
+                payload={"entry": entry, "timeline_item": timeline_item},
+            )
+    except Exception:
+        logger.warning("quota poll EventBus publish failed", exc_info=True)
+    from prismatic.quota_status import build_quota_status
+
+    return {
+        "ok": True,
+        "status": "ok",
+        "entry": entry,
+        "timeline_item": timeline_item,
+        "quota": build_quota_status(state),
+        "stdout": "",
+        "stderr": "",
+    }
+
+
 # ── WebSocket Endpoint ──────────────────────────────────────────────
 
 
@@ -595,6 +653,11 @@ def _dashboard_merge_state_path() -> Path:
     return state_dir / "dashboard_merge_controls.json"
 
 
+def _dashboard_quota_state_path() -> Path:
+    state_dir = Path(os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state/"))
+    return state_dir / "dashboard_quota_controls.json"
+
+
 def _read_json_state(path: Path, default: dict[str, Any]) -> dict[str, Any]:
     if not path.exists():
         return dict(default)
@@ -652,6 +715,14 @@ def _read_dashboard_merge_state() -> dict[str, Any]:
 
 def _write_dashboard_merge_state(state: dict[str, Any]) -> None:
     _write_json_state(_dashboard_merge_state_path(), state)
+
+
+def _read_dashboard_quota_state() -> dict[str, Any]:
+    return _read_json_state(_dashboard_quota_state_path(), {"actions": [], "last_poll": None})
+
+
+def _write_dashboard_quota_state(state: dict[str, Any]) -> None:
+    _write_json_state(_dashboard_quota_state_path(), state)
 
 
 def _record_control_timeline_event(
