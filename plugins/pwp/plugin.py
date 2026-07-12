@@ -18,12 +18,43 @@ from .oauth_credentials import (
 )
 
 
+PWP_CAPABILITY_CONTRACT: Dict[str, Any] = {
+    "plugin_id": "pwp-design-token-plugin",
+    "connect_points": [
+        "PE dashboard/API consumes prismatic.pwp_integration.integration_status",
+        "PE agents call scripts/pwp and registered pwp_* tools for additive workflows",
+        "PWP manifest declares portable capabilities, governance, and disconnect behavior",
+    ],
+    "disconnect_points": [
+        "POST /api/pwp/disconnect marks PWP disconnected without deleting plugin code",
+        "Dashboard hides PWP readiness while preserving artifacts and core PE behavior",
+    ],
+    "capabilities": [
+        "theme validation/diff/compiler",
+        "credential provider refresh/status",
+        "visual/governance workflow augmentation",
+    ],
+}
+
+
 class PWPDesignTokenPlugin(PrismaticPlugin):
     """PWPDesignTokenPlugin — Compiles design tokens to CSS custom variables and renders starter templates."""
 
     def on_init(self, context: PluginContext) -> None:
         """Called by the loader on initial scan."""
-        pass
+        self.context = context
+
+    def capability_contract(self) -> Dict[str, Any]:
+        """Return the additive PWP capability contract for PE dashboards/agents."""
+        return dict(PWP_CAPABILITY_CONTRACT)
+
+    def connection_contract(self) -> Dict[str, Any]:
+        """Return explicit connect/disconnect semantics for PE governance surfaces."""
+        return {
+            "plugin_id": PWP_CAPABILITY_CONTRACT["plugin_id"],
+            "connect_points": list(PWP_CAPABILITY_CONTRACT["connect_points"]),
+            "disconnect_points": list(PWP_CAPABILITY_CONTRACT["disconnect_points"]),
+        }
 
     def register_tools(self) -> List[Dict[str, Any]]:
         """Registers PWP theme and credential-maintenance tools."""

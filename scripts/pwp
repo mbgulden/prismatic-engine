@@ -23,6 +23,7 @@ if external_plugins is not None:
 from plugins.pwp.oauth_credentials import main as credentials_main  # noqa: E402
 from plugins.pwp.theme_diff import main as theme_diff_main  # noqa: E402
 from plugins.pwp.theme_validator import main as theme_validate_main  # noqa: E402
+from prismatic.pwp_integration import connect_pwp, disconnect_pwp, integration_status, refresh_pwp  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -33,12 +34,31 @@ def main(argv: list[str] | None = None) -> int:
         return theme_validate_main(args[2:])
     if len(args) >= 2 and args[0] == "theme" and args[1] in {"diff", "check-compat"}:
         return theme_diff_main(args[1:])
+    if len(args) >= 1 and args[0] == "integration":
+        if len(args) >= 2 and args[1] == "status":
+            import json
+            print(json.dumps(integration_status(), indent=2, sort_keys=True))
+            return 0
+        if len(args) >= 2 and args[1] == "connect":
+            import json
+            payload = connect_pwp()
+            print(json.dumps(payload, indent=2, sort_keys=True))
+            return 0 if payload.get("connected") else 1
+        if len(args) >= 2 and args[1] == "disconnect":
+            import json
+            print(json.dumps(disconnect_pwp(), indent=2, sort_keys=True))
+            return 0
+        if len(args) >= 2 and args[1] == "refresh":
+            import json
+            print(json.dumps(refresh_pwp(), indent=2, sort_keys=True))
+            return 0
     print(
         "Usage: pwp credentials refresh <provider> [--verbose] [--no-verify] | "
         "pwp credentials status <provider> [--verify] | "
         "pwp theme validate <path> [--json] | "
         "pwp theme diff --from <path> --to <path> [--engine-version <semver>] [--json] | "
-        "pwp theme check-compat <path> --engine-version <semver> [--json]",
+        "pwp theme check-compat <path> --engine-version <semver> [--json] | "
+        "pwp integration status|connect|disconnect|refresh",
         file=sys.stderr,
     )
     return 2

@@ -144,6 +144,9 @@
             <button id="tab-btn-crons" onclick="switchTab('crons')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
                 Native Crons
             </button>
+            <button id="tab-btn-pwp" onclick="switchTab('pwp')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                PWP Plugin
+            </button>
             <button id="tab-btn-quota" onclick="switchTab('quota')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
                 GCP Quotas
             </button>
@@ -931,7 +934,41 @@
             </div>
         </div>
 
-        <!-- SECTION 7: NATIVE CRONS -->
+        <!-- SECTION 7: PWP PLUGIN -->
+        <div id="section-pwp" class="hidden space-y-6">
+            <div class="glass-panel p-5 rounded-xl space-y-5">
+                <div class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 pb-3">
+                    <div>
+                        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider">PWP Additive Plugin Surface</h2>
+                        <p class="text-xs text-slate-500 mt-1">Portable Website Plugin capabilities connected into PE without becoming PE core. Connect/disconnect is explicit, reversible, and dashboard-visible.</p>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        <button onclick="pwpAction('connect')" class="bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-300 border border-emerald-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Connect</button>
+                        <button onclick="pwpAction('disconnect')" class="bg-rose-600/10 hover:bg-rose-600/20 text-rose-300 border border-rose-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Disconnect</button>
+                        <button onclick="loadPWPStatus()" class="bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 border border-indigo-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Refresh</button>
+                    </div>
+                </div>
+                <div id="pwp-summary" class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs"></div>
+                <div id="pwp-blockers" class="space-y-2"></div>
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-4" id="pwp-capabilities"></div>
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 text-xs">
+                    <div class="bg-slate-950/70 border border-slate-800 rounded-xl p-4">
+                        <div class="text-slate-400 uppercase tracking-wider font-bold mb-2">Connect Points</div>
+                        <ul id="pwp-connect-points" class="space-y-2 text-slate-300 list-disc list-inside"></ul>
+                    </div>
+                    <div class="bg-slate-950/70 border border-slate-800 rounded-xl p-4">
+                        <div class="text-slate-400 uppercase tracking-wider font-bold mb-2">Disconnect Points</div>
+                        <ul id="pwp-disconnect-points" class="space-y-2 text-slate-300 list-disc list-inside"></ul>
+                    </div>
+                    <div class="bg-slate-950/70 border border-slate-800 rounded-xl p-4">
+                        <div class="text-slate-400 uppercase tracking-wider font-bold mb-2">Tools / Workflows</div>
+                        <div id="pwp-tools" class="flex flex-wrap gap-2"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SECTION 8: NATIVE CRONS -->
         <div id="section-crons" class="hidden space-y-6">
             <div class="glass-panel p-5 rounded-xl space-y-4">
                 <div class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 pb-3">
@@ -1189,7 +1226,7 @@
             activeTab = tab;
             
             // Toggle Tab Buttons
-            const tabs = ['dashboard', 'telemetry', 'merge', 'workspaces', 'skills', 'signals', 'crons', 'quota', 'foundation'];
+            const tabs = ['dashboard', 'telemetry', 'merge', 'workspaces', 'skills', 'signals', 'pwp', 'crons', 'quota', 'foundation'];
             tabs.forEach(t => {
                 const btn = document.getElementById(`tab-btn-${t}`);
                 const sec = document.getElementById(`section-${t}`);
@@ -1450,6 +1487,66 @@
                 out_of_queue: "bg-slate-800 text-slate-400 border-slate-700"
             };
             return `<span class="px-2 py-0.5 rounded text-[10px] uppercase font-bold border ${classes[v] || classes.out_of_queue}">${v.replace('_', ' ')}</span>`;
+        }
+
+        let loadedPWPStatus = null;
+
+        async function loadPWPStatus() {
+            try {
+                const res = await fetch('/api/pwp/status');
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                loadedPWPStatus = await res.json();
+                renderPWPStatus();
+            } catch (err) {
+                const summary = document.getElementById('pwp-summary');
+                if (summary) summary.innerHTML = `<div class="col-span-full text-rose-300 bg-rose-950/30 border border-rose-900/60 rounded-xl p-3">PWP status refresh failed: ${err.message}</div>`;
+            }
+        }
+
+        function pwpBadge(text, color = 'slate') {
+            const classes = {
+                slate: 'bg-slate-900/80 text-slate-300 border-slate-700',
+                emerald: 'bg-emerald-950/40 text-emerald-300 border-emerald-800/70',
+                amber: 'bg-amber-950/40 text-amber-300 border-amber-800/70',
+                rose: 'bg-rose-950/40 text-rose-300 border-rose-800/70',
+                indigo: 'bg-indigo-950/40 text-indigo-300 border-indigo-800/70'
+            };
+            return `<span class="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${classes[color] || classes.slate}">${text}</span>`;
+        }
+
+        function renderPWPStatus() {
+            const payload = loadedPWPStatus || {};
+            const summary = document.getElementById('pwp-summary');
+            const blockers = document.getElementById('pwp-blockers');
+            const caps = document.getElementById('pwp-capabilities');
+            const connects = document.getElementById('pwp-connect-points');
+            const disconnects = document.getElementById('pwp-disconnect-points');
+            const tools = document.getElementById('pwp-tools');
+            if (!summary || !blockers || !caps || !connects || !disconnects || !tools) return;
+            const hardBlockers = (payload.production_blockers || []).filter(b => b.severity === 'blocking').length;
+            const warnings = (payload.production_blockers || []).filter(b => b.severity !== 'blocking').length;
+            const statusColor = payload.connected ? 'emerald' : (hardBlockers ? 'rose' : 'amber');
+            summary.innerHTML = [
+                ['State', payload.state || 'unknown', statusColor],
+                ['Capabilities', String((payload.capabilities || []).length), 'indigo'],
+                ['Tools', String((payload.tool_names || []).length), 'slate'],
+                ['Blockers', `${hardBlockers} hard / ${warnings} warn`, hardBlockers ? 'rose' : (warnings ? 'amber' : 'emerald')],
+            ].map(([label, value, color]) => `<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><div class="text-slate-500 uppercase tracking-wider font-bold">${label}</div><div class="mt-1 text-slate-100 font-mono">${value}</div><div class="mt-2">${pwpBadge(payload.status || value, color)}</div></div>`).join('');
+            blockers.innerHTML = (payload.production_blockers || []).length
+                ? (payload.production_blockers || []).map(b => `<div class="rounded-xl border ${b.severity === 'blocking' ? 'border-rose-900/70 bg-rose-950/30 text-rose-200' : 'border-amber-900/70 bg-amber-950/30 text-amber-200'} p-3 text-xs"><span class="font-bold uppercase tracking-wider">${b.system || 'governance'}</span>: ${b.message}</div>`).join('')
+                : '<div class="rounded-xl border border-emerald-900/70 bg-emerald-950/30 text-emerald-200 p-3 text-xs">No PWP production blockers detected.</div>';
+            caps.innerHTML = (payload.capabilities || []).map(cap => `<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-4 text-xs space-y-3"><div><div class="text-slate-100 font-bold">${cap.label}</div><div class="text-slate-500 mt-1">${cap.category}</div></div><p class="text-slate-300 leading-relaxed">${cap.description}</p><div class="flex flex-wrap gap-1">${(cap.governance || []).slice(0,4).map(g => pwpBadge(g, 'indigo')).join('')}</div></div>`).join('');
+            connects.innerHTML = (payload.connect_points || []).map(item => `<li>${item}</li>`).join('');
+            disconnects.innerHTML = (payload.disconnect_points || []).map(item => `<li>${item}</li>`).join('');
+            tools.innerHTML = [...(payload.tool_names || []), ...(payload.workflows || [])].slice(0, 32).map(item => pwpBadge(item, 'slate')).join('');
+        }
+
+        async function pwpAction(action) {
+            const res = await fetch(`/api/pwp/${action}`, { method: 'POST' });
+            const payload = await res.json();
+            loadedPWPStatus = payload;
+            renderPWPStatus();
+            showToast(`PWP ${action}: ${payload.status || payload.state}`, !res.ok);
         }
 
         async function loadNativeCrons() {
@@ -2247,6 +2344,7 @@
         document.addEventListener("DOMContentLoaded", () => {
             applyTheme();
             fetchData();
+            loadPWPStatus();
             connectWS();
             pollingInterval = setInterval(fetchData, 4000);
             
