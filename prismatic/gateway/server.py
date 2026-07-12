@@ -363,6 +363,50 @@ async def health() -> dict[str, Any]:
         "started_at": _started_at,
     }
 
+# ── Merge Pipeline API ───────────────────────────────────────────────
+
+TERMINAL_LINEAR_STATE_NAMES = {"done", "canceled", "cancelled", "duplicate"}
+TERMINAL_LINEAR_STATE_TYPES = {"completed", "canceled"}
+
+
+def _linear_state_is_terminal(state: dict[str, Any] | None) -> bool:
+    if not state:
+        return False
+    name = str(state.get("name") or "").strip().lower()
+    state_type = str(state.get("type") or "").strip().lower()
+    return name in TERMINAL_LINEAR_STATE_NAMES or state_type in TERMINAL_LINEAR_STATE_TYPES
+
+
+def _terminal_pending_keep_rationale(details: Any) -> str | None:
+    if not isinstance(details, dict):
+        return None
+    if not any(details.get(key) for key in ("force_keep_terminal", "terminal_keep", "force_keep")):
+        return None
+    rationale = details.get("terminal_keep_rationale") or details.get("force_keep_rationale") or details.get("rationale")
+    return str(rationale or "force-kept terminal Linear issue").strip()
+
+
+def _prune_terminal_linear_pending(
+    pending: dict[str, Any],
+    linear_states: dict[str, dict[str, Any]],
+) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Drop terminal Linear issues from merge-pending state unless force-kept."""
+    active_pending: dict[str, Any] = {}
+    pruned: list[dict[str, Any]] = []
+    retained_terminal: list[dict[str, Any]] = []
+    for ticket, details in pending.items():
+        linear_state = linear_states.get(ticket)
+        if not _linear_state_is_terminal(linear_state):
+            active_pending[ticket] = details
+            continue
+        rationale = _terminal_pending_keep_rationale(details)
+        if rationale:
+            active_pending[ticket] = details
+            retained_terminal.append({"ticket": ticket, "linear_state": linear_state, "rationale": rationale})
+        else:
+            pruned.append({"ticket": ticket, "linear_state": linear_state})
+    return active_pending, pruned, retained_terminal
+
 
 @app.get("/api/harnesses")
 async def get_harnesses() -> list[dict[str, Any]]:
