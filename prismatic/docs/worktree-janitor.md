@@ -25,11 +25,50 @@ Dirty work is special:
 
 This makes “dirty” a mechanical Git state, and “good” equivalent to “not proven safe to remove.” Good/ambiguous work is preserved by default.
 
+## Usefulness/proof contract
+
+Preservation is not enough. Agents should also leave portable evidence that their work is useful, promotable, or intentionally abandoned.
+
+Each worktree can include a proof file at one of these paths:
+
+- `.prismatic/worktree-proof.json`
+- `prismatic-worktree-proof.json`
+- `.worktree-proof.json`
+
+Generate a template:
+
+```bash
+prismatic worktrees proof-template --issue GRO-1234 --summary "Implement useful thing"
+```
+
+The proof bundle is plain JSON and travels with the worktree. It can record:
+
+- issue/task identifier,
+- summary,
+- verdict: `useful`, `indispensable`, `promote`, `broken`, or `superseded`,
+- agent name,
+- verification evidence,
+- artifacts,
+- handoff notes.
+
+The janitor reads this evidence and adds value fields to every worktree record:
+
+- `value_class`: `indispensable`, `preserve-needs-proof`, `broken-review`, `disposable`, or `unknown`
+- `value_score`
+- `value_signals`
+- `proof_gaps`
+- `promotion_recommendation`
+
+Important rule: **missing proof never makes work disposable.** It creates a proof gap and preserves the work for review. This prevents undocumented but valuable work from being trashed just because an agent failed to document itself.
+
 ## CLI
 
 ```bash
-# Inspect registered Git worktrees as JSON with safety classes/reasons
+# Inspect registered Git worktrees as JSON with safety/value classes and reasons
 prismatic worktrees status --repo /path/to/prismatic-engine
+
+# Emit a portable proof template agents can commit or leave in the worktree
+prismatic worktrees proof-template --issue GRO-1234 --summary "Useful work"
 
 # Plan cleanup without removing anything
 prismatic worktrees janitor --repo /path/to/prismatic-engine --stale-hours 24
@@ -53,9 +92,10 @@ prismatic worktrees janitor \
 Authenticated endpoints:
 
 - `GET /api/v1/worktrees`
+- `GET /api/v1/worktrees/proof-template`
 - `POST /api/v1/worktrees/janitor` (`apply=false` by default)
 
-The API uses the same safety gates as the CLI. Dirty deletion requires `confirm_dirty_token`.
+The API uses the same safety and value gates as the CLI. Dirty deletion requires `confirm_dirty_token`.
 
 ## Core cron
 

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from prismatic.api.auth import verify_api_key
-from prismatic.worktree_janitor import list_worktrees, run_janitor
+from prismatic.worktree_janitor import list_worktrees, run_janitor, worktree_proof_template
 
 router = APIRouter()
 
@@ -31,6 +31,16 @@ async def get_worktrees(
     return {
         "worktrees": [record.to_dict() for record in list_worktrees(repo, base_ref=base_ref)]
     }
+
+
+@router.get("/worktrees/proof-template")
+async def get_worktree_proof_template(
+    issue: str | None = None,
+    summary: str = "",
+    current_user: dict = Depends(verify_api_key),  # noqa: B008
+):
+    """Return the portable proof bundle agents should leave in worktrees."""
+    return worktree_proof_template(issue=issue, summary=summary)
 
 
 @router.post("/worktrees/janitor")

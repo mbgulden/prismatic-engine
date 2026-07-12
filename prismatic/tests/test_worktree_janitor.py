@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 
 from prismatic.core_crons import emit
-from prismatic.worktree_janitor import list_worktrees, run_janitor
+from prismatic.worktree_janitor import list_worktrees, run_janitor, worktree_proof_template
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -126,6 +126,53 @@ def test_clean_unmerged_ahead_worktree_is_kept(tmp_path: Path) -> None:
 
     assert any(Path(item["path"]) == wt and item["safety_class"] == "keep" for item in result.kept)
     assert all(Path(item["path"]) != wt for item in result.removable)
+
+
+def test_dirty_worktree_is_preserved_and_marked_missing_proof(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path)
+    wt = tmp_path / "wt-undocumented-good-work"
+    _git(repo, "worktree", "add", str(wt), "HEAD")
+    (wt / "scratch.txt").write_text("valuable but undocumented\n")
+
+    records = list_worktrees(repo, base_ref="main", stale_seconds=0)
+    record = next(r for r in records if Path(r.path) == wt)
+
+    assert record.safety_class == "manual-review"
+    assert record.value_class == "preserve-needs-proof"
+    assert "missing portable worktree proof file" in record.proof_gaps
+    assert record.promotion_recommendation == "capture-proof-or-promote"
+
+
+def test_proof_file_promotes_useful_work_to_indispensable(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path)
+    wt = tmp_path / "GRO-9999-useful-work"
+    _git(repo, "worktree", "add", str(wt), "-b", "GRO-9999-useful-work", "HEAD")
+    proof_dir = wt / ".prismatic"
+    proof_dir.mkdir()
+    proof = worktree_proof_template(issue="GRO-9999", summary="Useful agent work")
+    proof["verdict"] = "indispensable"
+    proof["verification"] = [{"command": "pytest focused", "result": "passed"}]
+    (proof_dir / "worktree-proof.json").write_text(json.dumps(proof))
+    (wt / "feature.txt").write_text("valuable committed work\n")
+    _git(wt, "add", ".")
+    _git(wt, "commit", "-m", "valuable work")
+
+    records = list_worktrees(repo, base_ref="main", stale_seconds=0)
+    record = next(r for r in records if Path(r.path) == wt)
+
+    assert record.safety_class == "keep"
+    assert record.value_class == "indispensable"
+    assert any("proof verdict: indispensable" in signal for signal in record.value_signals)
+    assert record.promotion_recommendation == "promote"
+
+
+def test_proof_template_has_portable_required_fields() -> None:
+    proof = worktree_proof_template(issue="GRO-1234", summary="Summary")
+
+    assert proof["schema"] == "prismatic.worktree-proof.v1"
+    assert proof["issue"] == "GRO-1234"
+    assert proof["verification"] == []
+    assert "handoff" in proof
 
 
 def test_core_crons_emit_portable_manifest(tmp_path: Path) -> None:

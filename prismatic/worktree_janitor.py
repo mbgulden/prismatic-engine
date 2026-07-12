@@ -37,6 +37,11 @@ class WorktreeRecord:
     untracked_paths: int = 0
     safety_class: str = "unknown"
     safety_reasons: list[str] = dataclasses.field(default_factory=list)
+    value_class: str = "unknown"
+    value_score: int = 0
+    value_signals: list[str] = dataclasses.field(default_factory=list)
+    proof_gaps: list[str] = dataclasses.field(default_factory=list)
+    promotion_recommendation: str = "none"
 
     def to_dict(self) -> dict[str, Any]:
         return dataclasses.asdict(self)
@@ -124,7 +129,7 @@ def list_worktrees(
             exists=path.exists(),
         )
         if not path.exists():
-            out.append(record)
+            out.append(enrich_value_proof(record, path))
             continue
         status = _run(["git", "status", "--short", "--branch"], cwd=path).stdout
         lines = status.splitlines()
@@ -144,12 +149,138 @@ def list_worktrees(
             record.age_seconds = max(0.0, now - path.stat().st_mtime)
         except OSError:
             record.age_seconds = None
-        out.append(classify_worktree(record, canonical=str(repo_root), stale_seconds=stale_seconds))
+        classified = classify_worktree(record, canonical=str(repo_root), stale_seconds=stale_seconds)
+        out.append(enrich_value_proof(classified, path))
     return out
 
 
 def _safe_slug(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip("/"))[:160] or "worktree"
+
+
+ISSUE_RE = re.compile(r"\b[A-Z][A-Z0-9]+-\d+\b|\bgro-\d+\b", re.IGNORECASE)
+PROOF_FILES = (
+    ".prismatic/worktree-proof.json",
+    "prismatic-worktree-proof.json",
+    ".worktree-proof.json",
+)
+
+
+def _ahead_count(ahead_behind: str | None) -> int:
+    if not ahead_behind:
+        return 0
+    try:
+        left, _right = ahead_behind.split()
+        return int(left)
+    except (ValueError, AttributeError):
+        return 0
+
+
+def _load_proof_file(path: Path) -> tuple[dict[str, Any] | None, str | None]:
+    for rel in PROOF_FILES:
+        candidate = path / rel
+        if not candidate.exists():
+            continue
+        try:
+            return json.loads(candidate.read_text()), rel
+        except (OSError, json.JSONDecodeError) as exc:
+            return {"_invalid": str(exc)}, rel
+    return None, None
+
+
+def enrich_value_proof(record: WorktreeRecord, path: Path | None = None) -> WorktreeRecord:
+    """Attach portable usefulness/provenance signals to a worktree record.
+
+    This does not make deletion more aggressive. Missing proof creates a gap and
+    preserves work for review; it never converts ambiguous work into trash.
+    """
+    wt = path or Path(record.path)
+    score = 0
+    signals: list[str] = []
+    gaps: list[str] = []
+    recommendation = "none"
+
+    if record.branch and ISSUE_RE.search(record.branch):
+        score += 15
+        signals.append(f"branch links to issue-like id: {record.branch}")
+    elif record.branch and record.branch not in {"main", "master"}:
+        gaps.append("branch has no issue-like id")
+
+    ahead = _ahead_count(record.ahead_behind)
+    if ahead > 0:
+        score += 45
+        signals.append(f"{ahead} commit(s) ahead of base")
+        recommendation = "open-or-update-pr"
+    if record.dirty:
+        score += 35
+        signals.append(f"dirty working tree: {record.changed_paths} changed path(s)")
+        recommendation = "capture-proof-or-promote"
+    if record.untracked_paths:
+        score += 10
+        signals.append(f"{record.untracked_paths} untracked path(s)")
+    if record.unmerged:
+        score += 25
+        signals.append("conflicted/unmerged work requires human resolution")
+        recommendation = "manual-conflict-review"
+
+    proof, proof_rel = _load_proof_file(wt) if record.exists else (None, None)
+    if proof_rel:
+        if proof and proof.get("_invalid"):
+            gaps.append(f"invalid proof file {proof_rel}: {proof['_invalid']}")
+        else:
+            score += 35
+            signals.append(f"proof file present: {proof_rel}")
+            verdict = str((proof or {}).get("verdict") or (proof or {}).get("status") or "").lower()
+            if verdict in {"indispensable", "useful", "promote", "keep"}:
+                score += 35
+                signals.append(f"proof verdict: {verdict}")
+                recommendation = "promote"
+            elif verdict in {"broken", "abandon", "superseded", "trash"}:
+                signals.append(f"proof verdict: {verdict}")
+                recommendation = "manual-disposal-review"
+            if (proof or {}).get("verification"):
+                score += 15
+                signals.append("verification evidence recorded")
+            else:
+                gaps.append("proof file lacks verification evidence")
+    elif record.dirty or ahead > 0 or record.unmerged:
+        gaps.append("missing portable worktree proof file")
+
+    if record.safety_class == "safe-remove" and score == 0:
+        value_class = "disposable"
+        recommendation = "safe-remove"
+    elif recommendation == "manual-disposal-review":
+        value_class = "broken-review"
+    elif score >= 70:
+        value_class = "indispensable"
+    elif score > 0 or gaps:
+        value_class = "preserve-needs-proof"
+    else:
+        value_class = "unknown"
+
+    if gaps and recommendation == "none":
+        recommendation = "capture-proof"
+    record.value_score = score
+    record.value_signals = signals
+    record.proof_gaps = gaps
+    record.value_class = value_class
+    record.promotion_recommendation = recommendation
+    return record
+
+
+def worktree_proof_template(issue: str | None = None, summary: str = "") -> dict[str, Any]:
+    """Return the portable proof bundle agents should leave in worktrees."""
+    return {
+        "schema": "prismatic.worktree-proof.v1",
+        "issue": issue,
+        "summary": summary,
+        "verdict": "useful",  # useful | indispensable | promote | broken | superseded
+        "agent": None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "verification": [],  # e.g. [{"command": "pytest ...", "result": "passed"}]
+        "artifacts": [],
+        "handoff": "What should the next agent/human do with this work?",
+    }
 
 
 def archive_worktree(path: str | os.PathLike[str], archive_root: str | os.PathLike[str]) -> Path:
@@ -295,6 +426,8 @@ def write_manifest(
                 "older than stale threshold",
             ],
             "dirty_requires_explicit_token": True,
+            "usefulness_policy": "missing proof preserves work; it never makes work disposable",
+            "proof_files": list(PROOF_FILES),
         },
         "removable": [r.to_dict() for r in removable],
         "kept": [r.to_dict() for r in kept],
@@ -413,6 +546,9 @@ def cli(argv: Sequence[str] | None = None) -> int:
     status.add_argument("--repo", default=None)
     status.add_argument("--base-ref", default="origin/main")
     status.add_argument("--stale-hours", type=float, default=24.0)
+    proof = sub.add_parser("proof-template", help="Emit a portable worktree proof JSON template")
+    proof.add_argument("--issue", default=None)
+    proof.add_argument("--summary", default="")
     janitor = sub.add_parser("janitor", help="Archive/remove stale worktrees")
     janitor.add_argument("--repo", default=None)
     janitor.add_argument("--base-ref", default="origin/main")
@@ -426,6 +562,9 @@ def cli(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "status":
         print(json.dumps([r.to_dict() for r in list_worktrees(args.repo, base_ref=args.base_ref, stale_seconds=int(args.stale_hours * 3600))], indent=2))
+        return 0
+    if args.command == "proof-template":
+        print(json.dumps(worktree_proof_template(issue=args.issue, summary=args.summary), indent=2))
         return 0
     if args.command == "janitor":
         result = run_janitor(

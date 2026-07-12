@@ -25,8 +25,11 @@ def _make_repo(tmp_path: Path) -> Path:
     return repo
 
 
-def test_worktrees_api_lists_worktrees(monkeypatch, tmp_path: Path) -> None:
+def test_worktrees_api_lists_worktrees_with_value_signals(monkeypatch, tmp_path: Path) -> None:
     repo = _make_repo(tmp_path)
+    wt = tmp_path / "wt-dirty"
+    _git(repo, "worktree", "add", str(wt), "HEAD")
+    (wt / "scratch.txt").write_text("valuable but undocumented\n")
     monkeypatch.setenv("PRISMATIC_API_KEY", "test-token")
     client = TestClient(app)
 
@@ -38,8 +41,26 @@ def test_worktrees_api_lists_worktrees(monkeypatch, tmp_path: Path) -> None:
 
     assert response.status_code == 200
     body = response.json()
-    assert len(body["worktrees"]) == 1
-    assert body["worktrees"][0]["path"] == str(repo)
+    dirty = next(item for item in body["worktrees"] if Path(item["path"]) == wt)
+    assert dirty["value_class"] == "preserve-needs-proof"
+    assert "missing portable worktree proof file" in dirty["proof_gaps"]
+
+
+def test_worktree_proof_template_api(monkeypatch) -> None:
+    monkeypatch.setenv("PRISMATIC_API_KEY", "test-token")
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/v1/worktrees/proof-template",
+        params={"issue": "GRO-1234", "summary": "Useful work"},
+        headers={"Authorization": "Bearer test-token"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["schema"] == "prismatic.worktree-proof.v1"
+    assert body["issue"] == "GRO-1234"
+    assert body["summary"] == "Useful work"
 
 
 def test_worktree_janitor_api_defaults_to_dry_run(monkeypatch, tmp_path: Path) -> None:
