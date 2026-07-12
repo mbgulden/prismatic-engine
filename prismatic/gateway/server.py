@@ -158,7 +158,7 @@ _ws_clients: set[WebSocket] = set()
 @app.on_event("startup")
 async def startup() -> None:
     """Initialize EventBus, IPC bridge, WebSocket broadcaster, and store."""
-    global _started_at, _run_store, _ipc_listener
+    global _started_at, _server_started_at, _run_store, _ipc_listener
 
     _started_at = time.time()
     _server_started_at = _started_at
@@ -575,25 +575,57 @@ def _dashboard_recovery_state_path() -> Path:
     return state_dir / "dashboard_recovery_controls.json"
 
 
-def _read_dashboard_recovery_state() -> dict[str, Any]:
-    path = _dashboard_recovery_state_path()
+def _dashboard_dispatcher_state_path() -> Path:
+    state_dir = Path(os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state/"))
+    return state_dir / "dashboard_dispatcher_controls.json"
+
+
+def _dashboard_queue_state_path() -> Path:
+    state_dir = Path(os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state/"))
+    return state_dir / "dashboard_queue_controls.json"
+
+
+def _read_json_state(path: Path, default: dict[str, Any]) -> dict[str, Any]:
     if not path.exists():
-        return {"actions": [], "last_status": None}
+        return dict(default)
     try:
         data = json.loads(path.read_text())
         if isinstance(data, dict):
-            data.setdefault("actions", [])
-            data.setdefault("last_status", None)
-            return data
+            merged = dict(default)
+            merged.update(data)
+            return merged
     except Exception:
-        logger.warning("dashboard recovery state read failed", exc_info=True)
-    return {"actions": [], "last_status": None}
+        logger.warning("dashboard state read failed: %s", path, exc_info=True)
+    return dict(default)
+
+
+def _write_json_state(path: Path, state: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, indent=2, sort_keys=True))
+
+
+def _read_dashboard_recovery_state() -> dict[str, Any]:
+    return _read_json_state(_dashboard_recovery_state_path(), {"actions": [], "last_status": None})
 
 
 def _write_dashboard_recovery_state(state: dict[str, Any]) -> None:
-    path = _dashboard_recovery_state_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(state, indent=2, sort_keys=True))
+    _write_json_state(_dashboard_recovery_state_path(), state)
+
+
+def _read_dashboard_dispatcher_state() -> dict[str, Any]:
+    return _read_json_state(_dashboard_dispatcher_state_path(), {"commands": [], "last_command": None, "cycle_number": 0})
+
+
+def _write_dashboard_dispatcher_state(state: dict[str, Any]) -> None:
+    _write_json_state(_dashboard_dispatcher_state_path(), state)
+
+
+def _read_dashboard_queue_state() -> dict[str, Any]:
+    return _read_json_state(_dashboard_queue_state_path(), {"actions": [], "last_status": None})
+
+
+def _write_dashboard_queue_state(state: dict[str, Any]) -> None:
+    _write_json_state(_dashboard_queue_state_path(), state)
 
 
 def _record_control_timeline_event(
@@ -759,6 +791,42 @@ async def dashboard_recovery_control_status() -> dict[str, Any]:
     return _read_dashboard_recovery_state()
 
 
+@app.get("/api/gateway/webhooks/stats")
+async def dashboard_webhook_stats() -> dict[str, Any]:
+    """Return normalized webhook intake counters and queue depths."""
+    from prismatic.ingestion_status import webhook_stats_payload
+
+    return webhook_stats_payload(dict(_webhook_counters), _recent_agent_runs(limit=500))
+
+
+@app.get("/api/gateway/webhooks/queue")
+async def dashboard_webhook_queue(status: str | None = None, limit: int = 50) -> dict[str, Any]:
+    """Return normalized queue items derived from run records."""
+    from prismatic.ingestion_status import queue_payload
+
+    return queue_payload(_recent_agent_runs(limit=500), status=status, limit=limit)
+
+
+@app.get("/api/gateway/dispatcher/status")
+async def dashboard_dispatcher_status() -> dict[str, Any]:
+    """Return audit-safe dispatcher status for the Ingestion Queue tab."""
+    from prismatic.ingestion_status import dispatcher_status_payload
+
+    return dispatcher_status_payload(
+        _read_dashboard_dispatcher_state(),
+        _recent_agent_runs(limit=500),
+        server_started_at=_server_started_at or _started_at or None,
+    )
+
+
+@app.get("/api/gateway/recovery/status")
+async def dashboard_recovery_status() -> dict[str, Any]:
+    """Return failure taxonomy, recent failures, and recovery-control state."""
+    from prismatic.ingestion_status import recovery_status_payload
+
+    return recovery_status_payload(_read_dashboard_recovery_state(), _recent_agent_runs(limit=500), dict(_webhook_counters))
+
+
 @app.post("/api/dashboard/recovery-control", response_model=None)
 async def dashboard_recovery_control(payload: dict[str, Any]) -> dict[str, Any] | JSONResponse:
     """Record restart/retry/replay recovery actions for live dashboard proof.
@@ -843,6 +911,13 @@ async def dashboard_dispatcher_control(action: str) -> dict[str, Any] | JSONResp
         "detail": spec["detail"],
         "created_at": now,
     }
+    state = _read_dashboard_dispatcher_state()
+    commands = [entry] + list(state.get("commands", []))
+    state["commands"] = commands[:25]
+    state["last_command"] = entry
+    state["updated_at"] = now
+    state["cycle_number"] = int(state.get("cycle_number", 0) or 0) + 1
+    _write_dashboard_dispatcher_state(state)
     timeline_item = _record_control_timeline_event(
         source="DispatcherControl",
         severity=spec.get("severity", "info"),
@@ -880,6 +955,12 @@ async def dashboard_queue_retry(task_id: str) -> dict[str, Any] | JSONResponse:
         "detail": spec["detail"],
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
+    state = _read_dashboard_queue_state()
+    actions = [entry] + list(state.get("actions", []))
+    state["actions"] = actions[:25]
+    state["last_status"] = entry["status"]
+    state["updated_at"] = entry["created_at"]
+    _write_dashboard_queue_state(state)
     timeline_item = _record_control_timeline_event(
         source="QueueControl",
         severity=spec.get("severity", "info"),
@@ -913,6 +994,12 @@ async def dashboard_queue_purge() -> dict[str, Any]:
         "detail": spec["detail"],
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
+    state = _read_dashboard_queue_state()
+    actions = [entry] + list(state.get("actions", []))
+    state["actions"] = actions[:25]
+    state["last_status"] = entry["status"]
+    state["updated_at"] = entry["created_at"]
+    _write_dashboard_queue_state(state)
     timeline_item = _record_control_timeline_event(
         source="QueueControl",
         severity=spec.get("severity", "info"),

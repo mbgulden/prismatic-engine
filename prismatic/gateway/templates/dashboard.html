@@ -1359,10 +1359,10 @@
             document.getElementById("modal-queued").textContent = formatDate(item.queued_at);
             
             try {
-                const parsed = JSON.parse(item.payload);
+                const parsed = typeof item.payload === 'string' ? JSON.parse(item.payload) : (item.payload || {});
                 document.getElementById("modal-payload").textContent = JSON.stringify(parsed, null, 2);
             } catch (e) {
-                document.getElementById("modal-payload").textContent = item.payload;
+                document.getElementById("modal-payload").textContent = String(item.payload || "");
             }
             
             document.getElementById("modal-container").classList.remove("hidden");
@@ -1434,22 +1434,25 @@
             });
             
             if (filtered.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="6" class="py-8 text-center text-slate-500 italic">No matching events</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="6" class="py-8 text-center text-slate-500 italic">${loadedQueueItems.length === 0 ? 'Queue is empty — no webhook events or run records visible.' : 'No matching events'}</td></tr>`;
             } else {
-                tbody.innerHTML = filtered.map(item => `
-                    <tr onclick="openModal(${item.id})" class="border-b border-slate-800/50 hover:bg-slate-900/20 transition duration-150 cursor-pointer">
-                        <td class="py-3 px-3 font-semibold text-slate-200">${item.identifier || "N/A"}</td>
+                tbody.innerHTML = filtered.map(item => {
+                    const itemId = item.id || item.run_id || item.issue_id || '';
+                    return `
+                    <tr onclick="openModal('${escapeHtml(itemId)}')" class="border-b border-slate-800/50 hover:bg-slate-900/20 transition duration-150 cursor-pointer">
+                        <td class="py-3 px-3 font-semibold text-slate-200">${escapeHtml(item.identifier || item.issue_id || item.run_id || "N/A")}</td>
                         <td class="py-3 px-3">${getAgentBadge(item.agent_name)}</td>
-                        <td class="py-3 px-3 text-slate-400 capitalize text-xs">${item.action || "update"}</td>
+                        <td class="py-3 px-3 text-slate-400 capitalize text-xs">${escapeHtml(item.action || "update")}</td>
                         <td class="py-3 px-3">${getStatusBadge(item.dispatch_status)}</td>
-                        <td class="py-3 px-3 text-slate-500 text-xs">${formatDate(item.queued_at)}</td>
+                        <td class="py-3 px-3 text-slate-500 text-xs">${escapeHtml(formatDate(item.queued_at))}</td>
                         <td class="py-3 px-3 text-right">
-                            <button onclick="event.stopPropagation(); retryTask(${item.id})" class="text-xs text-indigo-400 hover:text-indigo-300 font-semibold px-2 py-1 rounded bg-indigo-500/5 hover:bg-indigo-500/10 border border-indigo-500/10 transition">
+                            <button onclick="event.stopPropagation(); retryTask('${escapeHtml(itemId)}')" class="text-xs text-indigo-400 hover:text-indigo-300 font-semibold px-2 py-1 rounded bg-indigo-500/5 hover:bg-indigo-500/10 border border-indigo-500/10 transition">
                                 Retry
                             </button>
                         </td>
                     </tr>
-                `).join("");
+                    `;
+                }).join("");
             }
         }
 
@@ -1557,6 +1560,10 @@
         }
 
         async function fetchTelemetryData() {
+            const queueBody = document.getElementById("queue-tbody");
+            const taxonomyGrid = document.getElementById("failure-taxonomy-grid");
+            if (queueBody) queueBody.innerHTML = `<tr><td colspan="6" class="py-8 text-center text-slate-500 italic">Loading webhook queue…</td></tr>`;
+            if (taxonomyGrid) taxonomyGrid.innerHTML = `<div class="col-span-full text-slate-500 italic">Loading recovery taxonomy…</div>`;
             try {
                 // 1. Stats
                 const statsRes = await fetch(`${API_PREFIX}/webhooks/stats`);
@@ -1564,7 +1571,8 @@
                     const stats = await statsRes.json();
                     document.getElementById("stat-received").textContent = stats.received || 0;
                     document.getElementById("stat-auth-failed").textContent = stats.auth_failed || 0;
-                    document.getElementById("stat-latency").textContent = stats.average_dispatch_latency_seconds ? stats.average_dispatch_latency_seconds.toFixed(1) : "0.0";
+                    const latency = stats.average_dispatch_latency_seconds ?? (stats.latency_ms ? stats.latency_ms / 1000 : null);
+                    document.getElementById("stat-latency").textContent = latency !== null && latency !== undefined ? Number(latency).toFixed(1) : "—";
                     
                     const sparklineDiv = document.getElementById("latency-sparkline");
                     if (stats.recent_latencies && stats.recent_latencies.length >= 2) {
@@ -1577,6 +1585,8 @@
                     document.getElementById("stat-processing").textContent = stats.queue_depths?.processing || 0;
                     document.getElementById("stat-completed").textContent = stats.queue_depths?.completed || 0;
                     document.getElementById("stat-failed").textContent = stats.queue_depths?.failed || 0;
+                } else {
+                    throw new Error(`Webhook stats HTTP ${statsRes.status}`);
                 }
 
                 // 1b. Failure taxonomy
@@ -1623,6 +1633,8 @@
                     loadedQueueItems = queue.items || [];
                     document.getElementById("queue-total-badge").textContent = `${queue.total} total`;
                     filterQueue();
+                } else {
+                    throw new Error(`Queue HTTP ${queueRes.status}`);
                 }
 
                 // 3. Dispatcher Status
@@ -1637,12 +1649,22 @@
                         badge.className = "flex items-center space-x-1.5 bg-emerald-500/10 px-2.5 py-1 rounded-full text-xs font-bold text-emerald-400 border border-emerald-500/20";
                         dot.className = "w-2 h-2 rounded-full bg-emerald-500 status-pulse";
                         text.textContent = "ACTIVE";
-                        setSummaryBadge("summary-dispatcher-badge", "summary-dispatcher-meta", "green", "ACTIVE", `Cycle #${disp.cycle_number || 0} · ${disp.active_agents?.length || 0} agent(s) live`);
+                        setSummaryBadge("summary-dispatcher-badge", "summary-dispatcher-meta", "green", "ACTIVE", `${disp.status_reason || 'Active'} · ${disp.active_agents?.length || 0} agent(s) live`);
+                    } else if (disp.status === "paused") {
+                        badge.className = "flex items-center space-x-1.5 bg-amber-500/10 px-2.5 py-1 rounded-full text-xs font-bold text-amber-400 border border-amber-500/20";
+                        dot.className = "w-2 h-2 rounded-full bg-amber-500";
+                        text.textContent = "PAUSED";
+                        setSummaryBadge("summary-dispatcher-badge", "summary-dispatcher-meta", "amber", "PAUSED", disp.status_reason || "Paused by operator command");
+                    } else if (disp.status === "queue-starved" || disp.status === "blocked") {
+                        badge.className = "flex items-center space-x-1.5 bg-rose-500/10 px-2.5 py-1 rounded-full text-xs font-bold text-rose-400 border border-rose-500/20";
+                        dot.className = "w-2 h-2 rounded-full bg-rose-500";
+                        text.textContent = disp.status === "blocked" ? "BLOCKED" : "QUEUE-STARVED";
+                        setSummaryBadge("summary-dispatcher-badge", "summary-dispatcher-meta", "red", text.textContent, disp.status_reason || "Queue needs attention");
                     } else {
                         badge.className = "flex items-center space-x-1.5 bg-slate-800 px-2.5 py-1 rounded-full text-xs font-bold text-slate-400 border border-slate-700/30";
                         dot.className = "w-2 h-2 rounded-full bg-slate-500";
                         text.textContent = "IDLE";
-                        setSummaryBadge("summary-dispatcher-badge", "summary-dispatcher-meta", "slate", "IDLE", `Cycle #${disp.cycle_number || 0} · last seen ${disp.last_cycle_at ? formatDate(disp.last_cycle_at) : "Never"}`);
+                        setSummaryBadge("summary-dispatcher-badge", "summary-dispatcher-meta", "slate", "IDLE", disp.status_reason || `Cycle #${disp.cycle_number || 0} · last seen ${disp.last_cycle_at ? formatDate(disp.last_cycle_at) : "Never"}`);
                     }
 
                     document.getElementById("disp-cycle").textContent = disp.cycle_number || 0;
@@ -1665,6 +1687,10 @@
                 }
             } catch (e) {
                 console.error("Error fetching telemetry:", e);
+                if (queueBody) queueBody.innerHTML = `<tr><td colspan="6" class="py-8 text-center text-rose-400 italic">Ingestion Queue API unavailable: ${escapeHtml(e.message || e)}</td></tr>`;
+                if (taxonomyGrid) taxonomyGrid.innerHTML = `<div class="col-span-full text-rose-400 italic">Recovery status API unavailable: ${escapeHtml(e.message || e)}</div>`;
+                document.getElementById("queue-total-badge").textContent = "API error";
+                setSummaryBadge("summary-dispatcher-badge", "summary-dispatcher-meta", "red", "ERROR", `Ingestion API unavailable: ${e.message || e}`);
             }
         }
 
