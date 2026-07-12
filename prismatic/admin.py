@@ -675,6 +675,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    from prismatic.observability import init_logging
+
+    init_logging()
     parser = build_parser()
     args = parser.parse_args()
 

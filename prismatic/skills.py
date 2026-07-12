@@ -207,6 +207,9 @@ def cli_skills(args: list[str] | None = None) -> int:
 
     Returns exit code (0 = success).
     """
+    from prismatic.observability import init_logging
+
+    init_logging()
     if args is None:
         args = sys.argv[1:]
     if not args or args[0] in ("-h", "--help", "help"):

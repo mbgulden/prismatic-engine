@@ -1953,7 +1953,6 @@ AGY_LABELS_DEFAULT = [
     "agent:ned-code",
     "agent:ned-infra",
     "agent:ned-audit",
-    "agent:ned-review",
     "agent:jules",
     "agent:kai",
     "agent:kai-content",
@@ -1966,12 +1965,6 @@ AGY_LABELS_DEFAULT = [
     "agent:qwen-local",
     "agent:post-publish-doc-update",
     "agent:post-publish-done",
-    "agent:post-publish-review",
-    "agent:post-publish-review-agy-approved",
-    "agent:post-publish-review-jules-approved",
-    "agent:done",
-    "agent:peer-review",
-    "agent:needs-human-review",
     "agent:antigravity-cli",
 ]
 LANE_ORDER = ["on-demand", "priority", "project", "backlog"]

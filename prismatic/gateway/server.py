@@ -1103,21 +1103,22 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
     body = await request.body()
     signature = request.headers.get("linear-signature", "")
     _webhook_counters["linear_received"] += 1
-    if signature:
-        secrets = get_linear_secrets()
-        if secrets:
-            expected = None
-            for secret in secrets:
-                candidate = _hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-                if _hmac.compare_digest(candidate, signature):
-                    expected = candidate
-                    break
-            if expected is None:
-                _webhook_counters["linear_auth_failed"] += 1
-                await _publish_webhook_auth_failed("linear")
-                from fastapi.responses import JSONResponse
+    secrets = get_linear_secrets()
+    if secrets:
+        expected = None
+        for secret in secrets:
+            candidate = _hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+            if _hmac.compare_digest(candidate, signature):
+                expected = candidate
+                break
+        if expected is None:
+            _webhook_counters["linear_auth_failed"] += 1
+            await _publish_webhook_auth_failed("linear")
+            from fastapi.responses import JSONResponse
 
-                return JSONResponse({"status": "auth-failed"}, status_code=401)
+            return JSONResponse({"status": "auth-failed"}, status_code=401)
+    else:
+        logger.warning("Linear webhook skipped signature check: no secrets configured")
     try:
         event = json.loads(body) if body else {}
     except Exception:

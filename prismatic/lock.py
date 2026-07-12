@@ -329,6 +329,9 @@ def _duration_ms(start_ms: int, suffix: str = "") -> str:
 
 
 def main() -> None:
+    from prismatic.observability import init_logging
+
+    init_logging()
     parser = argparse.ArgumentParser(
         prog="prismatic-lock",
         description="Centralized file locking for multi-agent repos (Prismatic Engine)",
