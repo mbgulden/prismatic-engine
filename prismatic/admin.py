@@ -126,41 +126,44 @@ def cmd_config_migrate(current_path: str | None = None) -> int:
 def _sync_alembic_files() -> Path:
     """Ensure that the alembic migrations and alembic.ini exist in ~/.prismatic/."""
     import shutil
-    target_dir = CONFIG_DIR / "migrations"
-    target_ini = CONFIG_DIR / "alembic.ini"
     
+    real_home_config = Path(os.path.expanduser("~")) / ".prismatic"
     src_dir = Path(__file__).resolve().parent / "migrations"
     src_ini = Path(__file__).resolve().parent.parent / "alembic.ini"
     if not src_ini.exists():
         src_ini = Path(__file__).resolve().parent / "alembic.ini"
         
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    
-    if src_dir.exists():
-        if target_dir.exists():
+    for base_dir in (CONFIG_DIR, real_home_config):
+        target_dir = base_dir / "migrations"
+        target_ini = base_dir / "alembic.ini"
+        
+        base_dir.mkdir(parents=True, exist_ok=True)
+        
+        if src_dir.exists():
+            if target_dir.exists():
+                try:
+                    shutil.rmtree(target_dir)
+                except Exception:
+                    pass
             try:
-                shutil.rmtree(target_dir)
+                shutil.copytree(src_dir, target_dir)
+            except Exception as exc:
+                print(f"Warning: could not copy migrations to {target_dir}: {exc}", file=sys.stderr)
+                
+        if src_ini.exists():
+            try:
+                shutil.copy2(src_ini, target_ini)
             except Exception:
                 pass
-        try:
-            shutil.copytree(src_dir, target_dir)
-        except Exception as exc:
-            print(f"Warning: could not copy migrations to {target_dir}: {exc}", file=sys.stderr)
-            
-    if src_ini.exists():
-        try:
-            shutil.copy2(src_ini, target_ini)
-        except Exception:
-            pass
-            
-    if not target_ini.exists() or target_ini.stat().st_size == 0:
-        try:
-            with open(target_ini, "w") as f:
-                f.write(f"[alembic]\nscript_location = {target_dir}\n")
-        except Exception:
-            pass
+                
+        if not target_ini.exists() or target_ini.stat().st_size == 0:
+            try:
+                with open(target_ini, "w") as f:
+                    f.write(f"[alembic]\nscript_location = {target_dir}\n")
+            except Exception:
+                pass
 
-    return target_ini
+    return CONFIG_DIR / "alembic.ini"
 
 
 def cmd_db_upgrade(db_path: str | None = None) -> int:

@@ -1,0 +1,66 @@
+<?xml version="1.0" ?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Prismatic Swarm Blog</title>
+  <subtitle>Latest updates from the Prismatic Agent Swarm</subtitle>
+  <link href="https://prismatic-swarm.com/atom.xml" rel="self"/>
+  <link href="https://prismatic-swarm.com/blog"/>
+  <id>https://prismatic-swarm.com/blog</id>
+  <updated>2026-07-12T14:11:44Z</updated>
+  <author>
+    <name>Prismatic Swarm</name>
+  </author>
+  <entry>
+    <title>The Power of Antigravity (AGY)</title>
+    <link href="https://prismatic-swarm.com/blog/power-of-antigravity"/>
+    <id>https://prismatic-swarm.com/blog/power-of-antigravity</id>
+    <updated>2026-06-10T00:00:00Z</updated>
+    <summary>Deep research and document synthesis with 1M context windows.</summary>
+    <content type="html">&lt;h1&gt;The Power of Antigravity (AGY)&lt;/h1&gt;
+&lt;p&gt;When it comes to processing massive amounts of information, &lt;strong&gt;Antigravity (AGY)&lt;/strong&gt; is our go-to agent.&lt;/p&gt;
+&lt;p&gt;With a &lt;strong&gt;1M-token context window&lt;/strong&gt;, AGY can ingest entire codebases, 500-page PDFs, or complex research corpora in a single session.&lt;/p&gt;
+&lt;h2&gt;Use Cases&lt;/h2&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Competitive Research&lt;/strong&gt;: Analyzing dozens of competitor sites and strategy papers.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Visual QA&lt;/strong&gt;: Comparing screenshots and design mockups with pixel precision.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Knowledge Synthesis&lt;/strong&gt;: Creating summary reports from years of archived logs.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;AGY transforms &quot;Too Long; Didn't Read&quot; into actionable intelligence.&lt;/p&gt;</content>
+  </entry>
+  <entry>
+    <title>Scaling with Jules</title>
+    <link href="https://prismatic-swarm.com/blog/scaling-with-jules"/>
+    <id>https://prismatic-swarm.com/blog/scaling-with-jules</id>
+    <updated>2026-06-05T00:00:00Z</updated>
+    <summary>How we use async remote VMs to handle hundreds of PRs daily.</summary>
+    <content type="html">&lt;h1&gt;Scaling with Jules&lt;/h1&gt;
+&lt;p&gt;In this post, we'll dive into the architecture that allows &lt;strong&gt;Jules&lt;/strong&gt; to handle massive throughput for GitHub PRs.&lt;/p&gt;
+&lt;p&gt;The secret lies in our use of &lt;strong&gt;asynchronous remote VMs&lt;/strong&gt;. Every task spawns a temporary, isolated environment where the code is cloned, modified, and verified.&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;&quot;Goal delegation, not task delegation.&quot;&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;By providing Jules with a clear goal and the necessary context, it can work independently of the main orchestrator, freeing up resources for other tasks.&lt;/p&gt;
+&lt;h3&gt;Benefits&lt;/h3&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;strong&gt;Isolation&lt;/strong&gt;: No local environment pollution.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Parallelism&lt;/strong&gt;: Run up to 300 sessions per day.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Safety&lt;/strong&gt;: Changes are proposed via PRs, requiring human or second-agent approval.&lt;/li&gt;
+&lt;/ol&gt;</content>
+  </entry>
+  <entry>
+    <title>Welcome to the Prismatic Swarm</title>
+    <link href="https://prismatic-swarm.com/blog/welcome-to-the-prismatic-swarm"/>
+    <id>https://prismatic-swarm.com/blog/welcome-to-the-prismatic-swarm</id>
+    <updated>2026-06-01T00:00:00Z</updated>
+    <summary>Introducing the new Prismatic Agent Hub for multi-agent coordination.</summary>
+    <content type="html">&lt;h1&gt;Welcome to the Prismatic Swarm&lt;/h1&gt;
+&lt;p&gt;We are excited to announce the launch of the &lt;strong&gt;Prismatic Agent Hub&lt;/strong&gt; (codenamed &lt;strong&gt;Prism&lt;/strong&gt;). &lt;/p&gt;
+&lt;p&gt;This hub acts as a central coordinator for our heterogeneous fleet of AI workers. By splitting incoming tasks into specialized wavelengths, we achieve full-spectrum autonomy.&lt;/p&gt;
+&lt;h2&gt;Key Features&lt;/h2&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;strong&gt;Hub-and-Spoke Design&lt;/strong&gt;: Central coordinator + specialized agents.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Bolt-on Skills&lt;/strong&gt;: Easily extendable capabilities.&lt;/li&gt;
+&lt;li&gt;&lt;strong&gt;Platform Agnostic&lt;/strong&gt;: Works with Hermes, Open Claw, and more.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Stay tuned for more updates!&lt;/p&gt;</content>
+  </entry>
+</feed>

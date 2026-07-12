@@ -194,8 +194,47 @@ def set_tenant_tokens(tenant_id: str, tokens: dict) -> None:
         json.dump(tokens, f, indent=2)
 
 
+def _get_analytics_snippet(tenant_id: str = None) -> str:
+    """Load analytics configuration and generate the appropriate HTML script snippet."""
+    config = {}
+    if tenant_id:
+        config_path = TENANTS_DIR / tenant_id / "analytics.json"
+        if config_path.exists():
+            try:
+                config = load_json(config_path)
+            except Exception:
+                pass
+
+    # Zaraz takes precedence if present/enabled
+    if config.get("zaraz"):
+        return '<script src="/cdn-cgi/zaraz/i.js" referrerpolicy="origin"></script>'
+
+    # GTAG (Google Analytics 4) if configured
+    if "gtag_id" in config and config["gtag_id"]:
+        gtag_id = config["gtag_id"]
+        return (
+            f'<script async src="https://www.googletagmanager.com/gtag/js?id={gtag_id}"></script>\n'
+            f'<script>\n'
+            f'  window.dataLayer = window.dataLayer || [];\n'
+            f'  function gtag(){{dataLayer.push(arguments);}}\n'
+            f"  gtag('js', new Date());\n"
+            f"  gtag('config', '{gtag_id}');\n"
+            f'</script>'
+        )
+
+    # Plausible (Default)
+    domain = config.get("domain") or config.get("plausible_domain")
+    if not domain:
+        if tenant_id:
+            domain = f"{tenant_id}.com"
+        else:
+            domain = "default.com"
+
+    return f'<script defer data-domain="{domain}" src="https://plausible.io/js/script.js"></script>'
+
+
 def render_template(template_name: str, tenant_id: str = None) -> str:
-    """Renders the HTML for the specified template with the compiled CSS tokens."""
+    """Renders the HTML for the specified template with the compiled CSS tokens and analytics."""
     template_html_path = TEMPLATES_DIR / template_name / "index.html"
     if not template_html_path.exists():
         raise FileNotFoundError(
@@ -221,5 +260,12 @@ def render_template(template_name: str, tenant_id: str = None) -> str:
             html = html.replace("</head>", f"{style_block}\n</head>")
         else:
             html = style_block + "\n" + html
+
+    # Inject analytics snippet right before </head>
+    analytics_snippet = _get_analytics_snippet(tenant_id)
+    if "</head>" in html:
+        html = html.replace("</head>", f"{analytics_snippet}\n</head>")
+    else:
+        html = html + "\n" + analytics_snippet
 
     return html
