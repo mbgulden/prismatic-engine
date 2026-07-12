@@ -41,6 +41,7 @@ from prismatic.gateway.ws_broadcaster import (
     stop_ws_broadcaster,
 )
 from prismatic.lock import _read_locks as read_swarm_locks
+from prismatic.plugin_architecture import MEDIA_CAPABILITY_CLASSES, plugin_catalog
 from prismatic.plugin_health import get_plugin_health
 from prismatic.pwp_integration import connect_pwp, disconnect_pwp, integration_status, refresh_pwp
 from prismatic.run_records import AgentRunRecordStore
@@ -371,6 +372,27 @@ async def get_harnesses() -> list[dict[str, Any]]:
     registry_path = Path(__file__).resolve().parents[1] / "harnesses" / "registry.json"
     registry = json.loads(registry_path.read_text(encoding="utf-8"))
     return registry["harnesses"]
+
+
+@app.get("/api/plugins/catalog")
+async def plugins_catalog() -> dict[str, Any]:
+    """Return the PE Core plugin catalog, manifest validation, and integration surfaces."""
+    return plugin_catalog()
+
+
+@app.get("/api/plugins/architecture")
+async def plugins_architecture() -> dict[str, Any]:
+    """Return the canonical plugin development architecture and future media classes."""
+    catalog = plugin_catalog()
+    return {
+        "schema_version": catalog["schema_version"],
+        "core_integration_points": catalog["core_integration_points"],
+        "media_capability_classes": MEDIA_CAPABILITY_CLASSES,
+        "proven_future_plugin_classes": ["video", "images", "music-sfx", "game-assets", "asset-forge-3d"],
+        "required_manifest_fields": ["schema_version", "name", "version", "entry_point", "core_version_constraint"],
+        "media_asset_required_fields": ["capabilities", "asset_domains", "artifact_types", "integration_points", "automation_surfaces"],
+        "recommended_surfaces": ["registered tools", "gateway API", "dashboard surface", "MCP server", "asset index", "artifact store", "governance checks"],
+    }
 
 
 @app.get("/api/v1/plugins/{plugin_name}/health")

@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from prismatic.plugin_architecture import (  # noqa: E402
+    MEDIA_CAPABILITY_CLASSES,
+    future_plugin_blueprint,
+    load_manifest,
+    plugin_catalog,
+    validate_manifest_payload,
+    write_blueprint,
+)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Prismatic Engine plugin architecture/development helper")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    catalog = sub.add_parser("catalog", help="Print plugin catalog/status JSON")
+    catalog.add_argument("--plugins-dir", type=Path, default=None)
+
+    validate = sub.add_parser("validate", help="Validate a plugin manifest")
+    validate.add_argument("manifest", type=Path)
+
+    blueprint = sub.add_parser("blueprint", help="Print a future media/service plugin manifest blueprint")
+    blueprint.add_argument("slug")
+    blueprint.add_argument("--class", dest="capability_class", required=True, choices=sorted(MEDIA_CAPABILITY_CLASSES))
+
+    scaffold = sub.add_parser("scaffold", help="Write a plugin blueprint directory to a safe target")
+    scaffold.add_argument("slug")
+    scaffold.add_argument("--class", dest="capability_class", required=True, choices=sorted(MEDIA_CAPABILITY_CLASSES))
+    scaffold.add_argument("--target-dir", type=Path, default=ROOT / "generated-plugin-blueprints")
+
+    args = parser.parse_args(argv)
+    if args.command == "catalog":
+        print(json.dumps(plugin_catalog(args.plugins_dir), indent=2, sort_keys=True))
+        return 0
+    if args.command == "validate":
+        manifest = load_manifest(args.manifest)
+        result = validate_manifest_payload(manifest.raw, args.manifest)
+        print(json.dumps({"manifest": manifest.to_dict(), "validation": result}, indent=2, sort_keys=True))
+        return 0 if not result["errors"] else 1
+    if args.command == "blueprint":
+        print(json.dumps(future_plugin_blueprint(args.slug, args.capability_class), indent=2, sort_keys=True))
+        return 0
+    if args.command == "scaffold":
+        print(json.dumps(write_blueprint(args.slug, args.capability_class, args.target_dir), indent=2, sort_keys=True))
+        return 0
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
