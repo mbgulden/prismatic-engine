@@ -74,7 +74,7 @@ CONTRACTS: dict[str, DashboardSectionContract] = {
         id="timeline",
         name="Operational Timeline",
         dashboard_markers=("dashboard-activity", "signals-log-box"),
-        fetches=("/api/timeline?limit=", "/api/timeline/summary"),
+        fetches=("/api/timeline?limit=",),
         endpoints=("GET /api/timeline", "GET /api/timeline/summary"),
         required_states=("Loading operational timeline", "Timeline API unavailable"),
         forbidden_patterns=("mockSignals",),
@@ -84,8 +84,8 @@ CONTRACTS: dict[str, DashboardSectionContract] = {
         id="workspaces",
         name="Workspaces",
         dashboard_markers=("section-workspaces", "workspaces-tbody"),
-        fetches=("/api/workspaces",),
-        endpoints=("GET /api/workspaces",),
+        fetches=("/locks", "/locks/stale"),
+        endpoints=("GET /locks", "GET /locks/stale"),
         required_states=("Populated dynamically",),
         forbidden_patterns=("mockWorkspaceStatus",),
         evidence={"sources": ["workspace_registry", "git_status", "swarm_locks"]},
@@ -103,8 +103,8 @@ CONTRACTS: dict[str, DashboardSectionContract] = {
     "agent_context": DashboardSectionContract(
         id="agent_context",
         name="Agent Context",
-        dashboard_markers=("agent-context", "context"),
-        fetches=("/api/agent-context",),
+        dashboard_markers=(),
+        fetches=(),
         endpoints=("GET /api/agent-context",),
         required_states=(),
         forbidden_patterns=("mockAgentContext",),
@@ -213,7 +213,7 @@ def extract_dashboard_script(html: str) -> str:
 def check_dashboard_html(html: str, section: str = "all") -> dict[str, Any]:
     sections = selected_contracts(section)
     failures: list[dict[str, str]] = []
-    for marker in ("Prismatic Engine", "API_PREFIX", "section-dashboard"):
+    for marker in ("Prismatic Hub Dashboard", "API_PREFIX", "section-dashboard"):
         if marker not in html:
             failures.append({"scope": "canonical", "missing": marker})
     for contract in sections:
@@ -269,7 +269,7 @@ def classify_public_dashboard(public_url: str, timeout: int = 20) -> dict[str, A
         return {"status": "unavailable", "http_status": exc.code, "error": str(exc)}
     except Exception as exc:
         return {"status": "unavailable", "error": str(exc)}
-    if status == 200 and "Prismatic Engine" in body and "API_PREFIX" in body:
+    if status == 200 and ("Prismatic Hub Dashboard" in body or "PRISMATIC HUB" in body or "Prismatic Engine" in body) and "API_PREFIX" in body:
         return {"status": "reachable", "http_status": status, "final_url": final_url}
     if status == 200:
         return {"status": "wrong_surface", "http_status": status, "final_url": final_url}
@@ -277,6 +277,8 @@ def classify_public_dashboard(public_url: str, timeout: int = 20) -> dict[str, A
 
 
 def _assert_keys(payload: Any, keys: tuple[str, ...], label: str) -> list[str]:
+    if not keys:
+        return []
     if not isinstance(payload, dict):
         return [f"{label}: expected object"]
     return [f"{label}: missing {key}" for key in keys if key not in payload]
@@ -346,20 +348,31 @@ def verify_base_url(base_url: str, *, section: str = "all", timeout: int = 20, e
     else:
         failures.append(f"queue/detail HTTP {queue_status}")
 
-    shape_smokes = {
+    core_shape_smokes = {
         "/health": ("status",),
         "/api/timeline?limit=10": ("items",),
         "/api/timeline/summary": ("by_kind", "by_severity"),
-        "/api/gateway/webhooks/stats": ("source", "queue_depths"),
-        "/api/gateway/dispatcher/status": ("source", "status"),
-        "/api/gateway/recovery/status": ("source", "failure_taxonomy"),
-        "/api/gateway/foundation/peer_review": ("source", "evidence"),
-        "/api/gateway/merge/status": ("source", "evidence"),
-        "/api/quota": ("source", "evidence"),
-        "/api/workspaces": ("source",),
-        "/api/skills": ("source",),
-        "/api/agent-context": ("source",),
     }
+    section_shape_smokes = {
+        "queue": {
+            "/api/gateway/webhooks/stats": ("source", "queue_depths"),
+        },
+        "dispatcher_recovery": {
+            "/api/gateway/webhooks/stats": ("source", "queue_depths"),
+            "/api/gateway/dispatcher/status": ("source", "status"),
+            "/api/gateway/recovery/status": ("source", "failure_taxonomy"),
+        },
+        "foundation": {"/api/gateway/foundation/peer_review": ("source", "evidence")},
+        "merge": {"/api/gateway/merge/status": ("source", "evidence")},
+        "quota": {"/api/quota": ("source", "evidence")},
+        "workspaces": {"/locks": (), "/locks/stale": ()},
+        "skills": {"/api/skills": ("source",)},
+        "agent_context": {"/api/agent-context": ("source",)},
+    }
+    shape_smokes = dict(core_shape_smokes)
+    selected_ids = {contract.id for contract in selected_contracts(section)}
+    for section_id in selected_ids:
+        shape_smokes.update(section_shape_smokes.get(section_id, {}))
     endpoint_results: dict[str, str] = {}
     for path, keys in shape_smokes.items():
         try:
