@@ -807,7 +807,7 @@
                     <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Jules CLI Sessions</span>
                     <div class="flex items-end justify-between mt-2">
                         <span id="stat-foundation-jules" class="text-2xl font-bold text-indigo-400">0</span>
-                        <span class="text-xs text-slate-500">Limit: 300</span>
+                        <span id="foundation-jules-limit" class="text-xs text-slate-500">Limit: 300</span>
                     </div>
                     <!-- progress bar -->
                     <div class="w-full bg-slate-800 rounded-full h-1.5 mt-2">
@@ -830,6 +830,17 @@
                     <span id="stat-foundation-reviewer" class="text-lg font-bold text-amber-400 mt-2 uppercase">agent:jules</span>
                 </div>
             </section>
+
+            <div id="foundation-state-panel" class="glass-panel p-4 rounded-xl border border-slate-800/70">
+                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <div>
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Live Peer Review Evidence</div>
+                        <div id="foundation-status-line" class="mt-1 text-sm text-slate-300">Loading Foundation / Peer Review status…</div>
+                    </div>
+                    <span id="foundation-source-badge" class="self-start sm:self-auto px-2 py-0.5 rounded-full text-[10px] font-bold border border-slate-700 text-slate-400 bg-slate-800/80">LOADING</span>
+                </div>
+                <div id="foundation-evidence-line" class="mt-2 text-xs text-slate-500">Waiting for run-record evidence.</div>
+            </div>
 
             <!-- Control actions and logs layout -->
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -1488,42 +1499,68 @@
         }
 
         async function fetchFoundationData() {
+            const statusLine = document.getElementById("foundation-status-line");
+            const evidenceLine = document.getElementById("foundation-evidence-line");
+            const sourceBadge = document.getElementById("foundation-source-badge");
+            if (statusLine) statusLine.textContent = "Loading Foundation / Peer Review status…";
+            if (evidenceLine) evidenceLine.textContent = "Waiting for run-record evidence.";
+            if (sourceBadge) {
+                sourceBadge.textContent = "LOADING";
+                sourceBadge.className = "self-start sm:self-auto px-2 py-0.5 rounded-full text-[10px] font-bold border border-slate-700 text-slate-400 bg-slate-800/80";
+            }
             try {
                 const res = await fetch(`${API_PREFIX}/foundation/peer_review`);
-                if (res.ok) {
-                    const data = await res.json();
-                    document.getElementById("stat-foundation-jules").textContent = data.jules_count;
-                    document.getElementById("stat-foundation-ned").textContent = data.ned_count;
-                    document.getElementById("stat-foundation-agy").textContent = data.agy_count;
-                    document.getElementById("stat-foundation-reviewer").textContent = data.current_agy_reviewer;
-                    
-                    // Update progress bar
-                    const pct = Math.min(100, (data.jules_count / data.jules_limit) * 100);
-                    document.getElementById("progress-foundation-jules").style.width = `${pct}%`;
+                if (!res.ok) throw new Error(`Foundation API HTTP ${res.status}`);
+                const data = await res.json();
+                document.getElementById("stat-foundation-jules").textContent = data.jules_count ?? 0;
+                document.getElementById("stat-foundation-ned").textContent = data.ned_count ?? 0;
+                document.getElementById("stat-foundation-agy").textContent = data.agy_count ?? 0;
+                document.getElementById("stat-foundation-reviewer").textContent = data.current_agy_reviewer || "none";
+                document.getElementById("foundation-jules-limit").textContent = `Limit: ${data.jules_limit ?? data.limits?.jules ?? 300}`;
+                const limit = Number(data.jules_limit ?? data.limits?.jules ?? 300) || 300;
+                const pct = Math.min(100, ((data.jules_count || 0) / limit) * 100);
+                document.getElementById("progress-foundation-jules").style.width = `${pct}%`;
+                const evidence = data.evidence || {};
+                if (data.empty) {
+                    if (statusLine) statusLine.textContent = "No Jules/Ned/AGY peer-review run evidence yet.";
+                    if (sourceBadge) {
+                        sourceBadge.textContent = "EMPTY";
+                        sourceBadge.className = "self-start sm:self-auto px-2 py-0.5 rounded-full text-[10px] font-bold border border-amber-500/20 text-amber-400 bg-amber-500/10";
+                    }
+                } else {
+                    if (statusLine) statusLine.textContent = `${data.current_agy_reviewer || 'none'} · ${data.reviewer_reason || 'run-record evidence'} · last ${data.last_activity_at ? formatDate(data.last_activity_at) : 'unknown'}`;
+                    if (sourceBadge) {
+                        sourceBadge.textContent = "LIVE";
+                        sourceBadge.className = "self-start sm:self-auto px-2 py-0.5 rounded-full text-[10px] font-bold border border-emerald-500/20 text-emerald-400 bg-emerald-500/10";
+                    }
+                }
+                if (evidenceLine) {
+                    evidenceLine.textContent = `${data.source || 'run_records'} · ${evidence.run_record_count || 0} run record(s) · agents: ${(evidence.agents_seen || []).join(', ') || 'none'} · last control: ${data.last_control_action?.action || 'none'}`;
                 }
             } catch (err) {
                 console.error("Error fetching foundation peer review data", err);
+                if (statusLine) statusLine.textContent = `Foundation / Peer Review API unavailable: ${err.message || err}`;
+                if (evidenceLine) evidenceLine.textContent = "No fallback data rendered.";
+                if (sourceBadge) {
+                    sourceBadge.textContent = "ERROR";
+                    sourceBadge.className = "self-start sm:self-auto px-2 py-0.5 rounded-full text-[10px] font-bold border border-rose-500/20 text-rose-400 bg-rose-500/10";
+                }
             }
         }
 
         async function triggerFoundationAction(action) {
             const consoleEl = document.getElementById("foundation-console");
-            consoleEl.textContent = `Running ${action}... Please wait...\n`;
+            consoleEl.textContent = `Recording ${action} operator intent...\n`;
             try {
                 const res = await fetch(`${API_PREFIX}/foundation/control/${action}`, { method: "POST" });
-                if (res.ok) {
-                    const data = await res.json();
-                    if (data.status === "ok") {
-                        showToast(`Action ${action} succeeded`);
-                        consoleEl.textContent += `[SUCCESS] ${data.message}\n\nSTDOUT:\n${data.stdout || ''}\n\nSTDERR:\n${data.stderr || ''}`;
-                        fetchData();
-                    } else {
-                        showToast(data.message || "Action failed", true);
-                        consoleEl.textContent += `[ERROR] ${data.message}\n`;
-                    }
+                const data = await res.json().catch(() => ({}));
+                if (res.ok && data.status === "ok") {
+                    showToast(`Foundation action ${action} recorded`);
+                    consoleEl.textContent += `[AUDIT] ${data.message}\nTimeline source: ${data.timeline_item?.source || 'FoundationControl'}\nEntry: ${data.entry?.id || 'recorded'}\n`;
+                    await fetchFoundationData();
                 } else {
-                    showToast(`Server returned error status`, true);
-                    consoleEl.textContent += `[HTTP ERROR] Status: ${res.status}\n`;
+                    showToast(data.error || data.message || "Action failed", true);
+                    consoleEl.textContent += `[ERROR] ${data.error || data.message || `HTTP ${res.status}`}\n`;
                 }
             } catch (err) {
                 showToast("Network connection error", true);

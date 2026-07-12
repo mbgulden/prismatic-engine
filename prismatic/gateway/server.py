@@ -585,6 +585,11 @@ def _dashboard_queue_state_path() -> Path:
     return state_dir / "dashboard_queue_controls.json"
 
 
+def _dashboard_foundation_state_path() -> Path:
+    state_dir = Path(os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state/"))
+    return state_dir / "dashboard_foundation_controls.json"
+
+
 def _read_json_state(path: Path, default: dict[str, Any]) -> dict[str, Any]:
     if not path.exists():
         return dict(default)
@@ -626,6 +631,14 @@ def _read_dashboard_queue_state() -> dict[str, Any]:
 
 def _write_dashboard_queue_state(state: dict[str, Any]) -> None:
     _write_json_state(_dashboard_queue_state_path(), state)
+
+
+def _read_dashboard_foundation_state() -> dict[str, Any]:
+    return _read_json_state(_dashboard_foundation_state_path(), {"actions": [], "last_action": None})
+
+
+def _write_dashboard_foundation_state(state: dict[str, Any]) -> None:
+    _write_json_state(_dashboard_foundation_state_path(), state)
 
 
 def _record_control_timeline_event(
@@ -825,6 +838,68 @@ async def dashboard_recovery_status() -> dict[str, Any]:
     from prismatic.ingestion_status import recovery_status_payload
 
     return recovery_status_payload(_read_dashboard_recovery_state(), _recent_agent_runs(limit=500), dict(_webhook_counters))
+
+
+@app.get("/api/gateway/foundation/peer_review")
+async def dashboard_foundation_peer_review() -> dict[str, Any]:
+    """Return live Foundation / Peer Review status from run evidence."""
+    from prismatic.foundation_status import foundation_peer_review_payload
+
+    return foundation_peer_review_payload(_recent_agent_runs(limit=500), _read_dashboard_foundation_state())
+
+
+@app.post("/api/gateway/foundation/control/{action}", response_model=None)
+async def dashboard_foundation_control(action: str) -> dict[str, Any] | JSONResponse:
+    """Record an audit-safe Foundation control intent.
+
+    This endpoint intentionally does not shell out from the browser. It records
+    the allowlisted operator action, emits timeline evidence, and publishes an
+    EventBus signal for downstream workers/watchdogs.
+    """
+    from prismatic.foundation_status import CONTROL_ACTIONS, foundation_control_entry
+
+    clean_action = str(action or "").strip().lower()
+    if clean_action not in CONTROL_ACTIONS:
+        return JSONResponse(
+            {"ok": False, "status": "error", "error": f"unsupported foundation action: {clean_action}", "allowed_actions": sorted(CONTROL_ACTIONS)},
+            status_code=400,
+        )
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    entry = foundation_control_entry(clean_action, now=now)
+    state = _read_dashboard_foundation_state()
+    actions = [entry] + list(state.get("actions", []))
+    state["actions"] = actions[:25]
+    state["last_action"] = entry
+    state["updated_at"] = now
+    _write_dashboard_foundation_state(state)
+    spec = CONTROL_ACTIONS[clean_action]
+    timeline_item = _record_control_timeline_event(
+        source="FoundationControl",
+        severity=spec.get("severity", "info"),
+        title=spec["label"],
+        message=spec["detail"],
+        entity_id=clean_action,
+        metadata={"entry": entry},
+    )
+    try:
+        bus = get_event_bus()
+        if bus is not None:
+            await bus.publish(
+                event_type=f"dashboard.foundation.{clean_action}",
+                source="prismatic-hub",
+                payload=entry,
+            )
+    except Exception:
+        logger.warning("dashboard foundation event publish failed", exc_info=True)
+    return {
+        "ok": True,
+        "status": "ok",
+        "message": spec["detail"],
+        "entry": entry,
+        "timeline_item": timeline_item,
+        "stdout": "",
+        "stderr": "",
+    }
 
 
 @app.post("/api/dashboard/recovery-control", response_model=None)
