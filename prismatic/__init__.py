@@ -18,4 +18,9 @@ from __future__ import annotations
 __version__ = "0.1.0"
 __all__ = ["__version__", "main"]
 
-from .dispatcher import main
+
+def main(*args, **kwargs):
+    """Lazy dispatcher entrypoint so lightweight modules stay importable."""
+    from .dispatcher import main as dispatcher_main
+
+    return dispatcher_main(*args, **kwargs)

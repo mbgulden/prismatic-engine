@@ -59,6 +59,7 @@ prismatic-linear-import = "prismatic.journal:cli_linear_import"
 prismatic-second-witness = "prismatic.journal:cli_second_witness"
 prismatic-gateway = "prismatic.gateway.server:main"
 prismatic-api = "prismatic.api.server:run"
+prismatic-timeline = "prismatic.timeline:main"
 
 [tool.setuptools.packages.find]
 include = ["prismatic*"]

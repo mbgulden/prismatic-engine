@@ -585,6 +585,33 @@ def _write_dashboard_recovery_state(state: dict[str, Any]) -> None:
     path.write_text(json.dumps(state, indent=2, sort_keys=True))
 
 
+def _record_control_timeline_event(
+    *,
+    source: str,
+    severity: str,
+    title: str,
+    message: str,
+    entity_id: str = "",
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Best-effort audit event for dashboard control-plane actions."""
+    try:
+        from prismatic.timeline import record_timeline_item
+
+        return record_timeline_item(
+            kind="manual",
+            source=source,
+            severity=severity,
+            title=title,
+            message=message,
+            entity_id=entity_id,
+            metadata=metadata or {},
+        )
+    except Exception:
+        logger.warning("timeline control event record failed", exc_info=True)
+        return None
+
+
 @app.get("/api/dashboard/recovery-control/status")
 async def dashboard_recovery_control_status() -> dict[str, Any]:
     """Return visible recovery-control proof for the dashboard UI."""
@@ -629,6 +656,14 @@ async def dashboard_recovery_control(payload: dict[str, Any]) -> dict[str, Any] 
     state["last_status"] = status_text
     state["updated_at"] = now
     _write_dashboard_recovery_state(state)
+    _record_control_timeline_event(
+        source="RecoveryControl",
+        severity="success",
+        title=spec["label"],
+        message=status_text,
+        entity_id=ref,
+        metadata={"entry": entry, "agent": agent, "action": action},
+    )
 
     try:
         bus = get_event_bus()
@@ -642,6 +677,185 @@ async def dashboard_recovery_control(payload: dict[str, Any]) -> dict[str, Any] 
         logger.warning("dashboard recovery event publish failed", exc_info=True)
 
     return {"ok": True, "status": status_text, "entry": entry, "state": state}
+
+
+@app.post("/api/gateway/dispatcher/{action}", response_model=None)
+async def dashboard_dispatcher_control(action: str) -> dict[str, Any] | JSONResponse:
+    """Audit dispatcher control-button requests from the governance dashboard.
+
+    This endpoint intentionally records durable operator intent instead of
+    directly shelling out from the browser process.
+    """
+    action = action.strip().lower()
+    if action not in _DISPATCHER_CONTROL_ACTIONS:
+        return JSONResponse(
+            {"ok": False, "error": "invalid_action", "allowed": sorted(_DISPATCHER_CONTROL_ACTIONS)},
+            status_code=400,
+        )
+    spec = _DISPATCHER_CONTROL_ACTIONS[action]
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    entry = {
+        "id": f"dispatcher-{action}-{int(time.time() * 1000)}",
+        "action": action,
+        "label": spec["label"],
+        "status": spec["status"],
+        "detail": spec["detail"],
+        "created_at": now,
+    }
+    timeline_item = _record_control_timeline_event(
+        source="DispatcherControl",
+        severity=spec.get("severity", "info"),
+        title=spec["label"],
+        message=spec["detail"],
+        entity_id="dispatcher",
+        metadata={"entry": entry},
+    )
+    try:
+        bus = get_event_bus()
+        if bus is not None:
+            await bus.publish(
+                event_type=f"dashboard.dispatcher.{action}",
+                source="prismatic-hub",
+                payload=entry,
+            )
+    except Exception:
+        logger.warning("dashboard dispatcher event publish failed", exc_info=True)
+    return {"ok": True, "status": spec["status"], "entry": entry, "timeline_item": timeline_item}
+
+
+@app.post("/api/gateway/webhooks/queue/retry/{task_id}", response_model=None)
+async def dashboard_queue_retry(task_id: str) -> dict[str, Any] | JSONResponse:
+    """Audit a webhook queue retry request from the governance dashboard."""
+    clean_task_id = str(task_id or "").strip()
+    if not clean_task_id:
+        return JSONResponse({"ok": False, "error": "task_id is required"}, status_code=400)
+    spec = _QUEUE_CONTROL_ACTIONS["retry"]
+    entry = {
+        "id": f"queue-retry-{clean_task_id}-{int(time.time() * 1000)}",
+        "action": "retry",
+        "task_id": clean_task_id,
+        "label": spec["label"],
+        "status": spec["status"],
+        "detail": spec["detail"],
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    timeline_item = _record_control_timeline_event(
+        source="QueueControl",
+        severity=spec.get("severity", "info"),
+        title=spec["label"],
+        message=f"{spec['detail']} Task: {clean_task_id}",
+        entity_id=clean_task_id,
+        metadata={"entry": entry},
+    )
+    try:
+        bus = get_event_bus()
+        if bus is not None:
+            await bus.publish(
+                event_type="dashboard.queue.retry",
+                source="prismatic-hub",
+                payload=entry,
+            )
+    except Exception:
+        logger.warning("dashboard queue retry event publish failed", exc_info=True)
+    return {"ok": True, "status": spec["status"], "entry": entry, "timeline_item": timeline_item}
+
+
+@app.post("/api/gateway/webhooks/queue/purge", response_model=None)
+async def dashboard_queue_purge() -> dict[str, Any]:
+    """Audit a webhook queue purge request from the governance dashboard."""
+    spec = _QUEUE_CONTROL_ACTIONS["purge"]
+    entry = {
+        "id": f"queue-purge-{int(time.time() * 1000)}",
+        "action": "purge",
+        "label": spec["label"],
+        "status": spec["status"],
+        "detail": spec["detail"],
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    timeline_item = _record_control_timeline_event(
+        source="QueueControl",
+        severity=spec.get("severity", "info"),
+        title=spec["label"],
+        message=spec["detail"],
+        entity_id="webhook-queue",
+        metadata={"entry": entry},
+    )
+    try:
+        bus = get_event_bus()
+        if bus is not None:
+            await bus.publish(
+                event_type="dashboard.queue.purge",
+                source="prismatic-hub",
+                payload=entry,
+            )
+    except Exception:
+        logger.warning("dashboard queue purge event publish failed", exc_info=True)
+    return {"ok": True, "status": spec["status"], "entry": entry, "timeline_item": timeline_item}
+
+
+def _recent_run_records_for_timeline(limit: int = 50) -> list[dict[str, Any]]:
+    if _run_store is None:
+        return []
+    try:
+        _run_store.reload()
+        return [_run_record_to_dict(record) for record in _run_store.get_recent_runs(limit=limit)]
+    except Exception:
+        logger.warning("timeline run-record read failed", exc_info=True)
+        return []
+
+
+@app.get("/api/timeline")
+async def get_timeline(
+    limit: int = 50,
+    source: str | None = None,
+    kind: str | None = None,
+    severity: str | None = None,
+) -> dict[str, Any]:
+    """Return the normalized Prismatic Operational Timeline."""
+    from prismatic.timeline import list_timeline
+
+    return list_timeline(
+        limit=limit,
+        source=source,
+        kind=kind,
+        severity=severity,
+        run_records=_recent_run_records_for_timeline(limit=limit),
+        recovery_state=_read_dashboard_recovery_state(),
+        webhook_counters=dict(_webhook_counters),
+    )
+
+
+@app.get("/api/timeline/summary")
+async def get_timeline_summary(limit: int = 200) -> dict[str, Any]:
+    """Return compact Operational Timeline counts for dashboard cards."""
+    from prismatic.timeline import timeline_summary
+
+    return timeline_summary(
+        limit=limit,
+        run_records=_recent_run_records_for_timeline(limit=limit),
+        recovery_state=_read_dashboard_recovery_state(),
+        webhook_counters=dict(_webhook_counters),
+    )
+
+
+@app.post("/api/timeline/record", response_model=None)
+async def record_timeline_api(payload: dict[str, Any]) -> dict[str, Any] | JSONResponse:
+    """Record a manual/governance event in the Operational Timeline."""
+    from prismatic.timeline import record_timeline_item
+
+    try:
+        item = record_timeline_item(
+            kind=str(payload.get("kind") or "manual"),
+            source=str(payload.get("source") or "Manual"),
+            severity=str(payload.get("severity") or "info"),
+            title=str(payload.get("title") or ""),
+            message=str(payload.get("message") or ""),
+            entity_id=str(payload.get("entity_id") or ""),
+            metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {},
+        )
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    return {"ok": True, "item": item}
 
 
 # ── D.5: Observability metrics ──────────────────────────────────
