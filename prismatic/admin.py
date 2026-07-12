@@ -121,47 +121,50 @@ def cmd_config_migrate(current_path: str | None = None) -> int:
     return 0
 
 
-# ── Database Upgrade ────────────────────────────────────
+# ── Database Upgrade (Alembic-style) ────────────────────
 
-# Track the current schema version. Increment when adding new tables/columns.
-CURRENT_SCHEMA_VERSION = 1
+def _sync_alembic_files() -> Path:
+    """Ensure that the alembic migrations and alembic.ini exist in ~/.prismatic/."""
+    import shutil
+    target_dir = CONFIG_DIR / "migrations"
+    target_ini = CONFIG_DIR / "alembic.ini"
+    
+    src_dir = Path(__file__).resolve().parent / "migrations"
+    src_ini = Path(__file__).resolve().parent.parent / "alembic.ini"
+    if not src_ini.exists():
+        src_ini = Path(__file__).resolve().parent / "alembic.ini"
+        
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    
+    if src_dir.exists():
+        if target_dir.exists():
+            try:
+                shutil.rmtree(target_dir)
+            except Exception:
+                pass
+        try:
+            shutil.copytree(src_dir, target_dir)
+        except Exception as exc:
+            print(f"Warning: could not copy migrations to {target_dir}: {exc}", file=sys.stderr)
+            
+    if src_ini.exists():
+        try:
+            shutil.copy2(src_ini, target_ini)
+        except Exception:
+            pass
+            
+    if not target_ini.exists() or target_ini.stat().st_size == 0:
+        try:
+            with open(target_ini, "w") as f:
+                f.write(f"[alembic]\nscript_location = {target_dir}\n")
+        except Exception:
+            pass
 
-SCHEMA_MIGRATIONS: dict[int, str] = {
-    1: """
-    -- Schema v1: Initial event router schema
-    CREATE TABLE IF NOT EXISTS schema_version (
-        version INTEGER PRIMARY KEY,
-        applied_at TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS processed_events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        dedup_key TEXT NOT NULL UNIQUE,
-        event_type TEXT NOT NULL,
-        processed_at TEXT NOT NULL DEFAULT (datetime('now')),
-        source_agent TEXT,
-        target_agent TEXT
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_dedup_key ON processed_events(dedup_key);
-    CREATE INDEX IF NOT EXISTS idx_processed_at ON processed_events(processed_at);
-    """,
-}
-
-
-def _get_db_version(conn: sqlite3.Connection) -> int:
-    """Return the current schema version from the DB, or 0 if unversioned."""
-    try:
-        row = conn.execute(
-            "SELECT MAX(version) FROM schema_version"
-        ).fetchone()
-        return row[0] if row and row[0] is not None else 0
-    except sqlite3.OperationalError:
-        return 0
+    return target_ini
 
 
 def cmd_db_upgrade(db_path: str | None = None) -> int:
-    """Run pending database schema migrations.
+    """Run pending database schema migrations using Alembic.
 
     Args:
         db_path: Path to the SQLite database file.
@@ -171,54 +174,34 @@ def cmd_db_upgrade(db_path: str | None = None) -> int:
         0 on success, 1 on failure.
     """
     target_path = Path(db_path) if db_path else DEFAULT_DB_PATH
-
-    # Ensure directory exists
     target_path.parent.mkdir(parents=True, exist_ok=True)
 
-    conn = sqlite3.connect(str(target_path))
     try:
-        current_version = _get_db_version(conn)
+        ini_path = _sync_alembic_files()
 
-        if current_version >= CURRENT_SCHEMA_VERSION:
-            print(
-                f"prismatic-admin: db schema is current "
-                f"(v{current_version}, latest v{CURRENT_SCHEMA_VERSION})."
-            )
-            return 0
+        from alembic.config import Config
+        from alembic import command
+        from sqlalchemy import create_engine
 
-        print(
-            f"prismatic-admin: upgrading db from v{current_version} "
-            f"to v{CURRENT_SCHEMA_VERSION}..."
-        )
+        alembic_cfg = Config(str(ini_path))
+        
+        # Point config database url to the target database path
+        db_url = f"sqlite:///{target_path.resolve()}"
+        alembic_cfg.set_main_option("sqlalchemy.url", db_url)
 
-        for version in range(current_version + 1, CURRENT_SCHEMA_VERSION + 1):
-            if version not in SCHEMA_MIGRATIONS:
-                print(
-                    f"prismatic-admin: error — no migration defined for v{version}"
-                )
-                return 1
+        # Connect and run online migrations using the engine connection
+        engine = create_engine(db_url)
+        with engine.begin() as connection:
+            alembic_cfg.attributes["connection"] = connection
+            command.upgrade(alembic_cfg, "head")
 
-            print(f"  Applying migration v{version}...")
-            conn.executescript(SCHEMA_MIGRATIONS[version])
-
-        conn.execute(
-            "INSERT INTO schema_version (version) VALUES (?)",
-            (CURRENT_SCHEMA_VERSION,),
-        )
-        conn.commit()
-
-        print(
-            f"prismatic-admin: db upgrade complete. "
-            f"Now at v{CURRENT_SCHEMA_VERSION}."
-        )
+        print(f"prismatic-admin: database upgrade complete for {target_path} (Alembic head).")
         return 0
 
     except Exception as e:
-        print(f"prismatic-admin: db upgrade failed: {e}", file=sys.stderr)
-        conn.rollback()
+        print(f"prismatic-admin: database upgrade failed: {e}", file=sys.stderr)
         return 1
-    finally:
-        conn.close()
+
 
 
 # ── CLI Entry Point ─────────────────────────────────────
