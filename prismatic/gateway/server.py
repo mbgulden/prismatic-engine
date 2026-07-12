@@ -1163,8 +1163,36 @@ async def mutate_schedule(schedule_id: str, payload: dict[str, Any]):
         return res
     except UnauthorizedMutationError as e:
         return JSONResponse(status_code=403, content={"error": str(e)})
+
+
+# ── Native Cron Endpoints ─────────────────────────────────────────────
+
+
+@app.get("/native-crons")
+async def list_native_crons_endpoint(include_deleted: bool = False) -> list[dict[str, Any]]:
+    """List PE-native portable cron definitions and queue state."""
+    from prismatic.native_crons import list_native_crons
+
+    return list_native_crons(include_deleted=include_deleted)
+
+
+@app.post("/native-crons/{cron_id}/action")
+async def native_cron_action(cron_id: str, payload: dict[str, Any]):
+    """Pause/resume/deactivate/activate/delete/run a PE-native cron."""
+    from fastapi.responses import JSONResponse
+    from prismatic.native_crons import mutate_native_cron
+
+    action = payload.get("action")
+    if action not in {"pause", "resume", "deactivate", "activate", "delete", "run"}:
+        return JSONResponse(status_code=400, content={"error": "Unsupported native cron action"})
+    try:
+        return mutate_native_cron(cron_id, action)
+    except KeyError:
+        return JSONResponse(status_code=404, content={"error": f"Native cron not found: {cron_id}"})
     except FileNotFoundError as e:
         return JSONResponse(status_code=404, content={"error": str(e)})
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
 def get_linear_secrets():
