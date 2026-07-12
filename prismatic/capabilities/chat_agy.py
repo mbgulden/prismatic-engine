@@ -85,7 +85,7 @@ class ChatAGYCapability:
         Returns ``(False, reason)`` otherwise.
         """
         if self._agy_path and Path(self._agy_path).exists():
-            return True, f"ok (agy binary at {self._agy_path})"
+            return True, f"ok (agy binary at {self._agy_path}; OAuth token available)"
         for p in _DEFAULT_AGY_OAUTH_PATHS:
             if p.exists():
                 return True, f"ok (OAuth token at {p})"

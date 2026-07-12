@@ -19,3 +19,17 @@ repos:
     rev: v0.10.0.1
     hooks:
       - id: shellcheck
+
+  # Gap 13: Ship-time plugin load verification.
+  # Runs whenever files under plugins/ or prismatic/core/registry.py change.
+  # Catches plugins whose manifests declare version constraints
+  # incompatible with the running core, broken entry_points, etc.
+  # See okf/operations/gap13-plugin-load-gate-spec-2026-06-29.md
+  - repo: local
+    hooks:
+      - id: plugin-load-gate
+        name: Verify shipped plugins load
+        entry: python -m prismatic.quality.plugin_load
+        language: system
+        pass_filenames: false
+        files: ^(plugins/|prismatic/core/registry\.py|prismatic/quality/plugin_load\.py)

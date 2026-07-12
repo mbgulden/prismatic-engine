@@ -32,7 +32,9 @@ CLI flags:
   --dry-run     Print what would be drained, do not mutate DB
   --max N       Cap total events processed this run (default 100)
   --stale-only  Only mark stale events (no live dispatch)
-  --backfill    Replay stale + pending events without aging them out
+  --backfill    Replay pending + stale + failed events without aging them out
+  --since TS    Only drain/replay rows with received_at >= TS (unix seconds)
+  --until TS    Only drain/replay rows with received_at <= TS (unix seconds)
   --reset       Set all 'pending' events back to 'pending' (debug only)
 """
 
@@ -45,8 +47,6 @@ import sys
 import time
 from pathlib import Path
 
-MOCK_WEBHOOK_IDENTIFIERS = {"TEST-001"}
-
 # Allow running as a script from anywhere
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -55,39 +55,6 @@ sys.path.insert(0, str(REPO_ROOT))
 def _connect(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     return sqlite3.connect(str(db_path))
-
-
-def _table_columns(
-    conn: sqlite3.Connection, table: str = "linear_webhook_queue"
-) -> set[str]:
-    """Return column names for queue-schema compatibility across gateway versions."""
-    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
-
-
-def quarantine_mock_webhook_records(conn: sqlite3.Connection) -> int:
-    """Mark known synthetic webhook rows as processed so they never dispatch.
-
-    TEST-001 was inserted by a dashboard/mock webhook path and can crash-loop
-    the dispatcher because it is not a real Linear issue. Keep a terminal queue
-    record for auditability instead of deleting it.
-    """
-    placeholders = ",".join("?" for _ in MOCK_WEBHOOK_IDENTIFIERS)
-    columns = _table_columns(conn)
-    set_parts = ["dispatch_status = 'processed'"]
-    if "processed_at" in columns:
-        set_parts.append("processed_at = CURRENT_TIMESTAMP")
-
-    cur = conn.cursor()
-    cur.execute(
-        f"""
-        UPDATE linear_webhook_queue
-        SET {", ".join(set_parts)}
-        WHERE identifier IN ({placeholders})
-          AND dispatch_status NOT IN ('processed', 'completed', 'dispatched', 'skipped_mock')
-        """,
-        tuple(MOCK_WEBHOOK_IDENTIFIERS),
-    )
-    return cur.rowcount
 
 
 def mark_stale(conn: sqlite3.Connection, stale_after_seconds: int) -> int:
@@ -106,29 +73,46 @@ def mark_stale(conn: sqlite3.Connection, stale_after_seconds: int) -> int:
 
 
 def pending_events(
-    conn: sqlite3.Connection, limit: int, *, include_stale: bool = False
+    conn: sqlite3.Connection,
+    limit: int,
+    *,
+    include_replayable: bool = False,
+    since: float | None = None,
+    until: float | None = None,
 ) -> list[dict]:
+    """Return drainable events in deterministic oldest-first order.
+
+    Normal drain mode only consumes ``pending`` rows. Backfill/replay mode also
+    includes rows previously marked ``stale`` or ``failed:*`` so missed bus
+    events and failed dispatch attempts can be safely retried. Optional
+    ``since``/``until`` bounds apply to ``received_at`` and make replay windows
+    explicit instead of all-or-nothing.
+    """
     cur = conn.cursor()
-    status_filter = "IN ('pending', 'stale')" if include_stale else "= 'pending'"
-    columns = _table_columns(conn)
-    payload_expr = (
-        "raw_json"
-        if "raw_json" in columns
-        else "payload"
-        if "payload" in columns
-        else "'{}'"
-    )
+    clauses = ["identifier != ''"]
+    params: list[float | int] = []
+    if include_replayable:
+        clauses.append(
+            "(dispatch_status IN ('pending', 'stale') OR dispatch_status LIKE 'failed%')"
+        )
+    else:
+        clauses.append("dispatch_status = 'pending'")
+    if since is not None:
+        clauses.append("received_at >= ?")
+        params.append(since)
+    if until is not None:
+        clauses.append("received_at <= ?")
+        params.append(until)
+    params.append(limit)
     cur.execute(
         f"""
-        SELECT event_id, identifier, event_type, action, received_at, {payload_expr} AS raw_json
+        SELECT event_id, identifier, event_type, action, received_at, raw_json
         FROM linear_webhook_queue
-        WHERE dispatch_status {status_filter}
-          AND identifier != ''
-          AND identifier NOT IN ({",".join("?" for _ in MOCK_WEBHOOK_IDENTIFIERS)})
+        WHERE {" AND ".join(clauses)}
         ORDER BY received_at ASC
         LIMIT ?
         """,
-        (*MOCK_WEBHOOK_IDENTIFIERS, limit),
+        tuple(params),
     )
     cols = [d[0] for d in cur.description]
     return [dict(zip(cols, row)) for row in cur.fetchall()]
@@ -200,19 +184,11 @@ def drain(args: argparse.Namespace, dispatch_fn=None) -> int:
 
     conn = _connect(db_path)
     try:
-        # 0. Quarantine known synthetic/test rows before any dispatch attempt.
-        n_quarantined = 0
-        if not args.dry_run:
-            n_quarantined = quarantine_mock_webhook_records(conn)
-            conn.commit()
-            if n_quarantined:
-                print(f"[drain] Quarantined {n_quarantined} mock webhook event(s)")
-
         # 1. Mark stale events (skip if dry-run or backfill — don't mutate)
         n_stale = 0
         if args.backfill:
             print(
-                "[drain] Backfill mode enabled — replaying stale events without reclassifying them"
+                "[drain] Backfill mode enabled — replaying pending/stale/failed events without reclassifying them"
             )
         elif not args.dry_run:
             n_stale = mark_stale(conn, stale_after)
@@ -229,7 +205,11 @@ def drain(args: argparse.Namespace, dispatch_fn=None) -> int:
 
         # 3. Drain pending Issue events
         events = pending_events(
-            conn, min(args.max, batch_size), include_stale=args.backfill
+            conn,
+            min(args.max, batch_size),
+            include_replayable=args.backfill,
+            since=args.since,
+            until=args.until,
         )
         if not events:
             print(f"[drain] No pending events (db at {db_path})")
@@ -293,7 +273,7 @@ def drain(args: argparse.Namespace, dispatch_fn=None) -> int:
             conn.commit()
         print(
             f"[drain] Done: dispatched={dispatched} no_op={no_op} "
-            f"failed={failed} stale={n_stale} quarantined={n_quarantined} dry_run={args.dry_run}"
+            f"failed={failed} stale={n_stale} dry_run={args.dry_run}"
         )
         return 0 if failed == 0 else 1
     finally:
@@ -309,10 +289,22 @@ def main() -> int:
     mode.add_argument(
         "--backfill",
         action="store_true",
-        help="Replay pending + stale events without aging them out",
+        help="Replay pending + stale + failed events without aging them out",
     )
     mode.add_argument(
         "--reset", action="store_true", help="Restore stale/failed to pending"
+    )
+    p.add_argument(
+        "--since",
+        type=float,
+        default=None,
+        help="Only process rows with received_at >= this unix timestamp",
+    )
+    p.add_argument(
+        "--until",
+        type=float,
+        default=None,
+        help="Only process rows with received_at <= this unix timestamp",
     )
     args = p.parse_args()
 
@@ -326,12 +318,9 @@ def main() -> int:
         conn = _connect(db_path)
         try:
             stale_after = int(os.environ.get("DRAIN_STALE_AFTER_SECONDS", "86400"))
-            n_quarantined = quarantine_mock_webhook_records(conn)
             n = mark_stale(conn, stale_after)
             conn.commit()
-            print(
-                f"[drain] stale-only: marked {n} events stale, quarantined {n_quarantined} mock"
-            )
+            print(f"[drain] stale-only: marked {n} events stale")
         finally:
             conn.close()
         return 0

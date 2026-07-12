@@ -1,0 +1,65 @@
+# Prismatic Engine — Hardware Execution Profiles
+# ===============================================
+# Standard profiles for routing agent tasks to appropriate hardware.
+# These profiles are loaded by HardwareProfileRegistry and validated
+# against plugin manifests.
+#
+# Profile schema:
+#   name:         unique profile identifier
+#   description:  human-readable purpose
+#   vram_gb_min:  minimum GPU VRAM in GB (0 = CPU-only)
+#   cpu_cores:    minimum CPU cores
+#   memory_gb_min:  minimum system RAM in GB
+#   gpu_required:   whether a GPU is mandatory
+#   gpu_type:     optional hint (nvidia, amd, apple-silicon, etc.)
+
+profiles:
+  - name: llm-inference-large
+    description: >
+      Large LLM inference (70B+ parameter models, 4-bit quantized).
+      Requires high VRAM for KV-cache and context windows.
+    vram_gb_min: 24
+    cpu_cores: 8
+    memory_gb_min: 32
+    gpu_required: true
+    gpu_type: nvidia
+
+  - name: video-heavy-veo
+    description: >
+      Video generation workloads (Veo, Sora, etc.).
+      High VRAM for temporal attention and frame buffers.
+    vram_gb_min: 32
+    cpu_cores: 8
+    memory_gb_min: 64
+    gpu_required: true
+    gpu_type: nvidia
+
+  - name: image-medium-imagen
+    description: >
+      Image generation workloads (Imagen, Stable Diffusion, DALL-E).
+      Moderate VRAM sufficient for common resolutions.
+    vram_gb_min: 16
+    cpu_cores: 4
+    memory_gb_min: 16
+    gpu_required: true
+    gpu_type: nvidia
+
+  - name: audio-lyria
+    description: >
+      Audio/speech generation (Lyria, MusicGen, TTS).
+      Lower VRAM; inference-only workloads.
+    vram_gb_min: 8
+    cpu_cores: 4
+    memory_gb_min: 8
+    gpu_required: false
+    gpu_type: nvidia
+
+  - name: cpu-light-docs
+    description: >
+      Documentation processing, text analysis, and light ETL.
+      No GPU required; runs on commodity hardware.
+    vram_gb_min: 0
+    cpu_cores: 2
+    memory_gb_min: 4
+    gpu_required: false
+    gpu_type: null

@@ -29,8 +29,6 @@ config.local.yaml
 scratch/
 .wrangler/
 node_modules/
-
 # Real env file (mirrors .env.template but with secrets) — never commit
 .env
 # Keep .env.template committed; it is the portable schema reference.
-

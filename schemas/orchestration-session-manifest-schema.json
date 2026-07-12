@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Prismatic orchestration session manifest",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["version", "units"],
+  "properties": {
+    "version": {"type": "integer"},
+    "updated_at": {"type": "string"},
+    "units": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "id",
+          "title",
+          "target_repository",
+          "source",
+          "risk_class",
+          "worker",
+          "state",
+          "expected_artifacts",
+          "acceptance_checks",
+          "human_approval_required",
+          "timeout_policy",
+          "last_verified_at"
+        ],
+        "properties": {
+          "id": {"type": "string"},
+          "title": {"type": "string"},
+          "target_repository": {"type": "string"},
+          "source": {"type": "object"},
+          "risk_class": {"type": "string"},
+          "worker": {"type": "string"},
+          "state": {"type": "string"},
+          "expected_artifacts": {"type": "array", "items": {"type": "string"}},
+          "acceptance_checks": {"type": "array", "items": {"type": "string"}},
+          "human_approval_required": {"type": "boolean"},
+          "timeout_policy": {"type": "object"},
+          "last_verified_at": {"type": "string"}
+        }
+      }
+    }
+  }
+}

@@ -364,6 +364,14 @@ async def health() -> dict[str, Any]:
     }
 
 
+@app.get("/api/harnesses")
+async def get_harnesses() -> list[dict[str, Any]]:
+    """Return the registered agent execution harness adapters."""
+    registry_path = Path(__file__).resolve().parents[1] / "harnesses" / "registry.json"
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    return registry["harnesses"]
+
+
 @app.get("/api/v1/plugins/{plugin_name}/health")
 async def plugin_health(plugin_name: str, request: Request) -> JSONResponse:
     """Return lifecycle/telemetry health for a sandboxed plugin."""
