@@ -141,6 +141,7 @@ class EventBus:
         self._total_published: int = 0
         self._total_delivered: int = 0
         self._total_failures: int = 0
+        self._checkpoint_task: asyncio.Task | None = None
 
     # ── Public API ──────────────────────────────────────
 
@@ -224,7 +225,51 @@ class EventBus:
             "total_failures": self._total_failures,
         }
 
+    def start_checkpoint_task(self) -> None:
+        """Start the periodic SQLite WAL checkpoint background task."""
+        if self._checkpoint_task and not self._checkpoint_task.done():
+            return
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.warning("No running event loop; SQLite checkpoint task will not be started.")
+            return
+
+        self._checkpoint_task = loop.create_task(self._checkpoint_loop())
+        logger.info("SQLite WAL checkpoint background task started.")
+
+    def stop_checkpoint_task(self) -> None:
+        """Stop the periodic SQLite WAL checkpoint background task."""
+        if self._checkpoint_task:
+            self._checkpoint_task.cancel()
+            logger.info("SQLite WAL checkpoint background task cancellation requested.")
+
     # ── Internal ─────────────────────────────────────────
+
+    async def _checkpoint_loop(self) -> None:
+        """Loop that runs every hour to checkpoint the WAL file."""
+        while True:
+            try:
+                # Wait for 1 hour
+                await asyncio.sleep(3600)
+                self._checkpoint_db()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error("Error in SQLite checkpoint loop: %s", e)
+
+    def _checkpoint_db(self) -> None:
+        """Force a checkpoint on the SQLite DB."""
+        logger.info("Executing periodic SQLite WAL checkpoint (TRUNCATE) for bus db")
+        with _sqlite_lock:
+            try:
+                conn = sqlite3.connect(_BUS_DB_PATH, timeout=5)
+                conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                conn.close()
+                logger.info("SQLite WAL checkpoint completed successfully")
+            except Exception as exc:
+                logger.warning("SQLite WAL checkpoint failed: %s", exc)
 
     async def _deliver(self, handler: EventHandler, event: SwarmEvent) -> None:
         """Deliver an event to a single handler, tracking success/failure."""

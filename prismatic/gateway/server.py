@@ -152,8 +152,9 @@ async def startup() -> None:
     _started_at = time.time()
     _server_started_at = _started_at
 
-    # Initialize EventBus (ensure singleton)
-    get_event_bus()
+    # Initialize EventBus (ensure singleton) and start checkpoint task
+    bus = get_event_bus()
+    bus.start_checkpoint_task()
 
     # Start IPC bridge Unix socket listener
     _ipc_listener = UnixSocketListener()
@@ -188,6 +189,10 @@ async def shutdown() -> None:
     if _ipc_listener:
         await _ipc_listener.stop()
         _ipc_listener = None
+
+    # Stop checkpoint task
+    bus = get_event_bus()
+    bus.stop_checkpoint_task()
 
     stop_ws_broadcaster()
 

@@ -31,6 +31,8 @@ dependencies = [
     "packaging>=23.0",
     "pytest>=8.0",
     "pyyaml>=6.0",
+    "alembic>=1.13.0",
+    "sqlalchemy>=2.0.0",
 ]
 
 [project.optional-dependencies]
