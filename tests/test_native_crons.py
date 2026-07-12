@@ -1,20 +1,7 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
-
-_REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(_REPO_ROOT) in sys.path:
-    sys.path.remove(str(_REPO_ROOT))
-sys.path.insert(0, str(_REPO_ROOT))
-_loaded_prismatic = sys.modules.get("prismatic")
-if _loaded_prismatic is not None:
-    module_file = getattr(_loaded_prismatic, "__file__", "") or ""
-    if not module_file.startswith(str(_REPO_ROOT)):
-        for name in list(sys.modules):
-            if name == "prismatic" or name.startswith("prismatic."):
-                sys.modules.pop(name, None)
 
 from fastapi.testclient import TestClient
 
