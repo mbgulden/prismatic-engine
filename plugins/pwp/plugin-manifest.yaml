@@ -12,6 +12,58 @@ description: >-
 
 author: "Prismatic Engine Swarm"
 
+plugin_type: "website-production"
+risk_level: "low"
+permissions:
+  - "filesystem-read"
+  - "filesystem-write"
+  - "network"
+approval_gates:
+  - "operator approval before publishing generated site/page artifacts"
+policy_checks:
+  - "credential redaction"
+  - "theme schema compatibility"
+  - "artifact provenance before publish"
+provenance_required: true
+audit_events:
+  - "connect"
+  - "disconnect"
+  - "refresh"
+  - "credential_status"
+  - "credential_refresh"
+  - "theme_validate"
+job_lifecycle:
+  - "queued"
+  - "running"
+  - "needs_approval"
+  - "completed"
+  - "failed"
+
+artifact_types:
+  - "application/x-prismatic-theme+json"
+  - "text/html"
+  - "text/css"
+
+dashboard_surfaces:
+  - "PWP readiness card"
+  - "PWP blocker/warning panel"
+  - "PWP capability map"
+  - "PWP tool/workflow chips"
+
+endpoints:
+  - method: "GET"
+    path: "/api/pwp/status"
+    description: "Read PWP connection, readiness, capabilities, blockers, and governance status."
+  - method: "POST"
+    path: "/api/pwp/connect"
+    description: "Connect PWP as an additive PE plugin surface."
+  - method: "POST"
+    path: "/api/pwp/disconnect"
+    description: "Disconnect PWP without deleting artifacts or plugin code."
+  - method: "POST"
+    path: "/api/pwp/refresh"
+    description: "Refresh PWP readiness/governance status."
+
 entry_point: "pwp.plugin:PWPDesignTokenPlugin"
 
 core_version_constraint: ">=0.2.0, <2.0.0"

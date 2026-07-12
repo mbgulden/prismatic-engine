@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
+from prismatic.plugin_architecture import plugin_catalog
+
 try:
     import yaml  # type: ignore
 except Exception:  # pragma: no cover - yaml is present in PE runtime/tests
@@ -262,6 +264,8 @@ def integration_status(store: PWPIntegrationStore | None = None, state: PWPConne
     hard_blockers = [b for b in blockers if b.get("severity") == "blocking"]
     connected = state.state == CONNECTION_CONNECTED and not hard_blockers
     connection_blockers = production_blockers(include_connection=True, connection_state=state)
+    catalog_item = next((item for item in plugin_catalog(repo_root() / "plugins").get("plugins", []) if item.get("name") == PWP_PLUGIN_ID), {})
+    catalog_governance = catalog_item.get("governance", {})
     return {
         "plugin_id": PWP_PLUGIN_ID,
         "package": PWP_PACKAGE,
@@ -277,6 +281,12 @@ def integration_status(store: PWPIntegrationStore | None = None, state: PWPConne
         "tool_names": sorted({tool for cap in PWP_CAPABILITIES for tool in cap.tools}),
         "workflows": sorted({wf for cap in PWP_CAPABILITIES for wf in cap.workflows}),
         "governance": sorted({rule for cap in PWP_CAPABILITIES for rule in cap.governance}),
+        "catalog_governance": catalog_governance,
+        "risk_level": catalog_governance.get("risk_level", "low"),
+        "approval_gates": catalog_governance.get("approval_gates", []),
+        "policy_checks": catalog_governance.get("policy_checks", []),
+        "surface_coverage": catalog_governance.get("surface_coverage", {}),
+        "artifact_types": catalog_item.get("artifact_types", []),
         "cli": cli_status(),
         "production_blockers": blockers + connection_blockers[len(blockers):],
         "connection": asdict(state),

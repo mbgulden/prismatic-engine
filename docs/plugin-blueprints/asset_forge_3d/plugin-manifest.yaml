@@ -8,6 +8,32 @@ core_version_constraint: '>=0.2.0, <2.0.0'
 categories:
 - creative-media
 - asset-forge-3d
+risk_level: high
+permissions:
+- network
+- filesystem-write
+approval_gates:
+- operator approval for publish/export
+- cost review for large batch jobs
+policy_checks:
+- credential redaction
+- artifact provenance
+- rate/cost limits
+- destructive action approval
+provenance_required: true
+audit_events:
+- connect
+- disconnect
+- job_create
+- job_complete
+- asset_export
+job_lifecycle:
+- queued
+- running
+- needs_approval
+- completed
+- failed
+- cancelled
 required_capabilities:
 - network
 - filesystem-write
