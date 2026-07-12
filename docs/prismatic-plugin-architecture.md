@@ -194,6 +194,7 @@ Core endpoints:
 |---|---|
 | `GET /api/plugins/catalog` | Live manifest catalog, validation, capability index, media classes. |
 | `GET /api/plugins/architecture` | Canonical architecture, supported future plugin classes, required fields. |
+| `GET /api/plugins/governance` | Operator-facing readiness, risk, approval gates, surface coverage, and blocker data. |
 | `GET /api/v1/plugins/{plugin_name}/health` | Existing plugin health endpoint. |
 
 Domain plugins may add their own endpoints listed in manifest `endpoints`. Asset Forge 3D should start with:
@@ -205,6 +206,31 @@ Domain plugins may add their own endpoints listed in manifest `endpoints`. Asset
 | `GET /api/plugins/asset-forge-3d/jobs/{id}` | Job status/progress/provenance. |
 | `GET /api/plugins/asset-forge-3d/assets` | List indexed/generated 3D assets. |
 | `POST /api/plugins/asset-forge-3d/assets/{id}/export` | Export to glTF/FBX/Blender/engine formats. |
+
+## Governance/readiness contract
+
+PE Core now computes a governance summary for every plugin manifest and exposes it through both `/api/plugins/catalog` and `/api/plugins/governance`.
+
+Each plugin receives:
+
+- `readiness_state`: `ready`, `warning`, or `blocked`
+- `risk_level`: explicit manifest value or derived from plugin type/MCP/service usage
+- `permissions`: declared scopes/capabilities
+- `approval_gates`: operator approvals required before publish/export/costly/destructive actions
+- `policy_checks`: checks such as credential redaction, artifact provenance, rate/cost limits, destructive action approval
+- `credential_redaction`: `env-names-only` or `blocked`
+- `surface_coverage`: counts for tools, MCP servers, API routes, artifact types, dashboard surfaces, connect/disconnect points
+- `production_blockers`: blocking and warning messages suitable for dashboard cards
+
+The dashboard **Plugins** tab renders this as an operator catalog with readiness cards, blocker/warning visualization, risk labels, approval gates, API/MCP/artifact surface coverage, and endpoint chips. The PWP tab remains the reference plugin-specific operator surface and now also exposes the catalog-derived governance contract in `/api/pwp/status`.
+
+Rules:
+
+- Raw token-like values in manifests are blockers. Use env var names only.
+- Media/service plugins should declare approval gates.
+- Provenance-required plugins must declare artifact types.
+- MCP/service plugins should declare dashboard surfaces and auth env var names.
+- High-risk plugins should declare policy checks before jobs execute.
 
 ## MCP setup pattern
 

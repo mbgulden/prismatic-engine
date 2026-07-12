@@ -253,6 +253,74 @@ def validate_manifest_payload(raw: dict[str, Any], path: Path | None = None) -> 
     return {"errors": errors, "warnings": warnings}
 
 
+def _contains_secret_value(value: Any) -> bool:
+    """Return True when a manifest value appears to contain raw secret material."""
+    if isinstance(value, dict):
+        return any(_contains_secret_value(v) for v in value.values())
+    if isinstance(value, list):
+        return any(_contains_secret_value(v) for v in value)
+    if not isinstance(value, str):
+        return False
+    upper = value.upper()
+    if upper.endswith("_ENV") or (upper.isidentifier() and any(token in upper for token in ["API_KEY", "TOKEN", "SECRET", "PASSWORD"])):
+        return False
+    risky_keys = ["sk-", "ghp_", "xoxb-", "AIza", "-----BEGIN", "Bearer "]
+    return any(token in value for token in risky_keys)
+
+
+def plugin_governance_summary(manifest: PluginArchitectureManifest, validation: dict[str, list[str]]) -> dict[str, Any]:
+    raw = manifest.raw
+    blockers = list(validation.get("errors", []))
+    warnings = list(validation.get("warnings", []))
+    plugin_type = manifest.plugin_type
+    risk_level = str(raw.get("risk_level") or ("high" if plugin_type == "external-service" else "medium" if manifest.mcp_servers else "low"))
+    approval_gates = _str_list(raw.get("approval_gates"))
+    permissions = _str_list(raw.get("permissions") or raw.get("required_capabilities"))
+    provenance_required = bool(raw.get("provenance_required", bool(manifest.artifact_types or manifest.asset_domains)))
+    audit_events = _str_list(raw.get("audit_events"))
+    job_lifecycle = _str_list(raw.get("job_lifecycle"))
+    policy_checks = _str_list(raw.get("policy_checks"))
+
+    if _contains_secret_value(raw):
+        blockers.append("manifest appears to contain raw secret material; use env var names only")
+    if plugin_type in {"external-service", "creative-media", "asset-generation", "asset-library"} and not approval_gates:
+        warnings.append("media/service plugin should declare approval_gates")
+    if provenance_required and not manifest.artifact_types:
+        blockers.append("provenance_required is true but artifact_types is empty")
+    if manifest.mcp_servers and not manifest.dashboard_surfaces:
+        warnings.append("MCP/service plugin should declare dashboard_surfaces")
+    if manifest.external_service and not any(server.auth_env for server in manifest.mcp_servers):
+        warnings.append("external service plugin should declare MCP auth_env names")
+    if manifest.endpoints and not any(surface in manifest.automation_surfaces for surface in ["gateway-api", "dashboard"]):
+        warnings.append("endpoints declared without gateway-api/dashboard automation surface")
+    if risk_level in {"high", "critical"} and not policy_checks:
+        warnings.append("high-risk plugin should declare policy_checks")
+
+    readiness_state = "blocked" if blockers else "warning" if warnings else "ready"
+    return {
+        "readiness_state": readiness_state,
+        "risk_level": risk_level,
+        "permissions": permissions,
+        "approval_gates": approval_gates,
+        "policy_checks": policy_checks,
+        "provenance_required": provenance_required,
+        "audit_events": audit_events,
+        "job_lifecycle": job_lifecycle,
+        "credential_redaction": "blocked" if _contains_secret_value(raw) else "env-names-only",
+        "surface_coverage": {
+            "tools": sum(len(_str_list(cap.get("tools"))) for cap in manifest.capabilities),
+            "mcp_servers": len(manifest.mcp_servers),
+            "api_routes": len(manifest.endpoints),
+            "artifact_types": len(manifest.artifact_types),
+            "dashboard_surfaces": len(manifest.dashboard_surfaces),
+            "connect_points": len(manifest.connect_points),
+            "disconnect_points": len(manifest.disconnect_points),
+        },
+        "production_blockers": [{"severity": "blocking", "message": msg} for msg in blockers]
+        + [{"severity": "warning", "message": msg} for msg in warnings],
+    }
+
+
 def plugin_catalog(plugins_dir: Path | None = None) -> dict[str, Any]:
     manifests = [load_manifest(path) for path in discover_plugin_manifests(plugins_dir)]
     items = []
@@ -260,7 +328,8 @@ def plugin_catalog(plugins_dir: Path | None = None) -> dict[str, Any]:
         validation = validate_manifest_payload(manifest.raw, Path(manifest.path))
         item = manifest.to_dict()
         item["validation"] = validation
-        item["status"] = "ready" if not validation["errors"] else "invalid"
+        item["governance"] = plugin_governance_summary(manifest, validation)
+        item["status"] = "ready" if item["governance"]["readiness_state"] in {"ready", "warning"} and not validation["errors"] else "invalid"
         items.append(item)
     capability_index: dict[str, list[str]] = {}
     for item in items:
@@ -269,6 +338,13 @@ def plugin_catalog(plugins_dir: Path | None = None) -> dict[str, Any]:
             capability_index.setdefault(cap_id, []).append(item["name"])
         for domain in item.get("asset_domains", []):
             capability_index.setdefault(f"asset-domain:{domain}", []).append(item["name"])
+    governance_summary = {
+        "ready": sum(1 for item in items if item["governance"]["readiness_state"] == "ready"),
+        "warning": sum(1 for item in items if item["governance"]["readiness_state"] == "warning"),
+        "blocked": sum(1 for item in items if item["governance"]["readiness_state"] == "blocked"),
+        "high_risk": sum(1 for item in items if item["governance"]["risk_level"] in {"high", "critical"}),
+        "requires_approval": sum(1 for item in items if item["governance"]["approval_gates"]),
+    }
     return {
         "schema_version": PLUGIN_SCHEMA_VERSION,
         "plugins_dir": str(plugins_dir or default_plugins_dir()),
@@ -278,6 +354,7 @@ def plugin_catalog(plugins_dir: Path | None = None) -> dict[str, Any]:
         "core_integration_points": CORE_INTEGRATION_POINTS,
         "media_capability_classes": MEDIA_CAPABILITY_CLASSES,
         "capability_index": capability_index,
+        "governance_summary": governance_summary,
         "plugins": items,
     }
 
@@ -306,6 +383,13 @@ def future_plugin_blueprint(slug: str, capability_class: str) -> dict[str, Any]:
         "entry_point": f"{safe_slug.replace('-', '_')}.plugin:{class_name}",
         "core_version_constraint": ">=0.2.0, <2.0.0",
         "categories": ["creative-media", capability_class],
+        "risk_level": "high" if service_block else "medium",
+        "permissions": ["network", "filesystem-write"],
+        "approval_gates": ["operator approval for publish/export", "cost review for large batch jobs"] if service_block else ["operator approval for publish/export"],
+        "policy_checks": ["credential redaction", "artifact provenance", "rate/cost limits", "destructive action approval"],
+        "provenance_required": True,
+        "audit_events": ["connect", "disconnect", "job_create", "job_complete", "asset_export"],
+        "job_lifecycle": ["queued", "running", "needs_approval", "completed", "failed", "cancelled"],
         "required_capabilities": ["network", "filesystem-write"],
         "asset_domains": cls["asset_domains"],
         "artifact_types": cls["artifact_types"],

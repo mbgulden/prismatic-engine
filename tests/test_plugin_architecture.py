@@ -19,6 +19,7 @@ from prismatic.plugin_architecture import (
     validate_manifest_payload,
     write_blueprint,
 )
+from prismatic.pwp_integration import integration_status
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -36,6 +37,10 @@ def test_future_media_blueprints_validate_for_all_requested_plugin_families() ->
         assert "gateway-api" in manifest["automation_surfaces"]
         assert "mcp" in manifest["integration_points"]
         assert manifest["endpoints"]
+        assert manifest["provenance_required"] is True
+        assert manifest["approval_gates"]
+        assert "needs_approval" in manifest["job_lifecycle"]
+        assert "artifact provenance" in " ".join(manifest["policy_checks"])
 
 
 def test_asset_forge_3d_blueprint_is_external_service_with_http_mcp() -> None:
@@ -95,6 +100,41 @@ def test_live_plugin_catalog_exposes_pwp_and_media_capability_classes() -> None:
     pwp = next(item for item in catalog["plugins"] if item["name"] == "pwp-design-token-plugin")
     assert pwp["status"] == "ready"
     assert "pwp.credentials" in catalog["capability_index"]
+    assert catalog["governance_summary"]["requires_approval"] >= 1
+    assert pwp["governance"]["readiness_state"] in {"ready", "warning"}
+    assert pwp["governance"]["credential_redaction"] == "env-names-only"
+    assert pwp["governance"]["approval_gates"]
+    assert pwp["governance"]["surface_coverage"]["api_routes"] >= 4
+
+
+def test_plugin_governance_blocks_raw_secrets(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "plugins" / "bad_secret"
+    plugin_dir.mkdir(parents=True)
+    (plugin_dir / "plugin-manifest.yaml").write_text(
+        """
+schema_version: '1.1.0'
+name: bad-secret-plugin
+version: '0.1.0'
+entry_point: bad_secret.plugin:BadSecretPlugin
+core_version_constraint: '>=0.2.0, <2.0.0'
+plugin_type: external-service
+capabilities: []
+asset_domains: [image]
+artifact_types: [image/png]
+integration_points: [manifest, loader, api]
+automation_surfaces: [gateway-api]
+external_service:
+  name: Bad Secret
+  api_key: sk-live-should-not-be-here
+connect_points: [connect]
+""".strip(),
+        encoding="utf-8",
+    )
+    catalog = plugin_catalog(tmp_path / "plugins")
+    plugin = catalog["plugins"][0]
+    assert plugin["governance"]["readiness_state"] == "blocked"
+    assert plugin["governance"]["credential_redaction"] == "blocked"
+    assert any("raw secret" in b["message"] for b in plugin["governance"]["production_blockers"])
 
 
 def test_gateway_plugin_architecture_endpoints() -> None:
@@ -109,6 +149,39 @@ def test_gateway_plugin_architecture_endpoints() -> None:
     assert body["proven_future_plugin_classes"] == FUTURE_CLASSES
     assert "asset-forge-3d" in body["media_capability_classes"]
     assert "MCP server" in " ".join(body["recommended_surfaces"])
+
+    governance = client.get("/api/plugins/governance")
+    assert governance.status_code == 200
+    governance_body = governance.json()
+    assert governance_body["summary"]["requires_approval"] >= 1
+    pwp = next(item for item in governance_body["plugins"] if item["name"] == "pwp-design-token-plugin")
+    assert pwp["governance"]["credential_redaction"] == "env-names-only"
+    assert pwp["governance"]["approval_gates"]
+    assert pwp["governance"]["surface_coverage"]["api_routes"] >= 4
+
+
+def test_pwp_status_exposes_catalog_governance(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("PRISMATIC_PWP_INTEGRATION_STATE", str(tmp_path / "pwp_state.json"))
+    payload = integration_status()
+    assert payload["risk_level"] == "low"
+    assert payload["approval_gates"]
+    assert payload["policy_checks"]
+    assert payload["surface_coverage"]["api_routes"] >= 4
+    assert "application/x-prismatic-theme+json" in payload["artifact_types"]
+
+
+def test_dashboard_contains_generic_plugin_governance_surface() -> None:
+    html = (REPO_ROOT / "prismatic/gateway/templates/dashboard.html").read_text(encoding="utf-8")
+    for marker in [
+        "tab-btn-plugins",
+        "section-plugins",
+        "Plugin Governance Catalog",
+        "/api/plugins/governance",
+        "renderPluginGovernance",
+        "approval_gates",
+        "surface_coverage",
+    ]:
+        assert marker in html
 
 
 def test_plugin_architecture_cli_blueprint_validate_and_catalog(tmp_path: Path) -> None:

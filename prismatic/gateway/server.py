@@ -395,6 +395,32 @@ async def plugins_architecture() -> dict[str, Any]:
     }
 
 
+@app.get("/api/plugins/governance")
+async def plugins_governance() -> dict[str, Any]:
+    """Return operator-facing plugin readiness, risk, approval, and blocker data."""
+    catalog = plugin_catalog()
+    return {
+        "schema_version": catalog["schema_version"],
+        "summary": catalog["governance_summary"],
+        "plugins": [
+            {
+                "name": item["name"],
+                "status": item["status"],
+                "plugin_type": item["plugin_type"],
+                "categories": item["categories"],
+                "capability_count": len(item.get("capabilities", [])),
+                "asset_domains": item.get("asset_domains", []),
+                "artifact_types": item.get("artifact_types", []),
+                "dashboard_surfaces": item.get("dashboard_surfaces", []),
+                "endpoints": item.get("endpoints", []),
+                "mcp_servers": item.get("mcp_servers", []),
+                "governance": item["governance"],
+            }
+            for item in catalog["plugins"]
+        ],
+    }
+
+
 @app.get("/api/v1/plugins/{plugin_name}/health")
 async def plugin_health(plugin_name: str, request: Request) -> JSONResponse:
     """Return lifecycle/telemetry health for a sandboxed plugin."""
