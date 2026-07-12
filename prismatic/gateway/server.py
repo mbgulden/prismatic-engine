@@ -590,6 +590,11 @@ def _dashboard_foundation_state_path() -> Path:
     return state_dir / "dashboard_foundation_controls.json"
 
 
+def _dashboard_merge_state_path() -> Path:
+    state_dir = Path(os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state/"))
+    return state_dir / "dashboard_merge_controls.json"
+
+
 def _read_json_state(path: Path, default: dict[str, Any]) -> dict[str, Any]:
     if not path.exists():
         return dict(default)
@@ -639,6 +644,14 @@ def _read_dashboard_foundation_state() -> dict[str, Any]:
 
 def _write_dashboard_foundation_state(state: dict[str, Any]) -> None:
     _write_json_state(_dashboard_foundation_state_path(), state)
+
+
+def _read_dashboard_merge_state() -> dict[str, Any]:
+    return _read_json_state(_dashboard_merge_state_path(), {"actions": [], "last_action": None})
+
+
+def _write_dashboard_merge_state(state: dict[str, Any]) -> None:
+    _write_json_state(_dashboard_merge_state_path(), state)
 
 
 def _record_control_timeline_event(
@@ -1264,6 +1277,74 @@ MERGE_BACKLOG_TRIAGE: dict[str, Any] = {
 async def governance_merge_backlog() -> dict[str, Any]:
     """Expose the GRO-3520 merge backlog triage map for dashboards and operators."""
     return MERGE_BACKLOG_TRIAGE
+
+
+@app.get("/api/gateway/merge/status")
+async def dashboard_merge_status() -> dict[str, Any]:
+    """Return normalized Merge Pipeline status from existing merge state."""
+    from prismatic.merge_status import load_merge_state, merge_status_payload
+
+    state, state_path = load_merge_state()
+    return merge_status_payload(
+        state,
+        _read_dashboard_merge_state(),
+        MERGE_BACKLOG_TRIAGE,
+        state_path=state_path,
+    )
+
+
+@app.post("/api/gateway/merge/control/{action}", response_model=None)
+async def dashboard_merge_control(action: str) -> dict[str, Any] | JSONResponse:
+    """Record an audit-safe Merge Pipeline control intent.
+
+    The browser can request a merge refresh/promote/hold, but this handler does
+    not execute git, gh, or shell commands. Downstream operators/agents consume
+    the timeline/EventBus intent.
+    """
+    from prismatic.merge_status import CONTROL_ACTIONS, merge_control_entry
+
+    clean_action = str(action or "").strip().lower()
+    if clean_action not in CONTROL_ACTIONS:
+        return JSONResponse(
+            {"ok": False, "status": "error", "error": f"unsupported merge action: {clean_action}", "allowed_actions": sorted(CONTROL_ACTIONS)},
+            status_code=400,
+        )
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    entry = merge_control_entry(clean_action, now=now)
+    state = _read_dashboard_merge_state()
+    actions = [entry] + list(state.get("actions", []))
+    state["actions"] = actions[:25]
+    state["last_action"] = entry
+    state["updated_at"] = now
+    _write_dashboard_merge_state(state)
+    spec = CONTROL_ACTIONS[clean_action]
+    timeline_item = _record_control_timeline_event(
+        source="MergeControl",
+        severity=spec.get("severity", "info"),
+        title=spec["label"],
+        message=spec["detail"],
+        entity_id=clean_action,
+        metadata={"entry": entry},
+    )
+    try:
+        bus = get_event_bus()
+        if bus is not None:
+            await bus.publish(
+                event_type=f"dashboard.merge.{clean_action}",
+                source="prismatic-hub",
+                payload=entry,
+            )
+    except Exception:
+        logger.warning("dashboard merge event publish failed", exc_info=True)
+    return {
+        "ok": True,
+        "status": "ok",
+        "message": spec["detail"],
+        "entry": entry,
+        "timeline_item": timeline_item,
+        "stdout": "",
+        "stderr": "",
+    }
 
 
 @app.get("/events/recent")

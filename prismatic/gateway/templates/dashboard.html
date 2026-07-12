@@ -670,6 +670,17 @@
                 </div>
             </section>
 
+            <div id="merge-state-panel" class="glass-panel p-4 rounded-xl border border-slate-800/70">
+                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <div>
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Live Merge Evidence</div>
+                        <div id="merge-status-line" class="mt-1 text-sm text-slate-300">Loading Merge Pipeline status…</div>
+                    </div>
+                    <span id="merge-source-badge" class="self-start sm:self-auto px-2 py-0.5 rounded-full text-[10px] font-bold border border-slate-700 text-slate-400 bg-slate-800/80">LOADING</span>
+                </div>
+                <div id="merge-evidence-line" class="mt-2 text-xs text-slate-500">Waiting for merge state evidence.</div>
+            </div>
+
             <!-- Two Columns Layout -->
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <!-- Left Column: Watcher Config -->
@@ -699,8 +710,19 @@
                             <span class="text-xs font-bold text-cyan-400">Slack & Telegram</span>
                         </div>
                         <div class="bg-indigo-500/5 border border-indigo-500/10 rounded-lg p-3 text-xs text-slate-400 leading-relaxed mt-2">
-                            The watcher daemon monitors sandboxes dynamically. On event notification, it triggers test verification with setting resilience and auto-merges to staging.
+                            The watcher daemon monitors sandboxes dynamically. Browser controls below record operator intent only; merge execution remains gated outside this dashboard.
                         </div>
+                    </div>
+
+                    <div class="glass-panel p-5 rounded-xl space-y-4">
+                        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-2">Merge Controls</h2>
+                        <p class="text-xs text-slate-400">Audit-safe requests. These do not run git, gh, or shell commands from the browser.</p>
+                        <div class="space-y-3 pt-2">
+                            <button onclick="triggerMergeAction('refresh')" class="w-full bg-cyan-600 hover:bg-cyan-500 text-white py-2 rounded-lg text-xs font-bold transition">Request Status Refresh</button>
+                            <button onclick="triggerMergeAction('promote')" class="w-full bg-amber-600 hover:bg-amber-500 text-white py-2 rounded-lg text-xs font-bold transition">Request Canonical Promote Review</button>
+                            <button onclick="triggerMergeAction('hold')" class="w-full bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 py-2 rounded-lg text-xs font-bold transition">Hold Merge Queue</button>
+                        </div>
+                        <pre id="merge-control-console" class="bg-slate-950/80 border border-slate-800/80 rounded-xl p-3 font-mono text-xs text-slate-400 h-32 overflow-y-auto whitespace-pre-wrap">Merge controls ready.</pre>
                     </div>
 
                     <div class="glass-panel p-5 rounded-xl space-y-4">
@@ -742,6 +764,15 @@
 
                 <!-- Right Column: Pending and History feeds -->
                 <div class="lg:col-span-2 space-y-6">
+                    <div class="glass-panel p-5 rounded-xl space-y-4">
+                        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-3">
+                            Duplicate Families / Canonical Winners
+                        </h2>
+                        <div id="merge-duplicate-families" class="space-y-2 text-xs text-slate-400">
+                            Loading duplicate-family evidence…
+                        </div>
+                    </div>
+
                     <!-- Pending Sandboxes Table -->
                     <div class="glass-panel p-5 rounded-xl space-y-4">
                         <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-3">
@@ -1830,49 +1861,126 @@
         }
 
         async function fetchMergeData() {
+            const pendingTbody = document.getElementById("merge-pending-tbody");
+            const historyTbody = document.getElementById("merge-history-tbody");
+            const familiesEl = document.getElementById("merge-duplicate-families");
+            const statusLine = document.getElementById("merge-status-line");
+            const evidenceLine = document.getElementById("merge-evidence-line");
+            const sourceBadge = document.getElementById("merge-source-badge");
+            if (pendingTbody) pendingTbody.innerHTML = `<tr><td colspan="5" class="py-6 text-center text-slate-500 italic">Loading live merge queue…</td></tr>`;
+            if (historyTbody) historyTbody.innerHTML = `<tr><td colspan="4" class="py-6 text-center text-slate-500 italic">Loading merge history…</td></tr>`;
+            if (familiesEl) familiesEl.textContent = "Loading duplicate-family evidence…";
+            if (statusLine) statusLine.textContent = "Loading Merge Pipeline status…";
+            if (evidenceLine) evidenceLine.textContent = "Waiting for merge state evidence.";
+            if (sourceBadge) {
+                sourceBadge.textContent = "LOADING";
+                sourceBadge.className = "self-start sm:self-auto px-2 py-0.5 rounded-full text-[10px] font-bold border border-slate-700 text-slate-400 bg-slate-800/80";
+            }
             try {
                 const mergeRes = await fetch("/api/gateway/merge/status");
-                if (mergeRes.ok) {
-                    const data = await mergeRes.json();
-                    
-                    document.getElementById("stat-merge-pending").textContent = data.pending_count || 0;
-                    document.getElementById("stat-merge-merged").textContent = data.merged_count || 0;
-                    document.getElementById("stat-merge-scan").textContent = data.last_scan ? formatDate(data.last_scan) : "Never";
-                    document.getElementById("stat-merge-apply").textContent = data.last_apply ? formatDate(data.last_apply) : "Never";
-                    
-                    // Render Pending Sandboxes
-                    const pendingTbody = document.getElementById("merge-pending-tbody");
-                    if (!data.pending || data.pending.length === 0) {
-                        pendingTbody.innerHTML = `<tr><td colspan="5" class="py-6 text-center text-slate-500 italic">No pending sandboxes.</td></tr>`;
-                    } else {
-                        pendingTbody.innerHTML = data.pending.map(sb => `
-                            <tr class="border-b border-slate-800/50 hover:bg-slate-900/10">
-                                <td class="py-3 px-3 font-semibold text-slate-200 font-mono">${sb.ticket}</td>
-                                <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold border border-cyan-500/20 bg-cyan-500/10 text-cyan-400">T${sb.tier}</span></td>
-                                <td class="py-3 px-3 font-bold text-amber-400 font-mono">${sb.confidence}%</td>
-                                <td class="py-3 px-3 text-slate-400">${sb.modified} files</td>
-                                <td class="py-3 px-3 text-slate-500 font-mono text-[11px] max-w-[200px] truncate" title="${sb.contention.join(', ')}">${sb.contention.join(', ') || 'None'}</td>
-                            </tr>
-                        `).join("");
+                if (!mergeRes.ok) throw new Error(`Merge API HTTP ${mergeRes.status}`);
+                const data = await mergeRes.json();
+                document.getElementById("stat-merge-pending").textContent = data.pending_count ?? data.open_count ?? 0;
+                document.getElementById("stat-merge-merged").textContent = data.merged_count ?? 0;
+                document.getElementById("stat-merge-scan").textContent = data.last_scan ? formatDate(data.last_scan) : "Never";
+                document.getElementById("stat-merge-apply").textContent = data.last_apply ? formatDate(data.last_apply) : "Never";
+                if (data.empty) {
+                    if (statusLine) statusLine.textContent = "Merge Pipeline has no pending or merged state evidence.";
+                    if (sourceBadge) {
+                        sourceBadge.textContent = "EMPTY";
+                        sourceBadge.className = "self-start sm:self-auto px-2 py-0.5 rounded-full text-[10px] font-bold border border-amber-500/20 text-amber-400 bg-amber-500/10";
                     }
-                    
-                    // Render History
-                    const historyTbody = document.getElementById("merge-history-tbody");
-                    if (!data.merged || data.merged.length === 0) {
-                        historyTbody.innerHTML = `<tr><td colspan="4" class="py-6 text-center text-slate-500 italic">No merge history.</td></tr>`;
-                    } else {
-                        historyTbody.innerHTML = data.merged.map(m => `
-                            <tr class="border-b border-slate-800/50 hover:bg-slate-900/10">
-                                <td class="py-3 px-3 font-semibold text-slate-200 font-mono">${m.ticket}</td>
-                                <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold border border-cyan-500/20 bg-cyan-500/10 text-cyan-400">T${m.tier}</span></td>
-                                <td class="py-3 px-3 text-emerald-400 font-mono text-xs">${m.commit.substring(0, 7)}</td>
-                                <td class="py-3 px-3 text-slate-500 text-xs">${formatDate(m.timestamp)}</td>
-                            </tr>
-                        `).join("");
+                } else {
+                    if (statusLine) statusLine.textContent = `${data.status || 'unknown'} · open ${data.open_count || 0} · mergeable ${data.mergeable_count || 0} · blocked ${data.blocked_count || 0} · conflicts ${data.conflict_count || 0}`;
+                    if (sourceBadge) {
+                        sourceBadge.textContent = data.blocked_count ? "BLOCKED" : "LIVE";
+                        sourceBadge.className = data.blocked_count
+                            ? "self-start sm:self-auto px-2 py-0.5 rounded-full text-[10px] font-bold border border-amber-500/20 text-amber-400 bg-amber-500/10"
+                            : "self-start sm:self-auto px-2 py-0.5 rounded-full text-[10px] font-bold border border-emerald-500/20 text-emerald-400 bg-emerald-500/10";
                     }
+                }
+                if (evidenceLine) {
+                    const evidence = data.evidence || {};
+                    evidenceLine.textContent = `${data.source || 'merge_state'} · duplicate families ${data.duplicate_family_count || 0} · checks pass/fail/unknown ${data.checks?.passed || 0}/${data.checks?.failed || 0}/${data.checks?.unknown || 0} · last control: ${data.last_control_action?.action || 'none'} · ${evidence.triage_source_issue || 'no triage issue'}`;
+                }
+                if (!data.pending || data.pending.length === 0) {
+                    pendingTbody.innerHTML = `<tr><td colspan="5" class="py-6 text-center text-slate-500 italic">No pending sandboxes.</td></tr>`;
+                } else {
+                    pendingTbody.innerHTML = data.pending.map(sb => {
+                        const contention = sb.contention || sb.contention_files || [];
+                        const stateTag = sb.mergeable
+                            ? `<span class="ml-2 px-2 py-0.5 rounded text-[10px] font-bold border border-emerald-500/20 bg-emerald-500/10 text-emerald-400">mergeable</span>`
+                            : sb.blocked
+                                ? `<span class="ml-2 px-2 py-0.5 rounded text-[10px] font-bold border border-amber-500/20 bg-amber-500/10 text-amber-400">blocked</span>`
+                                : `<span class="ml-2 px-2 py-0.5 rounded text-[10px] font-bold border border-slate-500/20 bg-slate-500/10 text-slate-400">review</span>`;
+                        return `
+                            <tr class="border-b border-slate-800/50 hover:bg-slate-900/10">
+                                <td class="py-3 px-3 font-semibold text-slate-200 font-mono">${sb.ticket}${stateTag}</td>
+                                <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold border border-cyan-500/20 bg-cyan-500/10 text-cyan-400">T${sb.tier || '-'}</span></td>
+                                <td class="py-3 px-3 font-bold text-amber-400 font-mono">${sb.confidence || 0}%</td>
+                                <td class="py-3 px-3 text-slate-400">${sb.modified || 0} files</td>
+                                <td class="py-3 px-3 text-slate-500 font-mono text-[11px] max-w-[200px] truncate" title="${contention.join(', ')}">${contention.join(', ') || sb.blocked_reason || 'None'}</td>
+                            </tr>
+                        `;
+                    }).join("");
+                }
+                if (!data.duplicate_families || data.duplicate_families.length === 0) {
+                    familiesEl.innerHTML = `<div class="text-slate-500 italic">No duplicate families detected in current merge evidence.</div>`;
+                } else {
+                    familiesEl.innerHTML = data.duplicate_families.slice(0, 8).map(f => `
+                        <div class="rounded-lg border border-slate-800/80 bg-slate-950/30 p-3">
+                            <div class="flex items-start justify-between gap-3">
+                                <span class="font-bold text-slate-200">${f.family}</span>
+                                <span class="text-[10px] uppercase tracking-wider text-cyan-400">${f.source || 'merge'}</span>
+                            </div>
+                            <div class="mt-1 text-slate-400">Winner: <span class="font-mono text-cyan-300">${f.canonical_winner || 'not selected'}</span></div>
+                            <div class="mt-1 text-slate-500">${(f.siblings || []).join(', ') || f.reason || 'No siblings listed'}</div>
+                        </div>
+                    `).join("");
+                }
+                if (!data.merged || data.merged.length === 0) {
+                    historyTbody.innerHTML = `<tr><td colspan="4" class="py-6 text-center text-slate-500 italic">No merge history.</td></tr>`;
+                } else {
+                    historyTbody.innerHTML = data.merged.map(m => `
+                        <tr class="border-b border-slate-800/50 hover:bg-slate-900/10">
+                            <td class="py-3 px-3 font-semibold text-slate-200 font-mono">${m.ticket}</td>
+                            <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold border border-cyan-500/20 bg-cyan-500/10 text-cyan-400">T${m.tier || '-'}</span></td>
+                            <td class="py-3 px-3 text-emerald-400 font-mono text-xs">${(m.commit || '').substring(0, 7) || 'unknown'}</td>
+                            <td class="py-3 px-3 text-slate-500 text-xs">${m.timestamp ? formatDate(m.timestamp) : 'unknown'}</td>
+                        </tr>
+                    `).join("");
                 }
             } catch (e) {
                 console.error("Error fetching merge details:", e);
+                if (statusLine) statusLine.textContent = `Merge Pipeline API unavailable: ${e.message || e}`;
+                if (evidenceLine) evidenceLine.textContent = "No fallback data rendered.";
+                if (sourceBadge) {
+                    sourceBadge.textContent = "ERROR";
+                    sourceBadge.className = "self-start sm:self-auto px-2 py-0.5 rounded-full text-[10px] font-bold border border-rose-500/20 text-rose-400 bg-rose-500/10";
+                }
+                if (pendingTbody) pendingTbody.innerHTML = `<tr><td colspan="5" class="py-6 text-center text-rose-400 italic">Merge Pipeline API unavailable.</td></tr>`;
+                if (historyTbody) historyTbody.innerHTML = `<tr><td colspan="4" class="py-6 text-center text-rose-400 italic">Merge history unavailable.</td></tr>`;
+                if (familiesEl) familiesEl.innerHTML = `<div class="text-rose-400 italic">Duplicate-family evidence unavailable.</div>`;
+            }
+        }
+
+        async function triggerMergeAction(action) {
+            const consoleEl = document.getElementById("merge-control-console");
+            if (consoleEl) consoleEl.textContent = `Recording ${action} merge operator intent...\n`;
+            try {
+                const res = await fetch(`/api/gateway/merge/control/${action}`, { method: "POST" });
+                const data = await res.json().catch(() => ({}));
+                if (res.ok && data.status === "ok") {
+                    showToast(`Merge action ${action} recorded`);
+                    if (consoleEl) consoleEl.textContent += `[AUDIT] ${data.message}\nTimeline source: ${data.timeline_item?.source || 'MergeControl'}\nEntry: ${data.entry?.id || 'recorded'}\n`;
+                    await fetchMergeData();
+                } else {
+                    showToast(data.error || data.message || "Merge action failed", true);
+                    if (consoleEl) consoleEl.textContent += `[ERROR] ${data.error || data.message || `HTTP ${res.status}`}\n`;
+                }
+            } catch (err) {
+                showToast("Network connection error", true);
+                if (consoleEl) consoleEl.textContent += `[CONNECTION ERROR] ${err}\n`;
             }
         }
 
