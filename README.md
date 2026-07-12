@@ -155,6 +155,133 @@ The lane policy is enforced by `scripts/pre-push-hook.py`. Use `feature/*`, `con
 
 ## Tests
 
+## 📂 Repository File Map
+
+```
+.
+├── PRISMATIC_ENGINE.yaml             # Main project config (roles, lanes, locks, staging)
+├── SOUL.md                           # Philosophical core, non-negotiables & vision doc
+├── index.html                        # Sleek, animated dashboard landing page/demo
+├── Dockerfile                        # Container recipe for serving the engine
+├── docker-compose.yml                # Multi-container orchestration config
+├── install.sh                        # Engine CLI installer and systemd service generator
+├── pyproject.toml                    # Build config for the python package
+├── LICENSE                           # Affero GPL v3 license
+│
+├── prismatic/                        # Core Python engine codebase
+│   ├── __init__.py                   # Package initialization
+│   ├── coordinator.py                # Coordinator orchestrator loop
+│   ├── agents/                       # Agent adapter implementations
+│   │   ├── __init__.py
+│   │   ├── base.py                   # BaseAgent abstract definition
+│   │   └── hermes.py                 # Hermes agent signal wrapper
+│   └── providers/                    # Transport and tracker bridges
+│       ├── __init__.py
+│       ├── signals/                  # Signal adapters (File, HTTP, Redis, Telegram)
+│       │   ├── base.py
+│       │   ├── file.py
+│       │   ├── http.py
+│       │   └── redis.py
+│       └── tasks/                    # Task adapters (Linear, Local)
+│           ├── base.py
+│           └── linear.py
+│
+├── portable-skills/                  # Reusable agent skill profiles and disciplines
+│   ├── INSTALL.md                    # Setup and installation instructions
+│   ├── export.py                     # Skill packaging exporter tool
+│   ├── export.sh                     # Bash wrapper for skill exports
+│   └── (discipline subdirectories... detailed below)
+│
+├── plugins/                          # Suite of 8 dashboard monitoring extensions
+│   └── (plugin subdirectories... detailed below)
+│
+├── reports/                          # Audit reports and implementation specs
+│   ├── rubric-assessment-2026-06-11.md
+│   ├── agy-hermes-discovery-report.md
+│   └── agy-core-boundary-validation.md
+│
+├── research/                         # Coordination landscape & research notes
+├── specs/                            # Written architecture specifications
+├── test-plans/                       # Quality assurance test plans and scripts
+└── scripts/                          # Development and sync helpers
+```
+
+---
+
+## 🧠 Portable Agent Skills (`portable-skills/`)
+
+These directories contain modular, reusable rule systems and markdown runbooks injected into agents' system prompts to enforce professional disciplines:
+
+* **[INSTALL.md](file:///home/ubuntu/work/prismatic-engine/portable-skills/INSTALL.md)**: Details how to copy/link these skills into live Hermes agent profile directories.
+* **[export.py](file:///home/ubuntu/work/prismatic-engine/portable-skills/export.py) / [export.sh](file:///home/ubuntu/work/prismatic-engine/portable-skills/export.sh)**: Automates bundling, checking, and exporting these directories.
+* **`autonomous-execution-discipline/`**: Guidelines for runner agents (like Ned) to independently parse errors, test code, and verify builds without prompting for human approval.
+* **`github-pr-workflow/`**: Git review, automated staging tests, PR audits, and conflict resolution protocols.
+* **`golden-thread/`**: Step-by-step verification methodology to ensure code does not just compile but solves the root problem.
+* **`himalaya/`**: Code cleaniness and design aesthetic standards.
+* **`orchestrator-delegation-discipline/`**: Rules for the coordinator agent (Fred) to decompose large tasks and delegate them to specialized roles.
+* **`static-site-seo-fix/`**: Procedures for audits, canonical tag fixes, and landing page indexation policies.
+* **`systematic-debugging/`**: Troubleshooting processes including logging audits and local reproduction.
+
+---
+
+## 🖥️ Swarm Dashboard Plugins (`plugins/`)
+
+A consolidated collection of 8 React/Webpack-based plugin extensions built for the Hermes Dashboard to visualize swarm operations:
+
+1. **`hermes-plugin-lock-dashboard/`**  
+   *Displays live file lock status. Shows which files are currently locked, by which agent, and the remaining heartbeat TTL.*
+2. **`hermes-plugin-mcp-controller/`**  
+   *Model Context Protocol command panel. Lets you monitor active servers, test tools, and view server error logs.*
+3. **`hermes-plugin-orchestrator-command-deck/`**  
+   *Swarm control center. Dispatches commands, monitors active agents, and tracks active routing queues.*
+4. **`hermes-plugin-prismatic-hub/`**  
+   *Main coordination hub page. Visualizes event webhook dispatch, SQLite deduplication tables, and houses the interactive SVG prism refractor.*
+5. **`hermes-plugin-realtime-activity-stream/`**  
+   *Live SSE activity viewer. Feeds running subprocess logs and status updates from agents in real time.*
+6. **`hermes-plugin-swarm-manager/`**  
+   *Swarm session inspector. Explores workspace directories, acts as session director, and embeds an interactive shell terminal.*
+7. **`hermes-plugin-vram-observability/`**  
+   *Hardware telemetry monitor. Connects to `nvidia-smi` endpoints to render live GPU load, memory allocation, and VRAM limits.*
+8. **`hermes-plugin-workspace-tree-navigator/`**
+   *Interactive file tree navigation component. Enables directory exploring, file editing, and direct downloads through the dashboard.*
+
+### 📚 Building Your First Plugin — Start With `prismatic-hello-world`
+
+If you want to add a new plugin to the engine (not a Hermes dashboard widget,
+but a Core engine plugin that registers secret patterns, quality checks,
+impact rules, or action rules), start by copying **`plugins/prismatic_hello_world/`**.
+
+It's the **canonical reference plugin** — a working example that demonstrates every registration channel the engine exposes. The plugin registers all four pattern types (secret pattern, quality check, impact rule, action rule), so you can see exactly how each one is wired through `PluginLoader` → `PrismaticPlugin.on_init()` → `ReviewerRegistry`.
+
+**To create a new plugin:**
+
+1. `cp -r plugins/prismatic_hello_world plugins/my_plugin` (note: underscores, not dashes — Python can't import dashes)
+2. Edit `plugins/my_plugin/plugin-manifest.yaml` — change `name`, `entry_point`, `description`, `author`, `core_version_constraint`
+3. Edit `plugins/my_plugin/plugin.py` — rename `HelloWorldPlugin` → `MyPlugin`, replace the four registrations with your own
+4. Rename the directory: `mv plugins/my_plugin plugins/my_plugin` (already correct if you copied to underscore name)
+5. Edit the entry_point in your manifest: `my_plugin.plugin:MyPlugin`
+6. Add tests in `plugins/my_plugin/tests/test_my_plugin.py` (5+ tests, mutation-through assertions)
+7. Run `python3 -m pytest plugins/my_plugin/ -v` to verify
+
+See `plugins/prismatic_hello_world/README.md` for the full walkthrough and `specs/implementation-plans/GRO-1497-plugin-interface-plan.md` for the complete manifest schema reference.
+
+---
+
+## 🛡️ Governance, Reports & Research
+
+The governance and research documents represent the engineering constraints and history behind the Prismatic Engine:
+
+* **[PRISMATIC_ENGINE.yaml](file:///home/ubuntu/work/prismatic-engine/PRISMATIC_ENGINE.yaml)**: Enforces agent profiles (Fred, Kai, AGY, Jules, Ned), their branch name prefixes (e.g. `execution/`, `design/`), and their read/write folder lanes.
+* **[SOUL.md](file:///home/ubuntu/work/prismatic-engine/SOUL.md)**: Describes the "manifestation of idea in reality" mantra. A strict guide on avoiding placeholders, completing tasks fully, and building features to be production-ready.
+* **`reports/agy-core-boundary-validation.md`**: Architectural audit outlining core dispatch mechanisms vs plugin structures.
+* **`reports/rubric-assessment-2026-06-11.md`**: Core evaluation score sheet checking swarm resilience, security, and performance.
+* **`specs/prismatic-engine-architecture-v1.md`**: The initial architecture specification covering coordinator loops, git hooks, and lock interfaces.
+
+---
+
+## 🚀 Getting Started & Installation
+
+### 1. Engine CLI Setup
 ```bash
 # Run all tests from an activated virtualenv
 python -m pytest prismatic/

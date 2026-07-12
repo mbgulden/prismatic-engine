@@ -1,17 +1,13 @@
-"""Sandbox hardening helpers for Prismatic Engine."""
+"""
+Prismatic Worker Sandbox — ephemeral k3s pod lifecycle for tenant-isolated agent execution.
+"""
 
-from .cgroup_enforcer import (
-    CgroupEnforcer,
-    CgroupError,
-    CgroupLimits,
-    CgroupNotSupportedError,
-    CgroupStats,
-)
+from __future__ import annotations
+
+from .pod_manager import SandboxPodManager, PodState, HardwareProfile
 
 __all__ = [
-    "CgroupEnforcer",
-    "CgroupError",
-    "CgroupLimits",
-    "CgroupNotSupportedError",
-    "CgroupStats",
+    "SandboxPodManager",
+    "PodState",
+    "HardwareProfile",
 ]

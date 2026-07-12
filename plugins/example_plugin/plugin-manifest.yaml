@@ -17,7 +17,7 @@ author: "Ned (agent:ned)"
 entry_point: "example_plugin.plugin:ExamplePlugin"
 
 # SemVer range for supported core engine versions
-core_version_constraint: ">=1.0.0, <2.0.0"
+core_version_constraint: ">=0.1.0, <2.0.0"
 
 # External dependencies
 dependencies:

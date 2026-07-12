@@ -25,6 +25,9 @@ __all__ = [
     "CircuitBreakerState",
     "MODEL_PRIORITY_CHAIN",
     "DistributedComputeGovernor",
+    "HardwareProfileRegistry",
+    "HardwareProfile",
+    "HardwareProfileError",
 ]
 
 from .governor import DistributedComputeGovernor
@@ -38,4 +41,9 @@ from .router import (
     check_and_route_agy,
     CircuitBreakerState,
     MODEL_PRIORITY_CHAIN,
+)
+from .hardware_profiles import (
+    HardwareProfileRegistry,
+    HardwareProfile,
+    HardwareProfileError,
 )

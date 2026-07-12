@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "prismatic-engine"
-version = "0.1.0"
+version = "0.2.0"
 description = "Prismatic Engine — agent orchestration hub powered by Linear labels"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -43,6 +43,7 @@ Documentation = "https://github.com/mbgulden/prismatic-engine"
 
 [project.scripts]
 prismatic = "prismatic.cli:main"
+plugin-load-gate = "prismatic.quality.plugin_load:main"
 prismatic-engine = "prismatic.dispatcher:main"
 prismatic-engine-skills = "prismatic.skills:cli_skills"
 prismatic-lock = "prismatic.lock:main"
@@ -51,9 +52,34 @@ prismatic-journal = "prismatic.journal:cli_journal"
 prismatic-journal-snapshot = "prismatic.journal:cli_journal_snapshot"
 prismatic-linear-import = "prismatic.journal:cli_linear_import"
 prismatic-second-witness = "prismatic.journal:cli_second_witness"
+prismatic-gateway = "prismatic.gateway.server:main"
+prismatic-api = "prismatic.api.server:run"
 
 [tool.setuptools.packages.find]
 include = ["prismatic*"]
 
 [tool.setuptools.package-data]
 prismatic = ["skills/**/*", "templates/**/*", "config/**/*"]
+
+# ─────────────────────────────────────────────────────────────────────
+# Plugin entry points (Gap 9 / Part B)
+# ─────────────────────────────────────────────────────────────────────
+# Third-party plugins register themselves under the "prismatic.plugins"
+# group. Prismatic Engine queries this group at startup via
+# importlib.metadata.entry_points(group="prismatic.plugins") to discover
+# installed plugins. See prismatic/review/registry.py for the registry
+# API plugins use to contribute patterns, checks, and impact rules.
+#
+# Example plugin pyproject.toml:
+#   [project.entry-points."prismatic.plugins"]
+#   my_check_plugin = "my_check_pkg:register"
+#
+# Example plugin entry point:
+#   def register(registry: ReviewerRegistry) -> None:
+#       registry.register_check(my_custom_check, name="my_check")
+
+[project.entry-points."prismatic.plugins"]
+# No built-in plugins ship with Prismatic Engine itself.
+# Add entries here only when integrating an internal plugin that lives
+# in the main repo (e.g. a security-policy plugin). External plugins
+# declare their own entry points in their own pyproject.toml.
