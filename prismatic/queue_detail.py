@@ -58,7 +58,8 @@ def _issue_url(issue_id: str | None) -> str | None:
 
 def _failure_category(record: dict[str, Any], status: str) -> str:
     error = str(record.get("error_message") or "").lower()
-    evidence = record.get("evidence") if isinstance(record.get("evidence"), dict) else {}
+    evidence_raw = record.get("evidence")
+    evidence = evidence_raw if isinstance(evidence_raw, dict) else {}
     blob = " ".join(str(x or "").lower() for x in [error, evidence.get("reason"), evidence.get("status"), evidence.get("category")])
     if "auth" in blob or "signature" in blob or "401" in blob:
         return "ingest_auth"
@@ -91,7 +92,8 @@ def normalize_queue_item(record: Any, *, control_actions: list[dict[str, Any]] |
     else:
         dispatch_status = "pending"
 
-    evidence = data.get("evidence") if isinstance(data.get("evidence"), dict) else {}
+    evidence_raw = data.get("evidence")
+    evidence = evidence_raw if isinstance(evidence_raw, dict) else {}
     text_blob = " ".join(str(x or "").lower() for x in [raw_status, data.get("error_message"), evidence.get("status"), evidence.get("reason")])
     skipped = dispatch_status == "skipped" or "skipped" in text_blob
     dead_lettered = "dead_letter" in text_blob or "dead-letter" in text_blob or "dlq" in text_blob

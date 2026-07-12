@@ -953,6 +953,55 @@ async def dashboard_webhook_queue(status: str | None = None, limit: int = 50) ->
     return queue_payload(_recent_agent_runs(limit=500), status=status, limit=limit)
 
 
+def _queue_detail_inputs(limit: int = 500) -> dict[str, Any]:
+    from prismatic.ingestion_status import dispatcher_status_payload, recovery_status_payload
+    from prismatic.timeline import list_timeline
+
+    run_records = _recent_agent_runs(limit=limit)
+    run_dicts = [_run_record_to_dict(record) for record in run_records]
+    dispatcher = dispatcher_status_payload(
+        _read_dashboard_dispatcher_state(),
+        run_records,
+        server_started_at=_server_started_at or _started_at or None,
+    )
+    recovery = recovery_status_payload(
+        _read_dashboard_recovery_state(),
+        run_records,
+        counters=dict(_webhook_counters),
+    )
+    timeline = list_timeline(
+        limit=limit,
+        run_records=run_dicts,
+        recovery_state=_read_dashboard_recovery_state(),
+        webhook_counters=dict(_webhook_counters),
+    )
+    return {
+        "run_records": run_records,
+        "webhook_counters": dict(_webhook_counters),
+        "dispatcher_context": dispatcher,
+        "recovery_context": recovery,
+        "timeline_payload": timeline,
+        "queue_state": _read_dashboard_queue_state(),
+        "limit": limit,
+    }
+
+
+@app.get("/api/gateway/webhooks/queue/detail")
+async def dashboard_webhook_queue_detail(limit: int = 500) -> dict[str, Any]:
+    """Return live queue depth, retry, dead-letter, and recovery detail."""
+    from prismatic.queue_detail import build_queue_detail
+
+    return build_queue_detail(**_queue_detail_inputs(limit=limit))
+
+
+@app.get("/api/gateway/webhooks/queue/{task_id}")
+async def dashboard_webhook_queue_item_detail(task_id: str) -> dict[str, Any]:
+    """Return detail context for one queue task/run/issue id."""
+    from prismatic.queue_detail import build_queue_item_detail
+
+    return build_queue_item_detail(task_id, **_queue_detail_inputs(limit=500))
+
+
 @app.get("/api/gateway/dispatcher/status")
 async def dashboard_dispatcher_status() -> dict[str, Any]:
     """Return audit-safe dispatcher status for the Ingestion Queue tab."""
@@ -1144,7 +1193,7 @@ async def dashboard_dispatcher_control(action: str) -> dict[str, Any] | JSONResp
             )
     except Exception:
         logger.warning("dashboard dispatcher event publish failed", exc_info=True)
-    return {"ok": True, "status": spec["status"], "entry": entry, "timeline_item": timeline_item}
+    return {"ok": True, "status": spec["status"], "entry": entry, "timeline_item": timeline_item, "stdout": "", "stderr": ""}
 
 
 @app.post("/api/gateway/webhooks/queue/retry/{task_id}", response_model=None)
@@ -1187,7 +1236,7 @@ async def dashboard_queue_retry(task_id: str) -> dict[str, Any] | JSONResponse:
             )
     except Exception:
         logger.warning("dashboard queue retry event publish failed", exc_info=True)
-    return {"ok": True, "status": spec["status"], "entry": entry, "timeline_item": timeline_item}
+    return {"ok": True, "status": spec["status"], "entry": entry, "timeline_item": timeline_item, "stdout": "", "stderr": ""}
 
 
 @app.post("/api/gateway/webhooks/queue/purge", response_model=None)
@@ -1226,7 +1275,7 @@ async def dashboard_queue_purge() -> dict[str, Any]:
             )
     except Exception:
         logger.warning("dashboard queue purge event publish failed", exc_info=True)
-    return {"ok": True, "status": spec["status"], "entry": entry, "timeline_item": timeline_item}
+    return {"ok": True, "status": spec["status"], "entry": entry, "timeline_item": timeline_item, "stdout": "", "stderr": ""}
 
 
 def _recent_run_records_for_timeline(limit: int = 50) -> list[dict[str, Any]]:

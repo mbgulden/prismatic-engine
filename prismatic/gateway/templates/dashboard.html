@@ -651,6 +651,23 @@
                         </div>
                     </div>
 
+                    <div id="queue-detail-source-line" class="text-[11px] text-slate-500">Loading live queue evidence…</div>
+                    <div id="queue-depth-chips" class="flex flex-wrap gap-1.5"></div>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                        <div class="bg-slate-950/40 rounded-lg border border-slate-800/70 p-3">
+                            <div class="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Retry Candidates</div>
+                            <div id="queue-retry-candidates" class="mt-2 space-y-1 text-slate-400">Loading…</div>
+                        </div>
+                        <div class="bg-slate-950/40 rounded-lg border border-slate-800/70 p-3">
+                            <div class="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Dead-letter / Skipped</div>
+                            <div id="queue-dead-letter-items" class="mt-2 space-y-1 text-slate-400">Loading…</div>
+                        </div>
+                        <div class="bg-slate-950/40 rounded-lg border border-slate-800/70 p-3">
+                            <div class="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Recent Processing / Done / Failed</div>
+                            <div id="queue-recent-items" class="mt-2 space-y-1 text-slate-400">Loading…</div>
+                        </div>
+                    </div>
+
                     <div class="overflow-x-auto">
                         <table class="w-full text-left text-sm border-collapse">
                             <thead>
@@ -1096,6 +1113,14 @@
                     </div>
                 </div>
                 <div class="border-t border-slate-800/80 pt-4">
+                    <span class="text-slate-500 uppercase font-semibold text-xs block mb-2">Queue Detail / Recovery Context</span>
+                    <div id="modal-queue-detail" class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-slate-400"></div>
+                </div>
+                <div class="border-t border-slate-800/80 pt-4">
+                    <span class="text-slate-500 uppercase font-semibold text-xs block mb-2">Retry History / Timeline</span>
+                    <div id="modal-retry-history" class="space-y-1 text-xs text-slate-400"></div>
+                </div>
+                <div class="border-t border-slate-800/80 pt-4">
                     <span class="text-slate-500 uppercase font-semibold text-xs block mb-2">Raw JSON Payload</span>
                     <pre id="modal-payload" class="bg-slate-950 text-slate-300 p-4 rounded-lg overflow-x-auto text-[11px] font-mono border border-slate-900 max-h-[300px]"></pre>
                 </div>
@@ -1511,24 +1536,49 @@
         }
 
         // Webhook queue details modal
-        function openModal(id) {
-            const item = loadedQueueItems.find(x => x.id === id);
-            if (!item) return;
-            
-            document.getElementById("modal-id-badge").textContent = `ID: ${item.id}`;
-            document.getElementById("modal-agent").innerHTML = getAgentBadge(item.agent_name);
-            document.getElementById("modal-action").textContent = item.action || "update";
-            document.getElementById("modal-status").innerHTML = getStatusBadge(item.dispatch_status);
-            document.getElementById("modal-queued").textContent = formatDate(item.queued_at);
-            
-            try {
-                const parsed = typeof item.payload === 'string' ? JSON.parse(item.payload) : (item.payload || {});
-                document.getElementById("modal-payload").textContent = JSON.stringify(parsed, null, 2);
-            } catch (e) {
-                document.getElementById("modal-payload").textContent = String(item.payload || "");
+        async function openModal(id) {
+            const item = loadedQueueItems.find(x => String(x.id) === String(id) || String(x.run_id) === String(id) || String(x.issue_id) === String(id));
+            if (item) {
+                document.getElementById("modal-id-badge").textContent = `ID: ${item.id || item.run_id || item.issue_id}`;
+                document.getElementById("modal-agent").innerHTML = getAgentBadge(item.agent || item.agent_name);
+                document.getElementById("modal-action").textContent = item.action || "dispatch";
+                document.getElementById("modal-status").innerHTML = getStatusBadge(item.dispatch_status || item.status);
+                document.getElementById("modal-queued").textContent = formatDate(item.started_at || item.queued_at || item.last_activity_at);
+                document.getElementById("modal-queue-detail").innerHTML = `<div>Loading queue detail…</div>`;
+                document.getElementById("modal-retry-history").innerHTML = `<div>Loading retry/timeline context…</div>`;
+                document.getElementById("modal-payload").textContent = JSON.stringify(item.payload || item.evidence || {}, null, 2);
+                document.getElementById("modal-container").classList.remove("hidden");
             }
-            
-            document.getElementById("modal-container").classList.remove("hidden");
+            try {
+                const r = await fetch(`${API_PREFIX}/webhooks/queue/${encodeURIComponent(id)}`);
+                if (!r.ok) throw new Error(`Queue detail HTTP ${r.status}`);
+                const detail = await r.json();
+                const liveItem = detail.item || item || {};
+                document.getElementById("modal-id-badge").textContent = `ID: ${liveItem.id || id}`;
+                document.getElementById("modal-agent").innerHTML = getAgentBadge(liveItem.agent || liveItem.agent_name);
+                document.getElementById("modal-action").textContent = liveItem.action || "dispatch";
+                document.getElementById("modal-status").innerHTML = getStatusBadge(liveItem.dispatch_status || liveItem.status);
+                document.getElementById("modal-queued").textContent = formatDate(liveItem.started_at || liveItem.queued_at || liveItem.last_activity_at);
+                document.getElementById("modal-queue-detail").innerHTML = `
+                    <div><span class="text-slate-500 uppercase block">Retryable</span><span class="text-slate-200 font-semibold">${liveItem.retryable ? 'yes' : 'no'}</span></div>
+                    <div><span class="text-slate-500 uppercase block">Attempts</span><span class="text-slate-200 font-semibold">${liveItem.attempts ?? 0}</span></div>
+                    <div><span class="text-slate-500 uppercase block">Failure Category</span><span class="text-slate-200 font-semibold">${liveItem.failure_category || 'none'}</span></div>
+                    <div><span class="text-slate-500 uppercase block">Evidence</span><span class="text-slate-200 font-semibold">${detail.evidence?.source || 'queue_detail'}</span></div>
+                    <div class="sm:col-span-2"><span class="text-slate-500 uppercase block">Last Error</span><span class="text-slate-300">${escapeHtml(liveItem.last_error || liveItem.error_message || 'none')}</span></div>
+                `;
+                const retryHistory = detail.retry_history || [];
+                const timeline = detail.recent_timeline || [];
+                document.getElementById("modal-retry-history").innerHTML = [
+                    ...retryHistory.map(entry => `<div class="border-b border-slate-900/70 pb-1">Retry: ${entry.created_at || 'unknown'} · ${entry.status || entry.action || 'recorded'}</div>`),
+                    ...timeline.map(entry => `<div class="border-b border-slate-900/70 pb-1">${entry.source || 'Timeline'} · ${entry.title || entry.message || 'event'}</div>`),
+                ].join('') || `<div class="text-slate-500 italic">No retry history or timeline matches.</div>`;
+                document.getElementById("modal-payload").textContent = JSON.stringify({ item: liveItem, run_record: detail.run_record, evidence: detail.evidence }, null, 2);
+                document.getElementById("modal-container").classList.remove("hidden");
+            } catch (e) {
+                document.getElementById("modal-queue-detail").innerHTML = `<div class="text-rose-400">Queue detail API unavailable: ${escapeHtml(e.message || e)}</div>`;
+                document.getElementById("modal-retry-history").innerHTML = `<div class="text-slate-500 italic">No mock detail fallback rendered.</div>`;
+                document.getElementById("modal-container").classList.remove("hidden");
+            }
         }
 
         function closeModal() {
@@ -1556,12 +1606,13 @@
 
         async function retryTask(taskId) {
             try {
-                const r = await fetch(`${API_PREFIX}/webhooks/queue/retry/${taskId}`, { method: "POST" });
-                if (r.ok) {
-                    showToast("Task reset to pending");
-                    fetchData();
+                const r = await fetch(`${API_PREFIX}/webhooks/queue/retry/${encodeURIComponent(taskId)}`, { method: "POST" });
+                const data = await r.json().catch(() => ({}));
+                if (r.ok && data.ok) {
+                    showToast("Queue retry intent recorded");
+                    await fetchTelemetryData();
                 } else {
-                    showToast("Failed to retry task", true);
+                    showToast(data.error || "Failed to record retry intent", true);
                 }
             } catch (e) {
                 showToast("Network error", true);
@@ -1569,18 +1620,53 @@
         }
 
         async function purgeQueue() {
-            if (!confirm("Are you sure you want to purge completed/failed tasks from the queue?")) return;
+            if (!confirm("Record purge intent for completed/failed queue history? This dashboard action is audit-only.")) return;
             try {
                 const r = await fetch(`${API_PREFIX}/webhooks/queue/purge`, { method: "POST" });
-                if (r.ok) {
-                    showToast("Queue history purged");
-                    fetchData();
+                const data = await r.json().catch(() => ({}));
+                if (r.ok && data.ok) {
+                    showToast("Queue purge intent recorded");
+                    await fetchTelemetryData();
                 } else {
-                    showToast("Failed to purge queue", true);
+                    showToast(data.error || "Failed to record purge intent", true);
                 }
             } catch (e) {
                 showToast("Network error", true);
             }
+        }
+
+        function renderQueueMiniList(elId, items, emptyText) {
+            const el = document.getElementById(elId);
+            if (!el) return;
+            if (!items || items.length === 0) {
+                el.innerHTML = `<div class="text-slate-500 italic">${emptyText}</div>`;
+                return;
+            }
+            el.innerHTML = items.slice(0, 5).map(item => `
+                <button onclick="openModal('${escapeHtml(item.id || item.run_id || item.issue_id || '')}')" class="block w-full text-left rounded border border-slate-800/70 bg-slate-950/40 px-2 py-1 hover:border-indigo-500/30 transition">
+                    <span class="text-slate-200 font-semibold">${escapeHtml(item.issue_id || item.run_id || item.id || 'unknown')}</span>
+                    <span class="text-slate-500"> · ${escapeHtml(item.dispatch_status || item.status || 'unknown')}</span>
+                    ${item.failure_category ? `<span class="text-amber-400"> · ${escapeHtml(item.failure_category)}</span>` : ''}
+                </button>
+            `).join('');
+        }
+
+        function renderQueueDetail(data) {
+            const evidence = data.evidence || {};
+            const counters = data.webhook_counters || {};
+            const sourceLine = document.getElementById("queue-detail-source-line");
+            if (sourceLine) sourceLine.textContent = `${data.source || 'queue_detail'} · runs ${evidence.run_record_count ?? 0} · controls ${evidence.control_action_count ?? 0} · auth failures ${(counters.github_auth_failed || 0) + (counters.linear_auth_failed || 0)}`;
+            const depths = data.queue_depths || {};
+            const chips = document.getElementById("queue-depth-chips");
+            if (chips) {
+                chips.innerHTML = ['pending','processing','completed','failed','skipped','dead_letter'].map(key => `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase border border-slate-700 bg-slate-900 text-slate-300">${key.replace('_',' ')}: ${depths[key] || 0}</span>`).join('');
+            }
+            renderQueueMiniList('queue-retry-candidates', data.retry_candidates || [], 'No retry candidates.');
+            renderQueueMiniList('queue-dead-letter-items', [...(data.dead_letter || []), ...(data.skipped || [])], 'No dead-letter or skipped items.');
+            renderQueueMiniList('queue-recent-items', [...(data.processing || []), ...(data.completed_recently || []), ...(data.failed_recently || [])], 'No recent processing/completed/failed items.');
+            loadedQueueItems = data.items || [];
+            document.getElementById("queue-total-badge").textContent = `${loadedQueueItems.length} total`;
+            filterQueue();
         }
 
         // Searching / Filtering
@@ -1589,11 +1675,12 @@
             const tbody = document.getElementById("queue-tbody");
             
             const filtered = loadedQueueItems.filter(item => {
-                const id = (item.identifier || "").toLowerCase();
-                const agent = (item.agent_name || "").toLowerCase();
+                const id = (item.identifier || item.issue_id || item.run_id || item.id || "").toLowerCase();
+                const agent = (item.agent || item.agent_name || "").toLowerCase();
                 const action = (item.action || "").toLowerCase();
-                const status = (item.dispatch_status || "").toLowerCase();
-                return id.includes(query) || agent.includes(query) || action.includes(query) || status.includes(query);
+                const status = (item.dispatch_status || item.status || "").toLowerCase();
+                const category = (item.failure_category || "").toLowerCase();
+                return id.includes(query) || agent.includes(query) || action.includes(query) || status.includes(query) || category.includes(query);
             });
             
             if (filtered.length === 0) {
@@ -1604,12 +1691,12 @@
                     return `
                     <tr onclick="openModal('${escapeHtml(itemId)}')" class="border-b border-slate-800/50 hover:bg-slate-900/20 transition duration-150 cursor-pointer">
                         <td class="py-3 px-3 font-semibold text-slate-200">${escapeHtml(item.identifier || item.issue_id || item.run_id || "N/A")}</td>
-                        <td class="py-3 px-3">${getAgentBadge(item.agent_name)}</td>
-                        <td class="py-3 px-3 text-slate-400 capitalize text-xs">${escapeHtml(item.action || "update")}</td>
-                        <td class="py-3 px-3">${getStatusBadge(item.dispatch_status)}</td>
-                        <td class="py-3 px-3 text-slate-500 text-xs">${escapeHtml(formatDate(item.queued_at))}</td>
+                        <td class="py-3 px-3">${getAgentBadge(item.agent || item.agent_name)}</td>
+                        <td class="py-3 px-3 text-slate-400 capitalize text-xs">${escapeHtml(item.failure_category || item.action || "dispatch")}</td>
+                        <td class="py-3 px-3">${getStatusBadge(item.dispatch_status || item.status)} ${item.dead_lettered ? '<span class="ml-1 px-1.5 py-0.5 rounded text-[9px] bg-fuchsia-500/10 text-fuchsia-300 border border-fuchsia-500/20">DLQ</span>' : ''} ${item.skipped ? '<span class="ml-1 px-1.5 py-0.5 rounded text-[9px] bg-slate-700 text-slate-300 border border-slate-600">SKIPPED</span>' : ''}</td>
+                        <td class="py-3 px-3 text-slate-500 text-xs">${escapeHtml(formatDate(item.started_at || item.queued_at || item.last_activity_at))}</td>
                         <td class="py-3 px-3 text-right">
-                            <button onclick="event.stopPropagation(); retryTask('${escapeHtml(itemId)}')" class="text-xs text-indigo-400 hover:text-indigo-300 font-semibold px-2 py-1 rounded bg-indigo-500/5 hover:bg-indigo-500/10 border border-indigo-500/10 transition">
+                            <button ${item.retryable ? '' : 'disabled'} onclick="event.stopPropagation(); retryTask('${escapeHtml(itemId)}')" class="text-xs font-semibold px-2 py-1 rounded border transition ${item.retryable ? 'text-indigo-400 hover:text-indigo-300 bg-indigo-500/5 hover:bg-indigo-500/10 border-indigo-500/10' : 'text-slate-600 bg-slate-900/40 border-slate-800 cursor-not-allowed'}">
                                 Retry
                             </button>
                         </td>
@@ -1823,15 +1910,18 @@
                     );
                 }
 
-                // 2. Queue
-                const queueRes = await fetch(`${API_PREFIX}/webhooks/queue`);
+                // 2. Queue detail
+                const queueRes = await fetch(`${API_PREFIX}/webhooks/queue/detail`);
                 if (queueRes.ok) {
                     const queue = await queueRes.json();
-                    loadedQueueItems = queue.items || [];
-                    document.getElementById("queue-total-badge").textContent = `${queue.total} total`;
-                    filterQueue();
+                    renderQueueDetail(queue);
+                    const depths = queue.queue_depths || {};
+                    document.getElementById("stat-pending").textContent = depths.pending || 0;
+                    document.getElementById("stat-processing").textContent = depths.processing || 0;
+                    document.getElementById("stat-completed").textContent = depths.completed || 0;
+                    document.getElementById("stat-failed").textContent = depths.failed || 0;
                 } else {
-                    throw new Error(`Queue HTTP ${queueRes.status}`);
+                    throw new Error(`Queue detail HTTP ${queueRes.status}`);
                 }
 
                 // 3. Dispatcher Status
@@ -1885,6 +1975,11 @@
             } catch (e) {
                 console.error("Error fetching telemetry:", e);
                 if (queueBody) queueBody.innerHTML = `<tr><td colspan="6" class="py-8 text-center text-rose-400 italic">Ingestion Queue API unavailable: ${escapeHtml(e.message || e)}</td></tr>`;
+                const queueSource = document.getElementById("queue-detail-source-line");
+                if (queueSource) queueSource.textContent = `Queue detail API unavailable: ${e.message || e}. No mock queue fallback rendered.`;
+                renderQueueMiniList('queue-retry-candidates', [], 'Queue detail API unavailable.');
+                renderQueueMiniList('queue-dead-letter-items', [], 'Queue detail API unavailable.');
+                renderQueueMiniList('queue-recent-items', [], 'Queue detail API unavailable.');
                 if (taxonomyGrid) taxonomyGrid.innerHTML = `<div class="col-span-full text-rose-400 italic">Recovery status API unavailable: ${escapeHtml(e.message || e)}</div>`;
                 document.getElementById("queue-total-badge").textContent = "API error";
                 setSummaryBadge("summary-dispatcher-badge", "summary-dispatcher-meta", "red", "ERROR", `Ingestion API unavailable: ${e.message || e}`);
