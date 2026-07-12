@@ -39,6 +39,9 @@ Add the scaffolded JSON object to `config/seo_sites.json` or the host-specific c
    - `gsc_property` — default to `sc-domain:example.com`
    - `sitemap_url`
    - `ga4_property_id` or `ga4_property_env`
+   - `gtm_container_id` or `gtm_container_env`
+   - `ga4_measurement_id` or `ga4_measurement_env`
+   - `expected_data_layer_events`
    - static `site_dir_candidates` when available
 
 2. **Google Search Console**
@@ -47,15 +50,24 @@ Add the scaffolded JSON object to `config/seo_sites.json` or the host-specific c
    - Submit `https://example.com/sitemap.xml` when sitemap is live.
    - Ensure this PE host's ADC user/service account can read the property via the Search Console API.
 
-3. **Google Analytics 4**
+3. **Google Tag Manager**
+   - Create/select the GTM container for the site.
+   - Install the GTM `<head>` snippet once on every page.
+   - Install the GTM `<noscript>` fallback immediately after the opening `<body>` tag.
+   - Set `gtm_container_id` in the registry or export the configured env var, e.g. `EXAMPLE_COM_GTM_CONTAINER_ID=GTM-XXXXXXX`.
+   - The site should push clean business events to `window.dataLayer`; GTM maps those events to GA4, Google Ads, remarketing, and other destinations.
+
+4. **Google Analytics 4**
    - Create/select the GA4 property.
    - Create a web data stream for the site.
-   - Install the tag via GTM/gtag/CMP-approved loader.
+   - Configure the GA4 Configuration tag in GTM using the stream measurement ID.
+   - Set `ga4_measurement_id` in the registry or export the configured env var, e.g. `EXAMPLE_COM_GA4_MEASUREMENT_ID=G-XXXXXXXXXX`.
+   - Set `ga4_property_id` in the registry or export the configured env var, e.g. `EXAMPLE_COM_GA4_PROPERTY_ID=123456789`.
    - Mark key events/conversions: booking start, checkout click, lead submit, purchase/booking complete.
    - If booking completes off-site, configure cross-domain tracking and/or server-side Measurement Protocol/imports.
-   - Set `ga4_property_id` in the registry or export the configured env var, e.g. `EXAMPLE_COM_GA4_PROPERTY_ID=123456789`.
+   - Ensure ADC can read GA4 with `https://www.googleapis.com/auth/analytics.readonly`.
 
-4. **Run setup audit**
+5. **Run setup audit**
 
 ```bash
 python3 scripts/seo/managed_site_setup_audit.py
@@ -68,7 +80,7 @@ $PRISMATIC_STATE_DIR/seo/site-setup/latest_site_setup_audit.json
 $PRISMATIC_STATE_DIR/seo/site-setup/latest_site_setup_audit.md
 ```
 
-5. **Run GA4 insights**
+6. **Run GA4 insights**
 
 ```bash
 python3 scripts/seo/ga4_insights.py
@@ -85,7 +97,7 @@ $PRISMATIC_STATE_DIR/seo/ga4-insights/latest_ga4_insights.md
 
 | Native cron ID | Schedule | Purpose |
 |---|---:|---|
-| `seo.managed-sites-setup-audit` | `0 5 * * 0` | Weekly GSC/sitemap/GA4 setup blocker audit for every managed site. |
+| `seo.managed-sites-setup-audit` | `0 5 * * 0` | Weekly GSC/sitemap/GTM/dataLayer/GA4 setup blocker audit for every managed site. |
 | `seo.managed-sites-ga4-insights` | `0 6 * * *` | Daily GA4 conversion/revenue/page economics pull for every configured site. |
 
 Install/update crontab after changing site config or cron definitions:

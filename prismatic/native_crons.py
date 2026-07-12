@@ -134,8 +134,8 @@ SEO_NATIVE_CRONS: list[NativeCron] = [
         command=["python3", "scripts/seo/managed_site_setup_audit.py"],
         cwd=".",
         group="seo",
-        description="Audit every managed SEO site for GSC property access, sitemap reachability, GA4 property configuration, and setup blockers.",
-        tags=["seo", "managed-sites", "gsc", "ga4", "setup"],
+        description="Audit every managed SEO site for GSC property access, sitemap reachability, GTM/dataLayer installation, GA4 stream/property configuration, and setup blockers.",
+        tags=["seo", "managed-sites", "gsc", "ga4", "gtm", "datalayer", "setup"],
     ),
     NativeCron(
         id="seo.managed-sites-ga4-insights",
@@ -245,10 +245,30 @@ class NativeCronStore:
             existing = [NativeCron.from_dict(item) for item in raw.get("crons", [])]
         except Exception:
             return
-        existing_ids = {cron.id for cron in existing}
-        missing = [cron for cron in SEO_NATIVE_CRONS if cron.id not in existing_ids]
-        if missing:
-            self.save([*existing, *missing])
+        existing_by_id = {cron.id: cron for cron in existing}
+        merged: list[NativeCron] = []
+        changed = False
+        runtime_fields = {
+            "state", "queue_state", "last_run_at", "last_status", "last_exit_code", "last_stdout", "last_stderr",
+            "deactivated_at", "deleted_at", "paused_at", "updated_at",
+        }
+        for default in SEO_NATIVE_CRONS:
+            existing_cron = existing_by_id.pop(default.id, None)
+            if existing_cron is None:
+                merged.append(default)
+                changed = True
+                continue
+            refreshed = NativeCron.from_dict({
+                **default.to_dict(),
+                **{field: getattr(existing_cron, field) for field in runtime_fields},
+            })
+            if refreshed.to_dict() != existing_cron.to_dict():
+                changed = True
+            merged.append(refreshed)
+        if existing_by_id:
+            merged.extend(existing_by_id.values())
+        if changed:
+            self.save(merged)
 
     def load(self) -> list[NativeCron]:
         self.ensure_seeded()
