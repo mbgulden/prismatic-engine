@@ -93,57 +93,13 @@ class CostAttributionEngine:
     # ── Schema ─────────────────────────────────────────────
 
     def _ensure_tables(self) -> None:
-        """Create billing tables and migrate credit_ledger if needed."""
+        """Create billing tables using Alembic migrations."""
         db_dir = os.path.dirname(self._db_path)
         if db_dir and not os.path.exists(db_dir):
             os.makedirs(db_dir, exist_ok=True)
 
-        conn = sqlite3.connect(self._db_path)
-        try:
-            # ── billing_mapping: maps issues to client/project ──
-            conn.executescript("""
-                CREATE TABLE IF NOT EXISTS billing_mapping (
-                    issue_id    TEXT PRIMARY KEY,
-                    client_id   TEXT NOT NULL,
-                    project_id  TEXT NOT NULL,
-                    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
-                );
-                CREATE INDEX IF NOT EXISTS idx_billing_mapping_client
-                    ON billing_mapping(client_id);
-                CREATE INDEX IF NOT EXISTS idx_billing_mapping_project
-                    ON billing_mapping(project_id);
-            """)
-
-            # ── Ensure credit_ledger table exists (depended on by billing) ──
-            conn.executescript("""
-                CREATE TABLE IF NOT EXISTS telemetry_credit_ledger (
-                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                    run_id          TEXT NOT NULL,
-                    agent           TEXT NOT NULL,
-                    provider        TEXT NOT NULL,
-                    model           TEXT,
-                    credits_spent   INTEGER NOT NULL,
-                    operation       TEXT,
-                    recorded_at     TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_credit_ledger_run
-                    ON telemetry_credit_ledger(run_id);
-            """)
-
-            # ── Migrate credit_ledger: add client_id/project_id ──
-            cursor = conn.execute("PRAGMA table_info(telemetry_credit_ledger)")
-            existing_cols = {row[1] for row in cursor.fetchall()}
-            if "client_id" not in existing_cols:
-                conn.execute(
-                    "ALTER TABLE telemetry_credit_ledger ADD COLUMN client_id TEXT"
-                )
-            if "project_id" not in existing_cols:
-                conn.execute(
-                    "ALTER TABLE telemetry_credit_ledger ADD COLUMN project_id TEXT"
-                )
-            conn.commit()
-        finally:
-            conn.close()
+        from prismatic.admin import cmd_db_upgrade
+        cmd_db_upgrade(self._db_path)
 
     # ── Issue Attribution ──────────────────────────────────
 
