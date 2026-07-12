@@ -9,6 +9,7 @@ from .health_view import (
     evaluate_subsystem,
     render_markdown,
 )
+from .logging import get_logger, init_logging
 
 __all__ = [
     "FailureClass",
@@ -18,4 +19,6 @@ __all__ = [
     "build_health_view",
     "evaluate_subsystem",
     "render_markdown",
+    "get_logger",
+    "init_logging",
 ]

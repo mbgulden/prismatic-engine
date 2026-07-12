@@ -1044,13 +1044,16 @@ async def github_webhook(request: Request) -> dict[str, Any]:
     body = await request.body()
     signature = request.headers.get("X-Hub-Signature-256", "")
     _webhook_counters["github_received"] += 1
-    if signature:
-        secrets = get_github_secrets()
-        if not secrets:
-            logger.warning("GitHub webhook skipped: secret not set")
-            return {"status": "skipped", "reason": "no-secret"}
-        # GitHub HMAC algorithm: hmac_sha256(secret, "x-hub-signature-256:" + body)
-        signed_payload = b"x-hub-signature-256:" + body
+    secrets = get_github_secrets()
+    if secrets:
+        if not signature:
+            logger.warning("GitHub webhook authentication failed: signature header missing")
+            _webhook_counters["github_auth_failed"] += 1
+            await _publish_webhook_auth_failed("github")
+            from fastapi.responses import JSONResponse
+            return JSONResponse({"status": "auth-failed"}, status_code=401)
+        # GitHub HMAC algorithm: hmac_sha256(secret, body)
+        signed_payload = body
         # GitHub sends "sha256=<hex>"; compare_digest needs raw hex on both sides.
         sig_hex = (
             signature.split("=", 1)[1] if signature.startswith("sha256=") else signature
@@ -1064,10 +1067,10 @@ async def github_webhook(request: Request) -> dict[str, Any]:
                 expected = candidate
                 break
         if expected is None:
+            logger.warning("GitHub webhook authentication failed: invalid signature")
             _webhook_counters["github_auth_failed"] += 1
             await _publish_webhook_auth_failed("github")
             from fastapi.responses import JSONResponse
-
             return JSONResponse({"status": "auth-failed"}, status_code=401)
     try:
         event = json.loads(body) if body else {}

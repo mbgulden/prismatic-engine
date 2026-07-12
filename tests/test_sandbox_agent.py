@@ -72,5 +72,40 @@ class TestSandboxAgent(unittest.TestCase):
         self.assertNotIn("--runtime", cmd)
         self.assertNotIn("runsc", cmd)
 
+
+class TestSandboxVolumeValidation(unittest.TestCase):
+    def test_validate_volume_mount_sensitive_paths(self):
+        from prismatic.plugins.sandbox_pod_manager import SandboxPodManager, PodManagerError
+        from pathlib import Path
+        
+        home = Path.home().resolve()
+        sensitive_paths = [
+            home / ".ssh",
+            home / ".aws",
+            home / ".kube",
+            home / ".gemini",
+            home / "mounts",
+            Path("/home/ubuntu/.ssh"),
+            Path("/home/ubuntu/.aws"),
+            Path("/home/ubuntu/.kube"),
+            Path("/home/ubuntu/.gemini"),
+            Path("/home/ubuntu/mounts"),
+        ]
+        
+        for p in sensitive_paths:
+            # Check exact path
+            with self.assertRaises(PodManagerError):
+                SandboxPodManager._validate_volume_mount(f"{p}:/container")
+            # Check sub-path
+            with self.assertRaises(PodManagerError):
+                SandboxPodManager._validate_volume_mount(f"{p}/subpath:/container")
+
+    def test_validate_volume_mount_allowed_paths(self):
+        from prismatic.plugins.sandbox_pod_manager import SandboxPodManager
+        # Legitimate paths should pass
+        res = SandboxPodManager._validate_volume_mount("/tmp/allowed_path:/container")
+        self.assertEqual(res, "/tmp/allowed_path:/container")
+
+
 if __name__ == "__main__":
     unittest.main()
