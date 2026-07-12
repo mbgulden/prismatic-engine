@@ -953,6 +953,15 @@ async def get_lock(file_path: str) -> Response:
 
 
 def _run_record_to_dict(record: Any) -> dict[str, Any]:
+    duration = None
+    if record.started_at and record.completed_at:
+        try:
+            from datetime import datetime
+            start = datetime.fromisoformat(record.started_at)
+            end = datetime.fromisoformat(record.completed_at)
+            duration = (end - start).total_seconds()
+        except Exception:
+            pass
     return {
         "run_id": record.run_id,
         "issue_id": record.issue_id,
@@ -969,6 +978,7 @@ def _run_record_to_dict(record: Any) -> dict[str, Any]:
         "output_path": record.output_path,
         "error_message": record.error_message,
         "evidence": getattr(record, "evidence", None),
+        "duration_seconds": duration,
     }
 
 

@@ -1,8 +1,6 @@
 import json
 import logging
 import sys
-import pytest
-from io import StringIO
 
 from prismatic.observability.logging import init_logging, get_logger
 
