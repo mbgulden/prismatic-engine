@@ -11,16 +11,25 @@ This document captures the SEO automation moved out of profile-local Hermes cron
 | `seo.aot-competitor-velocity` | `f9e8d6319b72` / `competitor_velocity.py` | `0 6 * * 0` | `python3 scripts/seo/competitor_velocity.py` | Monitors competitor top-page/content movement. Depends on token refresh. |
 | `seo.aot-full-sweep` | profile-local `seo_full_sweep.py` | `manual` | `python3 scripts/seo/seo_full_sweep.py` | Saved as deactivated/manual by default for on-demand overnight competitive sweeps. |
 
-## Still worth wiring next
+## Extended native SEO crons
 
-These are SEO-adjacent capabilities in Kai's skills/references but not yet represented as PE-native scheduled jobs:
+| Native cron ID | Schedule / trigger | PE command | Notes |
+|---|---:|---|---|
+| `seo.gsc-query-page-export` | `30 5 * * *` | `python3 scripts/seo/gsc_query_page_export.py` | Daily own-site GSC query/page source-of-truth export for `sc-domain:activeoahutours.com`. |
+| `seo.aot-counter-content-briefs` | `30 7 * * 0` | `python3 scripts/seo/gsc_ubersuggest_countercontent.py` | Weekly after competitor velocity; pairs GSC opportunity rows with Ubersuggest competitor baseline pages. |
+| `seo.aot-internal-link-orphan-audit` | `15 8 * * 1` | `python3 scripts/seo/internal_link_orphan_audit.py` | Weekly static site link graph, orphan pages, missing H1/meta/schema, broken internal links. |
+| `seo.aot-structured-data-drift-audit` | `45 8 * * 1` | `python3 scripts/seo/structured_data_drift_audit.py` | Weekly JSON-LD parser/type inventory; exits non-zero only for parse errors. |
+| `seo.aot-sitemap-gsc-verification` | `manual` / post-deploy gated | `python3 scripts/seo/sitemap_gsc_verification.py` | Deactivated by default because GSC sitemap verification is auth/post-deploy gated. |
+| `seo.aot-lighthouse-seo-a11y-monitor` | `30 9 * * 1` | `python3 scripts/seo/lighthouse_seo_a11y_monitor.py` | Weekly rendered Lighthouse SEO/A11y/Best Practices monitor with static fallback artifact when Lighthouse/Chrome is unavailable. |
 
-1. **Google Search Console own-site truth pull** — periodic query/page export for `sc-domain:activeoahutours.com` to pair with Ubersuggest competitor intel.
-2. **GSC + Ubersuggest counter-content brief generator** — turns competitor territory alerts plus GSC own-site data into content briefs.
-3. **Internal link graph / orphan page audit** — static crawl and link graph report, likely weekly or on deploy.
-4. **Structured data / schema drift audit** — validates JSON-LD, FAQ/HowTo/Product/LocalBusiness coverage, and AI/GEO quick-answer blocks.
-5. **Sitemap / Search Console submission verification** — should stay gated on Google API auth and may be manual or post-deploy instead of recurring.
-6. **Lighthouse SEO/A11y monitor** — already conceptually AOT governance, but belongs as a PE-native monitor if it should outlive Hermes.
+## Remaining future wiring
+
+These are now intentionally follow-up enhancements rather than missing native cron definitions:
+
+1. **Dashboard surfacing of report artifacts** — link latest GSC/link/schema/Lighthouse markdown artifacts directly from the Native Crons tab.
+2. **Post-deploy trigger integration** — call `seo.aot-sitemap-gsc-verification` and Lighthouse monitor from the deployment pipeline after production deploys.
+3. **Linear issue creation** — turn counter-content briefs and audit deltas into Linear drafts/issues when Linear API quota is available.
+4. **Private business repo publishing** — mirror sensitive competitor reports into `active-oahu-business` instead of keeping only local PE state.
 
 ## Native cron lifecycle semantics
 

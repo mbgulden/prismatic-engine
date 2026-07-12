@@ -23,10 +23,19 @@ def test_native_cron_seed_contains_portable_seo_jobs(tmp_path: Path) -> None:
     crons = list_native_crons(include_deleted=True, store=store)
     ids = {cron["id"] for cron in crons}
 
-    assert "seo.ubersuggest-token-refresh" in ids
-    assert "seo.aot-weekly-rankings" in ids
-    assert "seo.aot-competitor-velocity" in ids
-    assert "seo.aot-full-sweep" in ids
+    expected = {
+        "seo.ubersuggest-token-refresh",
+        "seo.aot-weekly-rankings",
+        "seo.aot-competitor-velocity",
+        "seo.aot-full-sweep",
+        "seo.gsc-query-page-export",
+        "seo.aot-counter-content-briefs",
+        "seo.aot-internal-link-orphan-audit",
+        "seo.aot-structured-data-drift-audit",
+        "seo.aot-sitemap-gsc-verification",
+        "seo.aot-lighthouse-seo-a11y-monitor",
+    }
+    assert expected <= ids
     refresh = next(cron for cron in crons if cron["id"] == "seo.ubersuggest-token-refresh")
     assert refresh["portable"] is True
     assert refresh["queue_state"] == "queued"
@@ -75,9 +84,15 @@ def test_export_system_crontab_omits_paused_deactivated_deleted_and_manual(tmp_p
 
     joined = "\n".join(lines)
     assert "seo_full_sweep" not in joined
+    assert "sitemap_gsc_verification" not in joined
     assert "aot_kpi_tracker" not in joined
     assert "competitor_velocity" not in joined
     assert "scripts/pwp" in joined
+    assert "gsc_query_page_export.py" in joined
+    assert "gsc_ubersuggest_countercontent.py" in joined
+    assert "internal_link_orphan_audit.py" in joined
+    assert "structured_data_drift_audit.py" in joined
+    assert "lighthouse_seo_a11y_monitor.py" in joined
     assert lines[0].startswith("0 3 * * *")
 
 
@@ -103,6 +118,29 @@ def test_gateway_native_cron_endpoints(tmp_path: Path, monkeypatch) -> None:
 
     missing = client.post("/native-crons/nope/action", json={"action": "pause"})
     assert missing.status_code == 404
+
+
+def test_native_cron_store_merges_new_repo_defaults_into_existing_store(tmp_path: Path) -> None:
+    path = tmp_path / "native_crons.json"
+    path.write_text(json.dumps({
+        "version": 1,
+        "crons": [{
+            "id": "seo.ubersuggest-token-refresh",
+            "name": "Customized refresh",
+            "schedule": "0 1 * * *",
+            "command": ["python3", "scripts/pwp", "credentials", "refresh", "ubersuggest"],
+            "state": CRON_STATE_PAUSED,
+            "queue_state": "queued",
+        }],
+    }))
+    store = NativeCronStore(path)
+    crons = list_native_crons(include_deleted=True, store=store)
+    by_id = {cron["id"]: cron for cron in crons}
+
+    assert by_id["seo.ubersuggest-token-refresh"]["name"] == "Customized refresh"
+    assert by_id["seo.ubersuggest-token-refresh"]["state"] == CRON_STATE_PAUSED
+    assert "seo.gsc-query-page-export" in by_id
+    assert "seo.aot-lighthouse-seo-a11y-monitor" in by_id
 
 
 def test_native_cron_store_persists_json(tmp_path: Path) -> None:

@@ -127,6 +127,69 @@ SEO_NATIVE_CRONS: list[NativeCron] = [
         tags=["seo", "active-oahu", "competitive-audit", "manual"],
         depends_on=["seo.ubersuggest-token-refresh"],
     ),
+    NativeCron(
+        id="seo.gsc-query-page-export",
+        name="SEO — GSC own-site query/page export",
+        schedule="30 5 * * *",
+        command=["python3", "scripts/seo/gsc_query_page_export.py"],
+        cwd=".",
+        group="seo",
+        description="Export Google Search Console query/page rows for sc-domain:activeoahutours.com as the own-site source of truth.",
+        tags=["seo", "active-oahu", "gsc", "own-site-truth"],
+    ),
+    NativeCron(
+        id="seo.aot-counter-content-briefs",
+        name="SEO — AOT counter-content brief generator",
+        schedule="30 7 * * 0",
+        command=["python3", "scripts/seo/gsc_ubersuggest_countercontent.py"],
+        cwd=".",
+        group="seo",
+        description="Pair weekly competitor velocity data with GSC own-site evidence and produce counter-content briefs.",
+        tags=["seo", "active-oahu", "gsc", "ubersuggest", "content-briefs"],
+        depends_on=["seo.gsc-query-page-export", "seo.aot-competitor-velocity"],
+    ),
+    NativeCron(
+        id="seo.aot-internal-link-orphan-audit",
+        name="SEO — AOT internal link/orphan audit",
+        schedule="15 8 * * 1",
+        command=["python3", "scripts/seo/internal_link_orphan_audit.py"],
+        cwd=".",
+        group="seo",
+        description="Crawl the static AOT site export to build a link graph, find orphan pages, and surface internal-link quality issues.",
+        tags=["seo", "active-oahu", "internal-links", "orphan-pages"],
+    ),
+    NativeCron(
+        id="seo.aot-structured-data-drift-audit",
+        name="SEO — AOT structured data drift audit",
+        schedule="45 8 * * 1",
+        command=["python3", "scripts/seo/structured_data_drift_audit.py"],
+        cwd=".",
+        group="seo",
+        description="Parse static HTML JSON-LD blocks, count schema types, and flag parse/schema drift.",
+        tags=["seo", "active-oahu", "schema", "structured-data"],
+    ),
+    NativeCron(
+        id="seo.aot-sitemap-gsc-verification",
+        name="SEO — AOT sitemap/GSC verification",
+        schedule="manual",
+        command=["python3", "scripts/seo/sitemap_gsc_verification.py"],
+        cwd=".",
+        group="seo",
+        description="Verify live sitemap.xml against Google Search Console sitemap API. Manual/post-deploy because submission is gated by Google auth.",
+        state=CRON_STATE_DEACTIVATED,
+        tags=["seo", "active-oahu", "gsc", "sitemap", "manual", "post-deploy"],
+        depends_on=["seo.gsc-query-page-export"],
+    ),
+    NativeCron(
+        id="seo.aot-lighthouse-seo-a11y-monitor",
+        name="SEO — AOT Lighthouse SEO/A11y monitor",
+        schedule="30 9 * * 1",
+        command=["python3", "scripts/seo/lighthouse_seo_a11y_monitor.py"],
+        cwd=".",
+        group="seo",
+        description="Run rendered Lighthouse SEO/A11y/Best-Practices checks on priority AOT routes, with static fallback artifacts when Lighthouse is unavailable.",
+        tags=["seo", "active-oahu", "lighthouse", "accessibility", "post-deploy"],
+    ),
 ]
 
 
@@ -153,9 +216,18 @@ class NativeCronStore:
         self.path = path or default_cron_store_path()
 
     def ensure_seeded(self) -> None:
-        if self.path.exists():
+        if not self.path.exists():
+            self.save(SEO_NATIVE_CRONS)
             return
-        self.save(SEO_NATIVE_CRONS)
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+            existing = [NativeCron.from_dict(item) for item in raw.get("crons", [])]
+        except Exception:
+            return
+        existing_ids = {cron.id for cron in existing}
+        missing = [cron for cron in SEO_NATIVE_CRONS if cron.id not in existing_ids]
+        if missing:
+            self.save([*existing, *missing])
 
     def load(self) -> list[NativeCron]:
         self.ensure_seeded()

@@ -23,7 +23,13 @@ def test_render_block_contains_active_native_seo_crons() -> None:
     assert "scripts/pwp credentials refresh ubersuggest" in block
     assert "scripts/seo/aot_kpi_tracker.py" in block
     assert "scripts/seo/competitor_velocity.py" in block
+    assert "scripts/seo/gsc_query_page_export.py" in block
+    assert "scripts/seo/gsc_ubersuggest_countercontent.py" in block
+    assert "scripts/seo/internal_link_orphan_audit.py" in block
+    assert "scripts/seo/structured_data_drift_audit.py" in block
+    assert "scripts/seo/lighthouse_seo_a11y_monitor.py" in block
     assert "scripts/seo/seo_full_sweep.py" not in block
+    assert "scripts/seo/sitemap_gsc_verification.py" not in block
 
 
 def test_replace_managed_block_appends_when_missing() -> None:
