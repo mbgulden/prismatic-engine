@@ -343,8 +343,14 @@
                         </svg>
                     </div>
                     
-                    <div class="text-[11px] text-slate-500 text-center">
-                        Click on any agent node above to inspect status details and current running harness parameters.
+                    <div id="agent-status-source-line" class="text-[11px] text-slate-500 text-center">
+                        Loading live agent/worker evidence…
+                    </div>
+                    <div id="agent-status-counts" class="flex flex-wrap justify-center gap-1.5 text-[10px]">
+                        <span class="px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700">Loading status counts…</span>
+                    </div>
+                    <div id="agent-cards-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                        <div class="col-span-full text-center text-slate-500 italic py-4">Loading live agent cards…</div>
                     </div>
                 </div>
 
@@ -356,28 +362,47 @@
                             Agent Details
                         </h3>
                         <div id="agent-detail-placeholder" class="text-xs text-slate-500 py-6 text-center italic">
-                            Select an agent on the visualizer ring.
+                            Select an agent on the visualizer ring or live cards. Detail data comes from `/api/gateway/agents/{agent_id}`.
                         </div>
                         <div id="agent-detail-card" class="hidden space-y-3 text-xs">
-                            <div class="flex items-center space-x-2">
-                                <span id="agent-detail-dot" class="w-3 h-3 rounded-full"></span>
-                                <span id="agent-detail-name" class="font-bold text-sm text-slate-200">AGY</span>
+                            <div class="flex items-center justify-between gap-2">
+                                <div class="flex items-center space-x-2">
+                                    <span id="agent-detail-dot" class="w-3 h-3 rounded-full"></span>
+                                    <span id="agent-detail-name" class="font-bold text-sm text-slate-200">Agent</span>
+                                </div>
                                 <span id="agent-detail-status-tag" class="px-2 py-0.5 rounded text-[9px] uppercase font-bold"></span>
                             </div>
                             <div class="text-slate-400" id="agent-detail-role"></div>
                             <div class="bg-slate-950/60 p-3 rounded-lg border border-slate-900/60 font-mono space-y-2">
-                                <div class="text-slate-500 font-bold text-[10px] uppercase">Active Task</div>
+                                <div class="text-slate-500 font-bold text-[10px] uppercase">Current Work</div>
                                 <div id="agent-detail-task" class="text-slate-300"></div>
+                                <div id="agent-detail-source" class="text-[10px] text-slate-500"></div>
                             </div>
                             <div class="grid grid-cols-2 gap-2 text-[10px] text-slate-400">
                                 <div>
-                                    <span class="text-slate-500 block">LAST SEEN</span>
+                                    <span class="text-slate-500 block">LAST ACTIVITY</span>
                                     <span id="agent-detail-seen" class="font-semibold text-slate-300"></span>
                                 </div>
                                 <div>
-                                    <span class="text-slate-500 block">HARNESS CONFIG</span>
-                                    <span id="agent-detail-config" class="font-semibold text-indigo-400"></span>
+                                    <span class="text-slate-500 block">QUEUE DEPTH</span>
+                                    <span id="agent-detail-queue" class="font-semibold text-indigo-400"></span>
                                 </div>
+                                <div>
+                                    <span class="text-slate-500 block">BRANCH</span>
+                                    <span id="agent-detail-branch" class="font-semibold text-slate-300"></span>
+                                </div>
+                                <div>
+                                    <span class="text-slate-500 block">SERVICE / PID</span>
+                                    <span id="agent-detail-health" class="font-semibold text-slate-300"></span>
+                                </div>
+                            </div>
+                            <div>
+                                <div class="text-slate-500 font-bold text-[10px] uppercase mb-1">Recent Runs</div>
+                                <div id="agent-detail-runs" class="space-y-1 max-h-32 overflow-y-auto border border-slate-900/70 rounded-lg p-2 bg-slate-950/40"></div>
+                            </div>
+                            <div>
+                                <div class="text-slate-500 font-bold text-[10px] uppercase mb-1">Recent Timeline</div>
+                                <div id="agent-detail-timeline" class="space-y-1 max-h-28 overflow-y-auto border border-slate-900/70 rounded-lg p-2 bg-slate-950/40"></div>
                             </div>
                         </div>
                     </div>
@@ -418,7 +443,14 @@
             </div>
 
             <!-- Dashboard signal summary -->
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                <div class="glass-panel p-4 rounded-xl border-l-2 border-l-violet-500/80">
+                    <div class="flex items-center justify-between gap-3">
+                        <span class="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Agents</span>
+                        <span id="summary-agents-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold border border-slate-700 text-slate-400 bg-slate-800/80">Loading</span>
+                    </div>
+                    <div id="summary-agents-meta" class="mt-2 text-sm text-slate-200 font-semibold">Waiting for agent status</div>
+                </div>
                 <div class="glass-panel p-4 rounded-xl border-l-2 border-l-emerald-500/80">
                     <div class="flex items-center justify-between gap-3">
                         <span class="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Dispatcher</span>
@@ -1087,69 +1119,7 @@
         let loadedQueueItems = [];
         let pollingInterval = null;
 
-        // Mock registries matching Prismatic Hub spec
-        const mockAgents = {
-            agy: {
-                name: "AGY",
-                color: "#f59e0b",
-                dot: "bg-amber-500",
-                status: "idle",
-                role: "Vision & Research CLI Specialist",
-                task: "Completed UI mockup draft and layout updates",
-                seen: "2m ago",
-                config: "harness:agy-cli (cooldown=60s)"
-            },
-            jules: {
-                name: "Jules",
-                color: "#ea580c",
-                dot: "bg-orange-500",
-                status: "working",
-                role: "Async Git, Conflict Resolver & PR Agent",
-                task: "Creating rebase branches for GRO-671",
-                seen: "Active now",
-                config: "harness:jules-cli (lane:curator)"
-            },
-            fred: {
-                name: "Fred",
-                color: "#0ea5e9",
-                dot: "bg-sky-500",
-                status: "idle",
-                role: "Staging Governor & Compliance Watcher",
-                task: "Monitoring staging builds and PR approval state",
-                seen: "15m ago",
-                config: "harness:fred-cli (lane:staging)"
-            },
-            ned: {
-                name: "Ned",
-                color: "#a855f7",
-                dot: "bg-purple-500",
-                status: "offline",
-                role: "Long-running Research & Context Compiler",
-                task: "Standby - waiting for deep synthesis trigger",
-                seen: "1h ago",
-                config: "harness:ned-cli (batch)"
-            },
-            kai: {
-                name: "Kai",
-                color: "#10b981",
-                dot: "bg-emerald-500",
-                status: "working",
-                role: "Swarm Orchestrator & Config Coordinator",
-                task: "Synchronizing SQLite file watch events",
-                seen: "10s ago",
-                config: "harness:kai-cli (cooldown=1s)"
-            },
-            codex: {
-                name: "Codex",
-                color: "#ef4444",
-                dot: "bg-red-500",
-                status: "error",
-                role: "PR Review Specialist & Security Linter",
-                task: "Aborted - PR #24 failed unit tests checks",
-                seen: "30m ago",
-                config: "harness:codex-cli"
-            }
-        };
+        let agentStatusCache = { agents: [], status_counts: {}, evidence: {} };
 
         const mockWorkspaces = [
             { id: "linear-growth", name: "Linear · GrowthWebDev", path: "/home/ubuntu/work/linear-growth-context", branch: "main", status: "connected", files: 142, size: "2.4 MB" },
@@ -1305,32 +1275,161 @@
             showToast("Recovery status refreshed");
         }
 
-        // Node detail helper
-        function showAgentDetail(id) {
-            const agent = mockAgents[id];
-            if (!agent) return;
-            
+        function agentStatusTone(status) {
+            const tones = {
+                active: { dot: 'bg-emerald-500 status-pulse', chip: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' },
+                idle: { dot: 'bg-slate-500', chip: 'bg-slate-800 text-slate-400 border-slate-700' },
+                queue_starved: { dot: 'bg-amber-500', chip: 'bg-amber-500/10 text-amber-400 border-amber-500/20' },
+                awaiting_user_feedback: { dot: 'bg-cyan-500', chip: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20' },
+                completed_recently: { dot: 'bg-indigo-500', chip: 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20' },
+                errored: { dot: 'bg-rose-500', chip: 'bg-rose-500/10 text-rose-400 border-rose-500/20' },
+                churning: { dot: 'bg-red-500 status-pulse', chip: 'bg-red-500/10 text-red-300 border-red-500/20' },
+                launch_failing: { dot: 'bg-red-500 status-pulse', chip: 'bg-red-500/10 text-red-300 border-red-500/20' },
+                unknown: { dot: 'bg-slate-600', chip: 'bg-slate-800 text-slate-500 border-slate-700' }
+            };
+            return tones[status] || tones.unknown;
+        }
+
+        function agentStatusLabel(status) {
+            return String(status || 'unknown').replaceAll('_', ' ');
+        }
+
+        function renderAgentBadges(agent) {
+            const badges = [];
+            if (agent.awaiting_user_feedback) badges.push(['Awaiting User Feedback', 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20']);
+            if (agent.completed_recently) badges.push(['Completed Recently', 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20']);
+            if (agent.status === 'queue_starved') badges.push(['Queue Starved', 'bg-amber-500/10 text-amber-400 border-amber-500/20']);
+            if (agent.churning_or_launch_failing) badges.push(['Churning / Launch Failing', 'bg-red-500/10 text-red-300 border-red-500/20']);
+            if (agent.status === 'errored') badges.push(['Error', 'bg-rose-500/10 text-rose-400 border-rose-500/20']);
+            return badges.map(([label, cls]) => `<span class="px-2 py-0.5 rounded-full border text-[9px] font-bold uppercase ${cls}">${label}</span>`).join('');
+        }
+
+        function renderAgentStatus(payload) {
+            agentStatusCache = payload || { agents: [], status_counts: {}, evidence: {} };
+            const sourceLine = document.getElementById('agent-status-source-line');
+            const countsEl = document.getElementById('agent-status-counts');
+            const cardsEl = document.getElementById('agent-cards-grid');
+            const agents = agentStatusCache.agents || [];
+            const evidence = agentStatusCache.evidence || {};
+            if (sourceLine) {
+                sourceLine.textContent = `${agentStatusCache.source || 'agent_status'} · runs ${evidence.run_record_count ?? 0} · registry ${evidence.registry_count ?? 0} · queue items ${evidence.queue_item_count ?? 0}`;
+            }
+            const counts = agentStatusCache.status_counts || {};
+            const order = ['active', 'idle', 'queue_starved', 'awaiting_user_feedback', 'completed_recently', 'errored', 'churning', 'launch_failing', 'unknown'];
+            if (countsEl) {
+                countsEl.innerHTML = order.map(status => {
+                    const tone = agentStatusTone(status).chip;
+                    return `<span class="px-2 py-0.5 rounded-full border font-bold uppercase ${tone}">${agentStatusLabel(status)}: ${counts[status] || 0}</span>`;
+                }).join('');
+            }
+            if (!cardsEl) return;
+            if (agents.length === 0) {
+                cardsEl.innerHTML = `<div class="col-span-full text-center text-slate-500 italic py-4">No known agents/workers returned. No mock fallback rendered.</div>`;
+                return;
+            }
+            cardsEl.innerHTML = agents.map(agent => {
+                const tone = agentStatusTone(agent.status);
+                const issue = agent.current_issue_url ? `<a href="${agent.current_issue_url}" class="text-cyan-400 hover:underline" target="_blank">${agent.current_issue}</a>` : (agent.current_issue || 'No current issue');
+                const branch = agent.current_branch || 'branch unknown';
+                const activity = agent.last_activity_at ? formatDate(agent.last_activity_at) : 'No activity timestamp';
+                return `
+                    <button onclick="showAgentDetail('${agent.id}')" class="text-left glass-panel p-3 rounded-xl border border-slate-800/70 hover:border-cyan-500/40 transition space-y-2">
+                        <div class="flex items-center justify-between gap-2">
+                            <div class="flex items-center gap-2 min-w-0">
+                                <span class="w-2.5 h-2.5 rounded-full ${tone.dot}"></span>
+                                <span class="font-bold text-slate-200 truncate">${agent.name}</span>
+                            </div>
+                            <span class="px-2 py-0.5 rounded text-[9px] uppercase font-bold border ${tone.chip}">${agentStatusLabel(agent.status)}</span>
+                        </div>
+                        <div class="text-[10px] text-slate-500 truncate">${agent.role || agent.kind || 'Agent'}</div>
+                        <div class="text-[11px] text-slate-300 truncate">${issue}</div>
+                        <div class="flex flex-wrap gap-1">${renderAgentBadges(agent)}</div>
+                        <div class="grid grid-cols-2 gap-2 text-[10px] text-slate-500">
+                            <div>Queue <span class="text-slate-300 font-semibold">${agent.queue_depth ?? 0}</span></div>
+                            <div>${branch}</div>
+                            <div class="col-span-2">Last: ${activity}</div>
+                        </div>
+                    </button>
+                `;
+            }).join('');
+        }
+
+        async function fetchAgentStatus() {
+            const sourceLine = document.getElementById('agent-status-source-line');
+            const cardsEl = document.getElementById('agent-cards-grid');
+            if (sourceLine) sourceLine.textContent = 'Loading live agent/worker evidence…';
+            if (cardsEl) cardsEl.innerHTML = `<div class="col-span-full text-center text-slate-500 italic py-4">Loading live agent cards…</div>`;
+            try {
+                const res = await fetch(`${API_PREFIX}/agents/status`);
+                if (!res.ok) throw new Error(`Agent status HTTP ${res.status}`);
+                const payload = await res.json();
+                renderAgentStatus(payload);
+                setSummaryBadge(
+                    'summary-agents-badge',
+                    'summary-agents-meta',
+                    (payload.status_counts?.errored || payload.status_counts?.churning || payload.status_counts?.launch_failing) ? 'red' : (payload.status_counts?.queue_starved || payload.status_counts?.awaiting_user_feedback) ? 'amber' : 'green',
+                    `${payload.agents?.length || 0} KNOWN`,
+                    `active ${payload.status_counts?.active || 0} · idle ${payload.status_counts?.idle || 0} · queue-starved ${payload.status_counts?.queue_starved || 0}`
+                );
+            } catch (err) {
+                console.error('Error loading agent status:', err);
+                if (sourceLine) sourceLine.textContent = `Agent status API unavailable: ${err.message || err}. No mock fallback rendered.`;
+                if (cardsEl) cardsEl.innerHTML = `<div class="col-span-full text-center text-rose-400 italic py-4">Agent status API unavailable. No mock fallback rendered.</div>`;
+                setSummaryBadge('summary-agents-badge', 'summary-agents-meta', 'red', 'ERROR', 'Agent status API unavailable');
+            }
+        }
+
+        // Node/detail helper backed by /api/gateway/agents/{agent_id}
+        async function showAgentDetail(id) {
             document.getElementById("agent-detail-placeholder").classList.add("hidden");
             const card = document.getElementById("agent-detail-card");
             card.classList.remove("hidden");
-            
-            document.getElementById("agent-detail-dot").className = `w-3 h-3 rounded-full ${agent.dot}`;
-            document.getElementById("agent-detail-name").textContent = agent.name;
-            document.getElementById("agent-detail-role").textContent = agent.role;
-            document.getElementById("agent-detail-task").textContent = agent.task;
-            document.getElementById("agent-detail-seen").textContent = agent.seen;
-            document.getElementById("agent-detail-config").textContent = agent.config;
-            
-            const tag = document.getElementById("agent-detail-status-tag");
-            tag.textContent = agent.status;
-            if (agent.status === "working") {
-                tag.className = "px-2 py-0.5 rounded text-[9px] uppercase font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20";
-            } else if (agent.status === "error") {
-                tag.className = "px-2 py-0.5 rounded text-[9px] uppercase font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20";
-            } else if (agent.status === "offline") {
-                tag.className = "px-2 py-0.5 rounded text-[9px] uppercase font-bold bg-slate-800 text-slate-500 border border-slate-700/50";
-            } else {
-                tag.className = "px-2 py-0.5 rounded text-[9px] uppercase font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20";
+            document.getElementById("agent-detail-name").textContent = id;
+            document.getElementById("agent-detail-role").textContent = "Loading agent detail…";
+            document.getElementById("agent-detail-task").textContent = "Loading live detail from API…";
+            try {
+                const res = await fetch(`${API_PREFIX}/agents/${encodeURIComponent(id)}`);
+                if (!res.ok) throw new Error(`Agent detail HTTP ${res.status}`);
+                const detail = await res.json();
+                const agent = detail.agent || {};
+                const tone = agentStatusTone(agent.status);
+                document.getElementById("agent-detail-dot").className = `w-3 h-3 rounded-full ${tone.dot}`;
+                document.getElementById("agent-detail-name").textContent = agent.name || agent.id || id;
+                document.getElementById("agent-detail-role").textContent = agent.role || agent.kind || "Agent";
+                const issue = agent.current_issue_url ? `<a href="${agent.current_issue_url}" target="_blank" class="text-cyan-400 hover:underline">${agent.current_issue}</a>` : (agent.current_issue || 'No current issue');
+                document.getElementById("agent-detail-task").innerHTML = `${issue}<br><span class="text-slate-500">${agent.id || id} · ${agent.phase || agent.status || 'unknown'}</span>`;
+                document.getElementById("agent-detail-source").textContent = `${agent.source || detail.evidence?.source || 'agent_status'} · runs ${detail.evidence?.run_count ?? 0} · queue matches ${detail.evidence?.queue_matches ?? 0}`;
+                document.getElementById("agent-detail-seen").textContent = agent.last_activity_at ? formatDate(agent.last_activity_at) : 'No activity timestamp';
+                document.getElementById("agent-detail-queue").textContent = `${agent.queue_depth ?? 0}`;
+                document.getElementById("agent-detail-branch").textContent = agent.current_branch || 'unknown';
+                document.getElementById("agent-detail-health").textContent = `${agent.service_name || 'service unknown'}${agent.pid ? ` / ${agent.pid}` : ''}`;
+                const tag = document.getElementById("agent-detail-status-tag");
+                tag.textContent = agentStatusLabel(agent.status);
+                tag.className = `px-2 py-0.5 rounded text-[9px] uppercase font-bold border ${tone.chip}`;
+                const runs = detail.recent_runs || [];
+                document.getElementById("agent-detail-runs").innerHTML = runs.length ? runs.map(run => `
+                    <div class="flex justify-between gap-2 text-[10px] border-b border-slate-900/70 pb-1 last:border-0">
+                        <span class="text-slate-300 truncate">${run.issue_url ? `<a href="${run.issue_url}" target="_blank" class="text-cyan-400 hover:underline">${run.issue_id}</a>` : (run.issue_id || 'unknown')}</span>
+                        <span class="text-slate-500 truncate">${run.status || 'unknown'} · ${run.last_activity_at ? formatDate(run.last_activity_at) : '—'}</span>
+                    </div>
+                `).join('') : `<div class="text-slate-500 italic">No recent runs for this agent.</div>`;
+                const timeline = detail.recent_timeline || [];
+                document.getElementById("agent-detail-timeline").innerHTML = timeline.length ? timeline.map(item => `
+                    <div class="text-[10px] border-b border-slate-900/70 pb-1 last:border-0">
+                        <div class="text-slate-300">${item.title || item.kind || 'Timeline event'}</div>
+                        <div class="text-slate-500">${item.source || 'Timeline'} · ${item.timestamp ? formatDate(item.timestamp) : '—'}</div>
+                    </div>
+                `).join('') : `<div class="text-slate-500 italic">No matching timeline events.</div>`;
+            } catch (err) {
+                console.error('Error loading agent detail:', err);
+                const tone = agentStatusTone('errored');
+                document.getElementById("agent-detail-dot").className = `w-3 h-3 rounded-full ${tone.dot}`;
+                document.getElementById("agent-detail-role").textContent = "Agent detail API unavailable";
+                document.getElementById("agent-detail-task").textContent = `Unable to load live detail: ${err.message || err}`;
+                document.getElementById("agent-detail-source").textContent = "No mock detail fallback rendered.";
+                const tag = document.getElementById("agent-detail-status-tag");
+                tag.textContent = 'error';
+                tag.className = `px-2 py-0.5 rounded text-[9px] uppercase font-bold border ${tone.chip}`;
             }
         }
 
@@ -1639,6 +1738,7 @@
             
             if (activeTab === 'dashboard') {
                 await renderDashboardSummary();
+                await fetchAgentStatus();
                 await fetchQuotaSummary();
                 await fetchMorningBriefing();
             } else if (activeTab === 'merge') {

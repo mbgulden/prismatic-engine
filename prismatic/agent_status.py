@@ -51,8 +51,8 @@ def agent_key(name: str | None) -> str:
 def _record_to_dict(record: Any) -> dict[str, Any]:
     if isinstance(record, dict):
         return dict(record)
-    if is_dataclass(record):
-        return asdict(record)
+    if is_dataclass(record) and not isinstance(record, type):
+        return asdict(record)  # type: ignore[arg-type]
     out: dict[str, Any] = {}
     for name in (
         "run_id",
@@ -108,14 +108,16 @@ def _latest_time(record: dict[str, Any]) -> datetime | None:
 def _status_from_record(record: dict[str, Any], now: datetime) -> tuple[str, str, dict[str, Any]]:
     raw_status = str(record.get("status") or "unknown").lower()
     error = str(record.get("error_message") or "")
-    evidence = record.get("evidence") if isinstance(record.get("evidence"), dict) else {}
+    evidence_raw = record.get("evidence")
+    evidence = evidence_raw if isinstance(evidence_raw, dict) else {}
     lower_blob = " ".join(
         str(x or "").lower()
         for x in [raw_status, error, evidence.get("status"), evidence.get("reason"), evidence.get("phase"), record.get("done_gate_result")]
     )
     started = _parse_dt(record.get("started_at"))
     completed = _parse_dt(record.get("completed_at"))
-    age_s = (now - (completed or started)).total_seconds() if (completed or started) else None
+    event_dt = completed or started
+    age_s = (now - event_dt).total_seconds() if event_dt is not None else None
     meta = {"raw_status": raw_status, "age_seconds": age_s}
 
     if "await" in lower_blob and ("feedback" in lower_blob or "user" in lower_blob or "approval" in lower_blob):

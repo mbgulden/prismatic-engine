@@ -367,6 +367,55 @@ async def get_agents() -> dict[str, Any]:
     return {"updated_at": now, "agents": agents}
 
 
+def _agent_status_inputs(limit: int = 500) -> dict[str, Any]:
+    """Collect live read-only inputs for normalized agent status endpoints."""
+    from prismatic.ingestion_status import queue_payload, recovery_status_payload
+    from prismatic.timeline import list_timeline
+
+    run_records = _recent_agent_runs(limit=limit)
+    run_dicts = [_run_record_to_dict(record) for record in run_records]
+    registry = _read_agent_registry()
+    queue = queue_payload(run_records, limit=limit)
+    recovery = recovery_status_payload(
+        _read_dashboard_recovery_state(),
+        run_records,
+        counters=dict(_webhook_counters),
+    )
+    timeline = list_timeline(
+        limit=limit,
+        run_records=run_dicts,
+        recovery_state=_read_dashboard_recovery_state(),
+        webhook_counters=dict(_webhook_counters),
+    )
+    return {
+        "run_records": run_records,
+        "registry": registry,
+        "queue_payload": queue,
+        "timeline_payload": timeline,
+        "health_context": {
+            "recovery": recovery,
+            "webhook_counters": dict(_webhook_counters),
+            "server_started_at": _server_started_at,
+        },
+    }
+
+
+@app.get("/api/gateway/agents/status")
+async def gateway_agents_status() -> dict[str, Any]:
+    """Return normalized live agent/worker status for the dashboard summary."""
+    from prismatic.agent_status import build_agent_status
+
+    return build_agent_status(**_agent_status_inputs())
+
+
+@app.get("/api/gateway/agents/{agent_id}")
+async def gateway_agent_detail(agent_id: str) -> dict[str, Any]:
+    """Return normalized drill-down detail for one agent/worker."""
+    from prismatic.agent_status import build_agent_detail
+
+    return build_agent_detail(agent_id, **_agent_status_inputs())
+
+
 # ── Health ──────────────────────────────────────────────────────────
 
 
