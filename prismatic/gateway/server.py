@@ -419,6 +419,14 @@ async def gateway_agent_detail(agent_id: str) -> dict[str, Any]:
 # ── Health ──────────────────────────────────────────────────────────
 
 
+@app.get("/api/gateway/dashboard/contracts")
+async def dashboard_contracts_manifest() -> dict[str, Any]:
+    """Return the read-only dashboard section contract manifest."""
+    from prismatic.dashboard_contracts import dashboard_contract_manifest
+
+    return dashboard_contract_manifest()
+
+
 @app.get("/health")
 async def health() -> dict[str, Any]:
     """Watchdog health check — returns uptime and system status."""

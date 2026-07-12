@@ -61,6 +61,7 @@ prismatic-gateway = "prismatic.gateway.server:main"
 prismatic-api = "prismatic.api.server:run"
 prismatic-timeline = "prismatic.timeline:main"
 prismatic-agent-context = "prismatic.agent_context:main"
+prismatic-dashboard-verify = "prismatic.dashboard_contracts:main"
 
 [tool.setuptools.packages.find]
 include = ["prismatic*"]
