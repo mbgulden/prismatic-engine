@@ -6,21 +6,37 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+PLUGIN_ROOT = REPO_ROOT / "plugins"
+for path in (str(PLUGIN_ROOT), str(REPO_ROOT)):
+    if path in sys.path:
+        sys.path.remove(path)
+# REPO_ROOT must be first so `plugins.pwp` resolves to this checkout rather
+# than an unrelated installed `plugins` package in agent virtualenvs.
+sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(1, str(PLUGIN_ROOT))
+external_plugins = sys.modules.get("plugins")
+if external_plugins is not None:
+    module_file = getattr(external_plugins, "__file__", "") or ""
+    if not module_file.startswith(str(REPO_ROOT)):
+        sys.modules.pop("plugins", None)
 
+from plugins.pwp.oauth_credentials import main as credentials_main  # noqa: E402
 from plugins.pwp.theme_diff import main as theme_diff_main  # noqa: E402
 from plugins.pwp.theme_validator import main as theme_validate_main  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    if len(args) >= 1 and args[0] == "credentials":
+        return credentials_main(args[1:])
     if len(args) >= 2 and args[0] == "theme" and args[1] == "validate":
         return theme_validate_main(args[2:])
     if len(args) >= 2 and args[0] == "theme" and args[1] in {"diff", "check-compat"}:
         return theme_diff_main(args[1:])
     print(
-        "Usage: pwp theme validate <path> [--json] | "
+        "Usage: pwp credentials refresh <provider> [--verbose] [--no-verify] | "
+        "pwp credentials status <provider> [--verify] | "
+        "pwp theme validate <path> [--json] | "
         "pwp theme diff --from <path> --to <path> [--engine-version <semver>] [--json] | "
         "pwp theme check-compat <path> --engine-version <semver> [--json]",
         file=sys.stderr,
