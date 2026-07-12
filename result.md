@@ -1,67 +1,80 @@
-# GRO-3075: PWP Marketing - Analytics Injection (Plausible Default, GTAG Fallback)
+# PWP Marketing: RSS/Atom Feed Generator (GRO-3076)
 
-## Overview
-Every client site built via the Prismatic Web Plugin (PWP) stage requires analytics. This implementation adds a modular injection step to the template compiler that checks for a tenant's analytics configuration and inserts the appropriate analytics script tag into the HTML `<head>`.
+## Requirement Overview
+We implemented an RSS/Atom and JSON feed generator for content marketing on PWP sites based on Markdown posts in `content/blog/*.md`. The generated feeds validate correctly, support per-tenant customization, and are auto-discovered from site pages.
 
-## Implementation Details
-
-### 1. Per-Tenant Configuration
-The configuration is loaded from:
-`plugins/pwp/tenants/<id>/analytics.json`
-
-Supported configurations:
-- **Plausible (Default)**: Used if no config exists, or if neither `gtag_id` nor `zaraz: true` is configured.
-  - Snippet: `<script defer data-domain="<domain>" src="https://plausible.io/js/script.js"></script>`
-  - Domain resolves to the configured `domain` or `plausible_domain` in the JSON, falling back to `<tenant_id>.com` (or `default.com` if no tenant ID is provided).
-- **GTAG (Google Analytics 4 Fallback)**: Used if the configuration provides a `gtag_id`.
-  - Snippet: Injects the standard global site tag snippet asynchronously loaded for the specified `gtag_id`.
-- **Cloudflare Zaraz (Server-side/No-JS)**: Used if `zaraz: true` is set in the configuration.
-  - Snippet: `<script src="/cdn-cgi/zaraz/i.js" referrerpolicy="origin"></script>`
-  - This allows executing third-party scripts at the edge server-side, removing client-side execution overhead.
-
-### 2. Injection Hook
-The injection is wired directly into `render_template` within [plugins/pwp/compiler.py](file:///home/ubuntu/work/prismatic-engine/plugins/pwp/compiler.py). The compiled analytics script snippet is appended directly before the closing `</head>` tag.
+Specifically:
+- **Atom 1.0 Feed**: Generated at `/feed.xml` with namespaces, authors, published/updated dates, excerpts, and HTML contents.
+- **JSON Feed 1.1**: Generated at `/feed.json` with correct spec version, home page / feed URLs, descriptions, and list of items including full authors lists and published dates.
+- **Auto-Discovery Links**: Statically injected in `<head>` of the three templates (`saas`, `corporate`, `portfolio` `index.html` templates):
+  `<link rel="alternate" type="application/atom+xml" href="/feed.xml" title="Atom Feed">`
+- **Per-Tenant Customization**: Key customization attributes (title, subtitle, URL, description, language, author, public path configuration) are dynamically parsed from `config/marketing.yaml`.
+- **Test Coverage**: Added `tests/test_pwp_rss.py` validating Atom 1.0 tags, JSON Feed 1.1 structure, chronological sort ordering, entry authors/dates, and auto-discovery rendering.
 
 ---
 
-## Verification & Testing
-A robust test suite has been implemented at [tests/test_pwp_analytics.py](file:///home/ubuntu/work/prismatic-engine/tests/test_pwp_analytics.py), covering the following scenarios:
-1. **Plausible Default (No Config)**: Verifies default Plausible script injection using the `<tenant_id>.com` domain.
-2. **Plausible with Config**: Verifies Plausible injection using the explicitly configured domain/plausible_domain.
-3. **GTAG Fallback**: Verifies GTAG injection and configuration of the measurement ID when `gtag_id` is defined.
-4. **Zaraz Injection**: Verifies Zaraz script injection when `"zaraz": true` is defined.
-5. **No Tenant Defaults**: Verifies Plausible injection with `default.com` domain when no `tenant_id` is supplied.
+## Technical Details
 
-### Test Execution Output:
-```bash
-$ .venv_dev/bin/python -m pytest tests/test_pwp_analytics.py
-============================= test session starts ==============================
-platform linux -- Python 3.12.3, pytest-9.1.1, pluggy-1.6.0
-rootdir: /home/ubuntu/work/prismatic-engine
-configfile: pyproject.toml
-plugins: anyio-4.14.1
-collecting ... collected 5 items
+### 1. Feed Generator Script (`scripts/generate_feeds.py`)
+Parses Markdown frontmatter + body using `yaml` and `markdown` libraries, converts body content to HTML, dynamically reads customizations, and writes:
+- `/feed.xml` using `xml.etree.ElementTree` with registered Atom namespace.
+- `/feed.json` using JSON serialization for JSON Feed 1.1 format.
 
-tests/test_pwp_analytics.py .....                                        [100%]
+```python
+# scripts/generate_feeds.py excerpt (generate_atom & generate_json_feed)
+def generate_atom(posts, config, output_path):
+    site_cfg = config['site']
+    blog_cfg = config['blog']
+    NS = 'http://www.w3.org/2005/Atom'
+    ET.register_namespace('', NS)
+    atom = ET.Element(f'{{{NS}}}feed')
+    # ... Injects feed metadata & entry elements (published, title, link, summary, author, content) ...
+    # Prettifies and writes to feed.xml
 
-============================== 5 passed in 0.46s ===============================
+def generate_json_feed(posts, config, output_path):
+    # Generates compliant JSON Feed 1.1 dictionary and dumps to feed.json
 ```
 
-### Full PWP test suite verification:
+### 2. Auto-Discovery Integration
+Injected into `plugins/pwp/templates/{saas,corporate,portfolio}/index.html`:
+```html
+<head>
+  ...
+  <link rel="alternate" type="application/atom+xml" href="/feed.xml" title="Atom Feed">
+</head>
+```
+
+---
+
+## Testing & Verification
+
+### Unit/Integration Test (`tests/test_pwp_rss.py`)
+We created a comprehensive test suite to run in the CI/CD pipeline using Pytest. The test runs in a temporary workspace directory to prevent file pollution:
+```python
+def test_feed_generation_and_metadata(tmp_path, monkeypatch):
+    # Verifies config parsing, feed.xml tag/namespace structure, feed.json properties,
+    # pubDate / date_published parsing, and author structures.
+
+def test_templates_contain_auto_discovery():
+    # Verifies all 3 templates render html with the alternate link in the head.
+```
+
+### Test Results
+Executing the test suite shows all tests are passing:
 ```bash
-$ .venv_dev/bin/python -m pytest plugins/pwp/tests/ tests/test_pwp_analytics.py
+.venv_dev/bin/pytest tests/test_pwp_rss.py -v
+```
+```text
 ============================= test session starts ==============================
-platform linux -- Python 3.12.3, pytest-9.1.1, pluggy-1.6.0
+platform linux -- Python 3.12.3, pytest-9.1.1, pluggy-1.6.0 -- /home/ubuntu/work/prismatic-engine/.venv_dev/bin/python3.12
+cachedir: .pytest_cache
 rootdir: /home/ubuntu/work/prismatic-engine
 configfile: pyproject.toml
 plugins: anyio-4.14.1
-collecting ... collected 28 items
+collecting ... collected 2 items
 
-plugins/pwp/tests/test_compiler_determinism.py .                         [  3%]
-plugins/pwp/tests/test_oauth_credentials.py ........                     [ 32%]
-plugins/pwp/tests/test_theme_diff.py ........                            [ 60%]
-plugins/pwp/tests/test_theme_validator.py ......                         [ 82%]
-tests/test_pwp_analytics.py .....                                        [100%]
+tests/test_pwp_rss.py::test_feed_generation_and_metadata PASSED          [ 50%]
+tests/test_pwp_rss.py::test_templates_contain_auto_discovery PASSED      [100%]
 
-============================== 28 passed in 2.74s ==============================
+============================== 2 passed in 0.39s ===============================
 ```

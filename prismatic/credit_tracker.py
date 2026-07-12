@@ -51,42 +51,13 @@ class AIUltraCreditTracker:
         self._ensure_tables()
 
     def _ensure_tables(self) -> None:
-        """Create necessary tables for media tracking if they do not exist."""
+        """Create necessary tables for media tracking using Alembic migrations."""
         db_dir = os.path.dirname(self._db_path)
         if db_dir and not os.path.exists(db_dir):
             os.makedirs(db_dir, exist_ok=True)
 
-        conn = sqlite3.connect(self._db_path)
-        try:
-            conn.executescript("""
-                CREATE TABLE IF NOT EXISTS telemetry_media_artifacts (
-                    filepath        TEXT PRIMARY KEY,
-                    file_hash       TEXT,
-                    media_type      TEXT NOT NULL,
-                    engine          TEXT NOT NULL,
-                    duration        REAL DEFAULT 0.0,
-                    credits_spent   INTEGER DEFAULT 0,
-                    detected_at     TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_media_detected_at
-                    ON telemetry_media_artifacts(detected_at);
-
-                CREATE TABLE IF NOT EXISTS telemetry_credit_ledger (
-                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-                    run_id          TEXT NOT NULL,
-                    agent           TEXT NOT NULL,
-                    provider        TEXT NOT NULL,
-                    model           TEXT,
-                    credits_spent   INTEGER NOT NULL,
-                    operation       TEXT,
-                    recorded_at     TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_credit_ledger_run
-                    ON telemetry_credit_ledger(run_id);
-            """)
-            conn.commit()
-        finally:
-            conn.close()
+        from prismatic.admin import cmd_db_upgrade
+        cmd_db_upgrade(self._db_path)
 
     def calculate_monthly_spent(self) -> int:
         """Calculate the total credits spent in the current calendar month for google-antigravity."""

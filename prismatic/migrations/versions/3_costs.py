@@ -37,22 +37,22 @@ def upgrade() -> None:
         issue_id TEXT PRIMARY KEY,
         client_id TEXT NOT NULL,
         project_id TEXT NOT NULL,
-        mapped_at TEXT NOT NULL DEFAULT (datetime('now'))
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     """)
 
     op.execute("""
     CREATE TABLE IF NOT EXISTS telemetry_media_artifacts (
-        id              INTEGER PRIMARY KEY AUTOINCREMENT,
-        run_id          TEXT NOT NULL,
-        agent           TEXT NOT NULL,
-        artifact_name   TEXT NOT NULL,
+        filepath        TEXT PRIMARY KEY,
+        file_hash       TEXT,
         media_type      TEXT NOT NULL,
-        size_bytes      INTEGER NOT NULL,
-        storage_uri     TEXT NOT NULL,
-        recorded_at     TEXT NOT NULL
+        engine          TEXT NOT NULL,
+        duration        REAL DEFAULT 0.0,
+        credits_spent   INTEGER DEFAULT 0,
+        detected_at     TEXT NOT NULL
     );
     """)
+    op.execute("CREATE INDEX IF NOT EXISTS idx_media_detected_at ON telemetry_media_artifacts(detected_at);")
 
 def downgrade() -> None:
     op.execute("DROP TABLE IF EXISTS telemetry_media_artifacts;")

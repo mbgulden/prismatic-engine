@@ -78,25 +78,8 @@ class LocalTaskQueue:
         return conn
 
     def _ensure_schema(self) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS local_tasks (
-                    id TEXT PRIMARY KEY,
-                    agent TEXT NOT NULL,
-                    title TEXT NOT NULL,
-                    workspace TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    metadata_json TEXT NOT NULL DEFAULT '{}'
-                )
-                """
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_local_tasks_status_agent ON local_tasks(status, agent)"
-            )
-            conn.commit()
+        from prismatic.admin import cmd_db_upgrade
+        cmd_db_upgrade(str(self.db_path))
 
     def create(
         self,

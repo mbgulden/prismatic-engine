@@ -27,6 +27,7 @@ def upgrade() -> None:
         metadata_json TEXT NOT NULL DEFAULT '{}'
     );
     """)
+    op.execute("CREATE INDEX IF NOT EXISTS idx_local_tasks_status_agent ON local_tasks(status, agent);")
 
 def downgrade() -> None:
     op.execute("DROP TABLE IF EXISTS local_tasks;")
