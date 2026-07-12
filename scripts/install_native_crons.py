@@ -7,8 +7,16 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+if str(REPO_ROOT) in sys.path:
+    sys.path.remove(str(REPO_ROOT))
+sys.path.insert(0, str(REPO_ROOT))
+_loaded_prismatic = sys.modules.get("prismatic")
+if _loaded_prismatic is not None:
+    module_file = getattr(_loaded_prismatic, "__file__", "") or ""
+    if not module_file.startswith(str(REPO_ROOT)):
+        for name in list(sys.modules):
+            if name == "prismatic" or name.startswith("prismatic."):
+                sys.modules.pop(name, None)
 
 from prismatic.native_crons import export_system_crontab_lines  # noqa: E402
 
