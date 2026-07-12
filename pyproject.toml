@@ -60,6 +60,7 @@ prismatic-second-witness = "prismatic.journal:cli_second_witness"
 prismatic-gateway = "prismatic.gateway.server:main"
 prismatic-api = "prismatic.api.server:run"
 prismatic-timeline = "prismatic.timeline:main"
+prismatic-agent-context = "prismatic.agent_context:main"
 
 [tool.setuptools.packages.find]
 include = ["prismatic*"]

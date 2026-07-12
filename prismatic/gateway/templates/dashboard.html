@@ -1093,11 +1093,7 @@
             { id: "gdrive-context", name: "Google Drive · Context", path: "/home/ubuntu/mounts/google-drive-context", branch: "n/a", status: "stalled", files: 34, size: "480 KB" }
         ];
 
-        const mockSkills = [
-            { id: "code-review", name: "Code Reviewer", desc: "Automated PR sanity checking, security vulnerability scan, and performance reviews.", version: "v1.2", status: "Active" },
-            { id: "docs-generator", name: "Docs Generator", desc: "Reads project classes, functions, and docstrings to auto-generate markdown.", version: "v0.9", status: "Active" },
-            { id: "research-synthesizer", name: "Research Synthesizer", desc: "Scrapes Synology NAS backups and compiles historical event summaries.", version: "v1.0", status: "Available" }
-        ];
+        let skillsCache = [];
         let timelineCache = [];
 
         // Theme Management
@@ -1552,7 +1548,7 @@
             } else if (activeTab === 'workspaces') {
                 await renderWorkspacesView();
             } else if (activeTab === 'skills') {
-                renderSkillsView();
+                await renderSkillsView();
             } else if (activeTab === 'signals') {
                 await renderSignalsView();
             } else if (activeTab === 'quota') {
@@ -1856,21 +1852,58 @@
             }
         }
 
-        function renderSkillsView() {
+        async function renderSkillsView() {
             const grid = document.getElementById("skills-grid");
-            grid.innerHTML = mockSkills.map(sk => `
-                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between space-y-3 relative overflow-hidden">
-                    <div class="flex justify-between items-start">
-                        <span class="text-xs text-slate-500 font-bold uppercase">${sk.version}</span>
-                        <span class="px-2 py-0.5 rounded text-[9px] font-bold ${sk.status === 'Active' ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20' : 'bg-slate-800 text-slate-400'} uppercase">${sk.status}</span>
-                    </div>
-                    <h3 class="font-bold text-slate-200 leading-tight">${sk.name}</h3>
-                    <p class="text-xs text-slate-400 leading-relaxed">${sk.desc}</p>
-                    <button class="w-full bg-slate-950 hover:bg-slate-900 border border-slate-800/80 text-xs font-semibold py-1.5 rounded transition">
-                        ${sk.status === 'Active' ? 'Disable Capability' : 'Install Skill'}
-                    </button>
-                </div>
-            `).join("");
+            grid.innerHTML = `<div class="col-span-full text-slate-500 italic">Loading live skill registry…</div>`;
+            try {
+                const res = await fetch("/api/skills");
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                skillsCache = data.skills || [];
+                if (skillsCache.length === 0) {
+                    grid.innerHTML = `<div class="col-span-full text-slate-500 italic">No packaged Prismatic skills found.</div>`;
+                    return;
+                }
+                grid.innerHTML = skillsCache.map(sk => {
+                    const installed = Boolean(sk.installed);
+                    const action = installed ? 'uninstall' : 'install';
+                    const buttonLabel = installed ? 'Uninstall Skill' : 'Install Skill';
+                    return `
+                        <div class="glass-panel p-4 rounded-xl flex flex-col justify-between space-y-3 relative overflow-hidden">
+                            <div class="flex justify-between items-start gap-2">
+                                <span class="text-xs text-slate-500 font-bold uppercase">${escapeHtml(sk.version || '?')}</span>
+                                <span class="px-2 py-0.5 rounded text-[9px] font-bold ${installed ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20' : 'bg-slate-800 text-slate-400'} uppercase">${escapeHtml(sk.status || (installed ? 'Active' : 'Available'))}</span>
+                            </div>
+                            <h3 class="font-bold text-slate-200 leading-tight">${escapeHtml(sk.name || sk.id)}</h3>
+                            <p class="text-xs text-slate-400 leading-relaxed">${escapeHtml(sk.description || 'No description provided.')}</p>
+                            <div class="text-[10px] text-slate-500 uppercase font-bold">${escapeHtml(sk.category || 'uncategorized')}</div>
+                            <button onclick="toggleSkillInstall('${encodeURIComponent(sk.id)}', '${action}')" class="w-full bg-slate-950 hover:bg-slate-900 border border-slate-800/80 text-xs font-semibold py-1.5 rounded transition">
+                                ${buttonLabel}
+                            </button>
+                        </div>
+                    `;
+                }).join("");
+            } catch (err) {
+                console.error("Error loading skills registry:", err);
+                grid.innerHTML = `<div class="col-span-full text-rose-400 italic">Skills API unavailable: ${escapeHtml(err.message || err)}</div>`;
+            }
+        }
+
+        async function toggleSkillInstall(encodedSkillId, action) {
+            const skillId = decodeURIComponent(encodedSkillId);
+            try {
+                const res = await fetch(`/api/skills/${encodeURIComponent(skillId)}/${action}`, { method: 'POST' });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || data.ok === false) {
+                    throw new Error(data.error || `HTTP ${res.status}`);
+                }
+                showToast(`${action === 'install' ? 'Installed' : 'Uninstalled'} ${skillId}`);
+                await renderSkillsView();
+                if (activeTab === 'signals') await renderSignalsView();
+            } catch (err) {
+                console.error("Error updating skill:", err);
+                showToast(`Skill ${action} failed: ${err.message || err}`, true);
+            }
         }
 
         async function renderSignalsView() {

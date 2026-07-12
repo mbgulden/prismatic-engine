@@ -623,6 +623,136 @@ def _record_control_timeline_event(
         return None
 
 
+def _skill_card(manifest: dict[str, Any], *, installed: bool) -> dict[str, Any]:
+    name = str(manifest.get("name") or "")
+    return {
+        "id": name,
+        "name": name,
+        "version": str(manifest.get("version") or "?"),
+        "description": str(manifest.get("description") or ""),
+        "category": str(manifest.get("category") or "uncategorized"),
+        "labels": manifest.get("labels") if isinstance(manifest.get("labels"), list) else [],
+        "author": str(manifest.get("author") or ""),
+        "installed": installed,
+        "status": "Active" if installed else "Available",
+        "path": str(manifest.get("_path") or ""),
+    }
+
+
+def _skills_payload() -> dict[str, Any]:
+    from prismatic.skills import list_skills
+
+    bundled = {str(skill.get("name")): skill for skill in list_skills(installed=False)}
+    installed = {str(skill.get("name")): skill for skill in list_skills(installed=True)}
+    cards: list[dict[str, Any]] = []
+    for name in sorted(set(bundled) | set(installed)):
+        manifest = installed.get(name) or bundled.get(name) or {"name": name}
+        cards.append(_skill_card(manifest, installed=name in installed))
+    return {
+        "source": "prismatic.skills",
+        "bundled_count": len(bundled),
+        "installed_count": len(installed),
+        "skills": cards,
+    }
+
+
+@app.get("/api/skills")
+async def get_skills() -> dict[str, Any]:
+    """Return live Prismatic Core skill registry cards."""
+    return _skills_payload()
+
+
+@app.get("/api/skills/{name}", response_model=None)
+async def get_skill_info(name: str) -> dict[str, Any] | JSONResponse:
+    from prismatic.skills import skill_info
+
+    manifest = skill_info(name)
+    if manifest is None:
+        return JSONResponse({"ok": False, "error": "skill not found", "name": name}, status_code=404)
+    payload = _skill_card(manifest, installed=any(card["id"] == name and card["installed"] for card in _skills_payload()["skills"]))
+    payload["manifest"] = manifest
+    return {"ok": True, "source": "prismatic.skills", "skill": payload}
+
+
+@app.post("/api/skills/{name}/install", response_model=None)
+async def install_skill_api(name: str) -> dict[str, Any] | JSONResponse:
+    from prismatic.skills import install_skill, list_skills, skill_info
+
+    bundled = {str(skill.get("name")) for skill in list_skills(installed=False)}
+    installed = {str(skill.get("name")) for skill in list_skills(installed=True)}
+    if name in installed:
+        return JSONResponse({"ok": False, "error": "skill already installed", "name": name}, status_code=409)
+    if name not in bundled:
+        return JSONResponse({"ok": False, "error": "skill not found", "name": name}, status_code=404)
+    if not install_skill(name):
+        return JSONResponse({"ok": False, "error": "skill install failed", "name": name}, status_code=500)
+    manifest = skill_info(name) or {"name": name}
+    timeline_item = _record_control_timeline_event(
+        source="SkillRegistry",
+        severity="success",
+        title="Skill installed",
+        message=f"Installed Prismatic skill {name}",
+        entity_id=name,
+        metadata={"skill": name, "version": manifest.get("version"), "category": manifest.get("category")},
+    )
+    return {"ok": True, "skill": _skill_card(manifest, installed=True), "timeline_item": timeline_item}
+
+
+@app.post("/api/skills/{name}/uninstall", response_model=None)
+async def uninstall_skill_api(name: str) -> dict[str, Any] | JSONResponse:
+    from prismatic.skills import list_skills, uninstall_skill
+
+    installed = {str(skill.get("name")) for skill in list_skills(installed=True)}
+    if name not in installed:
+        return JSONResponse({"ok": False, "error": "installed skill not found", "name": name}, status_code=404)
+    if not uninstall_skill(name):
+        return JSONResponse({"ok": False, "error": "skill uninstall failed", "name": name}, status_code=500)
+    timeline_item = _record_control_timeline_event(
+        source="SkillRegistry",
+        severity="warning",
+        title="Skill uninstalled",
+        message=f"Uninstalled Prismatic skill {name}",
+        entity_id=name,
+        metadata={"skill": name},
+    )
+    return {"ok": True, "name": name, "timeline_item": timeline_item}
+
+
+@app.get("/api/agent-context")
+async def get_agent_context(agent: str = "hermes") -> dict[str, Any]:
+    from prismatic.agent_context import list_context_cards
+
+    return {"source": "prismatic.agent_context", "agent": agent, "cards": list_context_cards(agent)}
+
+
+@app.get("/api/agent-context/line")
+async def get_agent_context_line(agent: str = "hermes") -> dict[str, Any]:
+    from prismatic.agent_context import render_context_lines
+
+    return {"source": "prismatic.agent_context", "agent": agent, "line": render_context_lines(agent)}
+
+
+@app.post("/api/agent-context/install-doc", response_model=None)
+async def install_agent_context_doc(payload: dict[str, Any]) -> dict[str, Any] | JSONResponse:
+    from prismatic.agent_context import install_context_doc
+
+    path = str(payload.get("path") or "").strip()
+    agent = str(payload.get("agent") or "hermes").strip() or "hermes"
+    if not path:
+        return JSONResponse({"ok": False, "error": "path is required"}, status_code=400)
+    result = install_context_doc(path, agent=agent)
+    timeline_item = _record_control_timeline_event(
+        source="AgentContext",
+        severity="success",
+        title="Agent context doc installed",
+        message=f"Installed Prismatic agent context block for {agent} into {path}",
+        entity_id=path,
+        metadata={"agent": agent, "path": path, "action": result.get("action")},
+    )
+    result["timeline_item"] = timeline_item
+    return result
+
+
 @app.get("/api/dashboard/recovery-control/status")
 async def dashboard_recovery_control_status() -> dict[str, Any]:
     """Return visible recovery-control proof for the dashboard UI."""
