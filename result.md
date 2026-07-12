@@ -1,58 +1,54 @@
-# Verification of Headless Goal & YOLO Equivalents (GRO-3114 / GRO-LR1)
+# Linear Webhook HMAC Verification Fix (GRO-3170)
 
-This document contains the verified findings, skill documentation status, and memory updates for the headless execution of goals and long-running tasks in Google Antigravity (AGY).
+## Problem
+In `prismatic/gateway/server.py`, the Linear webhook endpoints (`/api/gateway/linear` and `/webhooks/linear` alias) only verified the `linear-signature` header if it was provided by the client. If the signature header was omitted or if no secrets were configured, verification was bypassed, allowing anyone to post unauthenticated/fake events to the event bus.
 
-## 1. Verification of Test Tasks
+## Fix
+1. **Always Verify Signature when Secrets exist**: Enforced signature checks whenever `secrets` are configured via environment variables (such as `LINEAR_WEBHOOK_SIGNING_SECRET`, `PRISMATIC_LINEAR_WEBHOOK_SECRET`, etc.).
+2. **Reject Invalid/Missing Signatures**: If the signature header is missing or does not match any of the configured secrets, the server now immediately rejects the request with `401 Unauthorized` and returns `{"status": "auth-failed"}`.
+3. **Graceful Dev Mode**: If no secrets are configured in the environment, the server logs a warning and proceeds without signature verification to support local development.
 
-We verified that the three test tasks (`GRO-3027`, `GRO-3042`, `GRO-2495`) successfully completed their execution using the **Mandatory Finish Protocol** from their respective sandboxes and execution logs under `/archive/agy_sandbox_logs/`.
+### Code Changes
+Modified the validation block in `prismatic/gateway/server.py` to always extract secrets first:
+```python
+    secrets = get_linear_secrets()
+    if secrets:
+        expected = None
+        for secret in secrets:
+            candidate = _hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+            if _hmac.compare_digest(candidate, signature):
+                expected = candidate
+                break
+        if expected is None:
+            _webhook_counters["linear_auth_failed"] += 1
+            await _publish_webhook_auth_failed("linear")
+            from fastapi.responses import JSONResponse
 
-### Task 1: GRO-3027 (Epic 6 Documentation)
-- **Log Path**: `/archive/agy_sandbox_logs/GRO-3027.log`
-- **Verification Details**:
-  - Saved the complete execution summary to `RESULT.md`.
-  - Ran the self-review script: `python3 ~/.hermes/profiles/orchestrator/scripts/agy_self_review.py GRO-3027`
-  - Outputted the final line: `DONE: GRO-3027 Created the 8-document Prismatic Engine core documentation foundation.`
-
-### Task 2: GRO-3042 (Plugin Lifecycle Manager)
-- **Log Path**: `/archive/agy_sandbox_logs/GRO-3042.log`
-- **Verification Details**:
-  - Wrote changes to `prismatic/plugins/lifecycle_manager.py` and `prismatic/cli/__init__.py`.
-  - Created execution summary in `RESULT.md`.
-  - Executed self-review script successfully.
-  - Outputted the final line: `DONE: GRO-3042 Create lifecycle_manager.py stub and integrate with CLI subcommands`
-
-### Task 3: GRO-2495 (Astro EmDash Integration)
-- **Log Path**: `/archive/agy_sandbox_logs/GRO-2495.log`
-- **Verification Details**:
-  - Implemented the `pwb` CLI command and stages in `prismatic/cli/pwb.py`.
-  - Created the detailed summary file `RESULT.md`.
-  - Passed the self-review protocol.
-  - Outputted the final line: `DONE: GRO-2495 Wire Astro+EmDash scaffold into canonical PWP pipeline via pwb run command`
-
----
-
-## 2. Skill Documentation Status
-
-We verified that the skill files at both required locations exist, are identical, and contain all necessary documentation including trigger conditions, CLI options, the verbatim Mandatory Finish Protocol, pitfalls, and log verification steps.
-
-- **Paths**:
-  - `/home/ubuntu/.antigravity/skills/agent-orchestration/agy-long-running-tasks/SKILL.md`
-  - `/home/ubuntu/.gemini/config/skills/agy-long-running-tasks/SKILL.md`
-- **Content Elements Documented**:
-  - **Trigger Conditions**: Launching tasks >30min, running headless batch operations/scripts.
-  - **Numbered Steps**: Passing options `--print-timeout 24h0m0s --dangerously-skip-permissions --sandbox --add-dir <path>`
-  - **Mandatory Finish Protocol**: Verbatim instructions for writing `RESULT.md`, running self-review (`agy_self_review.py`), and outputting the `DONE:` final line.
-  - **Pitfalls**: Interactive commands in headless prompts, model selection display name discrepancies, home directory sandbox path trap, and silent terminal hangs (PTY requirement).
-  - **Verification**: Checking logs for the `RESULT.md detected` and `quality-gate fired` messages.
+            return JSONResponse({"status": "auth-failed"}, status_code=401)
+    else:
+        logger.warning("Linear webhook skipped signature check: no secrets configured")
+```
 
 ---
 
-## 3. Memory Update
+## Testing & Verification
+A new test suite was created in `tests/test_linear_webhook.py` to cover all scenarios:
+1. **Missing signature** (`test_linear_webhook_no_signature`) -> returns `401`
+2. **Invalid signature** (`test_linear_webhook_invalid_signature`) -> returns `401`
+3. **Valid signature** (`test_linear_webhook_valid_signature`) -> returns `200`
+4. **Valid signature on alias path** (`test_linear_webhook_alias_valid_signature`) -> returns `200`
 
-We successfully updated the Fred profile memory file to capture the headless-equivalents rule.
+### Test Output
+All tests in `tests/test_linear_webhook.py` ran and passed:
+```
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0
+rootdir: /home/ubuntu/work/prismatic-engine
+configfile: pyproject.toml
+plugins: anyio-4.13.0
+collecting ... collecting 0 items                                                             collected 4 items                                                              
 
-- **File Path**: `/home/ubuntu/.hermes/profiles/fred/memories/MEMORY.md`
-- **Added Memory Line**:
-  ```text
-  /goal and /yolo are TUI-only; factory uses --dangerously-skip-permissions + --print-timeout 24h0m0s + MANDATORY FINISH PROTOCOL.
-  ```
+tests/test_linear_webhook.py ....                                        [100%]
+======================== 4 passed, 5 warnings in 0.82s =========================
+```
+Also verified that other existing gateway tests (`prismatic/gateway/test_merge_status.py` and `prismatic/tests/test_gateway_recovery_controls.py`) passed successfully.
