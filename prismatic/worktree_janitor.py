@@ -520,8 +520,17 @@ def default_core_crons() -> list[dict[str, Any]]:
             "command": "prismatic worktrees janitor --repo ${PRISMATIC_REPO_DIR:-.} --quiet",
             "description": "Removes only clean+merged stale worktrees; dirty work is reported/manifested, never deleted by cron.",
             "silent_when_clean": True,
+        },
+        {
+            "id": "prismatic.db-vacuum.weekly",
+            "name": "Prismatic Database Vacuum Runner",
+            "schedule": "0 3 * * 0",
+            "command": "python3 ${PRISMATIC_REPO_DIR:-.}/scripts/vacuum_dbs.py",
+            "description": "Weekly SQLite VACUUM and ANALYZE runner for all Prismatic Engine state databases.",
+            "silent_when_clean": False,
         }
     ]
+
 
 
 def crontab_lines(repo: str | os.PathLike[str] | None = None) -> list[str]:

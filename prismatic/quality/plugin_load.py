@@ -449,6 +449,9 @@ def _infer_failure_status(detail: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     """CLI entry point. Returns 0 on pass, 1 on fail, 2 on bad args."""
+    from prismatic.observability import init_logging
+
+    init_logging()
     parser = argparse.ArgumentParser(
         description="Verify every shipped plugin loads in the current environment.",
     )

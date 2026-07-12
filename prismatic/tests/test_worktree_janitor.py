@@ -185,3 +185,7 @@ def test_core_crons_emit_portable_manifest(tmp_path: Path) -> None:
     assert "--include-dirty" not in crontab
     assert "PRISMATIC_REPO_DIR=" in crontab
     assert manifest[0]["id"] == "prismatic.worktree-janitor.hourly"
+    
+    assert "vacuum_dbs.py" in crontab
+    assert any(m["id"] == "prismatic.db-vacuum.weekly" for m in manifest)
+

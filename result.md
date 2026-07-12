@@ -1,16 +1,58 @@
-# GRO-3163: Per-agent API quota tracking + auto-throttle
+# Verification of Headless Goal & YOLO Equivalents (GRO-3114 / GRO-LR1)
 
-## Issue Description
-Opus quota is hit after ~15 dispatches/day. No throttling logic existed, meaning agents fired dispatches until Google returned 429, causing dispatches to fail.
+This document contains the verified findings, skill documentation status, and memory updates for the headless execution of goals and long-running tasks in Google Antigravity (AGY).
 
-## Resolution
-1. **Model Daily limits**: Defined daily dispatch limits mapping for models. The `opus` model limit is set to `14` dispatches daily.
-2. **Quota Tracking in `telemetry_credit_ledger`**:
-   - Added a daily dispatch count tracker function `get_daily_dispatch_count(model, db_path)` that counts `dispatch` operations for a specific model since UTC midnight.
-   - Updated `prismatic/curator/lane.py` to record every successfully spawned or queued dispatch under `operation="dispatch"` in `telemetry_credit_ledger` via `get_collector().record_credit()`.
-3. **Auto-Throttle & Auto-Pause**:
-   - Updated `decide_dispatch()` in `prismatic/curator/dispatcher.py` to query `get_daily_dispatch_count` and automatically pause dispatches for the requested model if it reaches the daily limit.
-   - Surfaced the `quota_paused: bool` state in both `DispatchDecision` and its serialized `to_dict()` form.
-4. **Unit Tests Added**:
-   - `test_get_daily_dispatch_count`: Verifies correct database querying of dispatches within the daily UTC window.
-   - `test_decide_dispatch_quota_paused`: Verifies that `decide_dispatch` returns `should_dispatch=False` and `quota_paused=True` once the limit is reached.
+## 1. Verification of Test Tasks
+
+We verified that the three test tasks (`GRO-3027`, `GRO-3042`, `GRO-2495`) successfully completed their execution using the **Mandatory Finish Protocol** from their respective sandboxes and execution logs under `/archive/agy_sandbox_logs/`.
+
+### Task 1: GRO-3027 (Epic 6 Documentation)
+- **Log Path**: `/archive/agy_sandbox_logs/GRO-3027.log`
+- **Verification Details**:
+  - Saved the complete execution summary to `RESULT.md`.
+  - Ran the self-review script: `python3 ~/.hermes/profiles/orchestrator/scripts/agy_self_review.py GRO-3027`
+  - Outputted the final line: `DONE: GRO-3027 Created the 8-document Prismatic Engine core documentation foundation.`
+
+### Task 2: GRO-3042 (Plugin Lifecycle Manager)
+- **Log Path**: `/archive/agy_sandbox_logs/GRO-3042.log`
+- **Verification Details**:
+  - Wrote changes to `prismatic/plugins/lifecycle_manager.py` and `prismatic/cli/__init__.py`.
+  - Created execution summary in `RESULT.md`.
+  - Executed self-review script successfully.
+  - Outputted the final line: `DONE: GRO-3042 Create lifecycle_manager.py stub and integrate with CLI subcommands`
+
+### Task 3: GRO-2495 (Astro EmDash Integration)
+- **Log Path**: `/archive/agy_sandbox_logs/GRO-2495.log`
+- **Verification Details**:
+  - Implemented the `pwb` CLI command and stages in `prismatic/cli/pwb.py`.
+  - Created the detailed summary file `RESULT.md`.
+  - Passed the self-review protocol.
+  - Outputted the final line: `DONE: GRO-2495 Wire Astro+EmDash scaffold into canonical PWP pipeline via pwb run command`
+
+---
+
+## 2. Skill Documentation Status
+
+We verified that the skill files at both required locations exist, are identical, and contain all necessary documentation including trigger conditions, CLI options, the verbatim Mandatory Finish Protocol, pitfalls, and log verification steps.
+
+- **Paths**:
+  - `/home/ubuntu/.antigravity/skills/agent-orchestration/agy-long-running-tasks/SKILL.md`
+  - `/home/ubuntu/.gemini/config/skills/agy-long-running-tasks/SKILL.md`
+- **Content Elements Documented**:
+  - **Trigger Conditions**: Launching tasks >30min, running headless batch operations/scripts.
+  - **Numbered Steps**: Passing options `--print-timeout 24h0m0s --dangerously-skip-permissions --sandbox --add-dir <path>`
+  - **Mandatory Finish Protocol**: Verbatim instructions for writing `RESULT.md`, running self-review (`agy_self_review.py`), and outputting the `DONE:` final line.
+  - **Pitfalls**: Interactive commands in headless prompts, model selection display name discrepancies, home directory sandbox path trap, and silent terminal hangs (PTY requirement).
+  - **Verification**: Checking logs for the `RESULT.md detected` and `quality-gate fired` messages.
+
+---
+
+## 3. Memory Update
+
+We successfully updated the Fred profile memory file to capture the headless-equivalents rule.
+
+- **File Path**: `/home/ubuntu/.hermes/profiles/fred/memories/MEMORY.md`
+- **Added Memory Line**:
+  ```text
+  /goal and /yolo are TUI-only; factory uses --dangerously-skip-permissions + --print-timeout 24h0m0s + MANDATORY FINISH PROTOCOL.
+  ```

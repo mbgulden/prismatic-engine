@@ -2928,6 +2928,9 @@ def main() -> None:
     Legacy Support (for backward compatibility):
         ``--once``, ``--interval``, ``--setup-pipelines`` work as before.
     """
+    from prismatic.observability import init_logging
+
+    init_logging()
     import argparse
 
     # ── Legacy support: Rewrite sys.argv ─────────────────────────
