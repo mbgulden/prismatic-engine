@@ -42,6 +42,7 @@ from prismatic.gateway.ws_broadcaster import (
 )
 from prismatic.lock import _read_locks as read_swarm_locks
 from prismatic.plugin_health import get_plugin_health
+from prismatic.pwp_integration import connect_pwp, disconnect_pwp, integration_status, refresh_pwp
 from prismatic.run_records import AgentRunRecordStore
 
 logger = logging.getLogger("prismatic.gateway.server")
@@ -384,6 +385,32 @@ async def plugin_health(plugin_name: str, request: Request) -> JSONResponse:
     if payload.get("status") == "unhealthy":
         return JSONResponse(payload, status_code=503)
     return JSONResponse(payload)
+
+
+@app.get("/api/pwp/status")
+async def pwp_status() -> dict[str, Any]:
+    """Return PWP additive plugin connection, capability, and governance status."""
+    return integration_status()
+
+
+@app.post("/api/pwp/connect")
+async def pwp_connect() -> JSONResponse:
+    """Connect PWP as an additive PE capability surface when hard blockers are clear."""
+    payload = connect_pwp()
+    status = 200 if payload.get("connected") else 409
+    return JSONResponse(payload, status_code=status)
+
+
+@app.post("/api/pwp/disconnect")
+async def pwp_disconnect() -> dict[str, Any]:
+    """Disconnect PWP capability surface without deleting plugin code or artifacts."""
+    return disconnect_pwp()
+
+
+@app.post("/api/pwp/refresh")
+async def pwp_refresh() -> dict[str, Any]:
+    """Refresh PWP dashboard/governance state from current manifest and files."""
+    return refresh_pwp()
 
 
 @app.get("/api/cost")

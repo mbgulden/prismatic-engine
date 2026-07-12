@@ -2,12 +2,15 @@ schema_version: "1.0.0"
 
 name: "pwp-design-token-plugin"
 
-version: "1.0.0"
+version: "1.1.0"
 
 description: >-
-  Design-token schema + 3 starter templates compiler and renderer.
+  Portable Website Plugin (PWP): additive PE plugin for design-token/theme
+  validation, portable website production workflows, credential-provider
+  maintenance, visual/governance checks, and dashboard-visible capability
+  contracts.
 
-author: "Antigravity (agent:antigravity)"
+author: "Prismatic Engine Swarm"
 
 entry_point: "pwp.plugin:PWPDesignTokenPlugin"
 
@@ -20,3 +23,46 @@ personas: []
 
 hooks:
   - "on_init"
+
+capabilities:
+  - id: "pwp.theme-system"
+    label: "Portable website/theme system"
+    category: "website-production"
+    tools:
+      - "pwp theme validate"
+      - "pwp theme diff"
+      - "pwp theme check-compat"
+    governance:
+      - "schema-backed theme contracts"
+      - "additive plugin boundary"
+  - id: "pwp.credentials"
+    label: "Credential provider bridge"
+    category: "ops-automation"
+    tools:
+      - "pwp_credentials_refresh"
+      - "pwp_credentials_status"
+      - "pwp credentials refresh"
+      - "pwp credentials status"
+    governance:
+      - "secret-redacted status"
+      - "refresh-token provider automation"
+  - id: "pwp.visual-governance"
+    label: "Visual/governance augmentation"
+    category: "quality-governance"
+    workflows:
+      - "PWP visual QA proof"
+      - "cultural diacritics/search compatibility"
+      - "page artifact governance"
+    governance:
+      - "additive checks only"
+      - "operator-visible blockers"
+
+connect_points:
+  - "PE dashboard reads prismatic.pwp_integration.integration_status"
+  - "PE agents/cron jobs call scripts/pwp for provider and theme workflows"
+  - "PWP plugin manifest advertises additive capabilities and governance"
+
+disconnect_points:
+  - "POST /api/pwp/disconnect marks PWP disconnected without deleting plugin code"
+  - "Disconnect hides PWP capability readiness while preserving generated artifacts"
+  - "Core PE queues, native crons, and dashboard remain operational without PWP"
