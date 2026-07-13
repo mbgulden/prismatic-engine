@@ -19,6 +19,7 @@ def test_gql_success():
             }
         }
     }).encode("utf-8")
+    mock_response.__enter__.return_value = mock_response
 
     with mock.patch("urllib.request.urlopen", return_value=mock_response):
         with mock.patch("get_linear_project_activity.get_linear_api_key", return_value="dummy-key"):
@@ -39,6 +40,7 @@ def test_gql_error_handling_project_not_found():
             }
         ]
     }).encode("utf-8")
+    mock_response.__enter__.return_value = mock_response
 
     with mock.patch("urllib.request.urlopen", return_value=mock_response):
         with mock.patch("get_linear_project_activity.get_linear_api_key", return_value="dummy-key"):

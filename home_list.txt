@@ -1,0 +1,5 @@
+total 24
+drwxr-xr-x  4 root     root    4096 Jun 26 16:29 .
+drwxr-xr-x 23 root     root    4096 Jun 26 21:53 ..
+drwxr-x---  2 synology users   4096 Jun 26 16:29 synology
+drwxr-x--x 54 ubuntu   ubuntu 12288 Jul 13 14:03 ubuntu

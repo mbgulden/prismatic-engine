@@ -121,7 +121,16 @@ def validate_manifest(manifest: Any) -> None:
     # Validates modes: [headless|interactive|both]
     if "modes" in manifest:
         modes = manifest["modes"]
-        if not isinstance(modes, str) or modes not in ["headless", "interactive", "both"]:
+        if isinstance(modes, str):
+            if modes not in ["headless", "interactive", "both"]:
+                raise PluginValidationError("Field 'modes' must be one of: headless, interactive, both")
+        elif isinstance(modes, list):
+            if not all(isinstance(m, str) for m in modes) or not modes:
+                raise PluginValidationError("Field 'modes' must be one of: headless, interactive, both")
+            for m in modes:
+                if m not in ["headless", "interactive"]:
+                    raise PluginValidationError(f"Field 'modes' must be one of: headless, interactive, both. Got invalid mode: {m}")
+        else:
             raise PluginValidationError("Field 'modes' must be one of: headless, interactive, both")
 
     # Validates ui: { surfaces, web, chat, interrupt_points, header }
@@ -135,16 +144,18 @@ def validate_manifest(manifest: Any) -> None:
             raise PluginValidationError(f"Field 'ui' contains invalid keys: {', '.join(extra_keys)}")
 
         if "surfaces" in ui:
-            if not _is_list_of_strings(ui["surfaces"]):
-                raise PluginValidationError("Field 'ui.surfaces' must be a list of strings.")
+            surfaces = ui["surfaces"]
+            if not isinstance(surfaces, list) or not all(isinstance(x, (str, dict)) for x in surfaces):
+                raise PluginValidationError("Field 'ui.surfaces' must be a list of strings or dictionaries.")
         if "interrupt_points" in ui:
-            if not _is_list_of_strings(ui["interrupt_points"]):
-                raise PluginValidationError("Field 'ui.interrupt_points' must be a list of strings.")
+            ips = ui["interrupt_points"]
+            if not isinstance(ips, list) or not all(isinstance(x, (str, dict)) for x in ips):
+                raise PluginValidationError("Field 'ui.interrupt_points' must be a list of strings or dictionaries.")
         for k in ["web", "chat", "header"]:
             if k in ui:
                 val = ui[k]
-                if not isinstance(val, (bool, dict, str)):
-                    raise PluginValidationError(f"Field 'ui.{k}' must be a boolean, dictionary, or string.")
+                if not isinstance(val, (bool, dict, str, list)):
+                    raise PluginValidationError(f"Field 'ui.{k}' must be a boolean, dictionary, list, or string.")
 
     # Validates permissions: { network, filesystem, secrets, bus }
     if "permissions" in manifest:
