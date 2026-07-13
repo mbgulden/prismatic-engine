@@ -950,6 +950,8 @@
                     </div>
                 </div>
                 <div id="plugin-governance-summary" class="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs"></div>
+                <div id="plugin-job-summary" class="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs"></div>
+                <div id="plugin-jobs-table" class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50"></div>
                 <div id="plugin-governance-cards" class="grid grid-cols-1 xl:grid-cols-2 gap-4"></div>
             </div>
         </div>
@@ -1510,13 +1512,20 @@
         }
 
         let loadedPluginGovernance = null;
+        let loadedPluginJobs = null;
 
         async function loadPluginGovernance() {
             try {
-                const res = await fetch('/api/plugins/governance');
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                loadedPluginGovernance = await res.json();
+                const [govRes, jobsRes] = await Promise.all([
+                    fetch('/api/plugins/governance'),
+                    fetch('/api/plugins/jobs')
+                ]);
+                if (!govRes.ok) throw new Error(`governance HTTP ${govRes.status}`);
+                if (!jobsRes.ok) throw new Error(`jobs HTTP ${jobsRes.status}`);
+                loadedPluginGovernance = await govRes.json();
+                loadedPluginJobs = await jobsRes.json();
                 renderPluginGovernance();
+                renderPluginJobs();
             } catch (err) {
                 const summary = document.getElementById('plugin-governance-summary');
                 if (summary) summary.innerHTML = `<div class="col-span-full text-rose-300 bg-rose-950/30 border border-rose-900/60 rounded-xl p-3">Plugin governance refresh failed: ${err.message}</div>`;
@@ -1532,6 +1541,32 @@
                 slate: 'bg-slate-900/80 text-slate-300 border-slate-700/70'
             };
             return `<span class="inline-flex items-center px-2 py-0.5 rounded-full border text-[10px] font-semibold ${palette[color] || palette.slate}">${label}</span>`;
+        }
+
+        function renderPluginJobs() {
+            const payload = loadedPluginJobs || {};
+            const summary = payload.summary || {};
+            const summaryEl = document.getElementById('plugin-job-summary');
+            const tableEl = document.getElementById('plugin-jobs-table');
+            if (!summaryEl || !tableEl) return;
+            summaryEl.innerHTML = [
+                ['Jobs', summary.job_count || 0, 'indigo'],
+                ['Events', summary.event_count || 0, 'slate'],
+                ['Artifacts', summary.artifact_count || 0, 'emerald'],
+                ['Needs approval', (summary.by_status || {}).needs_approval || 0, 'amber'],
+                ['Failed', (summary.by_status || {}).failed || 0, 'rose'],
+            ].map(([label, value, color]) => `<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><div class="text-slate-500 uppercase tracking-wider font-bold">${label}</div><div class="mt-1 text-slate-100 font-mono text-lg">${value}</div><div class="mt-2">${pluginBadge(label, color)}</div></div>`).join('');
+            const rows = (payload.jobs || []).slice(0, 12).map(job => `
+                <tr class="border-t border-slate-800/80">
+                    <td class="px-3 py-2 font-mono text-[11px] text-slate-300">${job.job_id}</td>
+                    <td class="px-3 py-2 text-slate-300">${job.plugin_name}</td>
+                    <td class="px-3 py-2 text-slate-400">${job.action}</td>
+                    <td class="px-3 py-2">${pluginBadge(job.status || 'unknown', job.status === 'failed' || job.status === 'rejected' ? 'rose' : job.status === 'needs_approval' ? 'amber' : 'emerald')}</td>
+                    <td class="px-3 py-2">${pluginBadge(`approval: ${job.approval_state || 'unknown'}`, job.approval_state === 'pending' ? 'amber' : job.approval_state === 'rejected' ? 'rose' : 'slate')}</td>
+                    <td class="px-3 py-2 text-slate-500">${job.updated_at || ''}</td>
+                </tr>`).join('');
+            tableEl.innerHTML = `<div class="px-3 py-2 border-b border-slate-800 text-xs font-bold uppercase tracking-wider text-slate-400">Durable Plugin Jobs / Audit Trail</div>
+                <table class="min-w-full text-xs"><thead class="text-slate-500"><tr><th class="px-3 py-2 text-left">Job</th><th class="px-3 py-2 text-left">Plugin</th><th class="px-3 py-2 text-left">Action</th><th class="px-3 py-2 text-left">Status</th><th class="px-3 py-2 text-left">Approval</th><th class="px-3 py-2 text-left">Updated</th></tr></thead><tbody>${rows || '<tr><td colspan="6" class="px-3 py-4 text-slate-500">No plugin jobs recorded yet.</td></tr>'}</tbody></table>`;
         }
 
         function renderPluginGovernance() {
