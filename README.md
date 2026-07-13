@@ -131,13 +131,17 @@ Core files:
 
 Deep dive:
 
+- [Public launch guide](docs/public-launch.md)
 - [Public onboarding guide](docs/public-onboarding.md)
 - [Architecture overview](docs/public-architecture.md)
+- [Plugin developer quickstart](docs/plugin-developer-quickstart.md)
 - [Plugin developer guide](docs/plugin-developer-guide.md)
 - [PWP reference lifecycle](docs/pwp-reference-lifecycle.md)
 - [Hello plugin tutorial](docs/hello-plugin-tutorial.md)
 - [Troubleshooting guide](docs/troubleshooting.md)
+- [Security guide](docs/security.md)
 - [Public security readiness audit](docs/public-security-readiness.md)
+- [Contributing guide](docs/contributing.md)
 - [Release process](docs/release-process.md)
 - [Release checklist](docs/release-checklist.md)
 - [Migration notes](docs/migrations.md)

@@ -106,6 +106,35 @@ def main() -> int:
         assert policy.status_code == 200
         assert policy.json()["decision"] == "allow"
 
+    def public_docs() -> None:
+        required_docs = [
+            "README.md",
+            ".env.example",
+            "CONTRIBUTING.md",
+            "SECURITY.md",
+            "docs/public-launch.md",
+            "docs/public-onboarding.md",
+            "docs/plugin-developer-quickstart.md",
+            "docs/plugin-developer-guide.md",
+            "docs/security.md",
+            "docs/contributing.md",
+            "docs/public-security-readiness.md",
+            "docs/pwp-reference-lifecycle.md",
+            "docs/troubleshooting.md",
+        ]
+        missing = [rel for rel in required_docs if not (repo / rel).exists()]
+        if missing:
+            raise RuntimeError(f"missing public docs: {missing}")
+        launch = (repo / "docs/public-launch.md").read_text(encoding="utf-8")
+        for marker in [
+            "PUBLIC_LAUNCH_SMOKE_OK",
+            "PWP reference lifecycle",
+            "/api/plugins/audit-events",
+            "public_security_readiness_audit.py",
+        ]:
+            if marker not in launch:
+                raise RuntimeError(f"public launch guide missing marker: {marker}")
+
     def dashboard_markers() -> None:
         html = (repo / "prismatic/gateway/templates/dashboard.html").read_text(
             encoding="utf-8"
@@ -139,6 +168,7 @@ def main() -> int:
     catalog_payload = step("plugin catalog", catalog)
     step("plugin load gate", plugin_load_gate)
     step("Gateway API smoke", gateway_smoke)
+    step("public docs", public_docs)
     step("dashboard markers", dashboard_markers)
 
     print(
