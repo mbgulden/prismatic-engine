@@ -64,6 +64,6 @@ Future public plugins should use the same pattern:
 2. Durable job creation through the universal plugin job registry.
 3. Artifact emission through `artifact_emitted` or the universal artifact registry.
 4. Provenance fields identifying source plugin, source job, generator, and provider/service.
-5. Approval gate before publish/export.
+5. Approval-before-publish gate before publish/export.
 6. Dashboard-visible job/artifact history.
 7. Safe disconnect that never deletes artifacts or core PE state.
