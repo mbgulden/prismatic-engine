@@ -25,8 +25,7 @@ def temp_bus_db(tmp_path, monkeypatch):
     monkeypatch.setattr("prismatic.gateway.event_bus._BUS_DB_PATH", db_path)
     return db_path
 
-@pytest.mark.asyncio
-async def test_linear_bot_manifest_and_metadata():
+def test_linear_bot_manifest_and_metadata():
     """Verify that the manifest file for linear-bot contains required fields and correct schemas."""
     manifest_path = _PLUGINS_ROOT / "linear_bot" / "plugin-manifest.yaml"
     assert manifest_path.exists(), "Manifest file should exist"
@@ -40,55 +39,58 @@ async def test_linear_bot_manifest_and_metadata():
     assert "pwp.pipeline.failed" in manifest["events_subscribed"]
     assert "linear.issue.created" in manifest["events_published"]
 
-@pytest.mark.asyncio
-async def test_linear_bot_event_subscription_and_handling(temp_bus_db, monkeypatch):
+def test_linear_bot_event_subscription_and_handling(temp_bus_db, monkeypatch):
     """Verify that LinearBotPlugin correctly registers to event bus and routes pipeline failures."""
-    # Reset event bus
-    bus = EventBus()
-    set_event_bus(bus)
+    async def run_test():
+        # Reset event bus
+        bus = EventBus()
+        set_event_bus(bus)
 
-    # Initialize plugin
-    context = PluginContext(
-        config={},
-        db_connection=None,
-        state_dir=str(temp_bus_db.parent),
-    )
-    
-    plugin = LinearBotPlugin()
-    plugin.on_init(context)
+        # Initialize plugin
+        context = PluginContext(
+            config={},
+            db_connection=None,
+            state_dir=str(temp_bus_db.parent),
+        )
+        
+        plugin = LinearBotPlugin()
+        plugin.on_init(context)
 
-    # Check that our handler is registered in the event bus
-    assert plugin.handle_event in bus._handlers
+        # Yield to allow scheduled tasks (the subscribe task) to run
+        await asyncio.sleep(0)
 
-    # Publish a simulated PWP pipeline failed event
-    test_payload = {
-        "pipeline_id": "pwp-run-123",
-        "error": "CSS token mismatch on stage compile"
-    }
+        # Check that our handler is registered in the event bus
+        assert plugin.handle_event in bus._handlers
 
-    # Since publish is async, we execute it in the event loop
-    published_event = await bus.publish(
-        event_type="pwp.pipeline.failed",
-        source="pwp-pipeline",
-        payload=test_payload
-    )
+        # Publish a simulated PWP pipeline failed event
+        test_payload = {
+            "pipeline_id": "pwp-run-123",
+            "error": "CSS token mismatch on stage compile"
+        }
 
-    # Wait for the event handlers to finish processing (since gather is done internally inside publish)
-    # Check if a linear.issue.created event was published back onto the bus
-    history = bus.get_history()
-    
-    issue_created_events = [e for e in history if e["type"] == "linear.issue.created"]
-    assert len(issue_created_events) == 1, "Should have published exactly one issue creation event"
+        # Publish event
+        published_event = await bus.publish(
+            event_type="pwp.pipeline.failed",
+            source="pwp-pipeline",
+            payload=test_payload
+        )
 
-    created_event = issue_created_events[0]
-    assert created_event["source"] == "linear-bot"
-    payload = created_event["payload"]
-    assert "PWP Pipeline Failure: pwp-run-123" in payload["title"]
-    assert "CSS token mismatch on stage compile" in payload["error"]
-    assert payload["severity"] == "high"
+        # Check if a linear.issue.created event was published back onto the bus
+        history = bus.get_history()
+        
+        issue_created_events = [e for e in history if e["type"] == "linear.issue.created"]
+        assert len(issue_created_events) == 1, "Should have published exactly one issue creation event"
 
-@pytest.mark.asyncio
-async def test_loader_loads_linear_bot(temp_bus_db):
+        created_event = issue_created_events[0]
+        assert created_event["source"] == "linear-bot"
+        payload = created_event["payload"]
+        assert "PWP Pipeline Failure: pwp-run-123" in payload["title"]
+        assert "CSS token mismatch on stage compile" in payload["error"]
+        assert payload["severity"] == "high"
+
+    asyncio.run(run_test())
+
+def test_loader_loads_linear_bot(temp_bus_db):
     """Verify that the PluginLoader can scan and load the linear-bot plugin from plugins directory."""
     plugins_dir = _PLUGINS_ROOT
     loader = PluginLoader(core_version="0.2.0", plugins_dir=str(plugins_dir))

@@ -1,80 +1,78 @@
-# PWP Marketing: RSS/Atom Feed Generator (GRO-3076)
+# Task GRO-3047: Create prismatic/interface/ui.py + 4 UI hooks + manifest modes/ui validation
 
-## Requirement Overview
-We implemented an RSS/Atom and JSON feed generator for content marketing on PWP sites based on Markdown posts in `content/blog/*.md`. The generated feeds validate correctly, support per-tenant customization, and are auto-discovered from site pages.
-
-Specifically:
-- **Atom 1.0 Feed**: Generated at `/feed.xml` with namespaces, authors, published/updated dates, excerpts, and HTML contents.
-- **JSON Feed 1.1**: Generated at `/feed.json` with correct spec version, home page / feed URLs, descriptions, and list of items including full authors lists and published dates.
-- **Auto-Discovery Links**: Statically injected in `<head>` of the three templates (`saas`, `corporate`, `portfolio` `index.html` templates):
-  `<link rel="alternate" type="application/atom+xml" href="/feed.xml" title="Atom Feed">`
-- **Per-Tenant Customization**: Key customization attributes (title, subtitle, URL, description, language, author, public path configuration) are dynamically parsed from `config/marketing.yaml`.
-- **Test Coverage**: Added `tests/test_pwp_rss.py` validating Atom 1.0 tags, JSON Feed 1.1 structure, chronological sort ordering, entry authors/dates, and auto-discovery rendering.
+We have completed the implementation of the UI system interface, hooks, and manifest validation according to the `opus-plugin-3-ui-ux-surface.md` specification. All acceptance criteria are successfully met.
 
 ---
 
-## Technical Details
+## 1. Summary of Changes
 
-### 1. Feed Generator Script (`scripts/generate_feeds.py`)
-Parses Markdown frontmatter + body using `yaml` and `markdown` libraries, converts body content to HTML, dynamically reads customizations, and writes:
-- `/feed.xml` using `xml.etree.ElementTree` with registered Atom namespace.
-- `/feed.json` using JSON serialization for JSON Feed 1.1 format.
+### A. Created UI Handle and Event Bus Structure
+We created the new file [ui.py](file:///home/ubuntu/work/prismatic-engine/prismatic/interface/ui.py) defining:
+* **`NoUIHostError`**: Exception raised when input is requested but no UI host is attached to handle it.
+* **`UIHandle`**: Base interaction handle defining interface methods `emit` and `request_input`.
+* **`NullUIHandle`**: Default no-op handle used in headless modes.
+* **`UIBusHandle`**: Interactive handle used when a UI host is attached. It publishes events to the bus and blocks synchronous stages using `threading.Event` until user feedback is received.
+* **`UIBus`**: Thread-safe event queue wrapper facilitating communication between executing plugins and the UI host.
+* **`UIBusEvent`**: Dataclass representing a serialized event sent over the `UIBus`.
 
-```python
-# scripts/generate_feeds.py excerpt (generate_atom & generate_json_feed)
-def generate_atom(posts, config, output_path):
-    site_cfg = config['site']
-    blog_cfg = config['blog']
-    NS = 'http://www.w3.org/2005/Atom'
-    ET.register_namespace('', NS)
-    atom = ET.Element(f'{{{NS}}}feed')
-    # ... Injects feed metadata & entry elements (published, title, link, summary, author, content) ...
-    # Prettifies and writes to feed.xml
+### B. Defined 4 New Hook Constants
+We updated [hooks.py](file:///home/ubuntu/work/prismatic-engine/prismatic/interface/hooks.py) to declare the 4 new constants, append them to `HOOK_NAMES`, and add type stubs:
+* **`HOOK_REGISTER_UI_SURFACES`** (`"register_ui_surfaces"`)
+* **`HOOK_ON_HUMAN_INPUT_RECEIVED`** (`"on_human_input_received"`)
+* **`HOOK_ON_UI_EVENT`** (`"on_ui_event"`)
+* **`HOOK_REGISTER_COMMANDS`** (`"register_commands"`)
 
-def generate_json_feed(posts, config, output_path):
-    # Generates compliant JSON Feed 1.1 dictionary and dumps to feed.json
-```
+### C. Added UI hooks to `PrismaticPlugin` and `PluginContext`
+We updated [plugin.py](file:///home/ubuntu/work/prismatic-engine/prismatic/interface/plugin.py) to:
+* Set `ui` inside `PluginContext` (defaulting to `NullUIHandle` for safety and backward compatibility).
+* Define the 4 optional UI hooks as no-ops on the `PrismaticPlugin` abstract base class.
 
-### 2. Auto-Discovery Integration
-Injected into `plugins/pwp/templates/{saas,corporate,portfolio}/index.html`:
-```html
-<head>
-  ...
-  <link rel="alternate" type="application/atom+xml" href="/feed.xml" title="Atom Feed">
-</head>
-```
+### D. Upgraded Manifest Validation for v1.1.0
+We updated [manifest_schema.py](file:///home/ubuntu/work/prismatic-engine/prismatic/interface/manifest_schema.py) to:
+* Validate the `modes` field, accepting either a string (`"headless"`, `"interactive"`, `"both"`) or a list of strings (`["headless", "interactive"]`). It rejects any unknown modes correctly.
+* Validate the `ui` field block, permitting rich types (lists of dicts/strings) for `surfaces` and `interrupt_points`.
+* Keep the `modes` field optional, meaning old 1.0.0 manifests continue to load seamlessly (backward compatibility).
 
 ---
 
-## Testing & Verification
+## 2. Testing and Verification
 
-### Unit/Integration Test (`tests/test_pwp_rss.py`)
-We created a comprehensive test suite to run in the CI/CD pipeline using Pytest. The test runs in a temporary workspace directory to prevent file pollution:
-```python
-def test_feed_generation_and_metadata(tmp_path, monkeypatch):
-    # Verifies config parsing, feed.xml tag/namespace structure, feed.json properties,
-    # pubDate / date_published parsing, and author structures.
+### A. Created Test Suite
+We wrote a comprehensive unit test suite in [test_ui_surface.py](file:///home/ubuntu/work/prismatic-engine/tests/test_ui_surface.py) that asserts:
+* Correct behavior of `NullUIHandle` (emit is a no-op, request_input raises `NoUIHostError`).
+* Correct behavior of `UIBusHandle` (emit puts events into the `UIBus`, request_input publishes the request, blocks, and receives the response successfully via thread synchronization).
+* Timeout handling and default values for `UIBusHandle.request_input`.
+* Manifest validation checks for list values of `modes`, validation of rich `ui` elements, and rejection of unknown mode values.
 
-def test_templates_contain_auto_discovery():
-    # Verifies all 3 templates render html with the alternate link in the head.
-```
+### B. Test Execution Results
+All test suites passed successfully:
 
-### Test Results
-Executing the test suite shows all tests are passing:
-```bash
-.venv_dev/bin/pytest tests/test_pwp_rss.py -v
-```
 ```text
+$ pytest tests/test_ui_surface.py
 ============================= test session starts ==============================
-platform linux -- Python 3.12.3, pytest-9.1.1, pluggy-1.6.0 -- /home/ubuntu/work/prismatic-engine/.venv_dev/bin/python3.12
-cachedir: .pytest_cache
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0
 rootdir: /home/ubuntu/work/prismatic-engine
 configfile: pyproject.toml
-plugins: anyio-4.14.1
-collecting ... collected 2 items
+plugins: anyio-4.13.0
+collecting ... collected 7 items
 
-tests/test_pwp_rss.py::test_feed_generation_and_metadata PASSED          [ 50%]
-tests/test_pwp_rss.py::test_templates_contain_auto_discovery PASSED      [100%]
+tests/test_ui_surface.py .......                                         [100%]
 
-============================== 2 passed in 0.39s ===============================
+============================== 7 passed in 2.38s ===============================
+```
+
+Additionally, the existing manifest schema tests in [test_manifest_schema.py](file:///home/ubuntu/work/prismatic-engine/tests/test_manifest_schema.py) all pass:
+
+```text
+$ pytest tests/test_manifest_schema.py
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0
+rootdir: /home/ubuntu/work/prismatic-engine
+configfile: pyproject.toml
+plugins: anyio-4.13.0
+collecting ... collected 17 items
+
+tests/test_manifest_schema.py .................                          [100%]
+
+============================== 17 passed in 0.22s ==============================
 ```
