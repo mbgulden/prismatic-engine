@@ -33,10 +33,25 @@ logger = logging.getLogger("prismatic.creative")
 
 # === Paths ===
 PRISMATIC_HOME = Path(os.environ.get("PRISMATIC_HOME") or Path.home())
-BUS_DB = Path(os.environ.get("PRISMATIC_BUS_DB") or str(PRISMATIC_HOME / ".prismatic/bus/event_log.sqlite"))
-CREATIVE_DB = Path(os.environ.get("PRISMATIC_CREATIVE_DB") or str(PRISMATIC_HOME / ".prismatic/creative/state.sqlite"))
-CONFIG_PATH = Path(os.environ.get("PRISMATIC_CREATIVE_CONFIG") or str(PRISMATIC_HOME / "prismatic-engine/config/creative.yaml"))
 ARTIFACTS_DIR = Path.home() / ".prismatic/artifacts"
+
+def get_bus_db_path() -> Path:
+    p = Path(os.environ.get("PRISMATIC_BUS_DB") or ".prismatic/bus/event_log.sqlite")
+    if not p.is_absolute():
+        p = PRISMATIC_HOME / p
+    return p
+
+def get_creative_db_path() -> Path:
+    p = Path(os.environ.get("PRISMATIC_CREATIVE_DB") or ".prismatic/creative/state.sqlite")
+    if not p.is_absolute():
+        p = PRISMATIC_HOME / p
+    return p
+
+def get_config_path() -> Path:
+    p = Path(os.environ.get("PRISMATIC_CREATIVE_CONFIG") or "prismatic-engine/config/creative.yaml")
+    if not p.is_absolute():
+        p = PRISMATIC_HOME / p
+    return p
 
 # === Pricing ===
 FORMAT_PRICING = {
@@ -47,8 +62,9 @@ FORMAT_PRICING = {
 
 # === DB Initialization ===
 def init_db():
-    CREATIVE_DB.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(CREATIVE_DB, timeout=5)
+    db_path = get_creative_db_path()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(db_path, timeout=5)
     try:
         conn.execute(
             """
@@ -90,7 +106,7 @@ def init_db():
 
 # === Helpers ===
 def get_last_processed_rowid() -> int:
-    conn = sqlite3.connect(CREATIVE_DB, timeout=5)
+    conn = sqlite3.connect(get_creative_db_path(), timeout=5)
     try:
         cur = conn.execute("SELECT value FROM metadata WHERE key = 'last_processed_rowid'")
         row = cur.fetchone()
@@ -99,7 +115,7 @@ def get_last_processed_rowid() -> int:
         conn.close()
 
 def set_last_processed_rowid(rowid: int) -> None:
-    conn = sqlite3.connect(CREATIVE_DB, timeout=5)
+    conn = sqlite3.connect(get_creative_db_path(), timeout=5)
     try:
         conn.execute("INSERT OR REPLACE INTO metadata (key, value) VALUES ('last_processed_rowid', ?)", (str(rowid),))
         conn.commit()
@@ -107,10 +123,11 @@ def set_last_processed_rowid(rowid: int) -> None:
         conn.close()
 
 def get_tenant_limit(tenant: str) -> float:
-    if CONFIG_PATH.exists():
+    cfg_path = get_config_path()
+    if cfg_path.exists():
         try:
             import yaml
-            with CONFIG_PATH.open() as f:
+            with cfg_path.open() as f:
                 cfg = yaml.safe_load(f)
                 if isinstance(cfg, dict) and "tenants" in cfg:
                     tenant_cfg = cfg["tenants"].get(tenant)
@@ -160,7 +177,8 @@ def sha256_hash(file_path: Path) -> str:
     return h.hexdigest()
 
 def emit_event(event_type: str, source: str, payload: dict) -> None:
-    if not BUS_DB.exists():
+    bus_db = get_bus_db_path()
+    if not bus_db.exists():
         logger.warning("Bus DB does not exist, cannot emit event %s", event_type)
         return
     timestamp = datetime.now(timezone.utc).isoformat()
@@ -174,7 +192,7 @@ def emit_event(event_type: str, source: str, payload: dict) -> None:
     p_hash = hashlib.md5(payload_str.encode()).hexdigest()[:12]
     dedup_key = f"{event_type}:{source}:{timestamp}:{p_hash}"
     
-    conn = sqlite3.connect(BUS_DB, timeout=5)
+    conn = sqlite3.connect(bus_db, timeout=5)
     try:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute(
@@ -207,7 +225,7 @@ def process_event(event_rowid: int, payload_json: dict) -> None:
     cost = FORMAT_PRICING.get(format_type, 0.05)
     budget_limit = get_tenant_limit(tenant)
     
-    conn = sqlite3.connect(CREATIVE_DB, timeout=5)
+    conn = sqlite3.connect(get_creative_db_path(), timeout=5)
     try:
         current_spend = get_daily_spend(conn, tenant, date_str)
         if current_spend + cost > budget_limit:
@@ -349,11 +367,12 @@ Here is the creative text generated for the prompt: "{prompt}".
 # === Main Processing Loop ===
 def fetch_and_process_events() -> int:
     last_rowid = get_last_processed_rowid()
-    if not BUS_DB.exists():
+    bus_db = get_bus_db_path()
+    if not bus_db.exists():
         return 0
         
     # Read events directly
-    conn = sqlite3.connect(BUS_DB, timeout=5)
+    conn = sqlite3.connect(bus_db, timeout=5)
     try:
         cur = conn.execute(
             "SELECT rowid, topic, payload_json FROM events WHERE rowid > ? ORDER BY rowid ASC",
