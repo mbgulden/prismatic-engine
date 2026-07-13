@@ -28,6 +28,7 @@ LANE_MODEL = {
     "jules": "sonnet",   # UI/review: balanced
     "ned": "sonnet",     # cron/monitoring: fast
     "triage": "sonnet",  # new issue assignment: cheap classification
+    "creative": "sonnet", # creative asset generation
 }
 
 # Per-lane per-day budget caps (in USD)
@@ -38,6 +39,7 @@ LANE_DAILY_BUDGET_USD = {
     "jules": float(os.environ.get("PRISMATIC_BUDGET_JULES", "3.00")),
     "ned": float(os.environ.get("PRISMATIC_BUDGET_NED", "5.00")),
     "triage": float(os.environ.get("PRISMATIC_BUDGET_TRIAGE", "1.00")),
+    "creative": float(os.environ.get("PRISMATIC_BUDGET_CREATIVE", "50.00")),
 }
 
 # Estimated cost per dispatch (USD). Conservative defaults; tune in prod.
@@ -48,6 +50,7 @@ LANE_ESTIMATED_COST_USD = {
     "jules": 0.15,
     "ned": 0.15,
     "triage": 0.05,
+    "creative": 0.10,
 }
 
 # Path to budget state (resets daily)

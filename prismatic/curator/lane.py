@@ -258,6 +258,10 @@ def tag_event(event: BusEvent) -> TagResult:
         if topic == "brief.rejected":
             return TagResult("escalate", lane_hint="creative", reason="creative brief rejected (budget cap)")
 
+    # Final fallback for generic webhooks that were not Linear/GitHub events.
+    if src == "webhook" or "webhook" in topic or "webhook" in src:
+        return TagResult("auto-pick", reason="generic webhook delivery")
+
     # Default: unknown event type, escalate so it gets human attention
     return TagResult("escalate", reason=f"unmatched source={src!r} topic={topic!r}")
 
@@ -441,6 +445,20 @@ def render_digest(target_date: str | None = None) -> tuple[str, dict]:
     finally:
         conn.close()
 
+    creative_briefs = []
+    creative_db = Path(os.environ.get("PRISMATIC_CREATIVE_DB") or (Path(os.environ.get("PRISMATIC_HOME") or Path.home()) / ".prismatic/creative/state.sqlite"))
+    if creative_db.exists():
+        try:
+            with sqlite3.connect(str(creative_db), timeout=5) as c_conn:
+                c_cur = c_conn.execute(
+                    "SELECT brief_id, tenant, format, prompt, status, cost, artifact_path FROM briefs "
+                    "WHERE created_at >= ? AND created_at < ? ORDER BY created_at ASC",
+                    (day_start, day_end),
+                )
+                creative_briefs = c_cur.fetchall()
+        except Exception as e:
+            print(f"[curator] error reading creative briefs: {e}")
+
     lines = [
         f"# Curator Digest — {target_date}",
         "",
@@ -484,6 +502,23 @@ def render_digest(target_date: str | None = None) -> tuple[str, dict]:
             when = (datetime.fromtimestamp(last_seen).strftime("%Y-%m-%d %H:%M:%S")
                      if last_seen else "never")
             lines.append(f"| {lane} | {total_n} | {dn} | {en} | {dn2} | {apn} | {when} |")
+        lines.append("")
+
+    if creative_briefs:
+        lines.append("## Creative Briefs")
+        lines.append("")
+        lines.append("| Brief ID | Tenant | Format | Prompt | Status | Cost | Artifact |")
+        lines.append("|---|---|---|---|---|---|---|")
+        for b_id, tenant, format_type, prompt, status, cost, art_path in creative_briefs:
+            art_link = "N/A"
+            if art_path and status == "completed":
+                try:
+                    artifacts_base = Path.home() / ".prismatic/artifacts"
+                    rel_path = Path(art_path).relative_to(artifacts_base)
+                    art_link = f"[View](http://127.0.0.1:9120/raw/prismatic-artifacts/{rel_path})"
+                except Exception:
+                    art_link = "[View](http://127.0.0.1:9120/health)"
+            lines.append(f"| {b_id} | {tenant} | {format_type} | {prompt} | {status} | ${cost:.2f} | {art_link} |")
         lines.append("")
 
     lines.append("---")

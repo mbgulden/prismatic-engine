@@ -86,7 +86,6 @@ def test_cross_repo_changes():
     ]}) is True
 
     # Single repo list of files (no infra changes)
-    assert is_high_impact({"files": ["repo_a/file1.py", "repo_a/file2.py"]}) is True # Wait, repo_a is repo, length is 1, wait, let's verify:
     # {"files": ["repo_a/file1.py", "repo_a/file2.py"]} has repo_a as the only repo, so len(repos) == 1.
     # Therefore, is_high_impact should be False (not feature, not high priority, not infra).
     assert is_high_impact({"files": ["repo_a/file1.py", "repo_a/file2.py"]}) is False
