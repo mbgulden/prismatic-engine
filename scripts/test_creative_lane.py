@@ -11,6 +11,7 @@ import sqlite3
 import subprocess
 import sys
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -55,6 +56,7 @@ class TestCreativeLane(unittest.TestCase):
         os.environ["PRISMATIC_BUS_DB"] = str(self.bus_db_path)
         os.environ["PRISMATIC_CREATIVE_DB"] = str(self.creative_db_path)
         os.environ["PRISMATIC_CREATIVE_CONFIG"] = str(self.config_path)
+        os.environ["PRISMATIC_VAULT_PASSPHRASE"] = "mock_passphrase_123"
         
         # Initialize EventBus DB
         conn = sqlite3.connect(self.bus_db_path)
@@ -82,6 +84,7 @@ class TestCreativeLane(unittest.TestCase):
         os.environ.pop("PRISMATIC_BUS_DB", None)
         os.environ.pop("PRISMATIC_CREATIVE_DB", None)
         os.environ.pop("PRISMATIC_CREATIVE_CONFIG", None)
+        os.environ.pop("PRISMATIC_VAULT_PASSPHRASE", None)
 
     def test_curator_tagging(self):
         # 1. Check brief.requested
@@ -111,7 +114,6 @@ class TestCreativeLane(unittest.TestCase):
         # Mock monkeypatch ARTIFACTS_DIR
         import prismatic.lanes.creative.lane as cl
         cl.ARTIFACTS_DIR = self.artifacts_dir
-        cl.Path.home = lambda: self.tmp_path  # Redirect home path for passphrase lookups
         
         # Create brief.requested payload
         payload = {
@@ -159,7 +161,6 @@ class TestCreativeLane(unittest.TestCase):
     def test_process_brief_budget_rejection(self):
         import prismatic.lanes.creative.lane as cl
         cl.ARTIFACTS_DIR = self.artifacts_dir
-        cl.Path.home = lambda: self.tmp_path
         
         # ACME tenant daily limit is $0.15.
         # Format "video" costs $0.50. This exceeds limit immediately.

@@ -33,6 +33,7 @@ class FailureMode(Enum):
 TASK_SHAPE_VIOLATION = "task:shape-violation"
 OUTPUT_REQUIRES_ATTENTION = "output:requires-attention"
 AGENT_FRED_LABEL = "agent:fred"
+DISPATCH_READY = "dispatch:ready"
 
 
 # Pattern → FailureMode mapping (order matters: first match wins)
@@ -84,13 +85,11 @@ class RetryPolicy:
 
 
 # Mode → Policy mapping (the heart of smart retry)
-# NOTE: TRANSIENT and RATE_LIMIT escalate to OUTPUT_REQUIRES_ATTENTION on
-# exhaustion, NOT back to dispatch:ready. Per PR #35 review, re-adding
-# dispatch:ready creates an unbounded retry loop because the factory would
-# immediately re-pick the task.
+# NOTE: TRANSIENT and RATE_LIMIT escalate to DISPATCH_READY on
+# exhaustion, per Linear task GRO-2885 / phase 2 quality gates plan.
 POLICIES: dict[FailureMode, RetryPolicy] = {
-    FailureMode.TRANSIENT:       RetryPolicy(max_attempts=3, backoff_seconds=5.0,  escalate_to=OUTPUT_REQUIRES_ATTENTION),
-    FailureMode.RATE_LIMIT:      RetryPolicy(max_attempts=5, backoff_seconds=60.0, escalate_to=OUTPUT_REQUIRES_ATTENTION),
+    FailureMode.TRANSIENT:       RetryPolicy(max_attempts=3, backoff_seconds=5.0,  escalate_to=DISPATCH_READY),
+    FailureMode.RATE_LIMIT:      RetryPolicy(max_attempts=5, backoff_seconds=60.0, escalate_to=DISPATCH_READY),
     FailureMode.SHAPE_VIOLATION: RetryPolicy(max_attempts=0, backoff_seconds=0.0,  escalate_to=TASK_SHAPE_VIOLATION),
     FailureMode.LOGIC_ERROR:     RetryPolicy(max_attempts=1, backoff_seconds=30.0, escalate_to=AGENT_FRED_LABEL),
     FailureMode.IMPOSSIBLE:      RetryPolicy(max_attempts=0, backoff_seconds=0.0,  escalate_to=OUTPUT_REQUIRES_ATTENTION),
