@@ -19,6 +19,7 @@ The project is currently alpha. Dates use UTC.
 - Contribution guide.
 - Security policy.
 - One-command public launch smoke test at `scripts/public_launch_smoke.py`.
+- Public security readiness audit at `scripts/public_security_readiness_audit.py` and `docs/public-security-readiness.md`.
 
 ### Current plugin foundation
 

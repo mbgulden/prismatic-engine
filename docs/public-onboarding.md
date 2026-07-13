@@ -18,12 +18,14 @@ cp .env.example .env
 
 ```bash
 python scripts/public_launch_smoke.py
+python scripts/public_security_readiness_audit.py
 ```
 
 Expected:
 
 ```text
 PUBLIC_LAUNCH_SMOKE_OK
+PUBLIC_SECURITY_READINESS_OK
 ```
 
 ## 3. Start the dashboard

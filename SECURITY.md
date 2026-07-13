@@ -25,6 +25,18 @@ Include:
 
 ## Secret handling rules
 
+Run the public security readiness audit before publishing a branch or release:
+
+```bash
+python scripts/public_security_readiness_audit.py
+```
+
+Expected marker:
+
+```text
+PUBLIC_SECURITY_READINESS_OK
+```
+
 - Never commit `.env`, credential files, provider responses containing credentials, or private keys.
 - Keep public examples free of credential material.
 - Prefer environment variables or a secret manager for live integrations.
