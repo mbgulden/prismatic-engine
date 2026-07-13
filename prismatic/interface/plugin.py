@@ -27,6 +27,9 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 
+from prismatic.interface.ui import UIHandle, NullUIHandle
+
+
 @dataclass
 class PluginContext:
     """
@@ -42,6 +45,7 @@ class PluginContext:
     state_dir: str
     telemetry_client: Optional[Any] = None
     lock_manager: Optional[Any] = None
+    ui: UIHandle = field(default_factory=NullUIHandle)
 
 
 @dataclass
@@ -214,3 +218,35 @@ class PrismaticPlugin(ABC):
         Default no-op.  See :data:`prismatic.interface.hooks.HOOK_ON_DEPLOY`.
         """
         return
+
+    # ── GRO-3047 UI hooks (optional) ────────────────────────────────────
+
+    def register_ui_surfaces(self, context: PluginContext) -> List[Dict[str, Any]]:
+        """
+        Declare UI surfaces this run exposes to the UI host.
+        """
+        return []
+
+    def on_human_input_received(
+        self,
+        pipeline_id: str,
+        prompt_id: str,
+        response: Dict[str, Any],
+    ) -> None:
+        """
+        Fired when human input requested via context.ui.request_input() arrives.
+        """
+        return
+
+    def on_ui_event(self, event: Dict[str, Any]) -> None:
+        """
+        Fired when a UIBusEvent is published by any plugin.
+        """
+        return
+
+    def register_commands(self) -> List[Dict[str, Any]]:
+        """
+        Declare user-invokable commands for this plugin.
+        """
+        return []
+

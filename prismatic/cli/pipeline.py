@@ -9,6 +9,13 @@ import re
 import sys
 from typing import Any
 
+# Import internal dependencies at module level for cleaner mocking/testing.
+# These imports do not pull in 'rich'.
+from prismatic.dispatcher import gql, add_comment
+from prismatic.quality.gates import trigger_ned_review
+from prismatic.review.pipeline import PipelineOrchestrator
+from prismatic.review import ReviewerRegistry, RealPRReviewer
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="prismatic pipeline",
@@ -59,15 +66,6 @@ def main(argv: list[str] | None = None) -> int:
     # Check for LINEAR_API_KEY
     if not os.environ.get("LINEAR_API_KEY"):
         print("Error: LINEAR_API_KEY environment variable is required.", file=sys.stderr)
-        return 1
-
-    try:
-        from prismatic.dispatcher import gql, add_comment
-        from prismatic.quality.gates import trigger_ned_review
-        from prismatic.review.pipeline import PipelineOrchestrator
-        from prismatic.review import ReviewerRegistry, RealPRReviewer
-    except ImportError as e:
-        print(f"Error: Internal import failed: {e}", file=sys.stderr)
         return 1
 
     # Fetch issue details from Linear

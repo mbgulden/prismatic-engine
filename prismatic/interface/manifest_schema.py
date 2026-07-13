@@ -169,7 +169,7 @@ def validate_manifest(manifest: Any) -> None:
         deps = manifest["dependencies"]
         if not isinstance(deps, dict):
             raise PluginValidationError("Field 'dependencies' must be a dictionary.")
-        allowed_dep_keys = {"pip", "plugins", "system"}
+        allowed_dep_keys = {"pip", "plugins", "system", "npm"}
         extra_keys = set(deps.keys()) - allowed_dep_keys
         if extra_keys:
             raise PluginValidationError(f"Field 'dependencies' contains invalid keys: {', '.join(extra_keys)}")
