@@ -950,6 +950,8 @@
                     </div>
                 </div>
                 <div id="plugin-governance-summary" class="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs"></div>
+                <div id="plugin-policy-summary" class="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs"></div>
+                <div id="plugin-policy-decision" class="rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-xs text-slate-300"></div>
                 <div id="plugin-job-summary" class="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs"></div>
                 <div id="plugin-artifact-summary" class="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs"></div>
                 <div id="plugin-artifacts-table" class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50"></div>
@@ -1531,6 +1533,7 @@
                 loadedPluginJobs = await jobsRes.json();
                 loadedPluginArtifacts = await artifactsRes.json();
                 renderPluginGovernance();
+                renderPluginPolicy();
                 renderPluginJobs();
                 renderPluginArtifacts();
             } catch (err) {
@@ -1548,6 +1551,30 @@
                 slate: 'bg-slate-900/80 text-slate-300 border-slate-700/70'
             };
             return `<span class="inline-flex items-center px-2 py-0.5 rounded-full border text-[10px] font-semibold ${palette[color] || palette.slate}">${label}</span>`;
+        }
+
+        function renderPluginPolicy() {
+            const jobs = (loadedPluginJobs && loadedPluginJobs.jobs) || [];
+            const artifacts = (loadedPluginArtifacts && loadedPluginArtifacts.artifacts) || [];
+            const jobPolicyBlocked = jobs.filter(job => (job.policy_result || {}).decision === 'block' || job.status === 'failed').length;
+            const jobApprovalRequired = jobs.filter(job => job.status === 'needs_approval' || job.approval_state === 'pending').length;
+            const artifactBlocked = artifacts.filter(artifact => artifact.approval_state === 'rejected' || artifact.publish_state === 'rejected' || ((artifact.policy_result || {}).decision === 'block')).length;
+            const artifactApprovalRequired = artifacts.filter(artifact => artifact.approval_state === 'pending').length;
+            const lastJob = jobs.find(job => job.policy_result);
+            const lastArtifact = artifacts.find(artifact => artifact.policy_result);
+            const lastPolicy = (lastJob && lastJob.policy_result) || (lastArtifact && lastArtifact.policy_result) || null;
+            const summaryEl = document.getElementById('plugin-policy-summary');
+            const decisionEl = document.getElementById('plugin-policy-decision');
+            if (!summaryEl || !decisionEl) return;
+            summaryEl.innerHTML = [
+                ['Blocked jobs', jobPolicyBlocked, jobPolicyBlocked ? 'rose' : 'emerald'],
+                ['Blocked artifacts', artifactBlocked, artifactBlocked ? 'rose' : 'emerald'],
+                ['Job approvals', jobApprovalRequired, jobApprovalRequired ? 'amber' : 'emerald'],
+                ['Artifact approvals', artifactApprovalRequired, artifactApprovalRequired ? 'amber' : 'emerald'],
+                ['Policy API', '/api/plugins/policy/preview', 'indigo'],
+            ].map(([label, value, color]) => `<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><div class="text-slate-500 uppercase tracking-wider font-bold">${label}</div><div class="mt-1 text-slate-100 font-mono text-lg">${value}</div><div class="mt-2">${pluginBadge('Policy Enforcement', color)}</div></div>`).join('');
+            const blockedReason = lastPolicy ? ((lastPolicy.blockers || [lastPolicy.reason || 'no blockers']).join('; ')) : 'No durable policy decisions yet. Use POST /api/plugins/policy/preview, job start, or artifact export to evaluate policy.';
+            decisionEl.innerHTML = `<div class="flex items-center justify-between gap-3"><div><div class="uppercase tracking-wider text-slate-500 font-bold">Policy Enforcement</div><div class="mt-1 text-slate-300">Last policy decision: <span class="font-mono">${lastPolicy ? lastPolicy.decision : 'none'}</span></div><div class="mt-1 text-slate-500 blocked_reason">blocked_reason: ${blockedReason}</div></div>${pluginBadge(lastPolicy ? `policy: ${lastPolicy.decision}` : 'policy: idle', lastPolicy && lastPolicy.decision === 'block' ? 'rose' : lastPolicy && lastPolicy.decision === 'needs_approval' ? 'amber' : 'emerald')}</div>`;
         }
 
         function renderPluginArtifacts() {

@@ -7,10 +7,13 @@ import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
-from prismatic.plugin_architecture import plugin_catalog
 from prismatic.plugin_artifacts import store_from_env as plugin_artifact_store
+from prismatic.plugin_policy import (
+    evaluate_job_request_policy,
+    evaluate_job_start_policy,
+)
 
 JOB_STATUSES = {
     "queued",
@@ -29,6 +32,8 @@ EVENT_TYPES = {
     "approved",
     "rejected",
     "started",
+    "start_allowed",
+    "start_blocked",
     "artifact_emitted",
     "completed",
     "failed",
@@ -47,11 +52,17 @@ def repo_root() -> Path:
 
 
 def default_state_dir() -> Path:
-    return Path(os.environ.get("PRISMATIC_STATE_DIR", repo_root() / "prismatic_state")).expanduser()
+    return Path(
+        os.environ.get("PRISMATIC_STATE_DIR", repo_root() / "prismatic_state")
+    ).expanduser()
 
 
 def default_jobs_path() -> Path:
-    return Path(os.environ.get("PRISMATIC_PLUGIN_JOBS_STATE", default_state_dir() / "plugin_jobs.json")).expanduser()
+    return Path(
+        os.environ.get(
+            "PRISMATIC_PLUGIN_JOBS_STATE", default_state_dir() / "plugin_jobs.json"
+        )
+    ).expanduser()
 
 
 def _atomic_write_json(path: Path, payload: Any) -> None:
@@ -92,9 +103,15 @@ def _looks_secret(value: Any) -> bool:
     if not isinstance(value, str):
         return False
     upper = value.upper()
-    if upper.endswith("_ENV") or (upper.isidentifier() and any(token in upper for token in ["API_KEY", "TOKEN", "SECRET", "PASSWORD"])):
+    if upper.endswith("_ENV") or (
+        upper.isidentifier()
+        and any(token in upper for token in ["API_KEY", "TOKEN", "SECRET", "PASSWORD"])
+    ):
         return False
-    return any(token in value for token in ["sk-", "ghp_", "xoxb-", "AIza", "-----BEGIN", "Bearer "])
+    return any(
+        token in value
+        for token in ["sk-", "ghp_", "xoxb-", "AIza", "-----BEGIN", "Bearer "]
+    )
 
 
 def _redact_secrets(value: Any) -> Any:
@@ -102,7 +119,17 @@ def _redact_secrets(value: Any) -> Any:
         redacted: dict[str, Any] = {}
         for key, val in value.items():
             key_lower = str(key).lower()
-            if any(token in key_lower for token in ["secret", "token", "password", "api_key", "apikey", "authorization"]):
+            if any(
+                token in key_lower
+                for token in [
+                    "secret",
+                    "token",
+                    "password",
+                    "api_key",
+                    "apikey",
+                    "authorization",
+                ]
+            ):
                 redacted[key] = "[REDACTED]"
             else:
                 redacted[key] = _redact_secrets(val)
@@ -114,11 +141,6 @@ def _redact_secrets(value: Any) -> Any:
     return value
 
 
-def _catalog_item(plugin_name: str) -> dict[str, Any] | None:
-    catalog = plugin_catalog(repo_root() / "plugins")
-    return next((item for item in catalog.get("plugins", []) if item.get("name") == plugin_name), None)
-
-
 def evaluate_plugin_policy(
     plugin_name: str,
     action: str,
@@ -126,60 +148,17 @@ def evaluate_plugin_policy(
     requested_approval_required: bool | None = None,
     input_summary: Any | None = None,
 ) -> dict[str, Any]:
-    """Evaluate the PE-owned policy gate for a plugin job request.
-
-    This is intentionally conservative and generic. Domain plugins can add richer
-    policy later, but every plugin job receives a durable policy decision now.
-    """
-    item = _catalog_item(plugin_name)
-    checks: list[dict[str, Any]] = []
-    blockers: list[str] = []
-    warnings: list[str] = []
-    approval_reasons: list[str] = []
-
-    if item is None:
-        blockers.append(f"unknown plugin: {plugin_name}")
-        risk_level = "unknown"
-        governance: dict[str, Any] = {}
-    else:
-        governance = item.get("governance", {})
-        risk_level = governance.get("risk_level", "unknown")
-        for blocker in governance.get("production_blockers", []):
-            message = str(blocker.get("message", "plugin governance blocker"))
-            if blocker.get("severity") == "blocking":
-                blockers.append(message)
-            else:
-                warnings.append(message)
-        if governance.get("approval_gates"):
-            approval_reasons.extend(governance.get("approval_gates", []))
-
-    action_lower = action.lower()
-    if any(token in action_lower for token in ["publish", "export", "deploy", "delete", "destroy", "costly", "batch"]):
-        approval_reasons.append(f"action '{action}' requires operator approval")
-    if risk_level in {"high", "critical"}:
-        approval_reasons.append(f"plugin risk level is {risk_level}")
-    if requested_approval_required is True:
-        approval_reasons.append("request explicitly required approval")
-    if _looks_secret(input_summary):
-        blockers.append("job input appears to contain raw secret material")
-
-    approval_required = bool(approval_reasons)
-    allowed = not blockers
-    checks.append({"name": "plugin_exists", "passed": item is not None})
-    checks.append({"name": "manifest_blockers", "passed": not any("governance" in b for b in blockers)})
-    checks.append({"name": "secret_redaction", "passed": not _looks_secret(input_summary)})
-    checks.append({"name": "approval_gate", "passed": True, "approval_required": approval_required})
-
-    return {
-        "allowed": allowed,
-        "risk_level": risk_level,
-        "approval_required": approval_required,
-        "approval_reasons": sorted(set(approval_reasons)),
-        "blockers": blockers,
-        "warnings": warnings,
-        "checks": checks,
-        "evaluated_at": now_iso(),
-    }
+    """Compatibility wrapper for the generic PE policy evaluator."""
+    policy = evaluate_job_request_policy(
+        plugin_name,
+        action,
+        requested_approval_required=requested_approval_required,
+        input_summary=input_summary,
+    )
+    policy["approval_required"] = bool(policy.get("approval_reasons"))
+    if policy.get("decision") == "needs_approval":
+        policy["allowed"] = True
+    return policy
 
 
 class PluginJobStore:
@@ -227,8 +206,10 @@ class PluginJobStore:
         )
         job_id = f"plugjob_{uuid.uuid4().hex[:16]}"
         approval_state = "pending" if policy["approval_required"] else "not_required"
-        status = "needs_approval" if policy["approval_required"] else "queued"
-        if not policy["allowed"]:
+        status = (
+            "needs_approval" if policy.get("decision") == "needs_approval" else "queued"
+        )
+        if policy.get("decision") == "block":
             status = "failed"
         job = {
             "job_id": job_id,
@@ -248,7 +229,9 @@ class PluginJobStore:
             "created_at": timestamp,
             "updated_at": timestamp,
             "completed_at": None,
-            "error": None if policy["allowed"] else "; ".join(policy["blockers"]),
+            "error": None
+            if policy.get("decision") != "block"
+            else "; ".join(policy["blockers"]),
         }
         state = self.load_state()
         state["plugin_jobs"][job_id] = job
@@ -294,7 +277,9 @@ class PluginJobStore:
         self.save_state(state)
         return self.get_job(job_id) or job
 
-    def list_jobs(self, *, plugin_name: str | None = None, status: str | None = None) -> list[dict[str, Any]]:
+    def list_jobs(
+        self, *, plugin_name: str | None = None, status: str | None = None
+    ) -> list[dict[str, Any]]:
         jobs = list(self.load_state()["plugin_jobs"].values())
         if plugin_name:
             jobs = [job for job in jobs if job.get("plugin_name") == plugin_name]
@@ -319,13 +304,35 @@ class PluginJobStore:
         payload["artifacts"] = [artifact for artifact in artifacts if artifact]
         return payload
 
-    def approve_job(self, job_id: str, *, actor: str = "operator", note: str | None = None) -> dict[str, Any] | None:
-        return self._set_approval(job_id, "approved", "queued", actor=actor, note=note, event_type="approved")
+    def approve_job(
+        self, job_id: str, *, actor: str = "operator", note: str | None = None
+    ) -> dict[str, Any] | None:
+        return self._set_approval(
+            job_id, "approved", "queued", actor=actor, note=note, event_type="approved"
+        )
 
-    def reject_job(self, job_id: str, *, actor: str = "operator", note: str | None = None) -> dict[str, Any] | None:
-        return self._set_approval(job_id, "rejected", "rejected", actor=actor, note=note, event_type="rejected")
+    def reject_job(
+        self, job_id: str, *, actor: str = "operator", note: str | None = None
+    ) -> dict[str, Any] | None:
+        return self._set_approval(
+            job_id,
+            "rejected",
+            "rejected",
+            actor=actor,
+            note=note,
+            event_type="rejected",
+        )
 
-    def _set_approval(self, job_id: str, approval_state: str, status: str, *, actor: str, note: str | None, event_type: str) -> dict[str, Any] | None:
+    def _set_approval(
+        self,
+        job_id: str,
+        approval_state: str,
+        status: str,
+        *,
+        actor: str,
+        note: str | None,
+        event_type: str,
+    ) -> dict[str, Any] | None:
         state = self.load_state()
         job = state["plugin_jobs"].get(job_id)
         if not job:
@@ -338,13 +345,114 @@ class PluginJobStore:
             job["completed_at"] = timestamp
         if note:
             job["operator_notes"] = _safe_text(note)
-        self._append_event_unlocked(state, job_id, event_type, actor=actor, source="operator", message=note or f"Job {event_type}", details={"approval_state": approval_state})
+        self._append_event_unlocked(
+            state,
+            job_id,
+            event_type,
+            actor=actor,
+            source="operator",
+            message=note or f"Job {event_type}",
+            details={"approval_state": approval_state},
+        )
         self.save_state(state)
         return self.get_job(job_id)
 
-    def update_status(self, job_id: str, status: str, *, actor: str = "system", message: str | None = None, error: str | None = None) -> dict[str, Any] | None:
+    def start_job(
+        self, job_id: str, *, actor: str = "system", message: str | None = None
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        state = self.load_state()
+        job = state["plugin_jobs"].get(job_id)
+        if not job:
+            return None, None
+        policy = evaluate_job_start_policy(job)
+        job["policy_result"] = policy
+        job["updated_at"] = now_iso()
+        self._append_event_unlocked(
+            state,
+            job_id,
+            "policy_checked",
+            actor="policy",
+            source="policy_gate",
+            message="Evaluated plugin job start policy",
+            details=policy,
+        )
+        if policy.get("decision") == "allow":
+            job["status"] = "running"
+            job["updated_at"] = now_iso()
+            self._append_event_unlocked(
+                state,
+                job_id,
+                "start_allowed",
+                actor="policy",
+                source="policy_gate",
+                message="Plugin job start allowed",
+                details=policy,
+            )
+            self._append_event_unlocked(
+                state,
+                job_id,
+                "started",
+                actor=actor,
+                source="job_start",
+                message=message or "Plugin job started",
+                details={"status": "running", "policy_result": policy},
+            )
+        elif policy.get("decision") == "needs_approval":
+            job["status"] = "needs_approval"
+            job["approval_required"] = True
+            if job.get("approval_state") != "approved":
+                job["approval_state"] = "pending"
+            self._append_event_unlocked(
+                state,
+                job_id,
+                "approval_required",
+                actor="policy",
+                source="policy_gate",
+                message="Plugin job start requires approval",
+                details=policy,
+            )
+            self._append_event_unlocked(
+                state,
+                job_id,
+                "start_blocked",
+                actor="policy",
+                source="policy_gate",
+                message="Plugin job start blocked pending approval",
+                details=policy,
+            )
+        else:
+            job["status"] = "failed"
+            job["error"] = "; ".join(
+                policy.get("blockers")
+                or [policy.get("reason") or "policy blocked job start"]
+            )
+            job["completed_at"] = now_iso()
+            self._append_event_unlocked(
+                state,
+                job_id,
+                "start_blocked",
+                actor="policy",
+                source="policy_gate",
+                message="Plugin job start blocked",
+                details=policy,
+            )
+        self.save_state(state)
+        return self.get_job(job_id), policy
+
+    def update_status(
+        self,
+        job_id: str,
+        status: str,
+        *,
+        actor: str = "system",
+        message: str | None = None,
+        error: str | None = None,
+    ) -> dict[str, Any] | None:
         if status not in JOB_STATUSES:
             raise ValueError(f"unsupported job status: {status}")
+        if status == "running":
+            job, policy = self.start_job(job_id, actor=actor, message=message)
+            return job
         state = self.load_state()
         job = state["plugin_jobs"].get(job_id)
         if not job:
@@ -355,8 +463,26 @@ class PluginJobStore:
             job["completed_at"] = job["updated_at"]
         if error:
             job["error"] = _safe_text(error, 2000)
-        event_type = "completed" if status == "completed" else "failed" if status == "failed" else "cancelled" if status == "cancelled" else "started" if status == "running" else "note_added"
-        self._append_event_unlocked(state, job_id, event_type, actor=actor, source="job_status", message=message or f"Job status set to {status}", details={"status": status, "error": error})
+        event_type = (
+            "completed"
+            if status == "completed"
+            else "failed"
+            if status == "failed"
+            else "cancelled"
+            if status == "cancelled"
+            else "started"
+            if status == "running"
+            else "note_added"
+        )
+        self._append_event_unlocked(
+            state,
+            job_id,
+            event_type,
+            actor=actor,
+            source="job_status",
+            message=message or f"Job status set to {status}",
+            details={"status": status, "error": error},
+        )
         self.save_state(state)
         return self.get_job(job_id)
 
@@ -374,7 +500,16 @@ class PluginJobStore:
         state = self.load_state()
         if job_id not in state["plugin_jobs"]:
             return None
-        self._append_event_unlocked(state, job_id, event_type, actor=actor, source=source, message=message, details=details, artifact=artifact)
+        self._append_event_unlocked(
+            state,
+            job_id,
+            event_type,
+            actor=actor,
+            source=source,
+            message=message,
+            details=details,
+            artifact=artifact,
+        )
         state["plugin_jobs"][job_id]["updated_at"] = now_iso()
         self.save_state(state)
         return self.get_job(job_id)
@@ -432,7 +567,11 @@ class PluginJobStore:
                 "publish_state": artifact_record.get("publish_state"),
                 "created_at": artifact_record.get("created_at"),
             }
-            artifact_ids = state["plugin_jobs"].setdefault(job_id, {}).setdefault("artifact_ids", [])
+            artifact_ids = (
+                state["plugin_jobs"]
+                .setdefault(job_id, {})
+                .setdefault("artifact_ids", [])
+            )
             if artifact_id not in artifact_ids:
                 artifact_ids.append(artifact_id)
             event["artifact_id"] = artifact_id
@@ -445,13 +584,19 @@ class PluginJobStore:
         by_status: dict[str, int] = {}
         by_plugin: dict[str, int] = {}
         for job in jobs:
-            by_status[job.get("status", "unknown")] = by_status.get(job.get("status", "unknown"), 0) + 1
-            by_plugin[job.get("plugin_name", "unknown")] = by_plugin.get(job.get("plugin_name", "unknown"), 0) + 1
+            by_status[job.get("status", "unknown")] = (
+                by_status.get(job.get("status", "unknown"), 0) + 1
+            )
+            by_plugin[job.get("plugin_name", "unknown")] = (
+                by_plugin.get(job.get("plugin_name", "unknown"), 0) + 1
+            )
         return {
             "schema_version": state["schema_version"],
             "state_path": str(self.path),
             "job_count": len(jobs),
-            "event_count": sum(len(events) for events in state["plugin_job_events"].values()),
+            "event_count": sum(
+                len(events) for events in state["plugin_job_events"].values()
+            ),
             "artifact_count": len(state["plugin_artifacts"]),
             "by_status": by_status,
             "by_plugin": by_plugin,

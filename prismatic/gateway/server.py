@@ -44,8 +44,14 @@ from prismatic.lock import _read_locks as read_swarm_locks
 from prismatic.plugin_architecture import MEDIA_CAPABILITY_CLASSES, plugin_catalog
 from prismatic.plugin_artifacts import store_from_env as plugin_artifact_store
 from prismatic.plugin_health import get_plugin_health
-from prismatic.plugin_jobs import PluginJobStore, store_from_env as plugin_job_store
-from prismatic.pwp_integration import connect_pwp, disconnect_pwp, integration_status, refresh_pwp
+from prismatic.plugin_jobs import store_from_env as plugin_job_store
+from prismatic.plugin_policy import preview_policy
+from prismatic.pwp_integration import (
+    connect_pwp,
+    disconnect_pwp,
+    integration_status,
+    refresh_pwp,
+)
 from prismatic.run_records import AgentRunRecordStore
 
 logger = logging.getLogger("prismatic.gateway.server")
@@ -390,10 +396,36 @@ async def plugins_architecture() -> dict[str, Any]:
         "schema_version": catalog["schema_version"],
         "core_integration_points": catalog["core_integration_points"],
         "media_capability_classes": MEDIA_CAPABILITY_CLASSES,
-        "proven_future_plugin_classes": ["video", "images", "music-sfx", "game-assets", "asset-forge-3d"],
-        "required_manifest_fields": ["schema_version", "name", "version", "entry_point", "core_version_constraint"],
-        "media_asset_required_fields": ["capabilities", "asset_domains", "artifact_types", "integration_points", "automation_surfaces"],
-        "recommended_surfaces": ["registered tools", "gateway API", "dashboard surface", "MCP server", "asset index", "artifact store", "governance checks"],
+        "proven_future_plugin_classes": [
+            "video",
+            "images",
+            "music-sfx",
+            "game-assets",
+            "asset-forge-3d",
+        ],
+        "required_manifest_fields": [
+            "schema_version",
+            "name",
+            "version",
+            "entry_point",
+            "core_version_constraint",
+        ],
+        "media_asset_required_fields": [
+            "capabilities",
+            "asset_domains",
+            "artifact_types",
+            "integration_points",
+            "automation_surfaces",
+        ],
+        "recommended_surfaces": [
+            "registered tools",
+            "gateway API",
+            "dashboard surface",
+            "MCP server",
+            "asset index",
+            "artifact store",
+            "governance checks",
+        ],
     }
 
 
@@ -425,6 +457,32 @@ async def plugins_governance() -> dict[str, Any]:
             for item in catalog["plugins"]
         ],
     }
+
+
+@app.post("/api/plugins/policy/preview")
+async def plugin_policy_preview(request: Request) -> JSONResponse:
+    """Preview a generic plugin policy decision without mutating durable state."""
+    payload = await request.json()
+    kind = str(payload.get("kind") or "").strip()
+    jobs = plugin_job_store()
+    artifacts = plugin_artifact_store()
+    job = jobs.get_job(str(payload.get("job_id"))) if payload.get("job_id") else None
+    artifact = (
+        artifacts.get_artifact(str(payload.get("artifact_id")))
+        if payload.get("artifact_id")
+        else None
+    )
+    policy = preview_policy(
+        kind,
+        job=job,
+        artifact=artifact,
+        plugin_name=payload.get("plugin_name"),
+        action=payload.get("action"),
+        input_summary=payload.get("input_summary"),
+        target=payload.get("target"),
+    )
+    status = 200 if policy.get("decision") in {"allow", "needs_approval"} else 409
+    return JSONResponse(policy, status_code=status)
 
 
 @app.get("/api/plugins/artifacts")
@@ -471,7 +529,10 @@ async def create_plugin_artifact(request: Request) -> JSONResponse:
 async def get_plugin_artifact(artifact_id: str) -> JSONResponse:
     artifact = plugin_artifact_store().get_artifact(artifact_id)
     if not artifact:
-        return JSONResponse({"error": "plugin artifact not found", "artifact_id": artifact_id}, status_code=404)
+        return JSONResponse(
+            {"error": "plugin artifact not found", "artifact_id": artifact_id},
+            status_code=404,
+        )
     return JSONResponse(artifact)
 
 
@@ -485,7 +546,10 @@ async def approve_plugin_artifact(artifact_id: str, request: Request) -> JSONRes
         note=payload.get("note") or payload.get("operator_notes"),
     )
     if not artifact:
-        return JSONResponse({"error": "plugin artifact not found", "artifact_id": artifact_id}, status_code=404)
+        return JSONResponse(
+            {"error": "plugin artifact not found", "artifact_id": artifact_id},
+            status_code=404,
+        )
     return JSONResponse(artifact)
 
 
@@ -499,12 +563,17 @@ async def reject_plugin_artifact(artifact_id: str, request: Request) -> JSONResp
         note=payload.get("note") or payload.get("operator_notes"),
     )
     if not artifact:
-        return JSONResponse({"error": "plugin artifact not found", "artifact_id": artifact_id}, status_code=404)
+        return JSONResponse(
+            {"error": "plugin artifact not found", "artifact_id": artifact_id},
+            status_code=404,
+        )
     return JSONResponse(artifact)
 
 
 @app.post("/api/plugins/artifacts/{artifact_id}/publish-ready")
-async def mark_plugin_artifact_publish_ready(artifact_id: str, request: Request) -> JSONResponse:
+async def mark_plugin_artifact_publish_ready(
+    artifact_id: str, request: Request
+) -> JSONResponse:
     payload = await request.json()
     artifact = plugin_artifact_store().mark_publish_ready(
         artifact_id,
@@ -512,8 +581,41 @@ async def mark_plugin_artifact_publish_ready(artifact_id: str, request: Request)
         note=payload.get("note") or payload.get("operator_notes"),
     )
     if not artifact:
-        return JSONResponse({"error": "plugin artifact not found", "artifact_id": artifact_id}, status_code=404)
+        return JSONResponse(
+            {"error": "plugin artifact not found", "artifact_id": artifact_id},
+            status_code=404,
+        )
+    policy = artifact.get("policy_result") or {}
+    if policy.get("decision") and policy.get("decision") != "allow":
+        return JSONResponse(
+            {"artifact": artifact, "policy_result": policy}, status_code=409
+        )
     return JSONResponse(artifact)
+
+
+@app.post("/api/plugins/artifacts/{artifact_id}/export")
+async def export_plugin_artifact(artifact_id: str, request: Request) -> JSONResponse:
+    payload = await request.json()
+    target = str(payload.get("target") or "").strip()
+    if not target:
+        return JSONResponse({"error": "target is required"}, status_code=400)
+    artifact = plugin_artifact_store().add_export(
+        artifact_id,
+        target=target,
+        actor=str(payload.get("actor") or "operator"),
+        note=payload.get("note") or payload.get("operator_notes"),
+    )
+    if not artifact:
+        return JSONResponse(
+            {"error": "plugin artifact not found", "artifact_id": artifact_id},
+            status_code=404,
+        )
+    policy = artifact.get("policy_result") or {}
+    if policy.get("decision") != "allow":
+        return JSONResponse(
+            {"artifact": artifact, "policy_result": policy}, status_code=409
+        )
+    return JSONResponse({"artifact": artifact, "policy_result": policy})
 
 
 @app.get("/api/plugins/jobs")
@@ -536,7 +638,9 @@ async def create_plugin_job(request: Request) -> JSONResponse:
     plugin_name = str(payload.get("plugin_name") or "").strip()
     action = str(payload.get("action") or "").strip()
     if not plugin_name or not action:
-        return JSONResponse({"error": "plugin_name and action are required"}, status_code=400)
+        return JSONResponse(
+            {"error": "plugin_name and action are required"}, status_code=400
+        )
     job = plugin_job_store().create_job(
         plugin_name,
         action,
@@ -554,7 +658,9 @@ async def create_plugin_job(request: Request) -> JSONResponse:
 async def get_plugin_job(job_id: str) -> JSONResponse:
     job = plugin_job_store().get_job(job_id)
     if not job:
-        return JSONResponse({"error": "plugin job not found", "job_id": job_id}, status_code=404)
+        return JSONResponse(
+            {"error": "plugin job not found", "job_id": job_id}, status_code=404
+        )
     return JSONResponse(job)
 
 
@@ -567,7 +673,9 @@ async def approve_plugin_job(job_id: str, request: Request) -> JSONResponse:
         note=payload.get("note") or payload.get("operator_notes"),
     )
     if not job:
-        return JSONResponse({"error": "plugin job not found", "job_id": job_id}, status_code=404)
+        return JSONResponse(
+            {"error": "plugin job not found", "job_id": job_id}, status_code=404
+        )
     return JSONResponse(job)
 
 
@@ -580,8 +688,28 @@ async def reject_plugin_job(job_id: str, request: Request) -> JSONResponse:
         note=payload.get("note") or payload.get("operator_notes"),
     )
     if not job:
-        return JSONResponse({"error": "plugin job not found", "job_id": job_id}, status_code=404)
+        return JSONResponse(
+            {"error": "plugin job not found", "job_id": job_id}, status_code=404
+        )
     return JSONResponse(job)
+
+
+@app.post("/api/plugins/jobs/{job_id}/start")
+async def start_plugin_job(job_id: str, request: Request) -> JSONResponse:
+    payload = await request.json()
+    job, policy = plugin_job_store().start_job(
+        job_id,
+        actor=str(payload.get("actor") or "system"),
+        message=payload.get("message"),
+    )
+    if not job:
+        return JSONResponse(
+            {"error": "plugin job not found", "job_id": job_id}, status_code=404
+        )
+    if policy and policy.get("decision") == "allow":
+        return JSONResponse({"job": job, "policy_result": policy})
+    status = 409 if policy and policy.get("decision") == "needs_approval" else 403
+    return JSONResponse({"job": job, "policy_result": policy}, status_code=status)
 
 
 @app.post("/api/plugins/jobs/{job_id}/events")
@@ -597,7 +725,9 @@ async def append_plugin_job_event(job_id: str, request: Request) -> JSONResponse
         artifact=payload.get("artifact"),
     )
     if not job:
-        return JSONResponse({"error": "plugin job not found", "job_id": job_id}, status_code=404)
+        return JSONResponse(
+            {"error": "plugin job not found", "job_id": job_id}, status_code=404
+        )
     return JSONResponse(job)
 
 
@@ -618,7 +748,14 @@ async def update_plugin_job_status(job_id: str, request: Request) -> JSONRespons
     except ValueError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
     if not job:
-        return JSONResponse({"error": "plugin job not found", "job_id": job_id}, status_code=404)
+        return JSONResponse(
+            {"error": "plugin job not found", "job_id": job_id}, status_code=404
+        )
+    if status == "running":
+        policy = job.get("policy_result") or {}
+        if policy.get("decision") != "allow":
+            code = 409 if policy.get("decision") == "needs_approval" else 403
+            return JSONResponse({"job": job, "policy_result": policy}, status_code=code)
     return JSONResponse(job)
 
 
@@ -783,7 +920,9 @@ async def dashboard_recovery_control_status() -> dict[str, Any]:
 
 
 @app.post("/api/dashboard/recovery-control", response_model=None)
-async def dashboard_recovery_control(payload: dict[str, Any]) -> dict[str, Any] | JSONResponse:
+async def dashboard_recovery_control(
+    payload: dict[str, Any],
+) -> dict[str, Any] | JSONResponse:
     """Record restart/retry/replay recovery actions for live dashboard proof.
 
     The dashboard controls intentionally do not shell out or kill processes from
@@ -799,7 +938,10 @@ async def dashboard_recovery_control(payload: dict[str, Any]) -> dict[str, Any] 
         )
 
     agent = str(payload.get("agent") or "unknown").strip() or "unknown"
-    ref = str(payload.get("ref") or payload.get("run_id") or "dashboard").strip() or "dashboard"
+    ref = (
+        str(payload.get("ref") or payload.get("run_id") or "dashboard").strip()
+        or "dashboard"
+    )
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     spec = _RECOVERY_CONTROL_ACTIONS[action]
     status_text = f"{spec['status']}: {agent} / {ref}"
@@ -902,7 +1044,10 @@ MERGE_BACKLOG_TRIAGE: dict[str, Any] = {
         {
             "family": "GRO-2193/GRO-2305",
             "winner": "plugins/hermes-plugin-prismatic-hub/src/index.js",
-            "siblings": ["plugins/hermes-plugin-prismatic-hub/dashboard/dist/index.html", "dashboard/manifest.json"],
+            "siblings": [
+                "plugins/hermes-plugin-prismatic-hub/dashboard/dist/index.html",
+                "dashboard/manifest.json",
+            ],
             "reason": "Source dashboard tree owns generated dist artifacts.",
         },
         {
@@ -1445,7 +1590,9 @@ async def mutate_schedule(schedule_id: str, payload: dict[str, Any]):
 
 
 @app.get("/native-crons")
-async def list_native_crons_endpoint(include_deleted: bool = False) -> list[dict[str, Any]]:
+async def list_native_crons_endpoint(
+    include_deleted: bool = False,
+) -> list[dict[str, Any]]:
     """List PE-native portable cron definitions and queue state."""
     from prismatic.native_crons import list_native_crons
 
@@ -1460,11 +1607,15 @@ async def native_cron_action(cron_id: str, payload: dict[str, Any]):
 
     action = payload.get("action")
     if action not in {"pause", "resume", "deactivate", "activate", "delete", "run"}:
-        return JSONResponse(status_code=400, content={"error": "Unsupported native cron action"})
+        return JSONResponse(
+            status_code=400, content={"error": "Unsupported native cron action"}
+        )
     try:
         return mutate_native_cron(cron_id, action)
     except KeyError:
-        return JSONResponse(status_code=404, content={"error": f"Native cron not found: {cron_id}"})
+        return JSONResponse(
+            status_code=404, content={"error": f"Native cron not found: {cron_id}"}
+        )
     except FileNotFoundError as e:
         return JSONResponse(status_code=404, content={"error": str(e)})
     except Exception as exc:
