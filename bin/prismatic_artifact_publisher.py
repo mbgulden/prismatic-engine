@@ -41,6 +41,7 @@ ALLOWED_ROOTS: dict[str, str] = {
     "hermes-research-reports": f"{PRISMATIC_HOME}/Hermes-Research/reports",
     "prismatic-engine": f"{PRISMATIC_HOME}/prismatic-engine",
     "agentic-swarm-ops": f"{PRISMATIC_HOME}/agentic-swarm-ops",
+    "prismatic-artifacts": str(Path.home() / ".prismatic/artifacts"),
 }
 
 # Blocklists (lowercased). Refuse to serve any path whose name matches.
