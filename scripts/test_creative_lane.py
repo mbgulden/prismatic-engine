@@ -10,6 +10,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+import time
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -85,6 +86,8 @@ class TestCreativeLane(unittest.TestCase):
         os.environ.pop("PRISMATIC_CREATIVE_DB", None)
         os.environ.pop("PRISMATIC_CREATIVE_CONFIG", None)
         os.environ.pop("PRISMATIC_VAULT_PASSPHRASE", None)
+        os.environ.pop("PRISMATIC_CURATOR_DB", None)
+        os.environ.pop("PRISMATIC_DIGEST_HOUR", None)
 
     def test_curator_tagging(self):
         # 1. Check brief.requested
@@ -198,6 +201,45 @@ class TestCreativeLane(unittest.TestCase):
         self.assertEqual(ev_payload["payload"]["brief_id"], "brief_202")
         self.assertIn("ceiling exceeded", ev_payload["payload"]["reason"])
         conn.close()
+
+    def test_render_digest_includes_creative_briefs(self):
+        curator_db_path = self.tmp_path / "curator_state.sqlite"
+        os.environ["PRISMATIC_CURATOR_DB"] = str(curator_db_path)
+        os.environ["PRISMATIC_DIGEST_HOUR"] = "0"
+        
+        # Initialize curator db
+        from prismatic.curator.lane import init_curator_db
+        init_curator_db()
+        
+        # Write completed brief to creative DB
+        conn = sqlite3.connect(self.creative_db_path)
+        now_ts = time.time()
+        
+        # Calculate time matching the target window (DIGEST_HOUR to DIGEST_HOUR + 24h)
+        # In render_digest, day_start is target_date midnight replaced with hour=DIGEST_HOUR.
+        # Since we set PRISMATIC_DIGEST_HOUR="0", day_start is midnight UTC.
+        # Let's ensure the created_at timestamp falls within [day_start, day_start + 86400].
+        # Using current time (now_ts) is perfect.
+        
+        conn.execute(
+            """INSERT INTO briefs
+            (brief_id, tenant, format, prompt, status, artifact_path, cost, created_at, completed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ("brief_999", "acme", "text", "test prompt", "completed", "/home/ubuntu/.prismatic/artifacts/acme/2026-07-13/brief_999/artifact.txt", 0.05, now_ts, now_ts)
+        )
+        conn.commit()
+        conn.close()
+        
+        # Render the digest for today
+        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        md, counts = render_digest(today_str)
+        
+        # Check that it contains "Creative Briefs" and our brief details
+        self.assertIn("## Creative Briefs", md)
+        self.assertIn("brief_999", md)
+        self.assertIn("acme", md)
+        self.assertIn("test prompt", md)
+        self.assertIn("completed", md)
 
 if __name__ == "__main__":
     unittest.main()

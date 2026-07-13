@@ -58,6 +58,7 @@ from .failure import (
     reset_after_success,
     get_failure_count,
     OUTPUT_REQUIRES_ATTENTION,
+    DISPATCH_READY,
     COUNTER_PATH,
 )
 from .smoke import (
@@ -112,6 +113,7 @@ __all__ = [
     "reset_after_success",
     "get_failure_count",
     "OUTPUT_REQUIRES_ATTENTION",
+    "DISPATCH_READY",
     "COUNTER_PATH",
     # Smoke test (Gap 5)
     "SmokeFinding",

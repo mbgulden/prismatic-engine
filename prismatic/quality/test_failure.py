@@ -35,6 +35,7 @@ from prismatic.quality.failure import (
     reset_after_success,
     get_failure_count,
     OUTPUT_REQUIRES_ATTENTION,
+    DISPATCH_READY,
     COUNTER_PATH,
 )
 
@@ -73,21 +74,20 @@ class TestPolicies:
         assert policy.max_attempts >= 3
         assert policy.backoff_seconds >= 0
 
-    def test_transient_escalates_to_requires_attention_not_requeue(self):
-        # Per PR #35 review: must NOT re-add dispatch:ready on exhaustion (causes retry loop)
+    def test_transient_escalates_to_dispatch_ready(self):
+        # Per GRO-2885: must escalate to dispatch:ready on exhaustion
         policy = POLICIES[FailureMode.TRANSIENT]
-        assert policy.escalate_to != "dispatch:ready"
-        assert policy.escalate_to == "output:requires-attention"
+        assert policy.escalate_to == "dispatch:ready"
 
     def test_rate_limit_uses_long_backoff(self):
         policy = POLICIES[FailureMode.RATE_LIMIT]
         assert policy.max_attempts >= 3
         assert policy.backoff_seconds >= 30  # Wait at least 30s on rate limit
 
-    def test_rate_limit_escalates_to_requires_attention_not_requeue(self):
-        # Per PR #35 review: must NOT re-add dispatch:ready on exhaustion
+    def test_rate_limit_escalates_to_dispatch_ready(self):
+        # Per GRO-2885: must escalate to dispatch:ready on exhaustion
         policy = POLICIES[FailureMode.RATE_LIMIT]
-        assert policy.escalate_to != "dispatch:ready"
+        assert policy.escalate_to == "dispatch:ready"
 
     def test_shape_violation_does_not_retry(self):
         policy = POLICIES[FailureMode.SHAPE_VIOLATION]
@@ -406,9 +406,8 @@ class TestApplyFailureClassification:
         issue_id, action, label, comment = linear_calls[0]
         assert issue_id == "GRO-200"
         assert action == "add_label"
-        # Per PR #35 review: must NOT escalate to dispatch:ready (re-queue loop)
-        assert label != "dispatch:ready"
-        assert label == "output:requires-attention"
+        # Per GRO-2885: must escalate to dispatch:ready (re-queue loop)
+        assert label == "dispatch:ready"
         assert "Failure classification: transient" in comment
 
     def test_shape_violation_immediate_escalation(self, tmp_path, monkeypatch):
