@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
+  <title id="title">Prismatic Engine plugin dashboard UX hardening screenshot</title>
+  <desc id="desc">Illustrative dashboard screenshot showing health cards, onboarding hints, plugin detail drawer, job timeline, artifact inventory, and approval controls.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1"><stop offset="0" stop-color="#020617"/><stop offset="1" stop-color="#111827"/></linearGradient>
+    <linearGradient id="card" x1="0" x2="1"><stop offset="0" stop-color="#0f172a"/><stop offset="1" stop-color="#111827"/></linearGradient>
+  </defs>
+  <rect width="1200" height="760" fill="url(#bg)"/>
+  <rect x="38" y="32" width="1124" height="696" rx="26" fill="#020617" stroke="#334155"/>
+  <text x="70" y="78" fill="#e2e8f0" font-family="Inter,Arial" font-size="24" font-weight="700">Plugin Governance Catalog</text>
+  <text x="70" y="104" fill="#94a3b8" font-family="Inter,Arial" font-size="14">Public launch dashboard UX: health, onboarding, approvals, artifacts, and timeline.</text>
+  <rect x="918" y="58" width="164" height="34" rx="12" fill="#312e81" stroke="#6366f1"/>
+  <text x="948" y="80" fill="#c7d2fe" font-family="Inter,Arial" font-size="13" font-weight="700">Refresh Catalog</text>
+
+  <g transform="translate(70 136)">
+    <rect width="245" height="92" rx="16" fill="url(#card)" stroke="#1e293b"/><text x="18" y="30" fill="#94a3b8" font-family="Inter,Arial" font-size="12" font-weight="700">PLUGINS</text><text x="18" y="66" fill="#f8fafc" font-family="Inter,Arial" font-size="32" font-weight="800">5</text><text x="150" y="30" fill="#86efac" font-family="Inter,Arial" font-size="11">healthy</text>
+    <rect x="265" width="245" height="92" rx="16" fill="url(#card)" stroke="#1e293b"/><text x="283" y="30" fill="#94a3b8" font-family="Inter,Arial" font-size="12" font-weight="700">JOBS</text><text x="283" y="66" fill="#f8fafc" font-family="Inter,Arial" font-size="32" font-weight="800">12</text><text x="405" y="30" fill="#a5b4fc" font-family="Inter,Arial" font-size="11">ready</text>
+    <rect x="530" width="245" height="92" rx="16" fill="url(#card)" stroke="#1e293b"/><text x="548" y="30" fill="#94a3b8" font-family="Inter,Arial" font-size="12" font-weight="700">ARTIFACTS</text><text x="548" y="66" fill="#f8fafc" font-family="Inter,Arial" font-size="32" font-weight="800">9</text><text x="680" y="30" fill="#a5b4fc" font-family="Inter,Arial" font-size="11">ready</text>
+    <rect x="795" width="245" height="92" rx="16" fill="url(#card)" stroke="#1e293b"/><text x="813" y="30" fill="#94a3b8" font-family="Inter,Arial" font-size="12" font-weight="700">NEEDS ATTENTION</text><text x="813" y="66" fill="#f8fafc" font-family="Inter,Arial" font-size="32" font-weight="800">1</text><text x="960" y="30" fill="#fbbf24" font-family="Inter,Arial" font-size="11">review</text>
+  </g>
+
+  <g transform="translate(70 254)">
+    <rect width="300" height="110" rx="16" fill="#0f172a" stroke="#1e293b"/><text x="18" y="32" fill="#e2e8f0" font-family="Inter,Arial" font-size="15" font-weight="700">Start local</text><text x="18" y="58" fill="#94a3b8" font-family="Inter,Arial" font-size="12">Run public smoke before sharing.</text><rect x="18" y="76" width="84" height="24" rx="8" fill="#312e81"/><text x="31" y="93" fill="#c7d2fe" font-family="Inter,Arial" font-size="11">Copy CLI</text><rect x="112" y="76" width="62" height="24" rx="8" fill="#020617" stroke="#475569"/><text x="130" y="93" fill="#cbd5e1" font-family="Inter,Arial" font-size="11">Docs</text>
+    <rect x="320" width="300" height="110" rx="16" fill="#0f172a" stroke="#1e293b"/><text x="338" y="32" fill="#e2e8f0" font-family="Inter,Arial" font-size="15" font-weight="700">Prove release path</text><text x="338" y="58" fill="#94a3b8" font-family="Inter,Arial" font-size="12">Validate package and dashboard.</text><rect x="338" y="76" width="84" height="24" rx="8" fill="#312e81"/><text x="351" y="93" fill="#c7d2fe" font-family="Inter,Arial" font-size="11">Copy CLI</text>
+    <rect x="640" width="300" height="110" rx="16" fill="#0f172a" stroke="#1e293b"/><text x="658" y="32" fill="#e2e8f0" font-family="Inter,Arial" font-size="15" font-weight="700">Govern plugins</text><text x="658" y="58" fill="#94a3b8" font-family="Inter,Arial" font-size="12">Preview policy before risky work.</text><rect x="658" y="76" width="84" height="24" rx="8" fill="#312e81"/><text x="671" y="93" fill="#c7d2fe" font-family="Inter,Arial" font-size="11">Copy CLI</text>
+  </g>
+
+  <g transform="translate(70 392)">
+    <rect width="660" height="250" rx="18" fill="#0f172a" stroke="#1e293b"/>
+    <text x="20" y="34" fill="#94a3b8" font-family="Inter,Arial" font-size="12" font-weight="700">JOB TIMELINE</text>
+    <line x1="36" y1="62" x2="36" y2="208" stroke="#6366f1" stroke-width="2" opacity="0.5"/>
+    <circle cx="36" cy="72" r="7" fill="#6366f1"/><text x="58" y="78" fill="#e2e8f0" font-family="Inter,Arial" font-size="13">policy_checked · allow</text>
+    <circle cx="36" cy="122" r="7" fill="#22c55e"/><text x="58" y="128" fill="#e2e8f0" font-family="Inter,Arial" font-size="13">started · durable audit event</text>
+    <circle cx="36" cy="172" r="7" fill="#38bdf8"/><text x="58" y="178" fill="#e2e8f0" font-family="Inter,Arial" font-size="13">artifact_emitted · provenance linked</text>
+    <rect x="360" y="54" width="260" height="156" rx="14" fill="#020617" stroke="#334155"/><text x="382" y="84" fill="#94a3b8" font-family="Inter,Arial" font-size="12" font-weight="700">ARTIFACT INVENTORY</text><text x="382" y="116" fill="#e2e8f0" font-family="Inter,Arial" font-size="13">image/png · publish-ready</text><text x="382" y="146" fill="#e2e8f0" font-family="Inter,Arial" font-size="13">brief/md · approved</text><text x="382" y="176" fill="#e2e8f0" font-family="Inter,Arial" font-size="13">export.zip · needs approval</text>
+  </g>
+
+  <g transform="translate(760 392)">
+    <rect width="322" height="250" rx="18" fill="#0f172a" stroke="#1e293b"/>
+    <text x="20" y="34" fill="#94a3b8" font-family="Inter,Arial" font-size="12" font-weight="700">PLUGIN DETAIL DRAWER</text>
+    <text x="20" y="70" fill="#f8fafc" font-family="Inter,Arial" font-size="19" font-weight="800">pwp-design-token-plugin</text>
+    <text x="20" y="104" fill="#94a3b8" font-family="Inter,Arial" font-size="13">Latest job: completed</text>
+    <text x="20" y="132" fill="#94a3b8" font-family="Inter,Arial" font-size="13">Latest artifact: publish-ready</text>
+    <rect x="20" y="160" width="126" height="32" rx="10" fill="#312e81" stroke="#6366f1"/><text x="40" y="181" fill="#c7d2fe" font-family="Inter,Arial" font-size="12" font-weight="700">Copy smoke</text>
+    <rect x="158" y="160" width="126" height="32" rx="10" fill="#064e3b" stroke="#10b981"/><text x="180" y="181" fill="#a7f3d0" font-family="Inter,Arial" font-size="12" font-weight="700">Approve</text>
+  </g>
+</svg>

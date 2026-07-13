@@ -42,8 +42,10 @@ jobs:
             scripts/release_smoke.py \
             scripts/public_launch_smoke.py \
             scripts/public_security_readiness_audit.py \
+            scripts/dashboard_visual_qa.py \
             tests/test_plugin_load_gate.py \
             tests/test_public_security_readiness.py \
+            tests/test_dashboard_ux_hardening.py \
             prismatic/quality/test_smoke.py
           python -m ruff format --check \
             prismatic/__init__.py \
@@ -51,8 +53,10 @@ jobs:
             scripts/release_smoke.py \
             scripts/public_launch_smoke.py \
             scripts/public_security_readiness_audit.py \
+            scripts/dashboard_visual_qa.py \
             tests/test_plugin_load_gate.py \
             tests/test_public_security_readiness.py \
+            tests/test_dashboard_ux_hardening.py \
             prismatic/quality/test_smoke.py
 
       - name: Run release readiness checks

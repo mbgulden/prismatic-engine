@@ -114,6 +114,14 @@ def main() -> int:
             "plugin-policy-decision",
             "renderPluginPolicy",
             "Policy Enforcement",
+            "plugin-first-run-empty-state",
+            "plugin-onboarding-hints",
+            "copyDashboardCommand",
+            "plugin-detail-drawer",
+            "plugin-job-timeline",
+            "plugin-artifact-inventory",
+            "plugin-approval-controls",
+            "plugin-dashboard-health-cards",
         ]
         missing = [marker for marker in markers if marker not in html]
         if missing:

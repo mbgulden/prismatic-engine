@@ -70,6 +70,9 @@ def main() -> int:
         [sys.executable, "scripts/public_security_readiness_audit.py"],
         "PUBLIC_SECURITY_READINESS_OK",
     )
+    dashboard = run(
+        [sys.executable, "scripts/dashboard_visual_qa.py"], "DASHBOARD_VISUAL_QA_OK"
+    )
     metadata = project_metadata()
     missing = sorted(set(EXPECTED_ENTRYPOINTS) - set(metadata["console_scripts"]))
     if missing:
@@ -82,6 +85,7 @@ def main() -> int:
         "plugin_load_reason": load_result.reason,
         "launch_marker": "PUBLIC_LAUNCH_SMOKE_OK" in launch,
         "security_marker": "PUBLIC_SECURITY_READINESS_OK" in security,
+        "dashboard_visual_marker": "DASHBOARD_VISUAL_QA_OK" in dashboard,
     }
     print(json.dumps(payload, indent=2, sort_keys=True))
     print("RELEASE_SMOKE_OK")

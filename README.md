@@ -204,6 +204,7 @@ docs/plugin-developer-guide.md
 ```bash
 python scripts/public_launch_smoke.py
 python scripts/public_security_readiness_audit.py
+python scripts/dashboard_visual_qa.py
 python scripts/release_check.py
 python scripts/release_smoke.py
 python scripts/plugin_architecture catalog
