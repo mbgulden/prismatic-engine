@@ -134,6 +134,7 @@ Deep dive:
 - [Plugin developer guide](docs/plugin-developer-guide.md)
 - [Hello plugin tutorial](docs/hello-plugin-tutorial.md)
 - [Troubleshooting guide](docs/troubleshooting.md)
+- [Public security readiness audit](docs/public-security-readiness.md)
 - [Dashboard screenshots](docs/dashboard-screenshots.md)
 - [Release notes](CHANGELOG.md)
 - [Security policy](SECURITY.md)
@@ -189,6 +190,7 @@ docs/plugin-developer-guide.md
 
 ```bash
 python scripts/public_launch_smoke.py
+python scripts/public_security_readiness_audit.py
 python scripts/plugin_architecture catalog
 plugin-load-gate
 python -m pytest tests/test_plugin_policy.py tests/test_plugin_artifacts.py tests/test_plugin_jobs.py -q

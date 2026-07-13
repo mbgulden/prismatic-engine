@@ -153,10 +153,12 @@ class TestDetectSecrets:
         assert any("stripe_key" in f.message for f in findings)
 
     def test_private_key_detected(self):
-        diff = """+++ b/server.pem
-+-----BEGIN RSA PRIVATE KEY-----
+        private_key_header = "-----BEGIN " + "RSA PRIVATE KEY-----"
+        private_key_footer = "-----END " + "RSA PRIVATE KEY-----"
+        diff = f"""+++ b/server.pem
++{private_key_header}
 +base64data
-+-----END RSA PRIVATE KEY-----
++{private_key_footer}
 """
         findings = detect_secrets(diff)
         assert any("private_key" in f.message for f in findings)

@@ -93,13 +93,42 @@ app = FastAPI(
     openapi_url=None,  # Disable OpenAPI schema generation — internal gateway
 )
 
-# CORS — allow all origins (internal orchestration gateway)
+
+def _configured_cors_origins() -> list[str]:
+    """Return explicit browser origins allowed to call the Gateway.
+
+    Public/default installs are local-only. Remote deployments must opt in with
+    PRISMATIC_CORS_ORIGINS as a comma-separated list of exact origins. Wildcard
+    CORS is intentionally rejected when credentials are enabled.
+    """
+    raw = os.environ.get(
+        "PRISMATIC_CORS_ORIGINS",
+        "http://127.0.0.1:9000,http://localhost:9000",
+    )
+    origins = [
+        origin.strip().rstrip("/") for origin in raw.split(",") if origin.strip()
+    ]
+    if not origins:
+        return ["http://127.0.0.1:9000", "http://localhost:9000"]
+    if "*" in origins:
+        logger.warning(
+            "Ignoring wildcard PRISMATIC_CORS_ORIGINS while credentials are enabled"
+        )
+        return [origin for origin in origins if origin != "*"] or [
+            "http://127.0.0.1:9000"
+        ]
+    return origins
+
+
+# CORS — local-only by default. Remote browser origins must be explicitly
+# configured with PRISMATIC_CORS_ORIGINS; do not combine wildcard origins with
+# credentialed requests.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_configured_cors_origins(),
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 # Auth check for observability endpoints (re-added 2026-06-30 after Phase D
