@@ -10,6 +10,10 @@ The project is currently alpha. Dates use UTC.
 
 - Public release engineering layer: release process docs, release checklist, migration notes, upgrade guide, stable CLI entrypoint reference, sample config, bootstrap script, Dockerfile, devcontainer, release smoke, and release readiness check.
 
+### Dashboard UX
+
+- Public-polished plugin dashboard layer: first-run empty state, onboarding hints, copyable CLI commands, docs links, error explanations, health cards, detail drawer, job timeline, artifact inventory, approval controls, and static visual QA.
+
 ### Changed
 
 - CI now runs a supported Python matrix and release smoke/readiness checks.

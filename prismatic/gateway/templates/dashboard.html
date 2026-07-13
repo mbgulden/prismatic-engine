@@ -949,14 +949,41 @@
                         <button onclick="loadPluginGovernance()" class="bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 border border-indigo-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Refresh Catalog</button>
                     </div>
                 </div>
-                <div id="plugin-governance-summary" class="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs"></div>
-                <div id="plugin-policy-summary" class="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs"></div>
-                <div id="plugin-policy-decision" class="rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-xs text-slate-300"></div>
-                <div id="plugin-job-summary" class="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs"></div>
-                <div id="plugin-artifact-summary" class="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs"></div>
-                <div id="plugin-artifacts-table" class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50"></div>
-                <div id="plugin-jobs-table" class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50"></div>
-                <div id="plugin-governance-cards" class="grid grid-cols-1 xl:grid-cols-2 gap-4"></div>
+                <div id="plugin-dashboard-health-cards" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 text-xs"></div>
+                <div id="plugin-first-run-empty-state" class="hidden rounded-2xl border border-dashed border-indigo-500/30 bg-indigo-950/10 p-4 text-sm text-slate-300">
+                    <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                        <div>
+                            <div class="text-indigo-300 font-bold uppercase tracking-wider text-xs">First-run plugin setup</div>
+                            <p class="mt-1 text-slate-400">No plugin records yet? Start with a catalog check, then run the release smoke to prove the dashboard, policy gate, jobs, and artifacts are wired.</p>
+                        </div>
+                        <div class="flex flex-wrap gap-2">
+                            <button onclick="copyDashboardCommand('python scripts/plugin_architecture catalog')" class="copy-cli-command rounded-lg border border-indigo-500/30 bg-indigo-600/10 px-3 py-2 text-xs font-semibold text-indigo-200 hover:bg-indigo-600/20">Copy catalog CLI</button>
+                            <button onclick="copyDashboardCommand('python scripts/release_smoke.py')" class="copy-cli-command rounded-lg border border-emerald-500/30 bg-emerald-600/10 px-3 py-2 text-xs font-semibold text-emerald-200 hover:bg-emerald-600/20">Copy release smoke</button>
+                        </div>
+                    </div>
+                </div>
+                <div id="plugin-onboarding-hints" class="grid grid-cols-1 lg:grid-cols-3 gap-3 text-xs"></div>
+                <div id="plugin-error-explanation" class="hidden rounded-xl border border-red-500/30 bg-red-950/20 p-3 text-xs text-red-100"></div>
+                <div class="grid grid-cols-1 2xl:grid-cols-[minmax(0,1fr)_380px] gap-4">
+                    <div class="space-y-4 min-w-0">
+                        <div id="plugin-governance-summary" class="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs"></div>
+                        <div id="plugin-policy-summary" class="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs"></div>
+                        <div id="plugin-policy-decision" class="rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-xs text-slate-300"></div>
+                        <div id="plugin-job-summary" class="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs"></div>
+                        <div id="plugin-artifact-summary" class="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs"></div>
+                        <div id="plugin-artifact-inventory" class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50"></div>
+                        <div id="plugin-artifacts-table" class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50"></div>
+                        <div id="plugin-job-timeline" class="rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-xs text-slate-300"></div>
+                        <div id="plugin-approval-controls" class="rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-xs text-slate-300"></div>
+                        <div id="plugin-jobs-table" class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50"></div>
+                        <div id="plugin-governance-cards" class="grid grid-cols-1 xl:grid-cols-2 gap-4"></div>
+                    </div>
+                    <aside id="plugin-detail-drawer" class="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-xs text-slate-300 h-fit lg:sticky lg:top-4">
+                        <div class="text-slate-500 uppercase tracking-wider font-bold">Plugin detail drawer</div>
+                        <p class="mt-2 text-slate-400">Select a plugin, job, or artifact row to inspect governance, timeline, provenance, approvals, and next commands.</p>
+                    </aside>
+                </div>
+                <div id="plugin-doc-links" class="flex flex-wrap gap-2 text-xs"></div>
             </div>
         </div>
 
@@ -1532,11 +1559,17 @@
                 loadedPluginGovernance = await govRes.json();
                 loadedPluginJobs = await jobsRes.json();
                 loadedPluginArtifacts = await artifactsRes.json();
+                renderPluginDashboardChrome(null);
                 renderPluginGovernance();
                 renderPluginPolicy();
                 renderPluginJobs();
                 renderPluginArtifacts();
+                renderPluginJobTimeline();
+                renderPluginArtifactInventory();
+                renderPluginApprovalControls();
+                renderPluginDetailDrawer();
             } catch (err) {
+                renderPluginDashboardChrome(err);
                 const summary = document.getElementById('plugin-governance-summary');
                 if (summary) summary.innerHTML = `<div class="col-span-full text-rose-300 bg-rose-950/30 border border-rose-900/60 rounded-xl p-3">Plugin governance refresh failed: ${err.message}</div>`;
             }
@@ -1551,6 +1584,123 @@
                 slate: 'bg-slate-900/80 text-slate-300 border-slate-700/70'
             };
             return `<span class="inline-flex items-center px-2 py-0.5 rounded-full border text-[10px] font-semibold ${palette[color] || palette.slate}">${label}</span>`;
+        }
+
+        function pluginDashboardCounts() {
+            const governance = (loadedPluginGovernance && loadedPluginGovernance.plugins) || [];
+            const jobs = (loadedPluginJobs && loadedPluginJobs.jobs) || [];
+            const artifacts = (loadedPluginArtifacts && loadedPluginArtifacts.artifacts) || [];
+            return {
+                plugins: governance.length,
+                jobs: jobs.length,
+                artifacts: artifacts.length,
+                approvals: jobs.filter(job => job.status === 'needs_approval' || job.approval_state === 'pending').length + artifacts.filter(artifact => artifact.approval_state === 'pending').length,
+                blockers: governance.filter(plugin => (plugin.production_blockers || []).length).length + jobs.filter(job => job.status === 'failed').length + artifacts.filter(artifact => artifact.approval_state === 'rejected').length
+            };
+        }
+
+        function copyDashboardCommand(command) {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(command);
+            }
+            renderPluginDetailDrawer({
+                title: 'Copied CLI command',
+                body: `<code class="block mt-2 rounded bg-slate-900 p-2 text-emerald-200 overflow-x-auto">${command}</code>`
+            });
+        }
+
+        function renderPluginDashboardChrome(error) {
+            const counts = pluginDashboardCounts();
+            const health = document.getElementById('plugin-dashboard-health-cards');
+            if (health) {
+                health.innerHTML = [
+                    ['Plugins', counts.plugins, 'Manifest catalog loaded', counts.plugins ? 'emerald' : 'amber'],
+                    ['Jobs', counts.jobs, 'Durable audit trail', counts.jobs ? 'indigo' : 'slate'],
+                    ['Artifacts', counts.artifacts, 'Provenance inventory', counts.artifacts ? 'indigo' : 'slate'],
+                    ['Needs attention', counts.approvals + counts.blockers, 'Approvals and blockers', counts.approvals + counts.blockers ? 'amber' : 'emerald'],
+                ].map(([label, value, help, color]) => `<div class="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                    <div class="flex items-center justify-between gap-2"><span class="text-slate-500 uppercase tracking-wider font-bold">${label}</span>${pluginBadge(color === 'emerald' ? 'healthy' : color === 'amber' ? 'review' : 'ready', color)}</div>
+                    <div class="mt-2 text-2xl font-black text-slate-100">${value}</div>
+                    <div class="mt-1 text-slate-500">${help}</div>
+                </div>`).join('');
+            }
+            const firstRun = document.getElementById('plugin-first-run-empty-state');
+            if (firstRun) firstRun.classList.toggle('hidden', counts.plugins + counts.jobs + counts.artifacts > 0);
+            const errorEl = document.getElementById('plugin-error-explanation');
+            if (errorEl) {
+                errorEl.classList.toggle('hidden', !error);
+                errorEl.innerHTML = error ? `<div class="font-bold uppercase tracking-wider">Dashboard refresh error</div><p class="mt-1 text-red-200">${error.message || error}. Check that the Gateway is running, then copy the smoke command below.</p><button onclick="copyDashboardCommand('python scripts/release_smoke.py')" class="copy-cli-command mt-2 rounded border border-red-400/30 px-2 py-1 text-red-100">Copy release smoke</button>` : '';
+            }
+            const hints = document.getElementById('plugin-onboarding-hints');
+            if (hints) {
+                const cards = [
+                    ['Start local', 'Run the public smoke before sharing the dashboard.', 'python scripts/public_launch_smoke.py', 'docs/public-onboarding.md'],
+                    ['Prove release path', 'Validate package metadata, plugins, API, and dashboard markers.', 'python scripts/release_smoke.py', 'docs/release-process.md'],
+                    ['Govern plugins', 'Preview policy before starting risky jobs or exporting artifacts.', 'python scripts/plugin_architecture catalog', 'docs/prismatic-plugin-architecture.md'],
+                ];
+                hints.innerHTML = cards.map(([title, body, command, doc]) => `<div class="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+                    <div class="font-bold text-slate-200">${title}</div><p class="mt-1 text-slate-500">${body}</p>
+                    <div class="mt-3 flex flex-wrap gap-2"><button onclick="copyDashboardCommand('${command}')" class="copy-cli-command rounded border border-indigo-500/30 px-2 py-1 text-indigo-200">Copy CLI</button><a class="dashboard-doc-link rounded border border-slate-700 px-2 py-1 text-slate-300 hover:text-white" href="/${doc}" target="_blank">Docs</a></div>
+                </div>`).join('');
+            }
+            const docs = document.getElementById('plugin-doc-links');
+            if (docs) {
+                docs.innerHTML = ['docs/public-onboarding.md', 'docs/prismatic-plugin-architecture.md', 'docs/release-process.md', 'docs/public-security-readiness.md'].map(doc => `<a class="dashboard-doc-link rounded-full border border-slate-700 px-3 py-1 text-slate-300 hover:border-indigo-500/50 hover:text-indigo-200" href="/${doc}" target="_blank">${doc.replace('docs/', '')}</a>`).join('');
+            }
+        }
+
+        function renderPluginDetailDrawer(selection = null) {
+            const drawer = document.getElementById('plugin-detail-drawer');
+            if (!drawer) return;
+            if (selection && selection.title) {
+                drawer.innerHTML = `<div class="text-slate-500 uppercase tracking-wider font-bold">${selection.title}</div><div class="mt-2 text-slate-300">${selection.body || ''}</div>`;
+                return;
+            }
+            const plugin = ((loadedPluginGovernance && loadedPluginGovernance.plugins) || [])[0];
+            const job = ((loadedPluginJobs && loadedPluginJobs.jobs) || [])[0];
+            const artifact = ((loadedPluginArtifacts && loadedPluginArtifacts.artifacts) || [])[0];
+            drawer.innerHTML = `<div class="flex items-start justify-between gap-3"><div><div class="text-slate-500 uppercase tracking-wider font-bold">Plugin detail drawer</div><div class="mt-1 text-lg font-black text-slate-100">${(plugin && plugin.name) || 'No plugin selected'}</div></div>${plugin ? pluginBadge(plugin.readiness_state || 'unknown', plugin.readiness_state === 'ready' ? 'emerald' : 'amber') : pluginBadge('first run', 'amber')}</div>
+                <div class="mt-4 space-y-3">
+                    <div><div class="text-slate-500 uppercase tracking-wider font-bold">Latest job</div><div class="mt-1 text-slate-300">${job ? `${job.job_id || job.id} · ${job.status}` : 'No job timeline yet.'}</div></div>
+                    <div><div class="text-slate-500 uppercase tracking-wider font-bold">Latest artifact</div><div class="mt-1 text-slate-300">${artifact ? `${artifact.artifact_id || artifact.id} · ${artifact.publish_state || artifact.approval_state}` : 'No artifact inventory yet.'}</div></div>
+                    <button onclick="copyDashboardCommand('python scripts/release_smoke.py')" class="copy-cli-command rounded-lg border border-indigo-500/30 bg-indigo-600/10 px-3 py-2 text-xs font-semibold text-indigo-200 hover:bg-indigo-600/20">Copy release smoke</button>
+                </div>`;
+        }
+
+        function renderPluginJobTimeline() {
+            const el = document.getElementById('plugin-job-timeline');
+            if (!el) return;
+            const jobs = ((loadedPluginJobs && loadedPluginJobs.jobs) || []).slice(0, 5);
+            if (!jobs.length) {
+                el.innerHTML = `<div class="text-slate-500 uppercase tracking-wider font-bold">Job timeline</div><p class="mt-2 text-slate-500">No plugin jobs yet. Create one through the API or run a plugin smoke to populate the durable audit trail.</p>`;
+                return;
+            }
+            el.innerHTML = `<div class="flex items-center justify-between"><div class="text-slate-500 uppercase tracking-wider font-bold">Job timeline</div><button onclick="copyDashboardCommand('curl -s http://127.0.0.1:9000/api/plugins/jobs')" class="copy-cli-command text-indigo-300 hover:text-indigo-200">Copy API</button></div><ol class="mt-3 space-y-2">${jobs.map(job => `<li class="border-l border-indigo-500/30 pl-3"><button onclick="renderPluginDetailDrawer({title: 'Job ${job.job_id || job.id}', body: 'Status: ${job.status || 'unknown'}<br>Approval: ${job.approval_state || 'unknown'}'})" class="text-left text-slate-200 hover:text-indigo-200">${job.action || job.kind || 'plugin job'} · ${pluginBadge(job.status || 'unknown', job.status === 'completed' ? 'emerald' : job.status === 'failed' ? 'rose' : 'amber')}</button><div class="text-slate-500">${formatDate(job.updated_at || job.created_at)}</div></li>`).join('')}</ol>`;
+        }
+
+        function renderPluginArtifactInventory() {
+            const el = document.getElementById('plugin-artifact-inventory');
+            if (!el) return;
+            const artifacts = ((loadedPluginArtifacts && loadedPluginArtifacts.artifacts) || []);
+            if (!artifacts.length) {
+                el.innerHTML = `<div class="p-3"><div class="text-slate-500 uppercase tracking-wider font-bold">Artifact inventory</div><p class="mt-2 text-slate-500">No artifacts registered yet. Approved plugin outputs will appear here with provenance, publish state, and export history.</p></div>`;
+                return;
+            }
+            el.innerHTML = `<div class="p-3 border-b border-slate-800 flex items-center justify-between"><div class="text-slate-500 uppercase tracking-wider font-bold">Artifact inventory</div><button onclick="copyDashboardCommand('curl -s http://127.0.0.1:9000/api/plugins/artifacts')" class="copy-cli-command text-indigo-300 hover:text-indigo-200">Copy API</button></div><div class="divide-y divide-slate-800/60">${artifacts.slice(0, 6).map(artifact => `<button onclick="renderPluginDetailDrawer({title: 'Artifact ${artifact.artifact_id || artifact.id}', body: 'Type: ${artifact.artifact_type || 'unknown'}<br>Publish: ${artifact.publish_state || 'unknown'}<br>Approval: ${artifact.approval_state || 'unknown'}'})" class="block w-full text-left p-3 hover:bg-slate-900/50"><div class="font-semibold text-slate-200">${artifact.artifact_type || 'artifact'} · ${artifact.artifact_id || artifact.id}</div><div class="mt-1 text-slate-500">${artifact.plugin_name || 'unknown plugin'} · ${artifact.publish_state || artifact.approval_state || 'unreviewed'}</div></button>`).join('')}</div>`;
+        }
+
+        function renderPluginApprovalControls() {
+            const el = document.getElementById('plugin-approval-controls');
+            if (!el) return;
+            const jobs = ((loadedPluginJobs && loadedPluginJobs.jobs) || []).filter(job => job.status === 'needs_approval' || job.approval_state === 'pending');
+            const artifacts = ((loadedPluginArtifacts && loadedPluginArtifacts.artifacts) || []).filter(artifact => artifact.approval_state === 'pending');
+            if (!jobs.length && !artifacts.length) {
+                el.innerHTML = `<div class="text-slate-500 uppercase tracking-wider font-bold">Approval controls</div><p class="mt-2 text-slate-500">No pending approvals. Policy-gated jobs and artifacts will show approve/reject actions here.</p>`;
+                return;
+            }
+            const jobButtons = jobs.slice(0, 3).map(job => `<div class="rounded-lg border border-amber-500/20 p-2"><div class="font-semibold text-amber-200">Job ${job.job_id || job.id}</div><div class="mt-2 flex gap-2"><button onclick="fetch('/api/plugins/jobs/${job.job_id || job.id}/approve', {method: 'POST'}).then(loadPluginGovernance)" class="rounded border border-emerald-500/30 px-2 py-1 text-emerald-200">Approve</button><button onclick="fetch('/api/plugins/jobs/${job.job_id || job.id}/reject', {method: 'POST'}).then(loadPluginGovernance)" class="rounded border border-rose-500/30 px-2 py-1 text-rose-200">Reject</button></div></div>`).join('');
+            const artifactButtons = artifacts.slice(0, 3).map(artifact => `<div class="rounded-lg border border-amber-500/20 p-2"><div class="font-semibold text-amber-200">Artifact ${artifact.artifact_id || artifact.id}</div><div class="mt-2 flex gap-2"><button onclick="fetch('/api/plugins/artifacts/${artifact.artifact_id || artifact.id}/approve', {method: 'POST'}).then(loadPluginGovernance)" class="rounded border border-emerald-500/30 px-2 py-1 text-emerald-200">Approve</button><button onclick="fetch('/api/plugins/artifacts/${artifact.artifact_id || artifact.id}/reject', {method: 'POST'}).then(loadPluginGovernance)" class="rounded border border-rose-500/30 px-2 py-1 text-rose-200">Reject</button></div></div>`).join('');
+            el.innerHTML = `<div class="text-slate-500 uppercase tracking-wider font-bold">Approval controls</div><div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">${jobButtons}${artifactButtons}</div>`;
         }
 
         function renderPluginPolicy() {
