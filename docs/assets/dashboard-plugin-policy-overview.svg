@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="720" viewBox="0 0 1200 720" role="img" aria-labelledby="title desc">
+  <title id="title">Prismatic Engine dashboard plugin policy overview</title>
+  <desc id="desc">Illustrative screenshot-style overview of the Plugins dashboard showing policy summary, jobs, and artifacts.</desc>
+  <rect width="1200" height="720" fill="#020617"/>
+  <rect x="40" y="36" width="1120" height="648" rx="28" fill="#0f172a" stroke="#334155"/>
+  <text x="80" y="90" fill="#e2e8f0" font-family="Inter, Arial, sans-serif" font-size="34" font-weight="700">Prismatic Engine Dashboard</text>
+  <text x="80" y="126" fill="#94a3b8" font-family="Inter, Arial, sans-serif" font-size="18">Plugins · Policy Enforcement · Jobs · Artifacts</text>
+  <g transform="translate(80 170)">
+    <rect width="205" height="110" rx="18" fill="#111827" stroke="#1e293b"/>
+    <text x="18" y="34" fill="#94a3b8" font-family="Inter, Arial" font-size="13" font-weight="700">BLOCKED JOBS</text>
+    <text x="18" y="78" fill="#f8fafc" font-family="Inter, Arial" font-size="38" font-weight="700">0</text>
+  </g>
+  <g transform="translate(310 170)">
+    <rect width="205" height="110" rx="18" fill="#111827" stroke="#1e293b"/>
+    <text x="18" y="34" fill="#94a3b8" font-family="Inter, Arial" font-size="13" font-weight="700">BLOCKED ARTIFACTS</text>
+    <text x="18" y="78" fill="#f8fafc" font-family="Inter, Arial" font-size="38" font-weight="700">0</text>
+  </g>
+  <g transform="translate(540 170)">
+    <rect width="205" height="110" rx="18" fill="#111827" stroke="#1e293b"/>
+    <text x="18" y="34" fill="#94a3b8" font-family="Inter, Arial" font-size="13" font-weight="700">APPROVALS</text>
+    <text x="18" y="78" fill="#fbbf24" font-family="Inter, Arial" font-size="38" font-weight="700">1</text>
+  </g>
+  <g transform="translate(770 170)">
+    <rect width="310" height="110" rx="18" fill="#111827" stroke="#1e293b"/>
+    <text x="18" y="34" fill="#94a3b8" font-family="Inter, Arial" font-size="13" font-weight="700">LAST POLICY DECISION</text>
+    <text x="18" y="76" fill="#34d399" font-family="Inter, Arial" font-size="30" font-weight="700">allow</text>
+  </g>
+  <rect x="80" y="330" width="1020" height="130" rx="18" fill="#020617" stroke="#1e293b"/>
+  <text x="110" y="370" fill="#e2e8f0" font-family="Inter, Arial" font-size="22" font-weight="700">Policy Enforcement</text>
+  <text x="110" y="405" fill="#94a3b8" font-family="Inter, Arial" font-size="16">blocked_reason: No blockers. Safe preview export is allowed.</text>
+  <rect x="110" y="425" width="120" height="26" rx="13" fill="#064e3b"/>
+  <text x="130" y="444" fill="#bbf7d0" font-family="Inter, Arial" font-size="13" font-weight="700">policy: allow</text>
+  <rect x="80" y="500" width="490" height="120" rx="18" fill="#111827" stroke="#1e293b"/>
+  <text x="110" y="540" fill="#e2e8f0" font-family="Inter, Arial" font-size="20" font-weight="700">Recent Plugin Jobs</text>
+  <text x="110" y="575" fill="#94a3b8" font-family="Inter, Arial" font-size="15">plugjob_… · running · pwp-design-token-plugin</text>
+  <rect x="610" y="500" width="490" height="120" rx="18" fill="#111827" stroke="#1e293b"/>
+  <text x="640" y="540" fill="#e2e8f0" font-family="Inter, Arial" font-size="20" font-weight="700">Artifacts / Provenance</text>
+  <text x="640" y="575" fill="#94a3b8" font-family="Inter, Arial" font-size="15">plugart_… · approved · publish_ready</text>
+</svg>

@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+"""One-command public launch smoke test for Prismatic Engine.
+
+This script is intentionally local-only. It does not require credentials,
+webhooks, systemd, or hosted infrastructure.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any
+
+
+def step(name: str, fn) -> Any:
+    print(f"[public-smoke] {name} ...", flush=True)
+    try:
+        result = fn()
+    except Exception as exc:  # pragma: no cover - CLI diagnostic path
+        print(f"[public-smoke] FAILED: {name}: {exc}", file=sys.stderr)
+        raise
+    print(f"[public-smoke] ok: {name}", flush=True)
+    return result
+
+
+def run(cmd: list[str], *, cwd: Path) -> str:
+    proc = subprocess.run(cmd, cwd=cwd, text=True, capture_output=True, timeout=120)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"command failed: {' '.join(cmd)}\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
+        )
+    return proc.stdout
+
+
+def main() -> int:
+    repo = Path(__file__).resolve().parents[1]
+    tmp = Path(tempfile.mkdtemp(prefix="prismatic-public-smoke-"))
+    state = tmp / "state"
+    state.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("PRISMATIC_STATE_DIR", str(state))
+    os.environ.setdefault(
+        "PRISMATIC_PLUGIN_JOBS_STATE", str(state / "plugin_jobs.json")
+    )
+    os.environ.setdefault(
+        "PRISMATIC_PLUGIN_ARTIFACTS_STATE", str(state / "plugin_artifacts.json")
+    )
+
+    def import_core() -> None:
+        import prismatic  # noqa: F401
+        from prismatic.plugin_policy import decision_payload
+
+        policy = decision_payload(decision="allow", reason="public smoke")
+        assert policy["decision"] == "allow"
+
+    def cli_help() -> None:
+        from prismatic.cli import run as cli_run
+
+        assert cli_run([]) == 0
+
+    def catalog() -> dict[str, Any]:
+        out = run([sys.executable, "scripts/plugin_architecture", "catalog"], cwd=repo)
+        payload = json.loads(out)
+        assert payload["count"] >= 1
+        assert payload["ready_count"] >= 1
+        return payload
+
+    def plugin_load_gate() -> None:
+        from prismatic.quality.plugin_load import verify_shipped_plugins_load
+
+        result = verify_shipped_plugins_load(
+            plugins_dir=repo / "plugins", core_version="0.2.0"
+        )
+        if not result.passed:
+            raise RuntimeError(result.reason)
+
+    def gateway_smoke() -> None:
+        from fastapi.testclient import TestClient
+        from prismatic.gateway import server
+
+        client = TestClient(server.app)
+        for path in [
+            "/api/plugins/catalog",
+            "/api/plugins/governance",
+            "/api/plugins/jobs",
+            "/api/plugins/artifacts",
+        ]:
+            response = client.get(path)
+            assert response.status_code == 200, (
+                path,
+                response.status_code,
+                response.text,
+            )
+        policy = client.post(
+            "/api/plugins/policy/preview",
+            json={
+                "kind": "job_request",
+                "plugin_name": "example-plugin",
+                "action": "smoke_validate",
+            },
+        )
+        assert policy.status_code == 200
+        assert policy.json()["decision"] == "allow"
+
+    def dashboard_markers() -> None:
+        html = (repo / "prismatic/gateway/templates/dashboard.html").read_text(
+            encoding="utf-8"
+        )
+        markers = [
+            "plugin-policy-summary",
+            "plugin-policy-decision",
+            "renderPluginPolicy",
+            "Policy Enforcement",
+        ]
+        missing = [marker for marker in markers if marker not in html]
+        if missing:
+            raise RuntimeError(f"missing dashboard markers: {missing}")
+
+    step("core imports", import_core)
+    step("CLI help", cli_help)
+    catalog_payload = step("plugin catalog", catalog)
+    step("plugin load gate", plugin_load_gate)
+    step("Gateway API smoke", gateway_smoke)
+    step("dashboard markers", dashboard_markers)
+
+    print(
+        json.dumps(
+            {
+                "plugins": catalog_payload["count"],
+                "ready": catalog_payload["ready_count"],
+            },
+            sort_keys=True,
+        )
+    )
+    print("PUBLIC_LAUNCH_SMOKE_OK")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
