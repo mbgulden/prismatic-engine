@@ -10,6 +10,7 @@ This is Layer 8 of the post-completion verification pipeline.
 
 Reference: okf/operations/phase2-quality-gates-plan.md (Gap 5)
 """
+
 from __future__ import annotations
 
 import os
@@ -27,6 +28,7 @@ from typing import Any
 @dataclass
 class SmokeFinding:
     """One finding from the smoke test."""
+
     path: str
     status: str  # "missing" | "empty" | "whitespace_only" | "claimed_ok" | "traversal_attempt"
     detail: str = ""
@@ -36,8 +38,22 @@ class SmokeFinding:
 
 
 @dataclass
+class Finding:
+    """One finding from the explicit filesystem verification helpers."""
+
+    path: str
+    passed: bool
+    status: str  # "ok" | "missing" | "empty" | "non-substantive" | "error"
+    detail: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class SmokeTestResult:
     """Result of the smoke test."""
+
     passed: bool
     claimed_paths: list[str] = field(default_factory=list)
     findings: list[SmokeFinding] = field(default_factory=list)
@@ -202,7 +218,9 @@ def file_has_substantive_content(path: str, workdir: str = ".") -> tuple[bool, s
             return True, f"binary file ({size} bytes, partial UTF-8 decode)"
 
         # Strip whitespace and comments
-        stripped = re.sub(r"^\s*#.*$", "", content, flags=re.MULTILINE)  # Python comments
+        stripped = re.sub(
+            r"^\s*#.*$", "", content, flags=re.MULTILINE
+        )  # Python comments
         stripped = re.sub(r"^\s*//.*$", "", stripped, flags=re.MULTILINE)  # JS comments
         stripped = stripped.strip()
 
@@ -259,40 +277,50 @@ def smoke_test(agent_output: str, workdir: str = ".") -> SmokeTestResult:
     for path in claimed:
         # Security check: path traversal attempt
         if is_path_traversal(path):
-            findings.append(SmokeFinding(
-                path=path,
-                status="traversal_attempt",
-                detail="Path contains '..' — possible path traversal attack",
-            ))
+            findings.append(
+                SmokeFinding(
+                    path=path,
+                    status="traversal_attempt",
+                    detail="Path contains '..' — possible path traversal attack",
+                )
+            )
             continue
 
         # Existence check
         if not file_exists(path, workdir):
-            findings.append(SmokeFinding(
-                path=path,
-                status="missing",
-                detail=f"Claimed file does not exist on disk (workdir={workdir})",
-            ))
+            findings.append(
+                SmokeFinding(
+                    path=path,
+                    status="missing",
+                    detail=f"Claimed file does not exist on disk (workdir={workdir})",
+                )
+            )
             continue
 
         # Content check
         has_content, detail = file_has_substantive_content(path, workdir)
         if not has_content:
-            findings.append(SmokeFinding(
-                path=path,
-                status="empty" if "empty" in detail else "whitespace_only",
-                detail=detail,
-            ))
+            findings.append(
+                SmokeFinding(
+                    path=path,
+                    status="empty" if "empty" in detail else "whitespace_only",
+                    detail=detail,
+                )
+            )
             continue
 
-        findings.append(SmokeFinding(
-            path=path,
-            status="claimed_ok",
-            detail=detail,
-        ))
+        findings.append(
+            SmokeFinding(
+                path=path,
+                status="claimed_ok",
+                detail=detail,
+            )
+        )
 
     # Compute verdict
-    missing_or_empty = [f for f in findings if f.status in ("missing", "empty", "whitespace_only")]
+    missing_or_empty = [
+        f for f in findings if f.status in ("missing", "empty", "whitespace_only")
+    ]
     traversal_attempts = [f for f in findings if f.status == "traversal_attempt"]
 
     if traversal_attempts:
@@ -312,3 +340,152 @@ def smoke_test(agent_output: str, workdir: str = ".") -> SmokeTestResult:
         findings=findings,
         reason=reason,
     )
+
+
+def _resolve_verification_path(path: str | Path, workdir: str | Path = ".") -> Path:
+    path_str = str(path)
+    return Path(path_str) if os.path.isabs(path_str) else Path(workdir) / path_str
+
+
+def verify_files_exist(
+    paths: list[str | Path], workdir: str | Path = "."
+) -> list[Finding]:
+    """Check whether explicit files exist, resolving relative paths against workdir."""
+    findings: list[Finding] = []
+    for path in paths:
+        path_str = str(path)
+        try:
+            full_path = _resolve_verification_path(path, workdir)
+            if full_path.exists() and full_path.is_file():
+                findings.append(
+                    Finding(
+                        path=path_str, passed=True, status="ok", detail="File exists"
+                    )
+                )
+            else:
+                findings.append(
+                    Finding(
+                        path=path_str,
+                        passed=False,
+                        status="missing",
+                        detail="File does not exist or is not a file",
+                    )
+                )
+        except Exception as exc:
+            findings.append(
+                Finding(
+                    path=path_str,
+                    passed=False,
+                    status="error",
+                    detail=f"Error checking file existence: {exc}",
+                )
+            )
+    return findings
+
+
+def verify_files_nonempty(
+    paths: list[str | Path], workdir: str | Path = ".", *, min_bytes: int = 100
+) -> list[Finding]:
+    """Check whether explicit files exist and are larger than min_bytes."""
+    findings: list[Finding] = []
+    for path in paths:
+        path_str = str(path)
+        try:
+            full_path = _resolve_verification_path(path, workdir)
+            if not full_path.exists() or not full_path.is_file():
+                findings.append(
+                    Finding(
+                        path=path_str,
+                        passed=False,
+                        status="missing",
+                        detail="File does not exist or is not a file",
+                    )
+                )
+                continue
+            size = full_path.stat().st_size
+            if size > min_bytes:
+                findings.append(
+                    Finding(
+                        path=path_str,
+                        passed=True,
+                        status="ok",
+                        detail=f"File size is {size} bytes (> {min_bytes} bytes)",
+                    )
+                )
+            else:
+                findings.append(
+                    Finding(
+                        path=path_str,
+                        passed=False,
+                        status="empty",
+                        detail=f"File size is {size} bytes (<= {min_bytes} bytes)",
+                    )
+                )
+        except Exception as exc:
+            findings.append(
+                Finding(
+                    path=path_str,
+                    passed=False,
+                    status="error",
+                    detail=f"Error checking file size: {exc}",
+                )
+            )
+    return findings
+
+
+def verify_files_substantive(
+    paths: list[str | Path], workdir: str | Path = ".", *, min_chars: int = 50
+) -> list[Finding]:
+    """Check whether files have substantive non-comment, non-whitespace text."""
+    findings: list[Finding] = []
+    for path in paths:
+        path_str = str(path)
+        try:
+            full_path = _resolve_verification_path(path, workdir)
+            if not full_path.exists() or not full_path.is_file():
+                findings.append(
+                    Finding(
+                        path=path_str,
+                        passed=False,
+                        status="missing",
+                        detail="File does not exist or is not a file",
+                    )
+                )
+                continue
+            content = full_path.read_text(encoding="utf-8", errors="ignore")
+            content_no_comments = re.sub(r"/\*.*?\*/", "", content, flags=re.DOTALL)
+            content_no_comments = re.sub(
+                r"<!--.*?-->", "", content_no_comments, flags=re.DOTALL
+            )
+            content_no_comments = re.sub(r"#.*", "", content_no_comments)
+            content_no_comments = re.sub(r"//.*", "", content_no_comments)
+            content_no_ws = re.sub(r"\s+", "", content_no_comments)
+            char_count = len(content_no_ws)
+            if char_count > min_chars:
+                findings.append(
+                    Finding(
+                        path=path_str,
+                        passed=True,
+                        status="ok",
+                        detail=f"Substantive content is {char_count} chars (> {min_chars} chars)",
+                    )
+                )
+            else:
+                findings.append(
+                    Finding(
+                        path=path_str,
+                        passed=False,
+                        status="non-substantive",
+                        detail=f"Substantive content is only {char_count} chars (<= {min_chars} chars)",
+                    )
+                )
+        except Exception as exc:
+            findings.append(
+                Finding(
+                    path=path_str,
+                    passed=False,
+                    status="error",
+                    detail=f"Error verifying file content: {exc}",
+                )
+            )
+    return findings
