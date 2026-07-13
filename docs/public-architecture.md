@@ -31,8 +31,9 @@ Artifact/provenance registry
 | `prismatic/gateway/server.py` | FastAPI app, plugin APIs, dashboard route. |
 | `prismatic/core/registry.py` | Plugin loading and capability validation. |
 | `prismatic/plugin_architecture.py` | Manifest parsing, catalog, blueprints, scaffold helpers. |
-| `prismatic/plugin_jobs.py` | Durable plugin jobs and audit trail. |
-| `prismatic/plugin_artifacts.py` | Universal artifact/provenance records. |
+| `prismatic/plugin_jobs.py` | Durable plugin jobs and per-job audit trail. |
+| `prismatic/plugin_artifacts.py` | Universal artifact/provenance records plus artifact lifecycle events. |
+| `GET /api/plugins/audit-events` | Normalized cross-plugin audit event stream for jobs and artifacts. |
 | `prismatic/plugin_policy.py` | Stable allow/needs_approval/block policy decisions. |
 | `prismatic/quality/` | Verification, plugin load gate, smoke helpers. |
 

@@ -578,6 +578,33 @@ class PluginJobStore:
         state["plugin_job_events"].setdefault(job_id, []).append(event)
         return event
 
+    def list_events(
+        self,
+        *,
+        plugin_name: str | None = None,
+        job_id: str | None = None,
+        event_type: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        state = self.load_state()
+        events: list[dict[str, Any]] = []
+        job_ids = [job_id] if job_id else list(state["plugin_job_events"].keys())
+        for current_job_id in job_ids:
+            job = state["plugin_jobs"].get(current_job_id, {})
+            if plugin_name and job.get("plugin_name") != plugin_name:
+                continue
+            for event in state["plugin_job_events"].get(current_job_id, []):
+                if event_type and event.get("event_type") != event_type:
+                    continue
+                record = deepcopy(event)
+                record["plugin_name"] = job.get("plugin_name")
+                record["action"] = job.get("action")
+                record["status"] = job.get("status")
+                record["audit_source"] = "plugin_job"
+                events.append(record)
+        events.sort(key=lambda e: e.get("created_at") or "", reverse=True)
+        return events[: max(1, min(limit, 500))]
+
     def summary(self) -> dict[str, Any]:
         state = self.load_state()
         jobs = list(state["plugin_jobs"].values())

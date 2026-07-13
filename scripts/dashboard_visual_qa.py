@@ -30,6 +30,11 @@ REQUIRED_MARKERS = {
         "plugin-artifact-inventory",
         "renderPluginArtifactInventory",
     ],
+    "audit events": [
+        "plugin-audit-events",
+        "renderPluginAuditEvents",
+        "/api/plugins/audit-events",
+    ],
     "approval controls": [
         "plugin-approval-controls",
         "renderPluginApprovalControls",

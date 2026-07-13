@@ -87,6 +87,7 @@ def main() -> int:
             "/api/plugins/governance",
             "/api/plugins/jobs",
             "/api/plugins/artifacts",
+            "/api/plugins/audit-events",
         ]:
             response = client.get(path)
             assert response.status_code == 200, (
@@ -120,6 +121,9 @@ def main() -> int:
             "plugin-detail-drawer",
             "plugin-job-timeline",
             "plugin-artifact-inventory",
+            "plugin-audit-events",
+            "renderPluginAuditEvents",
+            "/api/plugins/audit-events",
             "plugin-approval-controls",
             "plugin-dashboard-health-cards",
             "pwp-lifecycle-history",
