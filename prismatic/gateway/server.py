@@ -51,6 +51,7 @@ from prismatic.pwp_integration import (
     disconnect_pwp,
     integration_status,
     refresh_pwp,
+    run_pwp_reference_lifecycle,
 )
 from prismatic.run_records import AgentRunRecordStore
 
@@ -826,6 +827,19 @@ async def pwp_disconnect() -> dict[str, Any]:
 async def pwp_refresh() -> dict[str, Any]:
     """Refresh PWP dashboard/governance state from current manifest and files."""
     return refresh_pwp()
+
+
+@app.post("/api/pwp/lifecycle-demo")
+async def pwp_lifecycle_demo(request: Request) -> JSONResponse:
+    """Run PWP as the full lifecycle reference plugin demo."""
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    disconnect_after = bool(payload.get("disconnect_after", True))
+    actor = str(payload.get("actor") or "pwp-dashboard")
+    result = run_pwp_reference_lifecycle(actor=actor, disconnect_after=disconnect_after)
+    return JSONResponse(result, status_code=200 if result.get("ok") else 409)
 
 
 @app.get("/api/cost")

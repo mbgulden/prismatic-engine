@@ -133,6 +133,7 @@ Deep dive:
 - [Public onboarding guide](docs/public-onboarding.md)
 - [Architecture overview](docs/public-architecture.md)
 - [Plugin developer guide](docs/plugin-developer-guide.md)
+- [PWP reference lifecycle](docs/pwp-reference-lifecycle.md)
 - [Hello plugin tutorial](docs/hello-plugin-tutorial.md)
 - [Troubleshooting guide](docs/troubleshooting.md)
 - [Public security readiness audit](docs/public-security-readiness.md)

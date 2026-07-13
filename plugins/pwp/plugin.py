@@ -24,15 +24,18 @@ PWP_CAPABILITY_CONTRACT: Dict[str, Any] = {
         "PE dashboard/API consumes prismatic.pwp_integration.integration_status",
         "PE agents call scripts/pwp and registered pwp_* tools for additive workflows",
         "PWP manifest declares portable capabilities, governance, and disconnect behavior",
+        "PWP reference lifecycle uses universal plugin jobs/artifacts/provenance registries",
     ],
     "disconnect_points": [
         "POST /api/pwp/disconnect marks PWP disconnected without deleting plugin code",
         "Dashboard hides PWP readiness while preserving artifacts and core PE behavior",
+        "PWP lifecycle artifacts and job history remain queryable after safe disconnect",
     ],
     "capabilities": [
         "theme validation/diff/compiler",
         "credential provider refresh/status",
         "visual/governance workflow augmentation",
+        "full lifecycle reference demo: connect → job → artifact → approval → publish/export → disconnect",
     ],
 }
 
@@ -114,7 +117,9 @@ class PWPDesignTokenPlugin(PrismaticPlugin):
     def credentials_refresh(self, provider: str, verify: bool = True) -> Dict[str, Any]:
         """Refresh a registered provider OAuth credential without exposing secrets."""
         provider_config = PROVIDERS[provider]
-        verifier = verify_ubersuggest_mcp if provider == "ubersuggest" and verify else None
+        verifier = (
+            verify_ubersuggest_mcp if provider == "ubersuggest" and verify else None
+        )
         result = refresh_oauth_token(
             provider_config,
             default_token_paths(provider),

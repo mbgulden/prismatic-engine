@@ -23,7 +23,13 @@ if external_plugins is not None:
 from plugins.pwp.oauth_credentials import main as credentials_main  # noqa: E402
 from plugins.pwp.theme_diff import main as theme_diff_main  # noqa: E402
 from plugins.pwp.theme_validator import main as theme_validate_main  # noqa: E402
-from prismatic.pwp_integration import connect_pwp, disconnect_pwp, integration_status, refresh_pwp  # noqa: E402
+from prismatic.pwp_integration import (  # noqa: E402
+    connect_pwp,
+    disconnect_pwp,
+    integration_status,
+    refresh_pwp,
+    run_pwp_reference_lifecycle,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -52,13 +58,20 @@ def main(argv: list[str] | None = None) -> int:
             import json
             print(json.dumps(refresh_pwp(), indent=2, sort_keys=True))
             return 0
+    if len(args) >= 2 and args[0] == "lifecycle" and args[1] == "demo":
+        import json
+        disconnect_after = "--keep-connected" not in args[2:]
+        payload = run_pwp_reference_lifecycle(disconnect_after=disconnect_after)
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0 if payload.get("ok") else 1
     print(
         "Usage: pwp credentials refresh <provider> [--verbose] [--no-verify] | "
         "pwp credentials status <provider> [--verify] | "
         "pwp theme validate <path> [--json] | "
         "pwp theme diff --from <path> --to <path> [--engine-version <semver>] [--json] | "
         "pwp theme check-compat <path> --engine-version <semver> [--json] | "
-        "pwp integration status|connect|disconnect|refresh",
+        "pwp integration status|connect|disconnect|refresh | "
+        "pwp lifecycle demo [--keep-connected]",
         file=sys.stderr,
     )
     return 2
