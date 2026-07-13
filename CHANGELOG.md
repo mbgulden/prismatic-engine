@@ -6,6 +6,17 @@ The project is currently alpha. Dates use UTC.
 
 ## Unreleased
 
+### Release engineering
+
+- Public release engineering layer: release process docs, release checklist, migration notes, upgrade guide, stable CLI entrypoint reference, sample config, bootstrap script, Dockerfile, devcontainer, release smoke, and release readiness check.
+
+### Changed
+
+- CI now runs a supported Python matrix and release smoke/readiness checks.
+- Publish workflow now verifies tags, checks distributions, uploads artifacts, and creates build provenance before PyPI publication.
+
+## [0.2.0] - 2026-07-13
+
 ### Added
 
 - Public README quickstart and first-user path.
@@ -27,3 +38,7 @@ The project is currently alpha. Dates use UTC.
 - Universal artifact/provenance registry.
 - Generic plugin policy decisions and enforcement.
 - Dashboard/API visibility for plugin governance, jobs, artifacts, and policy decisions.
+
+### Migration notes
+
+- See `docs/migrations.md` for the `0.1.x to 0.2.0` migration path.

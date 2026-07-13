@@ -126,6 +126,7 @@ Core files:
 | Artifacts/provenance | `prismatic/plugin_artifacts.py` |
 | Policy enforcement | `prismatic/plugin_policy.py` |
 | Public smoke | `scripts/public_launch_smoke.py` |
+| Release smoke | `scripts/release_smoke.py`, `scripts/release_check.py` |
 
 Deep dive:
 
@@ -135,6 +136,11 @@ Deep dive:
 - [Hello plugin tutorial](docs/hello-plugin-tutorial.md)
 - [Troubleshooting guide](docs/troubleshooting.md)
 - [Public security readiness audit](docs/public-security-readiness.md)
+- [Release process](docs/release-process.md)
+- [Release checklist](docs/release-checklist.md)
+- [Migration notes](docs/migrations.md)
+- [Upgrade guide](docs/upgrade-guide.md)
+- [Stable CLI entrypoints](docs/stable-cli-entrypoints.md)
 - [Dashboard screenshots](docs/dashboard-screenshots.md)
 - [Release notes](CHANGELOG.md)
 - [Security policy](SECURITY.md)
@@ -148,6 +154,13 @@ Start with:
 
 ```bash
 cp .env.example .env
+cp config/prismatic.sample.yaml config.local.yaml
+```
+
+Or bootstrap a fresh local release/dev environment:
+
+```bash
+bash scripts/bootstrap_env.sh
 ```
 
 The default `.env.example` is safe: it contains no secrets and points local state into `./prismatic_state`.
@@ -191,6 +204,8 @@ docs/plugin-developer-guide.md
 ```bash
 python scripts/public_launch_smoke.py
 python scripts/public_security_readiness_audit.py
+python scripts/release_check.py
+python scripts/release_smoke.py
 python scripts/plugin_architecture catalog
 plugin-load-gate
 python -m pytest tests/test_plugin_policy.py tests/test_plugin_artifacts.py tests/test_plugin_jobs.py -q
