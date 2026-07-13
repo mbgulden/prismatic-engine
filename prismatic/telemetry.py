@@ -196,9 +196,8 @@ class TelemetryCollector:
         """
         conn = sqlite3.connect(self._db_path)
         try:
-            conn.execute("BEGIN IMMEDIATE")
             cursor = conn.execute(
-                "SELECT micro_count, macro_count, tripped "
+                "SELECT micro_count, macro_count, tripped, tripped_at "
                 "FROM telemetry_circuit_breakers WHERE issue_id = ?",
                 (issue_id,),
             )
@@ -207,6 +206,7 @@ class TelemetryCollector:
             prev_micro = row[0] if row else 0
             prev_macro = row[1] if row else 0
             already_tripped = bool(row[2]) if row else False
+            prev_tripped_at = row[3] if row else None
 
             total_micro = prev_micro + micro_count
             total_macro = prev_macro + macro_count
@@ -216,21 +216,19 @@ class TelemetryCollector:
                 total_micro >= BREAKER_MICRO_MAX or total_macro >= BREAKER_MACRO_MAX
             )
 
-            conn.execute(
-                """INSERT OR REPLACE INTO telemetry_circuit_breakers
-                   (issue_id, agent, micro_count, macro_count, last_seen, tripped, tripped_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    issue_id,
-                    agent,
-                    total_micro,
-                    total_macro,
-                    now,
-                    1 if (already_tripped or tripped) else 0,
-                    now if tripped else (row[5] if row and row[5] else None),
-                ),
+            # Push breaker event to SQLite queue asynchronously
+            self._push(
+                "breaker",
+                {
+                    "issue_id": issue_id,
+                    "agent": agent,
+                    "micro_count": total_micro,
+                    "macro_count": total_macro,
+                    "last_seen": now,
+                    "tripped": 1 if (already_tripped or tripped) else 0,
+                    "tripped_at": now if tripped else prev_tripped_at,
+                },
             )
-            conn.commit()
 
             if tripped:
                 self._push(
@@ -248,7 +246,7 @@ class TelemetryCollector:
                     },
                 )
 
-            return tripped
+            return already_tripped or tripped
         finally:
             conn.close()
 
@@ -936,6 +934,21 @@ class TelemetryCollector:
                             data.get("depth", 0),
                             data.get("parent_id"),
                             data["created_at"],
+                        ),
+                    )
+                elif event_type == "breaker":
+                    conn.execute(
+                        """INSERT OR REPLACE INTO telemetry_circuit_breakers
+                           (issue_id, agent, micro_count, macro_count, last_seen, tripped, tripped_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            data["issue_id"],
+                            data["agent"],
+                            data["micro_count"],
+                            data["macro_count"],
+                            data["last_seen"],
+                            data["tripped"],
+                            data.get("tripped_at"),
                         ),
                     )
                 elif event_type == "tokens":

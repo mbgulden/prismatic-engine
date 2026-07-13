@@ -26,6 +26,7 @@ from .pr_reviewer import (
 )
 from .apply_impact_rules import apply_impact_rules, fire_hook
 from .pr_reviewer_impl import QualityFinding, RealPRReviewer
+from .impact import is_high_impact
 from .pipeline import (
     ACTIONS,
     ACTION_ADVANCE,
@@ -70,6 +71,7 @@ __all__ = [
     "QualityFinding",
     "apply_impact_rules",
     "fire_hook",
+    "is_high_impact",
     "PipelineDecision",
     "PipelineOrchestrator",
     "ReworkPayload",
