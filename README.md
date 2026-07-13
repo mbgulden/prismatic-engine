@@ -1,309 +1,218 @@
-# prismatic-engine
+# Prismatic Engine
 
-**Event-driven agent factory for the Prismatic Engine.**
+**Local-first agent orchestration, plugin governance, and artifact provenance for teams building with AI agents.**
 
-A FastAPI-based gateway that consumes Linear/GitHub webhooks, persists them to a SQLite bus, tags them via a curator lane, and dispatches them to bounded AGY supervisor pools with per-lane budget enforcement.
+Prismatic Engine gives you a small, inspectable control plane for agent work:
 
-## First-User Quick Start
+- a FastAPI Gateway and dashboard
+- plugin discovery and load gates
+- durable plugin jobs and audit events
+- universal artifact/provenance records
+- policy/approval enforcement before risky work runs
+- quality gates and one-command smoke checks
 
-Use this path from a clean checkout. It does **not** require systemd, Michael-specific paths, or hosted infrastructure.
+Prismatic is still alpha, but the public path below is designed to work from a clean checkout without Michael-specific infrastructure.
 
-```bash
-python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install .
-prismatic --help
-prismatic status
-```
+---
 
-Expected first-user result: `prismatic --help` prints the CLI commands, and `prismatic status` reports local diagnostics plus any missing optional integration credentials.
+## Quick start
 
-For development/editable installs:
+### Requirements
 
-```bash
-python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e .
-python scripts/distribution_readiness_smoke.py --fresh-install
-```
-
-## Optional operator/systemd deployment
-
-The systemd services below are for operators running a long-lived local Prismatic deployment. They are **not** required for the first-user install path.
-
-```bash
-# Check service health on a configured operator host
-systemctl status prismatic-gateway prismatic-consumer prismatic-curator
-
-# View live curator state when the gateway service is running
-curl -s http://localhost:9000/curator/health | python3 -m json.tool
-
-# Run all tests from an activated virtualenv
-python -m pytest prismatic/curator/tests/ prismatic/supervisor/tests/
-```
-
-## Architecture
-
-```
-Linear/GitHub webhooks
-       │
-       ▼
-┌─────────────────────┐
-│  prismatic-gateway  │  ← HMAC verify, /metrics, /events, /curator/health
-│  (port 9000)        │
-└──────────┬──────────┘
-           ▼
-┌─────────────────────┐
-│  SQLite event bus   │  ← WAL, 14-day/10k retention, durable
-│  ~/.prismatic/bus/  │
-└──────────┬──────────┘
-           ▼
-┌─────────────────────┐
-│ prismatic-consumer  │  ← rowid + atomic + 60s dedup
-│ (dispatch_consumer) │
-└──────────┬──────────┘
-           │
-           ▼
-┌─────────────────────┐
-│ SupervisorPool      │  ← bounded, MAX_CONCURRENT=8, reaps zombies
-│ (recovery.py)       │
-└──────────┬──────────┘
-           ▼
-┌─────────────────────┐
-│ AGY supervisors     │  ← per-lane dispatch (fred/codex/kai/jules/ned)
-│ (hermes profile)    │
-└─────────────────────┘
-
-(In parallel:)
-┌─────────────────────┐
-│ prismatic-curator   │  ← tags events, dispatches delegates via pool
-│ (curator/lane.py)   │  ← 8am daily digest, budget enforcement
-└─────────────────────┘
-```
-
-See `docs/phase-d-post-publish-chain.md` for the detailed Phase D architecture.
-
-## Modules
-
-### `prismatic/gateway/`
-- `event_bus.py` — In-process pub/sub + SQLite WAL persistence
-- `server.py` — FastAPI gateway with 5 endpoints: `/health`, `/metrics`, `/events/recent`, `/events/bus-stats`, `/curator/health`
-
-### `prismatic/curator/`
-- **[SPEC.md](prismatic/curator/SPEC.md)** — Doc #4: the canonical spec for the curator lane (14KB, 320 lines)
-- `lane.py` — Curator implementation (18KB, 575 lines)
-- `dispatcher.py` — Lane budget + Sonnet/Opus routing (8KB, 236 lines)
-- `tests/test_lane.py` — 15 unit tests
-- `tests/test_dispatcher.py` — 13 unit tests
-
-### `prismatic/supervisor/`
-- `recovery.py` — Bounded supervisor pool with reaping + DLQ (8.5KB, 271 lines)
-- `tests/test_recovery.py` — 11 unit tests
-
-### `scripts/`
-- `linear_relabel.py` — Bulk-label Linear issues for engine consumption (14KB)
-- `linear_relabel.py --dry-run` — preview changes
-- `linear_relabel.py --apply --yes` — apply idempotently
-
-## Systemd Units
-
-| Unit | Purpose |
+| Component | Supported |
 |---|---|
-| `prismatic-gateway.service` | HTTP gateway on port 9000 |
-| `prismatic-consumer.service` | bus consumer, dispatch via bounded pool |
-| `prismatic-curator.service` | tags events, dispatches delegates, runs continuously |
-| `prismatic-curator-digest.service` | one-shot, emits daily digest |
-| `prismatic-curator-digest.timer` | fires at 8am America/Denver daily |
+| Python | 3.10, 3.11, 3.12, 3.13 |
+| Node | Optional; only needed for plugin/dashboard assets that declare Node tooling |
+| OS | Linux/macOS for local development; Linux recommended for service deployment |
+| Package manager | `pip` with a Python virtual environment |
 
-## Configuration
+### Install locally
 
-Environment variables (set in `/etc/systemd/system/prismatic-*.service`):
-
-| Var | Default | Purpose |
-|---|---|---|
-| `PRISMATIC_HOME` | user home directory | base path |
-| `PRISMATIC_BUS_DB` | `~/.prismatic/bus/event_log.sqlite` | bus location |
-| `PRISMATIC_CURATOR_DB` | `~/.prismatic/curator/state.sqlite` | curator state |
-| `PRISMATIC_DIGEST_DIR` | `~/.prismatic/curator/digests` | digest output dir |
-| `PRISMATIC_DIGEST_HOUR` | `8` | daily digest hour |
-| `PRISMATIC_METRICS_TOKEN` | (empty) | bearer token for /metrics auth |
-| `PRISMATIC_ALLOWED_IPS` | `127.0.0.1,::1` | IP allowlist for observability endpoints |
-| `PRISMATIC_LINEAR_WEBHOOK_SECRET` | (required) | HMAC secret for Linear webhooks |
-| `PRISMATIC_LINEAR_WEBHOOK_SECRET_SECONDARY` | (optional) | 2nd slot for rotation |
-| `PRISMATIC_GITHUB_WEBHOOK_SECRET` | (required) | HMAC secret for GitHub webhooks |
-| `PRISMATIC_SUPERVISOR_MAX` | `8` | max concurrent supervisors |
-| `PRISMATIC_SUPERVISOR_REAP_INTERVAL` | `30` | seconds between reap sweeps |
-| `PRISMATIC_BUDGET_FRED` | `5.00` | USD/day cap for fred lane (opus) |
-| `PRISMATIC_BUDGET_CODEX` | `10.00` | USD/day cap for codex lane |
-| `PRISMATIC_BUDGET_KAI` | `3.00` | USD/day cap for kai lane |
-| `PRISMATIC_BUDGET_JULES` | `3.00` | USD/day cap for jules lane |
-| `PRISMATIC_BUDGET_NED` | `5.00` | USD/day cap for ned lane |
-| `PRISMATIC_BUDGET_TRIAGE` | `1.00` | USD/day cap for triage lane |
-
-## Lane Policy
-
-Per `PRISMATIC_ENGINE.yaml`:
-- **Fred** owns the entire repo (orchestrator) — `lanes.owner: ["*"]`
-- **Ned** owns `scripts/` + `plugins/` — code execution & task agent
-- **Kai** owns `content/` + `active-oahu/` — content writer
-- **AGY** owns `assets/` + `designs/` + `research/` — designer & researcher
-- **Jules** has no direct edits, PR-only — PR agent & code reviewer
-
-The lane policy is enforced by `scripts/pre-push-hook.py`. Use `feature/*`, `content/*`, `design/*`, `fix/*`, or `ned/*` branch prefixes.
-
-## Tests
-
-## 📂 Repository File Map
-
-```
-.
-├── PRISMATIC_ENGINE.yaml             # Main project config (roles, lanes, locks, staging)
-├── SOUL.md                           # Philosophical core, non-negotiables & vision doc
-├── index.html                        # Sleek, animated dashboard landing page/demo
-├── Dockerfile                        # Container recipe for serving the engine
-├── docker-compose.yml                # Multi-container orchestration config
-├── install.sh                        # Engine CLI installer and systemd service generator
-├── pyproject.toml                    # Build config for the python package
-├── LICENSE                           # Affero GPL v3 license
-│
-├── prismatic/                        # Core Python engine codebase
-│   ├── __init__.py                   # Package initialization
-│   ├── coordinator.py                # Coordinator orchestrator loop
-│   ├── agents/                       # Agent adapter implementations
-│   │   ├── __init__.py
-│   │   ├── base.py                   # BaseAgent abstract definition
-│   │   └── hermes.py                 # Hermes agent signal wrapper
-│   └── providers/                    # Transport and tracker bridges
-│       ├── __init__.py
-│       ├── signals/                  # Signal adapters (File, HTTP, Redis, Telegram)
-│       │   ├── base.py
-│       │   ├── file.py
-│       │   ├── http.py
-│       │   └── redis.py
-│       └── tasks/                    # Task adapters (Linear, Local)
-│           ├── base.py
-│           └── linear.py
-│
-├── portable-skills/                  # Reusable agent skill profiles and disciplines
-│   ├── INSTALL.md                    # Setup and installation instructions
-│   ├── export.py                     # Skill packaging exporter tool
-│   ├── export.sh                     # Bash wrapper for skill exports
-│   └── (discipline subdirectories... detailed below)
-│
-├── plugins/                          # Suite of 8 dashboard monitoring extensions
-│   └── (plugin subdirectories... detailed below)
-│
-├── reports/                          # Audit reports and implementation specs
-│   ├── rubric-assessment-2026-06-11.md
-│   ├── agy-hermes-discovery-report.md
-│   └── agy-core-boundary-validation.md
-│
-├── research/                         # Coordination landscape & research notes
-├── specs/                            # Written architecture specifications
-├── test-plans/                       # Quality assurance test plans and scripts
-└── scripts/                          # Development and sync helpers
-```
-
----
-
-## 🧠 Portable Agent Skills (`portable-skills/`)
-
-These directories contain modular, reusable rule systems and markdown runbooks injected into agents' system prompts to enforce professional disciplines:
-
-* **[INSTALL.md](file:///home/ubuntu/work/prismatic-engine/portable-skills/INSTALL.md)**: Details how to copy/link these skills into live Hermes agent profile directories.
-* **[export.py](file:///home/ubuntu/work/prismatic-engine/portable-skills/export.py) / [export.sh](file:///home/ubuntu/work/prismatic-engine/portable-skills/export.sh)**: Automates bundling, checking, and exporting these directories.
-* **`autonomous-execution-discipline/`**: Guidelines for runner agents (like Ned) to independently parse errors, test code, and verify builds without prompting for human approval.
-* **`github-pr-workflow/`**: Git review, automated staging tests, PR audits, and conflict resolution protocols.
-* **`golden-thread/`**: Step-by-step verification methodology to ensure code does not just compile but solves the root problem.
-* **`himalaya/`**: Code cleaniness and design aesthetic standards.
-* **`orchestrator-delegation-discipline/`**: Rules for the coordinator agent (Fred) to decompose large tasks and delegate them to specialized roles.
-* **`static-site-seo-fix/`**: Procedures for audits, canonical tag fixes, and landing page indexation policies.
-* **`systematic-debugging/`**: Troubleshooting processes including logging audits and local reproduction.
-
----
-
-## 🖥️ Swarm Dashboard Plugins (`plugins/`)
-
-A consolidated collection of 8 React/Webpack-based plugin extensions built for the Hermes Dashboard to visualize swarm operations:
-
-1. **`hermes-plugin-lock-dashboard/`**  
-   *Displays live file lock status. Shows which files are currently locked, by which agent, and the remaining heartbeat TTL.*
-2. **`hermes-plugin-mcp-controller/`**  
-   *Model Context Protocol command panel. Lets you monitor active servers, test tools, and view server error logs.*
-3. **`hermes-plugin-orchestrator-command-deck/`**  
-   *Swarm control center. Dispatches commands, monitors active agents, and tracks active routing queues.*
-4. **`hermes-plugin-prismatic-hub/`**  
-   *Main coordination hub page. Visualizes event webhook dispatch, SQLite deduplication tables, and houses the interactive SVG prism refractor.*
-5. **`hermes-plugin-realtime-activity-stream/`**  
-   *Live SSE activity viewer. Feeds running subprocess logs and status updates from agents in real time.*
-6. **`hermes-plugin-swarm-manager/`**  
-   *Swarm session inspector. Explores workspace directories, acts as session director, and embeds an interactive shell terminal.*
-7. **`hermes-plugin-vram-observability/`**  
-   *Hardware telemetry monitor. Connects to `nvidia-smi` endpoints to render live GPU load, memory allocation, and VRAM limits.*
-8. **`hermes-plugin-workspace-tree-navigator/`**
-   *Interactive file tree navigation component. Enables directory exploring, file editing, and direct downloads through the dashboard.*
-
-### 📚 Building Your First Plugin — Start With `prismatic-hello-world`
-
-If you want to add a new plugin to the engine (not a Hermes dashboard widget,
-but a Core engine plugin that registers secret patterns, quality checks,
-impact rules, or action rules), start by copying **`plugins/prismatic_hello_world/`**.
-
-It's the **canonical reference plugin** — a working example that demonstrates every registration channel the engine exposes. The plugin registers all four pattern types (secret pattern, quality check, impact rule, action rule), so you can see exactly how each one is wired through `PluginLoader` → `PrismaticPlugin.on_init()` → `ReviewerRegistry`.
-
-**To create a new plugin:**
-
-1. `cp -r plugins/prismatic_hello_world plugins/my_plugin` (note: underscores, not dashes — Python can't import dashes)
-2. Edit `plugins/my_plugin/plugin-manifest.yaml` — change `name`, `entry_point`, `description`, `author`, `core_version_constraint`
-3. Edit `plugins/my_plugin/plugin.py` — rename `HelloWorldPlugin` → `MyPlugin`, replace the four registrations with your own
-4. Rename the directory: `mv plugins/my_plugin plugins/my_plugin` (already correct if you copied to underscore name)
-5. Edit the entry_point in your manifest: `my_plugin.plugin:MyPlugin`
-6. Add tests in `plugins/my_plugin/tests/test_my_plugin.py` (5+ tests, mutation-through assertions)
-7. Run `python3 -m pytest plugins/my_plugin/ -v` to verify
-
-See `plugins/prismatic_hello_world/README.md` for the full walkthrough and `specs/implementation-plans/GRO-1497-plugin-interface-plan.md` for the complete manifest schema reference.
-
----
-
-## 🛡️ Governance, Reports & Research
-
-The governance and research documents represent the engineering constraints and history behind the Prismatic Engine:
-
-* **[PRISMATIC_ENGINE.yaml](file:///home/ubuntu/work/prismatic-engine/PRISMATIC_ENGINE.yaml)**: Enforces agent profiles (Fred, Kai, AGY, Jules, Ned), their branch name prefixes (e.g. `execution/`, `design/`), and their read/write folder lanes.
-* **[SOUL.md](file:///home/ubuntu/work/prismatic-engine/SOUL.md)**: Describes the "manifestation of idea in reality" mantra. A strict guide on avoiding placeholders, completing tasks fully, and building features to be production-ready.
-* **`reports/agy-core-boundary-validation.md`**: Architectural audit outlining core dispatch mechanisms vs plugin structures.
-* **`reports/rubric-assessment-2026-06-11.md`**: Core evaluation score sheet checking swarm resilience, security, and performance.
-* **`specs/prismatic-engine-architecture-v1.md`**: The initial architecture specification covering coordinator loops, git hooks, and lock interfaces.
-
----
-
-## 🚀 Getting Started & Installation
-
-### 1. Engine CLI Setup
 ```bash
-# Run all tests from an activated virtualenv
-python -m pytest prismatic/
-
-# Run specific suite
-python -m pytest prismatic/curator/tests/ prismatic/supervisor/tests/
+git clone https://github.com/mbgulden/prismatic-engine.git
+cd prismatic-engine
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e ".[gateway]"
+cp .env.example .env
+python scripts/public_launch_smoke.py
 ```
 
-**Current status:** 39/39 passing in ~1.2s.
+Expected result:
 
-## Documentation
+```text
+PUBLIC_LAUNCH_SMOKE_OK
+```
 
-- [Curator Lane Spec (Doc #4)](prismatic/curator/SPEC.md) — The canonical spec
-- `docs/phase-d-post-publish-chain.md` — Architecture diagram
-- `docs/runbook.md` — Operator runbook
-- `docs/first-user-journey.md` — First-user journey and demo trail
+### Run the Gateway/dashboard
 
-## Linear
+```bash
+. .venv/bin/activate
+prismatic-gateway --host 127.0.0.1 --port 9000
+```
 
-- Epic 1: GRO-3022 (In Progress, 6/8 stories done) — [Curator Lane + Service Reliability](https://linear.app/growthwebdev/issue/GRO-3022)
-- Epics 2-7: GRO-3023..3028 (Backlog) — 3-month roadmap
+Then open:
+
+```text
+http://127.0.0.1:9000/dashboard
+```
+
+Useful API checks:
+
+```bash
+curl -s http://127.0.0.1:9000/api/plugins/catalog | python -m json.tool
+curl -s http://127.0.0.1:9000/api/plugins/governance | python -m json.tool
+```
+
+---
+
+## Minimal demo
+
+Run the included smoke/demo command:
+
+```bash
+python scripts/public_launch_smoke.py
+```
+
+The smoke test verifies:
+
+- package imports
+- CLI availability
+- plugin catalog generation
+- shipped plugin load gate
+- Gateway TestClient health
+- plugin governance API
+- job/artifact/policy API basics
+- dashboard policy markers
+
+For a plugin-specific demo, see the hello plugin tutorial:
+
+```text
+docs/hello-plugin-tutorial.md
+```
+
+---
+
+## Architecture overview
+
+Prismatic has five public-facing layers:
+
+```text
+CLI / Gateway / Dashboard
+        │
+        ▼
+Plugin catalog + loader
+        │
+        ▼
+Policy + governance gate
+        │
+        ▼
+Durable jobs + audit events
+        │
+        ▼
+Artifact/provenance registry
+```
+
+Core files:
+
+| Area | Files |
+|---|---|
+| CLI | `prismatic/cli/__init__.py` |
+| Gateway/dashboard | `prismatic/gateway/server.py`, `prismatic/gateway/templates/dashboard.html` |
+| Plugin loader | `prismatic/core/registry.py` |
+| Plugin architecture/catalog | `prismatic/plugin_architecture.py` |
+| Jobs/audit | `prismatic/plugin_jobs.py` |
+| Artifacts/provenance | `prismatic/plugin_artifacts.py` |
+| Policy enforcement | `prismatic/plugin_policy.py` |
+| Public smoke | `scripts/public_launch_smoke.py` |
+
+Deep dive:
+
+- [Public onboarding guide](docs/public-onboarding.md)
+- [Architecture overview](docs/public-architecture.md)
+- [Plugin developer guide](docs/plugin-developer-guide.md)
+- [Hello plugin tutorial](docs/hello-plugin-tutorial.md)
+- [Troubleshooting guide](docs/troubleshooting.md)
+- [Dashboard screenshots](docs/dashboard-screenshots.md)
+- [Release notes](CHANGELOG.md)
+- [Security policy](SECURITY.md)
+- [Contribution guide](CONTRIBUTING.md)
+
+---
+
+## Environment configuration
+
+Start with:
+
+```bash
+cp .env.example .env
+```
+
+The default `.env.example` is safe: it contains no secrets and points local state into `./prismatic_state`.
+
+Credentials such as `GITHUB_TOKEN`, `LINEAR_API_KEY`, or provider keys are optional unless you enable integrations that require them. Never commit `.env`.
+
+---
+
+## Plugin development in 60 seconds
+
+Inspect shipped plugins:
+
+```bash
+python scripts/plugin_architecture catalog
+plugin-load-gate
+```
+
+Copy the hello plugin as a starting point:
+
+```bash
+cp -R plugins/prismatic_hello_world plugins/my_plugin
+```
+
+Then edit:
+
+```text
+plugins/my_plugin/plugin-manifest.yaml
+plugins/my_plugin/plugin.py
+```
+
+Read the full guide:
+
+```text
+docs/plugin-developer-guide.md
+```
+
+---
+
+## Verification commands
+
+```bash
+python scripts/public_launch_smoke.py
+python scripts/plugin_architecture catalog
+plugin-load-gate
+python -m pytest tests/test_plugin_policy.py tests/test_plugin_artifacts.py tests/test_plugin_jobs.py -q
+```
+
+For formatting/linting if `ruff` is installed:
+
+```bash
+python -m ruff check prismatic tests scripts
+python -m ruff format --check prismatic tests scripts
+```
+
+---
+
+## Deployment notes
+
+The quickstart does not require systemd. Long-running operator deployments may use the service scripts and runbooks in `docs/` and `scripts/ops/`, but those are intentionally separate from the public first-user path.
+
+---
 
 ## License
 
-AGPL-3.0-only. See `LICENSE`.
+Prismatic Engine is licensed under **AGPL-3.0-only**. See [`LICENSE`](LICENSE).
+
+## Security
+
+Please read [`SECURITY.md`](SECURITY.md) before reporting vulnerabilities or wiring credentials.
