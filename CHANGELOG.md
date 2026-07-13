@@ -13,6 +13,7 @@ The project is currently alpha. Dates use UTC.
 ### Dashboard UX
 
 - Public-polished plugin dashboard layer: first-run empty state, onboarding hints, copyable CLI commands, docs links, error explanations, health cards, detail drawer, job timeline, artifact inventory, approval controls, and static visual QA.
+- Added a normalized cross-plugin audit event stream (`GET /api/plugins/audit-events`) plus dashboard visibility for job and artifact lifecycle events.
 
 ### PWP reference plugin
 

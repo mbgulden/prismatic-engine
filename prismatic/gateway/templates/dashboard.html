@@ -973,6 +973,7 @@
                         <div id="plugin-artifact-summary" class="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs"></div>
                         <div id="plugin-artifact-inventory" class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50"></div>
                         <div id="plugin-artifacts-table" class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50"></div>
+                        <div id="plugin-audit-events" class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50"></div>
                         <div id="plugin-job-timeline" class="rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-xs text-slate-300"></div>
                         <div id="plugin-approval-controls" class="rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-xs text-slate-300"></div>
                         <div id="plugin-jobs-table" class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50"></div>
@@ -1559,25 +1560,30 @@
         let loadedPluginGovernance = null;
         let loadedPluginJobs = null;
         let loadedPluginArtifacts = null;
+        let loadedPluginAuditEvents = null;
 
         async function loadPluginGovernance() {
             try {
-                const [govRes, jobsRes, artifactsRes] = await Promise.all([
+                const [govRes, jobsRes, artifactsRes, auditRes] = await Promise.all([
                     fetch('/api/plugins/governance'),
                     fetch('/api/plugins/jobs'),
-                    fetch('/api/plugins/artifacts')
+                    fetch('/api/plugins/artifacts'),
+                    fetch('/api/plugins/audit-events?limit=50')
                 ]);
                 if (!govRes.ok) throw new Error(`governance HTTP ${govRes.status}`);
                 if (!jobsRes.ok) throw new Error(`jobs HTTP ${jobsRes.status}`);
                 if (!artifactsRes.ok) throw new Error(`artifacts HTTP ${artifactsRes.status}`);
+                if (!auditRes.ok) throw new Error(`audit HTTP ${auditRes.status}`);
                 loadedPluginGovernance = await govRes.json();
                 loadedPluginJobs = await jobsRes.json();
                 loadedPluginArtifacts = await artifactsRes.json();
+                loadedPluginAuditEvents = await auditRes.json();
                 renderPluginDashboardChrome(null);
                 renderPluginGovernance();
                 renderPluginPolicy();
                 renderPluginJobs();
                 renderPluginArtifacts();
+                renderPluginAuditEvents();
                 renderPluginJobTimeline();
                 renderPluginArtifactInventory();
                 renderPluginApprovalControls();
@@ -1739,6 +1745,20 @@
             ].map(([label, value, color]) => `<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><div class="text-slate-500 uppercase tracking-wider font-bold">${label}</div><div class="mt-1 text-slate-100 font-mono text-lg">${value}</div><div class="mt-2">${pluginBadge('Policy Enforcement', color)}</div></div>`).join('');
             const blockedReason = lastPolicy ? ((lastPolicy.blockers || [lastPolicy.reason || 'no blockers']).join('; ')) : 'No durable policy decisions yet. Use POST /api/plugins/policy/preview, job start, or artifact export to evaluate policy.';
             decisionEl.innerHTML = `<div class="flex items-center justify-between gap-3"><div><div class="uppercase tracking-wider text-slate-500 font-bold">Policy Enforcement</div><div class="mt-1 text-slate-300">Last policy decision: <span class="font-mono">${lastPolicy ? lastPolicy.decision : 'none'}</span></div><div class="mt-1 text-slate-500 blocked_reason">blocked_reason: ${blockedReason}</div></div>${pluginBadge(lastPolicy ? `policy: ${lastPolicy.decision}` : 'policy: idle', lastPolicy && lastPolicy.decision === 'block' ? 'rose' : lastPolicy && lastPolicy.decision === 'needs_approval' ? 'amber' : 'emerald')}</div>`;
+        }
+
+        function renderPluginAuditEvents() {
+            const payload = loadedPluginAuditEvents || {};
+            const summary = payload.summary || {};
+            const events = payload.events || [];
+            const el = document.getElementById('plugin-audit-events');
+            if (!el) return;
+            if (!events.length) {
+                el.innerHTML = `<div class="p-3"><div class="flex items-center justify-between"><div class="text-slate-500 uppercase tracking-wider font-bold">Audit events</div><button onclick="copyDashboardCommand('curl -s http://127.0.0.1:9000/api/plugins/audit-events')" class="copy-cli-command text-indigo-300 hover:text-indigo-200">Copy API</button></div><p class="mt-2 text-slate-500">No plugin audit events yet. Create/start a job or register an artifact to populate the audit stream.</p></div>`;
+                return;
+            }
+            const rows = events.slice(0, 8).map(event => `<tr class="border-t border-slate-800/70 hover:bg-slate-900/50"><td class="px-3 py-2 font-mono text-slate-400">${event.created_at || '—'}</td><td class="px-3 py-2 text-slate-200">${event.event_type || 'event'}</td><td class="px-3 py-2 text-slate-300">${event.plugin_name || '—'}</td><td class="px-3 py-2 text-slate-400">${event.audit_source || event.source || '—'}</td><td class="px-3 py-2 text-slate-500">${event.job_id || event.artifact_id || '—'}</td></tr>`).join('');
+            el.innerHTML = `<div class="p-3 border-b border-slate-800 flex items-center justify-between"><div><div class="text-slate-500 uppercase tracking-wider font-bold">Audit events</div><div class="mt-1 text-slate-400">${summary.event_count || events.length} recent events · ${summary.job_event_count || 0} job · ${summary.artifact_event_count || 0} artifact</div></div><button onclick="copyDashboardCommand('curl -s http://127.0.0.1:9000/api/plugins/audit-events')" class="copy-cli-command text-indigo-300 hover:text-indigo-200">Copy API</button></div><table class="w-full text-left text-xs"><thead class="text-slate-500 uppercase"><tr><th class="px-3 py-2">Time</th><th class="px-3 py-2">Event</th><th class="px-3 py-2">Plugin</th><th class="px-3 py-2">Source</th><th class="px-3 py-2">Object</th></tr></thead><tbody>${rows}</tbody></table>`;
         }
 
         function renderPluginArtifacts() {

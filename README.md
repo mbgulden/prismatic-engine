@@ -63,6 +63,7 @@ Useful API checks:
 ```bash
 curl -s http://127.0.0.1:9000/api/plugins/catalog | python -m json.tool
 curl -s http://127.0.0.1:9000/api/plugins/governance | python -m json.tool
+curl -s http://127.0.0.1:9000/api/plugins/audit-events | python -m json.tool
 ```
 
 ---

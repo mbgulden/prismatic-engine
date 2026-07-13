@@ -11,7 +11,9 @@ from prismatic.plugin_jobs import PluginJobStore, evaluate_plugin_policy
 PWP = "pwp-design-token-plugin"
 
 
-def test_plugin_job_store_persists_policy_approval_events_and_artifacts(tmp_path: Path) -> None:
+def test_plugin_job_store_persists_policy_approval_events_and_artifacts(
+    tmp_path: Path,
+) -> None:
     store_path = tmp_path / "plugin_jobs.json"
     store = PluginJobStore(store_path)
 
@@ -38,13 +40,23 @@ def test_plugin_job_store_persists_policy_approval_events_and_artifacts(tmp_path
         "failed",
     ]
 
-    safe_job = store.create_job(PWP, "theme_validate", actor="kai", source="pytest", input_summary={"theme": "demo"})
+    safe_job = store.create_job(
+        PWP,
+        "theme_validate",
+        actor="kai",
+        source="pytest",
+        input_summary={"theme": "demo"},
+    )
     assert safe_job["status"] == "needs_approval"
-    approved = store.approve_job(safe_job["job_id"], actor="michael", note="approved dry run")
+    approved = store.approve_job(
+        safe_job["job_id"], actor="michael", note="approved dry run"
+    )
     assert approved is not None
     assert approved["status"] == "queued"
     assert approved["approval_state"] == "approved"
-    running = store.update_status(safe_job["job_id"], "running", actor="worker", message="started")
+    running = store.update_status(
+        safe_job["job_id"], "running", actor="worker", message="started"
+    )
     assert running is not None
     assert running["status"] == "running"
     with_artifact = store.append_event(
@@ -73,7 +85,12 @@ def test_plugin_job_store_persists_policy_approval_events_and_artifacts(tmp_path
     assert reloaded_job is not None
     assert reloaded_job["events"][-1]["event_type"] == "completed"
     raw = json.loads(store_path.read_text())
-    assert set(raw) == {"schema_version", "plugin_jobs", "plugin_job_events", "plugin_artifacts"}
+    assert set(raw) == {
+        "schema_version",
+        "plugin_jobs",
+        "plugin_job_events",
+        "plugin_artifacts",
+    }
 
 
 def test_plugin_policy_blocks_unknown_plugin_and_marks_approvals() -> None:
@@ -81,7 +98,9 @@ def test_plugin_policy_blocks_unknown_plugin_and_marks_approvals() -> None:
     assert unknown["allowed"] is False
     assert "unknown plugin" in unknown["blockers"][0]
 
-    publish = evaluate_plugin_policy(PWP, "publish_theme", input_summary={"theme": "demo"})
+    publish = evaluate_plugin_policy(
+        PWP, "publish_theme", input_summary={"theme": "demo"}
+    )
     assert publish["allowed"] is True
     assert publish["approval_required"] is True
     assert any("publish_theme" in reason for reason in publish["approval_reasons"])
@@ -89,7 +108,10 @@ def test_plugin_policy_blocks_unknown_plugin_and_marks_approvals() -> None:
 
 def test_plugin_jobs_gateway_endpoints_are_durable(monkeypatch, tmp_path: Path) -> None:
     state_path = tmp_path / "plugin_jobs.json"
+    artifacts_path = tmp_path / "plugin_artifacts.json"
+    monkeypatch.setenv("PRISMATIC_STATE_DIR", str(tmp_path))
     monkeypatch.setenv("PRISMATIC_PLUGIN_JOBS_STATE", str(state_path))
+    monkeypatch.setenv("PRISMATIC_PLUGIN_ARTIFACTS_STATE", str(artifacts_path))
     client = TestClient(server.app)
 
     create = client.post(
@@ -115,7 +137,10 @@ def test_plugin_jobs_gateway_endpoints_are_durable(monkeypatch, tmp_path: Path) 
     assert detail.status_code == 200
     assert detail.json()["job_id"] == job["job_id"]
 
-    approve = client.post(f"/api/plugins/jobs/{job['job_id']}/approve", json={"actor": "michael", "note": "ship it"})
+    approve = client.post(
+        f"/api/plugins/jobs/{job['job_id']}/approve",
+        json={"actor": "michael", "note": "ship it"},
+    )
     assert approve.status_code == 200
     assert approve.json()["approval_state"] == "approved"
     assert approve.json()["status"] == "queued"
@@ -126,16 +151,41 @@ def test_plugin_jobs_gateway_endpoints_are_durable(monkeypatch, tmp_path: Path) 
             "event_type": "artifact_emitted",
             "actor": "worker",
             "message": "artifact registered",
-            "artifact": {"artifact_type": "text/html", "path_or_url": "state/pwp/out.html"},
+            "artifact": {
+                "artifact_type": "text/html",
+                "path_or_url": "state/pwp/out.html",
+            },
         },
     )
     assert event.status_code == 200
     assert event.json()["artifact_ids"]
     assert event.json()["artifacts"][0]["artifact_type"] == "text/html"
 
-    completed = client.post(f"/api/plugins/jobs/{job['job_id']}/status", json={"status": "completed"})
+    completed = client.post(
+        f"/api/plugins/jobs/{job['job_id']}/status", json={"status": "completed"}
+    )
     assert completed.status_code == 200
     assert completed.json()["status"] == "completed"
+
+    audit = client.get("/api/plugins/audit-events", params={"plugin_name": PWP})
+    assert audit.status_code == 200
+    audit_payload = audit.json()
+    assert audit_payload["summary"]["event_count"] >= 1
+    assert any(
+        event["event_type"] == "artifact_emitted" for event in audit_payload["events"]
+    )
+    assert any(
+        event["audit_source"] == "plugin_artifact" for event in audit_payload["events"]
+    )
+
+    audit_filtered = client.get(
+        "/api/plugins/audit-events",
+        params={"event_type": "artifact_emitted", "job_id": job["job_id"]},
+    )
+    assert audit_filtered.status_code == 200
+    assert [event["event_type"] for event in audit_filtered.json()["events"]] == [
+        "artifact_emitted"
+    ]
 
     governance = client.get("/api/plugins/governance")
     assert governance.status_code == 200
@@ -150,7 +200,9 @@ def test_plugin_jobs_gateway_endpoints_are_durable(monkeypatch, tmp_path: Path) 
 
 
 def test_plugin_jobs_gateway_errors(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("PRISMATIC_PLUGIN_JOBS_STATE", str(tmp_path / "plugin_jobs.json"))
+    monkeypatch.setenv(
+        "PRISMATIC_PLUGIN_JOBS_STATE", str(tmp_path / "plugin_jobs.json")
+    )
     client = TestClient(server.app)
 
     bad_create = client.post("/api/plugins/jobs", json={"plugin_name": PWP})
@@ -159,19 +211,29 @@ def test_plugin_jobs_gateway_errors(monkeypatch, tmp_path: Path) -> None:
     missing = client.get("/api/plugins/jobs/plugjob_missing")
     assert missing.status_code == 404
 
-    create = client.post("/api/plugins/jobs", json={"plugin_name": PWP, "action": "theme_validate"})
+    create = client.post(
+        "/api/plugins/jobs", json={"plugin_name": PWP, "action": "theme_validate"}
+    )
     job_id = create.json()["job_id"]
-    bad_status = client.post(f"/api/plugins/jobs/{job_id}/status", json={"status": "bogus"})
+    bad_status = client.post(
+        f"/api/plugins/jobs/{job_id}/status", json={"status": "bogus"}
+    )
     assert bad_status.status_code == 400
 
 
 def test_dashboard_contains_plugin_job_audit_surface() -> None:
-    html = (Path(__file__).resolve().parents[1] / "prismatic/gateway/templates/dashboard.html").read_text(encoding="utf-8")
+    html = (
+        Path(__file__).resolve().parents[1]
+        / "prismatic/gateway/templates/dashboard.html"
+    ).read_text(encoding="utf-8")
     for marker in [
         "plugin-job-summary",
         "plugin-jobs-table",
         "/api/plugins/jobs",
         "renderPluginJobs",
+        "plugin-audit-events",
+        "renderPluginAuditEvents",
+        "/api/plugins/audit-events",
         "Durable Plugin Jobs / Audit Trail",
         "approval_state",
     ]:

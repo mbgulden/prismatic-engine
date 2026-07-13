@@ -421,8 +421,9 @@ Generic job APIs:
 | `POST /api/plugins/jobs/{job_id}/reject` | Reject a job and close its lifecycle. |
 | `POST /api/plugins/jobs/{job_id}/events` | Append audit events, including lightweight `artifact_emitted` records. |
 | `POST /api/plugins/jobs/{job_id}/status` | Update lifecycle status. |
+| `GET /api/plugins/audit-events` | List normalized cross-plugin audit events from job and artifact registries, filterable by plugin, job, artifact, event type, and limit. |
 
-`GET /api/plugins/governance` includes a `jobs` summary so the governance catalog and dashboard can show whether declared lifecycle/audit contracts are actually being used. The Dashboard **Plugins** tab renders durable job/audit summary cards and recent job rows.
+`GET /api/plugins/governance` includes a `jobs` summary so the governance catalog and dashboard can show whether declared lifecycle/audit contracts are actually being used. The Dashboard **Plugins** tab renders durable job/audit summary cards, recent job rows, and the `plugin-audit-events` operator stream.
 
 Policy behavior today:
 

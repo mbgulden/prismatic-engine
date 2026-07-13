@@ -30,7 +30,7 @@ blocked_reason
 
 ## Plugin dashboard UX hardening
 
-The public-polished Plugins tab now includes first-run empty states, onboarding hints, error explanations, copyable CLI commands, docs links, health cards, a plugin detail drawer, job timeline, artifact inventory, and approval controls.
+The public-polished Plugins tab now includes first-run empty states, onboarding hints, error explanations, copyable CLI commands, docs links, health cards, a plugin detail drawer, job timeline, artifact inventory, cross-plugin audit events, and approval controls.
 
 ![Plugin dashboard UX hardening](assets/dashboard-plugin-ux-hardening.svg)
 
@@ -44,6 +44,8 @@ copyDashboardCommand
 plugin-detail-drawer
 plugin-job-timeline
 plugin-artifact-inventory
+plugin-audit-events
+/api/plugins/audit-events
 plugin-approval-controls
 plugin-dashboard-health-cards
 DASHBOARD_VISUAL_QA_OK

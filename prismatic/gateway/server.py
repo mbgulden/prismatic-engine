@@ -515,6 +515,57 @@ async def plugin_policy_preview(request: Request) -> JSONResponse:
     return JSONResponse(policy, status_code=status)
 
 
+@app.get("/api/plugins/audit-events")
+async def list_plugin_audit_events(request: Request) -> dict[str, Any]:
+    """List normalized cross-plugin audit events from job and artifact registries."""
+    try:
+        limit = int(request.query_params.get("limit") or "100")
+    except ValueError:
+        limit = 100
+    limit = max(1, min(limit, 500))
+    plugin_name = request.query_params.get("plugin_name")
+    job_id = request.query_params.get("job_id")
+    artifact_id = request.query_params.get("artifact_id")
+    event_type = request.query_params.get("event_type")
+    job_store = plugin_job_store()
+    artifact_store = plugin_artifact_store()
+    job_events = job_store.list_events(
+        plugin_name=plugin_name,
+        job_id=job_id,
+        event_type=event_type,
+        limit=limit,
+    )
+    artifact_events = artifact_store.list_events(
+        plugin_name=plugin_name,
+        job_id=job_id,
+        artifact_id=artifact_id,
+        event_type=event_type,
+        limit=limit,
+    )
+    events = [*job_events, *artifact_events]
+    events.sort(key=lambda e: e.get("created_at") or "", reverse=True)
+    events = events[:limit]
+    by_source: dict[str, int] = {}
+    by_type: dict[str, int] = {}
+    for event in events:
+        by_source[event.get("audit_source") or "unknown"] = (
+            by_source.get(event.get("audit_source") or "unknown", 0) + 1
+        )
+        by_type[event.get("event_type") or "unknown"] = (
+            by_type.get(event.get("event_type") or "unknown", 0) + 1
+        )
+    return {
+        "summary": {
+            "event_count": len(events),
+            "job_event_count": len(job_events),
+            "artifact_event_count": len(artifact_events),
+            "by_source": by_source,
+            "by_event_type": by_type,
+        },
+        "events": events,
+    }
+
+
 @app.get("/api/plugins/artifacts")
 async def list_plugin_artifacts(request: Request) -> dict[str, Any]:
     """List durable universal plugin artifacts/provenance records."""

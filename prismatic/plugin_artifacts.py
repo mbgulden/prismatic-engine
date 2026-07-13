@@ -375,6 +375,88 @@ class PluginArtifactStore:
             result["policy_result"] = policy
         return result
 
+    def list_events(
+        self,
+        *,
+        plugin_name: str | None = None,
+        job_id: str | None = None,
+        artifact_id: str | None = None,
+        event_type: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        events: list[dict[str, Any]] = []
+        for artifact in self.list_artifacts(plugin_name=plugin_name, job_id=job_id):
+            if artifact_id and artifact.get("artifact_id") != artifact_id:
+                continue
+            artifact_base = {
+                "artifact_id": artifact.get("artifact_id"),
+                "plugin_name": artifact.get("plugin_name"),
+                "job_id": artifact.get("job_id"),
+                "artifact_type": artifact.get("artifact_type"),
+                "audit_source": "plugin_artifact",
+            }
+            created = artifact.get("created_at")
+            if created and (not event_type or event_type == "artifact_created"):
+                events.append(
+                    {
+                        **artifact_base,
+                        "event_id": f"{artifact.get('artifact_id')}:created",
+                        "event_type": "artifact_created",
+                        "actor": artifact.get("provenance", {}).get("generator")
+                        or "system",
+                        "source": "artifact_registry",
+                        "message": "Plugin artifact registered",
+                        "details": {
+                            "approval_state": artifact.get("approval_state"),
+                            "publish_state": artifact.get("publish_state"),
+                            "path_or_url": artifact.get("path_or_url"),
+                        },
+                        "created_at": created,
+                    }
+                )
+            for idx, note in enumerate(
+                artifact.get("metadata", {}).get("operator_notes", [])
+            ):
+                note_event = "artifact_approved"
+                if artifact.get("approval_state") == "rejected":
+                    note_event = "artifact_rejected"
+                if event_type and event_type != note_event:
+                    continue
+                events.append(
+                    {
+                        **artifact_base,
+                        "event_id": f"{artifact.get('artifact_id')}:approval:{idx}",
+                        "event_type": note_event,
+                        "actor": note.get("actor") or "operator",
+                        "source": "artifact_approval",
+                        "message": note.get("note") or f"Artifact {note_event}",
+                        "details": {"approval_state": artifact.get("approval_state")},
+                        "created_at": note.get("at")
+                        or artifact.get("updated_at")
+                        or created,
+                    }
+                )
+            for idx, export in enumerate(artifact.get("export_history", [])):
+                export_event = export.get("event") or "artifact_export"
+                if event_type and event_type != export_event:
+                    continue
+                events.append(
+                    {
+                        **artifact_base,
+                        "event_id": f"{artifact.get('artifact_id')}:export:{idx}",
+                        "event_type": export_event,
+                        "actor": export.get("actor") or "operator",
+                        "source": "artifact_export",
+                        "message": export.get("note") or export_event.replace("_", " "),
+                        "details": deepcopy(export),
+                        "created_at": export.get("at")
+                        or artifact.get("updated_at")
+                        or created,
+                    }
+                )
+        events.sort(key=lambda e: e.get("created_at") or "", reverse=True)
+        return events[: max(1, min(limit, 500))]
+
     def summary(self) -> dict[str, Any]:
         artifacts = list(self.load_state()["plugin_artifacts"].values())
         by_plugin: dict[str, int] = {}
