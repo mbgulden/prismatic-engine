@@ -36,6 +36,19 @@ class SmokeFinding:
 
 
 @dataclass
+class Finding:
+    """One finding from the filesystem verification helpers."""
+    path: str
+    passed: bool
+    status: str  # "ok" | "missing" | "empty" | "whitespace_only" | "non-substantive" | "error"
+    detail: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+
+@dataclass
 class SmokeTestResult:
     """Result of the smoke test."""
     passed: bool
@@ -312,3 +325,77 @@ def smoke_test(agent_output: str, workdir: str = ".") -> SmokeTestResult:
         findings=findings,
         reason=reason,
     )
+
+
+def verify_files_exist(paths: list[str | Path], workdir: str = ".") -> list[Finding]:
+    """Check if each file exists, resolving relative paths against workdir."""
+    findings = []
+    for p in paths:
+        path_str = str(p)
+        try:
+            full_path = Path(p) if os.path.isabs(path_str) else Path(workdir) / p
+            if full_path.exists() and full_path.is_file():
+                findings.append(Finding(path=path_str, passed=True, status="ok", detail="File exists"))
+            else:
+                findings.append(Finding(path=path_str, passed=False, status="missing", detail="File does not exist or is not a file"))
+        except Exception as e:
+            findings.append(Finding(path=path_str, passed=False, status="error", detail=f"Error checking file existence: {e}"))
+    return findings
+
+
+def verify_files_nonempty(paths: list[str | Path], workdir: str = ".") -> list[Finding]:
+    """Check if each file exists and is larger than 100 bytes."""
+    findings = []
+    for p in paths:
+        path_str = str(p)
+        try:
+            full_path = Path(p) if os.path.isabs(path_str) else Path(workdir) / p
+            if not full_path.exists() or not full_path.is_file():
+                findings.append(Finding(path=path_str, passed=False, status="missing", detail="File does not exist or is not a file"))
+                continue
+
+            size = full_path.stat().st_size
+            if size > 100:
+                findings.append(Finding(path=path_str, passed=True, status="ok", detail=f"File size is {size} bytes (> 100 bytes)"))
+            else:
+                findings.append(Finding(path=path_str, passed=False, status="empty", detail=f"File size is {size} bytes (<= 100 bytes)"))
+        except Exception as e:
+            findings.append(Finding(path=path_str, passed=False, status="error", detail=f"Error checking file size: {e}"))
+    return findings
+
+
+def verify_files_substantive(paths: list[str | Path], workdir: str = ".") -> list[Finding]:
+    """Check if each file exists and has > 50 characters of substantive content after stripping comments and whitespace."""
+    findings = []
+    for p in paths:
+        path_str = str(p)
+        try:
+            full_path = Path(p) if os.path.isabs(path_str) else Path(workdir) / p
+            if not full_path.exists() or not full_path.is_file():
+                findings.append(Finding(path=path_str, passed=False, status="missing", detail="File does not exist or is not a file"))
+                continue
+
+            try:
+                content = full_path.read_text(encoding="utf-8", errors="ignore")
+            except Exception as e:
+                findings.append(Finding(path=path_str, passed=False, status="error", detail=f"Error reading file as text: {e}"))
+                continue
+
+            # Remove block comments first
+            content_no_comments = re.sub(r"/\*.*?\*/", "", content, flags=re.DOTALL)
+            content_no_comments = re.sub(r"<!--.*?-->", "", content_no_comments, flags=re.DOTALL)
+            # Remove line comments
+            content_no_comments = re.sub(r"#.*", "", content_no_comments)
+            content_no_comments = re.sub(r"//.*", "", content_no_comments)
+
+            # Strip all whitespace to get true content character count
+            content_no_ws = re.sub(r"\s+", "", content_no_comments)
+            char_count = len(content_no_ws)
+
+            if char_count > 50:
+                findings.append(Finding(path=path_str, passed=True, status="ok", detail=f"Substantive content is {char_count} chars (> 50 chars)"))
+            else:
+                findings.append(Finding(path=path_str, passed=False, status="non-substantive", detail=f"Substantive content is only {char_count} chars (<= 50 chars)"))
+        except Exception as e:
+            findings.append(Finding(path=path_str, passed=False, status="error", detail=f"Error verifying file content: {e}"))
+    return findings

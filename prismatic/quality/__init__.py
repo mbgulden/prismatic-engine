@@ -70,6 +70,10 @@ from .smoke import (
     file_exists,
     file_has_substantive_content,
     smoke_test,
+    Finding,
+    verify_files_exist,
+    verify_files_nonempty,
+    verify_files_substantive,
 )
 
 __all__ = [
@@ -115,7 +119,6 @@ __all__ = [
     "OUTPUT_REQUIRES_ATTENTION",
     "DISPATCH_READY",
     "COUNTER_PATH",
-    # Smoke test (Gap 5)
     "SmokeFinding",
     "SmokeTestResult",
     "extract_claimed_paths",
@@ -123,4 +126,8 @@ __all__ = [
     "file_exists",
     "file_has_substantive_content",
     "smoke_test",
+    "Finding",
+    "verify_files_exist",
+    "verify_files_nonempty",
+    "verify_files_substantive",
 ]

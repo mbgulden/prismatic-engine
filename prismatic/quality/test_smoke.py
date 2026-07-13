@@ -22,6 +22,10 @@ from prismatic.quality.smoke import (
     file_exists,
     file_has_substantive_content,
     smoke_test,
+    Finding,
+    verify_files_exist,
+    verify_files_nonempty,
+    verify_files_substantive,
 )
 
 
@@ -334,3 +338,71 @@ class TestOutputFormats:
         assert "❌" in md
         assert "FAIL" in md
         assert "missing.py" in md
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Verification helper tests
+# ─────────────────────────────────────────────────────────────────────
+
+class TestVerificationHelpers:
+    def test_verify_files_exist(self, tmp_path):
+        f1 = tmp_path / "exist1.txt"
+        f1.write_text("hello")
+        f2 = tmp_path / "exist2.txt"
+
+        findings = verify_files_exist([f1, f2], workdir=str(tmp_path))
+        assert len(findings) == 2
+        assert findings[0].path == str(f1)
+        assert findings[0].passed is True
+        assert findings[0].status == "ok"
+
+        assert findings[1].path == str(f2)
+        assert findings[1].passed is False
+        assert findings[1].status == "missing"
+
+    def test_verify_files_nonempty(self, tmp_path):
+        f1 = tmp_path / "nonempty.txt"
+        f1.write_text("a" * 101)  # 101 bytes (> 100 bytes)
+        f2 = tmp_path / "empty.txt"
+        f2.write_text("a" * 99)   # 99 bytes (<= 100 bytes)
+        f3 = tmp_path / "missing.txt"
+
+        findings = verify_files_nonempty([f1, f2, f3], workdir=str(tmp_path))
+        assert len(findings) == 3
+        assert findings[0].passed is True
+        assert findings[0].status == "ok"
+
+        assert findings[1].passed is False
+        assert findings[1].status == "empty"
+
+        assert findings[2].passed is False
+        assert findings[2].status == "missing"
+
+    def test_verify_files_substantive(self, tmp_path):
+        f1 = tmp_path / "substantive.txt"
+        f1.write_text("a" * 51)  # 51 chars (> 50 chars)
+        f2 = tmp_path / "comments_only.txt"
+        f2.write_text("# " + "a" * 60 + "\n// " + "b" * 60)  # Only comments
+        f3 = tmp_path / "ws_only.txt"
+        f3.write_text(" \n\t" * 20)  # Only whitespace
+        f4 = tmp_path / "mixed.txt"
+        # 45 chars of comments, plus 52 chars of actual content
+        f4.write_text("# comment\n" + "a" * 52)
+        f5 = tmp_path / "missing.txt"
+
+        findings = verify_files_substantive([f1, f2, f3, f4, f5], workdir=str(tmp_path))
+        assert len(findings) == 5
+        assert findings[0].passed is True
+        assert findings[0].status == "ok"
+
+        assert findings[1].passed is False
+        assert findings[1].status == "non-substantive"
+
+        assert findings[2].passed is False
+        assert findings[2].status == "non-substantive"
+
+        assert findings[3].passed is True
+        assert findings[3].status == "ok"
+
+        assert findings[4].passed is False
+        assert findings[4].status == "missing"
