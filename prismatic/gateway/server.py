@@ -42,6 +42,7 @@ from prismatic.gateway.ws_broadcaster import (
 )
 from prismatic.lock import _read_locks as read_swarm_locks
 from prismatic.plugin_architecture import MEDIA_CAPABILITY_CLASSES, plugin_catalog
+from prismatic.plugin_artifacts import store_from_env as plugin_artifact_store
 from prismatic.plugin_health import get_plugin_health
 from prismatic.plugin_jobs import PluginJobStore, store_from_env as plugin_job_store
 from prismatic.pwp_integration import connect_pwp, disconnect_pwp, integration_status, refresh_pwp
@@ -401,10 +402,12 @@ async def plugins_governance() -> dict[str, Any]:
     """Return operator-facing plugin readiness, risk, approval, and blocker data."""
     catalog = plugin_catalog()
     jobs = plugin_job_store().summary()
+    artifacts = plugin_artifact_store().summary()
     return {
         "schema_version": catalog["schema_version"],
         "summary": catalog["governance_summary"],
         "jobs": jobs,
+        "artifacts": artifacts,
         "plugins": [
             {
                 "name": item["name"],
@@ -422,6 +425,95 @@ async def plugins_governance() -> dict[str, Any]:
             for item in catalog["plugins"]
         ],
     }
+
+
+@app.get("/api/plugins/artifacts")
+async def list_plugin_artifacts(request: Request) -> dict[str, Any]:
+    """List durable universal plugin artifacts/provenance records."""
+    store = plugin_artifact_store()
+    return {
+        "summary": store.summary(),
+        "artifacts": store.list_artifacts(
+            plugin_name=request.query_params.get("plugin_name"),
+            job_id=request.query_params.get("job_id"),
+            approval_state=request.query_params.get("approval_state"),
+            publish_state=request.query_params.get("publish_state"),
+        ),
+    }
+
+
+@app.post("/api/plugins/artifacts")
+async def create_plugin_artifact(request: Request) -> JSONResponse:
+    """Create a durable plugin artifact/provenance record."""
+    payload = await request.json()
+    plugin_name = str(payload.get("plugin_name") or "").strip()
+    if not plugin_name:
+        return JSONResponse({"error": "plugin_name is required"}, status_code=400)
+    artifact = plugin_artifact_store().create_artifact(
+        plugin_name=plugin_name,
+        job_id=payload.get("job_id"),
+        artifact_type=payload.get("artifact_type"),
+        mime_type=payload.get("mime_type"),
+        path_or_url=payload.get("path_or_url"),
+        asset_id=payload.get("asset_id"),
+        metadata=payload.get("metadata") or {},
+        provenance=payload.get("provenance") or {},
+        input_summary=payload.get("input_summary"),
+        provider_or_service=payload.get("provider_or_service"),
+        approval_state=payload.get("approval_state") or "pending",
+        publish_state=payload.get("publish_state") or "draft",
+        artifact_id=payload.get("artifact_id"),
+    )
+    return JSONResponse(artifact, status_code=201)
+
+
+@app.get("/api/plugins/artifacts/{artifact_id}")
+async def get_plugin_artifact(artifact_id: str) -> JSONResponse:
+    artifact = plugin_artifact_store().get_artifact(artifact_id)
+    if not artifact:
+        return JSONResponse({"error": "plugin artifact not found", "artifact_id": artifact_id}, status_code=404)
+    return JSONResponse(artifact)
+
+
+@app.post("/api/plugins/artifacts/{artifact_id}/approve")
+async def approve_plugin_artifact(artifact_id: str, request: Request) -> JSONResponse:
+    payload = await request.json()
+    artifact = plugin_artifact_store().set_approval(
+        artifact_id,
+        "approved",
+        actor=str(payload.get("actor") or "operator"),
+        note=payload.get("note") or payload.get("operator_notes"),
+    )
+    if not artifact:
+        return JSONResponse({"error": "plugin artifact not found", "artifact_id": artifact_id}, status_code=404)
+    return JSONResponse(artifact)
+
+
+@app.post("/api/plugins/artifacts/{artifact_id}/reject")
+async def reject_plugin_artifact(artifact_id: str, request: Request) -> JSONResponse:
+    payload = await request.json()
+    artifact = plugin_artifact_store().set_approval(
+        artifact_id,
+        "rejected",
+        actor=str(payload.get("actor") or "operator"),
+        note=payload.get("note") or payload.get("operator_notes"),
+    )
+    if not artifact:
+        return JSONResponse({"error": "plugin artifact not found", "artifact_id": artifact_id}, status_code=404)
+    return JSONResponse(artifact)
+
+
+@app.post("/api/plugins/artifacts/{artifact_id}/publish-ready")
+async def mark_plugin_artifact_publish_ready(artifact_id: str, request: Request) -> JSONResponse:
+    payload = await request.json()
+    artifact = plugin_artifact_store().mark_publish_ready(
+        artifact_id,
+        actor=str(payload.get("actor") or "operator"),
+        note=payload.get("note") or payload.get("operator_notes"),
+    )
+    if not artifact:
+        return JSONResponse({"error": "plugin artifact not found", "artifact_id": artifact_id}, status_code=404)
+    return JSONResponse(artifact)
 
 
 @app.get("/api/plugins/jobs")
