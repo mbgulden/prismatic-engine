@@ -249,9 +249,14 @@ def tag_event(event: BusEvent) -> TagResult:
             return TagResult("escalate", reason="watchdog timeout")
         return TagResult("auto-pick", reason="watchdog status event")
 
-    # Final fallback for generic webhooks that were not Linear/GitHub events.
-    if src == "webhook" or "webhook" in topic or "webhook" in src:
-        return TagResult("auto-pick", reason="generic webhook delivery")
+    # Creative events (Story 4.3)
+    if topic in ("brief.requested", "brief.completed", "brief.rejected"):
+        if topic == "brief.requested":
+            return TagResult("delegate", lane_hint="creative", reason="new creative brief requested")
+        if topic == "brief.completed":
+            return TagResult("auto-pick", lane_hint="creative", reason="creative brief completed")
+        if topic == "brief.rejected":
+            return TagResult("escalate", lane_hint="creative", reason="creative brief rejected (budget cap)")
 
     # Default: unknown event type, escalate so it gets human attention
     return TagResult("escalate", reason=f"unmatched source={src!r} topic={topic!r}")

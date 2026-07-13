@@ -537,6 +537,65 @@ class TestCleanupExpired:
         assert "durable_events" not in result
 
 
+
+# ── TestCheckCircuit ──────────────────────────────────────────────────────────
+
+
+class TestCheckCircuit:
+    def test_check_circuit_inserts_and_updates_breaker_table(self, collector):
+        """check_circuit pushes breaker events that drain into telemetry_circuit_breakers."""
+        c, db_path = collector
+        # 1. First call with micro failure (not tripped yet)
+        tripped = c.check_circuit(issue_id="GRO-9999", agent="agy", micro_count=1)
+        assert not tripped
+
+        # Wait for the async write to drain
+        rows = _wait_drain(c, db_path, "telemetry_circuit_breakers")
+        assert len(rows) >= 1
+        row = rows[0]
+        assert row["issue_id"] == "GRO-9999"
+        assert row["agent"] == "agy"
+        assert row["micro_count"] == 1
+        assert row["macro_count"] == 0
+        assert row["tripped"] == 0
+        assert row["tripped_at"] is None
+
+        # 2. Increment up to tripped state
+        # BREAKER_MICRO_MAX default is 5. Let's add 4 more to trip it.
+        tripped = c.check_circuit(issue_id="GRO-9999", agent="agy", micro_count=4)
+        assert tripped
+
+        # Wait for loop event to drain (since tripped is True, it pushes loop event too)
+        loop_rows = _wait_drain(c, db_path, "telemetry_loop_events")
+        assert len(loop_rows) >= 1
+        assert loop_rows[0]["issue_id"] == "GRO-9999"
+        assert loop_rows[0]["loop_type"] == "circuit_breaker"
+
+        # Wait for telemetry_circuit_breakers to reflect the tripped state
+        # We poll for the updated row
+        deadline = time.monotonic() + 3.0
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            row_updated = None
+            while time.monotonic() < deadline:
+                row_updated = conn.execute(
+                    "SELECT * FROM telemetry_circuit_breakers WHERE issue_id = 'GRO-9999'"
+                ).fetchone()
+                if row_updated and row_updated["tripped"] == 1:
+                    break
+                time.sleep(0.05)
+            assert row_updated is not None
+            assert row_updated["micro_count"] == 5
+            assert row_updated["tripped"] == 1
+            assert row_updated["tripped_at"] is not None
+        finally:
+            conn.close()
+
+        # 3. Subsequent calls should return True (tripped) even with micro_count=0
+        assert c.check_circuit(issue_id="GRO-9999", agent="agy", micro_count=0)
+
+
 # ── Deferred tests (Gap 11) ─────────────────────────────────────────────────
 #
 # Test #22: test_real_reviewer_completing_emits_review_completed_event

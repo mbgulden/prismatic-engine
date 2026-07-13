@@ -1,0 +1,6 @@
+# config/creative.yaml — configures creative budget ceiling per tenant
+tenants:
+  default:
+    daily_budget_ceiling: 5.0
+  acme:
+    daily_budget_ceiling: 10.0
