@@ -951,6 +951,8 @@
                 </div>
                 <div id="plugin-governance-summary" class="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs"></div>
                 <div id="plugin-job-summary" class="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs"></div>
+                <div id="plugin-artifact-summary" class="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs"></div>
+                <div id="plugin-artifacts-table" class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50"></div>
                 <div id="plugin-jobs-table" class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50"></div>
                 <div id="plugin-governance-cards" class="grid grid-cols-1 xl:grid-cols-2 gap-4"></div>
             </div>
@@ -1513,19 +1515,24 @@
 
         let loadedPluginGovernance = null;
         let loadedPluginJobs = null;
+        let loadedPluginArtifacts = null;
 
         async function loadPluginGovernance() {
             try {
-                const [govRes, jobsRes] = await Promise.all([
+                const [govRes, jobsRes, artifactsRes] = await Promise.all([
                     fetch('/api/plugins/governance'),
-                    fetch('/api/plugins/jobs')
+                    fetch('/api/plugins/jobs'),
+                    fetch('/api/plugins/artifacts')
                 ]);
                 if (!govRes.ok) throw new Error(`governance HTTP ${govRes.status}`);
                 if (!jobsRes.ok) throw new Error(`jobs HTTP ${jobsRes.status}`);
+                if (!artifactsRes.ok) throw new Error(`artifacts HTTP ${artifactsRes.status}`);
                 loadedPluginGovernance = await govRes.json();
                 loadedPluginJobs = await jobsRes.json();
+                loadedPluginArtifacts = await artifactsRes.json();
                 renderPluginGovernance();
                 renderPluginJobs();
+                renderPluginArtifacts();
             } catch (err) {
                 const summary = document.getElementById('plugin-governance-summary');
                 if (summary) summary.innerHTML = `<div class="col-span-full text-rose-300 bg-rose-950/30 border border-rose-900/60 rounded-xl p-3">Plugin governance refresh failed: ${err.message}</div>`;
@@ -1541,6 +1548,35 @@
                 slate: 'bg-slate-900/80 text-slate-300 border-slate-700/70'
             };
             return `<span class="inline-flex items-center px-2 py-0.5 rounded-full border text-[10px] font-semibold ${palette[color] || palette.slate}">${label}</span>`;
+        }
+
+        function renderPluginArtifacts() {
+            const payload = loadedPluginArtifacts || {};
+            const summary = payload.summary || {};
+            const summaryEl = document.getElementById('plugin-artifact-summary');
+            const tableEl = document.getElementById('plugin-artifacts-table');
+            if (!summaryEl || !tableEl) return;
+            const approval = summary.by_approval_state || {};
+            const publish = summary.by_publish_state || {};
+            summaryEl.innerHTML = [
+                ['Artifacts', summary.artifact_count || 0, 'emerald'],
+                ['Approved', approval.approved || 0, 'emerald'],
+                ['Pending', approval.pending || 0, 'amber'],
+                ['Publish ready', publish.publish_ready || 0, 'indigo'],
+                ['Rejected', approval.rejected || 0, 'rose'],
+            ].map(([label, value, color]) => `<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><div class="text-slate-500 uppercase tracking-wider font-bold">${label}</div><div class="mt-1 text-slate-100 font-mono text-lg">${value}</div><div class="mt-2">${pluginBadge(label, color)}</div></div>`).join('');
+            const rows = (payload.artifacts || []).slice(0, 12).map(artifact => `
+                <tr class="border-t border-slate-800/80">
+                    <td class="px-3 py-2 font-mono text-[11px] text-slate-300">${artifact.artifact_id}</td>
+                    <td class="px-3 py-2 text-slate-300">${artifact.plugin_name || ''}</td>
+                    <td class="px-3 py-2 text-slate-400">${artifact.artifact_type || ''}</td>
+                    <td class="px-3 py-2">${pluginBadge(`approval: ${artifact.approval_state || 'unknown'}`, artifact.approval_state === 'approved' ? 'emerald' : artifact.approval_state === 'rejected' ? 'rose' : 'amber')}</td>
+                    <td class="px-3 py-2">${pluginBadge(`publish: ${artifact.publish_state || 'unknown'}`, artifact.publish_state === 'publish_ready' ? 'indigo' : artifact.publish_state === 'rejected' ? 'rose' : 'slate')}</td>
+                    <td class="px-3 py-2 font-mono text-[11px] text-slate-500">${artifact.sha256 ? artifact.sha256.slice(0, 12) : 'external/no-hash'}</td>
+                    <td class="px-3 py-2 text-slate-500">${artifact.job_id || ''}</td>
+                </tr>`).join('');
+            tableEl.innerHTML = `<div class="px-3 py-2 border-b border-slate-800 text-xs font-bold uppercase tracking-wider text-slate-400">Universal Plugin Artifacts / Provenance Registry</div>
+                <table class="min-w-full text-xs"><thead class="text-slate-500"><tr><th class="px-3 py-2 text-left">Artifact</th><th class="px-3 py-2 text-left">Plugin</th><th class="px-3 py-2 text-left">Type</th><th class="px-3 py-2 text-left">Approval</th><th class="px-3 py-2 text-left">Publish</th><th class="px-3 py-2 text-left">SHA256</th><th class="px-3 py-2 text-left">Job</th></tr></thead><tbody>${rows || '<tr><td colspan="7" class="px-3 py-4 text-slate-500">No plugin artifacts registered yet.</td></tr>'}</tbody></table>`;
         }
 
         function renderPluginJobs() {

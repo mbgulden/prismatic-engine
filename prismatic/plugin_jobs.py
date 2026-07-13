@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from prismatic.plugin_architecture import plugin_catalog
+from prismatic.plugin_artifacts import store_from_env as plugin_artifact_store
 
 JOB_STATUSES = {
     "queued",
@@ -308,7 +309,14 @@ class PluginJobStore:
             return None
         payload = deepcopy(job)
         payload["events"] = state["plugin_job_events"].get(job_id, [])
-        payload["artifacts"] = [state["plugin_artifacts"].get(aid) for aid in payload.get("artifact_ids", []) if state["plugin_artifacts"].get(aid)]
+        universal_store = plugin_artifact_store()
+        artifacts = []
+        for artifact_id in payload.get("artifact_ids", []):
+            artifacts.append(
+                universal_store.get_artifact(artifact_id)
+                or state["plugin_artifacts"].get(artifact_id)
+            )
+        payload["artifacts"] = [artifact for artifact in artifacts if artifact]
         return payload
 
     def approve_job(self, job_id: str, *, actor: str = "operator", note: str | None = None) -> dict[str, Any] | None:
@@ -397,19 +405,36 @@ class PluginJobStore:
             "created_at": now_iso(),
         }
         if artifact:
-            artifact_id = str(artifact.get("artifact_id") or f"plugart_{uuid.uuid4().hex[:16]}")
-            artifact_record = {
+            plugin_name = state["plugin_jobs"].get(job_id, {}).get("plugin_name")
+            artifact_record = plugin_artifact_store().create_artifact(
+                artifact_id=artifact.get("artifact_id"),
+                plugin_name=plugin_name,
+                job_id=job_id,
+                artifact_type=artifact.get("artifact_type"),
+                mime_type=artifact.get("mime_type"),
+                path_or_url=artifact.get("path_or_url"),
+                asset_id=artifact.get("asset_id"),
+                metadata=artifact.get("metadata", {}),
+                provenance=artifact.get("provenance", {}),
+                input_summary=artifact.get("input_summary"),
+                provider_or_service=artifact.get("provider_or_service"),
+                approval_state=artifact.get("approval_state", "pending"),
+                publish_state=artifact.get("publish_state", "draft"),
+            )
+            artifact_id = artifact_record["artifact_id"]
+            state["plugin_artifacts"][artifact_id] = {
                 "artifact_id": artifact_id,
                 "job_id": job_id,
-                "plugin_name": state["plugin_jobs"].get(job_id, {}).get("plugin_name"),
-                "artifact_type": artifact.get("artifact_type"),
-                "path_or_url": artifact.get("path_or_url"),
-                "metadata": _redact_secrets(artifact.get("metadata", {})),
-                "approval_state": artifact.get("approval_state", "pending"),
-                "created_at": now_iso(),
+                "plugin_name": plugin_name,
+                "artifact_type": artifact_record.get("artifact_type"),
+                "path_or_url": artifact_record.get("path_or_url"),
+                "approval_state": artifact_record.get("approval_state"),
+                "publish_state": artifact_record.get("publish_state"),
+                "created_at": artifact_record.get("created_at"),
             }
-            state["plugin_artifacts"][artifact_id] = artifact_record
-            state["plugin_jobs"].setdefault(job_id, {}).setdefault("artifact_ids", []).append(artifact_id)
+            artifact_ids = state["plugin_jobs"].setdefault(job_id, {}).setdefault("artifact_ids", [])
+            if artifact_id not in artifact_ids:
+                artifact_ids.append(artifact_id)
             event["artifact_id"] = artifact_id
         state["plugin_job_events"].setdefault(job_id, []).append(event)
         return event

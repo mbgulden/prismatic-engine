@@ -232,6 +232,63 @@ Rules:
 - MCP/service plugins should declare dashboard surfaces and auth env var names.
 - High-risk plugins should declare policy checks before jobs execute.
 
+## Universal artifact/provenance registry
+
+PE Core persists full plugin artifact/provenance records in `prismatic/plugin_artifacts.py` using an atomic JSON store at:
+
+```text
+$PRISMATIC_PLUGIN_ARTIFACTS_STATE
+# default: $PRISMATIC_STATE_DIR/plugin_artifacts.json
+# default state dir fallback: ./prismatic_state/plugin_artifacts.json
+```
+
+Artifact records support:
+
+- `artifact_id`
+- `asset_id`
+- `plugin_name`
+- `job_id`
+- `artifact_type`
+- `mime_type`
+- `path_or_url`
+- `sha256` when a safe local file exists
+- `size_bytes` when a safe local file exists
+- `metadata`
+- `provenance`
+- `input_summary`
+- `provider_or_service`
+- `approval_state`
+- `publish_state`
+- `export_history`
+- `created_at`
+- `updated_at`
+
+Generic artifact APIs:
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/plugins/artifacts` | List durable artifact/provenance records and summary counts. |
+| `POST /api/plugins/artifacts` | Create an artifact/provenance record. |
+| `GET /api/plugins/artifacts/{artifact_id}` | Read artifact detail. |
+| `POST /api/plugins/artifacts/{artifact_id}/approve` | Approve an artifact. |
+| `POST /api/plugins/artifacts/{artifact_id}/reject` | Reject an artifact and mark it rejected for publishing. |
+| `POST /api/plugins/artifacts/{artifact_id}/publish-ready` | Mark an approved/selected artifact as ready to publish/export. |
+
+Safety rules:
+
+- External `http`/`https` URLs are stored as references and are not fetched by default.
+- Local file hashing is only allowed for paths under the repo, the configured PE state directory, or `/tmp`.
+- Unsafe local paths are preserved as references but are not read or hashed.
+- Token-like values in metadata, provenance, and input summaries are redacted.
+- Plugin disconnect does not delete artifacts.
+
+Gap 1 integration:
+
+- `POST /api/plugins/jobs/{job_id}/events` with `event_type: artifact_emitted` now creates a universal artifact record and links its `artifact_id` back to the job.
+- Job detail hydrates linked artifacts from the universal registry, falling back to the legacy lightweight event reference when needed.
+- `GET /api/plugins/governance` includes both `jobs` and `artifacts` summaries.
+- The Dashboard **Plugins** tab renders artifact summary cards and a **Universal Plugin Artifacts / Provenance Registry** table.
+
 ## Plugin jobs and audit trail
 
 PE Core persists plugin jobs and audit events in `prismatic/plugin_jobs.py` using an atomic JSON store at:
