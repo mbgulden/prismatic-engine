@@ -9,6 +9,8 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from prismatic.plugin_policy import evaluate_artifact_action_policy
 from urllib.parse import urlparse
 
 ARTIFACT_SCHEMA_VERSION = "1.0.0"
@@ -25,11 +27,18 @@ def repo_root() -> Path:
 
 
 def default_state_dir() -> Path:
-    return Path(os.environ.get("PRISMATIC_STATE_DIR", repo_root() / "prismatic_state")).expanduser()
+    return Path(
+        os.environ.get("PRISMATIC_STATE_DIR", repo_root() / "prismatic_state")
+    ).expanduser()
 
 
 def default_artifacts_path() -> Path:
-    return Path(os.environ.get("PRISMATIC_PLUGIN_ARTIFACTS_STATE", default_state_dir() / "plugin_artifacts.json")).expanduser()
+    return Path(
+        os.environ.get(
+            "PRISMATIC_PLUGIN_ARTIFACTS_STATE",
+            default_state_dir() / "plugin_artifacts.json",
+        )
+    ).expanduser()
 
 
 def _atomic_write_json(path: Path, payload: Any) -> None:
@@ -58,9 +67,15 @@ def _looks_secret(value: Any) -> bool:
     if not isinstance(value, str):
         return False
     upper = value.upper()
-    if upper.endswith("_ENV") or (upper.isidentifier() and any(token in upper for token in ["API_KEY", "TOKEN", "SECRET", "PASSWORD"])):
+    if upper.endswith("_ENV") or (
+        upper.isidentifier()
+        and any(token in upper for token in ["API_KEY", "TOKEN", "SECRET", "PASSWORD"])
+    ):
         return False
-    return any(token in value for token in ["sk-", "ghp_", "xoxb-", "AIza", "-----BEGIN", "Bearer "])
+    return any(
+        token in value
+        for token in ["sk-", "ghp_", "xoxb-", "AIza", "-----BEGIN", "Bearer "]
+    )
 
 
 def redact_secrets(value: Any) -> Any:
@@ -68,7 +83,17 @@ def redact_secrets(value: Any) -> Any:
         redacted: dict[str, Any] = {}
         for key, val in value.items():
             key_lower = str(key).lower()
-            if any(token in key_lower for token in ["secret", "token", "password", "api_key", "apikey", "authorization"]):
+            if any(
+                token in key_lower
+                for token in [
+                    "secret",
+                    "token",
+                    "password",
+                    "api_key",
+                    "apikey",
+                    "authorization",
+                ]
+            ):
                 redacted[key] = "[REDACTED]"
             else:
                 redacted[key] = redact_secrets(val)
@@ -103,7 +128,11 @@ def safe_local_artifact_path(path_or_url: str | None) -> Path | None:
         resolved = candidate.resolve(strict=False)
     except OSError:
         return None
-    allowed_roots = [repo_root().resolve(), default_state_dir().resolve(), Path("/tmp").resolve()]
+    allowed_roots = [
+        repo_root().resolve(),
+        default_state_dir().resolve(),
+        Path("/tmp").resolve(),
+    ]
     if not any(resolved == root or root in resolved.parents for root in allowed_roots):
         return None
     return resolved
@@ -165,7 +194,11 @@ class PluginArtifactStore:
         if publish_state not in PUBLISH_STATES:
             publish_state = "draft"
         local_path = safe_local_artifact_path(path_or_url)
-        fingerprint = file_fingerprint(local_path) if local_path else {"sha256": None, "size_bytes": None, "exists": False}
+        fingerprint = (
+            file_fingerprint(local_path)
+            if local_path
+            else {"sha256": None, "size_bytes": None, "exists": False}
+        )
         artifact_id = artifact_id or f"plugart_{uuid.uuid4().hex[:16]}"
         record = {
             "artifact_id": artifact_id,
@@ -178,11 +211,13 @@ class PluginArtifactStore:
             "sha256": fingerprint["sha256"],
             "size_bytes": fingerprint["size_bytes"],
             "metadata": redact_secrets(metadata or {}),
-            "provenance": redact_secrets({
-                "source_plugin": plugin_name,
-                "source_job": job_id,
-                **(provenance or {}),
-            }),
+            "provenance": redact_secrets(
+                {
+                    "source_plugin": plugin_name,
+                    "source_job": job_id,
+                    **(provenance or {}),
+                }
+            ),
             "input_summary": redact_secrets(input_summary),
             "provider_or_service": provider_or_service,
             "approval_state": approval_state,
@@ -196,23 +231,41 @@ class PluginArtifactStore:
         self.save_state(state)
         return deepcopy(record)
 
-    def list_artifacts(self, *, plugin_name: str | None = None, job_id: str | None = None, approval_state: str | None = None, publish_state: str | None = None) -> list[dict[str, Any]]:
+    def list_artifacts(
+        self,
+        *,
+        plugin_name: str | None = None,
+        job_id: str | None = None,
+        approval_state: str | None = None,
+        publish_state: str | None = None,
+    ) -> list[dict[str, Any]]:
         artifacts = list(self.load_state()["plugin_artifacts"].values())
         if plugin_name:
             artifacts = [a for a in artifacts if a.get("plugin_name") == plugin_name]
         if job_id:
             artifacts = [a for a in artifacts if a.get("job_id") == job_id]
         if approval_state:
-            artifacts = [a for a in artifacts if a.get("approval_state") == approval_state]
+            artifacts = [
+                a for a in artifacts if a.get("approval_state") == approval_state
+            ]
         if publish_state:
-            artifacts = [a for a in artifacts if a.get("publish_state") == publish_state]
+            artifacts = [
+                a for a in artifacts if a.get("publish_state") == publish_state
+            ]
         return sorted(artifacts, key=lambda a: a.get("created_at") or "", reverse=True)
 
     def get_artifact(self, artifact_id: str) -> dict[str, Any] | None:
         artifact = self.load_state()["plugin_artifacts"].get(artifact_id)
         return deepcopy(artifact) if artifact else None
 
-    def set_approval(self, artifact_id: str, approval_state: str, *, actor: str = "operator", note: str | None = None) -> dict[str, Any] | None:
+    def set_approval(
+        self,
+        artifact_id: str,
+        approval_state: str,
+        *,
+        actor: str = "operator",
+        note: str | None = None,
+    ) -> dict[str, Any] | None:
         if approval_state not in {"approved", "rejected"}:
             raise ValueError(f"unsupported approval state: {approval_state}")
         state = self.load_state()
@@ -223,30 +276,104 @@ class PluginArtifactStore:
         if approval_state == "rejected":
             artifact["publish_state"] = "rejected"
         artifact["updated_at"] = now_iso()
-        artifact.setdefault("metadata", {}).setdefault("operator_notes", []).append(redact_secrets({"actor": actor, "note": note, "at": artifact["updated_at"]}))
+        artifact.setdefault("metadata", {}).setdefault("operator_notes", []).append(
+            redact_secrets({"actor": actor, "note": note, "at": artifact["updated_at"]})
+        )
         self.save_state(state)
         return self.get_artifact(artifact_id)
 
-    def mark_publish_ready(self, artifact_id: str, *, actor: str = "operator", note: str | None = None) -> dict[str, Any] | None:
+    def mark_publish_ready(
+        self,
+        artifact_id: str,
+        *,
+        actor: str = "operator",
+        note: str | None = None,
+        enforce_policy: bool = True,
+    ) -> dict[str, Any] | None:
         state = self.load_state()
         artifact = state["plugin_artifacts"].get(artifact_id)
         if not artifact:
             return None
-        artifact["publish_state"] = "publish_ready"
-        artifact["updated_at"] = now_iso()
-        artifact.setdefault("export_history", []).append(redact_secrets({"event": "publish_ready", "actor": actor, "note": note, "at": artifact["updated_at"]}))
+        policy = (
+            evaluate_artifact_action_policy(artifact, "publish-ready")
+            if enforce_policy
+            else {
+                "decision": "allow",
+                "allowed": True,
+                "reason": "policy enforcement bypassed by caller",
+            }
+        )
+        timestamp = now_iso()
+        artifact["updated_at"] = timestamp
+        if policy.get("decision") == "allow":
+            artifact["publish_state"] = "publish_ready"
+            event = "publish_ready"
+            allowed = True
+        else:
+            event = "publish_ready_blocked"
+            allowed = False
+        artifact.setdefault("export_history", []).append(
+            redact_secrets(
+                {
+                    "event": event,
+                    "actor": actor,
+                    "note": note,
+                    "at": timestamp,
+                    "allowed": allowed,
+                    "policy_result": policy,
+                }
+            )
+        )
         self.save_state(state)
-        return self.get_artifact(artifact_id)
+        result = self.get_artifact(artifact_id)
+        if result is not None:
+            result["policy_result"] = policy
+        return result
 
-    def add_export(self, artifact_id: str, *, target: str, actor: str = "operator", note: str | None = None) -> dict[str, Any] | None:
+    def add_export(
+        self,
+        artifact_id: str,
+        *,
+        target: str,
+        actor: str = "operator",
+        note: str | None = None,
+        enforce_policy: bool = True,
+    ) -> dict[str, Any] | None:
         state = self.load_state()
         artifact = state["plugin_artifacts"].get(artifact_id)
         if not artifact:
             return None
-        artifact["updated_at"] = now_iso()
-        artifact.setdefault("export_history", []).append(redact_secrets({"event": "export", "target": target, "actor": actor, "note": note, "at": artifact["updated_at"]}))
+        policy = (
+            evaluate_artifact_action_policy(artifact, "export", target=target)
+            if enforce_policy
+            else {
+                "decision": "allow",
+                "allowed": True,
+                "reason": "policy enforcement bypassed by caller",
+            }
+        )
+        timestamp = now_iso()
+        artifact["updated_at"] = timestamp
+        artifact.setdefault("export_history", []).append(
+            redact_secrets(
+                {
+                    "event": "export"
+                    if policy.get("decision") == "allow"
+                    else "export_blocked",
+                    "target": target,
+                    "actor": actor,
+                    "note": note,
+                    "at": timestamp,
+                    "allowed": policy.get("decision") == "allow",
+                    "policy_result": policy,
+                }
+            )
+        )
         self.save_state(state)
-        return self.get_artifact(artifact_id)
+        result = self.get_artifact(artifact_id)
+        if result is not None:
+            result["policy_result"] = policy
+        return result
 
     def summary(self) -> dict[str, Any]:
         artifacts = list(self.load_state()["plugin_artifacts"].values())
@@ -254,9 +381,15 @@ class PluginArtifactStore:
         by_approval: dict[str, int] = {}
         by_publish: dict[str, int] = {}
         for artifact in artifacts:
-            by_plugin[artifact.get("plugin_name") or "unknown"] = by_plugin.get(artifact.get("plugin_name") or "unknown", 0) + 1
-            by_approval[artifact.get("approval_state") or "unknown"] = by_approval.get(artifact.get("approval_state") or "unknown", 0) + 1
-            by_publish[artifact.get("publish_state") or "unknown"] = by_publish.get(artifact.get("publish_state") or "unknown", 0) + 1
+            by_plugin[artifact.get("plugin_name") or "unknown"] = (
+                by_plugin.get(artifact.get("plugin_name") or "unknown", 0) + 1
+            )
+            by_approval[artifact.get("approval_state") or "unknown"] = (
+                by_approval.get(artifact.get("approval_state") or "unknown", 0) + 1
+            )
+            by_publish[artifact.get("publish_state") or "unknown"] = (
+                by_publish.get(artifact.get("publish_state") or "unknown", 0) + 1
+            )
         return {
             "schema_version": ARTIFACT_SCHEMA_VERSION,
             "state_path": str(self.path),

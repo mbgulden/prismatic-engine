@@ -232,6 +232,63 @@ Rules:
 - MCP/service plugins should declare dashboard surfaces and auth env var names.
 - High-risk plugins should declare policy checks before jobs execute.
 
+## Plugin policy/approval enforcement
+
+PE Core enforces plugin policy in `prismatic/plugin_policy.py`. Policy decisions are stable, machine-readable payloads:
+
+```json
+{
+  "allowed": true,
+  "requires_approval": false,
+  "decision": "allow",
+  "reason": "safe low-risk queued job",
+  "risk_level": "low",
+  "blockers": [],
+  "warnings": [],
+  "approval_reasons": [],
+  "checks": [
+    {"name": "plugin_known", "status": "passed", "details": {}}
+  ],
+  "context": {},
+  "evaluated_at": "..."
+}
+```
+
+Allowed `decision` values are:
+
+- `allow`
+- `needs_approval`
+- `block`
+
+Generic policy APIs:
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/plugins/policy/preview` | Preview a policy decision without mutating durable state. |
+| `POST /api/plugins/jobs/{job_id}/start` | Start a job only when policy and approvals allow it. |
+| `POST /api/plugins/artifacts/{artifact_id}/export` | Export an artifact only when policy and approvals allow it. |
+
+Job enforcement:
+
+- Unknown plugins are blocked.
+- Raw token-like job input is blocked and redacted from policy context.
+- Jobs with plugin approval gates or risky actions enter `needs_approval`.
+- Rejected, failed, cancelled, or completed jobs cannot start without a future explicit retry path.
+- Direct `POST /api/plugins/jobs/{job_id}/status` transitions to `running` call the same policy gate as `/start`.
+- Every start attempt records durable audit events: `policy_checked`, `start_allowed`/`start_blocked`, `approval_required` when applicable, and `started` when allowed.
+
+Artifact enforcement:
+
+- Rejected artifacts cannot become publish-ready or export.
+- Pending artifacts cannot become publish-ready or export without approval.
+- Artifacts missing provenance are blocked from publish-ready/export.
+- Approved artifacts with provenance can become publish-ready and export.
+- Export and publish-ready attempts append `export_history` records containing `allowed`, `policy_result`, `actor`, target/note, and timestamp.
+
+Conservative defaults require approval for actions containing publish/export/deploy/delete/destroy/write/overwrite/batch/costly/external-service/credentialed/production/public. Plugin manifests and blueprints feed policy via governance fields including `risk_level`, `approval_gates`, `policy_checks`, `production_blockers`, and credential redaction state.
+
+The Dashboard **Plugins** tab shows policy visibility through `plugin-policy-summary`, `plugin-policy-decision`, and `renderPluginPolicy()` with `blocked_reason` markers.
+
 ## Universal artifact/provenance registry
 
 PE Core persists full plugin artifact/provenance records in `prismatic/plugin_artifacts.py` using an atomic JSON store at:

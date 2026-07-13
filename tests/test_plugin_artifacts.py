@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -13,7 +12,9 @@ from prismatic.plugin_jobs import PluginJobStore
 PWP = "pwp-design-token-plugin"
 
 
-def test_artifact_store_hashes_safe_local_file_and_persists(tmp_path: Path, monkeypatch) -> None:
+def test_artifact_store_hashes_safe_local_file_and_persists(
+    tmp_path: Path, monkeypatch
+) -> None:
     state_dir = tmp_path / "state"
     artifact_path = state_dir / "pwp" / "theme-report.json"
     artifact_path.parent.mkdir(parents=True)
@@ -49,7 +50,9 @@ def test_artifact_store_hashes_safe_local_file_and_persists(tmp_path: Path, monk
     assert reloaded.summary()["by_plugin"][PWP] == 1
 
 
-def test_artifact_store_allows_url_without_fetch_and_blocks_unsafe_local_read(tmp_path: Path) -> None:
+def test_artifact_store_allows_url_without_fetch_and_blocks_unsafe_local_read(
+    tmp_path: Path,
+) -> None:
     store = PluginArtifactStore(tmp_path / "plugin_artifacts.json")
 
     url_artifact = store.create_artifact(
@@ -73,9 +76,16 @@ def test_artifact_store_allows_url_without_fetch_and_blocks_unsafe_local_read(tm
 
 def test_artifact_store_lifecycle_states(tmp_path: Path) -> None:
     store = PluginArtifactStore(tmp_path / "plugin_artifacts.json")
-    artifact = store.create_artifact(plugin_name=PWP, artifact_type="text/html", approval_state="pending")
+    artifact = store.create_artifact(
+        plugin_name=PWP,
+        artifact_type="text/html",
+        approval_state="pending",
+        provenance={"provider": "pytest"},
+    )
 
-    approved = store.set_approval(artifact["artifact_id"], "approved", actor="michael", note="looks good")
+    approved = store.set_approval(
+        artifact["artifact_id"], "approved", actor="michael", note="looks good"
+    )
     assert approved is not None
     assert approved["approval_state"] == "approved"
     assert approved["metadata"]["operator_notes"][0]["actor"] == "michael"
@@ -96,7 +106,9 @@ def test_artifact_gateway_endpoints(monkeypatch, tmp_path: Path) -> None:
     artifact_file.parent.mkdir(parents=True)
     artifact_file.write_text("<h1>demo</h1>", encoding="utf-8")
     monkeypatch.setenv("PRISMATIC_STATE_DIR", str(state_dir))
-    monkeypatch.setenv("PRISMATIC_PLUGIN_ARTIFACTS_STATE", str(state_dir / "plugin_artifacts.json"))
+    monkeypatch.setenv(
+        "PRISMATIC_PLUGIN_ARTIFACTS_STATE", str(state_dir / "plugin_artifacts.json")
+    )
     client = TestClient(server.app)
 
     create = client.post(
@@ -123,11 +135,17 @@ def test_artifact_gateway_endpoints(monkeypatch, tmp_path: Path) -> None:
     assert detail.status_code == 200
     assert detail.json()["artifact_id"] == artifact["artifact_id"]
 
-    approve = client.post(f"/api/plugins/artifacts/{artifact['artifact_id']}/approve", json={"actor": "michael"})
+    approve = client.post(
+        f"/api/plugins/artifacts/{artifact['artifact_id']}/approve",
+        json={"actor": "michael"},
+    )
     assert approve.status_code == 200
     assert approve.json()["approval_state"] == "approved"
 
-    ready = client.post(f"/api/plugins/artifacts/{artifact['artifact_id']}/publish-ready", json={"actor": "kai"})
+    ready = client.post(
+        f"/api/plugins/artifacts/{artifact['artifact_id']}/publish-ready",
+        json={"actor": "kai"},
+    )
     assert ready.status_code == 200
     assert ready.json()["publish_state"] == "publish_ready"
 
@@ -137,14 +155,20 @@ def test_artifact_gateway_endpoints(monkeypatch, tmp_path: Path) -> None:
     assert bad.status_code == 400
 
 
-def test_job_artifact_emitted_creates_universal_artifact(monkeypatch, tmp_path: Path) -> None:
+def test_job_artifact_emitted_creates_universal_artifact(
+    monkeypatch, tmp_path: Path
+) -> None:
     state_dir = tmp_path / "state"
     artifact_file = state_dir / "pwp" / "out.html"
     artifact_file.parent.mkdir(parents=True)
     artifact_file.write_text("<p>artifact</p>", encoding="utf-8")
     monkeypatch.setenv("PRISMATIC_STATE_DIR", str(state_dir))
-    monkeypatch.setenv("PRISMATIC_PLUGIN_JOBS_STATE", str(state_dir / "plugin_jobs.json"))
-    monkeypatch.setenv("PRISMATIC_PLUGIN_ARTIFACTS_STATE", str(state_dir / "plugin_artifacts.json"))
+    monkeypatch.setenv(
+        "PRISMATIC_PLUGIN_JOBS_STATE", str(state_dir / "plugin_jobs.json")
+    )
+    monkeypatch.setenv(
+        "PRISMATIC_PLUGIN_ARTIFACTS_STATE", str(state_dir / "plugin_artifacts.json")
+    )
 
     job_store = PluginJobStore(state_dir / "plugin_jobs.json")
     job = job_store.create_job(PWP, "theme_validate", input_summary={"theme": "demo"})
@@ -176,7 +200,10 @@ def test_job_artifact_emitted_creates_universal_artifact(monkeypatch, tmp_path: 
 
 
 def test_dashboard_contains_artifact_provenance_surface() -> None:
-    html = (Path(__file__).resolve().parents[1] / "prismatic/gateway/templates/dashboard.html").read_text(encoding="utf-8")
+    html = (
+        Path(__file__).resolve().parents[1]
+        / "prismatic/gateway/templates/dashboard.html"
+    ).read_text(encoding="utf-8")
     for marker in [
         "plugin-artifact-summary",
         "plugin-artifacts-table",
