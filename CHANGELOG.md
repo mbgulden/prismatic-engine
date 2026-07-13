@@ -9,6 +9,7 @@ The project is currently alpha. Dates use UTC.
 ### Release engineering
 
 - Public release engineering layer: release process docs, release checklist, migration notes, upgrade guide, stable CLI entrypoint reference, sample config, bootstrap script, Dockerfile, devcontainer, release smoke, and release readiness check.
+- Added stable public documentation entrypoints for launch, plugin developer quickstart, security, and contributing, and made the public launch smoke assert they exist.
 
 ### Dashboard UX
 
