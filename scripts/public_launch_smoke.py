@@ -122,6 +122,9 @@ def main() -> int:
             "plugin-artifact-inventory",
             "plugin-approval-controls",
             "plugin-dashboard-health-cards",
+            "pwp-lifecycle-history",
+            "renderPWPLifecycleHistory",
+            "pwpAction('lifecycle-demo')",
         ]
         missing = [marker for marker in markers if marker not in html]
         if missing:

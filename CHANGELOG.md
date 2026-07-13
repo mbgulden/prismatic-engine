@@ -14,6 +14,10 @@ The project is currently alpha. Dates use UTC.
 
 - Public-polished plugin dashboard layer: first-run empty state, onboarding hints, copyable CLI commands, docs links, error explanations, health cards, detail drawer, job timeline, artifact inventory, approval controls, and static visual QA.
 
+### PWP reference plugin
+
+- PWP is now the canonical full-lifecycle reference plugin with a credential-free lifecycle demo covering connect, durable job, artifact/provenance registration, approval-before-publish enforcement, export history, dashboard lifecycle history, and safe disconnect that preserves artifacts.
+
 ### Changed
 
 - CI now runs a supported Python matrix and release smoke/readiness checks.

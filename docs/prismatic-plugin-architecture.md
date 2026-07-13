@@ -4,6 +4,8 @@ This is the canonical path for building plugins that are **distinct from PE Core
 
 It covers current plugins such as PWP and future families:
 
+- PWP — the canonical full-lifecycle reference plugin; see [PWP reference lifecycle](pwp-reference-lifecycle.md) for connect → job → artifact/provenance → approval → publish/export → safe disconnect.
+
 - Prismatic Video
 - Prismatic Images
 - Prismatic Music/SFX

@@ -37,6 +37,12 @@ REQUIRED_MARKERS = {
         "/reject",
     ],
     "health cards": ["plugin-dashboard-health-cards", "pluginDashboardCounts"],
+    "pwp reference lifecycle": [
+        "pwp-lifecycle-history",
+        "renderPWPLifecycleHistory",
+        "pwpAction('lifecycle-demo')",
+        "approval before publish",
+    ],
     "responsive layout": [
         "grid-cols-1",
         "sm:grid-cols-2",

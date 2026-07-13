@@ -997,6 +997,7 @@
                     </div>
                     <div class="flex flex-wrap gap-2">
                         <button onclick="pwpAction('connect')" class="bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-300 border border-emerald-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Connect</button>
+                        <button onclick="pwpAction('lifecycle-demo')" class="bg-cyan-600/10 hover:bg-cyan-600/20 text-cyan-300 border border-cyan-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Run Lifecycle Demo</button>
                         <button onclick="pwpAction('disconnect')" class="bg-rose-600/10 hover:bg-rose-600/20 text-rose-300 border border-rose-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Disconnect</button>
                         <button onclick="loadPWPStatus()" class="bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 border border-indigo-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Refresh</button>
                     </div>
@@ -1017,6 +1018,19 @@
                         <div class="text-slate-400 uppercase tracking-wider font-bold mb-2">Tools / Workflows</div>
                         <div id="pwp-tools" class="flex flex-wrap gap-2"></div>
                     </div>
+                </div>
+                <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-4 text-xs">
+                    <div class="bg-slate-950/70 border border-slate-800 rounded-xl overflow-hidden">
+                        <div class="p-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                                <div class="text-slate-400 uppercase tracking-wider font-bold">PWP Reference Lifecycle History</div>
+                                <p class="mt-1 text-slate-500">Canonical full lifecycle: connect → job → artifact/provenance → approval → publish/export → safe disconnect.</p>
+                            </div>
+                            <button onclick="pwpAction('lifecycle-demo')" class="bg-cyan-600/10 hover:bg-cyan-600/20 text-cyan-300 border border-cyan-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Run Demo</button>
+                        </div>
+                        <div id="pwp-lifecycle-history" class="divide-y divide-slate-800/70"></div>
+                    </div>
+                    <aside id="pwp-lifecycle-detail" class="bg-slate-950/70 border border-slate-800 rounded-xl p-4 min-h-[220px]"></aside>
                 </div>
             </div>
         </div>
@@ -1849,7 +1863,9 @@
             const connects = document.getElementById('pwp-connect-points');
             const disconnects = document.getElementById('pwp-disconnect-points');
             const tools = document.getElementById('pwp-tools');
-            if (!summary || !blockers || !caps || !connects || !disconnects || !tools) return;
+            const lifecycleHistory = document.getElementById('pwp-lifecycle-history');
+            const lifecycleDetail = document.getElementById('pwp-lifecycle-detail');
+            if (!summary || !blockers || !caps || !connects || !disconnects || !tools || !lifecycleHistory || !lifecycleDetail) return;
             const hardBlockers = (payload.production_blockers || []).filter(b => b.severity === 'blocking').length;
             const warnings = (payload.production_blockers || []).filter(b => b.severity !== 'blocking').length;
             const statusColor = payload.connected ? 'emerald' : (hardBlockers ? 'rose' : 'amber');
@@ -1866,14 +1882,48 @@
             connects.innerHTML = (payload.connect_points || []).map(item => `<li>${item}</li>`).join('');
             disconnects.innerHTML = (payload.disconnect_points || []).map(item => `<li>${item}</li>`).join('');
             tools.innerHTML = [...(payload.tool_names || []), ...(payload.workflows || [])].slice(0, 32).map(item => pwpBadge(item, 'slate')).join('');
+            renderPWPLifecycleHistory(payload.lifecycle_summary || {}, lifecycleHistory, lifecycleDetail);
+        }
+
+        function renderPWPLifecycleHistory(lifecycle, historyEl, detailEl) {
+            const jobs = ((lifecycle.history || {}).jobs || []);
+            const artifacts = ((lifecycle.history || {}).artifacts || []);
+            const latestArtifact = lifecycle.latest_artifact || artifacts[0] || null;
+            if (!jobs.length && !artifacts.length) {
+                historyEl.innerHTML = '<div class="p-4 text-slate-500">No PWP lifecycle runs yet. Click Run Demo to create a credential-free job, artifact, approval, publish/export history, and safe disconnect proof.</div>';
+                detailEl.innerHTML = '<div class="text-slate-500 uppercase tracking-wider font-bold">Lifecycle detail</div><p class="mt-2 text-slate-400">PWP is the canonical reference plugin. The demo writes to the universal plugin job and artifact registries.</p>';
+                return;
+            }
+            historyEl.innerHTML = jobs.slice(0, 8).map(job => `<button onclick="showPWPLifecycleDetail('${job.job_id}')" class="block w-full text-left p-4 hover:bg-slate-900/60 transition"><div class="flex flex-wrap items-center justify-between gap-2"><div class="font-semibold text-slate-200">${job.action || 'pwp job'} · ${job.job_id}</div>${pwpBadge(job.status || 'unknown', job.status === 'completed' ? 'emerald' : job.status === 'failed' ? 'rose' : 'amber')}</div><div class="mt-1 text-slate-500">Artifacts: ${(job.artifact_ids || []).length} · approval: ${job.approval_state || 'unknown'} · ${formatDate(job.updated_at || job.created_at)}</div></button>`).join('');
+            detailEl.innerHTML = `<div class="text-slate-500 uppercase tracking-wider font-bold">Reference lifecycle proof</div><div class="mt-3 grid grid-cols-2 gap-2 text-xs"><div class="rounded-lg border border-slate-800 p-2"><div class="text-slate-500">Jobs</div><div class="text-lg font-black text-slate-100">${lifecycle.jobs_total || jobs.length}</div></div><div class="rounded-lg border border-slate-800 p-2"><div class="text-slate-500">Artifacts</div><div class="text-lg font-black text-slate-100">${lifecycle.artifacts_total || artifacts.length}</div></div></div><div class="mt-4 space-y-2 text-slate-300"><div>${pwpBadge('connect', 'emerald')} ${pwpBadge('job registry', 'indigo')} ${pwpBadge('provenance', 'indigo')}</div><div>${pwpBadge('approval before publish', 'amber')} ${pwpBadge('safe disconnect', 'emerald')}</div></div><div class="mt-4 text-slate-500">Latest artifact: ${latestArtifact ? `${latestArtifact.artifact_id} · ${latestArtifact.publish_state}` : 'none'}</div>`;
+        }
+
+        function showPWPLifecycleDetail(jobId) {
+            const detailEl = document.getElementById('pwp-lifecycle-detail');
+            const lifecycle = (loadedPWPStatus || {}).lifecycle_summary || {};
+            const jobs = ((lifecycle.history || {}).jobs || []);
+            const artifacts = ((lifecycle.history || {}).artifacts || []);
+            const job = jobs.find(item => item.job_id === jobId);
+            if (!detailEl || !job) return;
+            const linkedArtifacts = artifacts.filter(item => (job.artifact_ids || []).includes(item.artifact_id));
+            detailEl.innerHTML = `<div class="text-slate-500 uppercase tracking-wider font-bold">${job.job_id}</div><div class="mt-2 text-lg font-black text-slate-100">${job.action}</div><div class="mt-3 flex flex-wrap gap-2">${pwpBadge(job.status || 'unknown', job.status === 'completed' ? 'emerald' : 'amber')}${pwpBadge(job.approval_state || 'unknown', 'indigo')}</div><div class="mt-4 text-slate-400">Events: ${(job.events || []).length} · Artifacts: ${(job.artifact_ids || []).length}</div><div class="mt-4 space-y-2">${linkedArtifacts.map(artifact => `<div class="rounded-lg border border-slate-800 p-2"><div class="text-slate-200">${artifact.artifact_id}</div><div class="text-slate-500">${artifact.artifact_type} · ${artifact.approval_state} · ${artifact.publish_state}</div></div>`).join('') || '<div class="text-slate-500">No linked artifacts.</div>'}</div>`;
         }
 
         async function pwpAction(action) {
-            const res = await fetch(`/api/pwp/${action}`, { method: 'POST' });
+            const options = { method: 'POST' };
+            if (action === 'lifecycle-demo') {
+                options.headers = { 'Content-Type': 'application/json' };
+                options.body = JSON.stringify({ actor: 'pwp-dashboard', disconnect_after: true });
+            }
+            const res = await fetch(`/api/pwp/${action}`, options);
             const payload = await res.json();
-            loadedPWPStatus = payload;
-            renderPWPStatus();
-            showToast(`PWP ${action}: ${payload.status || payload.state}`, !res.ok);
+            if (action === 'lifecycle-demo') {
+                await loadPWPStatus();
+            } else {
+                loadedPWPStatus = payload;
+                renderPWPStatus();
+            }
+            showToast(`PWP ${action}: ${payload.ok === false ? 'failed' : (payload.status || payload.state || 'ok')}`, !res.ok);
         }
 
         async function loadNativeCrons() {
