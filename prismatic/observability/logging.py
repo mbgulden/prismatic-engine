@@ -14,6 +14,8 @@ from typing import Any
 # Global flag to track if logging has been initialized
 _initialized = False
 _original_print = builtins.print
+_original_stdout = sys.stdout
+_original_stderr = sys.stderr
 
 
 def init_logging(level: int | str = logging.INFO, intercept_print: bool = True) -> None:
@@ -84,8 +86,16 @@ def _setup_print_interception() -> None:
 
         file = kwargs.get("file", sys.stdout)
         
-        # Fall back to original print for custom targets (files, StringIO, etc.)
-        if file is not sys.stdout and file is not sys.stderr and not (hasattr(file, "name") and file.name in ("<stdout>", "<stderr>")):
+        is_stdout = (file is sys.stdout or (hasattr(file, "name") and file.name == "<stdout>"))
+        is_stderr = (file is sys.stderr or (hasattr(file, "name") and file.name == "<stderr>"))
+
+        # Fall back to original print for custom targets or if standard streams are redirected
+        if not is_stdout and not is_stderr:
+            _original_print(*args, **kwargs)
+            return
+
+        if (is_stdout and sys.stdout is not _original_stdout) or \
+           (is_stderr and sys.stderr is not _original_stderr):
             _original_print(*args, **kwargs)
             return
 

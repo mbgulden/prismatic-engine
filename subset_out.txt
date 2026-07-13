@@ -1,0 +1,162 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/ubuntu/work/prismatic-engine
+configfile: pyproject.toml
+plugins: anyio-4.14.1
+collected 7 items
+
+tests/test_cli_pipeline.py ....                                          [ 57%]
+tests/test_cli_visual_verify.py ..F                                      [100%]
+
+=================================== FAILURES ===================================
+_ TestVisualVerifyCli.test_prismatic_visual_verify_accepts_positional_url_and_writes_report _
+
+self = <test_cli_visual_verify.TestVisualVerifyCli testMethod=test_prismatic_visual_verify_accepts_positional_url_and_writes_report>
+
+    def test_prismatic_visual_verify_accepts_positional_url_and_writes_report(
+        self,
+    ) -> None:
+        from prismatic import cli
+    
+        with tempfile.TemporaryDirectory(prefix="prismatic-visual-cli-") as tmp:
+            out = StringIO()
+            with patch(
+                "prismatic.cli.visual_verify.run_visual_verification",
+                return_value=self._fake_result(tmp),
+            ) as fake_run:
+                with redirect_stdout(out):
+                    rc = cli.run(
+                        [
+                            "visual-verify",
+                            "https://example.com",
+                            "--output-dir",
+                            tmp,
+                            "--grade",
+                        ]
+                    )
+    
+            self.assertEqual(rc, 0)
+            fake_run.assert_called_once()
+            self.assertEqual(fake_run.call_args.kwargs["url"], "https://example.com")
+            self.assertTrue(fake_run.call_args.kwargs["grade"])
+            report_path = Path(tmp) / "visual-report.json"
+            self.assertTrue(report_path.exists())
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(report["grade"]["status"], "PASS")
+>           printed = json.loads(out.getvalue())
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_cli_visual_verify.py:75: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/usr/lib/python3.12/json/__init__.py:346: in loads
+    return _default_decoder.decode(s)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/json/decoder.py:337: in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <json.decoder.JSONDecoder object at 0x76a2bc42ffb0>, s = '', idx = 0
+
+    def raw_decode(self, s, idx=0):
+        """Decode a JSON document from ``s`` (a ``str`` beginning with
+        a JSON document) and return a 2-tuple of the Python
+        representation and the index in ``s`` where the document ended.
+    
+        This can be used to decode a JSON document from a string that may
+        have extraneous data at the end.
+    
+        """
+        try:
+            obj, end = self.scan_once(s, idx)
+        except StopIteration as err:
+>           raise JSONDecodeError("Expecting value", s, err.value) from None
+E           json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+/usr/lib/python3.12/json/decoder.py:355: JSONDecodeError
+----------------------------- Captured stderr call -----------------------------
+--- Logging error ---
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/logging/__init__.py", line 1163, in emit
+    stream.write(msg + self.terminator)
+ValueError: I/O operation on closed file.
+Call stack:
+  File "/home/ubuntu/work/prismatic-engine/.venv_dev/bin/pytest", line 6, in <module>
+    sys.exit(_console_main())
+  File "/home/ubuntu/work/prismatic-engine/.venv_dev/lib/python3.12/site-packages/_pytest/config/__init__.py", line 253, in _console_main
+    code = _main(prog=_get_prog_name(sys.argv))
+  File "/home/ubuntu/work/prismatic-engine/.venv_dev/lib/python3.12/site-packages/_pytest/config/__init__.py", line 229, in _main
+    ret: ExitCode | int = config.hook.pytest_cmdline_main(config=config)
+  File "/home/ubuntu/work/prismatic-engine/.venv_dev/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/home/ubuntu/work/prismatic-engine/.venv_dev/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/home/ubuntu/work/prismatic-engine/.venv_dev/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/home/ubuntu/work/prismatic-engine/.venv_dev/lib/python3.12/site-packages/_pytest/main.py", line 377, in pytest_cmdline_main
+    return wrap_session(config, _main)
+  File "/home/ubuntu/work/prismatic-engine/.venv_dev/lib/python3.12/site-packages/_pytest/main.py", line 330, in wrap_session
+    session.exitstatus = doit(config, session) or 0
+  File "/home/ubuntu/work/prismatic-engine/.venv_dev/lib/python3.12/site-packages/_pytest/main.py", line 384, in _main
+    config.hook.pytest_runtestloop(session=session)
+  File "/home/ubuntu/work/prismatic-engine/.venv_dev/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/home/ubuntu/work/prismatic-engine/.venv_dev/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/home/ubuntu/work/prismatic-engine/.venv_dev/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/home/ubuntu/work/prismatic-engine/.venv_dev/lib/python3.12/site-packages/_pytest/main.py", line 408, in pytest_runtestloop
+    item.config.hook.pytest_runtest_protocol(item=item, nextitem=nextitem)
+  File "/home/ubuntu/work/prismatic-engine/.venv_dev/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/home/ubuntu/work/prismatic-engine/.venv_dev/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/home/ubuntu/work/prismatic-engine/.venv_dev/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/home/ubuntu/work/prismatic-engine/.venv_dev/lib/python3.12/site-packages/_pytest/runner.py", line 118, in pytest_runtest_protocol
+    runtestprotocol(item, nextitem=nextitem)
+  File "/home/ubuntu/work/prismatic-engine/.venv_dev/lib/python3.12/site-packages/_pytest/runner.py", line 139, in runtestprotocol
+    reports.append(call_and_report(item, "call", log))
+  File "/home/ubuntu/work/prismatic-engine/.venv_dev/lib/python3.12/site-packages/_pytest/runner.py", line 249, in call_and_report
+    call = CallInfo.from_call(
+  File "/home/ubuntu/work/prismatic-engine/.venv_dev/lib/python3.12/site-packages/_pytest/runner.py", line 361, in from_call
+    result: TResult | None = func()
+  File "/home/ubuntu/work/prismatic-engine/.venv_dev/lib/python3.12/site-packages/_pytest/runner.py", line 250, in <lambda>
+    lambda: runtest_hook(item=item, **kwds),
+  File "/home/ubuntu/work/prismatic-engine/.venv_dev/lib/python3.12/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+  File "/home/ubuntu/work/prismatic-engine/.venv_dev/lib/python3.12/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+  File "/home/ubuntu/work/prismatic-engine/.venv_dev/lib/python3.12/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/home/ubuntu/work/prismatic-engine/.venv_dev/lib/python3.12/site-packages/_pytest/runner.py", line 184, in pytest_runtest_call
+    item.runtest()
+  File "/home/ubuntu/work/prismatic-engine/.venv_dev/lib/python3.12/site-packages/_pytest/unittest.py", line 410, in runtest
+    testcase(result=self)
+  File "/usr/lib/python3.12/unittest/case.py", line 690, in __call__
+    return self.run(*args, **kwds)
+  File "/usr/lib/python3.12/unittest/case.py", line 634, in run
+    self._callTestMethod(testMethod)
+  File "/usr/lib/python3.12/unittest/case.py", line 589, in _callTestMethod
+    if method() is not None:
+  File "/home/ubuntu/work/prismatic-engine/tests/test_cli_visual_verify.py", line 57, in test_prismatic_visual_verify_accepts_positional_url_and_writes_report
+    rc = cli.run(
+  File "/home/ubuntu/work/prismatic-engine/prismatic/cli/__init__.py", line 162, in run
+    return int(visual_verify_main(args.args) or 0)
+  File "/home/ubuntu/work/prismatic-engine/prismatic/cli/visual_verify.py", line 123, in main
+    print(
+  File "/home/ubuntu/work/prismatic-engine/prismatic/observability/logging.py", line 100, in intercepted_print
+    logger.info(message)
+  File "/home/ubuntu/work/prismatic-engine/.venv_dev/lib/python3.12/site-packages/structlog/stdlib.py", line 222, in info
+    return self._proxy_to_logger("info", event, *args, **kw)
+  File "/home/ubuntu/work/prismatic-engine/.venv_dev/lib/python3.12/site-packages/structlog/stdlib.py", line 286, in _proxy_to_logger
+    return super()._proxy_to_logger(method_name, event=event, **event_kw)
+  File "/home/ubuntu/work/prismatic-engine/.venv_dev/lib/python3.12/site-packages/structlog/_base.py", line 224, in _proxy_to_logger
+    return getattr(self._logger, method_name)(*args, **kw)
+Message: {'event': '{\n  "grade": {\n    "overallVerdict": "Looks good.",\n    "score": 100,\n    "status": "PASS",\n    "viewportReports": {\n      "desktop": {\n        "defects": [],\n        "pass": true\n      }\n    }\n  },\n  "metadata": {\n    "delay_ms": 500,\n    "model": "gemini-3.1-flash"\n  },\n  "ok": true,\n  "output_dir": "/tmp/prismatic-visual-cli-vwl0ueqt",\n  "overall_pass": true,\n  "report": "/tmp/prismatic-visual-cli-vwl0ueqt/visual-report.json",\n  "screenshots": [\n    {\n      "height": 800,\n      "name": "desktop",\n      "path": "/tmp/prismatic-visual-cli-vwl0ueqt/desktop.png",\n      "width": 1200\n    }\n  ],\n  "status": "pass",\n  "url": "https://example.com",\n  "viewport_results": [\n    {\n      "failures": [],\n      "grades": {\n        "visual": 100\n      },\n      "height": 800,\n      "pass": true,\n      "screenshot": "/tmp/prismatic-visual-cli-vwl0ueqt/desktop.png",\n      "viewport": "desktop",\n      "width": 1200\n    }\n  ]\n}', 'logger': 'print', 'level': 'info', 'timestamp': '2026-07-13T14:05:12.092717Z'}
+Arguments: ()
+------------------------------ Captured log call -------------------------------
+INFO     print:logging.py:100 {'event': '{\n  "grade": {\n    "overallVerdict": "Looks good.",\n    "score": 100,\n    "status": "PASS",\n    "viewportReports": {\n      "desktop": {\n        "defects": [],\n        "pass": true\n      }\n    }\n  },\n  "metadata": {\n    "delay_ms": 500,\n    "model": "gemini-3.1-flash"\n  },\n  "ok": true,\n  "output_dir": "/tmp/prismatic-visual-cli-vwl0ueqt",\n  "overall_pass": true,\n  "report": "/tmp/prismatic-visual-cli-vwl0ueqt/visual-report.json",\n  "screenshots": [\n    {\n      "height": 800,\n      "name": "desktop",\n      "path": "/tmp/prismatic-visual-cli-vwl0ueqt/desktop.png",\n      "width": 1200\n    }\n  ],\n  "status": "pass",\n  "url": "https://example.com",\n  "viewport_results": [\n    {\n      "failures": [],\n      "grades": {\n        "visual": 100\n      },\n      "height": 800,\n      "pass": true,\n      "screenshot": "/tmp/prismatic-visual-cli-vwl0ueqt/desktop.png",\n      "viewport": "desktop",\n      "width": 1200\n    }\n  ]\n}', 'logger': 'print', 'level': 'info', 'timestamp': '2026-07-13T14:05:12.092717Z'}
+=========================== short test summary info ============================
+FAILED tests/test_cli_visual_verify.py::TestVisualVerifyCli::test_prismatic_visual_verify_accepts_positional_url_and_writes_report
+========================= 1 failed, 6 passed in 0.32s ==========================

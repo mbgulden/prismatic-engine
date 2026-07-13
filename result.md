@@ -1,78 +1,133 @@
-# Task GRO-3047: Create prismatic/interface/ui.py + 4 UI hooks + manifest modes/ui validation
+# Prismatic Engine: Linear Bot Plugin (GRO-3051)
 
-We have completed the implementation of the UI system interface, hooks, and manifest validation according to the `opus-plugin-3-ui-ux-surface.md` specification. All acceptance criteria are successfully met.
+## Requirement Overview
+We implemented the **Linear Bot** plugin, which serves as the verification proof that the Prismatic Engine plugin system successfully supports plugins other than PWP (Prismatic Web Plugin). 
 
----
-
-## 1. Summary of Changes
-
-### A. Created UI Handle and Event Bus Structure
-We created the new file [ui.py](file:///home/ubuntu/work/prismatic-engine/prismatic/interface/ui.py) defining:
-* **`NoUIHostError`**: Exception raised when input is requested but no UI host is attached to handle it.
-* **`UIHandle`**: Base interaction handle defining interface methods `emit` and `request_input`.
-* **`NullUIHandle`**: Default no-op handle used in headless modes.
-* **`UIBusHandle`**: Interactive handle used when a UI host is attached. It publishes events to the bus and blocks synchronous stages using `threading.Event` until user feedback is received.
-* **`UIBus`**: Thread-safe event queue wrapper facilitating communication between executing plugins and the UI host.
-* **`UIBusEvent`**: Dataclass representing a serialized event sent over the `UIBus`.
-
-### B. Defined 4 New Hook Constants
-We updated [hooks.py](file:///home/ubuntu/work/prismatic-engine/prismatic/interface/hooks.py) to declare the 4 new constants, append them to `HOOK_NAMES`, and add type stubs:
-* **`HOOK_REGISTER_UI_SURFACES`** (`"register_ui_surfaces"`)
-* **`HOOK_ON_HUMAN_INPUT_RECEIVED`** (`"on_human_input_received"`)
-* **`HOOK_ON_UI_EVENT`** (`"on_ui_event"`)
-* **`HOOK_REGISTER_COMMANDS`** (`"register_commands"`)
-
-### C. Added UI hooks to `PrismaticPlugin` and `PluginContext`
-We updated [plugin.py](file:///home/ubuntu/work/prismatic-engine/prismatic/interface/plugin.py) to:
-* Set `ui` inside `PluginContext` (defaulting to `NullUIHandle` for safety and backward compatibility).
-* Define the 4 optional UI hooks as no-ops on the `PrismaticPlugin` abstract base class.
-
-### D. Upgraded Manifest Validation for v1.1.0
-We updated [manifest_schema.py](file:///home/ubuntu/work/prismatic-engine/prismatic/interface/manifest_schema.py) to:
-* Validate the `modes` field, accepting either a string (`"headless"`, `"interactive"`, `"both"`) or a list of strings (`["headless", "interactive"]`). It rejects any unknown modes correctly.
-* Validate the `ui` field block, permitting rich types (lists of dicts/strings) for `surfaces` and `interrupt_points`.
-* Keep the `modes` field optional, meaning old 1.0.0 manifests continue to load seamlessly (backward compatibility).
+Specifically:
+- **Event Flow**: `LinearBotPlugin` subscribes to the `pwp.pipeline.failed` event and publishes a corresponding `linear.issue.created` event with issue details.
+- **Manifest Properties**:
+  - Declares compatibility with core version `0.2.0` (`core_version_constraint: ">=0.2.0, <2.0.0"`).
+  - Exposes support for both modes (`modes: "both"` for headless cron + interactive TUI).
+  - Specifies network permission constraints (`permissions.network` includes `api.linear.app`).
+  - Lists event publications (`events_published`) and subscriptions (`events_subscribed`).
+- **Coexistence**: Configured `curator-tap` with a minimal manifest and plugin class so that **PWP + Linear Bot + curator-tap** coexist and load successfully with zero warnings.
+- **Validator Correction**: Added `"npm"` to the whitelisted dependency keys in `prismatic/interface/manifest_schema.py` to allow the existing `visual-verifier` plugin to load correctly.
+- **Test Coverage**: Added `tests/test_linear_bot_plugin.py` to assert manifest validation, event subscription/delivery, and core loader discovery.
 
 ---
 
-## 2. Testing and Verification
+## Technical Details
 
-### A. Created Test Suite
-We wrote a comprehensive unit test suite in [test_ui_surface.py](file:///home/ubuntu/work/prismatic-engine/tests/test_ui_surface.py) that asserts:
-* Correct behavior of `NullUIHandle` (emit is a no-op, request_input raises `NoUIHostError`).
-* Correct behavior of `UIBusHandle` (emit puts events into the `UIBus`, request_input publishes the request, blocks, and receives the response successfully via thread synchronization).
-* Timeout handling and default values for `UIBusHandle.request_input`.
-* Manifest validation checks for list values of `modes`, validation of rich `ui` elements, and rejection of unknown mode values.
-
-### B. Test Execution Results
-All test suites passed successfully:
-
-```text
-$ pytest tests/test_ui_surface.py
-============================= test session starts ==============================
-platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0
-rootdir: /home/ubuntu/work/prismatic-engine
-configfile: pyproject.toml
-plugins: anyio-4.13.0
-collecting ... collected 7 items
-
-tests/test_ui_surface.py .......                                         [100%]
-
-============================== 7 passed in 2.38s ===============================
+### 1. Linear Bot Manifest (`plugins/linear_bot/plugin-manifest.yaml`)
+```yaml
+schema_version: "1.1.0"
+name: "linear-bot"
+version: "1.0.0"
+description: "Linear Bot plugin that subscribes to pwp.pipeline.failed and publishes linear.issue.created."
+author: "Antigravity (agent:antigravity)"
+entry_point: "linear_bot.plugin:LinearBotPlugin"
+core_version_constraint: ">=0.2.0, <2.0.0"
+modes: "both"
+permissions:
+  network:
+    - "api.linear.app"
+events_subscribed:
+  - "pwp.pipeline.failed"
+events_published:
+  - "linear.issue.created"
+hooks:
+  - "on_init"
 ```
 
-Additionally, the existing manifest schema tests in [test_manifest_schema.py](file:///home/ubuntu/work/prismatic-engine/tests/test_manifest_schema.py) all pass:
+### 2. Linear Bot Python Implementation (`plugins/linear_bot/plugin.py`)
+Registers an async handler `handle_event` on the event bus singleton `get_event_bus()`. When a `pwp.pipeline.failed` event is received, it extracts the error and pipeline ID and publishes `linear.issue.created`.
+```python
+class LinearBotPlugin(PrismaticPlugin):
+    def on_init(self, context: PluginContext) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(get_event_bus().subscribe(self.handle_event))
+        except RuntimeError:
+            get_event_bus()._handlers.add(self.handle_event)
 
+    async def handle_event(self, event: SwarmEvent) -> None:
+        if event.type == "pwp.pipeline.failed":
+            payload = {
+                "title": f"PWP Pipeline Failure: {event.payload.get('pipeline_id')}",
+                "description": f"Pipeline failure detected.\nError details:\n{event.payload.get('error')}",
+                "pipeline_id": event.payload.get("pipeline_id"),
+                "error": event.payload.get("error"),
+                "severity": "high",
+                "source_event": event.to_dict()
+            }
+            await get_event_bus().publish(
+                event_type="linear.issue.created",
+                source="linear-bot",
+                payload=payload
+            )
+```
+
+### 3. Curator Tap Coexistence
+We created a minimal manifest (`plugins/curator_tap/plugin-manifest.yaml`) and plugin module (`plugins/curator_tap/plugin.py`) so it is discovered and loaded without any warnings.
+
+### 4. Manifest Validator Correction (`prismatic/interface/manifest_schema.py`)
+```diff
+@@ -169,7 +169,7 @@
+         deps = manifest["dependencies"]
+         if not isinstance(deps, dict):
+             raise PluginValidationError("Field 'dependencies' must be a dictionary.")
+-        allowed_dep_keys = {"pip", "plugins", "system"}
++        allowed_dep_keys = {"pip", "plugins", "system", "npm"}
+         extra_keys = set(deps.keys()) - allowed_dep_keys
+```
+
+---
+
+## Testing & Verification
+
+### 1. Shipped Plugin Load Gate
+Running the plugin load gate verifies all 7 shipped plugins (including `linear-bot` and `curator-tap`) load correctly without errors:
+```bash
+.venv_dev/bin/python -m prismatic.quality.plugin_load
+```
 ```text
-$ pytest tests/test_manifest_schema.py
+## ✅ Plugin Load Gate: PASS
+
+**Plugins dir:** `/home/ubuntu/work/prismatic-engine/plugins`
+**Core version:** `0.2.0`
+**Loaded:** 7
+**Failed:** 0
+**Reason:** all 7 shipped plugins loaded successfully
+
+### Findings
+
+| Plugin | Status | Detail |
+|---|---|---|
+| `curator-tap` | loaded | loaded successfully |
+| `example-plugin` | loaded | loaded successfully |
+| `linear-bot` | loaded | loaded successfully |
+| `prismatic-hello-world` | loaded | loaded successfully |
+| `pwp-design-token-plugin` | loaded | loaded successfully |
+| `pwp-hook-test-plugin` | loaded | loaded successfully |
+| `visual-verifier` | loaded | loaded successfully |
+```
+
+### 2. Unit/Integration Tests (`tests/test_linear_bot_plugin.py`)
+```bash
+.venv_dev/bin/pytest tests/test_linear_bot_plugin.py -v
+```
+```text
 ============================= test session starts ==============================
-platform linux -- Python 3.12.3, pytest-9.1.0, pluggy-1.6.0
+platform linux -- Python 3.12.3, pytest-9.1.1, pluggy-1.6.0
+cachedir: .pytest_cache
 rootdir: /home/ubuntu/work/prismatic-engine
 configfile: pyproject.toml
-plugins: anyio-4.13.0
-collecting ... collected 17 items
+plugins: anyio-4.14.1
+collected 3 items                                                              
 
-tests/test_manifest_schema.py .................                          [100%]
+tests/test_linear_bot_plugin.py::test_linear_bot_manifest_and_metadata PASSED [ 33%]
+tests/test_linear_bot_plugin.py::test_linear_bot_event_subscription_and_handling PASSED [ 66%]
+tests/test_linear_bot_plugin.py::test_loader_loads_linear_bot PASSED     [100%]
 
-============================== 17 passed in 0.22s ==============================
+============================== 3 passed in 14.97s ==============================
 ```
