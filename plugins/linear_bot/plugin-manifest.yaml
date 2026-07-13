@@ -1,0 +1,17 @@
+schema_version: "1.1.0"
+name: "linear-bot"
+version: "1.0.0"
+description: "Linear Bot plugin that subscribes to pwp.pipeline.failed and publishes linear.issue.created."
+author: "Antigravity (agent:antigravity)"
+entry_point: "linear_bot.plugin:LinearBotPlugin"
+core_version_constraint: ">=0.2.0, <2.0.0"
+modes: "both"
+permissions:
+  network:
+    - "api.linear.app"
+events_subscribed:
+  - "pwp.pipeline.failed"
+events_published:
+  - "linear.issue.created"
+hooks:
+  - "on_init"

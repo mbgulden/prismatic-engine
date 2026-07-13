@@ -12,7 +12,8 @@ Contents
 """
 
 __all__ = ["PrismaticPlugin", "PluginContext", "AgentContract", "PluginValidationError",
-           "HOOK_NAMES"]
+           "HOOK_NAMES", "validate_manifest"]
 
 from .plugin import PrismaticPlugin, PluginContext, AgentContract, PluginValidationError
 from .hooks import HOOK_NAMES
+from .manifest_schema import validate_manifest

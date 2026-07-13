@@ -3,7 +3,7 @@ I will list the contents of the `/home/ubuntu/work/prismatic-engine` directory t
 I will list the `/home/ubuntu/work/prismatic-engine/prismatic/` directory to see the current structure of the Python package.
 I will list the `/home/ubuntu/work/prismatic-engine/specs` directory to see what specification files currently exist.
 I will perform a search for references to `plugin` or `manifest` in the existing codebase to ensure alignment with any early-stage implementations or notes.
-# Prismatic Engine Core: Plugin Interface Specification (v1.0)
+# Prismatic Engine Core: Plugin Interface Specification (v1.1.0)
 
 This document provides the complete plugin interface specification for the Prismatic Engine Core, extending the architectural principles defined in [core-architecture-v1.md](file:///home/ubuntu/work/prismatic-engine/specs/core-architecture-v1.md) (Sections 5 and 5.1–5.4).
 
@@ -17,7 +17,7 @@ Each plugin must include a [plugin-manifest.yaml](file:///home/ubuntu/work/prism
 
 ```yaml
 # Schema version meta-information
-schema_version: "1.0.0"
+schema_version: "1.1.0"
 
 # Unique identifier of the plugin (alphanumeric, lowercase, dashes/underscores)
 name: "string"
@@ -37,10 +37,42 @@ entry_point: "string"
 # SemVer range specifying which core engine versions are supported
 core_version_constraint: "string"
 
+# Execution mode(s) supported by the plugin (headless, interactive, or both)
+modes: "string"
+
+# User interface surface configurations
+ui:
+  surfaces:
+    - "string"
+  web: boolean or dictionary or string
+  chat: boolean or dictionary or string
+  interrupt_points:
+    - "string"
+  header: boolean or dictionary or string
+
+# Explicit sandbox capability / resource permissions requested
+permissions:
+  network: boolean or dictionary or string or ["string"]
+  filesystem: boolean or dictionary or string or ["string"]
+  secrets: boolean or dictionary or string or ["string"]
+  bus: boolean or dictionary or string or ["string"]
+
 # External dependencies to validate and load
 dependencies:
   pip:
     - "string"
+  plugins:
+    - "string"
+  system:
+    - "string"
+
+# List of events published by the plugin
+events_published:
+  - "string"
+
+# List of events subscribed to by the plugin
+events_subscribed:
+  - "string"
 
 # Array of custom persona extensions introduced by the plugin
 personas:
@@ -62,17 +94,43 @@ hooks:
 ### 1.2 Concrete Manifest Example
 
 ```yaml
+schema_version: "1.1.0"
 name: "vram-observability"
-version: "1.0.0"
+version: "1.1.0"
 description: "Monitors GPU memory allocation and integrates warnings into the BudgetManager."
 author: "Fred (agent:fred)"
 entry_point: "vram_observability.plugin:VRAMObservabilityPlugin"
 core_version_constraint: ">=1.0.0, <2.0.0"
 
+modes: "both"
+
+ui:
+  surfaces:
+    - "web"
+  web:
+    route: "/gpu-metrics"
+  interrupt_points:
+    - "before_task_execution"
+
+permissions:
+  network:
+    - "api.metrics.internal"
+  filesystem:
+    - "reports/gpu"
+
 dependencies:
   pip:
     - "GPUtil>=1.4.0"
     - "prometheus-client>=0.17.0"
+  plugins:
+    - "monitoring-core>=1.0.0"
+  system:
+    - "nvidia-smi"
+
+events_published:
+  - "gpu.vram.critical"
+events_subscribed:
+  - "pipeline.stage.start"
 
 personas:
   - id: "GPU-COMPUTE-OBSERVER"

@@ -9,7 +9,7 @@ const interpreter = fs.existsSync(venvPython) ? venvPython : 'python3';
 module.exports = {
   apps: [
     {
-      name: "prismatic-artifact-publisher",
+      name: "hermes-artifact-publisher",
       script: "./bin/prismatic_artifact_publisher.py",
       interpreter: interpreter,
       cwd: __dirname,

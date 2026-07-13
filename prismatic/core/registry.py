@@ -28,6 +28,7 @@ from prismatic.interface.plugin import (
     PrismaticPlugin,
     PluginValidationError,
 )
+from prismatic.interface import validate_manifest
 from prismatic.core.hardware_profiles import (
     HardwareProfileError,
     HardwareProfileRegistry,
@@ -201,15 +202,12 @@ class PluginLoader:
         with open(manifest_path, "r") as fh:
             manifest = yaml.safe_load(fh)
 
-        name = manifest.get("name")
-        version = manifest.get("version")
-        entry_point = manifest.get("entry_point")
-        core_constraint = manifest.get("core_version_constraint")
+        validate_manifest(manifest)
 
-        if not all([name, version, entry_point, core_constraint]):
-            raise PluginValidationError(
-                f"Missing required fields in manifest: {manifest_path}"
-            )
+        name = manifest["name"]
+        version = manifest["version"]
+        entry_point = manifest["entry_point"]
+        core_constraint = manifest["core_version_constraint"]
 
         # 1. Core version validation
         specifier = SpecifierSet(core_constraint)
