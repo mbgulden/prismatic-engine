@@ -1,0 +1,32 @@
+{
+  "name": "Prismatic Engine",
+  "build": {
+    "dockerfile": "../Dockerfile",
+    "context": ".."
+  },
+  "workspaceFolder": "/app",
+  "remoteUser": "root",
+  "containerEnv": {
+    "PRISMATIC_STATE_DIR": "/app/prismatic_state",
+    "PRISMATIC_HOST": "127.0.0.1",
+    "PRISMATIC_PORT": "9000",
+    "PRISMATIC_CORS_ORIGINS": "http://127.0.0.1:9000,http://localhost:9000"
+  },
+  "forwardPorts": [9000],
+  "postCreateCommand": "python -m pip install -e '.[release]' && python scripts/release_smoke.py",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "charliermarsh.ruff"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.testing.pytestEnabled": true,
+        "python.testing.pytestArgs": [
+          "tests"
+        ]
+      }
+    }
+  }
+}

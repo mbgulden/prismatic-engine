@@ -1,0 +1,55 @@
+# Prismatic Engine sample config
+# Copy to config.local.yaml or another private path and adjust for your machine.
+# Keep credentials in environment variables or a secret manager, not in this file.
+
+version: 1
+
+state_dir: ./prismatic_state
+log_level: INFO
+public_demo_mode: true
+
+gateway:
+  host: 127.0.0.1
+  port: 9000
+  allowed_ips:
+    - 127.0.0.1
+    - ::1
+  cors_origins:
+    - http://127.0.0.1:9000
+    - http://localhost:9000
+
+plugins:
+  directory: ./plugins
+  require_manifest: true
+  load_gate: true
+  policy:
+    require_approval_for:
+      - publish
+      - export
+      - deploy
+      - delete
+      - destroy
+      - write
+      - overwrite
+      - external-service
+      - credentialed
+      - production
+      - public
+
+artifacts:
+  store: ./prismatic_state/plugin_artifacts.json
+  allow_hash_roots:
+    - repo
+    - state_dir
+    - /tmp
+
+jobs:
+  store: ./prismatic_state/plugin_jobs.json
+
+integrations:
+  github:
+    enabled: false
+    token_env: GITHUB_TOKEN
+  linear:
+    enabled: false
+    token_env: LINEAR_API_KEY
