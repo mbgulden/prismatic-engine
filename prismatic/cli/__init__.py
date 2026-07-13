@@ -92,6 +92,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     crons.add_argument("args", nargs=argparse.REMAINDER)
 
+    pipeline = subparsers.add_parser(
+        "pipeline",
+        help="Run or watch the peer-review pipeline for a Linear issue",
+    )
+    pipeline.add_argument("args", nargs=argparse.REMAINDER)
+
     return parser
 
 
@@ -154,6 +160,11 @@ def run(argv: Sequence[str] | None = None) -> int:
         from prismatic.cli.visual_verify import main as visual_verify_main
 
         return int(visual_verify_main(args.args) or 0)
+
+    if args.command == "pipeline":
+        from prismatic.cli.pipeline import main as pipeline_main
+
+        return int(pipeline_main(args.args) or 0)
 
     if args.command == "worktrees":
         from prismatic.worktree_janitor import cli as worktree_cli

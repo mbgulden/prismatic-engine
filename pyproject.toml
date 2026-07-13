@@ -40,7 +40,8 @@ dependencies = [
 http = ["requests>=2.31"]
 redis = ["redis>=5.0"]
 gateway = ["fastapi>=0.110", "httpx>=0.27", "uvicorn>=0.27", "websockets>=12.0"]
-all = ["prismatic-engine[http,redis,gateway]"]
+tui = ["rich>=13.0.0"]
+all = ["prismatic-engine[http,redis,gateway,tui]"]
 
 [project.urls]
 Homepage = "https://github.com/mbgulden/prismatic-engine"

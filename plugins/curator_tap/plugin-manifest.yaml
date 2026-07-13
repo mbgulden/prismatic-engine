@@ -1,0 +1,9 @@
+schema_version: "1.1.0"
+name: "curator-tap"
+version: "1.0.0"
+description: "Curator Tap validation plugin."
+author: "Antigravity (agent:antigravity)"
+entry_point: "curator_tap.plugin:CuratorTapPlugin"
+core_version_constraint: ">=0.2.0, <2.0.0"
+hooks:
+  - "on_init"
