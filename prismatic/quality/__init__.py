@@ -12,6 +12,7 @@ Phase 2 (Gaps 4, 5, 7, 8):
 
 Reference: ``okf/operations/prismatic-quality-gates-comprehensive-plan.md``
 """
+
 from __future__ import annotations
 
 from .gates import (
@@ -69,6 +70,10 @@ from .smoke import (
     file_exists,
     file_has_substantive_content,
     smoke_test,
+    Finding,
+    verify_files_exist,
+    verify_files_nonempty,
+    verify_files_substantive,
 )
 
 __all__ = [
@@ -121,4 +126,8 @@ __all__ = [
     "file_exists",
     "file_has_substantive_content",
     "smoke_test",
+    "Finding",
+    "verify_files_exist",
+    "verify_files_nonempty",
+    "verify_files_substantive",
 ]

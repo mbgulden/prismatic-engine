@@ -7,12 +7,9 @@ Covers:
   - Edge cases (empty output, no claims, lying agents)
   - Integration with workdir resolution
 """
+
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
-import pytest
 
 from prismatic.quality.smoke import (
     SmokeFinding,
@@ -22,6 +19,10 @@ from prismatic.quality.smoke import (
     file_exists,
     file_has_substantive_content,
     smoke_test,
+    Finding,
+    verify_files_exist,
+    verify_files_nonempty,
+    verify_files_substantive,
 )
 
 
@@ -303,7 +304,9 @@ class TestOutputFormats:
         result = SmokeTestResult(
             passed=True,
             claimed_paths=["foo.py"],
-            findings=[SmokeFinding(path="foo.py", status="claimed_ok", detail="100 chars")],
+            findings=[
+                SmokeFinding(path="foo.py", status="claimed_ok", detail="100 chars")
+            ],
             reason="All good",
         )
         d = result.to_dict()
@@ -315,7 +318,9 @@ class TestOutputFormats:
         result = SmokeTestResult(
             passed=True,
             claimed_paths=["foo.py"],
-            findings=[SmokeFinding(path="foo.py", status="claimed_ok", detail="100 chars")],
+            findings=[
+                SmokeFinding(path="foo.py", status="claimed_ok", detail="100 chars")
+            ],
             reason="All good",
         )
         md = result.to_markdown()
@@ -327,10 +332,76 @@ class TestOutputFormats:
         result = SmokeTestResult(
             passed=False,
             claimed_paths=["missing.py"],
-            findings=[SmokeFinding(path="missing.py", status="missing", detail="not found")],
+            findings=[
+                SmokeFinding(path="missing.py", status="missing", detail="not found")
+            ],
             reason="1 missing",
         )
         md = result.to_markdown()
         assert "❌" in md
         assert "FAIL" in md
         assert "missing.py" in md
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Explicit filesystem verification helper tests
+# ─────────────────────────────────────────────────────────────────────
+
+
+class TestExplicitFilesystemVerificationHelpers:
+    def test_finding_to_dict(self):
+        finding = Finding(
+            path="demo.txt", passed=True, status="ok", detail="File exists"
+        )
+        assert finding.to_dict() == {
+            "path": "demo.txt",
+            "passed": True,
+            "status": "ok",
+            "detail": "File exists",
+        }
+
+    def test_verify_files_exist(self, tmp_path):
+        present = tmp_path / "present.txt"
+        missing = tmp_path / "missing.txt"
+        present.write_text("hello", encoding="utf-8")
+
+        findings = verify_files_exist([present, missing], workdir=tmp_path)
+
+        assert [finding.status for finding in findings] == ["ok", "missing"]
+        assert [finding.passed for finding in findings] == [True, False]
+
+    def test_verify_files_nonempty(self, tmp_path):
+        large = tmp_path / "large.txt"
+        small = tmp_path / "small.txt"
+        missing = tmp_path / "missing.txt"
+        large.write_text("a" * 101, encoding="utf-8")
+        small.write_text("a" * 100, encoding="utf-8")
+
+        findings = verify_files_nonempty([large, small, missing], workdir=tmp_path)
+
+        assert [finding.status for finding in findings] == ["ok", "empty", "missing"]
+        assert [finding.passed for finding in findings] == [True, False, False]
+
+    def test_verify_files_substantive(self, tmp_path):
+        substantive = tmp_path / "substantive.py"
+        comments_only = tmp_path / "comments.py"
+        short = tmp_path / "short.py"
+        missing = tmp_path / "missing.py"
+        substantive.write_text(
+            "# comment\ndef useful_function():\n    return '" + "x" * 60 + "'\n",
+            encoding="utf-8",
+        )
+        comments_only.write_text("# comment only\n# still comment\n", encoding="utf-8")
+        short.write_text("value = 1\n", encoding="utf-8")
+
+        findings = verify_files_substantive(
+            [substantive, comments_only, short, missing], workdir=tmp_path
+        )
+
+        assert [finding.status for finding in findings] == [
+            "ok",
+            "non-substantive",
+            "non-substantive",
+            "missing",
+        ]
+        assert [finding.passed for finding in findings] == [True, False, False, False]
