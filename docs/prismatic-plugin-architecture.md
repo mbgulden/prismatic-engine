@@ -232,6 +232,91 @@ Rules:
 - MCP/service plugins should declare dashboard surfaces and auth env var names.
 - High-risk plugins should declare policy checks before jobs execute.
 
+## Plugin jobs and audit trail
+
+PE Core persists plugin jobs and audit events in `prismatic/plugin_jobs.py` using an atomic JSON store at:
+
+```text
+$PRISMATIC_PLUGIN_JOBS_STATE
+# default: $PRISMATIC_STATE_DIR/plugin_jobs.json
+# default state dir fallback: ./prismatic_state/plugin_jobs.json
+```
+
+The durable state owns three top-level buckets:
+
+- `plugin_jobs` — job records and latest lifecycle/approval/policy state
+- `plugin_job_events` — append-only per-job audit trail
+- `plugin_artifacts` — lightweight artifact references emitted by job events, ready for the fuller provenance registry in Gap 2
+
+Job lifecycle states:
+
+```text
+queued
+running
+needs_approval
+completed
+failed
+cancelled
+rejected
+```
+
+Audit events:
+
+```text
+job_created
+policy_checked
+approval_required
+approved
+rejected
+started
+artifact_emitted
+completed
+failed
+cancelled
+note_added
+```
+
+Every job records:
+
+- `job_id`
+- `plugin_name`
+- `action`
+- `status`
+- `risk_level`
+- `approval_required`
+- `approval_state`
+- `policy_result`
+- `input_summary` with token-like values redacted
+- `created_by`
+- `source`
+- `operator_notes`
+- `artifact_ids`
+- timestamps
+- `error`
+
+Generic job APIs:
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/plugins/jobs` | List durable plugin jobs and summary counts. |
+| `POST /api/plugins/jobs` | Create a plugin job and run the generic policy gate. |
+| `GET /api/plugins/jobs/{job_id}` | Read job detail, audit events, and linked artifacts. |
+| `POST /api/plugins/jobs/{job_id}/approve` | Approve a job waiting on operator approval. |
+| `POST /api/plugins/jobs/{job_id}/reject` | Reject a job and close its lifecycle. |
+| `POST /api/plugins/jobs/{job_id}/events` | Append audit events, including lightweight `artifact_emitted` records. |
+| `POST /api/plugins/jobs/{job_id}/status` | Update lifecycle status. |
+
+`GET /api/plugins/governance` includes a `jobs` summary so the governance catalog and dashboard can show whether declared lifecycle/audit contracts are actually being used. The Dashboard **Plugins** tab renders durable job/audit summary cards and recent job rows.
+
+Policy behavior today:
+
+- unknown plugins are blocked
+- token-like raw secrets in job input are blocked/redacted
+- manifest governance approval gates place jobs into `needs_approval`
+- publish/export/deploy/delete/destroy/costly/batch actions require approval
+- approval/rejection decisions are durable audit events
+- artifact-emitted events create lightweight `plugin_artifacts` records without deleting artifacts on disconnect
+
 ## MCP setup pattern
 
 MCP is the right bridge when the plugin is also an external app/service or has rich resource/tool semantics.

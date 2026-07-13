@@ -43,6 +43,7 @@ from prismatic.gateway.ws_broadcaster import (
 from prismatic.lock import _read_locks as read_swarm_locks
 from prismatic.plugin_architecture import MEDIA_CAPABILITY_CLASSES, plugin_catalog
 from prismatic.plugin_health import get_plugin_health
+from prismatic.plugin_jobs import PluginJobStore, store_from_env as plugin_job_store
 from prismatic.pwp_integration import connect_pwp, disconnect_pwp, integration_status, refresh_pwp
 from prismatic.run_records import AgentRunRecordStore
 
@@ -399,9 +400,11 @@ async def plugins_architecture() -> dict[str, Any]:
 async def plugins_governance() -> dict[str, Any]:
     """Return operator-facing plugin readiness, risk, approval, and blocker data."""
     catalog = plugin_catalog()
+    jobs = plugin_job_store().summary()
     return {
         "schema_version": catalog["schema_version"],
         "summary": catalog["governance_summary"],
+        "jobs": jobs,
         "plugins": [
             {
                 "name": item["name"],
@@ -419,6 +422,112 @@ async def plugins_governance() -> dict[str, Any]:
             for item in catalog["plugins"]
         ],
     }
+
+
+@app.get("/api/plugins/jobs")
+async def list_plugin_jobs(request: Request) -> dict[str, Any]:
+    """List durable plugin jobs with audit summary."""
+    store = plugin_job_store()
+    return {
+        "summary": store.summary(),
+        "jobs": store.list_jobs(
+            plugin_name=request.query_params.get("plugin_name"),
+            status=request.query_params.get("status"),
+        ),
+    }
+
+
+@app.post("/api/plugins/jobs")
+async def create_plugin_job(request: Request) -> JSONResponse:
+    """Create a durable plugin job and run the generic policy/approval gate."""
+    payload = await request.json()
+    plugin_name = str(payload.get("plugin_name") or "").strip()
+    action = str(payload.get("action") or "").strip()
+    if not plugin_name or not action:
+        return JSONResponse({"error": "plugin_name and action are required"}, status_code=400)
+    job = plugin_job_store().create_job(
+        plugin_name,
+        action,
+        actor=str(payload.get("actor") or "operator"),
+        source=str(payload.get("source") or "api"),
+        input_summary=payload.get("input_summary"),
+        operator_notes=payload.get("operator_notes"),
+        approval_required=payload.get("approval_required"),
+        metadata=payload.get("metadata") or {},
+    )
+    return JSONResponse(job, status_code=201)
+
+
+@app.get("/api/plugins/jobs/{job_id}")
+async def get_plugin_job(job_id: str) -> JSONResponse:
+    job = plugin_job_store().get_job(job_id)
+    if not job:
+        return JSONResponse({"error": "plugin job not found", "job_id": job_id}, status_code=404)
+    return JSONResponse(job)
+
+
+@app.post("/api/plugins/jobs/{job_id}/approve")
+async def approve_plugin_job(job_id: str, request: Request) -> JSONResponse:
+    payload = await request.json()
+    job = plugin_job_store().approve_job(
+        job_id,
+        actor=str(payload.get("actor") or "operator"),
+        note=payload.get("note") or payload.get("operator_notes"),
+    )
+    if not job:
+        return JSONResponse({"error": "plugin job not found", "job_id": job_id}, status_code=404)
+    return JSONResponse(job)
+
+
+@app.post("/api/plugins/jobs/{job_id}/reject")
+async def reject_plugin_job(job_id: str, request: Request) -> JSONResponse:
+    payload = await request.json()
+    job = plugin_job_store().reject_job(
+        job_id,
+        actor=str(payload.get("actor") or "operator"),
+        note=payload.get("note") or payload.get("operator_notes"),
+    )
+    if not job:
+        return JSONResponse({"error": "plugin job not found", "job_id": job_id}, status_code=404)
+    return JSONResponse(job)
+
+
+@app.post("/api/plugins/jobs/{job_id}/events")
+async def append_plugin_job_event(job_id: str, request: Request) -> JSONResponse:
+    payload = await request.json()
+    job = plugin_job_store().append_event(
+        job_id,
+        str(payload.get("event_type") or "note_added"),
+        actor=str(payload.get("actor") or "system"),
+        source=str(payload.get("source") or "api"),
+        message=payload.get("message"),
+        details=payload.get("details") or {},
+        artifact=payload.get("artifact"),
+    )
+    if not job:
+        return JSONResponse({"error": "plugin job not found", "job_id": job_id}, status_code=404)
+    return JSONResponse(job)
+
+
+@app.post("/api/plugins/jobs/{job_id}/status")
+async def update_plugin_job_status(job_id: str, request: Request) -> JSONResponse:
+    payload = await request.json()
+    status = str(payload.get("status") or "").strip()
+    if not status:
+        return JSONResponse({"error": "status is required"}, status_code=400)
+    try:
+        job = plugin_job_store().update_status(
+            job_id,
+            status,
+            actor=str(payload.get("actor") or "system"),
+            message=payload.get("message"),
+            error=payload.get("error"),
+        )
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    if not job:
+        return JSONResponse({"error": "plugin job not found", "job_id": job_id}, status_code=404)
+    return JSONResponse(job)
 
 
 @app.get("/api/v1/plugins/{plugin_name}/health")
