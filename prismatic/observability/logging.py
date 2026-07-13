@@ -73,9 +73,15 @@ def init_logging(level: int | str = logging.INFO, intercept_print: bool = True) 
 
 def _setup_print_interception() -> None:
     """Redirect standard prints to the structlog 'print' logger."""
+    import threading
+    _local = threading.local()
     logger = structlog.get_logger("print")
 
     def intercepted_print(*args: Any, **kwargs: Any) -> None:
+        if getattr(_local, "in_print", False):
+            _original_print(*args, **kwargs)
+            return
+
         file = kwargs.get("file", sys.stdout)
         
         # Fall back to original print for custom targets (files, StringIO, etc.)
@@ -86,10 +92,16 @@ def _setup_print_interception() -> None:
         sep = kwargs.get("sep", " ")
         message = sep.join(str(arg) for arg in args)
 
-        if file is sys.stderr or (hasattr(file, "name") and file.name == "<stderr>"):
-            logger.error(message)
-        else:
-            logger.info(message)
+        _local.in_print = True
+        try:
+            if file is sys.stderr or (hasattr(file, "name") and file.name == "<stderr>"):
+                logger.error(message)
+            else:
+                logger.info(message)
+        except Exception:
+            _original_print(*args, **kwargs)
+        finally:
+            _local.in_print = False
 
     builtins.print = intercepted_print
 

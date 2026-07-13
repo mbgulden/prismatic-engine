@@ -2,14 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 import yaml
 import pytest
 from pathlib import Path
 
+# Ensure the plugins directory is in sys.path so we can import modules from it
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_PLUGINS_ROOT = _REPO_ROOT / "plugins"
+if str(_PLUGINS_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PLUGINS_ROOT))
+
 from prismatic.core.registry import PluginLoader
 from prismatic.interface.plugin import PluginContext
 from prismatic.gateway.event_bus import get_event_bus, SwarmEvent, set_event_bus, EventBus
-from plugins.linear_bot.plugin import LinearBotPlugin
+from linear_bot.plugin import LinearBotPlugin
 
 @pytest.fixture
 def temp_bus_db(tmp_path, monkeypatch):
@@ -21,7 +28,7 @@ def temp_bus_db(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_linear_bot_manifest_and_metadata():
     """Verify that the manifest file for linear-bot contains required fields and correct schemas."""
-    manifest_path = Path(__file__).parent.parent / "plugins" / "linear_bot" / "plugin-manifest.yaml"
+    manifest_path = _PLUGINS_ROOT / "linear_bot" / "plugin-manifest.yaml"
     assert manifest_path.exists(), "Manifest file should exist"
 
     with open(manifest_path, "r") as f:
@@ -83,7 +90,7 @@ async def test_linear_bot_event_subscription_and_handling(temp_bus_db, monkeypat
 @pytest.mark.asyncio
 async def test_loader_loads_linear_bot(temp_bus_db):
     """Verify that the PluginLoader can scan and load the linear-bot plugin from plugins directory."""
-    plugins_dir = Path(__file__).parent.parent / "plugins"
+    plugins_dir = _PLUGINS_ROOT
     loader = PluginLoader(core_version="0.2.0", plugins_dir=str(plugins_dir))
     
     context = PluginContext(
