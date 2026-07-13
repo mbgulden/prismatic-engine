@@ -49,6 +49,12 @@ HOOK_ON_POST_PIPELINE        = "on_post_pipeline"
 HOOK_ON_ERROR                = "on_error"
 HOOK_ON_DEPLOY               = "on_deploy"
 
+# GRO-3047 UI hooks
+HOOK_REGISTER_UI_SURFACES    = "register_ui_surfaces"
+HOOK_ON_HUMAN_INPUT_RECEIVED = "on_human_input_received"
+HOOK_ON_UI_EVENT             = "on_ui_event"
+HOOK_REGISTER_COMMANDS       = "register_commands"
+
 HOOK_NAMES: List[str] = [
     HOOK_ON_INIT,
     HOOK_BEFORE_TASK_EXECUTION,
@@ -62,6 +68,10 @@ HOOK_NAMES: List[str] = [
     HOOK_ON_POST_PIPELINE,
     HOOK_ON_ERROR,
     HOOK_ON_DEPLOY,
+    HOOK_REGISTER_UI_SURFACES,
+    HOOK_ON_HUMAN_INPUT_RECEIVED,
+    HOOK_ON_UI_EVENT,
+    HOOK_REGISTER_COMMANDS,
 ]
 
 # ── PWP hook grouping helpers ───────────────────────────────────────────────

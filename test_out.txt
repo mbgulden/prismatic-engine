@@ -1,0 +1,139 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.1.1, pluggy-1.6.0
+rootdir: /home/ubuntu/work/prismatic-engine
+configfile: pyproject.toml
+plugins: anyio-4.14.1
+collected 4 items
+
+tests/test_cli_pipeline.py FFFF                                          [100%]
+
+=================================== FAILURES ===================================
+______________ TestCliPipeline.test_pipeline_run_issue_not_found _______________
+/usr/lib/python3.12/unittest/mock.py:1387: in patched
+    with self.decoration_helper(patched,
+/usr/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/usr/lib/python3.12/unittest/mock.py:1369: in decoration_helper
+    arg = exit_stack.enter_context(patching)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/contextlib.py:526: in enter_context
+    result = _enter(cm)
+             ^^^^^^^^^^
+/usr/lib/python3.12/unittest/mock.py:1458: in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <unittest.mock._patch object at 0x764c7614c7d0>
+
+    def get_original(self):
+        target = self.getter()
+        name = self.attribute
+    
+        original = DEFAULT
+        local = False
+    
+        try:
+            original = target.__dict__[name]
+        except (AttributeError, KeyError):
+            original = getattr(target, name, DEFAULT)
+        else:
+            local = True
+    
+        if name in _builtins and isinstance(target, ModuleType):
+            self.create = True
+    
+        if not self.create and original is DEFAULT:
+>           raise AttributeError(
+                "%s does not have the attribute %r" % (target, name)
+            )
+E           AttributeError: <module 'prismatic.cli.pipeline' from '/home/ubuntu/work/prismatic-engine/prismatic/cli/pipeline.py'> does not have the attribute 'gql'
+
+/usr/lib/python3.12/unittest/mock.py:1431: AttributeError
+______________ TestCliPipeline.test_pipeline_run_missing_api_key _______________
+
+self = <test_cli_pipeline.TestCliPipeline testMethod=test_pipeline_run_missing_api_key>
+
+    @patch.dict(os.environ, {"LINEAR_API_KEY": ""})
+    def test_pipeline_run_missing_api_key(self) -> None:
+        err = StringIO()
+        with patch("sys.stderr", err):
+            rc = cli.run(["pipeline", "run", "--issue", "GRO-123"])
+        self.assertEqual(rc, 1)
+>       self.assertIn("Error: LINEAR_API_KEY environment variable is required", err.getvalue())
+E       AssertionError: 'Error: LINEAR_API_KEY environment variable is required' not found in ''
+
+tests/test_cli_pipeline.py:80: AssertionError
+----------------------------- Captured stdout call -----------------------------
+{"event": "Error: LINEAR_API_KEY environment variable is required.", "logger": "print", "level": "error", "timestamp": "2026-07-13T14:03:50.296076Z"}
+__________________ TestCliPipeline.test_pipeline_run_success ___________________
+/usr/lib/python3.12/unittest/mock.py:1387: in patched
+    with self.decoration_helper(patched,
+/usr/lib/python3.12/contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+/usr/lib/python3.12/unittest/mock.py:1369: in decoration_helper
+    arg = exit_stack.enter_context(patching)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/contextlib.py:526: in enter_context
+    result = _enter(cm)
+             ^^^^^^^^^^
+/usr/lib/python3.12/unittest/mock.py:1458: in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <unittest.mock._patch object at 0x764c763438f0>
+
+    def get_original(self):
+        target = self.getter()
+        name = self.attribute
+    
+        original = DEFAULT
+        local = False
+    
+        try:
+            original = target.__dict__[name]
+        except (AttributeError, KeyError):
+            original = getattr(target, name, DEFAULT)
+        else:
+            local = True
+    
+        if name in _builtins and isinstance(target, ModuleType):
+            self.create = True
+    
+        if not self.create and original is DEFAULT:
+>           raise AttributeError(
+                "%s does not have the attribute %r" % (target, name)
+            )
+E           AttributeError: <module 'prismatic.cli.pipeline' from '/home/ubuntu/work/prismatic-engine/prismatic/cli/pipeline.py'> does not have the attribute 'trigger_ned_review'
+
+/usr/lib/python3.12/unittest/mock.py:1431: AttributeError
+_________________ TestCliPipeline.test_pipeline_run_watch_mode _________________
+
+self = <test_cli_pipeline.TestCliPipeline testMethod=test_pipeline_run_watch_mode>
+
+    def test_pipeline_run_watch_mode(self) -> None:
+        # Test watch mode behavior
+        out = StringIO()
+        err = StringIO()
+        with patch("sys.stdout", out), patch("sys.stderr", err):
+            rc = cli.run(["pipeline", "run", "--issue", "GRO-123", "--watch"])
+    
+        self.assertEqual(rc, 1)
+        combined = out.getvalue() + err.getvalue()
+>       self.assertTrue("rich" in combined.lower() or "watch" in combined.lower())
+E       AssertionError: False is not true
+
+tests/test_cli_pipeline.py:102: AssertionError
+----------------------------- Captured stdout call -----------------------------
+{"event": "Error: Watch mode requires the [tui] extra. Install via: pip install prismatic-engine[tui]", "logger": "print", "level": "error", "timestamp": "2026-07-13T14:03:50.414590Z"}
+------------------------------ Captured log call -------------------------------
+ERROR    print:logging.py:90 {'event': 'Error: Watch mode requires the [tui] extra. Install via: pip install prismatic-engine[tui]', 'logger': 'print', 'level': 'error', 'timestamp': '2026-07-13T14:03:50.414590Z'}
+=========================== short test summary info ============================
+FAILED tests/test_cli_pipeline.py::TestCliPipeline::test_pipeline_run_issue_not_found
+FAILED tests/test_cli_pipeline.py::TestCliPipeline::test_pipeline_run_missing_api_key
+FAILED tests/test_cli_pipeline.py::TestCliPipeline::test_pipeline_run_success
+FAILED tests/test_cli_pipeline.py::TestCliPipeline::test_pipeline_run_watch_mode
+============================== 4 failed in 1.29s ===============================
