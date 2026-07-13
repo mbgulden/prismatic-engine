@@ -191,3 +191,32 @@ def on_deploy(pipeline_id: str, target: str, artifact: Dict[str, Any]) -> None:
         artifact: Dictionary describing the deployed artifact (URL,
             commit SHA, size, etc.).
     """
+
+# ── GRO-3047 UI hook stubs ──────────────────────────────────────────────────
+
+def register_ui_surfaces(context: Any) -> List[Dict[str, Any]]:
+    """
+    Declare UI surfaces this run exposes to the UI host.
+    """
+    return []
+
+def on_human_input_received(
+    pipeline_id: str,
+    prompt_id: str,
+    response: Dict[str, Any],
+) -> None:
+    """
+    Fired when human input requested via context.ui.request_input() arrives.
+    """
+
+def on_ui_event(event: Dict[str, Any]) -> None:
+    """
+    Fired when a UIBusEvent is published by any plugin.
+    """
+
+def register_commands() -> List[Dict[str, Any]]:
+    """
+    Declare user-invokable commands for this plugin.
+    """
+    return []
+
