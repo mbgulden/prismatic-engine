@@ -24,6 +24,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from prismatic.quality.smoke import SmokeTestResult
+
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Gap 2: VerificationVerdict — 7-layer post-completion check
@@ -519,6 +522,7 @@ def run_verification(
     commit_sha: str = "",
     branch_name: str = "",
     pr_check_fn: Callable[[str], dict[str, Any] | None] | None = None,
+    smoke_test: SmokeTestResult | bool | None = None,
 ) -> VerificationVerdict:
     """Run all 7 verification layers and return a VerificationVerdict."""
     verdict = VerificationVerdict(issue_id=issue_id, identifier=identifier)
@@ -531,7 +535,24 @@ def run_verification(
         check_basic_syntax(modified_files, workdir="."),
         check_goal_match(task_body, agent_output),
     ]
+
+    if smoke_test is not None and smoke_test is not False:
+        # If it's a SmokeTestResult object
+        if hasattr(smoke_test, "passed"):
+            passed = smoke_test.passed
+            reason = smoke_test.reason if passed else "smoke_test_failed"
+            details = smoke_test.to_dict()
+            verdict.layers.append(
+                LayerResult(
+                    name="smoke_test",
+                    passed=passed,
+                    reason=reason,
+                    details=details,
+                )
+            )
+
     return verdict
+
 
 
 # ─────────────────────────────────────────────────────────────────────
