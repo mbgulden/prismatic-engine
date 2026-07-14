@@ -1,0 +1,2775 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prismatic Hub Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background-color: #080b11;
+            transition: background-color 0.3s, color 0.3s;
+        }
+        h1, h2, h3, h4, .font-heading {
+            font-family: 'Outfit', sans-serif;
+        }
+        .glass-panel {
+            background: rgba(13, 17, 28, 0.7);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.04);
+            transition: background 0.3s, border-color 0.3s, box-shadow 0.3s;
+        }
+        .status-pulse {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: .5; transform: scale(1.1); }
+        }
+        .agent-node {
+            transition: transform 0.2s, filter 0.2s;
+            cursor: pointer;
+        }
+        .agent-node:hover {
+            transform: scale(1.05);
+            filter: brightness(1.2);
+        }
+        
+        /* Light Mode Styles */
+        body.light-mode {
+            background-color: #f8fafc;
+            color: #0f172a;
+        }
+        body.light-mode .glass-panel {
+            background: rgba(255, 255, 255, 0.8);
+            border: 1px solid rgba(0, 0, 0, 0.08);
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05), 0 2px 4px -2px rgb(0 0 0 / 0.05);
+        }
+        body.light-mode .text-slate-200 { color: #1e293b; }
+        body.light-mode .text-slate-300 { color: #334155; }
+        body.light-mode .text-slate-400 { color: #475569; }
+        body.light-mode .text-slate-500 { color: #64748b; }
+        body.light-mode header {
+            background-color: rgba(255, 255, 255, 0.85);
+            border-color: #e2e8f0;
+        }
+        body.light-mode footer {
+            border-color: #e2e8f0;
+            background-color: rgba(241, 245, 249, 0.5);
+        }
+        body.light-mode tr.border-b {
+            border-color: #e2e8f0;
+        }
+        body.light-mode tr:hover {
+            background-color: rgba(0, 0, 0, 0.02);
+        }
+        body.light-mode input, body.light-mode select {
+            background-color: rgba(255, 255, 255, 0.9) !important;
+            border-color: #cbd5e1 !important;
+            color: #0f172a !important;
+        }
+        body.light-mode pre {
+            background-color: #f1f5f9 !important;
+            border-color: #cbd5e1 !important;
+            color: #334155 !important;
+        }
+        body.light-mode .border-slate-800 { border-color: #e2e8f0; }
+        body.light-mode .border-slate-900 { border-color: #f1f5f9; }
+        body.light-mode .bg-slate-950 { background-color: #f1f5f9; }
+        body.light-mode .bg-slate-900\/50 { background-color: rgba(255, 255, 255, 0.8); }
+        body.light-mode .bg-slate-950\/20 { background-color: rgba(241, 245, 249, 0.3); }
+        body.light-mode .bg-indigo-500\/5 { background-color: rgba(99, 102, 241, 0.05); }
+    </style>
+</head>
+<body class="text-slate-200 min-h-screen flex flex-col">
+    <!-- Header -->
+    <header class="border-b border-slate-800 bg-slate-900/50 backdrop-blur-md px-6 py-4 flex items-center justify-between sticky top-0 z-40">
+        <div class="flex items-center space-x-3">
+            <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-cyan-500 to-indigo-600 flex items-center justify-center font-bold text-white shadow-lg shadow-cyan-500/20">
+                ⧉
+            </div>
+            <div>
+                <h1 class="text-lg font-bold bg-gradient-to-r from-cyan-400 to-indigo-400 bg-clip-text text-transparent leading-none">PRISMATIC HUB</h1>
+                <span class="text-xs text-slate-500 font-medium">Observe · Orchestrate · Produce</span>
+            </div>
+        </div>
+        
+        <div class="flex items-center space-x-2.5 sm:space-x-4">
+            <!-- Mode Switcher -->
+            <div class="bg-slate-950 border border-slate-800/80 px-1 py-1 rounded-lg flex space-x-1">
+                <span class="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider bg-indigo-600 text-white rounded">Standalone</span>
+                <span class="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">Native</span>
+            </div>
+            <!-- Theme Toggle -->
+            <button onclick="toggleTheme()" class="bg-slate-800/80 hover:bg-slate-800 border border-slate-700/50 p-2 rounded-full transition flex items-center justify-center min-w-[36px] min-h-[36px]" aria-label="Toggle Theme">
+                <svg id="theme-icon" class="w-4 h-4 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m0-12.728l.707.707m12.728 12.728l.707.707M12 8a4 4 0 100 8 4 4 0 000-8z"></path>
+                </svg>
+            </button>
+            <!-- WS Status -->
+            <div class="flex items-center space-x-2 bg-slate-800/80 px-3 py-1.5 rounded-full border border-slate-700/50">
+                <span id="status-dot" class="w-2.5 h-2.5 rounded-full bg-red-500 status-pulse"></span>
+                <span id="status-text" class="text-[10px] sm:text-xs font-semibold text-slate-400 uppercase tracking-wider">Connecting</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Navigation Tabs Bar -->
+    <div class="border-b border-slate-800/80 bg-slate-950/20 py-2.5 overflow-x-auto">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 flex space-x-2 min-w-[650px]">
+            <button id="tab-btn-dashboard" onclick="switchTab('dashboard')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-indigo-600/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-600/20">
+                Dashboard
+            </button>
+            <button id="tab-btn-telemetry" onclick="switchTab('telemetry')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                Ingestion Queue
+            </button>
+            <button id="tab-btn-merge" onclick="switchTab('merge')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                Merge Pipeline
+            </button>
+            <button id="tab-btn-foundation" onclick="switchTab('foundation')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                Foundation
+            </button>
+            <button id="tab-btn-workspaces" onclick="switchTab('workspaces')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                Workspaces
+            </button>
+            <button id="tab-btn-skills" onclick="switchTab('skills')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                Skills
+            </button>
+            <button id="tab-btn-signals" onclick="switchTab('signals')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                Signals
+            </button>
+            <button id="tab-btn-crons" onclick="switchTab('crons')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                Native Crons
+            </button>
+            <button id="tab-btn-pwp" onclick="switchTab('pwp')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                PWP Plugin
+            </button>
+            <button id="tab-btn-plugins" onclick="switchTab('plugins')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                Plugins
+            </button>
+            <button id="tab-btn-quota" onclick="switchTab('quota')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                GCP Quotas
+            </button>
+        </div>
+    </div>
+
+    <!-- Main Container -->
+    <main class="flex-grow p-4 sm:p-6 max-w-7xl w-full mx-auto space-y-6">
+        
+        <!-- SECTION 1: DASHBOARD (VISUALIZER topo + simulator + activity feed) -->
+        <div id="section-dashboard" class="space-y-6">
+            <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-violet-500/80 shadow-lg shadow-violet-950/10">
+                <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <h2 class="text-sm font-bold text-slate-200 uppercase tracking-[0.18em]">Recovery Command Strip</h2>
+                            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-violet-500/20 bg-violet-500/10 text-violet-300">Live / DLQ</span>
+                        </div>
+                        <p class="text-xs text-slate-500">Fast operator surface for consumer health, heartbeat truth, and DLQ state without leaving the default dashboard.</p>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        <button onclick="refreshRecoveryStatus()" class="px-3 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider bg-violet-500/10 text-violet-300 border border-violet-500/20 hover:bg-violet-500/20 transition-colors min-h-[36px]">
+                            Refresh recovery
+                        </button>
+                        <button onclick="switchTab('telemetry')" class="px-3 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider bg-slate-800 text-slate-200 border border-slate-700/50 hover:bg-slate-700/70 transition-colors min-h-[36px]">
+                            Open queue view
+                        </button>
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mt-4 text-xs">
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Service</div>
+                        <div id="recovery-service" class="mt-1 font-semibold text-slate-100">prismatic-consumer.service</div>
+                        <div id="recovery-service-state" class="mt-1 text-[11px] text-slate-400">SYNCING</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Heartbeat</div>
+                        <div id="recovery-heartbeat" class="mt-1 font-semibold text-slate-100">—</div>
+                        <div id="recovery-heartbeat-path" class="mt-1 text-[11px] text-slate-500 break-all">Awaiting live heartbeat proof</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Pool</div>
+                        <div class="mt-1 font-semibold text-slate-100"><span id="recovery-live-count">0</span> live · <span id="recovery-dlq-count">0</span> dlq</div>
+                        <div id="recovery-pool-state" class="mt-1 text-[11px] text-slate-400">Awaiting live pool stats</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Failure taxonomy</div>
+                        <div id="recovery-taxonomy-count" class="mt-1 font-semibold text-slate-100">0 classes</div>
+                        <div id="recovery-taxonomy-sample" class="mt-1 text-[11px] text-slate-400">Awaiting taxonomy labels</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Morning Briefing Card (Overnight Report) -->
+            <section id="morning-briefing-card" class="glass-panel p-5 rounded-2xl border-l-2 border-l-indigo-500/80 shadow-lg shadow-indigo-950/10 space-y-4">
+                <div class="flex items-center justify-between border-b border-slate-800/80 pb-3">
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <h2 class="text-sm font-bold text-slate-200 uppercase tracking-[0.18em]">Morning Briefing Card</h2>
+                            <span id="briefing-fallback-badge" class="hidden px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider border border-amber-500/20 bg-amber-500/10 text-amber-300">Fallback Lookback Mode</span>
+                        </div>
+                        <p class="text-xs text-slate-500">Overnight factory run performance and deliverables snapshot (8am daily recap).</p>
+                    </div>
+                    <div class="text-[11px] text-slate-400 font-mono" id="briefing-timestamp">
+                        Loading...
+                    </div>
+                </div>
+                
+                <!-- Briefing Grid -->
+                <div class="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs text-center" id="briefing-kpis">
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Total Runs</div>
+                        <div id="briefing-total-runs" class="mt-1 text-lg font-bold text-indigo-400">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Completed</div>
+                        <div id="briefing-completed" class="mt-1 text-lg font-bold text-emerald-400">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Failed / Died</div>
+                        <div id="briefing-failed" class="mt-1 text-lg font-bold text-rose-400">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Success Rate</div>
+                        <div id="briefing-success-rate" class="mt-1 text-lg font-bold text-cyan-400">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Credits Spent</div>
+                        <div id="briefing-credits" class="mt-1 text-lg font-bold text-amber-400">—</div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                    <!-- Left: Recent Escalations & Codebase Commits -->
+                    <div class="space-y-3">
+                        <div class="rounded-xl border border-slate-800/80 bg-slate-950/30 p-4 space-y-3">
+                            <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider">🚨 Overnight Escalations</h3>
+                            <div class="space-y-2" id="briefing-escalations">
+                                <div class="text-slate-500 italic">No escalations occurred.</div>
+                            </div>
+                        </div>
+                        <div class="rounded-xl border border-slate-800/80 bg-slate-950/30 p-4 space-y-2">
+                            <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider">🛠️ Recent Git Commits</h3>
+                            <div class="space-y-1" id="briefing-commits">
+                                <div class="text-slate-500 italic">No recent commits.</div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Right: Detailed Runs Ledger Summary -->
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/30 p-4 flex flex-col justify-between">
+                        <div class="space-y-2 w-full">
+                            <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">📋 Agent Runs Summary</h3>
+                            <div class="overflow-y-auto max-h-[140px] border border-slate-850 rounded-lg">
+                                <table class="w-full text-left border-collapse text-[11px]">
+                                    <thead>
+                                        <tr class="border-b border-slate-800 text-slate-500 font-bold uppercase tracking-wider">
+                                            <th class="py-1.5 px-2">Agent</th>
+                                            <th class="py-1.5 px-2">Issue</th>
+                                            <th class="py-1.5 px-2">Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="briefing-runs-tbody">
+                                        <tr><td colspan="3" class="py-4 text-center text-slate-500 italic">No runs recorded.</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        <div class="pt-3 border-t border-slate-800/40 flex justify-end">
+                            <a href="/api/gateway/overnight-report/latest/html" target="_blank" class="px-3 py-1.5 rounded bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 border border-indigo-500/20 text-[10px] font-bold uppercase tracking-wider transition">
+                                Open Full Report HTML
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- Visualizer Graph (Left Column 2/3 wide) -->
+                <div class="lg:col-span-2 glass-panel p-5 rounded-xl space-y-4 flex flex-col justify-between">
+                    <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-2 flex justify-between items-center">
+                        <span>Swarm Spectrum Visualizer</span>
+                        <span class="text-xs text-slate-500 font-mono">Interactive Topology</span>
+                    </h2>
+                    
+                    <!-- SVG Ring -->
+                    <div class="flex justify-center items-center py-6">
+                        <svg viewBox="0 0 400 300" class="w-full max-w-[450px] h-auto">
+                            <!-- Center Prismatic Gate Glow -->
+                            <circle cx="200" cy="150" r="35" fill="none" stroke="#22d3ee" stroke-width="2" opacity="0.3" class="status-pulse" />
+                            <circle cx="200" cy="150" r="25" fill="url(#gateGrad)" />
+                            <text x="200" y="154" fill="#080b11" font-weight="bold" font-size="11" text-anchor="middle" font-family="'Outfit', sans-serif">GATE</text>
+                            
+                            <!-- Connecting lines -->
+                            <line x1="200" y1="150" x2="160" y2="70" stroke="#f59e0b" stroke-width="1.5" stroke-dasharray="4,4" />
+                            <line x1="200" y1="150" x2="280" y2="100" stroke="#ea580c" stroke-width="1.5" stroke-dasharray="4,4" />
+                            <line x1="200" y1="150" x2="270" y2="220" stroke="#0ea5e9" stroke-width="1.5" stroke-dasharray="4,4" />
+                            <line x1="200" y1="150" x2="130" y2="230" stroke="#a855f7" stroke-width="1.5" stroke-dasharray="4,4" />
+                            <line x1="200" y1="150" x2="70" y2="150" stroke="#10b981" stroke-width="1.5" stroke-dasharray="4,4" />
+                            <line x1="200" y1="150" x2="90" y2="70" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="4,4" />
+                            
+                            <!-- Agent Nodes -->
+                            <!-- AGY -->
+                            <g class="agent-node" onclick="showAgentDetail('agy')">
+                                <circle cx="160" cy="70" r="20" fill="#0f172a" stroke="#f59e0b" stroke-width="2" />
+                                <text x="160" y="74" fill="#f59e0b" font-weight="bold" font-size="10" text-anchor="middle" font-family="'Outfit', sans-serif">AGY</text>
+                            </g>
+                            <!-- Jules -->
+                            <g class="agent-node" onclick="showAgentDetail('jules')">
+                                <circle cx="280" cy="100" r="20" fill="#0f172a" stroke="#ea580c" stroke-width="2" />
+                                <text x="280" y="104" fill="#ea580c" font-weight="bold" font-size="10" text-anchor="middle" font-family="'Outfit', sans-serif">JLS</text>
+                            </g>
+                            <!-- Fred -->
+                            <g class="agent-node" onclick="showAgentDetail('fred')">
+                                <circle cx="270" cy="220" r="20" fill="#0f172a" stroke="#0ea5e9" stroke-width="2" />
+                                <text x="270" y="224" fill="#0ea5e9" font-weight="bold" font-size="10" text-anchor="middle" font-family="'Outfit', sans-serif">FRD</text>
+                            </g>
+                            <!-- Ned -->
+                            <g class="agent-node" onclick="showAgentDetail('ned')">
+                                <circle cx="130" cy="230" r="20" fill="#0f172a" stroke="#a855f7" stroke-width="2" />
+                                <text x="130" y="234" fill="#a855f7" font-weight="bold" font-size="10" text-anchor="middle" font-family="'Outfit', sans-serif">NED</text>
+                            </g>
+                            <!-- Kai -->
+                            <g class="agent-node" onclick="showAgentDetail('kai')">
+                                <circle cx="70" cy="150" r="20" fill="#0f172a" stroke="#10b981" stroke-width="2" />
+                                <text x="70" y="154" fill="#10b981" font-weight="bold" font-size="10" text-anchor="middle" font-family="'Outfit', sans-serif">KAI</text>
+                            </g>
+                            <!-- Codex -->
+                            <g class="agent-node" onclick="showAgentDetail('codex')">
+                                <circle cx="90" cy="70" r="20" fill="#0f172a" stroke="#ef4444" stroke-width="2" />
+                                <text x="90" y="74" fill="#ef4444" font-weight="bold" font-size="10" text-anchor="middle" font-family="'Outfit', sans-serif">CDX</text>
+                            </g>
+                            
+                            <!-- SVG Definitions -->
+                            <defs>
+                                <radialGradient id="gateGrad" cx="50%" cy="50%" r="50%">
+                                    <stop offset="0%" stop-color="#67e8f9" />
+                                    <stop offset="100%" stop-color="#06b6d4" />
+                                </radialGradient>
+                            </defs>
+                        </svg>
+                    </div>
+                    
+                    <div class="text-[11px] text-slate-500 text-center">
+                        Click on any agent node above to inspect status details and current running harness parameters.
+                    </div>
+                </div>
+
+                <!-- Agent Details & Webhook Simulator (Right Column 1/3 wide) -->
+                <div class="space-y-6">
+                    <!-- Agent Card Panel -->
+                    <div class="glass-panel p-5 rounded-xl space-y-4">
+                        <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-2">
+                            Agent Details
+                        </h3>
+                        <div id="agent-detail-placeholder" class="text-xs text-slate-500 py-6 text-center italic">
+                            Select an agent on the visualizer ring.
+                        </div>
+                        <div id="agent-detail-card" class="hidden space-y-3 text-xs">
+                            <div class="flex items-center space-x-2">
+                                <span id="agent-detail-dot" class="w-3 h-3 rounded-full"></span>
+                                <span id="agent-detail-name" class="font-bold text-sm text-slate-200">AGY</span>
+                                <span id="agent-detail-status-tag" class="px-2 py-0.5 rounded text-[9px] uppercase font-bold"></span>
+                            </div>
+                            <div class="text-slate-400" id="agent-detail-role"></div>
+                            <div class="bg-slate-950/60 p-3 rounded-lg border border-slate-900/60 font-mono space-y-2">
+                                <div class="text-slate-500 font-bold text-[10px] uppercase">Active Task</div>
+                                <div id="agent-detail-task" class="text-slate-300"></div>
+                            </div>
+                            <div class="grid grid-cols-2 gap-2 text-[10px] text-slate-400">
+                                <div>
+                                    <span class="text-slate-500 block">LAST SEEN</span>
+                                    <span id="agent-detail-seen" class="font-semibold text-slate-300"></span>
+                                </div>
+                                <div>
+                                    <span class="text-slate-500 block">HARNESS CONFIG</span>
+                                    <span id="agent-detail-config" class="font-semibold text-indigo-400"></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Webhook Event Simulator -->
+                    <div class="glass-panel p-5 rounded-xl space-y-4">
+                        <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-2">
+                            Simulate Webhook Event
+                        </h3>
+                        <form id="simulate-form" onsubmit="simulateWebhook(event)" class="space-y-3">
+                            <div class="grid grid-cols-2 gap-2">
+                                <div>
+                                    <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Ticket ID</label>
+                                    <input type="text" id="sim-ticket" value="GRO-3340" required class="w-full bg-slate-950 text-slate-200 border border-slate-800 px-2.5 py-1.5 rounded text-xs font-semibold focus:outline-none focus:border-indigo-500">
+                                </div>
+                                <div>
+                                    <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Target Agent</label>
+                                    <select id="sim-agent" class="w-full bg-slate-950 text-slate-200 border border-slate-800 px-2 py-1.5 rounded text-xs font-semibold focus:outline-none focus:border-indigo-500">
+                                        <option value="agy">agy</option>
+                                        <option value="jules">jules</option>
+                                        <option value="fred">fred</option>
+                                        <option value="ned">ned</option>
+                                        <option value="kai">kai</option>
+                                        <option value="codex">codex</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Event Text / Title</label>
+                                <input type="text" id="sim-title" value="Integrate standalone dashboard widgets for telemetry tracking" required class="w-full bg-slate-950 text-slate-200 border border-slate-800 px-2.5 py-1.5 rounded text-xs font-semibold focus:outline-none focus:border-indigo-500">
+                            </div>
+                            <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 rounded text-xs uppercase tracking-wider transition">
+                                Send Event Signal
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Dashboard signal summary -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                <div class="glass-panel p-4 rounded-xl border-l-2 border-l-emerald-500/80">
+                    <div class="flex items-center justify-between gap-3">
+                        <span class="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Dispatcher</span>
+                        <span id="summary-dispatcher-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold border border-slate-700 text-slate-400 bg-slate-800/80">Loading</span>
+                    </div>
+                    <div id="summary-dispatcher-meta" class="mt-2 text-sm text-slate-200 font-semibold">Waiting for loop telemetry</div>
+                </div>
+                <div class="glass-panel p-4 rounded-xl border-l-2 border-l-cyan-500/80">
+                    <div class="flex items-center justify-between gap-3">
+                        <span class="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Recovery</span>
+                        <span id="summary-recovery-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold border border-slate-700 text-slate-400 bg-slate-800/80">Loading</span>
+                    </div>
+                    <div id="summary-recovery-meta" class="mt-2 text-sm text-slate-200 font-semibold">Waiting for recovery surface</div>
+                </div>
+                <div class="glass-panel p-4 rounded-xl border-l-2 border-l-amber-500/80">
+                    <div class="flex items-center justify-between gap-3">
+                        <span class="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Quota</span>
+                        <span id="summary-quota-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold border border-slate-700 text-slate-400 bg-slate-800/80">Loading</span>
+                    </div>
+                    <div id="summary-quota-meta" class="mt-2 text-sm text-slate-200 font-semibold">Waiting for freshness data</div>
+                </div>
+            </div>
+
+            <!-- Dashboard summary widgets -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <!-- Swarm Activity Feed -->
+                <div class="glass-panel p-5 rounded-xl space-y-4">
+                    <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-2">
+                        Swarm Activity Feed
+                    </h3>
+                    <div class="space-y-2 max-h-[220px] overflow-y-auto" id="dashboard-activity">
+                        <!-- Items rendered by javascript -->
+                    </div>
+                </div>
+                <!-- Workspaces Summary -->
+                <div class="glass-panel p-5 rounded-xl space-y-4">
+                    <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-2">
+                        Active Workspace Contexts
+                    </h3>
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-xs border-collapse">
+                            <thead>
+                                <tr class="border-b border-slate-800 text-slate-500 font-bold uppercase tracking-wider">
+                                    <th class="py-2 px-3">Context Name</th>
+                                    <th class="py-2 px-3">Branch</th>
+                                    <th class="py-2 px-3">Status</th>
+                                    <th class="py-2 px-3">Files</th>
+                                </tr>
+                            </thead>
+                            <tbody id="dashboard-workspaces">
+                                <!-- Items rendered by javascript -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SECTION 2: INGESTION QUEUE (the standalone stats + loop + queue history) -->
+        <div id="section-telemetry" class="hidden space-y-6">
+            <!-- Stats Cards Grid -->
+            <section class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4">
+                <!-- Received -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Received</span>
+                    <span id="stat-received" class="text-2xl font-bold text-cyan-400 mt-2">0</span>
+                </div>
+                <!-- Auth Failed -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Auth Failures</span>
+                    <span id="stat-auth-failed" class="text-2xl font-bold text-red-400 mt-2">0</span>
+                </div>
+                <!-- Latency -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between min-h-[90px]">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Latency</span>
+                        <span class="text-[10px] text-slate-500 font-mono">ms</span>
+                    </div>
+                    <div class="flex items-end justify-between mt-2">
+                        <span id="stat-latency" class="text-2xl font-bold text-indigo-400 leading-none">0.0</span>
+                        <div id="latency-sparkline" class="flex items-end h-8 pb-1">
+                            <span class="text-[10px] text-slate-500 italic">No trend</span>
+                        </div>
+                    </div>
+                </div>
+                <!-- Pending -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-amber-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Pending</span>
+                    <span id="stat-pending" class="text-2xl font-bold text-amber-400 mt-2">0</span>
+                </div>
+                <!-- Processing -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-orange-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Processing</span>
+                    <span id="stat-processing" class="text-2xl font-bold text-orange-400 mt-2">0</span>
+                </div>
+                <!-- Completed -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-emerald-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Completed</span>
+                    <span id="stat-completed" class="text-2xl font-bold text-emerald-400 mt-2">0</span>
+                </div>
+                <!-- Failed -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-rose-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Failed</span>
+                    <span id="stat-failed" class="text-2xl font-bold text-rose-400 mt-2">0</span>
+                </div>
+                <!-- Consumer Recovery -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-violet-500 min-h-[90px]">
+                    <div class="flex items-center justify-between gap-2">
+                        <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Consumer Recovery</span>
+                        <span class="text-[10px] text-slate-500 font-mono">live / dlq</span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 mt-2">
+                        <div>
+                            <div class="text-[10px] text-slate-500 uppercase tracking-wider">Live</div>
+                            <div id="stat-pool-live" class="text-lg font-bold text-violet-400 leading-none">0</div>
+                        </div>
+                        <div>
+                            <div class="text-[10px] text-slate-500 uppercase tracking-wider">DLQ</div>
+                            <div id="stat-pool-dlq" class="text-lg font-bold text-fuchsia-400 leading-none">0</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="glass-panel p-4 rounded-2xl mt-6">
+                <div class="flex items-center justify-between mb-3">
+                    <div>
+                        <h2 class="text-sm font-semibold text-slate-200 uppercase tracking-[0.18em]">Failure taxonomy</h2>
+                        <p class="text-xs text-slate-500 mt-1">Canonical labels for ingest, routing, execution, artifact, state-sync, label debt, and silent stalls.</p>
+                    </div>
+                    <span class="text-[10px] uppercase tracking-wider text-slate-500">Shared across monitor + dashboard</span>
+                </div>
+                <div id="failure-taxonomy-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3"></div>
+            </section>
+
+            <!-- Two Columns Layout -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- Left Column: Dispatcher Control Panel -->
+                <div class="space-y-6">
+                    <!-- Dispatcher Control -->
+                    <div class="glass-panel p-5 rounded-xl space-y-4">
+                        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-2 flex justify-between items-center">
+                            <span>Dispatcher Control</span>
+                            <span id="dispatcher-loader" class="hidden w-4 h-4 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin"></span>
+                        </h2>
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm text-slate-400">Loop Status</span>
+                            <div id="disp-status-badge" class="flex items-center space-x-1.5 bg-slate-800 px-2.5 py-1 rounded-full text-xs font-bold text-slate-400">
+                                <span id="disp-status-dot" class="w-2 h-2 rounded-full bg-slate-500"></span>
+                                <span id="disp-status-text">OFFLINE</span>
+                            </div>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm text-slate-400">Total Cycles</span>
+                            <span id="disp-cycle" class="text-sm font-bold text-slate-200">0</span>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm text-slate-400">Last Active</span>
+                            <span id="disp-last-active" class="text-xs text-slate-500">Never</span>
+                        </div>
+                        <div id="disp-stall-alert" class="hidden rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300">
+                            Dispatcher stall alert
+                        </div>
+                        <!-- Control Actions -->
+                        <div class="grid grid-cols-3 gap-2 pt-2">
+                            <button onclick="controlDispatcher('start')" class="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:border-emerald-500/50 py-2 rounded-lg text-[10px] sm:text-xs font-bold transition duration-150 uppercase tracking-wider flex items-center justify-center min-h-[36px]">
+                                Start
+                            </button>
+                            <button onclick="controlDispatcher('stop')" class="bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 hover:border-rose-500/50 py-2 rounded-lg text-[10px] sm:text-xs font-bold transition duration-150 uppercase tracking-wider flex items-center justify-center min-h-[36px]">
+                                Stop
+                            </button>
+                            <button onclick="controlDispatcher('restart')" class="bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 hover:border-indigo-500/50 py-2 rounded-lg text-[10px] sm:text-xs font-bold transition duration-150 uppercase tracking-wider flex items-center justify-center min-h-[36px]">
+                                Restart
+                            </button>
+                        </div>
+                        <div class="space-y-1.5 pt-2">
+                            <span class="text-sm text-slate-400 block mb-1">Active Swarm Delegates</span>
+                            <div id="disp-agents" class="flex flex-wrap gap-1.5">
+                                <span class="text-xs text-slate-600 italic">None active</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right Column: Queue History Table -->
+                <div class="lg:col-span-2 glass-panel p-5 rounded-xl space-y-4 flex flex-col justify-between">
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-800 pb-3 gap-3">
+                        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider">
+                            Webhook Ingestion Queue
+                        </h2>
+                        <div class="flex items-center space-x-3 w-full sm:w-auto">
+                            <!-- Search Box -->
+                            <div class="relative flex-grow sm:flex-grow-0">
+                                <input type="text" id="search-input" oninput="filterQueue()" placeholder="Search queue..." class="bg-slate-950/60 text-slate-200 border border-slate-800/80 px-3 py-1.5 pl-8 rounded-lg text-xs font-medium w-full sm:w-48 focus:outline-none focus:border-indigo-500 transition duration-150">
+                                <svg class="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                            </div>
+                            <span id="queue-total-badge" class="bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2.5 py-1 rounded-lg text-xs font-bold whitespace-nowrap">0 total</span>
+                        </div>
+                    </div>
+
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-sm border-collapse">
+                            <thead>
+                                <tr class="border-b border-slate-800 text-slate-500 text-xs font-bold uppercase tracking-wider">
+                                    <th class="py-2.5 px-3">Ref</th>
+                                    <th class="py-2.5 px-3">Agent</th>
+                                    <th class="py-2.5 px-3">Action</th>
+                                    <th class="py-2.5 px-3">Status</th>
+                                    <th class="py-2.5 px-3">Queued At</th>
+                                    <th class="py-2.5 px-3 text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="queue-tbody" class="divide-y divide-slate-800/30">
+                                <tr>
+                                    <td colspan="6" class="py-8 text-center text-slate-500 italic">
+                                        Loading queue items...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SECTION 3: MERGE PIPELINE -->
+        <div id="section-merge" class="hidden space-y-6">
+            <!-- Stats Cards Grid -->
+            <section class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <!-- Pending Merges -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-cyan-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Pending Merges</span>
+                    <span id="stat-merge-pending" class="text-2xl font-bold text-cyan-400 mt-2">0</span>
+                </div>
+                <!-- Merged Count -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-emerald-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Merged Count</span>
+                    <span id="stat-merge-merged" class="text-2xl font-bold text-emerald-400 mt-2">0</span>
+                </div>
+                <!-- Last Scan -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-indigo-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Last Scan</span>
+                    <span id="stat-merge-scan" class="text-sm font-semibold text-indigo-400 mt-2">Never</span>
+                </div>
+                <!-- Last Apply -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-violet-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Last Apply</span>
+                    <span id="stat-merge-apply" class="text-sm font-semibold text-violet-400 mt-2">Never</span>
+                </div>
+            </section>
+
+            <!-- Two Columns Layout -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- Left Column: Watcher Config -->
+                <div class="space-y-6">
+                    <div class="glass-panel p-5 rounded-xl space-y-4">
+                        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-2">
+                            Watcher Configurations
+                        </h2>
+                        <div class="flex items-center justify-between border-b border-slate-900 pb-2">
+                            <span class="text-sm text-slate-400">Daemon Status</span>
+                            <span class="text-xs font-bold text-emerald-400">● Active</span>
+                        </div>
+                        <div class="flex items-center justify-between border-b border-slate-900 pb-2">
+                            <span class="text-sm text-slate-400">Watch Interval</span>
+                            <span class="text-xs text-slate-200 font-mono">300s / SIGUSR1</span>
+                        </div>
+                        <div class="flex items-center justify-between border-b border-slate-900 pb-2">
+                            <span class="text-sm text-slate-400">Confidence Threshold</span>
+                            <span class="text-xs font-bold text-amber-500">≥ 80</span>
+                        </div>
+                        <div class="flex items-center justify-between border-b border-slate-900 pb-2">
+                            <span class="text-sm text-slate-400">Shadow Verification</span>
+                            <span class="text-xs font-bold text-indigo-400">Port 9001</span>
+                        </div>
+                        <div class="flex items-center justify-between border-b border-slate-900 pb-2">
+                            <span class="text-sm text-slate-400">Notifications</span>
+                            <span class="text-xs font-bold text-cyan-400">Slack & Telegram</span>
+                        </div>
+                        <div class="bg-indigo-500/5 border border-indigo-500/10 rounded-lg p-3 text-xs text-slate-400 leading-relaxed mt-2">
+                            The watcher daemon monitors sandboxes dynamically. On event notification, it triggers test verification with setting resilience and auto-merges to staging.
+                        </div>
+                    </div>
+
+                    <div class="glass-panel p-5 rounded-xl space-y-4">
+                        <div class="flex items-center justify-between gap-3 border-b border-slate-800 pb-2">
+                            <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Canonical Merge Map</h2>
+                            <a class="text-[10px] font-bold uppercase tracking-wider text-cyan-400 hover:text-cyan-300" href="https://prismatic.growthwebdev.com/workspace-tree?file=okf/audits/canonical-merge-winner-map-2026-07-06.md" target="_blank" rel="noreferrer">Open audit</a>
+                        </div>
+                        <div class="space-y-2 text-xs text-slate-300">
+                            <div class="flex items-start justify-between gap-3">
+                                <span class="font-semibold text-slate-200">GRO-1567</span>
+                                <span class="text-slate-400 text-right">Winner: <span class="text-cyan-300 font-mono">prismatic/gateway/server.py</span></span>
+                            </div>
+                            <div class="flex items-start justify-between gap-3">
+                                <span class="font-semibold text-slate-200">GRO-1614</span>
+                                <span class="text-slate-400 text-right">Winner: <span class="text-cyan-300 font-mono">prismatic/core/hardware_profile.py</span></span>
+                            </div>
+                            <div class="flex items-start justify-between gap-3">
+                                <span class="font-semibold text-slate-200">GRO-2091</span>
+                                <span class="text-slate-400 text-right">Winner: <span class="text-cyan-300 font-mono">okf/index.md</span></span>
+                            </div>
+                            <div class="flex items-start justify-between gap-3">
+                                <span class="font-semibold text-slate-200">GRO-2193 / 2305</span>
+                                <span class="text-slate-400 text-right">Winner: <span class="text-cyan-300 font-mono">plugins/.../src/index.js</span></span>
+                            </div>
+                            <div class="flex items-start justify-between gap-3">
+                                <span class="font-semibold text-slate-200">GRO-2353 / 2355</span>
+                                <span class="text-slate-400 text-right">Winner: <span class="text-cyan-300 font-mono">plugins/pwp/plugin-manifest.yaml</span></span>
+                            </div>
+                            <div class="flex items-start justify-between gap-3">
+                                <span class="font-semibold text-slate-200">GRO-2471</span>
+                                <span class="text-slate-400 text-right">Winner: <span class="text-cyan-300 font-mono">.gitignore</span></span>
+                            </div>
+                        </div>
+                        <div class="bg-emerald-500/5 border border-emerald-500/10 rounded-lg p-3 text-xs text-slate-400 leading-relaxed">
+                            This keeps the highest-signal merge families visible from the dashboard instead of only inside audits.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right Column: Pending and History feeds -->
+                <div class="lg:col-span-2 space-y-6">
+                    <!-- Pending Sandboxes Table -->
+                    <div class="glass-panel p-5 rounded-xl space-y-4">
+                        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-3">
+                            Pending Sandboxes
+                        </h2>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left text-sm border-collapse">
+                                <thead>
+                                    <tr class="border-b border-slate-800 text-slate-500 text-xs font-bold uppercase tracking-wider">
+                                        <th class="py-2.5 px-3">Ticket</th>
+                                        <th class="py-2.5 px-3">Tier</th>
+                                        <th class="py-2.5 px-3">Confidence</th>
+                                        <th class="py-2.5 px-3">Modified</th>
+                                        <th class="py-2.5 px-3">Contention Files</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="merge-pending-tbody" class="divide-y divide-slate-800/30">
+                                    <tr>
+                                        <td colspan="5" class="py-6 text-center text-slate-500 italic">
+                                            No pending sandboxes.
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Merge History Table -->
+                    <div class="glass-panel p-5 rounded-xl space-y-4">
+                        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-3">
+                            Recent Auto-Merges
+                        </h2>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left text-sm border-collapse">
+                                <thead>
+                                    <tr class="border-b border-slate-800 text-slate-500 text-xs font-bold uppercase tracking-wider">
+                                        <th class="py-2.5 px-3">Ticket</th>
+                                        <th class="py-2.5 px-3">Tier</th>
+                                        <th class="py-2.5 px-3">Commit</th>
+                                        <th class="py-2.5 px-3">Applied</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="merge-history-tbody" class="divide-y divide-slate-800/30">
+                                    <tr>
+                                        <td colspan="4" class="py-6 text-center text-slate-500 italic">
+                                            No merge history.
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SECTION: FOUNDATION -->
+        <div id="section-foundation" class="hidden space-y-6">
+            <!-- Stats Grid -->
+            <section class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <!-- Jules runs -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-indigo-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Jules CLI Sessions</span>
+                    <div class="flex items-end justify-between mt-2">
+                        <span id="stat-foundation-jules" class="text-2xl font-bold text-indigo-400">0</span>
+                        <span class="text-xs text-slate-500">Limit: 300</span>
+                    </div>
+                    <!-- progress bar -->
+                    <div class="w-full bg-slate-800 rounded-full h-1.5 mt-2">
+                        <div id="progress-foundation-jules" class="bg-indigo-500 h-1.5 rounded-full" style="width: 0%"></div>
+                    </div>
+                </div>
+                <!-- Ned runs -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-emerald-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Ned CLI Sessions</span>
+                    <span id="stat-foundation-ned" class="text-2xl font-bold text-emerald-400 mt-2">0</span>
+                </div>
+                <!-- AGY runs -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-cyan-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">AGY CLI Sessions</span>
+                    <span id="stat-foundation-agy" class="text-2xl font-bold text-cyan-400 mt-2">0</span>
+                </div>
+                <!-- Active reviewer route -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-amber-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Active AGY Reviewer Route</span>
+                    <span id="stat-foundation-reviewer" class="text-lg font-bold text-amber-400 mt-2 uppercase">agent:jules</span>
+                </div>
+            </section>
+
+            <!-- Control actions and logs layout -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- Left Column: Swarm Foundation Control -->
+                <div class="space-y-6">
+                    <div class="glass-panel p-5 rounded-xl space-y-4">
+                        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-2">
+                            Swarm Controls
+                        </h2>
+                        <p class="text-xs text-slate-400">
+                            Manually orchestrate the peer review transitions or run git synchronization status checks.
+                        </p>
+                        <div class="space-y-3 pt-2">
+                            <button onclick="triggerFoundationAction('orchestrate')" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-2 rounded-lg text-xs font-bold transition flex items-center justify-center space-x-2">
+                                <span>Run Peer Review Orchestrator</span>
+                            </button>
+                            <button onclick="triggerFoundationAction('sync')" class="w-full bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 py-2 rounded-lg text-xs font-bold transition flex items-center justify-center space-x-2">
+                                <span>Verify Sync / Git Status</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right Column: Orchestration Output Console -->
+                <div class="lg:col-span-2 space-y-6">
+                    <div class="glass-panel p-5 rounded-xl space-y-4">
+                        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-2 flex justify-between items-center">
+                            <span>Orchestration Terminal Console</span>
+                            <button onclick="clearFoundationConsole()" class="text-xs text-slate-500 hover:text-slate-300">Clear</button>
+                        </h2>
+                        <pre id="foundation-console" class="bg-slate-950/80 border border-slate-800/80 rounded-xl p-4 font-mono text-xs text-slate-400 h-64 overflow-y-auto whitespace-pre-wrap">Console ready. Click a control action to run scripts...</pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SECTION 4: WORKSPACES -->
+        <div id="section-workspaces" class="hidden space-y-6">
+            <div class="glass-panel p-5 rounded-xl space-y-4">
+                <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-3 flex justify-between items-center">
+                    <span>Registered Workspaces</span>
+                    <button class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-3 py-1.5 rounded transition">
+                        + Register Context
+                    </button>
+                </h2>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-sm border-collapse">
+                        <thead>
+                            <tr class="border-b border-slate-800 text-slate-500 text-xs font-bold uppercase tracking-wider">
+                                <th class="py-2.5 px-3">Workspace Name</th>
+                                <th class="py-2.5 px-3">Host Directory Path</th>
+                                <th class="py-2.5 px-3">Branch</th>
+                                <th class="py-2.5 px-3">Files</th>
+                                <th class="py-2.5 px-3">Size</th>
+                                <th class="py-2.5 px-3">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody id="workspaces-tbody" class="divide-y divide-slate-800/30">
+                            <!-- Populated dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- SECTION 5: SKILLS -->
+        <div id="section-skills" class="hidden space-y-6">
+            <div class="glass-panel p-5 rounded-xl space-y-4">
+                <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-3 flex justify-between items-center">
+                    <span>Installed Agent Capabilities</span>
+                    <button class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-3 py-1.5 rounded transition">
+                        Install from Registry
+                    </button>
+                </h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4" id="skills-grid">
+                    <!-- Populated dynamically -->
+                </div>
+            </div>
+        </div>
+
+        <!-- SECTION 6: SIGNALS -->
+        <div id="section-signals" class="hidden space-y-6">
+            <div class="glass-panel p-5 rounded-xl space-y-4">
+                <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-3">
+                    Inbound Signals Log
+                </h2>
+                <div class="bg-slate-950 rounded-lg border border-slate-900 overflow-hidden font-mono text-xs">
+                    <div class="bg-slate-900 border-b border-slate-800 px-4 py-2 text-slate-500 font-bold uppercase flex justify-between">
+                        <span>Console Output</span>
+                        <span>listening on ws://localhost:9000/ws</span>
+                    </div>
+                    <div class="p-4 space-y-2 max-h-[400px] overflow-y-auto" id="signals-log-box">
+                        <!-- Populated dynamically -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SECTION 7: PLUGIN GOVERNANCE -->
+        <div id="section-plugins" class="hidden space-y-6">
+            <div class="glass-panel p-5 rounded-xl space-y-5">
+                <div class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 pb-3">
+                    <div>
+                        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Plugin Governance Catalog</h2>
+                        <p class="text-xs text-slate-500 mt-1">PE-owned readiness, risk, approval gates, MCP/API/artifact coverage, and production blockers for every loaded plugin manifest.</p>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        <button onclick="loadPluginGovernance()" class="bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 border border-indigo-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Refresh Catalog</button>
+                    </div>
+                </div>
+                <div id="plugin-dashboard-health-cards" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 text-xs"></div>
+                <div id="plugin-first-run-empty-state" class="hidden rounded-2xl border border-dashed border-indigo-500/30 bg-indigo-950/10 p-4 text-sm text-slate-300">
+                    <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                        <div>
+                            <div class="text-indigo-300 font-bold uppercase tracking-wider text-xs">First-run plugin setup</div>
+                            <p class="mt-1 text-slate-400">No plugin records yet? Start with a catalog check, then run the release smoke to prove the dashboard, policy gate, jobs, and artifacts are wired.</p>
+                        </div>
+                        <div class="flex flex-wrap gap-2">
+                            <button onclick="copyDashboardCommand('python scripts/plugin_architecture catalog')" class="copy-cli-command rounded-lg border border-indigo-500/30 bg-indigo-600/10 px-3 py-2 text-xs font-semibold text-indigo-200 hover:bg-indigo-600/20">Copy catalog CLI</button>
+                            <button onclick="copyDashboardCommand('python scripts/release_smoke.py')" class="copy-cli-command rounded-lg border border-emerald-500/30 bg-emerald-600/10 px-3 py-2 text-xs font-semibold text-emerald-200 hover:bg-emerald-600/20">Copy release smoke</button>
+                        </div>
+                    </div>
+                </div>
+                <div id="plugin-onboarding-hints" class="grid grid-cols-1 lg:grid-cols-3 gap-3 text-xs"></div>
+                <div id="plugin-error-explanation" class="hidden rounded-xl border border-red-500/30 bg-red-950/20 p-3 text-xs text-red-100"></div>
+                <div class="grid grid-cols-1 2xl:grid-cols-[minmax(0,1fr)_380px] gap-4">
+                    <div class="space-y-4 min-w-0">
+                        <div id="plugin-governance-summary" class="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs"></div>
+                        <div id="plugin-policy-summary" class="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs"></div>
+                        <div id="plugin-policy-decision" class="rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-xs text-slate-300"></div>
+                        <div id="plugin-job-summary" class="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs"></div>
+                        <div id="plugin-artifact-summary" class="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs"></div>
+                        <div id="plugin-artifact-inventory" class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50"></div>
+                        <div id="plugin-artifacts-table" class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50"></div>
+                        <div id="plugin-audit-events" class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50"></div>
+                        <div id="plugin-job-timeline" class="rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-xs text-slate-300"></div>
+                        <div id="plugin-approval-controls" class="rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-xs text-slate-300"></div>
+                        <div id="plugin-jobs-table" class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/50"></div>
+                        <div id="plugin-governance-cards" class="grid grid-cols-1 xl:grid-cols-2 gap-4"></div>
+                    </div>
+                    <aside id="plugin-detail-drawer" class="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 text-xs text-slate-300 h-fit lg:sticky lg:top-4">
+                        <div class="text-slate-500 uppercase tracking-wider font-bold">Plugin detail drawer</div>
+                        <p class="mt-2 text-slate-400">Select a plugin, job, or artifact row to inspect governance, timeline, provenance, approvals, and next commands.</p>
+                    </aside>
+                </div>
+                <div id="plugin-doc-links" class="flex flex-wrap gap-2 text-xs"></div>
+            </div>
+        </div>
+
+        <!-- SECTION 8: PWP PLUGIN -->
+        <div id="section-pwp" class="hidden space-y-6">
+            <div class="glass-panel p-5 rounded-xl space-y-5">
+                <div class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 pb-3">
+                    <div>
+                        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider">PWP Additive Plugin Surface</h2>
+                        <p class="text-xs text-slate-500 mt-1">Portable Website Plugin capabilities connected into PE without becoming PE core. Connect/disconnect is explicit, reversible, and dashboard-visible.</p>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        <button onclick="pwpAction('connect')" class="bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-300 border border-emerald-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Connect</button>
+                        <button onclick="pwpAction('lifecycle-demo')" class="bg-cyan-600/10 hover:bg-cyan-600/20 text-cyan-300 border border-cyan-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Run Lifecycle Demo</button>
+                        <button onclick="pwpAction('disconnect')" class="bg-rose-600/10 hover:bg-rose-600/20 text-rose-300 border border-rose-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Disconnect</button>
+                        <button onclick="loadPWPStatus()" class="bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 border border-indigo-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Refresh</button>
+                    </div>
+                </div>
+                <div id="pwp-summary" class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs"></div>
+                <div id="pwp-blockers" class="space-y-2"></div>
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-4" id="pwp-capabilities"></div>
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 text-xs">
+                    <div class="bg-slate-950/70 border border-slate-800 rounded-xl p-4">
+                        <div class="text-slate-400 uppercase tracking-wider font-bold mb-2">Connect Points</div>
+                        <ul id="pwp-connect-points" class="space-y-2 text-slate-300 list-disc list-inside"></ul>
+                    </div>
+                    <div class="bg-slate-950/70 border border-slate-800 rounded-xl p-4">
+                        <div class="text-slate-400 uppercase tracking-wider font-bold mb-2">Disconnect Points</div>
+                        <ul id="pwp-disconnect-points" class="space-y-2 text-slate-300 list-disc list-inside"></ul>
+                    </div>
+                    <div class="bg-slate-950/70 border border-slate-800 rounded-xl p-4">
+                        <div class="text-slate-400 uppercase tracking-wider font-bold mb-2">Tools / Workflows</div>
+                        <div id="pwp-tools" class="flex flex-wrap gap-2"></div>
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-4 text-xs">
+                    <div class="bg-slate-950/70 border border-slate-800 rounded-xl overflow-hidden">
+                        <div class="p-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                                <div class="text-slate-400 uppercase tracking-wider font-bold">PWP Reference Lifecycle History</div>
+                                <p class="mt-1 text-slate-500">Canonical full lifecycle: connect → job → artifact/provenance → approval → publish/export → safe disconnect.</p>
+                            </div>
+                            <button onclick="pwpAction('lifecycle-demo')" class="bg-cyan-600/10 hover:bg-cyan-600/20 text-cyan-300 border border-cyan-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Run Demo</button>
+                        </div>
+                        <div id="pwp-lifecycle-history" class="divide-y divide-slate-800/70"></div>
+                    </div>
+                    <aside id="pwp-lifecycle-detail" class="bg-slate-950/70 border border-slate-800 rounded-xl p-4 min-h-[220px]"></aside>
+                </div>
+            </div>
+        </div>
+
+        <!-- SECTION 8: NATIVE CRONS -->
+        <div id="section-crons" class="hidden space-y-6">
+            <div class="glass-panel p-5 rounded-xl space-y-4">
+                <div class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 pb-3">
+                    <div>
+                        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Native Cron Queue</h2>
+                        <p class="text-xs text-slate-500 mt-1">Standalone Prismatic Engine jobs. Pause stays in queue; deactivate moves out of queue and saves for later; delete requires confirmation.</p>
+                    </div>
+                    <button onclick="loadNativeCrons()" class="bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 border border-indigo-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Refresh</button>
+                </div>
+                <div id="native-crons-summary" class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs"></div>
+                <div class="overflow-x-auto rounded-xl border border-slate-800/80">
+                    <table class="w-full text-left text-xs border-collapse">
+                        <thead class="bg-slate-950/80 text-slate-500 uppercase tracking-wider">
+                            <tr>
+                                <th class="p-3">Job</th>
+                                <th class="p-3">Schedule</th>
+                                <th class="p-3">State</th>
+                                <th class="p-3">Queue</th>
+                                <th class="p-3">Last Run</th>
+                                <th class="p-3">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="native-crons-table" class="divide-y divide-slate-800/70">
+                            <tr><td colspan="6" class="p-4 text-slate-500">Loading native cron registry…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- SECTION 8: QUOTA -->
+        <div id="section-quota" class="hidden space-y-6">
+            <div class="glass-panel p-5 rounded-xl space-y-4">
+                <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-3 flex justify-between items-center">
+                    <span>Vertex AI GCP Quota Utilization</span>
+                    <button onclick="pollQuota()" class="bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 border border-indigo-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">
+                        Trigger Sync
+                    </button>
+                </h2>
+                <div class="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
+                    <div id="quota-sync-status">Awaiting quota snapshot</div>
+                    <div id="quota-sync-age" class="font-mono">—</div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="quota-cards-grid">
+                    <!-- Populated dynamically -->
+                </div>
+            </div>
+            
+            <!-- Quota Alerts Log -->
+            <div class="glass-panel p-5 rounded-xl space-y-4">
+                <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-3">
+                    Recent Quota Exhaustion Events
+                </h2>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-xs border-collapse">
+                        <thead>
+                            <tr class="border-b border-slate-800 text-slate-500 font-bold uppercase tracking-wider">
+                                <th class="py-2 px-3">Timestamp</th>
+                                <th class="py-2 px-3">Model</th>
+                                <th class="py-2 px-3">Details</th>
+                            </tr>
+                        </thead>
+                        <tbody id="quota-events-tbody">
+                            <!-- Populated dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Native Cron Delete Confirmation Modal -->
+    <div id="cron-delete-modal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="glass-panel w-full max-w-lg rounded-xl shadow-2xl overflow-hidden" onclick="event.stopPropagation()">
+            <div class="border-b border-slate-800 p-4 flex items-center justify-between">
+                <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Delete Native Cron?</h3>
+                <button onclick="closeCronDeleteModal()" class="text-slate-500 hover:text-slate-300 font-bold text-xl" aria-label="Cancel delete cron">&times;</button>
+            </div>
+            <div class="p-5 space-y-4 text-sm text-slate-300">
+                <p>Deleting removes this cron from the queue and marks it deleted. If you may want it later, deactivate instead.</p>
+                <div id="cron-delete-target" class="rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-xs font-mono text-slate-400"></div>
+                <div class="flex flex-wrap justify-end gap-2 pt-2">
+                    <button onclick="confirmCronDeactivateFromModal()" class="px-3 py-2 rounded-lg text-xs font-bold bg-amber-500/10 text-amber-300 border border-amber-500/30 hover:bg-amber-500/20">Deactivate</button>
+                    <button onclick="confirmCronDeleteFromModal()" class="px-3 py-2 rounded-lg text-xs font-bold bg-rose-500/10 text-rose-300 border border-rose-500/30 hover:bg-rose-500/20">Delete — I’m sure</button>
+                    <button onclick="closeCronDeleteModal()" class="px-3 py-2 rounded-lg text-xs font-bold bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Webhook Event Modal -->
+    <div id="modal-container" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div class="glass-panel w-full max-w-2xl rounded-xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden" onclick="event.stopPropagation()">
+            <div class="border-b border-slate-800 p-4 flex items-center justify-between">
+                <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider flex items-center space-x-2">
+                    <span>Webhook Details</span>
+                    <span id="modal-id-badge" class="bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2 py-0.5 rounded text-xs"></span>
+                </h3>
+                <button onclick="closeModal()" class="text-slate-500 hover:text-slate-300 font-bold text-xl">&times;</button>
+            </div>
+            <div class="p-6 overflow-y-auto space-y-4">
+                <div class="grid grid-cols-2 gap-4 text-xs">
+                    <div>
+                        <span class="text-slate-500 uppercase font-semibold">Agent Name</span>
+                        <div id="modal-agent" class="text-slate-200 mt-1 font-semibold text-sm"></div>
+                    </div>
+                    <div>
+                        <span class="text-slate-500 uppercase font-semibold">Action</span>
+                        <div id="modal-action" class="text-slate-200 mt-1 capitalize text-sm"></div>
+                    </div>
+                    <div>
+                        <span class="text-slate-500 uppercase font-semibold">Status</span>
+                        <div id="modal-status" class="mt-1"></div>
+                    </div>
+                    <div>
+                        <span class="text-slate-500 uppercase font-semibold">Queued At</span>
+                        <div id="modal-queued" class="text-slate-200 mt-1 text-sm"></div>
+                    </div>
+                </div>
+                <div class="border-t border-slate-800/80 pt-4">
+                    <span class="text-slate-500 uppercase font-semibold text-xs block mb-2">Raw JSON Payload</span>
+                    <pre id="modal-payload" class="bg-slate-950 text-slate-300 p-4 rounded-lg overflow-x-auto text-[11px] font-mono border border-slate-900 max-h-[300px]"></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="border-t border-slate-900 py-4 px-6 text-center text-xs text-slate-600 bg-slate-950/20">
+        Prismatic Hub v0.1.0 • Standalone Gateway Telemetry
+    </footer>
+
+    <!-- Toast Notifications -->
+    <div id="toast" class="fixed bottom-5 right-5 bg-slate-900 border border-slate-800 text-slate-200 px-4 py-3 rounded-lg shadow-xl text-xs font-semibold transform translate-y-20 opacity-0 transition duration-300 pointer-events-none flex items-center space-x-2">
+        <span id="toast-text">Toast Message</span>
+    </div>
+
+    <script>
+        const API_PREFIX = "/api/gateway";
+        let activeTab = 'dashboard';
+        let loadedQueueItems = [];
+        let loadedNativeCrons = [];
+        let pendingCronDeleteId = null;
+        let pollingInterval = null;
+
+        // Mock registries matching Prismatic Hub spec
+        const mockAgents = {
+            agy: {
+                name: "AGY",
+                color: "#f59e0b",
+                dot: "bg-amber-500",
+                status: "idle",
+                role: "Vision & Research CLI Specialist",
+                task: "Completed UI mockup draft and layout updates",
+                seen: "2m ago",
+                config: "harness:agy-cli (cooldown=60s)"
+            },
+            jules: {
+                name: "Jules",
+                color: "#ea580c",
+                dot: "bg-orange-500",
+                status: "working",
+                role: "Async Git, Conflict Resolver & PR Agent",
+                task: "Creating rebase branches for GRO-671",
+                seen: "Active now",
+                config: "harness:jules-cli (lane:curator)"
+            },
+            fred: {
+                name: "Fred",
+                color: "#0ea5e9",
+                dot: "bg-sky-500",
+                status: "idle",
+                role: "Staging Governor & Compliance Watcher",
+                task: "Monitoring staging builds and PR approval state",
+                seen: "15m ago",
+                config: "harness:fred-cli (lane:staging)"
+            },
+            ned: {
+                name: "Ned",
+                color: "#a855f7",
+                dot: "bg-purple-500",
+                status: "offline",
+                role: "Long-running Research & Context Compiler",
+                task: "Standby - waiting for deep synthesis trigger",
+                seen: "1h ago",
+                config: "harness:ned-cli (batch)"
+            },
+            kai: {
+                name: "Kai",
+                color: "#10b981",
+                dot: "bg-emerald-500",
+                status: "working",
+                role: "Swarm Orchestrator & Config Coordinator",
+                task: "Synchronizing SQLite file watch events",
+                seen: "10s ago",
+                config: "harness:kai-cli (cooldown=1s)"
+            },
+            codex: {
+                name: "Codex",
+                color: "#ef4444",
+                dot: "bg-red-500",
+                status: "error",
+                role: "PR Review Specialist & Security Linter",
+                task: "Aborted - PR #24 failed unit tests checks",
+                seen: "30m ago",
+                config: "harness:codex-cli"
+            }
+        };
+
+        const mockWorkspaces = [
+            { id: "linear-growth", name: "Linear · GrowthWebDev", path: "/home/ubuntu/work/linear-growth-context", branch: "main", status: "connected", files: 142, size: "2.4 MB" },
+            { id: "github-mbgulden", name: "GitHub · mbgulden", path: "/home/ubuntu/work/agentic-swarm-ops", branch: "main", status: "connected", files: 89, size: "1.8 MB" },
+            { id: "gdrive-context", name: "Google Drive · Context", path: "/home/ubuntu/mounts/google-drive-context", branch: "n/a", status: "stalled", files: 34, size: "480 KB" }
+        ];
+
+        const mockSkills = [
+            { id: "code-review", name: "Code Reviewer", desc: "Automated PR sanity checking, security vulnerability scan, and performance reviews.", version: "v1.2", status: "Active" },
+            { id: "docs-generator", name: "Docs Generator", desc: "Reads project classes, functions, and docstrings to auto-generate markdown.", version: "v0.9", status: "Active" },
+            { id: "research-synthesizer", name: "Research Synthesizer", desc: "Scrapes Synology NAS backups and compiles historical event summaries.", version: "v1.0", status: "Available" }
+        ];
+
+        const mockSignals = [
+            { time: "14:41:22", source: "Linear", text: "Linear issue webhook received for GRO-675", type: "info" },
+            { time: "14:39:10", source: "GitHub", text: "GitHub PR merge proposal #24 detected", type: "success" },
+            { time: "14:36:55", source: "Cron", text: "Watcher daily backup completed successfully", type: "success" }
+        ];
+
+        // Theme Management
+        function toggleTheme() {
+            const isLight = document.body.classList.toggle("light-mode");
+            localStorage.setItem("theme", isLight ? "light" : "dark");
+            updateThemeIcon(isLight);
+        }
+        function updateThemeIcon(isLight) {
+            const icon = document.getElementById("theme-icon");
+            if (isLight) {
+                icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>';
+            } else {
+                icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m0-12.728l.707.707m12.728 12.728l.707.707M12 8a4 4 0 100 8 4 4 0 000-8z"></path>';
+            }
+        }
+        function applyTheme() {
+            const saved = localStorage.getItem("theme");
+            if (saved === "light") {
+                document.body.classList.add("light-mode");
+                updateThemeIcon(true);
+            } else {
+                updateThemeIcon(false);
+            }
+        }
+
+        // Tab Switching
+        function switchTab(tab) {
+            activeTab = tab;
+            
+            // Toggle Tab Buttons
+            const tabs = ['dashboard', 'telemetry', 'merge', 'workspaces', 'skills', 'signals', 'pwp', 'plugins', 'crons', 'quota', 'foundation'];
+            tabs.forEach(t => {
+                const btn = document.getElementById(`tab-btn-${t}`);
+                const sec = document.getElementById(`section-${t}`);
+                
+                if (t === tab) {
+                    btn.className = "px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-indigo-600/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-600/20";
+                    sec.classList.remove("hidden");
+                } else {
+                    btn.className = "px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200";
+                    sec.classList.add("hidden");
+                }
+            });
+            
+            fetchData();
+            if (tab === 'crons') {
+                loadNativeCrons();
+            }
+        }
+
+        // Toasts
+        function showToast(text, isError = false) {
+            const toast = document.getElementById("toast");
+            const toastText = document.getElementById("toast-text");
+            toastText.textContent = text;
+            if (isError) {
+                toast.className = "fixed bottom-5 right-5 bg-rose-950 border border-rose-800 text-rose-200 px-4 py-3 rounded-lg shadow-xl text-xs font-semibold duration-300 pointer-events-none flex items-center space-x-2";
+            } else {
+                toast.className = "fixed bottom-5 right-5 bg-slate-900 border border-slate-800 text-slate-200 px-4 py-3 rounded-lg shadow-xl text-xs font-semibold duration-300 pointer-events-none flex items-center space-x-2";
+            }
+            toast.classList.remove("translate-y-20", "opacity-0");
+            setTimeout(() => {
+                toast.classList.add("translate-y-20", "opacity-0");
+            }, 3000);
+        }
+
+        // Date Helpers
+        function formatDate(val) {
+            if (!val) return "N/A";
+            if (typeof val === 'number') {
+                return new Date(val * 1000).toLocaleString();
+            }
+            try {
+                return new Date(val).toLocaleString();
+            } catch (e) {
+                return val;
+            }
+        }
+
+        function formatQuotaPct(value) {
+            const num = Number(value);
+            if (value === null || value === undefined || Number.isNaN(num)) {
+                return "—";
+            }
+            return `${num.toFixed(1)}%`;
+        }
+
+        function quotaStatusLabel(item) {
+            if (item.exhausted) return "EXHAUSTED";
+            const num = Number(item.remaining_pct);
+            if (item.remaining_pct === null || item.remaining_pct === undefined || Number.isNaN(num)) {
+                return "SYNCING";
+            }
+            if (num <= 1) return "BLOCKED";
+            return "ACTIVE";
+        }
+
+        function formatAge(seconds) {
+            const n = Number(seconds);
+            if (!Number.isFinite(n) || n < 0) return "Freshness: unknown";
+            if (n < 60) return `Freshness: ${Math.round(n)}s ago`;
+            const mins = Math.floor(n / 60);
+            if (mins < 60) return `Freshness: ${mins}m ago`;
+            const hours = Math.floor(mins / 60);
+            return `Freshness: ${hours}h ${mins % 60}m ago`;
+        }
+
+        function renderRecoverySurface(payload = {}) {
+            const serviceName = payload.service_name || "prismatic-consumer.service";
+            const systemdActive = Boolean(payload.systemd_active);
+            const heartbeat = payload.heartbeat || {};
+            const pool = payload.pool_stats || {};
+            const taxonomy = Array.isArray(payload.failure_taxonomy) ? payload.failure_taxonomy : [];
+            const serviceState = systemdActive ? "ACTIVE" : "OFFLINE";
+            const heartbeatState = heartbeat.exists ? "present" : "missing";
+            const poolState = pool.error ? "ERROR" : (Number(pool.live_count) >= 0 ? "LIVE" : "SYNCING");
+
+            const setText = (id, value) => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = value;
+            };
+
+            setText("recovery-service", serviceName);
+            setText("recovery-service-state", serviceState);
+            setText("recovery-heartbeat", heartbeatState);
+            setText("recovery-heartbeat-path", heartbeat.path || "Awaiting live heartbeat proof");
+            setText("recovery-live-count", pool.live_count ?? 0);
+            setText("recovery-dlq-count", pool.total_skipped_dlq ?? 0);
+            setText("recovery-pool-state", pool.error ? `Pool error: ${pool.error}` : `Systemd ${serviceState.toLowerCase()}, heartbeat ${heartbeatState}`);
+            setText("recovery-taxonomy-count", `${taxonomy.length} classes`);
+            setText(
+                "recovery-taxonomy-sample",
+                taxonomy.length
+                    ? taxonomy.slice(0, 3).map(item => item.label || item.code || item.name || "unlabeled").join(" · ")
+                    : "No taxonomy labels reported"
+            );
+        }
+
+        async function refreshRecoveryStatus() {
+            const res = await fetch(`${API_PREFIX}/recovery/status`);
+            if (!res.ok) {
+                showToast("Recovery status refresh failed", true);
+                return;
+            }
+            const payload = await res.json();
+            renderRecoverySurface(payload);
+            showToast("Recovery status refreshed");
+        }
+
+        // Node detail helper
+        function showAgentDetail(id) {
+            const agent = mockAgents[id];
+            if (!agent) return;
+            
+            document.getElementById("agent-detail-placeholder").classList.add("hidden");
+            const card = document.getElementById("agent-detail-card");
+            card.classList.remove("hidden");
+            
+            document.getElementById("agent-detail-dot").className = `w-3 h-3 rounded-full ${agent.dot}`;
+            document.getElementById("agent-detail-name").textContent = agent.name;
+            document.getElementById("agent-detail-role").textContent = agent.role;
+            document.getElementById("agent-detail-task").textContent = agent.task;
+            document.getElementById("agent-detail-seen").textContent = agent.seen;
+            document.getElementById("agent-detail-config").textContent = agent.config;
+            
+            const tag = document.getElementById("agent-detail-status-tag");
+            tag.textContent = agent.status;
+            if (agent.status === "working") {
+                tag.className = "px-2 py-0.5 rounded text-[9px] uppercase font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20";
+            } else if (agent.status === "error") {
+                tag.className = "px-2 py-0.5 rounded text-[9px] uppercase font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20";
+            } else if (agent.status === "offline") {
+                tag.className = "px-2 py-0.5 rounded text-[9px] uppercase font-bold bg-slate-800 text-slate-500 border border-slate-700/50";
+            } else {
+                tag.className = "px-2 py-0.5 rounded text-[9px] uppercase font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20";
+            }
+        }
+
+        // Webhook simulator POST
+        async function simulateWebhook(e) {
+            e.preventDefault();
+            const ticket = document.getElementById("sim-ticket").value.trim();
+            const agent = document.getElementById("sim-agent").value;
+            const title = document.getElementById("sim-title").value.trim();
+            
+            // Build Linear Issue Payload matching the server format
+            const payload = {
+                action: "update",
+                type: "Issue",
+                data: {
+                    id: `sim-${Date.now()}`,
+                    title: title,
+                    identifier: ticket,
+                    labels: [{ name: `agent:${agent}` }]
+                }
+            };
+            
+            try {
+                const r = await fetch("/webhooks/linear", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+                if (r.ok) {
+                    showToast("Simulated event successfully queued!");
+                    addLocalSignal("Linear", `Inbound webhook simulated for ticket ${ticket}`);
+                    fetchData();
+                } else {
+                    showToast("Failed to queue simulated event", true);
+                }
+            } catch (err) {
+                showToast("Network error", true);
+            }
+        }
+
+        function addLocalSignal(source, text) {
+            const container = document.getElementById("signals-log-box");
+            const time = new Date().toLocaleTimeString();
+            const div = document.createElement("div");
+            div.className = "text-slate-300";
+            div.innerHTML = `<span class="text-slate-500 font-bold">[${time}]</span> <span class="text-indigo-400 font-semibold">[${source}]</span> ${text}`;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        // Badges
+        function getAgentBadge(name) {
+            if (!name) return '<span class="text-xs text-slate-600">None</span>';
+            const clean = name.toLowerCase();
+            const colors = {
+                agy: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+                jules: "bg-orange-500/10 text-orange-400 border-orange-500/20",
+                fred: "bg-sky-500/10 text-sky-400 border-sky-500/20",
+                ned: "bg-purple-500/10 text-purple-400 border-purple-500/20",
+                kai: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+                codex: "bg-rose-500/10 text-rose-400 border-rose-500/20"
+            };
+            const cls = colors[clean] || "bg-slate-800 text-slate-300 border-slate-700/50";
+            return '<span class="px-2 py-0.5 rounded text-[10px] font-bold border capitalize ' + cls + '">' + clean + '</span>';
+        }
+
+        function getStatusBadge(status) {
+            const clean = (status || "").toLowerCase();
+            if (clean === "completed" || clean === "success") {
+                return '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Success</span>';
+            }
+            if (clean === "failed" || clean === "error") {
+                return '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20">Failed</span>';
+            }
+            if (clean === "processing") {
+                return '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-orange-500/10 text-orange-400 border border-orange-500/20 status-pulse">Processing</span>';
+            }
+            return '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">Pending</span>';
+        }
+
+        // Webhook queue details modal
+        function openModal(id) {
+            const item = loadedQueueItems.find(x => x.id === id);
+            if (!item) return;
+            
+            document.getElementById("modal-id-badge").textContent = `ID: ${item.id}`;
+            document.getElementById("modal-agent").innerHTML = getAgentBadge(item.agent_name);
+            document.getElementById("modal-action").textContent = item.action || "update";
+            document.getElementById("modal-status").innerHTML = getStatusBadge(item.dispatch_status);
+            document.getElementById("modal-queued").textContent = formatDate(item.queued_at);
+            
+            try {
+                const parsed = JSON.parse(item.payload);
+                document.getElementById("modal-payload").textContent = JSON.stringify(parsed, null, 2);
+            } catch (e) {
+                document.getElementById("modal-payload").textContent = item.payload;
+            }
+            
+            document.getElementById("modal-container").classList.remove("hidden");
+        }
+
+        function closeModal() {
+            document.getElementById("modal-container").classList.add("hidden");
+        }
+
+        function cronBadge(value) {
+            const v = String(value || "unknown");
+            const classes = {
+                active: "bg-emerald-500/10 text-emerald-300 border-emerald-500/20",
+                paused: "bg-amber-500/10 text-amber-300 border-amber-500/20",
+                deactivated: "bg-slate-700/40 text-slate-300 border-slate-600/40",
+                deleted: "bg-rose-500/10 text-rose-300 border-rose-500/20",
+                queued: "bg-indigo-500/10 text-indigo-300 border-indigo-500/20",
+                out_of_queue: "bg-slate-800 text-slate-400 border-slate-700"
+            };
+            return `<span class="px-2 py-0.5 rounded text-[10px] uppercase font-bold border ${classes[v] || classes.out_of_queue}">${v.replace('_', ' ')}</span>`;
+        }
+
+        let loadedPluginGovernance = null;
+        let loadedPluginJobs = null;
+        let loadedPluginArtifacts = null;
+        let loadedPluginAuditEvents = null;
+
+        async function loadPluginGovernance() {
+            try {
+                const [govRes, jobsRes, artifactsRes, auditRes] = await Promise.all([
+                    fetch('/api/plugins/governance'),
+                    fetch('/api/plugins/jobs'),
+                    fetch('/api/plugins/artifacts'),
+                    fetch('/api/plugins/audit-events?limit=50')
+                ]);
+                if (!govRes.ok) throw new Error(`governance HTTP ${govRes.status}`);
+                if (!jobsRes.ok) throw new Error(`jobs HTTP ${jobsRes.status}`);
+                if (!artifactsRes.ok) throw new Error(`artifacts HTTP ${artifactsRes.status}`);
+                if (!auditRes.ok) throw new Error(`audit HTTP ${auditRes.status}`);
+                loadedPluginGovernance = await govRes.json();
+                loadedPluginJobs = await jobsRes.json();
+                loadedPluginArtifacts = await artifactsRes.json();
+                loadedPluginAuditEvents = await auditRes.json();
+                renderPluginDashboardChrome(null);
+                renderPluginGovernance();
+                renderPluginPolicy();
+                renderPluginJobs();
+                renderPluginArtifacts();
+                renderPluginAuditEvents();
+                renderPluginJobTimeline();
+                renderPluginArtifactInventory();
+                renderPluginApprovalControls();
+                renderPluginDetailDrawer();
+            } catch (err) {
+                renderPluginDashboardChrome(err);
+                const summary = document.getElementById('plugin-governance-summary');
+                if (summary) summary.innerHTML = `<div class="col-span-full text-rose-300 bg-rose-950/30 border border-rose-900/60 rounded-xl p-3">Plugin governance refresh failed: ${err.message}</div>`;
+            }
+        }
+
+        function pluginBadge(label, color = 'slate') {
+            const palette = {
+                emerald: 'bg-emerald-950/40 text-emerald-300 border-emerald-800/60',
+                amber: 'bg-amber-950/40 text-amber-300 border-amber-800/60',
+                rose: 'bg-rose-950/40 text-rose-300 border-rose-800/60',
+                indigo: 'bg-indigo-950/40 text-indigo-300 border-indigo-800/60',
+                slate: 'bg-slate-900/80 text-slate-300 border-slate-700/70'
+            };
+            return `<span class="inline-flex items-center px-2 py-0.5 rounded-full border text-[10px] font-semibold ${palette[color] || palette.slate}">${label}</span>`;
+        }
+
+        function pluginDashboardCounts() {
+            const governance = (loadedPluginGovernance && loadedPluginGovernance.plugins) || [];
+            const jobs = (loadedPluginJobs && loadedPluginJobs.jobs) || [];
+            const artifacts = (loadedPluginArtifacts && loadedPluginArtifacts.artifacts) || [];
+            return {
+                plugins: governance.length,
+                jobs: jobs.length,
+                artifacts: artifacts.length,
+                approvals: jobs.filter(job => job.status === 'needs_approval' || job.approval_state === 'pending').length + artifacts.filter(artifact => artifact.approval_state === 'pending').length,
+                blockers: governance.filter(plugin => (plugin.production_blockers || []).length).length + jobs.filter(job => job.status === 'failed').length + artifacts.filter(artifact => artifact.approval_state === 'rejected').length
+            };
+        }
+
+        function copyDashboardCommand(command) {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(command);
+            }
+            renderPluginDetailDrawer({
+                title: 'Copied CLI command',
+                body: `<code class="block mt-2 rounded bg-slate-900 p-2 text-emerald-200 overflow-x-auto">${command}</code>`
+            });
+        }
+
+        function renderPluginDashboardChrome(error) {
+            const counts = pluginDashboardCounts();
+            const health = document.getElementById('plugin-dashboard-health-cards');
+            if (health) {
+                health.innerHTML = [
+                    ['Plugins', counts.plugins, 'Manifest catalog loaded', counts.plugins ? 'emerald' : 'amber'],
+                    ['Jobs', counts.jobs, 'Durable audit trail', counts.jobs ? 'indigo' : 'slate'],
+                    ['Artifacts', counts.artifacts, 'Provenance inventory', counts.artifacts ? 'indigo' : 'slate'],
+                    ['Needs attention', counts.approvals + counts.blockers, 'Approvals and blockers', counts.approvals + counts.blockers ? 'amber' : 'emerald'],
+                ].map(([label, value, help, color]) => `<div class="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                    <div class="flex items-center justify-between gap-2"><span class="text-slate-500 uppercase tracking-wider font-bold">${label}</span>${pluginBadge(color === 'emerald' ? 'healthy' : color === 'amber' ? 'review' : 'ready', color)}</div>
+                    <div class="mt-2 text-2xl font-black text-slate-100">${value}</div>
+                    <div class="mt-1 text-slate-500">${help}</div>
+                </div>`).join('');
+            }
+            const firstRun = document.getElementById('plugin-first-run-empty-state');
+            if (firstRun) firstRun.classList.toggle('hidden', counts.plugins + counts.jobs + counts.artifacts > 0);
+            const errorEl = document.getElementById('plugin-error-explanation');
+            if (errorEl) {
+                errorEl.classList.toggle('hidden', !error);
+                errorEl.innerHTML = error ? `<div class="font-bold uppercase tracking-wider">Dashboard refresh error</div><p class="mt-1 text-red-200">${error.message || error}. Check that the Gateway is running, then copy the smoke command below.</p><button onclick="copyDashboardCommand('python scripts/release_smoke.py')" class="copy-cli-command mt-2 rounded border border-red-400/30 px-2 py-1 text-red-100">Copy release smoke</button>` : '';
+            }
+            const hints = document.getElementById('plugin-onboarding-hints');
+            if (hints) {
+                const cards = [
+                    ['Start local', 'Run the public smoke before sharing the dashboard.', 'python scripts/public_launch_smoke.py', 'docs/public-onboarding.md'],
+                    ['Prove release path', 'Validate package metadata, plugins, API, and dashboard markers.', 'python scripts/release_smoke.py', 'docs/release-process.md'],
+                    ['Govern plugins', 'Preview policy before starting risky jobs or exporting artifacts.', 'python scripts/plugin_architecture catalog', 'docs/prismatic-plugin-architecture.md'],
+                ];
+                hints.innerHTML = cards.map(([title, body, command, doc]) => `<div class="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+                    <div class="font-bold text-slate-200">${title}</div><p class="mt-1 text-slate-500">${body}</p>
+                    <div class="mt-3 flex flex-wrap gap-2"><button onclick="copyDashboardCommand('${command}')" class="copy-cli-command rounded border border-indigo-500/30 px-2 py-1 text-indigo-200">Copy CLI</button><a class="dashboard-doc-link rounded border border-slate-700 px-2 py-1 text-slate-300 hover:text-white" href="/${doc}" target="_blank">Docs</a></div>
+                </div>`).join('');
+            }
+            const docs = document.getElementById('plugin-doc-links');
+            if (docs) {
+                docs.innerHTML = ['docs/public-onboarding.md', 'docs/prismatic-plugin-architecture.md', 'docs/release-process.md', 'docs/public-security-readiness.md'].map(doc => `<a class="dashboard-doc-link rounded-full border border-slate-700 px-3 py-1 text-slate-300 hover:border-indigo-500/50 hover:text-indigo-200" href="/${doc}" target="_blank">${doc.replace('docs/', '')}</a>`).join('');
+            }
+        }
+
+        function renderPluginDetailDrawer(selection = null) {
+            const drawer = document.getElementById('plugin-detail-drawer');
+            if (!drawer) return;
+            if (selection && selection.title) {
+                drawer.innerHTML = `<div class="text-slate-500 uppercase tracking-wider font-bold">${selection.title}</div><div class="mt-2 text-slate-300">${selection.body || ''}</div>`;
+                return;
+            }
+            const plugin = ((loadedPluginGovernance && loadedPluginGovernance.plugins) || [])[0];
+            const job = ((loadedPluginJobs && loadedPluginJobs.jobs) || [])[0];
+            const artifact = ((loadedPluginArtifacts && loadedPluginArtifacts.artifacts) || [])[0];
+            drawer.innerHTML = `<div class="flex items-start justify-between gap-3"><div><div class="text-slate-500 uppercase tracking-wider font-bold">Plugin detail drawer</div><div class="mt-1 text-lg font-black text-slate-100">${(plugin && plugin.name) || 'No plugin selected'}</div></div>${plugin ? pluginBadge(plugin.readiness_state || 'unknown', plugin.readiness_state === 'ready' ? 'emerald' : 'amber') : pluginBadge('first run', 'amber')}</div>
+                <div class="mt-4 space-y-3">
+                    <div><div class="text-slate-500 uppercase tracking-wider font-bold">Latest job</div><div class="mt-1 text-slate-300">${job ? `${job.job_id || job.id} · ${job.status}` : 'No job timeline yet.'}</div></div>
+                    <div><div class="text-slate-500 uppercase tracking-wider font-bold">Latest artifact</div><div class="mt-1 text-slate-300">${artifact ? `${artifact.artifact_id || artifact.id} · ${artifact.publish_state || artifact.approval_state}` : 'No artifact inventory yet.'}</div></div>
+                    <button onclick="copyDashboardCommand('python scripts/release_smoke.py')" class="copy-cli-command rounded-lg border border-indigo-500/30 bg-indigo-600/10 px-3 py-2 text-xs font-semibold text-indigo-200 hover:bg-indigo-600/20">Copy release smoke</button>
+                </div>`;
+        }
+
+        function renderPluginJobTimeline() {
+            const el = document.getElementById('plugin-job-timeline');
+            if (!el) return;
+            const jobs = ((loadedPluginJobs && loadedPluginJobs.jobs) || []).slice(0, 5);
+            if (!jobs.length) {
+                el.innerHTML = `<div class="text-slate-500 uppercase tracking-wider font-bold">Job timeline</div><p class="mt-2 text-slate-500">No plugin jobs yet. Create one through the API or run a plugin smoke to populate the durable audit trail.</p>`;
+                return;
+            }
+            el.innerHTML = `<div class="flex items-center justify-between"><div class="text-slate-500 uppercase tracking-wider font-bold">Job timeline</div><button onclick="copyDashboardCommand('curl -s http://127.0.0.1:9000/api/plugins/jobs')" class="copy-cli-command text-indigo-300 hover:text-indigo-200">Copy API</button></div><ol class="mt-3 space-y-2">${jobs.map(job => `<li class="border-l border-indigo-500/30 pl-3"><button onclick="renderPluginDetailDrawer({title: 'Job ${job.job_id || job.id}', body: 'Status: ${job.status || 'unknown'}<br>Approval: ${job.approval_state || 'unknown'}'})" class="text-left text-slate-200 hover:text-indigo-200">${job.action || job.kind || 'plugin job'} · ${pluginBadge(job.status || 'unknown', job.status === 'completed' ? 'emerald' : job.status === 'failed' ? 'rose' : 'amber')}</button><div class="text-slate-500">${formatDate(job.updated_at || job.created_at)}</div></li>`).join('')}</ol>`;
+        }
+
+        function renderPluginArtifactInventory() {
+            const el = document.getElementById('plugin-artifact-inventory');
+            if (!el) return;
+            const artifacts = ((loadedPluginArtifacts && loadedPluginArtifacts.artifacts) || []);
+            if (!artifacts.length) {
+                el.innerHTML = `<div class="p-3"><div class="text-slate-500 uppercase tracking-wider font-bold">Artifact inventory</div><p class="mt-2 text-slate-500">No artifacts registered yet. Approved plugin outputs will appear here with provenance, publish state, and export history.</p></div>`;
+                return;
+            }
+            el.innerHTML = `<div class="p-3 border-b border-slate-800 flex items-center justify-between"><div class="text-slate-500 uppercase tracking-wider font-bold">Artifact inventory</div><button onclick="copyDashboardCommand('curl -s http://127.0.0.1:9000/api/plugins/artifacts')" class="copy-cli-command text-indigo-300 hover:text-indigo-200">Copy API</button></div><div class="divide-y divide-slate-800/60">${artifacts.slice(0, 6).map(artifact => `<button onclick="renderPluginDetailDrawer({title: 'Artifact ${artifact.artifact_id || artifact.id}', body: 'Type: ${artifact.artifact_type || 'unknown'}<br>Publish: ${artifact.publish_state || 'unknown'}<br>Approval: ${artifact.approval_state || 'unknown'}'})" class="block w-full text-left p-3 hover:bg-slate-900/50"><div class="font-semibold text-slate-200">${artifact.artifact_type || 'artifact'} · ${artifact.artifact_id || artifact.id}</div><div class="mt-1 text-slate-500">${artifact.plugin_name || 'unknown plugin'} · ${artifact.publish_state || artifact.approval_state || 'unreviewed'}</div></button>`).join('')}</div>`;
+        }
+
+        function renderPluginApprovalControls() {
+            const el = document.getElementById('plugin-approval-controls');
+            if (!el) return;
+            const jobs = ((loadedPluginJobs && loadedPluginJobs.jobs) || []).filter(job => job.status === 'needs_approval' || job.approval_state === 'pending');
+            const artifacts = ((loadedPluginArtifacts && loadedPluginArtifacts.artifacts) || []).filter(artifact => artifact.approval_state === 'pending');
+            if (!jobs.length && !artifacts.length) {
+                el.innerHTML = `<div class="text-slate-500 uppercase tracking-wider font-bold">Approval controls</div><p class="mt-2 text-slate-500">No pending approvals. Policy-gated jobs and artifacts will show approve/reject actions here.</p>`;
+                return;
+            }
+            const jobButtons = jobs.slice(0, 3).map(job => `<div class="rounded-lg border border-amber-500/20 p-2"><div class="font-semibold text-amber-200">Job ${job.job_id || job.id}</div><div class="mt-2 flex gap-2"><button onclick="fetch('/api/plugins/jobs/${job.job_id || job.id}/approve', {method: 'POST'}).then(loadPluginGovernance)" class="rounded border border-emerald-500/30 px-2 py-1 text-emerald-200">Approve</button><button onclick="fetch('/api/plugins/jobs/${job.job_id || job.id}/reject', {method: 'POST'}).then(loadPluginGovernance)" class="rounded border border-rose-500/30 px-2 py-1 text-rose-200">Reject</button></div></div>`).join('');
+            const artifactButtons = artifacts.slice(0, 3).map(artifact => `<div class="rounded-lg border border-amber-500/20 p-2"><div class="font-semibold text-amber-200">Artifact ${artifact.artifact_id || artifact.id}</div><div class="mt-2 flex gap-2"><button onclick="fetch('/api/plugins/artifacts/${artifact.artifact_id || artifact.id}/approve', {method: 'POST'}).then(loadPluginGovernance)" class="rounded border border-emerald-500/30 px-2 py-1 text-emerald-200">Approve</button><button onclick="fetch('/api/plugins/artifacts/${artifact.artifact_id || artifact.id}/reject', {method: 'POST'}).then(loadPluginGovernance)" class="rounded border border-rose-500/30 px-2 py-1 text-rose-200">Reject</button></div></div>`).join('');
+            el.innerHTML = `<div class="text-slate-500 uppercase tracking-wider font-bold">Approval controls</div><div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">${jobButtons}${artifactButtons}</div>`;
+        }
+
+        function renderPluginPolicy() {
+            const jobs = (loadedPluginJobs && loadedPluginJobs.jobs) || [];
+            const artifacts = (loadedPluginArtifacts && loadedPluginArtifacts.artifacts) || [];
+            const jobPolicyBlocked = jobs.filter(job => (job.policy_result || {}).decision === 'block' || job.status === 'failed').length;
+            const jobApprovalRequired = jobs.filter(job => job.status === 'needs_approval' || job.approval_state === 'pending').length;
+            const artifactBlocked = artifacts.filter(artifact => artifact.approval_state === 'rejected' || artifact.publish_state === 'rejected' || ((artifact.policy_result || {}).decision === 'block')).length;
+            const artifactApprovalRequired = artifacts.filter(artifact => artifact.approval_state === 'pending').length;
+            const lastJob = jobs.find(job => job.policy_result);
+            const lastArtifact = artifacts.find(artifact => artifact.policy_result);
+            const lastPolicy = (lastJob && lastJob.policy_result) || (lastArtifact && lastArtifact.policy_result) || null;
+            const summaryEl = document.getElementById('plugin-policy-summary');
+            const decisionEl = document.getElementById('plugin-policy-decision');
+            if (!summaryEl || !decisionEl) return;
+            summaryEl.innerHTML = [
+                ['Blocked jobs', jobPolicyBlocked, jobPolicyBlocked ? 'rose' : 'emerald'],
+                ['Blocked artifacts', artifactBlocked, artifactBlocked ? 'rose' : 'emerald'],
+                ['Job approvals', jobApprovalRequired, jobApprovalRequired ? 'amber' : 'emerald'],
+                ['Artifact approvals', artifactApprovalRequired, artifactApprovalRequired ? 'amber' : 'emerald'],
+                ['Policy API', '/api/plugins/policy/preview', 'indigo'],
+            ].map(([label, value, color]) => `<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><div class="text-slate-500 uppercase tracking-wider font-bold">${label}</div><div class="mt-1 text-slate-100 font-mono text-lg">${value}</div><div class="mt-2">${pluginBadge('Policy Enforcement', color)}</div></div>`).join('');
+            const blockedReason = lastPolicy ? ((lastPolicy.blockers || [lastPolicy.reason || 'no blockers']).join('; ')) : 'No durable policy decisions yet. Use POST /api/plugins/policy/preview, job start, or artifact export to evaluate policy.';
+            decisionEl.innerHTML = `<div class="flex items-center justify-between gap-3"><div><div class="uppercase tracking-wider text-slate-500 font-bold">Policy Enforcement</div><div class="mt-1 text-slate-300">Last policy decision: <span class="font-mono">${lastPolicy ? lastPolicy.decision : 'none'}</span></div><div class="mt-1 text-slate-500 blocked_reason">blocked_reason: ${blockedReason}</div></div>${pluginBadge(lastPolicy ? `policy: ${lastPolicy.decision}` : 'policy: idle', lastPolicy && lastPolicy.decision === 'block' ? 'rose' : lastPolicy && lastPolicy.decision === 'needs_approval' ? 'amber' : 'emerald')}</div>`;
+        }
+
+        function renderPluginAuditEvents() {
+            const payload = loadedPluginAuditEvents || {};
+            const summary = payload.summary || {};
+            const events = payload.events || [];
+            const el = document.getElementById('plugin-audit-events');
+            if (!el) return;
+            if (!events.length) {
+                el.innerHTML = `<div class="p-3"><div class="flex items-center justify-between"><div class="text-slate-500 uppercase tracking-wider font-bold">Audit events</div><button onclick="copyDashboardCommand('curl -s http://127.0.0.1:9000/api/plugins/audit-events')" class="copy-cli-command text-indigo-300 hover:text-indigo-200">Copy API</button></div><p class="mt-2 text-slate-500">No plugin audit events yet. Create/start a job or register an artifact to populate the audit stream.</p></div>`;
+                return;
+            }
+            const rows = events.slice(0, 8).map(event => `<tr class="border-t border-slate-800/70 hover:bg-slate-900/50"><td class="px-3 py-2 font-mono text-slate-400">${event.created_at || '—'}</td><td class="px-3 py-2 text-slate-200">${event.event_type || 'event'}</td><td class="px-3 py-2 text-slate-300">${event.plugin_name || '—'}</td><td class="px-3 py-2 text-slate-400">${event.audit_source || event.source || '—'}</td><td class="px-3 py-2 text-slate-500">${event.job_id || event.artifact_id || '—'}</td></tr>`).join('');
+            el.innerHTML = `<div class="p-3 border-b border-slate-800 flex items-center justify-between"><div><div class="text-slate-500 uppercase tracking-wider font-bold">Audit events</div><div class="mt-1 text-slate-400">${summary.event_count || events.length} recent events · ${summary.job_event_count || 0} job · ${summary.artifact_event_count || 0} artifact</div></div><button onclick="copyDashboardCommand('curl -s http://127.0.0.1:9000/api/plugins/audit-events')" class="copy-cli-command text-indigo-300 hover:text-indigo-200">Copy API</button></div><table class="w-full text-left text-xs"><thead class="text-slate-500 uppercase"><tr><th class="px-3 py-2">Time</th><th class="px-3 py-2">Event</th><th class="px-3 py-2">Plugin</th><th class="px-3 py-2">Source</th><th class="px-3 py-2">Object</th></tr></thead><tbody>${rows}</tbody></table>`;
+        }
+
+        function renderPluginArtifacts() {
+            const payload = loadedPluginArtifacts || {};
+            const summary = payload.summary || {};
+            const summaryEl = document.getElementById('plugin-artifact-summary');
+            const tableEl = document.getElementById('plugin-artifacts-table');
+            if (!summaryEl || !tableEl) return;
+            const approval = summary.by_approval_state || {};
+            const publish = summary.by_publish_state || {};
+            summaryEl.innerHTML = [
+                ['Artifacts', summary.artifact_count || 0, 'emerald'],
+                ['Approved', approval.approved || 0, 'emerald'],
+                ['Pending', approval.pending || 0, 'amber'],
+                ['Publish ready', publish.publish_ready || 0, 'indigo'],
+                ['Rejected', approval.rejected || 0, 'rose'],
+            ].map(([label, value, color]) => `<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><div class="text-slate-500 uppercase tracking-wider font-bold">${label}</div><div class="mt-1 text-slate-100 font-mono text-lg">${value}</div><div class="mt-2">${pluginBadge(label, color)}</div></div>`).join('');
+            const rows = (payload.artifacts || []).slice(0, 12).map(artifact => `
+                <tr class="border-t border-slate-800/80">
+                    <td class="px-3 py-2 font-mono text-[11px] text-slate-300">${artifact.artifact_id}</td>
+                    <td class="px-3 py-2 text-slate-300">${artifact.plugin_name || ''}</td>
+                    <td class="px-3 py-2 text-slate-400">${artifact.artifact_type || ''}</td>
+                    <td class="px-3 py-2">${pluginBadge(`approval: ${artifact.approval_state || 'unknown'}`, artifact.approval_state === 'approved' ? 'emerald' : artifact.approval_state === 'rejected' ? 'rose' : 'amber')}</td>
+                    <td class="px-3 py-2">${pluginBadge(`publish: ${artifact.publish_state || 'unknown'}`, artifact.publish_state === 'publish_ready' ? 'indigo' : artifact.publish_state === 'rejected' ? 'rose' : 'slate')}</td>
+                    <td class="px-3 py-2 font-mono text-[11px] text-slate-500">${artifact.sha256 ? artifact.sha256.slice(0, 12) : 'external/no-hash'}</td>
+                    <td class="px-3 py-2 text-slate-500">${artifact.job_id || ''}</td>
+                </tr>`).join('');
+            tableEl.innerHTML = `<div class="px-3 py-2 border-b border-slate-800 text-xs font-bold uppercase tracking-wider text-slate-400">Universal Plugin Artifacts / Provenance Registry</div>
+                <table class="min-w-full text-xs"><thead class="text-slate-500"><tr><th class="px-3 py-2 text-left">Artifact</th><th class="px-3 py-2 text-left">Plugin</th><th class="px-3 py-2 text-left">Type</th><th class="px-3 py-2 text-left">Approval</th><th class="px-3 py-2 text-left">Publish</th><th class="px-3 py-2 text-left">SHA256</th><th class="px-3 py-2 text-left">Job</th></tr></thead><tbody>${rows || '<tr><td colspan="7" class="px-3 py-4 text-slate-500">No plugin artifacts registered yet.</td></tr>'}</tbody></table>`;
+        }
+
+        function renderPluginJobs() {
+            const payload = loadedPluginJobs || {};
+            const summary = payload.summary || {};
+            const summaryEl = document.getElementById('plugin-job-summary');
+            const tableEl = document.getElementById('plugin-jobs-table');
+            if (!summaryEl || !tableEl) return;
+            summaryEl.innerHTML = [
+                ['Jobs', summary.job_count || 0, 'indigo'],
+                ['Events', summary.event_count || 0, 'slate'],
+                ['Artifacts', summary.artifact_count || 0, 'emerald'],
+                ['Needs approval', (summary.by_status || {}).needs_approval || 0, 'amber'],
+                ['Failed', (summary.by_status || {}).failed || 0, 'rose'],
+            ].map(([label, value, color]) => `<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><div class="text-slate-500 uppercase tracking-wider font-bold">${label}</div><div class="mt-1 text-slate-100 font-mono text-lg">${value}</div><div class="mt-2">${pluginBadge(label, color)}</div></div>`).join('');
+            const rows = (payload.jobs || []).slice(0, 12).map(job => `
+                <tr class="border-t border-slate-800/80">
+                    <td class="px-3 py-2 font-mono text-[11px] text-slate-300">${job.job_id}</td>
+                    <td class="px-3 py-2 text-slate-300">${job.plugin_name}</td>
+                    <td class="px-3 py-2 text-slate-400">${job.action}</td>
+                    <td class="px-3 py-2">${pluginBadge(job.status || 'unknown', job.status === 'failed' || job.status === 'rejected' ? 'rose' : job.status === 'needs_approval' ? 'amber' : 'emerald')}</td>
+                    <td class="px-3 py-2">${pluginBadge(`approval: ${job.approval_state || 'unknown'}`, job.approval_state === 'pending' ? 'amber' : job.approval_state === 'rejected' ? 'rose' : 'slate')}</td>
+                    <td class="px-3 py-2 text-slate-500">${job.updated_at || ''}</td>
+                </tr>`).join('');
+            tableEl.innerHTML = `<div class="px-3 py-2 border-b border-slate-800 text-xs font-bold uppercase tracking-wider text-slate-400">Durable Plugin Jobs / Audit Trail</div>
+                <table class="min-w-full text-xs"><thead class="text-slate-500"><tr><th class="px-3 py-2 text-left">Job</th><th class="px-3 py-2 text-left">Plugin</th><th class="px-3 py-2 text-left">Action</th><th class="px-3 py-2 text-left">Status</th><th class="px-3 py-2 text-left">Approval</th><th class="px-3 py-2 text-left">Updated</th></tr></thead><tbody>${rows || '<tr><td colspan="6" class="px-3 py-4 text-slate-500">No plugin jobs recorded yet.</td></tr>'}</tbody></table>`;
+        }
+
+        function renderPluginGovernance() {
+            const payload = loadedPluginGovernance || {};
+            const summary = document.getElementById('plugin-governance-summary');
+            const cards = document.getElementById('plugin-governance-cards');
+            if (!summary || !cards) return;
+            const s = payload.summary || {};
+            summary.innerHTML = [
+                ['Ready', s.ready || 0, 'emerald'],
+                ['Warnings', s.warning || 0, 'amber'],
+                ['Blocked', s.blocked || 0, 'rose'],
+                ['High risk', s.high_risk || 0, 'rose'],
+                ['Needs approval', s.requires_approval || 0, 'indigo'],
+            ].map(([label, value, color]) => `<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><div class="text-slate-500 uppercase tracking-wider font-bold">${label}</div><div class="mt-1 text-slate-100 font-mono text-lg">${value}</div><div class="mt-2">${pluginBadge(label, color)}</div></div>`).join('');
+            cards.innerHTML = (payload.plugins || []).map(plugin => {
+                const gov = plugin.governance || {};
+                const blockers = gov.production_blockers || [];
+                const coverage = gov.surface_coverage || {};
+                const stateColor = gov.readiness_state === 'ready' ? 'emerald' : (gov.readiness_state === 'blocked' ? 'rose' : 'amber');
+                const endpointLinks = (plugin.endpoints || []).slice(0, 4).map(ep => pluginBadge(`${ep.method || 'GET'} ${ep.path || ''}`, 'slate')).join('');
+                return `<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-4 text-xs space-y-3">
+                    <div class="flex items-start justify-between gap-3">
+                        <div><div class="text-slate-100 font-bold">${plugin.name}</div><div class="text-slate-500 mt-1">${plugin.plugin_type} · ${(plugin.categories || []).join(', ') || 'uncategorized'}</div></div>
+                        <div class="flex gap-1 flex-wrap justify-end">${pluginBadge(gov.readiness_state || 'unknown', stateColor)}${pluginBadge(`risk: ${gov.risk_level || 'unknown'}`, gov.risk_level === 'high' || gov.risk_level === 'critical' ? 'rose' : 'indigo')}</div>
+                    </div>
+                    <div class="grid grid-cols-3 md:grid-cols-6 gap-2 text-center">
+                        ${[['Tools', coverage.tools], ['MCP', coverage.mcp_servers], ['API', coverage.api_routes], ['Artifacts', coverage.artifact_types], ['Dashboard', coverage.dashboard_surfaces], ['Approvals', (gov.approval_gates || []).length]].map(([label, value]) => `<div class="bg-slate-900/70 border border-slate-800 rounded-lg p-2"><div class="text-slate-500 uppercase text-[9px]">${label}</div><div class="text-slate-200 font-mono">${value || 0}</div></div>`).join('')}
+                    </div>
+                    <div class="flex flex-wrap gap-1">${(gov.approval_gates || []).map(g => pluginBadge(g, 'indigo')).join('') || pluginBadge('no approval gates declared', 'amber')}</div>
+                    <div class="flex flex-wrap gap-1">${endpointLinks || pluginBadge('no endpoints declared', 'amber')}</div>
+                    <div class="space-y-1">${blockers.length ? blockers.map(b => `<div class="rounded-lg border ${b.severity === 'blocking' ? 'border-rose-900/70 bg-rose-950/30 text-rose-200' : 'border-amber-900/70 bg-amber-950/30 text-amber-200'} p-2"><span class="font-bold uppercase">${b.severity}</span>: ${b.message}</div>`).join('') : '<div class="rounded-lg border border-emerald-900/70 bg-emerald-950/30 text-emerald-200 p-2">No production blockers detected.</div>'}</div>
+                </div>`;
+            }).join('') || '<div class="text-slate-500 text-xs">No plugin manifests discovered.</div>';
+        }
+
+        let loadedPWPStatus = null;
+
+        async function loadPWPStatus() {
+            try {
+                const res = await fetch('/api/pwp/status');
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                loadedPWPStatus = await res.json();
+                renderPWPStatus();
+            } catch (err) {
+                const summary = document.getElementById('pwp-summary');
+                if (summary) summary.innerHTML = `<div class="col-span-full text-rose-300 bg-rose-950/30 border border-rose-900/60 rounded-xl p-3">PWP status refresh failed: ${err.message}</div>`;
+            }
+        }
+
+        function pwpBadge(text, color = 'slate') {
+            const classes = {
+                slate: 'bg-slate-900/80 text-slate-300 border-slate-700',
+                emerald: 'bg-emerald-950/40 text-emerald-300 border-emerald-800/70',
+                amber: 'bg-amber-950/40 text-amber-300 border-amber-800/70',
+                rose: 'bg-rose-950/40 text-rose-300 border-rose-800/70',
+                indigo: 'bg-indigo-950/40 text-indigo-300 border-indigo-800/70'
+            };
+            return `<span class="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${classes[color] || classes.slate}">${text}</span>`;
+        }
+
+        function renderPWPStatus() {
+            const payload = loadedPWPStatus || {};
+            const summary = document.getElementById('pwp-summary');
+            const blockers = document.getElementById('pwp-blockers');
+            const caps = document.getElementById('pwp-capabilities');
+            const connects = document.getElementById('pwp-connect-points');
+            const disconnects = document.getElementById('pwp-disconnect-points');
+            const tools = document.getElementById('pwp-tools');
+            const lifecycleHistory = document.getElementById('pwp-lifecycle-history');
+            const lifecycleDetail = document.getElementById('pwp-lifecycle-detail');
+            if (!summary || !blockers || !caps || !connects || !disconnects || !tools || !lifecycleHistory || !lifecycleDetail) return;
+            const hardBlockers = (payload.production_blockers || []).filter(b => b.severity === 'blocking').length;
+            const warnings = (payload.production_blockers || []).filter(b => b.severity !== 'blocking').length;
+            const statusColor = payload.connected ? 'emerald' : (hardBlockers ? 'rose' : 'amber');
+            summary.innerHTML = [
+                ['State', payload.state || 'unknown', statusColor],
+                ['Capabilities', String((payload.capabilities || []).length), 'indigo'],
+                ['Tools', String((payload.tool_names || []).length), 'slate'],
+                ['Blockers', `${hardBlockers} hard / ${warnings} warn`, hardBlockers ? 'rose' : (warnings ? 'amber' : 'emerald')],
+            ].map(([label, value, color]) => `<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><div class="text-slate-500 uppercase tracking-wider font-bold">${label}</div><div class="mt-1 text-slate-100 font-mono">${value}</div><div class="mt-2">${pwpBadge(payload.status || value, color)}</div></div>`).join('');
+            blockers.innerHTML = (payload.production_blockers || []).length
+                ? (payload.production_blockers || []).map(b => `<div class="rounded-xl border ${b.severity === 'blocking' ? 'border-rose-900/70 bg-rose-950/30 text-rose-200' : 'border-amber-900/70 bg-amber-950/30 text-amber-200'} p-3 text-xs"><span class="font-bold uppercase tracking-wider">${b.system || 'governance'}</span>: ${b.message}</div>`).join('')
+                : '<div class="rounded-xl border border-emerald-900/70 bg-emerald-950/30 text-emerald-200 p-3 text-xs">No PWP production blockers detected.</div>';
+            caps.innerHTML = (payload.capabilities || []).map(cap => `<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-4 text-xs space-y-3"><div><div class="text-slate-100 font-bold">${cap.label}</div><div class="text-slate-500 mt-1">${cap.category}</div></div><p class="text-slate-300 leading-relaxed">${cap.description}</p><div class="flex flex-wrap gap-1">${(cap.governance || []).slice(0,4).map(g => pwpBadge(g, 'indigo')).join('')}</div></div>`).join('');
+            connects.innerHTML = (payload.connect_points || []).map(item => `<li>${item}</li>`).join('');
+            disconnects.innerHTML = (payload.disconnect_points || []).map(item => `<li>${item}</li>`).join('');
+            tools.innerHTML = [...(payload.tool_names || []), ...(payload.workflows || [])].slice(0, 32).map(item => pwpBadge(item, 'slate')).join('');
+            renderPWPLifecycleHistory(payload.lifecycle_summary || {}, lifecycleHistory, lifecycleDetail);
+        }
+
+        function renderPWPLifecycleHistory(lifecycle, historyEl, detailEl) {
+            const jobs = ((lifecycle.history || {}).jobs || []);
+            const artifacts = ((lifecycle.history || {}).artifacts || []);
+            const latestArtifact = lifecycle.latest_artifact || artifacts[0] || null;
+            if (!jobs.length && !artifacts.length) {
+                historyEl.innerHTML = '<div class="p-4 text-slate-500">No PWP lifecycle runs yet. Click Run Demo to create a credential-free job, artifact, approval, publish/export history, and safe disconnect proof.</div>';
+                detailEl.innerHTML = '<div class="text-slate-500 uppercase tracking-wider font-bold">Lifecycle detail</div><p class="mt-2 text-slate-400">PWP is the canonical reference plugin. The demo writes to the universal plugin job and artifact registries.</p>';
+                return;
+            }
+            historyEl.innerHTML = jobs.slice(0, 8).map(job => `<button onclick="showPWPLifecycleDetail('${job.job_id}')" class="block w-full text-left p-4 hover:bg-slate-900/60 transition"><div class="flex flex-wrap items-center justify-between gap-2"><div class="font-semibold text-slate-200">${job.action || 'pwp job'} · ${job.job_id}</div>${pwpBadge(job.status || 'unknown', job.status === 'completed' ? 'emerald' : job.status === 'failed' ? 'rose' : 'amber')}</div><div class="mt-1 text-slate-500">Artifacts: ${(job.artifact_ids || []).length} · approval: ${job.approval_state || 'unknown'} · ${formatDate(job.updated_at || job.created_at)}</div></button>`).join('');
+            detailEl.innerHTML = `<div class="text-slate-500 uppercase tracking-wider font-bold">Reference lifecycle proof</div><div class="mt-3 grid grid-cols-2 gap-2 text-xs"><div class="rounded-lg border border-slate-800 p-2"><div class="text-slate-500">Jobs</div><div class="text-lg font-black text-slate-100">${lifecycle.jobs_total || jobs.length}</div></div><div class="rounded-lg border border-slate-800 p-2"><div class="text-slate-500">Artifacts</div><div class="text-lg font-black text-slate-100">${lifecycle.artifacts_total || artifacts.length}</div></div></div><div class="mt-4 space-y-2 text-slate-300"><div>${pwpBadge('connect', 'emerald')} ${pwpBadge('job registry', 'indigo')} ${pwpBadge('provenance', 'indigo')}</div><div>${pwpBadge('approval before publish', 'amber')} ${pwpBadge('safe disconnect', 'emerald')}</div></div><div class="mt-4 text-slate-500">Latest artifact: ${latestArtifact ? `${latestArtifact.artifact_id} · ${latestArtifact.publish_state}` : 'none'}</div>`;
+        }
+
+        function showPWPLifecycleDetail(jobId) {
+            const detailEl = document.getElementById('pwp-lifecycle-detail');
+            const lifecycle = (loadedPWPStatus || {}).lifecycle_summary || {};
+            const jobs = ((lifecycle.history || {}).jobs || []);
+            const artifacts = ((lifecycle.history || {}).artifacts || []);
+            const job = jobs.find(item => item.job_id === jobId);
+            if (!detailEl || !job) return;
+            const linkedArtifacts = artifacts.filter(item => (job.artifact_ids || []).includes(item.artifact_id));
+            detailEl.innerHTML = `<div class="text-slate-500 uppercase tracking-wider font-bold">${job.job_id}</div><div class="mt-2 text-lg font-black text-slate-100">${job.action}</div><div class="mt-3 flex flex-wrap gap-2">${pwpBadge(job.status || 'unknown', job.status === 'completed' ? 'emerald' : 'amber')}${pwpBadge(job.approval_state || 'unknown', 'indigo')}</div><div class="mt-4 text-slate-400">Events: ${(job.events || []).length} · Artifacts: ${(job.artifact_ids || []).length}</div><div class="mt-4 space-y-2">${linkedArtifacts.map(artifact => `<div class="rounded-lg border border-slate-800 p-2"><div class="text-slate-200">${artifact.artifact_id}</div><div class="text-slate-500">${artifact.artifact_type} · ${artifact.approval_state} · ${artifact.publish_state}</div></div>`).join('') || '<div class="text-slate-500">No linked artifacts.</div>'}</div>`;
+        }
+
+        async function pwpAction(action) {
+            const options = { method: 'POST' };
+            if (action === 'lifecycle-demo') {
+                options.headers = { 'Content-Type': 'application/json' };
+                options.body = JSON.stringify({ actor: 'pwp-dashboard', disconnect_after: true });
+            }
+            const res = await fetch(`/api/pwp/${action}`, options);
+            const payload = await res.json();
+            if (action === 'lifecycle-demo') {
+                await loadPWPStatus();
+            } else {
+                loadedPWPStatus = payload;
+                renderPWPStatus();
+            }
+            showToast(`PWP ${action}: ${payload.ok === false ? 'failed' : (payload.status || payload.state || 'ok')}`, !res.ok);
+        }
+
+        async function loadNativeCrons() {
+            const table = document.getElementById("native-crons-table");
+            if (!table) return;
+            table.innerHTML = '<tr><td colspan="6" class="p-4 text-slate-500">Loading native cron registry…</td></tr>';
+            try {
+                const res = await fetch('/native-crons?include_deleted=false');
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                loadedNativeCrons = await res.json();
+                renderNativeCrons();
+            } catch (err) {
+                table.innerHTML = `<tr><td colspan="6" class="p-4 text-rose-300">Failed to load native crons: ${err.message}</td></tr>`;
+            }
+        }
+
+        function renderNativeCrons() {
+            const table = document.getElementById("native-crons-table");
+            const summary = document.getElementById("native-crons-summary");
+            if (!table || !summary) return;
+            const counts = loadedNativeCrons.reduce((acc, cron) => {
+                acc[cron.state] = (acc[cron.state] || 0) + 1;
+                return acc;
+            }, {});
+            summary.innerHTML = ['active', 'paused', 'deactivated', 'deleted'].map(key => `
+                <div class="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+                    <div class="text-slate-500 uppercase tracking-wider font-bold">${key}</div>
+                    <div class="text-xl font-bold text-slate-200 mt-1">${counts[key] || 0}</div>
+                </div>
+            `).join('');
+            if (!loadedNativeCrons.length) {
+                table.innerHTML = '<tr><td colspan="6" class="p-4 text-slate-500">No native crons registered.</td></tr>';
+                return;
+            }
+            table.innerHTML = loadedNativeCrons.map(cron => {
+                const last = cron.last_run_at ? `${formatDate(cron.last_run_at)}<br><span class="text-slate-500">${cron.last_status || 'unknown'}</span>` : '<span class="text-slate-500">Never</span>';
+                const pauseResume = cron.state === 'paused'
+                    ? `<button onclick="nativeCronAction('${cron.id}', 'resume')" class="text-emerald-300 hover:text-emerald-200">Resume</button>`
+                    : `<button onclick="nativeCronAction('${cron.id}', 'pause')" class="text-amber-300 hover:text-amber-200">Pause</button>`;
+                const activateDeactivate = cron.state === 'deactivated'
+                    ? `<button onclick="nativeCronAction('${cron.id}', 'activate')" class="text-indigo-300 hover:text-indigo-200">Activate</button>`
+                    : `<button onclick="nativeCronAction('${cron.id}', 'deactivate')" class="text-slate-300 hover:text-slate-100">Deactivate</button>`;
+                return `
+                    <tr class="hover:bg-slate-900/40">
+                        <td class="p-3 align-top"><div class="font-bold text-slate-200">${cron.name}</div><div class="text-slate-500 mt-1">${cron.description || cron.id}</div><div class="text-slate-600 font-mono mt-1">${cron.id}</div></td>
+                        <td class="p-3 align-top font-mono text-slate-300">${cron.schedule}</td>
+                        <td class="p-3 align-top">${cronBadge(cron.state)}</td>
+                        <td class="p-3 align-top">${cronBadge(cron.queue_state)}</td>
+                        <td class="p-3 align-top text-slate-400">${last}</td>
+                        <td class="p-3 align-top"><div class="flex flex-wrap gap-2 text-xs font-bold">${pauseResume}${activateDeactivate}<button onclick="nativeCronAction('${cron.id}', 'run')" class="text-indigo-300 hover:text-indigo-200">Run</button><button onclick="openCronDeleteModal('${cron.id}')" class="text-rose-300 hover:text-rose-200">Delete</button></div></td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        async function nativeCronAction(cronId, action) {
+            const res = await fetch(`/native-crons/${encodeURIComponent(cronId)}/action`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action })
+            });
+            const payload = await res.json();
+            if (!res.ok || payload.success === false) {
+                showToast(payload.error || `Cron ${action} failed`, true);
+                return;
+            }
+            showToast(`Cron ${action} complete`);
+            await loadNativeCrons();
+        }
+
+        function openCronDeleteModal(cronId) {
+            pendingCronDeleteId = cronId;
+            const cron = loadedNativeCrons.find(item => item.id === cronId);
+            document.getElementById("cron-delete-target").textContent = cron ? `${cron.name} (${cron.id})` : cronId;
+            document.getElementById("cron-delete-modal").classList.remove("hidden");
+        }
+
+        function closeCronDeleteModal() {
+            pendingCronDeleteId = null;
+            document.getElementById("cron-delete-modal").classList.add("hidden");
+        }
+
+        async function confirmCronDeactivateFromModal() {
+            if (!pendingCronDeleteId) return;
+            const cronId = pendingCronDeleteId;
+            closeCronDeleteModal();
+            await nativeCronAction(cronId, 'deactivate');
+        }
+
+        async function confirmCronDeleteFromModal() {
+            if (!pendingCronDeleteId) return;
+            const cronId = pendingCronDeleteId;
+            closeCronDeleteModal();
+            await nativeCronAction(cronId, 'delete');
+        }
+
+        // Control Hooks
+        async function controlDispatcher(action) {
+            const loader = document.getElementById("dispatcher-loader");
+            loader.classList.remove("hidden");
+            try {
+                const r = await fetch(`${API_PREFIX}/dispatcher/${action}`, { method: "POST" });
+                if (r.ok) {
+                    showToast(`Dispatcher command ${action}ed`);
+                    setTimeout(fetchData, 1000);
+                } else {
+                    showToast("Control failed", true);
+                }
+            } catch (e) {
+                showToast("Network error", true);
+            } finally {
+                loader.classList.add("hidden");
+            }
+        }
+
+        async function retryTask(taskId) {
+            try {
+                const r = await fetch(`${API_PREFIX}/webhooks/queue/retry/${taskId}`, { method: "POST" });
+                if (r.ok) {
+                    showToast("Task reset to pending");
+                    fetchData();
+                } else {
+                    showToast("Failed to retry task", true);
+                }
+            } catch (e) {
+                showToast("Network error", true);
+            }
+        }
+
+        async function purgeQueue() {
+            if (!confirm("Are you sure you want to purge completed/failed tasks from the queue?")) return;
+            try {
+                const r = await fetch(`${API_PREFIX}/webhooks/queue/purge`, { method: "POST" });
+                if (r.ok) {
+                    showToast("Queue history purged");
+                    fetchData();
+                } else {
+                    showToast("Failed to purge queue", true);
+                }
+            } catch (e) {
+                showToast("Network error", true);
+            }
+        }
+
+        // Searching / Filtering
+        function filterQueue() {
+            const query = document.getElementById("search-input").value.toLowerCase().trim();
+            const tbody = document.getElementById("queue-tbody");
+            
+            const filtered = loadedQueueItems.filter(item => {
+                const id = (item.identifier || "").toLowerCase();
+                const agent = (item.agent_name || "").toLowerCase();
+                const action = (item.action || "").toLowerCase();
+                const status = (item.dispatch_status || "").toLowerCase();
+                return id.includes(query) || agent.includes(query) || action.includes(query) || status.includes(query);
+            });
+            
+            if (filtered.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="6" class="py-8 text-center text-slate-500 italic">No matching events</td></tr>`;
+            } else {
+                tbody.innerHTML = filtered.map(item => `
+                    <tr onclick="openModal(${item.id})" class="border-b border-slate-800/50 hover:bg-slate-900/20 transition duration-150 cursor-pointer">
+                        <td class="py-3 px-3 font-semibold text-slate-200">${item.identifier || "N/A"}</td>
+                        <td class="py-3 px-3">${getAgentBadge(item.agent_name)}</td>
+                        <td class="py-3 px-3 text-slate-400 capitalize text-xs">${item.action || "update"}</td>
+                        <td class="py-3 px-3">${getStatusBadge(item.dispatch_status)}</td>
+                        <td class="py-3 px-3 text-slate-500 text-xs">${formatDate(item.queued_at)}</td>
+                        <td class="py-3 px-3 text-right">
+                            <button onclick="event.stopPropagation(); retryTask(${item.id})" class="text-xs text-indigo-400 hover:text-indigo-300 font-semibold px-2 py-1 rounded bg-indigo-500/5 hover:bg-indigo-500/10 border border-indigo-500/10 transition">
+                                Retry
+                            </button>
+                        </td>
+                    </tr>
+                `).join("");
+            }
+        }
+
+        // Sparklines drawing helper
+        function drawSparkline(values) {
+            const max = Math.max(...values, 1.0);
+            const height = 24;
+            const width = 48;
+            const step = width / (values.length - 1 || 1);
+            
+            const points = values.map((val, idx) => {
+                const x = idx * step;
+                const y = height - (val / max) * height;
+                return x + "," + y;
+            }).join(" ");
+            
+            return '<svg width="' + width + '" height="' + height + '"><polyline fill="none" stroke="#6366f1" stroke-width="1.5" points="' + points + '" /></svg>';
+        }
+
+        // Quotas poll hook
+        async function pollQuota() {
+            try {
+                const r = await fetch("/api/quota/poll", { method: "POST" });
+                if (r.ok) {
+                    showToast("Quota sync initiated");
+                    setTimeout(fetchData, 2000);
+                } else {
+                    showToast("Sync failed", true);
+                }
+            } catch (err) {
+                showToast("Network error", true);
+            }
+        }
+
+        async function fetchFoundationData() {
+            try {
+                const res = await fetch(`${API_PREFIX}/foundation/peer_review`);
+                if (res.ok) {
+                    const data = await res.json();
+                    document.getElementById("stat-foundation-jules").textContent = data.jules_count;
+                    document.getElementById("stat-foundation-ned").textContent = data.ned_count;
+                    document.getElementById("stat-foundation-agy").textContent = data.agy_count;
+                    document.getElementById("stat-foundation-reviewer").textContent = data.current_agy_reviewer;
+                    
+                    // Update progress bar
+                    const pct = Math.min(100, (data.jules_count / data.jules_limit) * 100);
+                    document.getElementById("progress-foundation-jules").style.width = `${pct}%`;
+                }
+            } catch (err) {
+                console.error("Error fetching foundation peer review data", err);
+            }
+        }
+
+        async function triggerFoundationAction(action) {
+            const consoleEl = document.getElementById("foundation-console");
+            consoleEl.textContent = `Running ${action}... Please wait...\n`;
+            try {
+                const res = await fetch(`${API_PREFIX}/foundation/control/${action}`, { method: "POST" });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.status === "ok") {
+                        showToast(`Action ${action} succeeded`);
+                        consoleEl.textContent += `[SUCCESS] ${data.message}\n\nSTDOUT:\n${data.stdout || ''}\n\nSTDERR:\n${data.stderr || ''}`;
+                        fetchData();
+                    } else {
+                        showToast(data.message || "Action failed", true);
+                        consoleEl.textContent += `[ERROR] ${data.message}\n`;
+                    }
+                } else {
+                    showToast(`Server returned error status`, true);
+                    consoleEl.textContent += `[HTTP ERROR] Status: ${res.status}\n`;
+                }
+            } catch (err) {
+                showToast("Network connection error", true);
+                consoleEl.textContent += `[CONNECTION ERROR] ${err}\n`;
+            }
+        }
+
+        function clearFoundationConsole() {
+            document.getElementById("foundation-console").textContent = "Console cleared.\n";
+        }
+
+        // Fetch API States
+        async function fetchData() {
+            // Global telemetry poll
+            await fetchTelemetryData();
+            
+            if (activeTab === 'dashboard') {
+                renderDashboardSummary();
+                await fetchQuotaSummary();
+                await fetchMorningBriefing();
+            } else if (activeTab === 'merge') {
+                await fetchMergeData();
+            } else if (activeTab === 'foundation') {
+                await fetchFoundationData();
+            } else if (activeTab === 'workspaces') {
+                await renderWorkspacesView();
+            } else if (activeTab === 'skills') {
+                renderSkillsView();
+            } else if (activeTab === 'signals') {
+                await renderSignalsView();
+            } else if (activeTab === 'quota') {
+                await fetchQuotaData();
+            }
+        }
+
+        async function fetchTelemetryData() {
+            try {
+                // 1. Stats
+                const statsRes = await fetch(`${API_PREFIX}/webhooks/stats`);
+                if (statsRes.ok) {
+                    const stats = await statsRes.json();
+                    document.getElementById("stat-received").textContent = stats.received || 0;
+                    document.getElementById("stat-auth-failed").textContent = stats.auth_failed || 0;
+                    document.getElementById("stat-latency").textContent = stats.average_dispatch_latency_seconds ? stats.average_dispatch_latency_seconds.toFixed(1) : "0.0";
+                    
+                    const sparklineDiv = document.getElementById("latency-sparkline");
+                    if (stats.recent_latencies && stats.recent_latencies.length >= 2) {
+                        sparklineDiv.innerHTML = drawSparkline(stats.recent_latencies);
+                    } else {
+                        sparklineDiv.innerHTML = `<span class="text-[10px] text-slate-500 italic">No trend</span>`;
+                    }
+                    
+                    document.getElementById("stat-pending").textContent = stats.queue_depths?.pending || 0;
+                    document.getElementById("stat-processing").textContent = stats.queue_depths?.processing || 0;
+                    document.getElementById("stat-completed").textContent = stats.queue_depths?.completed || 0;
+                    document.getElementById("stat-failed").textContent = stats.queue_depths?.failed || 0;
+                }
+
+                // 1b. Failure taxonomy
+                const taxonomyRes = await fetch(`${API_PREFIX}/recovery/status`);
+                if (taxonomyRes.ok) {
+                    const payload = await taxonomyRes.json();
+                    const grid = document.getElementById("failure-taxonomy-grid");
+                    const taxonomy = payload.failure_taxonomy || [];
+                    grid.innerHTML = taxonomy.map(item => `
+                        <article class="glass-panel p-3 rounded-xl border border-slate-800/70">
+                            <div class="flex items-center justify-between gap-3">
+                                <div>
+                                    <div class="text-[10px] uppercase tracking-wider text-slate-500">${item.code}</div>
+                                    <h3 class="text-sm font-semibold text-slate-100 mt-1">${item.name}</h3>
+                                </div>
+                                <span class="px-2 py-0.5 rounded text-[10px] font-bold border border-cyan-500/20 bg-cyan-500/10 text-cyan-400">${item.layer}</span>
+                            </div>
+                            <p class="text-xs text-slate-400 mt-2">${item.example}</p>
+                            <div class="mt-3 flex flex-wrap gap-1">
+                                ${item.signals.map(sig => `<span class="px-2 py-0.5 rounded-full text-[10px] bg-slate-800 text-slate-300 border border-slate-700">${sig}</span>`).join("")}
+                            </div>
+                        </article>
+                    `).join("");
+
+                    renderRecoverySurface(payload);
+
+                    const pool = payload.pool_stats || {};
+                    document.getElementById("stat-pool-live").textContent = pool.live_count ?? 0;
+                    document.getElementById("stat-pool-dlq").textContent = pool.total_skipped_dlq ?? 0;
+                    const recoveryHealthy = payload.systemd_active && payload.heartbeat?.exists && (pool.live_count ?? 0) === 0;
+                    setSummaryBadge(
+                        "summary-recovery-badge",
+                        "summary-recovery-meta",
+                        recoveryHealthy ? "green" : "amber",
+                        recoveryHealthy ? "HEALTHY" : "CHECK",
+                        `${payload.service_name || 'prismatic-consumer.service'} · heartbeat ${payload.heartbeat?.exists ? 'present' : 'missing'} · ${pool.live_count ?? 0} live / ${pool.total_skipped_dlq ?? 0} dlq`
+                    );
+                }
+
+                // 2. Queue
+                const queueRes = await fetch(`${API_PREFIX}/webhooks/queue`);
+                if (queueRes.ok) {
+                    const queue = await queueRes.json();
+                    loadedQueueItems = queue.items || [];
+                    document.getElementById("queue-total-badge").textContent = `${queue.total} total`;
+                    filterQueue();
+                }
+
+                // 3. Dispatcher Status
+                const dispRes = await fetch(`${API_PREFIX}/dispatcher/status`);
+                if (dispRes.ok) {
+                    const disp = await dispRes.json();
+                    const badge = document.getElementById("disp-status-badge");
+                    const dot = document.getElementById("disp-status-dot");
+                    const text = document.getElementById("disp-status-text");
+
+                    if (disp.status === "active") {
+                        badge.className = "flex items-center space-x-1.5 bg-emerald-500/10 px-2.5 py-1 rounded-full text-xs font-bold text-emerald-400 border border-emerald-500/20";
+                        dot.className = "w-2 h-2 rounded-full bg-emerald-500 status-pulse";
+                        text.textContent = "ACTIVE";
+                        setSummaryBadge("summary-dispatcher-badge", "summary-dispatcher-meta", "green", "ACTIVE", `Cycle #${disp.cycle_number || 0} · ${disp.active_agents?.length || 0} agent(s) live`);
+                    } else {
+                        badge.className = "flex items-center space-x-1.5 bg-slate-800 px-2.5 py-1 rounded-full text-xs font-bold text-slate-400 border border-slate-700/30";
+                        dot.className = "w-2 h-2 rounded-full bg-slate-500";
+                        text.textContent = "IDLE";
+                        setSummaryBadge("summary-dispatcher-badge", "summary-dispatcher-meta", "slate", "IDLE", `Cycle #${disp.cycle_number || 0} · last seen ${disp.last_cycle_at ? formatDate(disp.last_cycle_at) : "Never"}`);
+                    }
+
+                    document.getElementById("disp-cycle").textContent = disp.cycle_number || 0;
+                    document.getElementById("disp-last-active").textContent = disp.last_cycle_at ? formatDate(disp.last_cycle_at) : "Never";
+
+                    const stallAlert = document.getElementById("disp-stall-alert");
+                    if (disp.silent_stall && disp.silent_stall.triggered) {
+                        stallAlert.textContent = disp.silent_stall.message || "Dispatcher stall alert";
+                        stallAlert.classList.remove("hidden");
+                    } else {
+                        stallAlert.classList.add("hidden");
+                    }
+
+                    const agentsDiv = document.getElementById("disp-agents");
+                    if (!disp.active_agents || disp.active_agents.length === 0) {
+                        agentsDiv.innerHTML = `<span class="text-xs text-slate-600 italic">None active</span>`;
+                    } else {
+                        agentsDiv.innerHTML = disp.active_agents.map(a => getAgentBadge(a)).join("");
+                    }
+                }
+            } catch (e) {
+                console.error("Error fetching telemetry:", e);
+            }
+        }
+
+        function renderDashboardSummary() {
+            // Activity Feed
+            const actFeed = document.getElementById("dashboard-activity");
+            actFeed.innerHTML = mockSignals.map(sig => `
+                <div class="activity-item">
+                    <div class="activity-text-row">
+                        <span class="time">${sig.time}</span>
+                        <span class="source-badge">${sig.source}</span>
+                        <span class="title text-slate-200">${sig.text}</span>
+                    </div>
+                </div>
+            `).join("");
+            
+            // Workspaces List Summary
+            const wsSummary = document.getElementById("dashboard-workspaces");
+            wsSummary.innerHTML = mockWorkspaces.map(ws => `
+                <tr class="border-b border-slate-800/40 hover:bg-slate-900/10 transition">
+                    <td class="py-2.5 px-3 font-semibold text-slate-200">${ws.name}</td>
+                    <td class="py-2.5 px-3 text-slate-400 font-mono">${ws.branch}</td>
+                    <td class="py-2.5 px-3 text-[10px] uppercase font-bold ${ws.status === 'connected' ? 'text-emerald-400' : 'text-amber-400'}">${ws.status}</td>
+                    <td class="py-2.5 px-3 text-slate-500">${ws.files} files</td>
+                </tr>
+            `).join("");
+        }
+
+        function setSummaryBadge(badgeId, metaId, tone, badgeText, metaText) {
+            const palette = {
+                green: {
+                    badge: "px-2 py-0.5 rounded-full text-[10px] font-bold border border-emerald-500/20 text-emerald-400 bg-emerald-500/10",
+                    meta: "mt-2 text-sm text-emerald-100 font-semibold",
+                },
+                amber: {
+                    badge: "px-2 py-0.5 rounded-full text-[10px] font-bold border border-amber-500/20 text-amber-400 bg-amber-500/10",
+                    meta: "mt-2 text-sm text-amber-100 font-semibold",
+                },
+                red: {
+                    badge: "px-2 py-0.5 rounded-full text-[10px] font-bold border border-rose-500/20 text-rose-400 bg-rose-500/10",
+                    meta: "mt-2 text-sm text-rose-100 font-semibold",
+                },
+                cyan: {
+                    badge: "px-2 py-0.5 rounded-full text-[10px] font-bold border border-cyan-500/20 text-cyan-400 bg-cyan-500/10",
+                    meta: "mt-2 text-sm text-cyan-100 font-semibold",
+                },
+                slate: {
+                    badge: "px-2 py-0.5 rounded-full text-[10px] font-bold border border-slate-700 text-slate-400 bg-slate-800/80",
+                    meta: "mt-2 text-sm text-slate-200 font-semibold",
+                },
+            };
+            const badge = document.getElementById(badgeId);
+            const meta = document.getElementById(metaId);
+            const style = palette[tone] || palette.slate;
+            if (badge) {
+                badge.className = style.badge;
+                badge.textContent = badgeText;
+            }
+            if (meta) {
+                meta.className = style.meta;
+                meta.textContent = metaText;
+            }
+        }
+
+        async function fetchMergeData() {
+            try {
+                const mergeRes = await fetch("/api/gateway/merge/status");
+                if (mergeRes.ok) {
+                    const data = await mergeRes.json();
+                    
+                    document.getElementById("stat-merge-pending").textContent = data.pending_count || 0;
+                    document.getElementById("stat-merge-merged").textContent = data.merged_count || 0;
+                    document.getElementById("stat-merge-scan").textContent = data.last_scan ? formatDate(data.last_scan) : "Never";
+                    document.getElementById("stat-merge-apply").textContent = data.last_apply ? formatDate(data.last_apply) : "Never";
+                    
+                    // Render Pending Sandboxes
+                    const pendingTbody = document.getElementById("merge-pending-tbody");
+                    if (!data.pending || data.pending.length === 0) {
+                        pendingTbody.innerHTML = `<tr><td colspan="5" class="py-6 text-center text-slate-500 italic">No pending sandboxes.</td></tr>`;
+                    } else {
+                        pendingTbody.innerHTML = data.pending.map(sb => `
+                            <tr class="border-b border-slate-800/50 hover:bg-slate-900/10">
+                                <td class="py-3 px-3 font-semibold text-slate-200 font-mono">${sb.ticket}</td>
+                                <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold border border-cyan-500/20 bg-cyan-500/10 text-cyan-400">T${sb.tier}</span></td>
+                                <td class="py-3 px-3 font-bold text-amber-400 font-mono">${sb.confidence}%</td>
+                                <td class="py-3 px-3 text-slate-400">${sb.modified} files</td>
+                                <td class="py-3 px-3 text-slate-500 font-mono text-[11px] max-w-[200px] truncate" title="${sb.contention.join(', ')}">${sb.contention.join(', ') || 'None'}</td>
+                            </tr>
+                        `).join("");
+                    }
+                    
+                    // Render History
+                    const historyTbody = document.getElementById("merge-history-tbody");
+                    if (!data.merged || data.merged.length === 0) {
+                        historyTbody.innerHTML = `<tr><td colspan="4" class="py-6 text-center text-slate-500 italic">No merge history.</td></tr>`;
+                    } else {
+                        historyTbody.innerHTML = data.merged.map(m => `
+                            <tr class="border-b border-slate-800/50 hover:bg-slate-900/10">
+                                <td class="py-3 px-3 font-semibold text-slate-200 font-mono">${m.ticket}</td>
+                                <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold border border-cyan-500/20 bg-cyan-500/10 text-cyan-400">T${m.tier}</span></td>
+                                <td class="py-3 px-3 text-emerald-400 font-mono text-xs">${m.commit.substring(0, 7)}</td>
+                                <td class="py-3 px-3 text-slate-500 text-xs">${formatDate(m.timestamp)}</td>
+                            </tr>
+                        `).join("");
+                    }
+                }
+            } catch (e) {
+                console.error("Error fetching merge details:", e);
+            }
+        }
+
+        async function renderWorkspacesView() {
+            try {
+                const locksRes = await fetch("/locks");
+                const staleRes = await fetch("/locks/stale");
+                if (locksRes.ok && staleRes.ok) {
+                    const locks = await locksRes.json();
+                    const stale = await staleRes.json();
+                    
+                    const stalePaths = new Set(stale.map(s => s.filePath));
+                    const tbody = document.getElementById("workspaces-tbody");
+                    
+                    if (locks.length === 0) {
+                        tbody.innerHTML = `<tr><td colspan="6" class="py-6 text-center text-slate-500 italic">No active file locks acquired by agents.</td></tr>`;
+                        return;
+                    }
+                    
+                    tbody.innerHTML = locks.map(lock => {
+                        const isStale = stalePaths.has(lock.filePath);
+                        const statusTag = isStale 
+                            ? `<span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold border bg-rose-500/10 text-rose-400 border-rose-500/20 uppercase">stale</span>`
+                            : `<span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold border bg-emerald-500/10 text-emerald-400 border-emerald-500/20 uppercase">active</span>`;
+                        
+                        return `
+                            <tr class="border-b border-slate-800/40 hover:bg-slate-900/10 transition">
+                                <td class="py-3 px-3 font-semibold text-slate-200">${lock.filePath.split('/').pop()}</td>
+                                <td class="py-3 px-3 font-mono text-slate-400 text-xs">${lock.filePath}</td>
+                                <td class="py-3 px-3 font-mono text-indigo-400 text-xs">${lock.agentId}</td>
+                                <td class="py-3 px-3 text-slate-400">${formatDate(lock.timestamp / 1000)}</td>
+                                <td class="py-3 px-3 text-slate-400">${formatDate(lock.lastHeartbeat / 1000)}</td>
+                                <td class="py-3 px-3">${statusTag}</td>
+                            </tr>
+                        `;
+                    }).join("");
+                }
+            } catch (err) {
+                console.error("Error loading locks registry:", err);
+            }
+        }
+
+        function renderSkillsView() {
+            const grid = document.getElementById("skills-grid");
+            grid.innerHTML = mockSkills.map(sk => `
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between space-y-3 relative overflow-hidden">
+                    <div class="flex justify-between items-start">
+                        <span class="text-xs text-slate-500 font-bold uppercase">${sk.version}</span>
+                        <span class="px-2 py-0.5 rounded text-[9px] font-bold ${sk.status === 'Active' ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20' : 'bg-slate-800 text-slate-400'} uppercase">${sk.status}</span>
+                    </div>
+                    <h3 class="font-bold text-slate-200 leading-tight">${sk.name}</h3>
+                    <p class="text-xs text-slate-400 leading-relaxed">${sk.desc}</p>
+                    <button class="w-full bg-slate-950 hover:bg-slate-900 border border-slate-800/80 text-xs font-semibold py-1.5 rounded transition">
+                        ${sk.status === 'Active' ? 'Disable Capability' : 'Install Skill'}
+                    </button>
+                </div>
+            `).join("");
+        }
+
+        async function renderSignalsView() {
+            try {
+                const res = await fetch("/runs?limit=50");
+                if (res.ok) {
+                    const runs = await res.json();
+                    const container = document.getElementById("signals-log-box");
+                    
+                    if (runs.length === 0) {
+                        container.innerHTML = `<div class="text-slate-500 italic">No agent execution runs recorded.</div>`;
+                        return;
+                    }
+                    
+                    container.innerHTML = runs.map(r => {
+                        const timeStr = formatDate(r.started_at);
+                        const statusColor = r.status === "success" ? "text-emerald-400" : r.status === "failed" ? "text-rose-400" : "text-amber-400";
+                        const errDetails = r.error_message ? ` (Error: ${r.error_message})` : "";
+                        return `
+                            <div class="text-slate-300">
+                                <span class="text-slate-500 font-bold">[${timeStr}]</span>
+                                <span class="text-indigo-400 font-semibold">[Agent: ${r.agent_name}]</span>
+                                Run ${r.run_id} for Issue <span class="text-amber-400 font-semibold">${r.issue_id}</span> is <span class="${statusColor} font-bold">${r.status.toUpperCase()}</span>${errDetails}
+                            </div>
+                        `;
+                    }).join("");
+                }
+            } catch (err) {
+                console.error("Error loading runs log:", err);
+            }
+        }
+
+        async function fetchQuotaSummary() {
+            try {
+                const quotaRes = await fetch("/api/quota");
+                if (quotaRes.ok) {
+                    const data = await quotaRes.json();
+                    const activeModels = (data.current || []).length;
+                    const freshness = data.snapshot_age_sec !== null && data.snapshot_age_sec !== undefined ? formatAge(data.snapshot_age_sec) : "Freshness unknown";
+                    const tone = data.snapshot_age_sec !== null && data.snapshot_age_sec !== undefined && data.snapshot_age_sec < 300 ? "green" : data.snapshot_age_sec !== null && data.snapshot_age_sec !== undefined && data.snapshot_age_sec < 900 ? "amber" : "red";
+                    setSummaryBadge(
+                        "summary-quota-badge",
+                        "summary-quota-meta",
+                        tone,
+                        tone === "green" ? "FRESH" : tone === "amber" ? "STALE" : "OLD",
+                        `${freshness} · ${activeModels} active model${activeModels === 1 ? "" : "s"}`
+                    );
+                }
+            } catch (err) {
+                console.error("Error loading quota summary:", err);
+            }
+        }
+
+        async function fetchMorningBriefing() {
+            try {
+                const res = await fetch("/api/gateway/overnight-report/latest");
+                if (res.ok) {
+                    const data = await res.json();
+                    
+                    // Update timestamp & badges
+                    document.getElementById("briefing-timestamp").textContent = `Generated: ${data.generated_at ? data.generated_at.substring(0, 16).replace('T', ' ') : 'N/A'} UTC`;
+                    
+                    const fallbackBadge = document.getElementById("briefing-fallback-badge");
+                    if (data.period && data.period.fallback_used) {
+                        fallbackBadge.classList.remove("hidden");
+                    } else {
+                        fallbackBadge.classList.add("hidden");
+                    }
+                    
+                    // Update KPIs
+                    const s = data.summary || {};
+                    document.getElementById("briefing-total-runs").textContent = s.total_dispatches ?? 0;
+                    document.getElementById("briefing-completed").textContent = s.completed ?? 0;
+                    document.getElementById("briefing-failed").textContent = s.failed ?? 0;
+                    document.getElementById("briefing-success-rate").textContent = `${s.success_rate ?? 100}%`;
+                    document.getElementById("briefing-credits").textContent = s.total_credits_spent ?? 0;
+                    
+                    // Update Escalations
+                    const escContainer = document.getElementById("briefing-escalations");
+                    if (data.escalations && data.escalations.length > 0) {
+                        escContainer.innerHTML = data.escalations.map(esc => `
+                            <div class="p-2 rounded border border-rose-500/20 bg-rose-500/5 text-rose-300">
+                                <div class="flex items-center justify-between font-semibold">
+                                    <span>${esc.issue_id} (${esc.lane})</span>
+                                    <span class="text-[9px] text-slate-500 font-mono">${esc.time ? esc.time.substring(11, 16) : ''}</span>
+                                </div>
+                                <div class="text-[10px] text-slate-400 mt-0.5">${esc.reason}</div>
+                            </div>
+                        `).join("");
+                    } else {
+                        escContainer.innerHTML = `<div class="text-slate-500 italic">No escalations occurred.</div>`;
+                    }
+                    
+                    // Update Commits
+                    const commitsContainer = document.getElementById("briefing-commits");
+                    if (data.git_commits && data.git_commits.length > 0) {
+                        commitsContainer.innerHTML = data.git_commits.map(c => `
+                            <div class="flex items-center space-x-1.5 font-mono text-[10px] text-slate-400 py-0.5">
+                                <span class="text-indigo-400 font-bold">${c.sha}</span>
+                                <span class="text-slate-300 truncate" style="max-width: 250px;">${c.message}</span>
+                            </div>
+                        `).join("");
+                    } else {
+                        commitsContainer.innerHTML = `<div class="text-slate-500 italic">No recent commits.</div>`;
+                    }
+                    
+                    // Update Runs table
+                    const runsTbody = document.getElementById("briefing-runs-tbody");
+                    if (data.runs && data.runs.length > 0) {
+                        runsTbody.innerHTML = data.runs.slice(0, 10).map(r => {
+                            const statusClass = (r.status === 'completed' || r.exit_code === 0) ? 'text-emerald-400' : (r.status === 'failed' || (r.exit_code !== null && r.exit_code !== 0)) ? 'text-rose-400' : 'text-amber-400';
+                            return `
+                                <tr class="border-b border-slate-800/40 hover:bg-slate-900/10">
+                                    <td class="py-1.5 px-2 text-slate-300 font-semibold font-mono">${r.agent}</td>
+                                    <td class="py-1.5 px-2 text-slate-400 font-mono">${r.issue_id}</td>
+                                    <td class="py-1.5 px-2 font-bold ${statusClass}">${r.status}</td>
+                                </tr>
+                            `;
+                        }).join("");
+                    } else {
+                        runsTbody.innerHTML = `<tr><td colspan="3" class="py-4 text-center text-slate-500 italic">No runs recorded.</td></tr>`;
+                    }
+                }
+            } catch (err) {
+                console.error("Error loading morning briefing:", err);
+            }
+        }
+
+        async function fetchQuotaData() {
+            try {
+                const quotaRes = await fetch("/api/quota");
+                if (quotaRes.ok) {
+                    const data = await quotaRes.json();
+                    
+                    const syncStatus = document.getElementById("quota-sync-status");
+                    const syncAge = document.getElementById("quota-sync-age");
+                    if (syncStatus) {
+                        const snapshotAt = data.snapshot_at ? formatDate(data.snapshot_at) : "unknown";
+                        syncStatus.textContent = `Snapshot captured ${snapshotAt}`;
+                    }
+                    if (syncAge) {
+                        syncAge.textContent = data.snapshot_age_sec !== null && data.snapshot_age_sec !== undefined ? formatAge(data.snapshot_age_sec) : "Freshness: unknown";
+                    }
+                    
+                    // Render Cards
+                    const grid = document.getElementById("quota-cards-grid");
+                    const current = data.current || [];
+                    if (current.length === 0) {
+                        grid.innerHTML = `<div class="col-span-3 text-center text-slate-500 italic py-6">No active region quotas snapshot ledger details found.</div>`;
+                    } else {
+                        grid.innerHTML = current.map(item => {
+                            const pct = Number(item.remaining_pct);
+                            const hasPct = !Number.isNaN(pct);
+                            const effectivePct = hasPct ? pct : 0;
+                            const barColor = effectivePct < 20 ? 'bg-red-500' : effectivePct < 50 ? 'bg-amber-500' : 'bg-emerald-500';
+                            const labelColor = effectivePct < 20 ? 'text-red-400' : effectivePct < 50 ? 'text-amber-400' : 'text-emerald-400';
+                            const status = quotaStatusLabel(item);
+                            return `
+                                <div class="glass-panel p-4 rounded-xl space-y-3 flex flex-col justify-between">
+                                    <div class="flex justify-between items-start gap-2">
+                                        <h3 class="font-bold text-xs uppercase text-slate-400">${item.display_name || item.model}</h3>
+                                        <span class="text-xs font-bold font-mono ${hasPct ? labelColor : 'text-slate-400'}">${formatQuotaPct(item.remaining_pct)} remaining</span>
+                                    </div>
+                                    <div class="w-full bg-slate-950 h-2 rounded-full overflow-hidden">
+                                        <div class="h-full ${barColor}" style="width: ${effectivePct}%"></div>
+                                    </div>
+                                    <div class="flex justify-between items-center text-[10px] text-slate-500 gap-2">
+                                        <span>Reset in ${formatDate(item.reset_time)}</span>
+                                        <span class="font-mono">${status}</span>
+                                    </div>
+                                </div>
+                            `;
+                        }).join("");
+                    }
+                    
+                    // Render History Events
+                    const eventsTbody = document.getElementById("quota-events-tbody");
+                    const events = data.recent_events || [];
+                    if (events.length === 0) {
+                        eventsTbody.innerHTML = `<tr><td colspan="3" class="py-4 text-center text-slate-500 italic">No quota breaches reported within the last 24 hours.</td></tr>`;
+                    } else {
+                        eventsTbody.innerHTML = events.map(ev => {
+                            const details = ev.details || ev.event_type || 'No details available';
+                            return `
+                            <tr class="border-b border-slate-800/40 hover:bg-slate-900/10 transition">
+                                <td class="py-2.5 px-3 text-slate-500 font-mono">${formatDate(ev.timestamp)}</td>
+                                <td class="py-2.5 px-3 font-semibold text-slate-200">${ev.model || 'Unknown model'}</td>
+                                <td class="py-2.5 px-3 text-red-400 font-medium">${details}</td>
+                            </tr>
+                        `;
+                        }).join("");
+                    }
+                }
+            } catch (err) {
+                console.error("Error loading quota data:", err);
+            }
+        }
+
+        // WebSockets
+        function connectWS() {
+            let ws;
+            try {
+                const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+                const wsUrl = protocol + "//" + window.location.host + "/ws";
+                ws = new WebSocket(wsUrl);
+            } catch (e) {
+                setTimeout(connectWS, 3000);
+                return;
+            }
+
+            ws.onopen = () => {
+                const dot = document.getElementById("status-dot");
+                const text = document.getElementById("status-text");
+                dot.className = "w-2.5 h-2.5 rounded-full bg-emerald-500 status-pulse";
+                text.className = "text-[10px] sm:text-xs font-semibold text-emerald-400 uppercase tracking-wider";
+                text.textContent = "Connected";
+                fetchData();
+            };
+
+            ws.onmessage = (e) => {
+                try {
+                    const event = JSON.parse(e.data);
+                    if (["webhook_queued", "webhook_processing", "webhook_completed", "webhook_failed", "dispatcher_cycle"].includes(event.type)) {
+                        fetchData();
+                    }
+                    // Append event to signals console log
+                    addLocalSignal(event.type.replace("webhook_", "").toUpperCase(), event.message || JSON.stringify(event));
+                } catch (err) {}
+            };
+
+            ws.onclose = () => {
+                const dot = document.getElementById("status-dot");
+                const text = document.getElementById("status-text");
+                dot.className = "w-2.5 h-2.5 rounded-full bg-red-500 status-pulse";
+                text.className = "text-[10px] sm:text-xs font-semibold text-slate-400 uppercase tracking-wider";
+                text.textContent = "Connecting";
+                setTimeout(connectWS, 3000);
+            };
+        }
+
+        document.addEventListener("DOMContentLoaded", () => {
+            applyTheme();
+            fetchData();
+            loadPluginGovernance();
+            loadPWPStatus();
+            connectWS();
+            pollingInterval = setInterval(fetchData, 4000);
+            
+            // Populate mock signals initial data
+            const container = document.getElementById("signals-log-box");
+            mockSignals.forEach(sig => {
+                const div = document.createElement("div");
+                div.className = "text-slate-400";
+                div.innerHTML = `<span class="text-slate-500 font-bold">[${sig.time}]</span> <span class="text-indigo-400 font-semibold">[${sig.source}]</span> ${sig.text}`;
+                container.appendChild(div);
+            });
+            
+            // Close modal on click outside
+            window.onclick = function(event) {
+                const modal = document.getElementById("modal-container");
+                const cronModal = document.getElementById("cron-delete-modal");
+                if (event.target === modal) {
+                    closeModal();
+                }
+                if (event.target === cronModal) {
+                    closeCronDeleteModal();
+                }
+            };
+            
+            // Show AGY as default agent details
+            showAgentDetail('agy');
+        });
+    </script>
+</body>
+</html>

@@ -11,8 +11,10 @@ agents:
   fred:
     role: Orchestrator & Infrastructure
     lanes:
-      owner: ["src/", "infra/", "deploy/", ".github/", "specs/"]
-      read_only: ["content/", "active-oahu/"]
+      # Fred is the Prismatic Engine orchestrator/staging governor and may repair
+      # any repository path when cross-lane messes need to be integrated.
+      owner: ["*"]
+      read_only: []
     branch_prefix: "feature/"
     staging_governor: true  # Only Fred merges to staging
 
