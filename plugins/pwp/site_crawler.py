@@ -205,14 +205,17 @@ def _validate_sitemap(root: Path, site_url: str | None, pages: list[PageRecord],
         if not parsed.scheme or not parsed.netloc:
             result.errors.append(f"sitemap.xml loc is not absolute: {loc}")
             continue
+        host_matches = True
         if site_url:
             base = urlparse(site_url)
             if parsed.netloc != base.netloc:
+                host_matches = False
                 result.errors.append(f"sitemap.xml loc host does not match site URL: {loc}")
         route = parsed.path or "/"
         if not route.endswith("/") and not Path(route).suffix:
             route += "/"
-        loc_routes.add(route)
+        if host_matches:
+            loc_routes.add(route)
         target = _route_to_file(root, route)
         if not target.exists():
             result.errors.append(f"sitemap.xml loc target missing: {loc}")
