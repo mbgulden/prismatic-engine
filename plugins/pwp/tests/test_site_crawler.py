@@ -22,7 +22,9 @@ def _write_page(
     body: str = "",
     json_ld: str | None = None,
 ) -> None:
-    path = root / route.strip("/") / "index.html" if route != "/" else root / "index.html"
+    path = (
+        root / route.strip("/") / "index.html" if route != "/" else root / "index.html"
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     schema = ""
     if json_ld is not None:
