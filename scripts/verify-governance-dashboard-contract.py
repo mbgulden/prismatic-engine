@@ -20,6 +20,7 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 HTML = REPO / "prismatic" / "gateway" / "templates" / "dashboard.html"
 SERVER = REPO / "prismatic" / "gateway" / "server.py"
+INGESTION_QUEUE = REPO / "prismatic" / "ingestion_queue.py"
 
 FORBIDDEN_HTML_STRINGS = [
     "mockSkills",
@@ -40,6 +41,8 @@ REQUIRED_HTML_STRINGS = [
     "/api/skills",
     "toggleSkillInstall",
     "/api/gateway/timeline?limit=80",
+    "const API_PREFIX = \"/api/gateway\"",
+    "`${API_PREFIX}/webhooks/queue`",
     "/api/gateway/agents/status",
     "Test Webhook Harness",
     "No synthetic fallback rendered",
@@ -50,10 +53,14 @@ ROUTES = [
     "/api/skills",
     "/api/gateway/timeline?limit=20",
     "/api/gateway/agents/status",
+    "/api/webhooks/stats",
+    "/api/gateway/webhooks/stats",
     "/api/webhooks/queue",
+    "/api/gateway/webhooks/queue",
     "/api/gateway/merge/status",
     "/api/foundation/peer_review",
     "/api/dispatcher/status",
+    "/api/gateway/dispatcher/status",
     "/api/recovery/status",
     "/locks",
     "/locks/stale",
@@ -83,14 +90,14 @@ def main() -> int:
     failures: list[dict[str, Any]] = []
     checks: dict[str, Any] = {}
 
-    for path in [HTML, SERVER]:
+    for path in [HTML, SERVER, INGESTION_QUEUE]:
         ok = path.exists()
         checks[f"exists:{path.relative_to(REPO)}"] = ok
         if not ok:
             fail("changed_path_exists", str(path), failures)
 
     py = subprocess.run(
-        [sys.executable, "-m", "py_compile", str(SERVER)],
+        [sys.executable, "-m", "py_compile", str(SERVER), str(INGESTION_QUEUE)],
         cwd=REPO,
         text=True,
         capture_output=True,
@@ -110,6 +117,17 @@ def main() -> int:
         checks[f"required_present:{needle}"] = ok
         if not ok:
             fail("required_html_string", needle, failures)
+
+    server_text = SERVER.read_text(encoding="utf-8")
+    queue_noop_needles = [
+        "Retry request recorded by gateway compatibility layer",
+        "Purge request accepted by gateway compatibility layer",
+    ]
+    for needle in queue_noop_needles:
+        ok = needle not in server_text
+        checks[f"queue_noop_removed:{needle[:24]}"] = ok
+        if not ok:
+            fail("queue_noop_removed", needle, failures)
 
     script = html.split("<script>", 1)[1].rsplit("</script>", 1)[0]
     script_tmp = Path("/tmp/hermes-dashboard-contract-node-check.js")
@@ -155,10 +173,14 @@ def main() -> int:
 
     expectations = {
         "/api/gateway/agents/status": ("source", "run_records+agent_registry+queue_state+timeline+health_context"),
-        "/api/webhooks/queue": ("source", "sqlite"),
+        "/api/webhooks/stats": ("source", "linear_webhook_queue.db"),
+        "/api/gateway/webhooks/stats": ("source", "linear_webhook_queue.db"),
+        "/api/webhooks/queue": ("source", "linear_webhook_queue.db"),
+        "/api/gateway/webhooks/queue": ("source", "linear_webhook_queue.db"),
         "/api/gateway/merge/status": ("source", "merge_state+governance_triage+merge_control_state"),
         "/api/foundation/peer_review": ("source", "run_records+foundation_control_state"),
         "/api/dispatcher/status": ("source", "dashboard_dispatcher_state+run_records"),
+        "/api/gateway/dispatcher/status": ("source", "dashboard_dispatcher_state+run_records"),
         "/api/recovery/status": ("source", "dashboard_recovery_controls+run_records"),
         "/api/quota": ("source", "quota_state.db"),
     }

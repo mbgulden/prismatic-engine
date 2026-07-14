@@ -1286,6 +1286,45 @@ def _write_json_state(path: Path, state: dict[str, Any]) -> None:
     path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
 
 
+def _record_control_timeline_event(
+    *,
+    source: str,
+    title: str,
+    message: str = "",
+    severity: str = "info",
+    entity_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Record durable dashboard operator intent without shelling out."""
+    try:
+        from prismatic.timeline import record_timeline_item
+
+        return record_timeline_item(
+            kind="control",
+            source=source,
+            severity=severity,
+            title=title,
+            message=message,
+            entity_id=entity_id or "",
+            metadata=metadata or {},
+        )
+    except Exception:
+        logger.warning("dashboard control timeline write failed", exc_info=True)
+        return None
+
+
+def _dashboard_queue_state_path() -> Path:
+    return _dashboard_state_dir() / "dashboard_queue_controls.json"
+
+
+def _read_dashboard_queue_state() -> dict[str, Any]:
+    return _read_json_state(_dashboard_queue_state_path(), {"actions": [], "last_status": None})
+
+
+def _write_dashboard_queue_state(state: dict[str, Any]) -> None:
+    _write_json_state(_dashboard_queue_state_path(), state)
+
+
 def _dashboard_dispatcher_state_path() -> Path:
     return _dashboard_state_dir() / "dashboard_dispatcher_controls.json"
 
@@ -1645,53 +1684,88 @@ async def dashboard_recovery_status() -> dict[str, Any]:
 @app.get("/api/webhooks/stats")
 @app.get("/api/gateway/webhooks/stats")
 async def dashboard_webhook_stats() -> dict[str, Any]:
-    """Return webhook/queue counters from gateway counters plus run records."""
-    from prismatic.ingestion_status import webhook_stats_payload
+    """Return durable webhook queue counters from linear_webhook_queue.db."""
+    from prismatic.ingestion_queue import queue_stats_payload
 
-    return webhook_stats_payload(dict(_webhook_counters), _recent_agent_runs(limit=500))
+    return queue_stats_payload(dict(_webhook_counters))
 
 
 @app.get("/api/webhooks/queue")
-async def dashboard_webhook_queue() -> dict[str, Any]:
-    """Return a non-404 queue payload compatible with the dashboard table."""
-    events_payload = await events_recent(limit=50)
-    items: list[dict[str, Any]] = []
-    for event in events_payload.get("events", []):
-        payload = event.get("payload") if isinstance(event, dict) else {}
-        if not isinstance(payload, dict):
-            payload = {}
-        items.append(
-            {
-                "id": event.get("rowid"),
-                "identifier": payload.get("identifier") or payload.get("issue") or event.get("topic"),
-                "agent_name": payload.get("agent") or payload.get("agent_name") or "gateway",
-                "action": payload.get("action") or event.get("topic"),
-                "dispatch_status": "completed" if event.get("processed") else "pending",
-                "queued_at": event.get("ts"),
-            }
-        )
-    return {"items": items, "total": len(items), "source": events_payload.get("source", "sqlite")}
+@app.get("/api/gateway/webhooks/queue")
+async def dashboard_webhook_queue(limit: int = 50, offset: int = 0, status: str | None = None) -> dict[str, Any]:
+    """Return the durable webhook ingestion queue, not EventBus stand-in rows."""
+    from prismatic.ingestion_queue import queue_payload
+
+    return queue_payload(limit=limit, offset=offset, status=status)
 
 
 @app.post("/api/webhooks/queue/retry/{task_id}")
-async def dashboard_webhook_queue_retry(task_id: str) -> dict[str, Any]:
-    """Acknowledge dashboard retry intent without mutating unknown queue storage."""
-    return {
-        "ok": True,
-        "status": "accepted_noop",
+@app.post("/api/gateway/webhooks/queue/retry/{task_id}")
+async def dashboard_webhook_queue_retry(task_id: str) -> JSONResponse:
+    """Reset a durable queue row to pending and audit the operator action."""
+    from prismatic.ingestion_queue import retry_task
+
+    result = retry_task(task_id)
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    entry = {
+        "id": f"queue-retry-{task_id}-{int(time.time() * 1000)}",
+        "action": "retry",
         "task_id": task_id,
-        "message": "Retry request recorded by gateway compatibility layer; no unsafe shell action executed.",
+        "status": result.get("status"),
+        "detail": result.get("message"),
+        "updated": result.get("updated", 0),
+        "created_at": now,
     }
+    state = _read_dashboard_queue_state()
+    state["actions"] = [entry] + list(state.get("actions", []))[:24]
+    state["last_status"] = entry["status"]
+    state["updated_at"] = now
+    _write_dashboard_queue_state(state)
+    timeline_item = _record_control_timeline_event(
+        source="QueueControl",
+        severity="success" if result.get("ok") else "warning",
+        title="Retry queue task",
+        message=str(result.get("message") or ""),
+        entity_id=str(task_id),
+        metadata={"entry": entry, "ok": result.get("ok"), "status": result.get("status"), "updated": result.get("updated", 0)},
+    )
+    result["entry"] = entry
+    result["timeline_item"] = timeline_item
+    status_code = 200 if result.get("ok") else 404 if result.get("status") == "not_found" else 400
+    return JSONResponse(result, status_code=status_code)
 
 
 @app.post("/api/webhooks/queue/purge")
+@app.post("/api/gateway/webhooks/queue/purge")
 async def dashboard_webhook_queue_purge() -> dict[str, Any]:
-    """Acknowledge dashboard purge intent without destructive queue mutation."""
-    return {
-        "ok": True,
-        "status": "accepted_noop",
-        "message": "Purge request accepted by gateway compatibility layer; no destructive mutation executed.",
+    """Purge terminal durable queue rows and audit the operator action."""
+    from prismatic.ingestion_queue import purge_queue
+
+    result = purge_queue()
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    entry = {
+        "id": f"queue-purge-{int(time.time() * 1000)}",
+        "action": "purge",
+        "status": result.get("status"),
+        "detail": result.get("message"),
+        "deleted": result.get("deleted", 0),
+        "created_at": now,
     }
+    state = _read_dashboard_queue_state()
+    state["actions"] = [entry] + list(state.get("actions", []))[:24]
+    state["last_status"] = entry["status"]
+    state["updated_at"] = now
+    _write_dashboard_queue_state(state)
+    result["entry"] = entry
+    result["timeline_item"] = _record_control_timeline_event(
+        source="QueueControl",
+        severity="success",
+        title="Purge queue history",
+        message=str(result.get("message") or ""),
+        entity_id="queue",
+        metadata={"entry": entry, "ok": result.get("ok"), "status": result.get("status"), "deleted": result.get("deleted", 0)},
+    )
+    return result
 
 
 @app.get("/api/dispatcher/status")
@@ -1708,6 +1782,7 @@ async def dashboard_dispatcher_status() -> dict[str, Any]:
 
 
 @app.post("/api/dispatcher/{action}")
+@app.post("/api/gateway/dispatcher/{action}")
 async def dashboard_dispatcher_control(action: str) -> JSONResponse:
     """Return an auditable no-op for dashboard dispatcher controls.
 
@@ -1730,6 +1805,14 @@ async def dashboard_dispatcher_control(action: str) -> JSONResponse:
     state["last_command"] = entry
     state["updated_at"] = now
     _write_dashboard_dispatcher_state(state)
+    timeline_item = _record_control_timeline_event(
+        source="DispatcherControl",
+        severity="success" if action in {"start", "restart", "resume"} else "warning",
+        title=f"Dispatcher {action}",
+        message=entry["detail"],
+        entity_id="dispatcher",
+        metadata={"entry": entry},
+    )
     return JSONResponse(
         {
             "ok": True,
@@ -1737,6 +1820,7 @@ async def dashboard_dispatcher_control(action: str) -> JSONResponse:
             "action": action,
             "message": entry["detail"],
             "entry": entry,
+            "timeline_item": timeline_item,
         }
     )
 
@@ -2284,6 +2368,12 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
     body = await request.body()
     signature = request.headers.get("linear-signature", "")
     _webhook_counters["linear_received"] += 1
+    try:
+        from prismatic.ingestion_queue import increment_counter
+
+        increment_counter("linear_received", 1)
+    except Exception:
+        logger.warning("linear durable counter increment failed", exc_info=True)
     if signature:
         secrets = get_linear_secrets()
         if secrets:
@@ -2295,6 +2385,12 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
                     break
             if expected is None:
                 _webhook_counters["linear_auth_failed"] += 1
+                try:
+                    from prismatic.ingestion_queue import increment_counter
+
+                    increment_counter("linear_auth_failed", 1)
+                except Exception:
+                    logger.warning("linear durable auth-failed counter increment failed", exc_info=True)
                 await _publish_webhook_auth_failed("linear")
                 from fastapi.responses import JSONResponse
 
@@ -2303,6 +2399,14 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
         event = json.loads(body) if body else {}
     except Exception:
         event = {"raw": body.decode("utf-8", errors="replace")}
+    durable_enqueue: dict[str, Any] | None = None
+    if isinstance(event, dict):
+        try:
+            from prismatic.ingestion_queue import enqueue_linear_event
+
+            durable_enqueue = enqueue_linear_event(event, raw_body=body)
+        except Exception:
+            logger.error("Linear webhook durable queue insert failed", exc_info=True)
     try:
         from prismatic.gateway.event_bus import get_event_bus
 
@@ -2317,7 +2421,7 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
             _webhook_counters["linear_published"] += 1
     except Exception as e:
         logger.error("Linear webhook bus publish failed: %s", e)
-    return {"status": "ok", "message": "webhook received"}
+    return {"status": "ok", "message": "webhook received", "queue": durable_enqueue}
 
 
 @app.post("/webhooks/linear")
