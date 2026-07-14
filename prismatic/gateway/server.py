@@ -1079,6 +1079,21 @@ def _write_json_state(path: Path, state: dict[str, Any]) -> None:
     path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
 
 
+def _dashboard_dispatcher_state_path() -> Path:
+    return _dashboard_state_dir() / "dashboard_dispatcher_controls.json"
+
+
+def _read_dashboard_dispatcher_state() -> dict[str, Any]:
+    return _read_json_state(
+        _dashboard_dispatcher_state_path(),
+        {"commands": [], "last_command": None, "cycle_number": 0},
+    )
+
+
+def _write_dashboard_dispatcher_state(state: dict[str, Any]) -> None:
+    _write_json_state(_dashboard_dispatcher_state_path(), state)
+
+
 def _dashboard_foundation_state_path() -> Path:
     return _dashboard_state_dir() / "dashboard_foundation_controls.json"
 
@@ -1389,40 +1404,21 @@ def _empty_failure_taxonomy() -> list[dict[str, Any]]:
 
 
 @app.get("/api/recovery/status")
+@app.get("/api/gateway/recovery/status")
 async def dashboard_recovery_status() -> dict[str, Any]:
-    """Return failure taxonomy/recovery state for the dashboard without 404 noise."""
-    return {
-        "ok": True,
-        "service_name": "prismatic-gateway.service",
-        "systemd_active": True,
-        "heartbeat": {"exists": True, "source": "gateway-live"},
-        "pool_stats": {"live_count": 0, "total_skipped_dlq": 0},
-        "failure_taxonomy": _empty_failure_taxonomy(),
-        "generated_at": _dashboard_now(),
-        "source": "dashboard-compat",
-    }
+    """Return failure taxonomy, recent failures, and recovery-control state."""
+    from prismatic.ingestion_status import recovery_status_payload
+
+    return recovery_status_payload(_read_dashboard_recovery_state(), _recent_agent_runs(limit=500), dict(_webhook_counters))
 
 
 @app.get("/api/webhooks/stats")
+@app.get("/api/gateway/webhooks/stats")
 async def dashboard_webhook_stats() -> dict[str, Any]:
-    """Return webhook/queue counters expected by the dashboard telemetry pane."""
-    received = _webhook_counters.get("github_received", 0) + _webhook_counters.get("linear_received", 0)
-    auth_failed = _webhook_counters.get("github_auth_failed", 0) + _webhook_counters.get("linear_auth_failed", 0)
-    published = _webhook_counters.get("github_published", 0) + _webhook_counters.get("linear_published", 0)
-    return {
-        "received": received,
-        "auth_failed": auth_failed,
-        "published": published,
-        "average_dispatch_latency_seconds": 0.0,
-        "recent_latencies": [],
-        "queue_depths": {
-            "pending": 0,
-            "processing": 0,
-            "completed": published,
-            "failed": auth_failed,
-        },
-        "source": "gateway-counters",
-    }
+    """Return webhook/queue counters from gateway counters plus run records."""
+    from prismatic.ingestion_status import webhook_stats_payload
+
+    return webhook_stats_payload(dict(_webhook_counters), _recent_agent_runs(limit=500))
 
 
 @app.get("/api/webhooks/queue")
@@ -1469,17 +1465,16 @@ async def dashboard_webhook_queue_purge() -> dict[str, Any]:
 
 
 @app.get("/api/dispatcher/status")
+@app.get("/api/gateway/dispatcher/status")
 async def dashboard_dispatcher_status() -> dict[str, Any]:
-    """Return dispatcher status for the dashboard without process-control side effects."""
-    uptime = (_dashboard_now() - _server_started_at) if _server_started_at else 0.0
-    return {
-        "status": "active" if uptime > 0 else "idle",
-        "cycle_number": 0,
-        "last_cycle_at": None,
-        "active_agents": [],
-        "silent_stall": {"triggered": False, "message": "No dispatcher stall detected by gateway compatibility layer."},
-        "source": "gateway-compat",
-    }
+    """Return audit-safe dispatcher status from control state and run records."""
+    from prismatic.ingestion_status import dispatcher_status_payload
+
+    return dispatcher_status_payload(
+        _read_dashboard_dispatcher_state(),
+        _recent_agent_runs(limit=500),
+        server_started_at=_server_started_at or _started_at or None,
+    )
 
 
 @app.post("/api/dispatcher/{action}")
@@ -1491,12 +1486,27 @@ async def dashboard_dispatcher_control(action: str) -> JSONResponse:
     """
     if action not in {"start", "stop", "restart", "pause", "resume"}:
         return JSONResponse({"ok": False, "status": "unsupported", "action": action}, status_code=400)
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    entry = {
+        "id": f"dispatcher-{action}-{now.replace(':', '').replace('-', '').replace('.', '')}",
+        "action": action,
+        "status": "accepted_noop",
+        "detail": "Dispatcher control intent recorded; no shell or service-manager action executed from browser route.",
+        "actor": "dashboard",
+        "created_at": now,
+    }
+    state = _read_dashboard_dispatcher_state()
+    state["commands"] = [entry] + list(state.get("commands", []))[:24]
+    state["last_command"] = entry
+    state["updated_at"] = now
+    _write_dashboard_dispatcher_state(state)
     return JSONResponse(
         {
             "ok": True,
             "status": "accepted_noop",
             "action": action,
-            "message": "Dispatcher control acknowledged; no shell or service-manager action executed from browser route.",
+            "message": entry["detail"],
+            "entry": entry,
         }
     )
 
