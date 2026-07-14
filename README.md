@@ -131,6 +131,9 @@ Core files:
 
 Deep dive:
 
+- [North Star](docs/north-star.md)
+- [Dashboard-primary touchpoint](docs/dashboard-primary-touchpoint.md)
+- [OKF evidence map](docs/okf-evidence-map.md)
 - [Public launch guide](docs/public-launch.md)
 - [Public onboarding guide](docs/public-onboarding.md)
 - [Architecture overview](docs/public-architecture.md)
