@@ -203,6 +203,13 @@ Compiled output:
 }
 ```
 
+Compiler contract for Phase 1:
+
+- `compile_tokens_to_css(tokens)` validates the token object before emitting CSS.
+- Output uses the `--pwp-*` namespace and is sorted by final CSS custom-property name, not JSON insertion order, so identical token content produces byte-stable CSS for deploy hashes and diffs.
+- Nested token groups flatten by path (`color.semantic.success` → `--pwp-color-semantic-success`).
+- Existing starter-token aliases remain compatibility mappings: `colors` → `color`, `font_families` → `font-family`, `font_sizes` → `font-size`, `font_weights` → `font-weight`, `line_heights` → `line-height`, `radii` → `radius`, `shadows` → `shadow`, and `animations` → `animation`.
+
 Theme-specific aliases may exist, but the PWP namespace must always be present for compatibility.
 
 ### 3. Module manifest
@@ -335,45 +342,6 @@ Agents must produce:
 | performance | Lighthouse CI budgets | yes for production theme release |
 | SEO/link/sitemap | crawler + XML parser | yes |
 | compliance/safety lint | domain-specific copy rules | yes for regulated claims |
-
-### Theme validation command
-
-Theme packages are validated with the repo-local command:
-
-```bash
-python3 scripts/pwp theme validate <theme-package-path>
-```
-
-The validator checks the Phase 0 contracts before later build/a11y gates run:
-
-- `theme.json` exists and declares the PWP theme schema.
-- Required manifest entrypoints (`tokens`, `css`, `layout`, `components`, `contentSchema`, `emdashMap`) point to safe in-package files.
-- Module ids are unique lowercase kebab-case values and each module has a `modules/<id>.json` contract.
-- Token files include the canonical W3C-style PWP groups: `color`, `font`, `space`, `size`, `radius`, `shadow`, `motion`, `breakpoint`, and `zIndex`.
-- EmDash maps reference declared module ids only and provide editable field definitions for each block.
-
-The command exits `0` on a valid package and `1` with a concrete error list on invalid packages, making it suitable for theme fixture tests and CI.
-
-### Theme diff and compatibility resolver
-
-Phase 4 registry work adds two repo-local theme lifecycle commands:
-
-```bash
-python3 scripts/pwp theme check-compat <theme-package-path> --engine-version <semver>
-python3 scripts/pwp theme diff --from <old-theme-path> --to <new-theme-path> [--engine-version <semver>] [--json]
-```
-
-The compatibility resolver reads `theme.json.engineCompatibility` and supports deterministic semver-style constraints (`>=`, `>`, `<=`, `<`, `=`, `==`, `^`, `~`, plus whitespace/comma-separated AND ranges). The resolver exits `0` only when the package is structurally valid and the supplied engine version is accepted by the theme range.
-
-The diff command compares two validated theme packages in the same family and emits a structured change list for registry/install/upgrade workflows. It flags these as breaking:
-
-- theme id changes,
-- removed entrypoints,
-- removed modules,
-- module prop-schema changes,
-- target theme ranges that exclude the requested PWP engine version.
-
-Added modules and version-only changes are reported as safe changes. Token group changes and entrypoint path changes are surfaced for review so tenant override preservation can be handled by the later upgrade workflow instead of hidden during install.
 
 ### Theme compatibility matrix
 

@@ -1,0 +1,27 @@
+{
+  "id": "booking-cta",
+  "component": "BookingCta.astro",
+  "slots": [
+    "actions"
+  ],
+  "propsSchema": "schemas/modules/booking-cta.schema.json",
+  "editableFields": [
+    "heading",
+    "body",
+    "cta",
+    "urgencyNote"
+  ],
+  "variants": [
+    "sticky-band",
+    "inline-card"
+  ],
+  "a11yRules": [
+    "Preserve semantic headings",
+    "Interactive controls must meet 44px tap target",
+    "Color pairs must meet WCAG AA contrast"
+  ],
+  "contentSafetyRules": [
+    "Do not render unverified claims as guarantees",
+    "Keep CTA labels explicit"
+  ]
+}

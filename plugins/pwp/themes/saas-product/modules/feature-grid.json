@@ -1,0 +1,26 @@
+{
+  "id": "feature-grid",
+  "component": "FeatureGrid.astro",
+  "slots": [
+    "features"
+  ],
+  "propsSchema": "schemas/modules/feature-grid.schema.json",
+  "editableFields": [
+    "heading",
+    "intro",
+    "features"
+  ],
+  "variants": [
+    "three-up",
+    "with-screenshots"
+  ],
+  "a11yRules": [
+    "Preserve semantic headings",
+    "Interactive controls must meet 44px tap target",
+    "Color pairs must meet WCAG AA contrast"
+  ],
+  "contentSafetyRules": [
+    "Do not render unverified claims as guarantees",
+    "Keep CTA labels explicit"
+  ]
+}

@@ -1,0 +1,94 @@
+{
+  "contentType": "saasLandingPage",
+  "route": "/",
+  "lockedFields": [
+    "schemaOrgType",
+    "securityClaims"
+  ],
+  "blocks": [
+    {
+      "blockId": "hero",
+      "component": "Hero",
+      "fields": {
+        "eyebrow": {
+          "type": "string",
+          "editable": true
+        },
+        "title": {
+          "type": "string",
+          "editable": true
+        },
+        "body": {
+          "type": "portableText",
+          "editable": true
+        },
+        "primaryCta": {
+          "type": "string",
+          "editable": true
+        },
+        "secondaryCta": {
+          "type": "string",
+          "editable": true
+        }
+      }
+    },
+    {
+      "blockId": "feature-grid",
+      "component": "FeatureGrid",
+      "fields": {
+        "heading": {
+          "type": "string",
+          "editable": true
+        },
+        "intro": {
+          "type": "portableText",
+          "editable": true
+        },
+        "features": {
+          "type": "string",
+          "editable": true
+        }
+      }
+    },
+    {
+      "blockId": "pricing-table",
+      "component": "PricingTable",
+      "fields": {
+        "heading": {
+          "type": "string",
+          "editable": true
+        },
+        "plans": {
+          "type": "string",
+          "editable": true
+        },
+        "disclaimer": {
+          "type": "string",
+          "editable": true
+        }
+      }
+    },
+    {
+      "blockId": "demo-cta",
+      "component": "DemoCta",
+      "fields": {
+        "heading": {
+          "type": "string",
+          "editable": true
+        },
+        "body": {
+          "type": "portableText",
+          "editable": true
+        },
+        "cta": {
+          "type": "string",
+          "editable": true
+        },
+        "formFields": {
+          "type": "string",
+          "editable": true
+        }
+      }
+    }
+  ]
+}

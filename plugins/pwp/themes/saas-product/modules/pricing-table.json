@@ -1,0 +1,26 @@
+{
+  "id": "pricing-table",
+  "component": "PricingTable.astro",
+  "slots": [
+    "plans"
+  ],
+  "propsSchema": "schemas/modules/pricing-table.schema.json",
+  "editableFields": [
+    "heading",
+    "plans",
+    "disclaimer"
+  ],
+  "variants": [
+    "two-tier",
+    "three-tier"
+  ],
+  "a11yRules": [
+    "Preserve semantic headings",
+    "Interactive controls must meet 44px tap target",
+    "Color pairs must meet WCAG AA contrast"
+  ],
+  "contentSafetyRules": [
+    "Do not render unverified claims as guarantees",
+    "Keep CTA labels explicit"
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schemas.prismatic.dev/pwp/theme-registry.schema.json",
+  "themes": [
+    {
+      "id": "pwp.theme.tourism-conversion",
+      "version": "0.1.0",
+      "path": "themes/tourism-conversion/theme.json",
+      "family": "tourism-conversion"
+    },
+    {
+      "id": "pwp.theme.saas-product",
+      "version": "0.1.0",
+      "path": "themes/saas-product/theme.json",
+      "family": "saas-product"
+    }
+  ]
+}

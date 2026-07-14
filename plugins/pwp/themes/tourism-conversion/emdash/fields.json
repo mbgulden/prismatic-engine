@@ -1,0 +1,94 @@
+{
+  "contentType": "tourismLandingPage",
+  "route": "/",
+  "lockedFields": [
+    "schemaOrgType",
+    "priceDisclaimer"
+  ],
+  "blocks": [
+    {
+      "blockId": "hero",
+      "component": "Hero",
+      "fields": {
+        "eyebrow": {
+          "type": "string",
+          "editable": true
+        },
+        "title": {
+          "type": "string",
+          "editable": true
+        },
+        "body": {
+          "type": "portableText",
+          "editable": true
+        },
+        "primaryCta": {
+          "type": "string",
+          "editable": true
+        },
+        "secondaryCta": {
+          "type": "string",
+          "editable": true
+        }
+      }
+    },
+    {
+      "blockId": "tour-card-grid",
+      "component": "TourCardGrid",
+      "fields": {
+        "heading": {
+          "type": "string",
+          "editable": true
+        },
+        "intro": {
+          "type": "portableText",
+          "editable": true
+        },
+        "tours": {
+          "type": "string",
+          "editable": true
+        }
+      }
+    },
+    {
+      "blockId": "booking-cta",
+      "component": "BookingCta",
+      "fields": {
+        "heading": {
+          "type": "string",
+          "editable": true
+        },
+        "body": {
+          "type": "portableText",
+          "editable": true
+        },
+        "cta": {
+          "type": "string",
+          "editable": true
+        },
+        "urgencyNote": {
+          "type": "string",
+          "editable": true
+        }
+      }
+    },
+    {
+      "blockId": "trust-proof",
+      "component": "TrustProof",
+      "fields": {
+        "rating": {
+          "type": "string",
+          "editable": true
+        },
+        "reviewCount": {
+          "type": "string",
+          "editable": true
+        },
+        "proofItems": {
+          "type": "string",
+          "editable": true
+        }
+      }
+    }
+  ]
+}

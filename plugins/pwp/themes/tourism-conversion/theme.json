@@ -1,0 +1,45 @@
+{
+  "$schema": "https://schemas.prismatic.dev/pwp/theme.schema.json",
+  "id": "pwp.theme.tourism-conversion",
+  "name": "Tourism Conversion",
+  "version": "0.1.0",
+  "engineCompatibility": ">=0.2.0",
+  "framework": "astro",
+  "description": "Booking-first theme for tour operators, attractions, local guides, and activity landing pages.",
+  "family": "tourism-conversion",
+  "useCases": [
+    "tour operators",
+    "local experiences",
+    "activity landing pages",
+    "destination SEO"
+  ],
+  "designMood": [
+    "immersive",
+    "sunlit",
+    "actionable",
+    "trustworthy",
+    "local"
+  ],
+  "editableWith": [
+    "emdash"
+  ],
+  "entrypoints": {
+    "tokens": "tokens/tokens.json",
+    "css": "src/styles/theme.css",
+    "layout": "src/layouts/BaseLayout.astro",
+    "components": "src/components/index.ts",
+    "contentSchema": "src/content.config.ts",
+    "emdashMap": "emdash/fields.json"
+  },
+  "modules": [
+    "hero",
+    "tour-card-grid",
+    "booking-cta",
+    "trust-proof"
+  ],
+  "verification": {
+    "commands": [
+      "python3 scripts/pwp theme validate plugins/pwp/themes/tourism-conversion"
+    ]
+  }
+}

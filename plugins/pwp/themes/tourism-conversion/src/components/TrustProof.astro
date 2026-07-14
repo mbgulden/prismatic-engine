@@ -1,0 +1,11 @@
+---
+const { rating, reviewCount, proofItems = [] } = Astro.props;
+---
+<section class="pwp-section">
+  <div class="pwp-container pwp-card">
+    <strong>{rating} average rating</strong>
+    <p>{reviewCount} verified reviews</p>
+    <ul>{proofItems.map((item) => <li>{item}</li>)}</ul>
+    <slot name="badges" />
+  </div>
+</section>

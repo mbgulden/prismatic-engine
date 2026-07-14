@@ -1,0 +1,16 @@
+---
+import '../styles/theme.css';
+const { title = 'PWP Reference Theme', description = 'Reference implementation for Prismatic Web Plugin.' } = Astro.props;
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+  </head>
+  <body class="pwp-theme pwp-focus-ring">
+    <slot />
+  </body>
+</html>

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://schemas.prismatic.dev/pwp/theme.schema.json",
+  "id": "pwp.theme.saas-product",
+  "name": "SaaS Product",
+  "version": "0.1.0",
+  "engineCompatibility": ">=0.2.0",
+  "framework": "astro",
+  "description": "Product-led SaaS theme for launches, waitlists, demo requests, and feature education.",
+  "family": "saas-product",
+  "useCases": [
+    "SaaS homepages",
+    "product launches",
+    "waitlists",
+    "demo funnels"
+  ],
+  "designMood": [
+    "precise",
+    "modern",
+    "credible",
+    "efficient",
+    "product-led"
+  ],
+  "editableWith": [
+    "emdash"
+  ],
+  "entrypoints": {
+    "tokens": "tokens/tokens.json",
+    "css": "src/styles/theme.css",
+    "layout": "src/layouts/BaseLayout.astro",
+    "components": "src/components/index.ts",
+    "contentSchema": "src/content.config.ts",
+    "emdashMap": "emdash/fields.json"
+  },
+  "modules": [
+    "hero",
+    "feature-grid",
+    "pricing-table",
+    "demo-cta"
+  ],
+  "verification": {
+    "commands": [
+      "python3 scripts/pwp theme validate plugins/pwp/themes/saas-product"
+    ]
+  }
+}
