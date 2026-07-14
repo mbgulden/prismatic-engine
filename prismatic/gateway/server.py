@@ -18,32 +18,72 @@ Integration:
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac as _hmac
 import json
 import logging
 import os
+import sys
 import threading
 import time
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from prismatic.gateway.event_bus import get_event_bus
-from prismatic.gateway.ipc_bridge import (
-    UnixSocketListener,
-    create_event_ingest_route,
-)
+from prismatic.gateway.ipc_bridge import UnixSocketListener, create_event_ingest_route
 from prismatic.gateway.ws_broadcaster import (
     start_ws_broadcaster,
     stop_ws_broadcaster,
 )
 from prismatic.lock import _read_locks as read_swarm_locks
+from prismatic.plugin_architecture import MEDIA_CAPABILITY_CLASSES, plugin_catalog
+from prismatic.plugin_artifacts import store_from_env as plugin_artifact_store
+from prismatic.plugin_health import get_plugin_health
+from prismatic.plugin_jobs import store_from_env as plugin_job_store
+from prismatic.plugin_policy import preview_policy
+from prismatic.pwp_integration import (
+    connect_pwp,
+    disconnect_pwp,
+    integration_status,
+    refresh_pwp,
+    run_pwp_reference_lifecycle,
+)
 from prismatic.run_records import AgentRunRecordStore
 
 logger = logging.getLogger("prismatic.gateway.server")
+
+# ── D.5: In-process observability counters ──────────────────────────
+_server_started_at: float | None = None
+_webhook_counters: dict[str, int] = {
+    "github_received": 0,
+    "github_auth_failed": 0,
+    "github_published": 0,
+    "linear_received": 0,
+    "linear_auth_failed": 0,
+    "linear_published": 0,
+}
+
+
+async def _publish_webhook_auth_failed(source: str) -> None:
+    """Publish a redacted webhook auth-failure event for curator escalation."""
+    try:
+        from prismatic.gateway.event_bus import get_event_bus
+
+        bus = get_event_bus()
+        if bus is not None:
+            await bus.publish(
+                event_type="webhook.auth_failed",
+                source=source,
+                payload={"status": "auth-failed"},
+            )
+    except Exception as exc:
+        logger.warning("webhook auth-failed bus publish failed: %s", exc)
+
 
 # ── FastAPI Application ──────────────────────────────────────────────
 
@@ -54,18 +94,105 @@ app = FastAPI(
     openapi_url=None,  # Disable OpenAPI schema generation — internal gateway
 )
 
-# CORS — allow all origins (internal orchestration gateway)
+
+def _configured_cors_origins() -> list[str]:
+    """Return explicit browser origins allowed to call the Gateway.
+
+    Public/default installs are local-only. Remote deployments must opt in with
+    PRISMATIC_CORS_ORIGINS as a comma-separated list of exact origins. Wildcard
+    CORS is intentionally rejected when credentials are enabled.
+    """
+    raw = os.environ.get(
+        "PRISMATIC_CORS_ORIGINS",
+        "http://127.0.0.1:9000,http://localhost:9000",
+    )
+    origins = [
+        origin.strip().rstrip("/") for origin in raw.split(",") if origin.strip()
+    ]
+    if not origins:
+        return ["http://127.0.0.1:9000", "http://localhost:9000"]
+    if "*" in origins:
+        logger.warning(
+            "Ignoring wildcard PRISMATIC_CORS_ORIGINS while credentials are enabled"
+        )
+        return [origin for origin in origins if origin != "*"] or [
+            "http://127.0.0.1:9000"
+        ]
+    return origins
+
+
+# CORS — local-only by default. Remote browser origins must be explicitly
+# configured with PRISMATIC_CORS_ORIGINS; do not combine wildcard origins with
+# credentialed requests.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_configured_cors_origins(),
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
+
+# Auth check for observability endpoints (re-added 2026-06-30 after Phase D
+# cherry-pick conflict dropped it). Reuses the IP allowlist from
+# PRISMATIC_ALLOWED_IPS (already in systemd) plus an optional bearer token
+# from PRISMATIC_METRICS_TOKEN. If neither is configured, endpoints are
+# local-only (rejected unless from 127.0.0.1).
+_METRICS_TOKEN = os.environ.get("PRISMATIC_METRICS_TOKEN", "")
+_ALLOWED_IPS_RAW = os.environ.get("PRISMATIC_ALLOWED_IPS", "127.0.0.1,::1")
+_ALLOWED_IPS = {ip.strip() for ip in _ALLOWED_IPS_RAW.split(",") if ip.strip()}
+
+
+def _check_observability_auth(request: Request) -> bool:
+    """Allow if bearer token matches OR client IP is allowlisted."""
+    if _METRICS_TOKEN:
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer ") and auth[7:] == _METRICS_TOKEN:
+            return True
+    client_ip = request.client.host if request.client else ""
+    if client_ip in _ALLOWED_IPS:
+        return True
+    return False
+
+
+@app.middleware("http")
+async def _observability_auth_middleware(request: Request, call_next):
+    path = request.url.path
+    if (
+        path == "/metrics"
+        or path.startswith("/events/")
+        or path.startswith("/curator/")
+    ):
+        if not _check_observability_auth(request):
+            return JSONResponse({"detail": "forbidden"}, status_code=403)
+    return await call_next(request)
+
 
 # Mount the IPC bridge event ingest route (POST /events, GET /events/history)
 # The router's @router.post("/events") defines the full path — no prefix needed
 app.include_router(create_event_ingest_route())
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+# Canonical governance dashboard route target: prismatic/gateway/templates/dashboard.html
+_GOVERNANCE_DASHBOARD_HTML = _REPO_ROOT / "prismatic" / "gateway" / "templates" / "dashboard.html"
+
+
+def _serve_governance_dashboard_html() -> HTMLResponse:
+    """Serve the canonical Prismatic governance/control-plane dashboard."""
+    if not _GOVERNANCE_DASHBOARD_HTML.exists():
+        return HTMLResponse("Governance dashboard HTML not found", status_code=404)
+    return HTMLResponse(_GOVERNANCE_DASHBOARD_HTML.read_text(encoding="utf-8"))
+
+
+@app.get("/", response_class=HTMLResponse)
+async def serve_governance_index() -> HTMLResponse:
+    """Governance gateway root: never serve marketing HTML here."""
+    return _serve_governance_dashboard_html()
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def serve_governance_dashboard() -> HTMLResponse:
+    """Serve the canonical Prismatic governance/control-plane dashboard."""
+    return _serve_governance_dashboard_html()
 
 # ── Startup timestamp ──────────────────────────────────────────────
 _started_at: float = 0.0
@@ -86,6 +213,7 @@ async def startup() -> None:
     global _started_at, _run_store, _ipc_listener
 
     _started_at = time.time()
+    _server_started_at = _started_at
 
     # Initialize EventBus (ensure singleton)
     get_event_bus()
@@ -97,16 +225,22 @@ async def startup() -> None:
     # Start WebSocket broadcaster (daemon thread with its own event loop)
     start_ws_broadcaster()
 
-    # Initialize run records store. The default is the shared SQLite
-    # database used by supervisor processes: ~/.prismatic/runs.db.
-    _run_store = AgentRunRecordStore()
+    # Initialize run records store
+    state_dir = os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state/")
+    store_path = os.path.join(state_dir, "run_records.json")
+    _run_store = AgentRunRecordStore(store_path)
 
     logger.info(
         "Gateway started at %s, store=%s, ipc=%s",
         time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        _run_store._store_path,
+        store_path,
         _ipc_listener.socket_path,
     )
+    # NOTE: dispatch consumer is now managed by systemd unit
+    # `prismatic-consumer.service` (see Phase D SPOF-2 fix). Do not spawn
+    # the in-process consumer here — it's dead-on-arrival because the
+    # EventBus singleton is per-process and the subprocess can't see
+    # events published by this gateway process.
 
 
 @app.on_event("shutdown")
@@ -121,6 +255,162 @@ async def shutdown() -> None:
     stop_ws_broadcaster()
 
     logger.info("Gateway shutdown complete")
+
+
+# ── Agent Dashboard API ─────────────────────────────────────────────
+
+_AGENT_DEFAULTS: dict[str, dict[str, str]] = {
+    "agy": {"name": "AGY", "role": "Vision & Research CLI"},
+    "jules": {"name": "Jules", "role": "Async Git & PR Agent"},
+    "fred": {"name": "Fred", "role": "Nudge/Staging Governor"},
+    "ned": {"name": "Ned", "role": "Research & Synthesis"},
+    "kai": {"name": "Kai", "role": "Tourism Orchestrator"},
+    "codex": {"name": "Codex", "role": "Coding Executor"},
+}
+
+
+def _agent_key(name: str | None) -> str:
+    """Normalize agent/profile names for dashboard keys."""
+    key = (name or "unknown").strip().lower().replace("agent:", "")
+    aliases = {
+        "agy-cli": "agy",
+        "kai-content": "kai",
+        "kai-css": "kai",
+        "kai-js": "kai",
+    }
+    return aliases.get(key, key)
+
+
+def _read_agent_registry() -> dict[str, Any]:
+    """Read optional live agent registry without failing the dashboard."""
+    candidates = [
+        os.environ.get("PRISMATIC_AGENT_REGISTRY"),
+        str(Path.home() / ".prismatic" / "registry.json"),
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        path = Path(candidate).expanduser()
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(path.read_text())
+            return data if isinstance(data, dict) else {}
+        except Exception as exc:
+            logger.warning("Unable to read agent registry %s: %s", path, exc)
+    return {}
+
+
+def _seconds_between(started_at: str | None, completed_at: str | None) -> float | None:
+    if not started_at or not completed_at:
+        return None
+    try:
+        from datetime import datetime
+
+        start = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+        end = datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
+        return max(0.0, (end - start).total_seconds())
+    except Exception:
+        return None
+
+
+def _recent_agent_runs(limit: int = 200) -> list[Any]:
+    if _run_store is None:
+        return []
+    try:
+        _run_store.reload()
+        return _run_store.get_recent_runs(limit=limit)
+    except Exception as exc:
+        logger.warning("Unable to read recent run records: %s", exc)
+        return []
+
+
+@app.get("/api/agents")
+async def get_agents() -> dict[str, Any]:
+    """Return live agent status from registry plus recent run records."""
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    agents: dict[str, dict[str, Any]] = {
+        key: {
+            "name": meta["name"],
+            "role": meta["role"],
+            "status": "Unknown",
+            "last_seen": None,
+            "dispatched": 0,
+            "duration": "—",
+            "dedup": "—",
+            "queue": [],
+            "logs": [],
+        }
+        for key, meta in _AGENT_DEFAULTS.items()
+    }
+
+    registry = _read_agent_registry()
+    for raw_name, info in registry.items():
+        if not isinstance(info, dict):
+            continue
+        key = _agent_key(raw_name)
+        agents.setdefault(
+            key,
+            {
+                "name": raw_name,
+                "role": info.get("role", "Agent"),
+                "status": "Unknown",
+                "last_seen": None,
+                "dispatched": 0,
+                "duration": "—",
+                "dedup": "—",
+                "queue": [],
+                "logs": [],
+            },
+        )
+        status = info.get("status") or info.get("state") or agents[key]["status"]
+        agents[key]["status"] = str(status).title()
+        agents[key]["last_seen"] = info.get("last_heartbeat") or info.get("last_seen")
+        agents[key]["current_issue"] = info.get("issue") or info.get("task_id")
+
+    durations: dict[str, list[float]] = {}
+    for record in _recent_agent_runs():
+        key = _agent_key(getattr(record, "agent_name", None))
+        agent = agents.setdefault(
+            key,
+            {
+                "name": key.title(),
+                "role": "Agent",
+                "status": "Unknown",
+                "last_seen": None,
+                "dispatched": 0,
+                "duration": "—",
+                "dedup": "—",
+                "queue": [],
+                "logs": [],
+            },
+        )
+        agent["dispatched"] += 1
+        status = getattr(record, "status", "unknown")
+        issue_id = getattr(record, "issue_id", "unknown")
+        started_at = getattr(record, "started_at", "") or ""
+        completed_at = getattr(record, "completed_at", None)
+        seconds = _seconds_between(started_at, completed_at)
+        if seconds is not None:
+            durations.setdefault(key, []).append(seconds)
+        if status in {"pending", "running"}:
+            agent["queue"].append(f"{issue_id} — {status}")
+            agent["status"] = "Running" if status == "running" else "Queued"
+        if len(agent["logs"]) < 5:
+            agent["logs"].append(
+                {
+                    "ref": issue_id,
+                    "time": started_at[11:19] if len(started_at) >= 19 else "—",
+                    "status": str(status).title(),
+                    "dur": f"{seconds:.1f}s" if seconds is not None else "—",
+                }
+            )
+
+    for key, values in durations.items():
+        if values:
+            agents[key]["duration"] = f"{sum(values) / len(values):.1f}s"
+
+    return {"updated_at": now, "agents": agents}
 
 
 # ── Health ──────────────────────────────────────────────────────────
@@ -143,6 +433,495 @@ async def get_harnesses() -> list[dict[str, Any]]:
     registry_path = Path(__file__).resolve().parents[1] / "harnesses" / "registry.json"
     registry = json.loads(registry_path.read_text(encoding="utf-8"))
     return registry["harnesses"]
+
+
+@app.get("/api/plugins/catalog")
+async def plugins_catalog() -> dict[str, Any]:
+    """Return the PE Core plugin catalog, manifest validation, and integration surfaces."""
+    return plugin_catalog()
+
+
+@app.get("/api/plugins/architecture")
+async def plugins_architecture() -> dict[str, Any]:
+    """Return the canonical plugin development architecture and future media classes."""
+    catalog = plugin_catalog()
+    return {
+        "schema_version": catalog["schema_version"],
+        "core_integration_points": catalog["core_integration_points"],
+        "media_capability_classes": MEDIA_CAPABILITY_CLASSES,
+        "proven_future_plugin_classes": [
+            "video",
+            "images",
+            "music-sfx",
+            "game-assets",
+            "asset-forge-3d",
+        ],
+        "required_manifest_fields": [
+            "schema_version",
+            "name",
+            "version",
+            "entry_point",
+            "core_version_constraint",
+        ],
+        "media_asset_required_fields": [
+            "capabilities",
+            "asset_domains",
+            "artifact_types",
+            "integration_points",
+            "automation_surfaces",
+        ],
+        "recommended_surfaces": [
+            "registered tools",
+            "gateway API",
+            "dashboard surface",
+            "MCP server",
+            "asset index",
+            "artifact store",
+            "governance checks",
+        ],
+    }
+
+
+@app.get("/api/plugins/governance")
+async def plugins_governance() -> dict[str, Any]:
+    """Return operator-facing plugin readiness, risk, approval, and blocker data."""
+    catalog = plugin_catalog()
+    jobs = plugin_job_store().summary()
+    artifacts = plugin_artifact_store().summary()
+    return {
+        "schema_version": catalog["schema_version"],
+        "summary": catalog["governance_summary"],
+        "jobs": jobs,
+        "artifacts": artifacts,
+        "plugins": [
+            {
+                "name": item["name"],
+                "status": item["status"],
+                "plugin_type": item["plugin_type"],
+                "categories": item["categories"],
+                "capability_count": len(item.get("capabilities", [])),
+                "asset_domains": item.get("asset_domains", []),
+                "artifact_types": item.get("artifact_types", []),
+                "dashboard_surfaces": item.get("dashboard_surfaces", []),
+                "endpoints": item.get("endpoints", []),
+                "mcp_servers": item.get("mcp_servers", []),
+                "governance": item["governance"],
+            }
+            for item in catalog["plugins"]
+        ],
+    }
+
+
+@app.post("/api/plugins/policy/preview")
+async def plugin_policy_preview(request: Request) -> JSONResponse:
+    """Preview a generic plugin policy decision without mutating durable state."""
+    payload = await request.json()
+    kind = str(payload.get("kind") or "").strip()
+    jobs = plugin_job_store()
+    artifacts = plugin_artifact_store()
+    job = jobs.get_job(str(payload.get("job_id"))) if payload.get("job_id") else None
+    artifact = (
+        artifacts.get_artifact(str(payload.get("artifact_id")))
+        if payload.get("artifact_id")
+        else None
+    )
+    policy = preview_policy(
+        kind,
+        job=job,
+        artifact=artifact,
+        plugin_name=payload.get("plugin_name"),
+        action=payload.get("action"),
+        input_summary=payload.get("input_summary"),
+        target=payload.get("target"),
+    )
+    status = 200 if policy.get("decision") in {"allow", "needs_approval"} else 409
+    return JSONResponse(policy, status_code=status)
+
+
+@app.get("/api/plugins/audit-events")
+async def list_plugin_audit_events(request: Request) -> dict[str, Any]:
+    """List normalized cross-plugin audit events from job and artifact registries."""
+    try:
+        limit = int(request.query_params.get("limit") or "100")
+    except ValueError:
+        limit = 100
+    limit = max(1, min(limit, 500))
+    plugin_name = request.query_params.get("plugin_name")
+    job_id = request.query_params.get("job_id")
+    artifact_id = request.query_params.get("artifact_id")
+    event_type = request.query_params.get("event_type")
+    job_store = plugin_job_store()
+    artifact_store = plugin_artifact_store()
+    job_events = job_store.list_events(
+        plugin_name=plugin_name,
+        job_id=job_id,
+        event_type=event_type,
+        limit=limit,
+    )
+    artifact_events = artifact_store.list_events(
+        plugin_name=plugin_name,
+        job_id=job_id,
+        artifact_id=artifact_id,
+        event_type=event_type,
+        limit=limit,
+    )
+    events = [*job_events, *artifact_events]
+    events.sort(key=lambda e: e.get("created_at") or "", reverse=True)
+    events = events[:limit]
+    by_source: dict[str, int] = {}
+    by_type: dict[str, int] = {}
+    for event in events:
+        by_source[event.get("audit_source") or "unknown"] = (
+            by_source.get(event.get("audit_source") or "unknown", 0) + 1
+        )
+        by_type[event.get("event_type") or "unknown"] = (
+            by_type.get(event.get("event_type") or "unknown", 0) + 1
+        )
+    return {
+        "summary": {
+            "event_count": len(events),
+            "job_event_count": len(job_events),
+            "artifact_event_count": len(artifact_events),
+            "by_source": by_source,
+            "by_event_type": by_type,
+        },
+        "events": events,
+    }
+
+
+@app.get("/api/plugins/artifacts")
+async def list_plugin_artifacts(request: Request) -> dict[str, Any]:
+    """List durable universal plugin artifacts/provenance records."""
+    store = plugin_artifact_store()
+    return {
+        "summary": store.summary(),
+        "artifacts": store.list_artifacts(
+            plugin_name=request.query_params.get("plugin_name"),
+            job_id=request.query_params.get("job_id"),
+            approval_state=request.query_params.get("approval_state"),
+            publish_state=request.query_params.get("publish_state"),
+        ),
+    }
+
+
+@app.post("/api/plugins/artifacts")
+async def create_plugin_artifact(request: Request) -> JSONResponse:
+    """Create a durable plugin artifact/provenance record."""
+    payload = await request.json()
+    plugin_name = str(payload.get("plugin_name") or "").strip()
+    if not plugin_name:
+        return JSONResponse({"error": "plugin_name is required"}, status_code=400)
+    artifact = plugin_artifact_store().create_artifact(
+        plugin_name=plugin_name,
+        job_id=payload.get("job_id"),
+        artifact_type=payload.get("artifact_type"),
+        mime_type=payload.get("mime_type"),
+        path_or_url=payload.get("path_or_url"),
+        asset_id=payload.get("asset_id"),
+        metadata=payload.get("metadata") or {},
+        provenance=payload.get("provenance") or {},
+        input_summary=payload.get("input_summary"),
+        provider_or_service=payload.get("provider_or_service"),
+        approval_state=payload.get("approval_state") or "pending",
+        publish_state=payload.get("publish_state") or "draft",
+        artifact_id=payload.get("artifact_id"),
+    )
+    return JSONResponse(artifact, status_code=201)
+
+
+@app.get("/api/plugins/artifacts/{artifact_id}")
+async def get_plugin_artifact(artifact_id: str) -> JSONResponse:
+    artifact = plugin_artifact_store().get_artifact(artifact_id)
+    if not artifact:
+        return JSONResponse(
+            {"error": "plugin artifact not found", "artifact_id": artifact_id},
+            status_code=404,
+        )
+    return JSONResponse(artifact)
+
+
+@app.post("/api/plugins/artifacts/{artifact_id}/approve")
+async def approve_plugin_artifact(artifact_id: str, request: Request) -> JSONResponse:
+    payload = await request.json()
+    artifact = plugin_artifact_store().set_approval(
+        artifact_id,
+        "approved",
+        actor=str(payload.get("actor") or "operator"),
+        note=payload.get("note") or payload.get("operator_notes"),
+    )
+    if not artifact:
+        return JSONResponse(
+            {"error": "plugin artifact not found", "artifact_id": artifact_id},
+            status_code=404,
+        )
+    return JSONResponse(artifact)
+
+
+@app.post("/api/plugins/artifacts/{artifact_id}/reject")
+async def reject_plugin_artifact(artifact_id: str, request: Request) -> JSONResponse:
+    payload = await request.json()
+    artifact = plugin_artifact_store().set_approval(
+        artifact_id,
+        "rejected",
+        actor=str(payload.get("actor") or "operator"),
+        note=payload.get("note") or payload.get("operator_notes"),
+    )
+    if not artifact:
+        return JSONResponse(
+            {"error": "plugin artifact not found", "artifact_id": artifact_id},
+            status_code=404,
+        )
+    return JSONResponse(artifact)
+
+
+@app.post("/api/plugins/artifacts/{artifact_id}/publish-ready")
+async def mark_plugin_artifact_publish_ready(
+    artifact_id: str, request: Request
+) -> JSONResponse:
+    payload = await request.json()
+    artifact = plugin_artifact_store().mark_publish_ready(
+        artifact_id,
+        actor=str(payload.get("actor") or "operator"),
+        note=payload.get("note") or payload.get("operator_notes"),
+    )
+    if not artifact:
+        return JSONResponse(
+            {"error": "plugin artifact not found", "artifact_id": artifact_id},
+            status_code=404,
+        )
+    policy = artifact.get("policy_result") or {}
+    if policy.get("decision") and policy.get("decision") != "allow":
+        return JSONResponse(
+            {"artifact": artifact, "policy_result": policy}, status_code=409
+        )
+    return JSONResponse(artifact)
+
+
+@app.post("/api/plugins/artifacts/{artifact_id}/export")
+async def export_plugin_artifact(artifact_id: str, request: Request) -> JSONResponse:
+    payload = await request.json()
+    target = str(payload.get("target") or "").strip()
+    if not target:
+        return JSONResponse({"error": "target is required"}, status_code=400)
+    artifact = plugin_artifact_store().add_export(
+        artifact_id,
+        target=target,
+        actor=str(payload.get("actor") or "operator"),
+        note=payload.get("note") or payload.get("operator_notes"),
+    )
+    if not artifact:
+        return JSONResponse(
+            {"error": "plugin artifact not found", "artifact_id": artifact_id},
+            status_code=404,
+        )
+    policy = artifact.get("policy_result") or {}
+    if policy.get("decision") != "allow":
+        return JSONResponse(
+            {"artifact": artifact, "policy_result": policy}, status_code=409
+        )
+    return JSONResponse({"artifact": artifact, "policy_result": policy})
+
+
+@app.get("/api/plugins/jobs")
+async def list_plugin_jobs(request: Request) -> dict[str, Any]:
+    """List durable plugin jobs with audit summary."""
+    store = plugin_job_store()
+    return {
+        "summary": store.summary(),
+        "jobs": store.list_jobs(
+            plugin_name=request.query_params.get("plugin_name"),
+            status=request.query_params.get("status"),
+        ),
+    }
+
+
+@app.post("/api/plugins/jobs")
+async def create_plugin_job(request: Request) -> JSONResponse:
+    """Create a durable plugin job and run the generic policy/approval gate."""
+    payload = await request.json()
+    plugin_name = str(payload.get("plugin_name") or "").strip()
+    action = str(payload.get("action") or "").strip()
+    if not plugin_name or not action:
+        return JSONResponse(
+            {"error": "plugin_name and action are required"}, status_code=400
+        )
+    job = plugin_job_store().create_job(
+        plugin_name,
+        action,
+        actor=str(payload.get("actor") or "operator"),
+        source=str(payload.get("source") or "api"),
+        input_summary=payload.get("input_summary"),
+        operator_notes=payload.get("operator_notes"),
+        approval_required=payload.get("approval_required"),
+        metadata=payload.get("metadata") or {},
+    )
+    return JSONResponse(job, status_code=201)
+
+
+@app.get("/api/plugins/jobs/{job_id}")
+async def get_plugin_job(job_id: str) -> JSONResponse:
+    job = plugin_job_store().get_job(job_id)
+    if not job:
+        return JSONResponse(
+            {"error": "plugin job not found", "job_id": job_id}, status_code=404
+        )
+    return JSONResponse(job)
+
+
+@app.post("/api/plugins/jobs/{job_id}/approve")
+async def approve_plugin_job(job_id: str, request: Request) -> JSONResponse:
+    payload = await request.json()
+    job = plugin_job_store().approve_job(
+        job_id,
+        actor=str(payload.get("actor") or "operator"),
+        note=payload.get("note") or payload.get("operator_notes"),
+    )
+    if not job:
+        return JSONResponse(
+            {"error": "plugin job not found", "job_id": job_id}, status_code=404
+        )
+    return JSONResponse(job)
+
+
+@app.post("/api/plugins/jobs/{job_id}/reject")
+async def reject_plugin_job(job_id: str, request: Request) -> JSONResponse:
+    payload = await request.json()
+    job = plugin_job_store().reject_job(
+        job_id,
+        actor=str(payload.get("actor") or "operator"),
+        note=payload.get("note") or payload.get("operator_notes"),
+    )
+    if not job:
+        return JSONResponse(
+            {"error": "plugin job not found", "job_id": job_id}, status_code=404
+        )
+    return JSONResponse(job)
+
+
+@app.post("/api/plugins/jobs/{job_id}/start")
+async def start_plugin_job(job_id: str, request: Request) -> JSONResponse:
+    payload = await request.json()
+    job, policy = plugin_job_store().start_job(
+        job_id,
+        actor=str(payload.get("actor") or "system"),
+        message=payload.get("message"),
+    )
+    if not job:
+        return JSONResponse(
+            {"error": "plugin job not found", "job_id": job_id}, status_code=404
+        )
+    if policy and policy.get("decision") == "allow":
+        return JSONResponse({"job": job, "policy_result": policy})
+    status = 409 if policy and policy.get("decision") == "needs_approval" else 403
+    return JSONResponse({"job": job, "policy_result": policy}, status_code=status)
+
+
+@app.post("/api/plugins/jobs/{job_id}/events")
+async def append_plugin_job_event(job_id: str, request: Request) -> JSONResponse:
+    payload = await request.json()
+    job = plugin_job_store().append_event(
+        job_id,
+        str(payload.get("event_type") or "note_added"),
+        actor=str(payload.get("actor") or "system"),
+        source=str(payload.get("source") or "api"),
+        message=payload.get("message"),
+        details=payload.get("details") or {},
+        artifact=payload.get("artifact"),
+    )
+    if not job:
+        return JSONResponse(
+            {"error": "plugin job not found", "job_id": job_id}, status_code=404
+        )
+    return JSONResponse(job)
+
+
+@app.post("/api/plugins/jobs/{job_id}/status")
+async def update_plugin_job_status(job_id: str, request: Request) -> JSONResponse:
+    payload = await request.json()
+    status = str(payload.get("status") or "").strip()
+    if not status:
+        return JSONResponse({"error": "status is required"}, status_code=400)
+    try:
+        job = plugin_job_store().update_status(
+            job_id,
+            status,
+            actor=str(payload.get("actor") or "system"),
+            message=payload.get("message"),
+            error=payload.get("error"),
+        )
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    if not job:
+        return JSONResponse(
+            {"error": "plugin job not found", "job_id": job_id}, status_code=404
+        )
+    if status == "running":
+        policy = job.get("policy_result") or {}
+        if policy.get("decision") != "allow":
+            code = 409 if policy.get("decision") == "needs_approval" else 403
+            return JSONResponse({"job": job, "policy_result": policy}, status_code=code)
+    return JSONResponse(job)
+
+
+@app.get("/api/v1/plugins/{plugin_name}/health")
+async def plugin_health(plugin_name: str, request: Request) -> JSONResponse:
+    """Return lifecycle/telemetry health for a sandboxed plugin."""
+    if not _check_observability_auth(request):
+        return JSONResponse({"detail": "forbidden"}, status_code=403)
+
+    payload = get_plugin_health(plugin_name)
+    if payload.get("status") == "NOT_FOUND":
+        return JSONResponse(payload, status_code=404)
+    if payload.get("status") == "unhealthy":
+        return JSONResponse(payload, status_code=503)
+    return JSONResponse(payload)
+
+
+@app.get("/api/pwp/status")
+async def pwp_status() -> dict[str, Any]:
+    """Return PWP additive plugin connection, capability, and governance status."""
+    return integration_status()
+
+
+@app.post("/api/pwp/connect")
+async def pwp_connect() -> JSONResponse:
+    """Connect PWP as an additive PE capability surface when hard blockers are clear."""
+    payload = connect_pwp()
+    status = 200 if payload.get("connected") else 409
+    return JSONResponse(payload, status_code=status)
+
+
+@app.post("/api/pwp/disconnect")
+async def pwp_disconnect() -> dict[str, Any]:
+    """Disconnect PWP capability surface without deleting plugin code or artifacts."""
+    return disconnect_pwp()
+
+
+@app.post("/api/pwp/refresh")
+async def pwp_refresh() -> dict[str, Any]:
+    """Refresh PWP dashboard/governance state from current manifest and files."""
+    return refresh_pwp()
+
+
+@app.post("/api/pwp/lifecycle-demo")
+async def pwp_lifecycle_demo(request: Request) -> JSONResponse:
+    """Run PWP as the full lifecycle reference plugin demo."""
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    disconnect_after = bool(payload.get("disconnect_after", True))
+    actor = str(payload.get("actor") or "pwp-dashboard")
+    result = run_pwp_reference_lifecycle(actor=actor, disconnect_after=disconnect_after)
+    return JSONResponse(result, status_code=200 if result.get("ok") else 409)
+
+
+@app.get("/api/cost")
+async def get_cost_summary() -> dict[str, Any]:
+    """Return per-dispatch cost summary for dashboards."""
+    from prismatic.cost.tracker import cost_summary
+
+    return cost_summary()
 
 
 # ── WebSocket Endpoint ──────────────────────────────────────────────
@@ -204,6 +983,468 @@ async def list_locks() -> list[dict[str, Any]]:
     return read_swarm_locks()
 
 
+# ── Dashboard recovery controls ─────────────────────────────────
+
+_RECOVERY_CONTROL_ACTIONS: dict[str, dict[str, str]] = {
+    "restart": {
+        "label": "Restart agent worker",
+        "status": "restart queued",
+        "detail": "Server recorded a restart request for the selected agent.",
+    },
+    "retry": {
+        "label": "Retry failed run",
+        "status": "retry queued",
+        "detail": "Server recorded a retry request and marked the run for another attempt.",
+    },
+    "replay": {
+        "label": "Replay last event",
+        "status": "replay queued",
+        "detail": "Server recorded an event replay request for the selected agent stream.",
+    },
+}
+
+
+def _dashboard_recovery_state_path() -> Path:
+    state_dir = Path(os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state/"))
+    return state_dir / "dashboard_recovery_controls.json"
+
+
+def _read_dashboard_recovery_state() -> dict[str, Any]:
+    path = _dashboard_recovery_state_path()
+    if not path.exists():
+        return {"actions": [], "last_status": None}
+    try:
+        data = json.loads(path.read_text())
+        if isinstance(data, dict):
+            data.setdefault("actions", [])
+            data.setdefault("last_status", None)
+            return data
+    except Exception:
+        logger.warning("dashboard recovery state read failed", exc_info=True)
+    return {"actions": [], "last_status": None}
+
+
+def _write_dashboard_recovery_state(state: dict[str, Any]) -> None:
+    path = _dashboard_recovery_state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, indent=2, sort_keys=True))
+
+
+@app.get("/api/dashboard/recovery-control/status")
+async def dashboard_recovery_control_status() -> dict[str, Any]:
+    """Return visible recovery-control proof for the dashboard UI."""
+    return _read_dashboard_recovery_state()
+
+
+@app.post("/api/dashboard/recovery-control", response_model=None)
+async def dashboard_recovery_control(
+    payload: dict[str, Any],
+) -> dict[str, Any] | JSONResponse:
+    """Record restart/retry/replay recovery actions for live dashboard proof.
+
+    The dashboard controls intentionally do not shell out or kill processes from
+    the browser. The server-side effect is a durable recovery-control ledger plus
+    an optional event-bus publication, giving operators visible proof that the
+    command reached the gateway and changed server state.
+    """
+    action = str(payload.get("action", "")).strip().lower()
+    if action not in _RECOVERY_CONTROL_ACTIONS:
+        return JSONResponse(
+            {"error": "invalid_action", "allowed": sorted(_RECOVERY_CONTROL_ACTIONS)},
+            status_code=400,
+        )
+
+    agent = str(payload.get("agent") or "unknown").strip() or "unknown"
+    ref = (
+        str(payload.get("ref") or payload.get("run_id") or "dashboard").strip()
+        or "dashboard"
+    )
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    spec = _RECOVERY_CONTROL_ACTIONS[action]
+    status_text = f"{spec['status']}: {agent} / {ref}"
+    entry = {
+        "id": f"recovery-{int(time.time() * 1000)}",
+        "action": action,
+        "agent": agent,
+        "ref": ref,
+        "label": spec["label"],
+        "status": status_text,
+        "detail": spec["detail"],
+        "created_at": now,
+    }
+
+    state = _read_dashboard_recovery_state()
+    actions = [entry] + list(state.get("actions", []))
+    state["actions"] = actions[:25]
+    state["last_status"] = status_text
+    state["updated_at"] = now
+    _write_dashboard_recovery_state(state)
+
+    try:
+        bus = get_event_bus()
+        if bus is not None:
+            await bus.publish(
+                event_type=f"dashboard.recovery.{action}",
+                source="prismatic-hub",
+                payload=entry,
+            )
+    except Exception:
+        logger.warning("dashboard recovery event publish failed", exc_info=True)
+
+    return {"ok": True, "status": status_text, "entry": entry, "state": state}
+
+
+# ── D.5: Observability metrics ──────────────────────────────────
+
+
+@app.get("/metrics")
+async def metrics() -> dict[str, Any]:
+    """Phase D.5 — observability metrics endpoint.
+
+    Returns Prometheus-style plain-text when Accept contains 'text/plain';
+    otherwise JSON. Includes event bus stats, webhook counters, and
+    uptime. Counters reset on process restart (in-process).
+    """
+    from prismatic.gateway.event_bus import get_event_bus
+
+    bus = get_event_bus()
+    bus_stats = bus.stats
+    uptime_s = time.time() - _server_started_at if _server_started_at else 0.0
+    return {
+        "uptime_seconds": round(uptime_s, 2),
+        "event_bus": bus_stats,
+        "webhooks": dict(_webhook_counters),
+    }
+
+
+# ── Merge Backlog Triage Companion API ───────────────────────────────
+
+MERGE_BACKLOG_TRIAGE: dict[str, Any] = {
+    "status": "green_baseline_with_followups",
+    "source_issue": "GRO-3520",
+    "last_verified": "2026-07-06T14:32:49Z",
+    "snapshot": {
+        "pending_count": 84,
+        "merged_count": 266,
+        "drift_detected": False,
+        "last_apply": None,
+    },
+    "okf_artifacts": [
+        "okf/audits/merge-family-audit-2026-07-06.md",
+        "okf/audits/canonical-merge-winner-map-2026-07-06.md",
+        "okf/standards/prismatic-governance-scorecard.md",
+    ],
+    "canonical_winners": [
+        {
+            "family": "GRO-1567",
+            "winner": "prismatic/gateway/server.py",
+            "siblings": ["prismatic/gateway/ipc_bridge.py"],
+            "reason": "Gateway/server is the operator-facing control surface; IPC bridge remains derivative.",
+        },
+        {
+            "family": "GRO-1614",
+            "winner": "prismatic/core/hardware_profile.py",
+            "siblings": [
+                "prismatic/core/__init__.py",
+                "prismatic/core/registry.py",
+                "prismatic/interface/plugin.py",
+                "tests/test_hardware_profiles.py",
+            ],
+            "reason": "Hardware profile model is the source of truth for the registry cluster.",
+        },
+        {
+            "family": "GRO-2091",
+            "winner": "okf/index.md",
+            "siblings": ["downstream index copies", "cross-links"],
+            "reason": "Root OKF index remains canonical and should only point outward.",
+        },
+        {
+            "family": "GRO-2193/GRO-2305",
+            "winner": "plugins/hermes-plugin-prismatic-hub/src/index.js",
+            "siblings": [
+                "plugins/hermes-plugin-prismatic-hub/dashboard/dist/index.html",
+                "dashboard/manifest.json",
+            ],
+            "reason": "Source dashboard tree owns generated dist artifacts.",
+        },
+        {
+            "family": "GRO-2353/GRO-2355",
+            "winner": "plugins/pwp/plugin-manifest.yaml",
+            "siblings": [
+                "plugins/pwp/__init__.py",
+                "plugins/pwp/plugin.py",
+                "scripts/migrate_pwp.py",
+                "tests/test_pwp_hooks.py",
+            ],
+            "reason": "Manifest-first ownership keeps plugin wiring explicit and reviewable.",
+        },
+        {
+            "family": "GRO-2471",
+            "winner": ".gitignore",
+            "siblings": ["duplicate ignore fragments", "stale rule copies"],
+            "reason": "Low-footprint cleanup family with a single root ignore source.",
+        },
+    ],
+    "duplicate_families": ["GRO-2193/GRO-2305", "GRO-2353/GRO-2355"],
+    "contested_items": ["GRO-1567", "GRO-2353/GRO-2355"],
+    "next_actions": [
+        "Close or fold duplicate siblings into the listed canonical winners.",
+        "Keep dashboard/API merge visibility green while follow-up cleanup reduces pending_count.",
+        "Downgrade scorecard gate 7 if this endpoint or the linked OKF artifacts disappear.",
+    ],
+}
+
+
+@app.get("/api/governance/merge-backlog")
+@app.get("/api/gateway/governance/merge-backlog")
+async def governance_merge_backlog() -> dict[str, Any]:
+    """Expose the GRO-3520 merge backlog triage map for dashboards and operators."""
+    return MERGE_BACKLOG_TRIAGE
+
+
+@app.get("/api/gateway/merge/status")
+@app.get("/api/merge/status")
+async def merge_status() -> dict[str, Any]:
+    """Return dashboard-safe merge pipeline status without shelling out."""
+    state_candidates = [
+        Path(os.environ.get("PRISMATIC_MERGE_STATUS", "")) if os.environ.get("PRISMATIC_MERGE_STATUS") else None,
+        Path(os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state")) / "merge_status.json",
+        Path.home() / ".prismatic" / "merge_status.json",
+    ]
+    for candidate in state_candidates:
+        if not candidate:
+            continue
+        try:
+            if candidate.exists():
+                data = json.loads(candidate.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    data.setdefault("pending", [])
+                    data.setdefault("merged", [])
+                    data.setdefault("pending_count", len(data.get("pending") or []))
+                    data.setdefault("merged_count", len(data.get("merged") or []))
+                    data.setdefault("last_scan", None)
+                    data.setdefault("last_apply", None)
+                    data.setdefault("source", str(candidate))
+                    return data
+        except Exception as exc:
+            logger.warning("merge status read failed from %s: %s", candidate, exc)
+    return {
+        "pending_count": 0,
+        "merged_count": 0,
+        "last_scan": None,
+        "last_apply": None,
+        "pending": [],
+        "merged": [],
+        "source": "empty-fallback",
+        "warning": "No merge_status.json state file found; merge watcher may be uninitialized.",
+    }
+
+
+@app.get("/events/recent")
+async def events_recent(limit: int = 50) -> dict[str, Any]:
+    """Phase D.5 — return recent events from both in-memory history and SQLite bus.
+
+    Useful for debugging what got published, what's in the queue, and what
+    the consumer should be draining. Reads from SQLite (durable) rather
+    than in-memory ring buffer so the window is wider.
+    """
+    import sqlite3
+
+    db_path = os.environ.get("PRISMATIC_BUS_DB") or ".prismatic/bus/event_log.sqlite"
+    if not os.path.isabs(db_path):
+        db_path = os.path.join(
+            os.environ.get("PRISMATIC_HOME") or os.path.expanduser("~"), db_path
+        )
+    if not os.path.exists(db_path):
+        return {
+            "events": [],
+            "count": 0,
+            "source": "sqlite",
+            "note": "bus db not yet created",
+        }
+    try:
+        conn = sqlite3.connect(db_path, timeout=5)
+        try:
+            cur = conn.execute(
+                "SELECT rowid, topic, payload_json, ts, processed "
+                "FROM events ORDER BY rowid DESC LIMIT ?",
+                (max(1, min(limit, 500)),),
+            )
+            rows = cur.fetchall()
+            events = []
+            for row in rows:
+                try:
+                    payload = json.loads(row[2])
+                except Exception:
+                    payload = {"_raw": row[2][:200]}
+                events.append(
+                    {
+                        "rowid": row[0],
+                        "topic": row[1],
+                        "ts": row[3],
+                        "processed": bool(row[4]),
+                        "payload": payload,
+                    }
+                )
+            return {"events": events, "count": len(events), "source": "sqlite"}
+        finally:
+            conn.close()
+    except Exception as e:
+        return {"events": [], "count": 0, "source": "sqlite", "error": str(e)}
+
+
+@app.get("/api/report/latest", response_model=None)
+async def get_latest_report() -> Any:
+    """Return the latest overnight factory report JSON.
+
+    The report is generated by prismatic.reports.overnight and persisted to
+    ~/.prismatic/reports/latest.json.  Missing reports return 404 so dashboards
+    can show an explicit empty state instead of stale sample data.
+    """
+    report = Path("~/.prismatic/reports/latest.json").expanduser()
+    if not report.exists():
+        return Response(status_code=404)
+    try:
+        return json.loads(report.read_text())
+    except json.JSONDecodeError as exc:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "latest report is not valid JSON", "detail": str(exc)},
+        )
+
+
+@app.get("/events/bus-stats")
+async def events_bus_stats() -> dict[str, Any]:
+    """SQLite bus durable stats: total events, processed, oldest, newest."""
+    import sqlite3
+
+    db_path = os.environ.get("PRISMATIC_BUS_DB") or ".prismatic/bus/event_log.sqlite"
+    if not os.path.isabs(db_path):
+        db_path = os.path.join(
+            os.environ.get("PRISMATIC_HOME") or os.path.expanduser("~"), db_path
+        )
+    if not os.path.exists(db_path):
+        return {"exists": False}
+    try:
+        conn = sqlite3.connect(db_path, timeout=5)
+        try:
+            total = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+            processed = conn.execute(
+                "SELECT COUNT(*) FROM events WHERE processed = 1"
+            ).fetchone()[0]
+            oldest = conn.execute("SELECT MIN(ts) FROM events").fetchone()[0]
+            newest = conn.execute("SELECT MAX(ts) FROM events").fetchone()[0]
+            return {
+                "exists": True,
+                "total": total,
+                "processed": processed,
+                "pending": total - processed,
+                "oldest_ts": oldest,
+                "newest_ts": newest,
+            }
+        finally:
+            conn.close()
+    except Exception as e:
+        return {"exists": True, "error": str(e)}
+
+
+@app.get("/curator/health")
+async def curator_health() -> dict[str, Any]:
+    """Story 1.7: Curator Lane observability dashboard endpoint.
+
+    Returns curator state: tag distribution, lane stats, recent escalations,
+    pool stats, budget usage, and last digest timestamp.
+
+    Used by the morning digest generator + ad-hoc health checks.
+    """
+    import sqlite3
+
+    curator_db = os.environ.get("PRISMATIC_CURATOR_DB")
+    if not curator_db or not os.path.exists(curator_db):
+        return {"exists": False, "error": "curator DB not found"}
+
+    # Pool stats via import (graceful if not available)
+    pool_stats = None
+    try:
+        engine_root = os.path.join(
+            os.environ.get("PRISMATIC_HOME") or os.path.expanduser("~"),
+            "work",
+            "prismatic-engine",
+        )
+        if os.path.isdir(engine_root) and engine_root not in sys.path:
+            sys.path.insert(0, engine_root)
+        from prismatic.supervisor.recovery import get_pool
+
+        pool_stats = get_pool().stats()
+    except Exception as e:
+        pool_stats = {"error": str(e)}
+
+    # Budget stats
+    budget_path = os.path.expanduser("~/.prismatic/curator/budget.json")
+    budget = None
+    if os.path.exists(budget_path):
+        try:
+            import json as _json
+
+            with open(budget_path) as f:
+                budget = _json.load(f)
+        except Exception:
+            pass
+
+    try:
+        conn = sqlite3.connect(curator_db, timeout=5)
+        try:
+            # Tag distribution
+            cur = conn.execute("SELECT tag, COUNT(*) FROM tagged_events GROUP BY tag")
+            tag_counts = {row[0]: row[1] for row in cur.fetchall()}
+
+            # Last 10 escalations
+            cur = conn.execute(
+                "SELECT event_rowid, lane_hint, reason, tagged_at "
+                "FROM tagged_events WHERE tag = 'escalate' "
+                "ORDER BY tagged_at DESC LIMIT 10"
+            )
+            recent_escalations = [
+                {
+                    "event_rowid": row[0],
+                    "lane_hint": row[1],
+                    "reason": row[2],
+                    "tagged_at": row[3],
+                }
+                for row in cur.fetchall()
+            ]
+
+            # Last digest
+            cur = conn.execute(
+                "SELECT date, ran_at, escalate_count, paged_michael, digest_path "
+                "FROM digest_runs ORDER BY ran_at DESC LIMIT 1"
+            )
+            last_digest_row = cur.fetchone()
+            last_digest = None
+            if last_digest_row:
+                last_digest = {
+                    "date": last_digest_row[0],
+                    "ran_at": last_digest_row[1],
+                    "escalate_count": last_digest_row[2],
+                    "paged_michael": bool(last_digest_row[3]),
+                    "digest_path": last_digest_row[4],
+                }
+        finally:
+            conn.close()
+    except Exception as e:
+        return {"exists": True, "error": str(e)}
+
+    return {
+        "exists": True,
+        "tag_counts": tag_counts,
+        "total_tagged": sum(tag_counts.values()),
+        "recent_escalations": recent_escalations,
+        "last_digest": last_digest,
+        "pool_stats": pool_stats,
+        "budget": budget,
+    }
+
+
 @app.get("/locks/stale")
 async def list_stale_locks() -> list[dict[str, Any]]:
     """Return locks whose heartbeat has expired (>5 min stale)."""
@@ -238,33 +1479,23 @@ async def get_lock(file_path: str) -> Response:
 # ── Agent Run Records API ────────────────────────────────────────────
 
 
-def _parse_iso_timestamp(value: str | None) -> datetime | None:
-    """Parse persisted ISO timestamps, including trailing-Z UTC values."""
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-
-
 def _run_record_to_dict(record: Any) -> dict[str, Any]:
-    """Serialize a run record for the public Runs API."""
-    started = _parse_iso_timestamp(record.started_at)
-    completed = _parse_iso_timestamp(record.completed_at)
-    duration = None
-    if started is not None and completed is not None:
-        duration = max(0.0, (completed - started).total_seconds())
     return {
         "run_id": record.run_id,
         "issue_id": record.issue_id,
         "agent_name": record.agent_name,
         "status": record.status,
+        "verification_status": getattr(record, "verification_status", "self_reported"),
+        "verification_scope": getattr(record, "verification_scope", "not_run"),
+        "failure_category": getattr(record, "failure_category", "none"),
+        "cleanup_status": getattr(record, "cleanup_status", "not_reported"),
+        "done_gate_result": getattr(record, "done_gate_result", "not_done"),
+        "done_gate_errors": getattr(record, "done_gate_errors", []),
         "started_at": record.started_at,
         "completed_at": record.completed_at,
-        "duration_seconds": duration,
         "output_path": record.output_path,
         "error_message": record.error_message,
+        "evidence": getattr(record, "evidence", None),
     }
 
 
@@ -305,7 +1536,7 @@ async def get_run(run_id: str) -> Response:
 
 
 @app.post("/runs/{run_id}/complete")
-async def complete_run(run_id: str, payload: dict[str, Any] | None = None) -> Response:
+async def complete_run(run_id: str, payload: dict[str, Any] | None = None) -> Any:
     """Mark a run as completed or failed."""
     if _run_store is None:
         return Response(
@@ -321,8 +1552,10 @@ async def complete_run(run_id: str, payload: dict[str, Any] | None = None) -> Re
             media_type="application/json",
         )
     status = (payload or {}).get("status", "completed")
-    _run_store.update_run(run_id, status=status)
-    return {"status": "ok"}
+    evidence = (payload or {}).get("evidence")
+    _run_store.update_run(run_id, status=status, evidence=evidence)
+    updated = _run_store.get_run(run_id)
+    return {"status": "ok", "run": _run_record_to_dict(updated) if updated else None}
 
 
 # ── Webhook Endpoints (stubs — full implementation in dedicated modules) ──
@@ -330,176 +1563,314 @@ async def complete_run(run_id: str, payload: dict[str, Any] | None = None) -> Re
 
 @app.post("/api/gateway/github")
 async def github_webhook(request: Request) -> dict[str, Any]:
-    """Receive GitHub webhook events (PR opened, synchronized, review submitted)."""
+    """Receive GitHub webhook events. Verifies HMAC-SHA256 via X-Hub-Signature-256
+    and publishes to the in-process event bus.
+
+    Per opus-event-driven-real-plan.md Phase 1.
+    """
     body = await request.body()
-    logger.info("GitHub webhook received (%d bytes)", len(body))
+    signature = request.headers.get("X-Hub-Signature-256", "")
+    _webhook_counters["github_received"] += 1
+    if signature:
+        secrets = get_github_secrets()
+        if not secrets:
+            logger.warning("GitHub webhook skipped: secret not set")
+            return {"status": "skipped", "reason": "no-secret"}
+        # GitHub HMAC algorithm: hmac_sha256(secret, "x-hub-signature-256:" + body)
+        signed_payload = b"x-hub-signature-256:" + body
+        # GitHub sends "sha256=<hex>"; compare_digest needs raw hex on both sides.
+        sig_hex = (
+            signature.split("=", 1)[1] if signature.startswith("sha256=") else signature
+        )
+        expected = None
+        for secret in secrets:
+            candidate = _hmac.new(
+                secret.encode(), signed_payload, hashlib.sha256
+            ).hexdigest()
+            if _hmac.compare_digest(candidate, sig_hex):
+                expected = candidate
+                break
+        if expected is None:
+            _webhook_counters["github_auth_failed"] += 1
+            await _publish_webhook_auth_failed("github")
+            from fastapi.responses import JSONResponse
+
+            return JSONResponse({"status": "auth-failed"}, status_code=401)
+    try:
+        event = json.loads(body) if body else {}
+    except Exception:
+        event = {"raw": body.decode("utf-8", errors="replace")}
+    try:
+        from prismatic.gateway.event_bus import get_event_bus
+
+        bus = get_event_bus()
+        if bus is not None:
+            await bus.publish(
+                event_type=request.headers.get("X-GitHub-Event")
+                or event.get("action", "unknown"),
+                source="github",
+                payload=event,
+            )
+            logger.info("GitHub webhook published to bus")
+            _webhook_counters["github_published"] += 1
+    except Exception as e:
+        logger.error("GitHub webhook bus publish failed: %s", e)
     return {"status": "ok", "message": "webhook received"}
 
 
 @app.post("/api/gateway/linear")
 async def linear_webhook(request: Request) -> dict[str, Any]:
-    """Receive Linear webhook events (issue status changes, comments)."""
+    """Receive Linear webhook events. Validates HMAC and publishes to bus.
+
+    Per opus-event-driven-real-plan.md Phase 1.
+    """
     body = await request.body()
-    logger.info("Linear webhook received (%d bytes)", len(body))
+    signature = request.headers.get("linear-signature", "")
+    _webhook_counters["linear_received"] += 1
+    if signature:
+        secrets = get_linear_secrets()
+        if secrets:
+            expected = None
+            for secret in secrets:
+                candidate = _hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+                if _hmac.compare_digest(candidate, signature):
+                    expected = candidate
+                    break
+            if expected is None:
+                _webhook_counters["linear_auth_failed"] += 1
+                await _publish_webhook_auth_failed("linear")
+                from fastapi.responses import JSONResponse
+
+                return JSONResponse({"status": "auth-failed"}, status_code=401)
+    try:
+        event = json.loads(body) if body else {}
+    except Exception:
+        event = {"raw": body.decode("utf-8", errors="replace")}
+    try:
+        from prismatic.gateway.event_bus import get_event_bus
+
+        bus = get_event_bus()
+        if bus is not None:
+            await bus.publish(
+                event_type=event.get("action", "unknown"),
+                source="linear",
+                payload=event,
+            )
+            logger.info("Linear webhook published to bus")
+            _webhook_counters["linear_published"] += 1
+    except Exception as e:
+        logger.error("Linear webhook bus publish failed: %s", e)
     return {"status": "ok", "message": "webhook received"}
 
 
-# ── Merge Pipeline API ───────────────────────────────────────────────
-
-TERMINAL_LINEAR_STATE_NAMES = {"done", "canceled", "cancelled", "duplicate"}
-TERMINAL_LINEAR_STATE_TYPES = {"completed", "canceled"}
-
-
-def _linear_state_is_terminal(state: dict[str, Any] | None) -> bool:
-    if not state:
-        return False
-    name = str(state.get("name") or "").strip().lower()
-    state_type = str(state.get("type") or "").strip().lower()
-    return name in TERMINAL_LINEAR_STATE_NAMES or state_type in TERMINAL_LINEAR_STATE_TYPES
+@app.post("/webhooks/linear")
+async def linear_webhook_alias(request: Request) -> dict[str, Any]:
+    """Alias for /api/gateway/linear — Linear's OAuth apps store the literal
+    webhook URL https://webhooks.growthwebdev.com/webhooks/linear. Without
+    this alias, every Linear webhook hits 404 (Jun 30 2026 incident).
+    Forward to the same handler.
+    """
+    return await linear_webhook(request)
 
 
-def _terminal_pending_keep_rationale(details: Any) -> str | None:
-    if not isinstance(details, dict):
-        return None
-    if not any(details.get(key) for key in ("force_keep_terminal", "terminal_keep", "force_keep")):
-        return None
-    rationale = details.get("terminal_keep_rationale") or details.get("force_keep_rationale") or details.get("rationale")
-    return str(rationale or "force-kept terminal Linear issue").strip()
+# ── Chat AGY Endpoints (v0.1) ──────────────────────────────────────
 
 
-def _prune_terminal_linear_pending(
-    pending: dict[str, Any],
-    linear_states: dict[str, dict[str, Any]],
-) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
-    """Drop terminal Linear issues from merge-pending state unless force-kept."""
-    active_pending: dict[str, Any] = {}
-    pruned: list[dict[str, Any]] = []
-    retained_terminal: list[dict[str, Any]] = []
-    for ticket, details in pending.items():
-        linear_state = linear_states.get(ticket)
-        if not _linear_state_is_terminal(linear_state):
-            active_pending[ticket] = details
-            continue
-        rationale = _terminal_pending_keep_rationale(details)
-        if rationale:
-            active_pending[ticket] = details
-            retained_terminal.append({"ticket": ticket, "linear_state": linear_state, "rationale": rationale})
-        else:
-            pruned.append({"ticket": ticket, "linear_state": linear_state})
-    return active_pending, pruned, retained_terminal
+@app.get("/chat/sessions")
+async def list_chat_sessions() -> list[dict[str, Any]]:
+    """Get the list of active/known AGY chat sessions."""
+    from prismatic.capabilities.chat_agy import ChatAGYCapability
+
+    cap = ChatAGYCapability()
+    return cap.list_sessions()
 
 
-def _fetch_linear_issue_states(tickets: list[str]) -> dict[str, dict[str, Any]]:
-    """Fetch Linear state for ticket identifiers using issue(id:) aliases."""
-    import urllib.request
+@app.get("/chat/sessions/{session_id}")
+async def get_chat_session(session_id: str):
+    """Get a single chat session by ID, or return 404 per v0.1 contract."""
+    from prismatic.capabilities.chat_agy import ChatAGYCapability
+    from fastapi import HTTPException
 
-    api_key = os.environ.get("LINEAR_API_KEY")
-    if not api_key or not tickets:
-        return {}
-
-    states: dict[str, dict[str, Any]] = {}
-    for start in range(0, len(tickets), 40):
-        chunk = tickets[start:start + 40]
-        fields = []
-        for idx, ticket in enumerate(chunk):
-            safe_ticket = ticket.replace('"', '\\"')
-            fields.append(f'i{idx}: issue(id: "{safe_ticket}") {{ identifier state {{ name type }} }}')
-        payload = json.dumps({"query": "query { " + " ".join(fields) + " }"}).encode("utf-8")
-        request = urllib.request.Request(
-            "https://api.linear.app/graphql",
-            data=payload,
-            headers={"Authorization": api_key, "Content-Type": "application/json"},
-            method="POST",
+    cap = ChatAGYCapability()
+    session = cap.get_session(session_id)
+    if session is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "session_not_found",
+                "reason": f"Session '{session_id}' not found under the v0.1 contract (no live data path).",
+            },
         )
-        with urllib.request.urlopen(request, timeout=10) as response:  # nosec B310 - fixed Linear API URL
-            data = json.loads(response.read().decode("utf-8"))
-        if data.get("errors"):
-            raise RuntimeError(data["errors"])
-        for node in (data.get("data") or {}).values():
-            if node and node.get("identifier"):
-                states[node["identifier"]] = node.get("state") or {}
-    return states
+    return session
 
 
-@app.get("/api/merge/status")
-@app.get("/api/gateway/merge/status")
-def get_merge_status() -> dict[str, Any]:
-    home = Path.home()
-    merge_path = str(home / "work/prismatic-merge")
-    if merge_path not in sys.path:
-        sys.path.insert(0, merge_path)
+# ── Schedule Observatory Endpoints ─────────────────────────────────
+
+
+@app.get("/schedules")
+async def list_schedules() -> list[dict[str, Any]]:
+    """List all configured schedules across providers."""
+    from prismatic.schedules import get_all_schedules
+
+    return [s.to_dict() for s in get_all_schedules()]
+
+
+@app.post("/schedules/chat-command")
+async def schedules_chat_command(payload: dict[str, Any]) -> dict[str, Any]:
+    """Parse a chat command to update a schedule."""
+    from prismatic.schedules import process_chat_schedule_request
+
+    message = payload.get("message", "")
+    return process_chat_schedule_request(message)
+
+
+@app.post("/schedules/{schedule_id}/mutate")
+async def mutate_schedule(schedule_id: str, payload: dict[str, Any]):
+    """Mutate a schedule with owner-aware policy check."""
+    from prismatic.schedules import request_schedule_mutation, UnauthorizedMutationError
+    from fastapi.responses import JSONResponse
+
+    enabled = payload.get("enabled")
+    schedule_expr = payload.get("schedule_expr")
     try:
-        import prismatic_merge.config as merge_config
-        from prismatic_merge.core.state import StateManager
+        res = request_schedule_mutation(
+            schedule_id=schedule_id, enabled=enabled, schedule_expr=schedule_expr
+        )
+        return res
+    except UnauthorizedMutationError as e:
+        return JSONResponse(status_code=403, content={"error": str(e)})
 
-        merge_config.STATE_DIR = home / ".prismatic/merge-pipeline"
-        state = StateManager(state_file=home / ".prismatic/merge-pipeline/state_v6.json")
-        state.load()
-        pending = dict(getattr(state, "pending", {}) or {})
-        linear_state_error = ""
-        try:
-            linear_states = _fetch_linear_issue_states(list(pending.keys()))
-        except Exception as exc:
-            logger.warning("Unable to prune terminal Linear pending entries: %s", exc)
-            linear_states = {}
-            linear_state_error = str(exc)
-        active_pending, pruned_terminal, retained_terminal = _prune_terminal_linear_pending(pending, linear_states)
-        if pruned_terminal:
-            state.pending = active_pending
-            try:
-                state.save()
-            except Exception as exc:
-                logger.warning("Unable to persist terminal pending prune: %s", exc)
-        pending_list = []
-        for ticket, details in active_pending.items():
-            linear_state = linear_states.get(ticket)
-            pending_list.append({
-                "ticket": ticket,
-                "tier": details.get("tier", 2),
-                "confidence": details.get("confidence", 80),
-                "files": details.get("files", []),
-                "modified": details.get("modified_files", 0),
-                "contention": details.get("contention_files", []),
-                "linear_state": linear_state,
-                "terminal_keep_rationale": _terminal_pending_keep_rationale(details),
-            })
-        merged_list = []
-        for ticket, details in getattr(state, "merged", {}).items():
-            commit = details if isinstance(details, str) else details.get("commit", "")
-            tier = 2 if isinstance(details, str) else details.get("tier", 2)
-            timestamp = getattr(state, "last_apply", "") if isinstance(details, str) else details.get("merged_at", details.get("at", ""))
-            merged_list.append({
-                "ticket": ticket,
-                "commit": commit,
-                "tier": tier,
-                "timestamp": timestamp
-            })
-        merged_list.reverse()
-        return {
-            "status": "ok",
-            "pending_count": len(pending_list),
-            "merged_count": len(merged_list),
-            "terminal_pruned_count": len(pruned_terminal),
-            "retained_terminal_count": len(retained_terminal),
-            "linear_state_lookup_error": linear_state_error,
-            "last_scan": getattr(state, "last_scan", ""),
-            "last_apply": getattr(state, "last_apply", ""),
-            "drift_detected": getattr(state, "drift_detected", False),
-            "pending": pending_list,
-            "pruned_terminal": pruned_terminal,
-            "retained_terminal": retained_terminal,
-            "merged": merged_list[:15]
-        }
+
+# ── Native Cron Endpoints ─────────────────────────────────────────────
+
+
+@app.get("/native-crons")
+async def list_native_crons_endpoint(
+    include_deleted: bool = False,
+) -> list[dict[str, Any]]:
+    """List PE-native portable cron definitions and queue state."""
+    from prismatic.native_crons import list_native_crons
+
+    return list_native_crons(include_deleted=include_deleted)
+
+
+@app.post("/native-crons/{cron_id}/action")
+async def native_cron_action(cron_id: str, payload: dict[str, Any]):
+    """Pause/resume/deactivate/activate/delete/run a PE-native cron."""
+    from fastapi.responses import JSONResponse
+    from prismatic.native_crons import mutate_native_cron
+
+    action = payload.get("action")
+    if action not in {"pause", "resume", "deactivate", "activate", "delete", "run"}:
+        return JSONResponse(
+            status_code=400, content={"error": "Unsupported native cron action"}
+        )
+    try:
+        return mutate_native_cron(cron_id, action)
+    except KeyError:
+        return JSONResponse(
+            status_code=404, content={"error": f"Native cron not found: {cron_id}"}
+        )
+    except FileNotFoundError as e:
+        return JSONResponse(status_code=404, content={"error": str(e)})
     except Exception as exc:
-        return {"status": "error", "message": str(exc)}
+        return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
-# ── CLI Entry Point ──────────────────────────────────────────────────
+def get_linear_secrets():
+    """Read PRIMARY + SECONDARY Linear webhook signing secrets.
+
+    Supports 2-slot rotation: PRIMARY is current, SECONDARY is the previous
+    or next secret during rotation. Both are accepted for HMAC verification.
+    """
+    import os
+
+    seen = set()
+    out = []
+    for k in (
+        "PRISMATIC_LINEAR_WEBHOOK_SECRET",
+        "PRISMATIC_LINEAR_WEBHOOK_SECRET_SECONDARY",
+        "LINEAR_WEBHOOK_SIGNING_SECRET",
+        "LINEAR_WEBHOOK_SIGNING_SECRET_SECONDARY",
+    ):
+        v = os.environ.get(k, "")
+        if v and v not in seen:
+            out.append(v)
+            seen.add(v)
+    if not out:
+        env_file = Path(
+            os.environ.get("PRISMATIC_ENV_FILE")
+            or os.path.join(
+                os.environ.get("PRISMATIC_HOME") or os.path.expanduser("~"),
+                ".hermes/profiles/orchestrator/.env",
+            )
+        )
+        if env_file.exists():
+            for line in env_file.read_text().splitlines():
+                if (
+                    "PRISMATIC_LINEAR_WEBHOOK_SECRET" in line
+                    or "LINEAR_WEBHOOK_SIGNING_SECRET" in line
+                ) and "=" in line:
+                    v = line.split("=", 1)[1].strip().strip("'\"")
+                    if v and v not in seen:
+                        out.append(v)
+                        seen.add(v)
+    return out
+
+
+def get_linear_secret():
+    """Legacy single-secret accessor (returns first slot)."""
+    secrets = get_linear_secrets()
+    return secrets[0] if secrets else ""
+
+
+def get_github_secrets():
+    """Read PRIMARY + SECONDARY GitHub webhook signing secrets.
+
+    Supports 2-slot rotation: PRIMARY is current, SECONDARY is the previous
+    or next secret during rotation. Both are accepted for HMAC verification.
+    """
+    import os
+    import re as _re
+
+    seen = set()
+    out = []
+    for k in (
+        "PRISMATIC_GITHUB_WEBHOOK_SECRET",
+        "PRISMATIC_GITHUB_WEBHOOK_SECRET_SECONDARY",
+    ):
+        v = os.environ.get(k, "")
+        if v and v not in seen:
+            out.append(v)
+            seen.add(v)
+    if not out:
+        svc = Path("/etc/systemd/system/prismatic-gateway.service")
+        if svc.exists():
+            content = svc.read_text()
+            for k in (
+                "PRISMATIC_GITHUB_WEBHOOK_SECRET",
+                "PRISMATIC_GITHUB_WEBHOOK_SECRET_SECONDARY",
+            ):
+                m = _re.search(k + "=(.*)", content)
+                if m:
+                    v = m.group(1).strip()
+                    if v and v not in seen:
+                        out.append(v)
+                        seen.add(v)
+    return out
+
+
+def get_github_secret():
+    """Legacy single-secret accessor (returns first slot)."""
+    secrets = get_github_secrets()
+    return secrets[0] if secrets else ""
 
 
 def _create_run_store() -> AgentRunRecordStore | None:
     """Initialize run store (used by gRPC server)."""
-    return AgentRunRecordStore()
+    state_dir = os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state/")
+    store_path = os.path.join(state_dir, "run_records.json")
+    return AgentRunRecordStore(store_path)
 
 
 def main() -> None:
