@@ -1056,6 +1056,53 @@ def _write_dashboard_recovery_state(state: dict[str, Any]) -> None:
     path.write_text(json.dumps(state, indent=2, sort_keys=True))
 
 
+def _dashboard_state_dir() -> Path:
+    return Path(os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state/")).expanduser()
+
+
+def _read_json_state(path: Path, default: dict[str, Any]) -> dict[str, Any]:
+    if not path.exists():
+        return dict(default)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            merged = dict(default)
+            merged.update(data)
+            return merged
+    except Exception:
+        logger.warning("dashboard state read failed from %s", path, exc_info=True)
+    return dict(default)
+
+
+def _write_json_state(path: Path, state: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _dashboard_foundation_state_path() -> Path:
+    return _dashboard_state_dir() / "dashboard_foundation_controls.json"
+
+
+def _read_dashboard_foundation_state() -> dict[str, Any]:
+    return _read_json_state(_dashboard_foundation_state_path(), {"actions": [], "last_action": None})
+
+
+def _write_dashboard_foundation_state(state: dict[str, Any]) -> None:
+    _write_json_state(_dashboard_foundation_state_path(), state)
+
+
+def _dashboard_merge_state_path() -> Path:
+    return _dashboard_state_dir() / "dashboard_merge_controls.json"
+
+
+def _read_dashboard_merge_state() -> dict[str, Any]:
+    return _read_json_state(_dashboard_merge_state_path(), {"actions": [], "last_action": None})
+
+
+def _write_dashboard_merge_state(state: dict[str, Any]) -> None:
+    _write_json_state(_dashboard_merge_state_path(), state)
+
+
 @app.get("/api/dashboard/recovery-control/status")
 async def dashboard_recovery_control_status() -> dict[str, Any]:
     """Return visible recovery-control proof for the dashboard UI."""
@@ -1231,39 +1278,16 @@ async def governance_merge_backlog() -> dict[str, Any]:
 @app.get("/api/gateway/merge/status")
 @app.get("/api/merge/status")
 async def merge_status() -> dict[str, Any]:
-    """Return dashboard-safe merge pipeline status without shelling out."""
-    state_candidates = [
-        Path(os.environ.get("PRISMATIC_MERGE_STATUS", "")) if os.environ.get("PRISMATIC_MERGE_STATUS") else None,
-        Path(os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state")) / "merge_status.json",
-        Path.home() / ".prismatic" / "merge_status.json",
-    ]
-    for candidate in state_candidates:
-        if not candidate:
-            continue
-        try:
-            if candidate.exists():
-                data = json.loads(candidate.read_text(encoding="utf-8"))
-                if isinstance(data, dict):
-                    data.setdefault("pending", [])
-                    data.setdefault("merged", [])
-                    data.setdefault("pending_count", len(data.get("pending") or []))
-                    data.setdefault("merged_count", len(data.get("merged") or []))
-                    data.setdefault("last_scan", None)
-                    data.setdefault("last_apply", None)
-                    data.setdefault("source", str(candidate))
-                    return data
-        except Exception as exc:
-            logger.warning("merge status read failed from %s: %s", candidate, exc)
-    return {
-        "pending_count": 0,
-        "merged_count": 0,
-        "last_scan": None,
-        "last_apply": None,
-        "pending": [],
-        "merged": [],
-        "source": "empty-fallback",
-        "warning": "No merge_status.json state file found; merge watcher may be uninitialized.",
-    }
+    """Return normalized Merge Pipeline status from existing merge state."""
+    from prismatic.merge_status import load_merge_state, merge_status_payload
+
+    state, state_path = load_merge_state()
+    return merge_status_payload(
+        state,
+        _read_dashboard_merge_state(),
+        MERGE_BACKLOG_TRIAGE,
+        state_path=state_path,
+    )
 
 
 @app.get("/events/recent")
@@ -1478,28 +1502,34 @@ async def dashboard_dispatcher_control(action: str) -> JSONResponse:
 
 
 @app.get("/api/foundation/peer_review")
+@app.get("/api/gateway/foundation/peer_review")
 async def dashboard_foundation_peer_review() -> dict[str, Any]:
-    """Return dashboard-safe peer-review/foundation counters."""
-    return {
-        "jules_count": 0,
-        "jules_limit": 4,
-        "ned_count": 0,
-        "agy_count": 0,
-        "current_agy_reviewer": "none",
-        "source": "gateway-compat",
-    }
+    """Return live Foundation / Peer Review status from run evidence."""
+    from prismatic.foundation_status import foundation_peer_review_payload
+
+    return foundation_peer_review_payload(_recent_agent_runs(limit=500), _read_dashboard_foundation_state())
 
 
 @app.post("/api/foundation/control/{action}")
-async def dashboard_foundation_control(action: str) -> dict[str, Any]:
-    """Acknowledge foundation control requests without running shell commands."""
-    return {
-        "status": "ok",
-        "action": action,
-        "message": "Foundation action acknowledged by gateway compatibility layer; no shell command executed.",
-        "stdout": "",
-        "stderr": "",
-    }
+@app.post("/api/gateway/foundation/control/{action}")
+async def dashboard_foundation_control(action: str) -> JSONResponse:
+    """Record an audit-safe Foundation control intent without shell execution."""
+    from prismatic.foundation_status import CONTROL_ACTIONS, foundation_control_entry
+
+    clean_action = str(action or "").strip().lower()
+    if clean_action not in CONTROL_ACTIONS:
+        return JSONResponse(
+            {"ok": False, "status": "error", "error": f"unsupported foundation action: {clean_action}", "allowed_actions": sorted(CONTROL_ACTIONS)},
+            status_code=400,
+        )
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    entry = foundation_control_entry(clean_action, now=now)
+    state = _read_dashboard_foundation_state()
+    state["actions"] = [entry] + list(state.get("actions", []))[:24]
+    state["last_action"] = entry
+    state["updated_at"] = now
+    _write_dashboard_foundation_state(state)
+    return JSONResponse({"ok": True, "status": "ok", "message": entry["detail"], "entry": entry})
 
 
 def _quota_state_db_path() -> Path:
