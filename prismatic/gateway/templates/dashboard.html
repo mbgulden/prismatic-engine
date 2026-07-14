@@ -2452,27 +2452,31 @@
                     const locks = await locksRes.json();
                     const stale = await staleRes.json();
                     
-                    const stalePaths = new Set(stale.map(s => s.filePath));
+                    const stalePaths = new Set(stale.map(s => s.filePath || s.path).filter(Boolean));
                     const tbody = document.getElementById("workspaces-tbody");
-                    
-                    if (locks.length === 0) {
+
+                    if (!Array.isArray(locks) || locks.length === 0) {
                         tbody.innerHTML = `<tr><td colspan="6" class="py-6 text-center text-slate-500 italic">No active file locks acquired by agents.</td></tr>`;
                         return;
                     }
-                    
+
                     tbody.innerHTML = locks.map(lock => {
-                        const isStale = stalePaths.has(lock.filePath);
-                        const statusTag = isStale 
+                        const lockPath = lock.filePath || lock.path || "unknown";
+                        const agent = lock.agentId || lock.agent || "unknown";
+                        const rawTimestamp = lock.timestamp || lock.heartbeat || lock.lastHeartbeat || 0;
+                        const timestampSeconds = rawTimestamp > 9999999999 ? rawTimestamp / 1000 : rawTimestamp;
+                        const isStale = stalePaths.has(lockPath);
+                        const statusTag = isStale
                             ? `<span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold border bg-rose-500/10 text-rose-400 border-rose-500/20 uppercase">stale</span>`
                             : `<span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold border bg-emerald-500/10 text-emerald-400 border-emerald-500/20 uppercase">active</span>`;
-                        
+
                         return `
                             <tr class="border-b border-slate-800/40 hover:bg-slate-900/10 transition">
-                                <td class="py-3 px-3 font-semibold text-slate-200">${lock.filePath.split('/').pop()}</td>
-                                <td class="py-3 px-3 font-mono text-slate-400 text-xs">${lock.filePath}</td>
-                                <td class="py-3 px-3 font-mono text-indigo-400 text-xs">${lock.agentId}</td>
-                                <td class="py-3 px-3 text-slate-400">${formatDate(lock.timestamp / 1000)}</td>
-                                <td class="py-3 px-3 text-slate-400">${formatDate(lock.lastHeartbeat / 1000)}</td>
+                                <td class="py-3 px-3 font-semibold text-slate-200">${lockPath.split('/').pop()}</td>
+                                <td class="py-3 px-3 font-mono text-slate-400 text-xs">${lockPath}</td>
+                                <td class="py-3 px-3 font-mono text-indigo-400 text-xs">${agent}</td>
+                                <td class="py-3 px-3 text-slate-400">${timestampSeconds ? formatDate(timestampSeconds) : '—'}</td>
+                                <td class="py-3 px-3 text-slate-400">${timestampSeconds ? formatDate(timestampSeconds) : '—'}</td>
                                 <td class="py-3 px-3">${statusTag}</td>
                             </tr>
                         `;
