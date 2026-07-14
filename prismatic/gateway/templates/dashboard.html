@@ -394,7 +394,7 @@
                     <!-- Webhook Event Simulator -->
                     <div class="glass-panel p-5 rounded-xl space-y-4">
                         <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-2">
-                            Simulate Webhook Event
+                            Test Webhook Harness
                         </h3>
                         <form id="simulate-form" onsubmit="simulateWebhook(event)" class="space-y-3">
                             <div class="grid grid-cols-2 gap-2">
@@ -1183,87 +1183,37 @@
         let pendingCronDeleteId = null;
         let pollingInterval = null;
 
-        // Mock registries matching Prismatic Hub spec
-        const mockAgents = {
-            agy: {
-                name: "AGY",
-                color: "#f59e0b",
-                dot: "bg-amber-500",
-                status: "idle",
-                role: "Vision & Research CLI Specialist",
-                task: "Completed UI mockup draft and layout updates",
-                seen: "2m ago",
-                config: "harness:agy-cli (cooldown=60s)"
-            },
-            jules: {
-                name: "Jules",
-                color: "#ea580c",
-                dot: "bg-orange-500",
-                status: "working",
-                role: "Async Git, Conflict Resolver & PR Agent",
-                task: "Creating rebase branches for GRO-671",
-                seen: "Active now",
-                config: "harness:jules-cli (lane:curator)"
-            },
-            fred: {
-                name: "Fred",
-                color: "#0ea5e9",
-                dot: "bg-sky-500",
-                status: "idle",
-                role: "Staging Governor & Compliance Watcher",
-                task: "Monitoring staging builds and PR approval state",
-                seen: "15m ago",
-                config: "harness:fred-cli (lane:staging)"
-            },
-            ned: {
-                name: "Ned",
-                color: "#a855f7",
-                dot: "bg-purple-500",
-                status: "offline",
-                role: "Long-running Research & Context Compiler",
-                task: "Standby - waiting for deep synthesis trigger",
-                seen: "1h ago",
-                config: "harness:ned-cli (batch)"
-            },
-            kai: {
-                name: "Kai",
-                color: "#10b981",
-                dot: "bg-emerald-500",
-                status: "working",
-                role: "Swarm Orchestrator & Config Coordinator",
-                task: "Synchronizing SQLite file watch events",
-                seen: "10s ago",
-                config: "harness:kai-cli (cooldown=1s)"
-            },
-            codex: {
-                name: "Codex",
-                color: "#ef4444",
-                dot: "bg-red-500",
-                status: "error",
-                role: "PR Review Specialist & Security Linter",
-                task: "Aborted - PR #24 failed unit tests checks",
-                seen: "30m ago",
-                config: "harness:codex-cli"
-            }
-        };
+        // Live dashboard state. No mock fallback is rendered on the Dashboard tab.
+        let agentStatusCache = { agents: [], status_counts: {}, evidence: {}, source: "not-loaded" };
 
-        const mockWorkspaces = [
-            { id: "linear-growth", name: "Linear · GrowthWebDev", path: "/home/ubuntu/work/linear-growth-context", branch: "main", status: "connected", files: 142, size: "2.4 MB" },
-            { id: "github-mbgulden", name: "GitHub · mbgulden", path: "/home/ubuntu/work/agentic-swarm-ops", branch: "main", status: "connected", files: 89, size: "1.8 MB" },
-            { id: "gdrive-context", name: "Google Drive · Context", path: "/home/ubuntu/mounts/google-drive-context", branch: "n/a", status: "stalled", files: 34, size: "480 KB" }
-        ];
+        function escapeHtml(value) {
+            return String(value ?? "").replace(/[&<>'"]/g, (ch) => ({
+                "&": "&amp;",
+                "<": "&lt;",
+                ">": "&gt;",
+                "'": "&#39;",
+                '"': "&quot;",
+            }[ch]));
+        }
 
-        const mockSkills = [
-            { id: "code-review", name: "Code Reviewer", desc: "Automated PR sanity checking, security vulnerability scan, and performance reviews.", version: "v1.2", status: "Active" },
-            { id: "docs-generator", name: "Docs Generator", desc: "Reads project classes, functions, and docstrings to auto-generate markdown.", version: "v0.9", status: "Active" },
-            { id: "research-synthesizer", name: "Research Synthesizer", desc: "Scrapes Synology NAS backups and compiles historical event summaries.", version: "v1.0", status: "Available" }
-        ];
+        function agentStatusTone(status) {
+            const key = String(status || "unknown").toLowerCase().replace(/-/g, "_");
+            const tones = {
+                active: { dot: "bg-emerald-500 status-pulse", chip: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" },
+                idle: { dot: "bg-slate-500", chip: "bg-slate-800 text-slate-400 border-slate-700/50" },
+                queue_starved: { dot: "bg-amber-500", chip: "bg-amber-500/10 text-amber-400 border-amber-500/20" },
+                awaiting_user_feedback: { dot: "bg-cyan-500", chip: "bg-cyan-500/10 text-cyan-400 border-cyan-500/20" },
+                completed_recently: { dot: "bg-indigo-500", chip: "bg-indigo-500/10 text-indigo-400 border-indigo-500/20" },
+                errored: { dot: "bg-rose-500", chip: "bg-rose-500/10 text-rose-400 border-rose-500/20" },
+                churning: { dot: "bg-orange-500", chip: "bg-orange-500/10 text-orange-400 border-orange-500/20" },
+                launch_failing: { dot: "bg-rose-500", chip: "bg-rose-500/10 text-rose-400 border-rose-500/20" },
+            };
+            return tones[key] || { dot: "bg-slate-500", chip: "bg-slate-800 text-slate-400 border-slate-700/50" };
+        }
 
-        const mockSignals = [
-            { time: "14:41:22", source: "Linear", text: "Linear issue webhook received for GRO-675", type: "info" },
-            { time: "14:39:10", source: "GitHub", text: "GitHub PR merge proposal #24 detected", type: "success" },
-            { time: "14:36:55", source: "Cron", text: "Watcher daily backup completed successfully", type: "success" }
-        ];
+        function agentStatusLabel(status) {
+            return String(status || "unknown").replace(/_/g, " ").toUpperCase();
+        }
 
         // Theme Management
         function toggleTheme() {
@@ -1413,33 +1363,42 @@
             showToast("Recovery status refreshed");
         }
 
-        // Node detail helper
-        function showAgentDetail(id) {
-            const agent = mockAgents[id];
-            if (!agent) return;
-            
+        // Node detail helper — live agent/worker evidence, no mock fallback.
+        async function showAgentDetail(id) {
+            let agent = (agentStatusCache.agents || []).find(a => a.id === id);
+            try {
+                const res = await fetch(`/api/gateway/agents/${encodeURIComponent(id)}`);
+                if (res.ok) {
+                    const detail = await res.json();
+                    agent = detail.agent || detail;
+                }
+            } catch (err) {
+                console.warn("agent detail fetch failed", err);
+            }
+            if (!agent) {
+                showToast(`No live agent evidence for ${id}`, true);
+                return;
+            }
+
             document.getElementById("agent-detail-placeholder").classList.add("hidden");
             const card = document.getElementById("agent-detail-card");
             card.classList.remove("hidden");
-            
-            document.getElementById("agent-detail-dot").className = `w-3 h-3 rounded-full ${agent.dot}`;
-            document.getElementById("agent-detail-name").textContent = agent.name;
-            document.getElementById("agent-detail-role").textContent = agent.role;
-            document.getElementById("agent-detail-task").textContent = agent.task;
-            document.getElementById("agent-detail-seen").textContent = agent.seen;
-            document.getElementById("agent-detail-config").textContent = agent.config;
-            
+
+            const tone = agentStatusTone(agent.status);
+            const issue = agent.current_issue || "No current issue";
+            const activity = agent.last_activity_at ? formatDate(agent.last_activity_at) : "No activity timestamp";
+            const source = agent.source || agentStatusCache.source || "live agent status";
+
+            document.getElementById("agent-detail-dot").className = `w-3 h-3 rounded-full ${tone.dot}`;
+            document.getElementById("agent-detail-name").textContent = agent.name || id;
+            document.getElementById("agent-detail-role").textContent = agent.role || agent.kind || "Agent";
+            document.getElementById("agent-detail-task").textContent = issue;
+            document.getElementById("agent-detail-seen").textContent = activity;
+            document.getElementById("agent-detail-config").textContent = `${source} · queue ${agent.queue_depth ?? 0} · branch ${agent.current_branch || 'unknown'}`;
+
             const tag = document.getElementById("agent-detail-status-tag");
-            tag.textContent = agent.status;
-            if (agent.status === "working") {
-                tag.className = "px-2 py-0.5 rounded text-[9px] uppercase font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20";
-            } else if (agent.status === "error") {
-                tag.className = "px-2 py-0.5 rounded text-[9px] uppercase font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20";
-            } else if (agent.status === "offline") {
-                tag.className = "px-2 py-0.5 rounded text-[9px] uppercase font-bold bg-slate-800 text-slate-500 border border-slate-700/50";
-            } else {
-                tag.className = "px-2 py-0.5 rounded text-[9px] uppercase font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20";
-            }
+            tag.textContent = agentStatusLabel(agent.status);
+            tag.className = `px-2 py-0.5 rounded text-[9px] uppercase font-bold border ${tone.chip}`;
         }
 
         // Webhook simulator POST
@@ -2206,7 +2165,7 @@
             await fetchTelemetryData();
             
             if (activeTab === 'dashboard') {
-                renderDashboardSummary();
+                await renderDashboardSummary();
                 await fetchQuotaSummary();
                 await fetchMorningBriefing();
             } else if (activeTab === 'merge') {
@@ -2336,29 +2295,84 @@
             }
         }
 
-        function renderDashboardSummary() {
-            // Activity Feed
+        async function renderDashboardSummary() {
+            // Live agent status cache for topology node drilldowns.
+            try {
+                const agentRes = await fetch("/api/gateway/agents/status");
+                if (agentRes.ok) {
+                    agentStatusCache = await agentRes.json();
+                }
+            } catch (err) {
+                console.error("Error loading live agent status:", err);
+                agentStatusCache = { agents: [], status_counts: {}, evidence: {}, source: "agent-status-error" };
+            }
+
+            // Activity Feed — live operational timeline from EventBus/run/recovery evidence.
             const actFeed = document.getElementById("dashboard-activity");
-            actFeed.innerHTML = mockSignals.map(sig => `
-                <div class="activity-item">
-                    <div class="activity-text-row">
-                        <span class="time">${sig.time}</span>
-                        <span class="source-badge">${sig.source}</span>
-                        <span class="title text-slate-200">${sig.text}</span>
-                    </div>
-                </div>
-            `).join("");
-            
-            // Workspaces List Summary
+            try {
+                const timelineRes = await fetch("/api/gateway/timeline?limit=12");
+                let items = [];
+                if (timelineRes.ok) {
+                    const payload = await timelineRes.json();
+                    items = payload.items || payload.timeline || [];
+                }
+                if (!items.length) {
+                    const eventsRes = await fetch("/events/recent?limit=12");
+                    if (eventsRes.ok) {
+                        const payload = await eventsRes.json();
+                        items = (payload.events || []).map(event => ({
+                            timestamp: event.ts,
+                            source: event.topic || "EventBus",
+                            title: event.payload?.title || event.payload?.identifier || event.topic || "event",
+                            severity: event.processed ? "info" : "warning",
+                        }));
+                    }
+                }
+                if (!items.length) {
+                    actFeed.innerHTML = `<div class="text-slate-500 italic">No live operational timeline events recorded. No mock fallback rendered.</div>`;
+                } else {
+                    actFeed.innerHTML = items.slice(0, 12).map(item => `
+                        <div class="activity-item">
+                            <div class="activity-text-row">
+                                <span class="time">${escapeHtml(item.timestamp ? formatDate(item.timestamp) : '—')}</span>
+                                <span class="source-badge">${escapeHtml(item.source || item.kind || 'Timeline')}</span>
+                                <span class="title text-slate-200">${escapeHtml(item.title || item.message || 'Timeline event')}</span>
+                            </div>
+                            <div class="text-[10px] text-slate-500 uppercase font-bold mt-1">${escapeHtml(item.severity || 'info')}</div>
+                        </div>
+                    `).join("");
+                }
+            } catch (err) {
+                console.error("Error loading operational timeline:", err);
+                actFeed.innerHTML = `<div class="text-rose-400 italic">Timeline API unavailable: ${escapeHtml(err.message || err)}</div>`;
+            }
+
+            // Workspaces List Summary — live locks, not static workspace mocks.
             const wsSummary = document.getElementById("dashboard-workspaces");
-            wsSummary.innerHTML = mockWorkspaces.map(ws => `
-                <tr class="border-b border-slate-800/40 hover:bg-slate-900/10 transition">
-                    <td class="py-2.5 px-3 font-semibold text-slate-200">${ws.name}</td>
-                    <td class="py-2.5 px-3 text-slate-400 font-mono">${ws.branch}</td>
-                    <td class="py-2.5 px-3 text-[10px] uppercase font-bold ${ws.status === 'connected' ? 'text-emerald-400' : 'text-amber-400'}">${ws.status}</td>
-                    <td class="py-2.5 px-3 text-slate-500">${ws.files} files</td>
-                </tr>
-            `).join("");
+            try {
+                const locksRes = await fetch("/locks");
+                const locks = locksRes.ok ? await locksRes.json() : [];
+                if (!Array.isArray(locks) || locks.length === 0) {
+                    wsSummary.innerHTML = `<tr><td colspan="4" class="py-4 px-3 text-slate-500 italic">No active file locks. No mock workspace fallback rendered.</td></tr>`;
+                } else {
+                    wsSummary.innerHTML = locks.slice(0, 8).map(lock => {
+                        const path = lock.path || lock.filePath || "unknown";
+                        const owner = lock.agent || lock.agentId || "unknown";
+                        const heartbeat = lock.heartbeat || lock.lastHeartbeat || lock.timestamp;
+                        return `
+                            <tr class="border-b border-slate-800/40 hover:bg-slate-900/10 transition">
+                                <td class="py-2.5 px-3 font-semibold text-slate-200">${escapeHtml(path.split('/')[0] || path)}</td>
+                                <td class="py-2.5 px-3 text-slate-400 font-mono">${escapeHtml(owner)}</td>
+                                <td class="py-2.5 px-3 text-[10px] uppercase font-bold text-emerald-400">locked</td>
+                                <td class="py-2.5 px-3 text-slate-500">${escapeHtml(heartbeat ? formatDate(heartbeat) : '—')}</td>
+                            </tr>
+                        `;
+                    }).join("");
+                }
+            } catch (err) {
+                console.error("Error loading live workspace locks:", err);
+                wsSummary.innerHTML = `<tr><td colspan="4" class="py-4 px-3 text-rose-400 italic">Unable to load live lock registry.</td></tr>`;
+            }
         }
 
         function setSummaryBadge(badgeId, metaId, tone, badgeText, metaText) {
