@@ -71,7 +71,10 @@ class _PageParser(HTMLParser):
             self.links.append(attr["href"])
         elif tag.lower() == "link" and attr.get("rel", "").lower() == "canonical":
             self.canonical = attr.get("href")
-        elif tag.lower() == "script" and attr.get("type", "").lower() == "application/ld+json":
+        elif (
+            tag.lower() == "script"
+            and attr.get("type", "").lower() == "application/ld+json"
+        ):
             self._in_json_ld = True
             self._json_ld_parts = []
 
@@ -124,7 +127,9 @@ def _load_pages(root: Path) -> tuple[list[PageRecord], dict[str, PageRecord]]:
     return pages, by_route
 
 
-def _link_to_route(current_route: str, href: str, site_url: str | None) -> tuple[str | None, str | None]:
+def _link_to_route(
+    current_route: str, href: str, site_url: str | None
+) -> tuple[str | None, str | None]:
     parsed = urlparse(href)
     if parsed.scheme in _SKIP_SCHEMES:
         return None, None
@@ -179,13 +184,19 @@ def _validate_json_ld(page: PageRecord, result: SiteCrawlResult) -> None:
         try:
             payload = json.loads(raw)
         except json.JSONDecodeError as exc:
-            result.errors.append(f"{page.route}: JSON-LD block {index} is invalid JSON: {exc.msg}")
+            result.errors.append(
+                f"{page.route}: JSON-LD block {index} is invalid JSON: {exc.msg}"
+            )
             continue
         if not _has_jsonld_context_and_type(payload):
-            result.errors.append(f"{page.route}: JSON-LD block {index} missing @context/@type")
+            result.errors.append(
+                f"{page.route}: JSON-LD block {index} missing @context/@type"
+            )
 
 
-def _validate_sitemap(root: Path, site_url: str | None, pages: list[PageRecord], result: SiteCrawlResult) -> None:
+def _validate_sitemap(
+    root: Path, site_url: str | None, pages: list[PageRecord], result: SiteCrawlResult
+) -> None:
     sitemap = root / "sitemap.xml"
     if not sitemap.exists():
         result.errors.append("Missing sitemap.xml")
@@ -195,7 +206,11 @@ def _validate_sitemap(root: Path, site_url: str | None, pages: list[PageRecord],
     except ET.ParseError as exc:
         result.errors.append(f"sitemap.xml is invalid XML: {exc}")
         return
-    locs = [node.text.strip() for node in tree.iter() if node.tag.endswith("loc") and node.text and node.text.strip()]
+    locs = [
+        node.text.strip()
+        for node in tree.iter()
+        if node.tag.endswith("loc") and node.text and node.text.strip()
+    ]
     if not locs:
         result.errors.append("sitemap.xml has no <loc> entries")
         return
@@ -210,7 +225,9 @@ def _validate_sitemap(root: Path, site_url: str | None, pages: list[PageRecord],
             base = urlparse(site_url)
             if parsed.netloc != base.netloc:
                 host_matches = False
-                result.errors.append(f"sitemap.xml loc host does not match site URL: {loc}")
+                result.errors.append(
+                    f"sitemap.xml loc host does not match site URL: {loc}"
+                )
         route = parsed.path or "/"
         if not route.endswith("/") and not Path(route).suffix:
             route += "/"
@@ -224,7 +241,9 @@ def _validate_sitemap(root: Path, site_url: str | None, pages: list[PageRecord],
         result.errors.append(f"sitemap.xml missing page route: {route}")
 
 
-def crawl_site(site_root: str | Path, *, site_url: str | None = None) -> SiteCrawlResult:
+def crawl_site(
+    site_root: str | Path, *, site_url: str | None = None
+) -> SiteCrawlResult:
     root = Path(site_root).resolve()
     normalized_site_url = site_url.rstrip("/") if site_url else None
     result = SiteCrawlResult(site_root=root, site_url=normalized_site_url, pages=[])
@@ -251,7 +270,9 @@ def crawl_site(site_root: str | Path, *, site_url: str | None = None) -> SiteCra
         else:
             parsed = urlparse(page.canonical)
             if not parsed.scheme or not parsed.netloc:
-                result.errors.append(f"{page.route}: canonical URL is not absolute: {page.canonical}")
+                result.errors.append(
+                    f"{page.route}: canonical URL is not absolute: {page.canonical}"
+                )
             if normalized_site_url:
                 expected = _expected_url(normalized_site_url, page.route)
                 if page.canonical.rstrip("/") != expected.rstrip("/"):
@@ -260,19 +281,27 @@ def crawl_site(site_root: str | Path, *, site_url: str | None = None) -> SiteCra
                     )
         _validate_json_ld(page, result)
         for href in page.links:
-            target_route, fragment = _link_to_route(page.route, href, normalized_site_url)
+            target_route, fragment = _link_to_route(
+                page.route, href, normalized_site_url
+            )
             if target_route is None:
                 continue
             target_file = _route_to_file(root, target_route)
             if not target_file.exists():
                 result.errors.append(f"{page.route}: broken link target {href}")
                 continue
-            target_page = by_route.get(_route_for_html(root, target_file)) if target_file.suffix == ".html" else None
+            target_page = (
+                by_route.get(_route_for_html(root, target_file))
+                if target_file.suffix == ".html"
+                else None
+            )
             if fragment and target_page and fragment not in target_page.ids:
                 result.errors.append(f"{page.route}: broken anchor {href}")
     for title, routes in sorted(titles.items()):
         if len(routes) > 1:
-            result.errors.append(f"Duplicate title '{title}' on routes: {', '.join(routes)}")
+            result.errors.append(
+                f"Duplicate title '{title}' on routes: {', '.join(routes)}"
+            )
     _validate_sitemap(root, normalized_site_url, pages, result)
     return result
 
@@ -296,7 +325,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("path", help="Generated static site directory")
     parser.add_argument("--site-url", help="Canonical production/preview base URL")
-    parser.add_argument("--json", action="store_true", help="Emit machine-readable crawl result")
+    parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable crawl result"
+    )
     args = parser.parse_args(argv)
 
     result = crawl_site(args.path, site_url=args.site_url)
