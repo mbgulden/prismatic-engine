@@ -2061,7 +2061,8 @@
             });
             
             if (filtered.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="6" class="py-8 text-center text-slate-500 italic">No matching events</td></tr>`;
+                const emptyText = loadedQueueItems.length === 0 ? "Durable ingestion queue is empty" : "No matching events";
+                tbody.innerHTML = `<tr><td colspan="6" class="py-8 text-center text-slate-500 italic">${emptyText}</td></tr>`;
             } else {
                 tbody.innerHTML = filtered.map(item => `
                     <tr onclick="openModal(${item.id})" class="border-b border-slate-800/50 hover:bg-slate-900/20 transition duration-150 cursor-pointer">
@@ -2245,11 +2246,16 @@
 
                 // 2. Queue
                 const queueRes = await fetch(`${API_PREFIX}/webhooks/queue`);
+                const queueBody = await queueRes.text();
                 if (queueRes.ok) {
-                    const queue = await queueRes.json();
+                    const queue = queueBody ? JSON.parse(queueBody) : { items: [], total: 0 };
                     loadedQueueItems = queue.items || [];
-                    document.getElementById("queue-total-badge").textContent = `${queue.total} total`;
+                    document.getElementById("queue-total-badge").textContent = `${queue.total ?? loadedQueueItems.length} total`;
                     filterQueue();
+                } else {
+                    loadedQueueItems = [];
+                    document.getElementById("queue-total-badge").textContent = `queue error`;
+                    document.getElementById("queue-tbody").innerHTML = `<tr><td colspan="6" class="py-8 text-center text-rose-400 italic">Queue API unavailable (${queueRes.status}): ${escapeHtml(queueBody.slice(0, 240))}</td></tr>`;
                 }
 
                 // 3. Dispatcher Status
