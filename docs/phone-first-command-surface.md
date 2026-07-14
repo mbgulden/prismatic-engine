@@ -2,7 +2,17 @@
 
 > **Core Objective:** Provide Michael and engine operators with immediate, low-friction phone-based visibility and control over running Prismatic / AGY agent instances without requiring custom mobile app stores or heavy client development.
 
-This document details the strategy, roadmap, and interaction designs for the phone-first Prismatic command surface. The guiding principle is to bridge the product gap by prioritizing **Telegram as the primary interface** (Telegram-First) and establishing a **mobile Progressive Web App as the secondary interface** (PWA-Second).
+This document details the strategy, roadmap, and interaction designs for the phone-first Prismatic command surface.
+
+**2026 public-launch update:** Telegram/headless is the current working operator bridge, but it is no longer the intended final primary product surface. The current North Star is dashboard-first for normal users, with Telegram retained for notifications, urgent approvals, and mobile continuity. See [`north-star.md`](north-star.md), [`dashboard-primary-touchpoint.md`](dashboard-primary-touchpoint.md), and [`okf-evidence-map.md`](okf-evidence-map.md). Historical references below to "Telegram-First" and "PWA-Second" describe the bootstrap strategy, not the final user experience.
+
+The current product principle is:
+
+```text
+Dashboard first for normal users.
+Telegram/headless for notifications, urgent steering, and mobile continuity.
+CLI/scripts for development, automation, and recovery.
+```
 
 ---
 

@@ -112,6 +112,9 @@ def main() -> int:
             ".env.example",
             "CONTRIBUTING.md",
             "SECURITY.md",
+            "docs/north-star.md",
+            "docs/dashboard-primary-touchpoint.md",
+            "docs/okf-evidence-map.md",
             "docs/public-launch.md",
             "docs/public-onboarding.md",
             "docs/plugin-developer-quickstart.md",
@@ -126,6 +129,11 @@ def main() -> int:
         if missing:
             raise RuntimeError(f"missing public docs: {missing}")
         launch = (repo / "docs/public-launch.md").read_text(encoding="utf-8")
+        north_star = (repo / "docs/north-star.md").read_text(encoding="utf-8")
+        dashboard_primary = (repo / "docs/dashboard-primary-touchpoint.md").read_text(
+            encoding="utf-8"
+        )
+        okf_map = (repo / "docs/okf-evidence-map.md").read_text(encoding="utf-8")
         for marker in [
             "PUBLIC_LAUNCH_SMOKE_OK",
             "PWP reference lifecycle",
@@ -134,6 +142,34 @@ def main() -> int:
         ]:
             if marker not in launch:
                 raise RuntimeError(f"public launch guide missing marker: {marker}")
+        for marker in [
+            "One-sentence North Star",
+            "Plugin ecosystem maturity ladder",
+            "Media plugin readiness checklist",
+            "Business plugin readiness checklist",
+            "Golden Flow status",
+            "Dashboard as the intended primary touchpoint",
+        ]:
+            if marker not in north_star:
+                raise RuntimeError(f"north star guide missing marker: {marker}")
+        for marker in [
+            "Dashboard first for normal users",
+            "Telegram/headless for notifications",
+            "OKF documentation gap closure",
+            "Dashboard-first OKF map",
+            "Acceptance criteria for dashboard-primary maturity",
+        ]:
+            if marker not in dashboard_primary:
+                raise RuntimeError(f"dashboard-primary guide missing marker: {marker}")
+        for marker in [
+            "Objective → Key Result → Function → Evidence",
+            "Public-launch OKF map",
+            "Plugin-governance OKF map",
+            "Media plugin OKF map",
+            "Business plugin OKF map",
+        ]:
+            if marker not in okf_map:
+                raise RuntimeError(f"OKF evidence map missing marker: {marker}")
 
     def dashboard_markers() -> None:
         html = (repo / "prismatic/gateway/templates/dashboard.html").read_text(

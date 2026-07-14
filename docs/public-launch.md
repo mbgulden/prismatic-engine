@@ -6,6 +6,18 @@ This is the stable public-launch entrypoint for Prismatic Engine. It points firs
 
 Prismatic Engine is a local-first orchestration engine for plugin-governed automation. PE Core owns lifecycle, policy, jobs, artifacts, provenance, dashboard/API visibility, and plugin discovery. Plugins own domain-specific implementation.
 
+## North Star and user touchpoint
+
+The one-sentence North Star is:
+
+```text
+Install engine → get immediate value → attach governed capabilities as needed → operate them visibly from the dashboard → detach without losing state.
+```
+
+See [`north-star.md`](north-star.md) for the canonical milestone map and plugin ecosystem rubric.
+
+The current working operator workflow is Telegram/headless, but the intended product surface is dashboard-first: most commands, tools, functions, approvals, jobs, artifacts, and evidence views should be available directly in the dashboard as the main or only user touchpoint. See [`dashboard-primary-touchpoint.md`](dashboard-primary-touchpoint.md) and [`okf-evidence-map.md`](okf-evidence-map.md).
+
 ## Quickstart
 
 ```bash
