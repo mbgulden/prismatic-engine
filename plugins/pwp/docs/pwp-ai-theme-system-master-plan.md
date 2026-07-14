@@ -375,6 +375,25 @@ The diff command compares two validated theme packages in the same family and em
 
 Added modules and version-only changes are reported as safe changes. Token group changes and entrypoint path changes are surfaced for review so tenant override preservation can be handled by the later upgrade workflow instead of hidden during install.
 
+### Generated-site SEO/link/schema crawler
+
+Phase 6.5 adds a repo-local generated-site crawler for the post-build artifact:
+
+```bash
+python3 scripts/pwp site crawl <dist-dir> --site-url <canonical-base-url>
+python3 scripts/pwp site crawl <dist-dir> --site-url <canonical-base-url> --json
+```
+
+The crawler is intentionally static and open-standard: it walks generated HTML, parses `sitemap.xml`, and validates ordinary web contracts without relying on a private PWP runtime. It blocks merge on:
+
+- broken internal links and broken same-page/cross-page anchors,
+- missing or duplicate `<title>` values,
+- missing, relative, or wrong canonical URLs when `--site-url` is supplied,
+- missing/invalid sitemap XML, sitemap entries for missing files, or generated pages absent from the sitemap,
+- invalid JSON-LD and structured-data blocks missing `@context`/`@type`.
+
+This gate should run after `astro build` and before deploy/provenance recording so broken SEO metadata is caught while the artifact is still local and cheap to fix. External links are deliberately ignored here; those belong in slower network checks, because mixing live network drift with deterministic artifact validation is how CI becomes a slot machine.
+
 ### Theme compatibility matrix
 
 PWP should maintain a matrix:
