@@ -9,6 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from plugins.pwp.site_crawler import main as site_crawl_main  # noqa: E402
 from plugins.pwp.theme_diff import main as theme_diff_main  # noqa: E402
 from plugins.pwp.theme_validator import main as theme_validate_main  # noqa: E402
 
@@ -19,10 +20,13 @@ def main(argv: list[str] | None = None) -> int:
         return theme_validate_main(args[2:])
     if len(args) >= 2 and args[0] == "theme" and args[1] in {"diff", "check-compat"}:
         return theme_diff_main(args[1:])
+    if len(args) >= 2 and args[0] == "site" and args[1] == "crawl":
+        return site_crawl_main(args[2:])
     print(
         "Usage: pwp theme validate <path> [--json] | "
         "pwp theme diff --from <path> --to <path> [--engine-version <semver>] [--json] | "
-        "pwp theme check-compat <path> --engine-version <semver> [--json]",
+        "pwp theme check-compat <path> --engine-version <semver> [--json] | "
+        "pwp site crawl <dist-dir> [--site-url <url>] [--json]",
         file=sys.stderr,
     )
     return 2
