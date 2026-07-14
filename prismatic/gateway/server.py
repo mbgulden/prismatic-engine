@@ -1502,30 +1502,181 @@ async def dashboard_foundation_control(action: str) -> dict[str, Any]:
     }
 
 
-@app.get("/api/quota")
-async def dashboard_quota_summary() -> dict[str, Any]:
-    """Return pane-safe quota summary using persisted telemetry when available."""
-    try:
-        from prismatic.vertex_telemetry import VertexBillingLedger
+def _quota_state_db_path() -> Path:
+    return Path(os.environ.get("PRISMATIC_QUOTA_STATE_DB", "~/.prismatic/quota_state.db")).expanduser()
 
-        return VertexBillingLedger().get_status_summary()
+
+def _read_quota_state_ledger(limit: int = 60) -> dict[str, Any] | None:
+    """Read the original dashboard quota ledger contract from quota_state.db.
+
+    Kai's dashboard tab expects current/recent_events/snapshot_at/snapshot_age_sec.
+    The newer Vertex telemetry ledger uses quota_records/quota_freshness, so this
+    bridge keeps the working dashboard contract connected to the persisted data.
+    """
+    db_path = _quota_state_db_path()
+    if not db_path.exists():
+        return None
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        latest_ts_row = conn.execute("SELECT MAX(ts) AS ts FROM quota_snapshots").fetchone()
+        latest_ts = latest_ts_row["ts"] if latest_ts_row else None
+        current: list[dict[str, Any]] = []
+        if latest_ts is not None:
+            rows = conn.execute(
+                """
+                SELECT id, ts, model, display_name, remaining_pct, exhausted,
+                       reset_time, supports_thinking, project_id
+                FROM quota_snapshots
+                WHERE ts = ?
+                ORDER BY exhausted DESC, remaining_pct ASC, display_name ASC
+                LIMIT ?
+                """,
+                (latest_ts, limit),
+            ).fetchall()
+            current = [
+                {
+                    "id": row["id"],
+                    "timestamp": row["ts"],
+                    "model": row["model"],
+                    "display_name": row["display_name"] or row["model"],
+                    "remaining_pct": row["remaining_pct"],
+                    "exhausted": bool(row["exhausted"]),
+                    "reset_time": row["reset_time"],
+                    "supports_thinking": bool(row["supports_thinking"]),
+                    "project_id": row["project_id"],
+                }
+                for row in rows
+            ]
+        event_rows = conn.execute(
+            """
+            SELECT id, ts, model, event_type, remaining_pct
+            FROM quota_events
+            ORDER BY ts DESC, id DESC
+            LIMIT 50
+            """
+        ).fetchall()
+        recent_events = [
+            {
+                "id": row["id"],
+                "timestamp": row["ts"],
+                "model": row["model"],
+                "event_type": row["event_type"],
+                "remaining_pct": row["remaining_pct"],
+                "details": f"{row['event_type']} at {row['remaining_pct']}% remaining"
+                if row["remaining_pct"] is not None
+                else row["event_type"],
+            }
+            for row in event_rows
+        ]
+        thresholds = [
+            dict(row)
+            for row in conn.execute(
+                "SELECT model, warn_pct, critical_pct, pause_pct, updated_at FROM quota_thresholds ORDER BY model"
+            ).fetchall()
+        ]
+    snapshot_age_sec = None if latest_ts is None else max(0, int(time.time() - float(latest_ts)))
+    return {
+        "ok": True,
+        "source": "quota_state.db",
+        "db_path": str(db_path),
+        "snapshot_at": latest_ts,
+        "snapshot_age_sec": snapshot_age_sec,
+        "current": current,
+        "recent_events": recent_events,
+        "thresholds": thresholds,
+        "active_count": len(current),
+        "exhausted_count": sum(1 for item in current if item.get("exhausted")),
+        "quota_records": current,
+        "quota_freshness": {
+            "last_recorded_at": latest_ts,
+            "age_seconds": snapshot_age_sec,
+            "stale": snapshot_age_sec is None or snapshot_age_sec > 900,
+        },
+    }
+
+
+def _read_vertex_quota_summary() -> dict[str, Any]:
+    from prismatic.vertex_telemetry import VertexBillingLedger
+
+    return VertexBillingLedger().get_status_summary()
+
+
+def _dashboard_quota_payload() -> dict[str, Any]:
+    legacy = _read_quota_state_ledger()
+    if legacy and legacy.get("current"):
+        return legacy
+    try:
+        vertex = _read_vertex_quota_summary()
     except Exception as exc:
         return {
+            "ok": False,
+            "source": "quota-empty-fallback",
+            "current": [],
+            "recent_events": [],
+            "snapshot_at": None,
+            "snapshot_age_sec": None,
             "quota_records": [],
             "quota_freshness": {"stale": True, "last_recorded_at": None, "age_seconds": None},
-            "errors": [{"source": "gateway-compat", "error_message": str(exc)}],
-            "source": "empty-fallback",
+            "errors": [{"source": "vertex-ledger", "error_message": str(exc)}],
         }
+    records = vertex.get("quota_records") or []
+    return {
+        **vertex,
+        "ok": True,
+        "source": vertex.get("source") or "vertex-ledger",
+        "current": records,
+        "recent_events": vertex.get("latest_errors") or [],
+        "snapshot_at": (vertex.get("quota_freshness") or {}).get("last_recorded_at"),
+        "snapshot_age_sec": (vertex.get("quota_freshness") or {}).get("age_seconds"),
+    }
+
+
+@app.get("/api/quota")
+@app.get("/api/quotas")
+@app.get("/api/gcp/quotas")
+@app.get("/api/vertex/quota")
+@app.get("/api/vertex/quotas")
+async def dashboard_quota_summary() -> dict[str, Any]:
+    """Return quota data in the dashboard contract, backed by persisted ledgers."""
+    return _dashboard_quota_payload()
 
 
 @app.post("/api/quota/poll")
 async def dashboard_quota_poll() -> dict[str, Any]:
-    """Acknowledge quota poll requests without shelling out from the browser."""
-    return {
-        "ok": True,
-        "status": "accepted_noop",
-        "message": "Quota poll acknowledged; run the native quota collector outside the browser route.",
-    }
+    """Run the real quota collector when credentials exist, then return dashboard data."""
+    poll = {"attempted": True, "ok": False, "errors": []}
+    try:
+        from prismatic.vertex_telemetry import (
+            VertexBillingLedger,
+            poll_billing_balance,
+            poll_vertex_quota_status,
+        )
+
+        ledger = VertexBillingLedger()
+        status = poll_vertex_quota_status()
+        records = status.get("records") or []
+        errors = status.get("errors") or []
+        if records:
+            ledger.record_quota_snapshot(records)
+        if errors:
+            ledger.record_quota_errors(errors)
+        balance = poll_billing_balance()
+        if balance:
+            ledger.record_balance_checkpoint(balance)
+        poll.update(
+            {
+                "ok": bool(records) and not errors,
+                "records": len(records),
+                "errors": errors,
+                "balance_recorded": bool(balance),
+            }
+        )
+    except Exception as exc:
+        poll["errors"] = [{"source": "quota-poll", "error_message": str(exc)}]
+    payload = _dashboard_quota_payload()
+    payload["poll"] = poll
+    payload["status"] = "polled" if poll.get("ok") else "poll_unavailable_using_persisted_data"
+    return payload
 
 
 @app.get("/api/gateway/overnight-report/latest")
