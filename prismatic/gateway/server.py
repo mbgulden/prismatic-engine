@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import hmac as _hmac
+import importlib.util
 import json
 import logging
 import os
@@ -33,7 +34,7 @@ from typing import Any
 import uvicorn
 from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from prismatic.gateway.event_bus import get_event_bus
 from prismatic.gateway.ipc_bridge import UnixSocketListener, create_event_ingest_route
@@ -173,8 +174,38 @@ async def _observability_auth_middleware(request: Request, call_next):
 app.include_router(create_event_ingest_route())
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-# Canonical governance dashboard route target: prismatic/gateway/templates/dashboard.html
 _GOVERNANCE_DASHBOARD_HTML = _REPO_ROOT / "prismatic" / "gateway" / "templates" / "dashboard.html"
+_WORKSPACE_TREE_PLUGIN_DIR = _REPO_ROOT / "plugins" / "hermes-plugin-workspace-tree-navigator" / "dashboard"
+_WORKSPACE_TREE_DIST_JS = _WORKSPACE_TREE_PLUGIN_DIR / "dist" / "index.js"
+_WORKSPACE_TREE_API = _WORKSPACE_TREE_PLUGIN_DIR / "plugin_api.py"
+
+
+def _mount_workspace_tree_plugin_api() -> None:
+    """Mount the existing Workspace Tree Navigator plugin API when available."""
+    if not _WORKSPACE_TREE_API.exists():
+        logger.warning("workspace tree plugin API missing at %s", _WORKSPACE_TREE_API)
+        return
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "prismatic_workspace_tree_plugin_api", _WORKSPACE_TREE_API
+        )
+        if spec is None or spec.loader is None:
+            raise RuntimeError("unable to create import spec")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        router = getattr(module, "router", None)
+        if router is None:
+            raise RuntimeError("plugin_api.py did not expose router")
+        app.include_router(
+            router,
+            prefix="/api/plugins/hermes-plugin-workspace-tree-navigator",
+        )
+        logger.info("mounted workspace tree plugin API")
+    except Exception:
+        logger.warning("failed to mount workspace tree plugin API", exc_info=True)
+
+
+_mount_workspace_tree_plugin_api()
 
 
 def _serve_governance_dashboard_html() -> HTMLResponse:
@@ -194,6 +225,52 @@ async def serve_governance_index() -> HTMLResponse:
 async def serve_governance_dashboard() -> HTMLResponse:
     """Serve the canonical Prismatic governance/control-plane dashboard."""
     return _serve_governance_dashboard_html()
+
+
+@app.get("/workspace-tree", response_class=HTMLResponse)
+async def serve_workspace_tree() -> HTMLResponse:
+    """Serve the Workspace Tree Navigator plugin shell inside the governance gateway."""
+    if not _WORKSPACE_TREE_DIST_JS.exists():
+        return HTMLResponse("Workspace Tree plugin bundle not found", status_code=404)
+    return HTMLResponse(
+        """<!DOCTYPE html>
+<html lang=\"en\">
+<head>
+  <meta charset=\"UTF-8\">
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">
+  <title>Prismatic Workspace Tree</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+</head>
+<body class=\"bg-slate-950 text-slate-100 min-h-screen\">
+  <main id=\"workspace-tree-root\" class=\"min-h-screen\"></main>
+  <script>
+    window.__HERMES_PLUGIN_SDK__ = {
+      React: window.React,
+      fetchJSON: async (path) => {
+        const res = await fetch(path);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      }
+    };
+    window.__HERMES_PLUGINS__ = {
+      register(name, component) {
+        const root = document.getElementById('workspace-tree-root');
+        window.ReactDOM.createRoot(root).render(window.React.createElement(component));
+      }
+    };
+  </script>
+  <script src=\"/workspace-tree/index.js\"></script>
+</body>
+</html>"""
+    )
+
+
+@app.get("/workspace-tree/index.js")
+async def serve_workspace_tree_bundle() -> FileResponse:
+    """Serve the Workspace Tree Navigator plugin bundle."""
+    return FileResponse(_WORKSPACE_TREE_DIST_JS, media_type="application/javascript")
 
 # ── Startup timestamp ──────────────────────────────────────────────
 _started_at: float = 0.0
@@ -925,6 +1002,87 @@ async def plugin_health(plugin_name: str, request: Request) -> JSONResponse:
     if payload.get("status") == "unhealthy":
         return JSONResponse(payload, status_code=503)
     return JSONResponse(payload)
+
+
+def _skill_card(manifest: dict[str, Any], *, installed: bool) -> dict[str, Any]:
+    name = str(manifest.get("name") or "")
+    return {
+        "id": name,
+        "name": name,
+        "version": str(manifest.get("version") or "?"),
+        "description": str(manifest.get("description") or ""),
+        "category": str(manifest.get("category") or "uncategorized"),
+        "labels": manifest.get("labels") if isinstance(manifest.get("labels"), list) else [],
+        "author": str(manifest.get("author") or ""),
+        "installed": installed,
+        "status": "Active" if installed else "Available",
+        "path": str(manifest.get("_path") or ""),
+    }
+
+
+def _skills_payload() -> dict[str, Any]:
+    from prismatic.skills import list_skills
+
+    bundled = {str(skill.get("name")): skill for skill in list_skills(installed=False)}
+    installed = {str(skill.get("name")): skill for skill in list_skills(installed=True)}
+    cards: list[dict[str, Any]] = []
+    for name in sorted(set(bundled) | set(installed)):
+        manifest = installed.get(name) or bundled.get(name) or {"name": name}
+        cards.append(_skill_card(manifest, installed=name in installed))
+    return {
+        "ok": True,
+        "source": "prismatic.skills",
+        "bundled_count": len(bundled),
+        "installed_count": len(installed),
+        "skills": cards,
+    }
+
+
+@app.get("/api/skills")
+async def get_skills() -> dict[str, Any]:
+    """Return live Prismatic Core skill registry cards."""
+    return _skills_payload()
+
+
+@app.get("/api/skills/{name}", response_model=None)
+async def get_skill_info(name: str) -> dict[str, Any] | JSONResponse:
+    from prismatic.skills import skill_info
+
+    manifest = skill_info(name)
+    if manifest is None:
+        return JSONResponse({"ok": False, "error": "skill not found", "name": name}, status_code=404)
+    installed = any(card["id"] == name and card["installed"] for card in _skills_payload()["skills"])
+    payload = _skill_card(manifest, installed=installed)
+    payload["manifest"] = manifest
+    return {"ok": True, "source": "prismatic.skills", "skill": payload}
+
+
+@app.post("/api/skills/{name}/install", response_model=None)
+async def install_skill_api(name: str) -> dict[str, Any] | JSONResponse:
+    from prismatic.skills import install_skill, list_skills, skill_info
+
+    bundled = {str(skill.get("name")) for skill in list_skills(installed=False)}
+    installed = {str(skill.get("name")) for skill in list_skills(installed=True)}
+    if name in installed:
+        return JSONResponse({"ok": False, "error": "skill already installed", "name": name}, status_code=409)
+    if name not in bundled:
+        return JSONResponse({"ok": False, "error": "skill not found", "name": name}, status_code=404)
+    if not install_skill(name):
+        return JSONResponse({"ok": False, "error": "skill install failed", "name": name}, status_code=500)
+    manifest = skill_info(name) or {"name": name}
+    return {"ok": True, "source": "prismatic.skills", "skill": _skill_card(manifest, installed=True)}
+
+
+@app.post("/api/skills/{name}/uninstall", response_model=None)
+async def uninstall_skill_api(name: str) -> dict[str, Any] | JSONResponse:
+    from prismatic.skills import list_skills, uninstall_skill
+
+    installed = {str(skill.get("name")) for skill in list_skills(installed=True)}
+    if name not in installed:
+        return JSONResponse({"ok": False, "error": "installed skill not found", "name": name}, status_code=404)
+    if not uninstall_skill(name):
+        return JSONResponse({"ok": False, "error": "skill uninstall failed", "name": name}, status_code=500)
+    return {"ok": True, "source": "prismatic.skills", "name": name}
 
 
 @app.get("/api/pwp/status")

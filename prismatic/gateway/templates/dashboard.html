@@ -1183,7 +1183,7 @@
         let pendingCronDeleteId = null;
         let pollingInterval = null;
 
-        // Live dashboard state. No mock fallback is rendered on the Dashboard tab.
+        // Live dashboard state. No synthetic fallback is rendered on the Dashboard tab.
         let agentStatusCache = { agents: [], status_counts: {}, evidence: {}, source: "not-loaded" };
 
         function escapeHtml(value) {
@@ -1363,7 +1363,7 @@
             showToast("Recovery status refreshed");
         }
 
-        // Node detail helper — live agent/worker evidence, no mock fallback.
+        // Node detail helper — live agent/worker evidence, no synthetic fallback.
         async function showAgentDetail(id) {
             let agent = (agentStatusCache.agents || []).find(a => a.id === id);
             try {
@@ -1401,7 +1401,7 @@
             tag.className = `px-2 py-0.5 rounded text-[9px] uppercase font-bold border ${tone.chip}`;
         }
 
-        // Webhook simulator POST
+        // Webhook test-harness POST
         async function simulateWebhook(e) {
             e.preventDefault();
             const ticket = document.getElementById("sim-ticket").value.trim();
@@ -1427,8 +1427,8 @@
                     body: JSON.stringify(payload)
                 });
                 if (r.ok) {
-                    showToast("Simulated event successfully queued!");
-                    addLocalSignal("Linear", `Inbound webhook simulated for ticket ${ticket}`);
+                    showToast("Test event successfully queued!");
+                    addLocalSignal("Linear", `Inbound webhook test event queued for ticket ${ticket}`);
                     fetchData();
                 } else {
                     showToast("Failed to queue simulated event", true);
@@ -2175,7 +2175,7 @@
             } else if (activeTab === 'workspaces') {
                 await renderWorkspacesView();
             } else if (activeTab === 'skills') {
-                renderSkillsView();
+                await renderSkillsView();
             } else if (activeTab === 'signals') {
                 await renderSignalsView();
             } else if (activeTab === 'quota') {
@@ -2329,7 +2329,7 @@
                     }
                 }
                 if (!items.length) {
-                    actFeed.innerHTML = `<div class="text-slate-500 italic">No live operational timeline events recorded. No mock fallback rendered.</div>`;
+                    actFeed.innerHTML = `<div class="text-slate-500 italic">No live operational timeline events recorded. No synthetic fallback rendered.</div>`;
                 } else {
                     actFeed.innerHTML = items.slice(0, 12).map(item => `
                         <div class="activity-item">
@@ -2353,7 +2353,7 @@
                 const locksRes = await fetch("/locks");
                 const locks = locksRes.ok ? await locksRes.json() : [];
                 if (!Array.isArray(locks) || locks.length === 0) {
-                    wsSummary.innerHTML = `<tr><td colspan="4" class="py-4 px-3 text-slate-500 italic">No active file locks. No mock workspace fallback rendered.</td></tr>`;
+                    wsSummary.innerHTML = `<tr><td colspan="4" class="py-4 px-3 text-slate-500 italic">No active file locks. No synthetic workspace fallback rendered.</td></tr>`;
                 } else {
                     wsSummary.innerHTML = locks.slice(0, 8).map(lock => {
                         const path = lock.path || lock.filePath || "unknown";
@@ -2501,50 +2501,86 @@
             }
         }
 
-        function renderSkillsView() {
+        async function renderSkillsView() {
             const grid = document.getElementById("skills-grid");
-            grid.innerHTML = mockSkills.map(sk => `
-                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between space-y-3 relative overflow-hidden">
-                    <div class="flex justify-between items-start">
-                        <span class="text-xs text-slate-500 font-bold uppercase">${sk.version}</span>
-                        <span class="px-2 py-0.5 rounded text-[9px] font-bold ${sk.status === 'Active' ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20' : 'bg-slate-800 text-slate-400'} uppercase">${sk.status}</span>
-                    </div>
-                    <h3 class="font-bold text-slate-200 leading-tight">${sk.name}</h3>
-                    <p class="text-xs text-slate-400 leading-relaxed">${sk.desc}</p>
-                    <button class="w-full bg-slate-950 hover:bg-slate-900 border border-slate-800/80 text-xs font-semibold py-1.5 rounded transition">
-                        ${sk.status === 'Active' ? 'Disable Capability' : 'Install Skill'}
-                    </button>
-                </div>
-            `).join("");
+            grid.innerHTML = `<div class="col-span-full text-slate-500 italic">Loading live skill registry…</div>`;
+            try {
+                const res = await fetch("/api/skills");
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const skills = data.skills || [];
+                if (skills.length === 0) {
+                    grid.innerHTML = `<div class="col-span-full text-slate-500 italic">No packaged Prismatic skills found.</div>`;
+                    return;
+                }
+                grid.innerHTML = skills.map(sk => {
+                    const installed = Boolean(sk.installed);
+                    const action = installed ? 'uninstall' : 'install';
+                    const buttonLabel = installed ? 'Uninstall Skill' : 'Install Skill';
+                    return `
+                        <div class="glass-panel p-4 rounded-xl flex flex-col justify-between space-y-3 relative overflow-hidden">
+                            <div class="flex justify-between items-start gap-2">
+                                <span class="text-xs text-slate-500 font-bold uppercase">${escapeHtml(sk.version || '?')}</span>
+                                <span class="px-2 py-0.5 rounded text-[9px] font-bold ${installed ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20' : 'bg-slate-800 text-slate-400'} uppercase">${escapeHtml(sk.status || (installed ? 'Active' : 'Available'))}</span>
+                            </div>
+                            <h3 class="font-bold text-slate-200 leading-tight">${escapeHtml(sk.name || sk.id)}</h3>
+                            <p class="text-xs text-slate-400 leading-relaxed">${escapeHtml(sk.description || 'No description provided.')}</p>
+                            <div class="text-[10px] text-slate-500 uppercase font-bold">${escapeHtml(sk.category || 'uncategorized')}</div>
+                            <button onclick="toggleSkillInstall('${encodeURIComponent(sk.id)}', '${action}')" class="w-full bg-slate-950 hover:bg-slate-900 border border-slate-800/80 text-xs font-semibold py-1.5 rounded transition">
+                                ${buttonLabel}
+                            </button>
+                        </div>
+                    `;
+                }).join("");
+            } catch (err) {
+                console.error("Error loading skills registry:", err);
+                grid.innerHTML = `<div class="col-span-full text-rose-400 italic">Skills API unavailable: ${escapeHtml(err.message || err)}</div>`;
+            }
+        }
+
+        async function toggleSkillInstall(encodedSkillId, action) {
+            const skillId = decodeURIComponent(encodedSkillId);
+            try {
+                const res = await fetch(`/api/skills/${encodeURIComponent(skillId)}/${action}`, { method: 'POST' });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || data.ok === false) throw new Error(data.error || `HTTP ${res.status}`);
+                showToast(`${action === 'install' ? 'Installed' : 'Uninstalled'} ${skillId}`);
+                await renderSkillsView();
+                if (activeTab === 'signals') await renderSignalsView();
+            } catch (err) {
+                console.error("Error updating skill:", err);
+                showToast(`Skill ${action} failed: ${err.message || err}`, true);
+            }
         }
 
         async function renderSignalsView() {
+            const container = document.getElementById("signals-log-box");
+            container.innerHTML = `<div class="text-slate-500 italic">Loading live operational timeline…</div>`;
             try {
-                const res = await fetch("/runs?limit=50");
-                if (res.ok) {
-                    const runs = await res.json();
-                    const container = document.getElementById("signals-log-box");
-                    
-                    if (runs.length === 0) {
-                        container.innerHTML = `<div class="text-slate-500 italic">No agent execution runs recorded.</div>`;
-                        return;
-                    }
-                    
-                    container.innerHTML = runs.map(r => {
-                        const timeStr = formatDate(r.started_at);
-                        const statusColor = r.status === "success" ? "text-emerald-400" : r.status === "failed" ? "text-rose-400" : "text-amber-400";
-                        const errDetails = r.error_message ? ` (Error: ${r.error_message})` : "";
-                        return `
-                            <div class="text-slate-300">
-                                <span class="text-slate-500 font-bold">[${timeStr}]</span>
-                                <span class="text-indigo-400 font-semibold">[Agent: ${r.agent_name}]</span>
-                                Run ${r.run_id} for Issue <span class="text-amber-400 font-semibold">${r.issue_id}</span> is <span class="${statusColor} font-bold">${r.status.toUpperCase()}</span>${errDetails}
-                            </div>
-                        `;
-                    }).join("");
+                const res = await fetch("/api/gateway/timeline?limit=80");
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const payload = await res.json();
+                const items = payload.items || payload.timeline || [];
+                if (items.length === 0) {
+                    container.innerHTML = `<div class="text-slate-500 italic">No operational timeline events recorded.</div>`;
+                    return;
                 }
+                container.innerHTML = items.map(item => {
+                    const ts = item.timestamp || item.created_at || item.started_at;
+                    const severity = String(item.severity || item.status || 'info').toLowerCase();
+                    const color = severity.includes('error') || severity.includes('fail') ? 'text-rose-400' : severity.includes('success') || severity.includes('complete') ? 'text-emerald-400' : severity.includes('warn') ? 'text-amber-400' : 'text-indigo-400';
+                    return `
+                        <div class="text-slate-300 border-b border-slate-900/80 pb-2 mb-2">
+                            <span class="text-slate-500 font-bold">[${escapeHtml(ts ? formatDate(ts) : '—')}]</span>
+                            <span class="${color} font-semibold">[${escapeHtml(item.source || item.kind || 'Timeline')}]</span>
+                            <span class="font-semibold">${escapeHtml(item.title || item.message || 'Operational event')}</span>
+                            ${item.message && item.title ? `<div class="text-xs text-slate-500 mt-1">${escapeHtml(item.message)}</div>` : ''}
+                        </div>
+                    `;
+                }).join("");
             } catch (err) {
-                console.error("Error loading runs log:", err);
+                console.error("Error loading operational timeline:", err);
+                container.innerHTML = `<div class="text-rose-400 italic">Signals timeline API unavailable: ${escapeHtml(err.message || err)}</div>`;
             }
         }
 
@@ -2764,14 +2800,7 @@
             connectWS();
             pollingInterval = setInterval(fetchData, 4000);
             
-            // Populate mock signals initial data
-            const container = document.getElementById("signals-log-box");
-            mockSignals.forEach(sig => {
-                const div = document.createElement("div");
-                div.className = "text-slate-400";
-                div.innerHTML = `<span class="text-slate-500 font-bold">[${sig.time}]</span> <span class="text-indigo-400 font-semibold">[${sig.source}]</span> ${sig.text}`;
-                container.appendChild(div);
-            });
+            // Signals tab is populated from the live operational timeline when opened.
             
             // Close modal on click outside
             window.onclick = function(event) {
