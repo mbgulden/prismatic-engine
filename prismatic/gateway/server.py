@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import hmac as _hmac
+import importlib.util
 import json
 import logging
 import os
