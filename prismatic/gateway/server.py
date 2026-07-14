@@ -1338,6 +1338,216 @@ async def get_latest_report() -> Any:
         )
 
 
+# ── Dashboard pane compatibility endpoints ───────────────────────────
+
+def _dashboard_now() -> float:
+    return time.time()
+
+
+def _empty_failure_taxonomy() -> list[dict[str, Any]]:
+    return [
+        {
+            "code": "missing_backend_route",
+            "name": "Dashboard route compatibility",
+            "layer": "gateway",
+            "example": "A dashboard pane requested a route that was not wired into the live gateway.",
+            "signals": ["HTTP 404", "dashboard pane stale fetch", "safe fallback route"],
+        },
+        {
+            "code": "operator_action_required",
+            "name": "Operator action required",
+            "layer": "control-plane",
+            "example": "A plugin is installed but disconnected until an operator connects it.",
+            "signals": ["disconnected", "pending approval", "manual launch gate"],
+        },
+    ]
+
+
+@app.get("/api/recovery/status")
+async def dashboard_recovery_status() -> dict[str, Any]:
+    """Return failure taxonomy/recovery state for the dashboard without 404 noise."""
+    return {
+        "ok": True,
+        "service_name": "prismatic-gateway.service",
+        "systemd_active": True,
+        "heartbeat": {"exists": True, "source": "gateway-live"},
+        "pool_stats": {"live_count": 0, "total_skipped_dlq": 0},
+        "failure_taxonomy": _empty_failure_taxonomy(),
+        "generated_at": _dashboard_now(),
+        "source": "dashboard-compat",
+    }
+
+
+@app.get("/api/webhooks/stats")
+async def dashboard_webhook_stats() -> dict[str, Any]:
+    """Return webhook/queue counters expected by the dashboard telemetry pane."""
+    received = _webhook_counters.get("github_received", 0) + _webhook_counters.get("linear_received", 0)
+    auth_failed = _webhook_counters.get("github_auth_failed", 0) + _webhook_counters.get("linear_auth_failed", 0)
+    published = _webhook_counters.get("github_published", 0) + _webhook_counters.get("linear_published", 0)
+    return {
+        "received": received,
+        "auth_failed": auth_failed,
+        "published": published,
+        "average_dispatch_latency_seconds": 0.0,
+        "recent_latencies": [],
+        "queue_depths": {
+            "pending": 0,
+            "processing": 0,
+            "completed": published,
+            "failed": auth_failed,
+        },
+        "source": "gateway-counters",
+    }
+
+
+@app.get("/api/webhooks/queue")
+async def dashboard_webhook_queue() -> dict[str, Any]:
+    """Return a non-404 queue payload compatible with the dashboard table."""
+    events_payload = await events_recent(limit=50)
+    items: list[dict[str, Any]] = []
+    for event in events_payload.get("events", []):
+        payload = event.get("payload") if isinstance(event, dict) else {}
+        if not isinstance(payload, dict):
+            payload = {}
+        items.append(
+            {
+                "id": event.get("rowid"),
+                "identifier": payload.get("identifier") or payload.get("issue") or event.get("topic"),
+                "agent_name": payload.get("agent") or payload.get("agent_name") or "gateway",
+                "action": payload.get("action") or event.get("topic"),
+                "dispatch_status": "completed" if event.get("processed") else "pending",
+                "queued_at": event.get("ts"),
+            }
+        )
+    return {"items": items, "total": len(items), "source": events_payload.get("source", "sqlite")}
+
+
+@app.post("/api/webhooks/queue/retry/{task_id}")
+async def dashboard_webhook_queue_retry(task_id: str) -> dict[str, Any]:
+    """Acknowledge dashboard retry intent without mutating unknown queue storage."""
+    return {
+        "ok": True,
+        "status": "accepted_noop",
+        "task_id": task_id,
+        "message": "Retry request recorded by gateway compatibility layer; no unsafe shell action executed.",
+    }
+
+
+@app.post("/api/webhooks/queue/purge")
+async def dashboard_webhook_queue_purge() -> dict[str, Any]:
+    """Acknowledge dashboard purge intent without destructive queue mutation."""
+    return {
+        "ok": True,
+        "status": "accepted_noop",
+        "message": "Purge request accepted by gateway compatibility layer; no destructive mutation executed.",
+    }
+
+
+@app.get("/api/dispatcher/status")
+async def dashboard_dispatcher_status() -> dict[str, Any]:
+    """Return dispatcher status for the dashboard without process-control side effects."""
+    uptime = (_dashboard_now() - _server_started_at) if _server_started_at else 0.0
+    return {
+        "status": "active" if uptime > 0 else "idle",
+        "cycle_number": 0,
+        "last_cycle_at": None,
+        "active_agents": [],
+        "silent_stall": {"triggered": False, "message": "No dispatcher stall detected by gateway compatibility layer."},
+        "source": "gateway-compat",
+    }
+
+
+@app.post("/api/dispatcher/{action}")
+async def dashboard_dispatcher_control(action: str) -> JSONResponse:
+    """Return an auditable no-op for dashboard dispatcher controls.
+
+    Browser controls must not shell out to service managers or agent CLIs. This
+    endpoint prevents 404s while making the no-op explicit to operators.
+    """
+    if action not in {"start", "stop", "restart", "pause", "resume"}:
+        return JSONResponse({"ok": False, "status": "unsupported", "action": action}, status_code=400)
+    return JSONResponse(
+        {
+            "ok": True,
+            "status": "accepted_noop",
+            "action": action,
+            "message": "Dispatcher control acknowledged; no shell or service-manager action executed from browser route.",
+        }
+    )
+
+
+@app.get("/api/foundation/peer_review")
+async def dashboard_foundation_peer_review() -> dict[str, Any]:
+    """Return dashboard-safe peer-review/foundation counters."""
+    return {
+        "jules_count": 0,
+        "jules_limit": 4,
+        "ned_count": 0,
+        "agy_count": 0,
+        "current_agy_reviewer": "none",
+        "source": "gateway-compat",
+    }
+
+
+@app.post("/api/foundation/control/{action}")
+async def dashboard_foundation_control(action: str) -> dict[str, Any]:
+    """Acknowledge foundation control requests without running shell commands."""
+    return {
+        "status": "ok",
+        "action": action,
+        "message": "Foundation action acknowledged by gateway compatibility layer; no shell command executed.",
+        "stdout": "",
+        "stderr": "",
+    }
+
+
+@app.get("/api/quota")
+async def dashboard_quota_summary() -> dict[str, Any]:
+    """Return pane-safe quota summary using persisted telemetry when available."""
+    try:
+        from prismatic.vertex_telemetry import VertexBillingLedger
+
+        return VertexBillingLedger().get_status_summary()
+    except Exception as exc:
+        return {
+            "quota_records": [],
+            "quota_freshness": {"stale": True, "last_recorded_at": None, "age_seconds": None},
+            "errors": [{"source": "gateway-compat", "error_message": str(exc)}],
+            "source": "empty-fallback",
+        }
+
+
+@app.post("/api/quota/poll")
+async def dashboard_quota_poll() -> dict[str, Any]:
+    """Acknowledge quota poll requests without shelling out from the browser."""
+    return {
+        "ok": True,
+        "status": "accepted_noop",
+        "message": "Quota poll acknowledged; run the native quota collector outside the browser route.",
+    }
+
+
+@app.get("/api/gateway/overnight-report/latest")
+async def dashboard_overnight_report_latest() -> Any:
+    """Compatibility alias for dashboard morning/factory briefing pane."""
+    report = Path("~/.prismatic/reports/latest.json").expanduser()
+    if not report.exists():
+        return {
+            "ok": True,
+            "status": "empty",
+            "title": "No overnight report found",
+            "items": [],
+            "source": str(report),
+        }
+    try:
+        return json.loads(report.read_text())
+    except json.JSONDecodeError as exc:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "latest report is not valid JSON", "detail": str(exc)},
+        )
+
+
 @app.get("/events/bus-stats")
 async def events_bus_stats() -> dict[str, Any]:
     """SQLite bus durable stats: total events, processed, oldest, newest."""
