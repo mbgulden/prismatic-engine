@@ -1,0 +1,27 @@
+{
+  "id": "demo-cta",
+  "component": "DemoCta.astro",
+  "slots": [
+    "actions"
+  ],
+  "propsSchema": "schemas/modules/demo-cta.schema.json",
+  "editableFields": [
+    "heading",
+    "body",
+    "cta",
+    "formFields"
+  ],
+  "variants": [
+    "demo-request",
+    "waitlist"
+  ],
+  "a11yRules": [
+    "Preserve semantic headings",
+    "Interactive controls must meet 44px tap target",
+    "Color pairs must meet WCAG AA contrast"
+  ],
+  "contentSafetyRules": [
+    "Do not render unverified claims as guarantees",
+    "Keep CTA labels explicit"
+  ]
+}

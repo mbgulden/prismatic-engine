@@ -883,6 +883,31 @@ async def pwp_status() -> dict[str, Any]:
     return integration_status()
 
 
+@app.get("/pwp/status")
+async def pwp_status_compat() -> dict[str, Any]:
+    """Compatibility alias for stale dashboard/content cards that predate /api/pwp/status."""
+    return integration_status()
+
+
+@app.get("/api/content/status")
+@app.get("/content/status")
+async def content_status_compat() -> dict[str, Any]:
+    """Return a non-404 content/plugin readiness shim for legacy content dashboard panes."""
+    pwp = integration_status()
+    catalog = plugin_catalog()
+    return {
+        "ok": True,
+        "status": "ready" if pwp.get("manifest", {}).get("exists") else "degraded",
+        "surface": "content-plugin-compat",
+        "pwp": pwp,
+        "plugins": {
+            "count": catalog.get("count", 0),
+            "ready_count": catalog.get("ready_count", 0),
+            "invalid_count": catalog.get("invalid_count", 0),
+        },
+    }
+
+
 @app.post("/api/pwp/connect")
 async def pwp_connect() -> JSONResponse:
     """Connect PWP as an additive PE capability surface when hard blockers are clear."""

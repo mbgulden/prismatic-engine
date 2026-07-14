@@ -1,0 +1,26 @@
+{
+  "id": "tour-card-grid",
+  "component": "TourCardGrid.astro",
+  "slots": [
+    "cards"
+  ],
+  "propsSchema": "schemas/modules/tour-card-grid.schema.json",
+  "editableFields": [
+    "heading",
+    "intro",
+    "tours"
+  ],
+  "variants": [
+    "three-up",
+    "featured-first"
+  ],
+  "a11yRules": [
+    "Preserve semantic headings",
+    "Interactive controls must meet 44px tap target",
+    "Color pairs must meet WCAG AA contrast"
+  ],
+  "contentSafetyRules": [
+    "Do not render unverified claims as guarantees",
+    "Keep CTA labels explicit"
+  ]
+}

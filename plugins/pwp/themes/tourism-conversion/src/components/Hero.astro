@@ -1,0 +1,16 @@
+---
+const { eyebrow, title, body, primaryCta, secondaryCta } = Astro.props;
+---
+<section class="pwp-hero">
+  <div class="pwp-container pwp-hero__grid">
+    <div>
+      {eyebrow && <p class="pwp-eyebrow">{eyebrow}</p>}
+      <h1 class="pwp-heading">{title}</h1>
+      {body && <p class="pwp-lede">{body}</p>}
+      <div class="pwp-actions"><slot name="actions" /></div>
+      {primaryCta && <a class="pwp-button" href={primaryCta.href}>{primaryCta.label}</a>}
+      {secondaryCta && <a class="pwp-button pwp-button--secondary" href={secondaryCta.href}>{secondaryCta.label}</a>}
+    </div>
+    <slot name="media" />
+  </div>
+</section>

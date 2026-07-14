@@ -1,0 +1,11 @@
+---
+const { heading, body, cta } = Astro.props;
+---
+<section class="pwp-section">
+  <div class="pwp-container pwp-card">
+    <h2>{heading}</h2>
+    {body && <p class="pwp-lede">{body}</p>}
+    {cta && <a class="pwp-button" href={cta.href}>{cta.label}</a>}
+    <slot name="actions" />
+  </div>
+</section>

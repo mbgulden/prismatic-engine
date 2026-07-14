@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Design Token Schema",
+  "description": "Schema for validation of design tokens (colors, typography, spacing, radii, shadows, animations)",
+  "type": "object",
+  "required": ["colors", "typography", "spacing", "radii", "shadows", "animations"],
+  "additionalProperties": false,
+  "properties": {
+    "colors": {
+      "type": "object",
+      "required": ["primary", "secondary", "accent", "neutral", "semantic"],
+      "additionalProperties": false,
+      "properties": {
+        "primary": { "type": "string" },
+        "secondary": { "type": "string" },
+        "accent": { "type": "string" },
+        "neutral": { "type": "string" },
+        "semantic": {
+          "type": "object",
+          "required": ["success", "warning", "error", "info"],
+          "additionalProperties": false,
+          "properties": {
+            "success": { "type": "string" },
+            "warning": { "type": "string" },
+            "error": { "type": "string" },
+            "info": { "type": "string" }
+          }
+        }
+      }
+    },
+    "typography": {
+      "type": "object",
+      "required": ["font_families", "font_sizes", "font_weights", "line_heights"],
+      "additionalProperties": false,
+      "properties": {
+        "font_families": {
+          "type": "object",
+          "required": ["body", "heading", "code"],
+          "additionalProperties": false,
+          "properties": {
+            "body": { "type": "string" },
+            "heading": { "type": "string" },
+            "code": { "type": "string" }
+          }
+        },
+        "font_sizes": {
+          "type": "object",
+          "required": ["xs", "sm", "base", "lg", "xl", "2xl", "3xl", "4xl"],
+          "additionalProperties": false,
+          "properties": {
+            "xs": { "type": "string" },
+            "sm": { "type": "string" },
+            "base": { "type": "string" },
+            "lg": { "type": "string" },
+            "xl": { "type": "string" },
+            "2xl": { "type": "string" },
+            "3xl": { "type": "string" },
+            "4xl": { "type": "string" }
+          }
+        },
+        "font_weights": {
+          "type": "object",
+          "required": ["light", "regular", "medium", "bold"],
+          "additionalProperties": false,
+          "properties": {
+            "light": { "type": "string" },
+            "regular": { "type": "string" },
+            "medium": { "type": "string" },
+            "bold": { "type": "string" }
+          }
+        },
+        "line_heights": {
+          "type": "object",
+          "required": ["tight", "normal", "loose"],
+          "additionalProperties": false,
+          "properties": {
+            "tight": { "type": "string" },
+            "normal": { "type": "string" },
+            "loose": { "type": "string" }
+          }
+        }
+      }
+    },
+    "spacing": {
+      "type": "object",
+      "required": ["none", "xs", "sm", "md", "lg", "xl", "2xl", "3xl"],
+      "additionalProperties": false,
+      "properties": {
+        "none": { "type": "string" },
+        "xs": { "type": "string" },
+        "sm": { "type": "string" },
+        "md": { "type": "string" },
+        "lg": { "type": "string" },
+        "xl": { "type": "string" },
+        "2xl": { "type": "string" },
+        "3xl": { "type": "string" }
+      }
+    },
+    "radii": {
+      "type": "object",
+      "required": ["none", "sm", "md", "lg", "full"],
+      "additionalProperties": false,
+      "properties": {
+        "none": { "type": "string" },
+        "sm": { "type": "string" },
+        "md": { "type": "string" },
+        "lg": { "type": "string" },
+        "full": { "type": "string" }
+      }
+    },
+    "shadows": {
+      "type": "object",
+      "required": ["none", "sm", "md", "lg", "xl"],
+      "additionalProperties": false,
+      "properties": {
+        "none": { "type": "string" },
+        "sm": { "type": "string" },
+        "md": { "type": "string" },
+        "lg": { "type": "string" },
+        "xl": { "type": "string" }
+      }
+    },
+    "animations": {
+      "type": "object",
+      "required": ["fade", "spin", "slide"],
+      "additionalProperties": false,
+      "properties": {
+        "fade": { "type": "string" },
+        "spin": { "type": "string" },
+        "slide": { "type": "string" }
+      }
+    }
+  }
+}

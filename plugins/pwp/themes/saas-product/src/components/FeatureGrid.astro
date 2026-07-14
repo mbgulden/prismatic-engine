@@ -1,0 +1,11 @@
+---
+const { heading, intro, features = [] } = Astro.props;
+---
+<section class="pwp-section">
+  <div class="pwp-container">
+    <h2>{heading}</h2>
+    {intro && <p class="pwp-lede">{intro}</p>}
+    <div class="pwp-card-grid">{features.map((feature) => <article class="pwp-card"><h3>{feature.title}</h3><p>{feature.body}</p></article>)}</div>
+    <slot name="features" />
+  </div>
+</section>

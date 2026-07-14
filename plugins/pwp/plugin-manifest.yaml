@@ -1,0 +1,149 @@
+schema_version: "1.0.0"
+
+name: "pwp-design-token-plugin"
+
+version: "1.2.0"
+
+description: >-
+  Portable Website Plugin (PWP): additive PE plugin for design-token/theme
+  validation, portable website production workflows, credential-provider
+  maintenance, visual/governance checks, and dashboard-visible capability
+  contracts.
+
+author: "Prismatic Engine Swarm"
+
+plugin_type: "website-production"
+risk_level: "low"
+permissions:
+  - "filesystem-read"
+  - "filesystem-write"
+  - "network"
+approval_gates:
+  - "operator approval before publishing generated site/page artifacts"
+policy_checks:
+  - "credential redaction"
+  - "theme schema compatibility"
+  - "artifact provenance before publish"
+provenance_required: true
+audit_events:
+  - "connect"
+  - "disconnect"
+  - "refresh"
+  - "credential_status"
+  - "credential_refresh"
+  - "theme_validate"
+  - "pwp_reference_lifecycle_publish"
+  - "artifact_emitted"
+  - "publish_ready_blocked"
+  - "artifact_approved"
+  - "publish_ready"
+  - "export"
+job_lifecycle:
+  - "queued"
+  - "running"
+  - "needs_approval"
+  - "completed"
+  - "failed"
+  - "cancelled"
+  - "rejected"
+
+artifact_types:
+  - "application/x-prismatic-theme+json"
+  - "text/html"
+  - "text/css"
+
+dashboard_surfaces:
+  - "PWP readiness card"
+  - "PWP blocker/warning panel"
+  - "PWP capability map"
+  - "PWP tool/workflow chips"
+  - "PWP full lifecycle history and reference demo controls"
+
+endpoints:
+  - method: "GET"
+    path: "/api/pwp/status"
+    description: "Read PWP connection, readiness, capabilities, blockers, and governance status."
+  - method: "POST"
+    path: "/api/pwp/connect"
+    description: "Connect PWP as an additive PE plugin surface."
+  - method: "POST"
+    path: "/api/pwp/disconnect"
+    description: "Disconnect PWP without deleting artifacts or plugin code."
+  - method: "POST"
+    path: "/api/pwp/refresh"
+    description: "Refresh PWP readiness/governance status."
+  - method: "POST"
+    path: "/api/pwp/lifecycle-demo"
+    description: "Run the credential-free full lifecycle reference demo: connect, create job, emit/register artifact provenance, enforce approval-before-publish, export, and safe disconnect."
+
+entry_point: "pwp.plugin:PWPDesignTokenPlugin"
+
+core_version_constraint: ">=0.2.0, <2.0.0"
+
+dependencies:
+  pip: []
+
+personas: []
+
+hooks:
+  - "on_init"
+
+capabilities:
+  - id: "pwp.theme-system"
+    label: "Portable website/theme system"
+    category: "website-production"
+    tools:
+      - "pwp theme validate"
+      - "pwp theme diff"
+      - "pwp theme check-compat"
+    governance:
+      - "schema-backed theme contracts"
+      - "additive plugin boundary"
+  - id: "pwp.credentials"
+    label: "Credential provider bridge"
+    category: "ops-automation"
+    tools:
+      - "pwp_credentials_refresh"
+      - "pwp_credentials_status"
+      - "pwp credentials refresh"
+      - "pwp credentials status"
+    governance:
+      - "secret-redacted status"
+      - "refresh-token provider automation"
+  - id: "pwp.visual-governance"
+    label: "Visual/governance augmentation"
+    category: "quality-governance"
+    workflows:
+      - "PWP visual QA proof"
+      - "cultural diacritics/search compatibility"
+      - "page artifact governance"
+    governance:
+      - "additive checks only"
+      - "operator-visible blockers"
+  - id: "pwp.reference-lifecycle"
+    label: "Canonical full lifecycle reference plugin"
+    category: "plugin-governance"
+    workflows:
+      - "connect → run job → produce artifact → register provenance"
+      - "approval-before-publish enforcement"
+      - "dashboard-visible job/artifact history"
+      - "safe disconnect with artifacts preserved"
+    tools:
+      - "pwp lifecycle demo"
+    governance:
+      - "universal plugin job registry"
+      - "universal artifact/provenance registry"
+      - "operator approval before publishing"
+      - "safe disconnect preserves history"
+
+connect_points:
+  - "PE dashboard reads prismatic.pwp_integration.integration_status"
+  - "PE agents/cron jobs call scripts/pwp for provider, theme, and lifecycle workflows"
+  - "PWP plugin manifest advertises additive capabilities and governance"
+  - "PWP lifecycle demo writes through PE Core plugin job/artifact/provenance registries"
+
+disconnect_points:
+  - "POST /api/pwp/disconnect marks PWP disconnected without deleting plugin code"
+  - "Disconnect hides PWP capability readiness while preserving generated artifacts"
+  - "Core PE queues, native crons, and dashboard remain operational without PWP"
+  - "PWP lifecycle jobs/artifacts remain dashboard-visible after safe disconnect"

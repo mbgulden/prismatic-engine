@@ -1,0 +1,29 @@
+{
+  "id": "hero",
+  "component": "Hero.astro",
+  "slots": [
+    "media",
+    "actions"
+  ],
+  "propsSchema": "schemas/modules/hero.schema.json",
+  "editableFields": [
+    "eyebrow",
+    "title",
+    "body",
+    "primaryCta",
+    "secondaryCta"
+  ],
+  "variants": [
+    "split-product",
+    "centered-waitlist"
+  ],
+  "a11yRules": [
+    "Preserve semantic headings",
+    "Interactive controls must meet 44px tap target",
+    "Color pairs must meet WCAG AA contrast"
+  ],
+  "contentSafetyRules": [
+    "Do not render unverified claims as guarantees",
+    "Keep CTA labels explicit"
+  ]
+}
