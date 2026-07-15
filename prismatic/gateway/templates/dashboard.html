@@ -451,6 +451,24 @@
                 </div>
             </div>
 
+            <!-- Operator attention rail: one prioritized next action, not another raw feed. -->
+            <div id="operator-attention-rail" class="glass-panel p-4 rounded-xl border border-indigo-500/20 bg-indigo-500/5 mb-6">
+                <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <span id="operator-attention-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold border border-slate-700 text-slate-400 bg-slate-800/80">Loading</span>
+                            <span class="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Operator attention</span>
+                        </div>
+                        <div id="operator-attention-title" class="mt-2 text-base font-bold text-slate-100">Checking control-plane signals…</div>
+                        <div id="operator-attention-detail" class="mt-1 text-xs text-slate-400">Ranking dispatcher, recovery, queue, quota, merge, and timeline evidence.</div>
+                    </div>
+                    <button id="operator-attention-action" onclick="switchTab('telemetry')" class="self-start lg:self-center px-3 py-2 rounded-lg border border-indigo-500/30 text-indigo-200 hover:bg-indigo-500/10 text-xs font-bold uppercase tracking-wider transition">
+                        Open Telemetry
+                    </button>
+                </div>
+                <div id="operator-attention-reasons" class="mt-3 flex flex-wrap gap-2 text-[10px] uppercase tracking-wider text-slate-500 font-bold"></div>
+            </div>
+
             <!-- Dashboard summary widgets -->
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <!-- Swarm Activity Feed -->
@@ -2313,6 +2331,8 @@
                 agentStatusCache = { agents: [], status_counts: {}, evidence: {}, source: "agent-status-error" };
             }
 
+            await renderOperatorAttention();
+
             // Activity Feed — live operational timeline from EventBus/run/recovery evidence.
             const actFeed = document.getElementById("dashboard-activity");
             try {
@@ -2378,6 +2398,92 @@
             } catch (err) {
                 console.error("Error loading live workspace locks:", err);
                 wsSummary.innerHTML = `<tr><td colspan="4" class="py-4 px-3 text-rose-400 italic">Unable to load live lock registry.</td></tr>`;
+            }
+        }
+
+        function setOperatorAttention(tone, badgeText, title, detail, actionLabel, tabName, reasons = []) {
+            const toneClass = {
+                green: "px-2 py-0.5 rounded-full text-[10px] font-bold border border-emerald-500/20 text-emerald-400 bg-emerald-500/10",
+                amber: "px-2 py-0.5 rounded-full text-[10px] font-bold border border-amber-500/20 text-amber-400 bg-amber-500/10",
+                red: "px-2 py-0.5 rounded-full text-[10px] font-bold border border-rose-500/20 text-rose-400 bg-rose-500/10",
+                slate: "px-2 py-0.5 rounded-full text-[10px] font-bold border border-slate-700 text-slate-400 bg-slate-800/80",
+            };
+            const badge = document.getElementById("operator-attention-badge");
+            const titleEl = document.getElementById("operator-attention-title");
+            const detailEl = document.getElementById("operator-attention-detail");
+            const action = document.getElementById("operator-attention-action");
+            const reasonEl = document.getElementById("operator-attention-reasons");
+            if (badge) {
+                badge.className = toneClass[tone] || toneClass.slate;
+                badge.textContent = badgeText;
+            }
+            if (titleEl) titleEl.textContent = title;
+            if (detailEl) detailEl.textContent = detail;
+            if (action) {
+                action.textContent = actionLabel;
+                action.onclick = () => switchTab(tabName);
+            }
+            if (reasonEl) {
+                reasonEl.innerHTML = reasons.slice(0, 5).map(reason => `<span class="px-2 py-1 rounded-full border border-slate-800/80 bg-slate-950/50">${escapeHtml(reason)}</span>`).join("");
+            }
+        }
+
+        async function renderOperatorAttention() {
+            try {
+                const [dispatcherRes, recoveryRes, queueRes, quotaRes, mergeRes, timelineRes] = await Promise.all([
+                    fetch(`${API_PREFIX}/dispatcher/status`),
+                    fetch(`${API_PREFIX}/recovery/status`),
+                    fetch(`${API_PREFIX}/webhooks/queue`),
+                    fetch("/api/quota"),
+                    fetch("/api/gateway/merge/status"),
+                    fetch("/api/gateway/timeline?limit=20"),
+                ]);
+                const dispatcher = dispatcherRes.ok ? await dispatcherRes.json() : {};
+                const recovery = recoveryRes.ok ? await recoveryRes.json() : {};
+                const queue = queueRes.ok ? await queueRes.json() : { items: [], total: 0 };
+                const quota = quotaRes.ok ? await quotaRes.json() : {};
+                const merge = mergeRes.ok ? await mergeRes.json() : {};
+                const timeline = timelineRes.ok ? await timelineRes.json() : { items: [] };
+                const queueTotal = Number(queue.total ?? (queue.items || []).length ?? 0);
+                const dlq = Number(recovery.pool_stats?.total_skipped_dlq ?? 0);
+                const liveRecovery = Number(recovery.pool_stats?.live_count ?? 0);
+                const quotaAge = Number(quota.snapshot_age_sec ?? NaN);
+                const mergePending = Number(merge.pending_count ?? merge.open_count ?? 0);
+                const severeEvents = (timeline.items || timeline.timeline || []).filter(item => ["error", "critical", "warning"].includes(String(item.severity || "").toLowerCase()));
+                const reasons = [];
+
+                if (dispatcher.silent_stall?.triggered) {
+                    reasons.push("dispatcher stall");
+                    return setOperatorAttention("red", "ACTION", "Dispatcher loop needs attention", dispatcher.silent_stall.message || "Silent-stall guard is triggered; inspect telemetry before launching more work.", "Open Telemetry", "telemetry", reasons);
+                }
+                if (queueTotal > 0) {
+                    reasons.push(`${queueTotal} queued event${queueTotal === 1 ? "" : "s"}`);
+                    return setOperatorAttention("amber", "QUEUE", "Ingestion queue has pending work", "Review retry/purge controls and failure taxonomy before assuming dispatch is healthy.", "Open Ingestion", "telemetry", reasons);
+                }
+                if (!recovery.systemd_active || !recovery.heartbeat?.exists || dlq > 0 || liveRecovery > 0) {
+                    reasons.push(recovery.systemd_active ? "recovery partial" : "recovery offline");
+                    if (!recovery.heartbeat?.exists) reasons.push("heartbeat missing");
+                    if (dlq > 0) reasons.push(`${dlq} DLQ`);
+                    if (liveRecovery > 0) reasons.push(`${liveRecovery} live recovery`);
+                    return setOperatorAttention("amber", "CHECK", "Recovery surface is not fully clean", "Recovery controls are live, but heartbeat/pool evidence needs review before calling the loop clean.", "Open Telemetry", "telemetry", reasons);
+                }
+                if (Number.isFinite(quotaAge) && quotaAge >= 900) {
+                    reasons.push(formatAge(quotaAge));
+                    return setOperatorAttention("amber", "STALE", "Quota snapshot is stale", "Refresh quota evidence so operators can distinguish idle from quota-starved work.", "Open Quotas", "quota", reasons);
+                }
+                if (mergePending > 0) {
+                    reasons.push(`${mergePending} merge item${mergePending === 1 ? "" : "s"}`);
+                    return setOperatorAttention("amber", "MERGE", "Merge queue has unresolved items", "Review canonical winners and blockers before claiming the staging lane is clear.", "Open Merge", "merge", reasons);
+                }
+                if (severeEvents.length > 0) {
+                    reasons.push(`${severeEvents.length} notable timeline event${severeEvents.length === 1 ? "" : "s"}`);
+                    return setOperatorAttention("amber", "SIGNALS", "Recent operational events need review", "Timeline has warnings/errors; inspect signals before launching another wave.", "Open Signals", "signals", reasons);
+                }
+                reasons.push("dispatcher ok", "recovery ok", "quota fresh", "queue empty");
+                return setOperatorAttention("green", "CLEAR", "No immediate operator action detected", "Core control-plane signals are connected and no high-priority intervention is surfaced.", "Open Dashboard", "dashboard", reasons);
+            } catch (err) {
+                console.error("Error ranking operator attention:", err);
+                setOperatorAttention("red", "ERROR", "Unable to rank operator attention", `One or more control-plane APIs failed: ${err.message || err}`, "Open Signals", "signals", ["attention-ranker error"]);
             }
         }
 
