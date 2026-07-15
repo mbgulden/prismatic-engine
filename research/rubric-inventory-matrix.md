@@ -1,6 +1,6 @@
 # Prismatic Engine — Rubric 10/10 Inventory & Scoring Rules
 **Date:** July 15, 2026  
-**Document version:** 1.0.0  
+**Document version:** 1.1.0  
 **Target Issue:** GRO-3837  
 **Parent Epic:** [Rubric 10/10][Epic] PE scorecard baseline + evidence ledger  
 
@@ -8,120 +8,89 @@
 
 ## 1. Scoring Rules and Thresholds
 
-To establish a measurable, objective scoring framework across all Prismatic Engine capabilities, the system uses a **0 to 10 scale**. This scale corresponds directly to the three visual statuses (Green, Yellow, Red) shown on the dashboard:
+This document inventories the current Prismatic Engine 10/10 rubric and defines the scoring rules that follow-up agents must use. It intentionally does **not** invent current scores. Current scores are marked `TBD by GRO-3838` until the baseline evidence run is executed and attached.
 
-| Score | Status | Meaning | Action / Requirements |
+| Score | Status | Meaning | Required action |
 |:---:|:---|:---|:---|
-| **9 - 10** | **Green** | **Production-grade / Standard** | Fully implemented, automated end-to-end, passes all test gates, documented in docs/code, verified under a CLI/API/dashboard smoke check, and active in daily operations. |
-| **7 - 8** | **Green/Yellow** | **Development Complete** | Code is fully functional and passes unit tests, but has minor UX polish, missing edge-case validation, or slight documentation gaps. |
-| **5 - 6** | **Yellow** | **Partial Implementation** | The capability works in a CLI context or local script but lacks integration with the Gateway/API or the Dashboard UI. |
-| **3 - 4** | **Yellow/Red** | **Blueprint / Design Only** | Manifest templates and architecture designs exist under `docs/plugin-blueprints/`, but no loadable code or engine-enforced rules exist yet. |
-| **1 - 2** | **Red** | **Acknowledged / Backlogged** | Requirement or check is identified in a spec or ticket, but no blueprints, models, or code stubs have been written. |
-| **0** | **Red** | **Blind Spot** | Capability or risk is not considered or documented in the system. |
+| **9 - 10** | **Green** | Production-grade / standard. The capability is implemented, automated end-to-end, documented, and verified under a CLI/API/dashboard proof surface. | Attach proof artifact or command output. No blocker may remain. |
+| **7 - 8** | **Green/Yellow** | Development-complete but with minor UX, edge-case, documentation, portability, or repeatability gaps. | Record the gap and create/attach a concrete follow-up child task. |
+| **5 - 6** | **Yellow** | Partial implementation. The capability works in a local script, CLI path, or isolated API path but lacks full Gateway/dashboard/operator integration. | Record the integration gap, blocker, owner, and next action. |
+| **3 - 4** | **Yellow/Red** | Blueprint/design only. Documentation or manifest templates exist but no loadable/enforced implementation is proven. | Create implementation child task before claiming readiness. |
+| **1 - 2** | **Red** | Acknowledged/backlogged. Requirement exists in a spec or ticket but there is little or no implementation proof. | Create scoped implementation and evidence tasks. |
+| **0** | **Red** | Blind spot. Capability or risk is not represented in the rubric/evidence surface. | Add the missing rubric row and owner before scoring. |
 
 ### Scoring Matrix Alignment Rules
-- A rubric dimension is considered **complete** only when it scores **9/10 or 10/10 (Green)**.
-- Any score **8/10 or below** must map to a concrete Linear issue or child task under the parent scorecard epic.
-- All proof checks must run against the local-first repository environment using non-credentialed mock fixtures or local database states.
+
+- A rubric item is considered **complete** only when it scores **9/10 or 10/10 (Green)** and has attached evidence.
+- Any score **8/10 or below** must map to a concrete Linear issue or child task under the scorecard epic.
+- `Current Score` must remain `TBD by GRO-3838` until the evidence command/path has been run or inspected in the baseline task.
+- `Target Score` is `10` for every rubric row unless the source-of-truth rubric explicitly lowers the bar.
+- `Evidence` must name the proof surface and the current command/path to inspect.
+- `Gap`, `Blocker`, and `Next Action` must be actionable enough for follow-up agents to execute without rereading the whole source tree.
+- Proof checks must avoid credentials/secrets and use local-first or mock fixtures when production access is not required.
 
 ---
 
-## 2. Complete Rubric Matrix
+## 2. Complete Rubric Matrix / Closure Ledger
 
-This matrix covers all required rubric criteria from `docs/north-star.md`, `docs/public-launch.md`, `docs/dashboard-primary-touchpoint.md`, `docs/pwp-reference-lifecycle.md`, and `docs/prismatic-plugin-architecture.md`.
+This matrix covers the required rubric criteria from `docs/north-star.md`, `docs/public-launch.md`, `docs/dashboard-primary-touchpoint.md`, `docs/pwp-reference-lifecycle.md`, and `docs/prismatic-plugin-architecture.md`, including public readiness, dashboard primary touchpoint, portability/local-first operation, media readiness, business readiness, plugin/PWP maturity, and Golden Flow/mobile continuity.
 
-### Section A: Public Launch & Local Setup
-*Focuses on onboarding developers, quickstarts, and engine bootstrap operations.*
-
-| # | Rubric Item / Objective | 10/10 Definition (Green) | Proof Surface | Current Evidence Path / Command | Owner Lane |
-|:---|:---|:---|:---|:---|:---|
-| **A1** | **Local Installation** | Clean local clone, virtual environment creation, and `pip install -e ".[gateway]"` installs all core and API dependencies without conflict. | `pyproject.toml`, `setup-dual-venvs.sh`, `scripts/public_launch_smoke.py` | `PYTHONPATH=. ./.venv_dev/bin/python3 scripts/public_launch_smoke.py` (specifically imports step) | `agent:fred` |
-| **A2** | **Dashboard Startup** | Gateway runs locally on port 9000 and serves dashboard assets cleanly with no HTTP/JS errors or missing resources. | `/dashboard`, `scripts/public_launch_smoke.py` ("Gateway API smoke" step) | `prismatic-gateway --host 127.0.0.1 --port 9000` & `python3 scripts/dashboard_visual_qa.py` | `agent:fred` |
-| **A3** | **Shipped Plugins Load** | All default plugins in `plugins/` (including PWP) load successfully through the loader, verifying manifest schema compatibility. | `/api/plugins/catalog`, `prismatic/core/registry.py` | `plugin-load-gate` or `python3 -m prismatic.quality.plugin_load` | `agent:ned` |
-| **A4** | **Governance Summary Visibility** | The gateway exposes a detailed operator checklist count (risk, permissions, blockers) for each plugin, rendered on dashboard cards. | `/api/plugins/governance`, `dashboard.html` (`plugin-dashboard-health-cards` marker) | GET `/api/plugins/governance` | `agent:fred` |
-| **A5** | **Policy Gate Visibility** | Gateway exposes inline policy decisions, allowing users to preview evaluation results (allow/block/needs_approval) for plugin jobs. | `/api/plugins/policy/preview`, dashboard policy cards | POST `/api/plugins/policy/preview` | `agent:fred` |
-| **A6** | **Durable Job State** | Job registry persists job history, lifecycle phases, inputs, and errors to a localized, atomic JSON file. | `/api/plugins/jobs`, `$PRISMATIC_PLUGIN_JOBS_STATE` | GET `/api/plugins/jobs` & check `prismatic_state/plugin_jobs.json` | `agent:ned` |
-| **A7** | **Durable Artifact & Provenance** | Emitted plugin outputs are registered with prompts, file SHA256 hashes, sizes, and provider details, surviving plugin disconnect. | `/api/plugins/artifacts`, `$PRISMATIC_PLUGIN_ARTIFACTS_STATE` | GET `/api/plugins/artifacts` & check `prismatic_state/plugin_artifacts.json` | `agent:ned` |
-| **A8** | **Audit Event Stream** | All execution milestones (job creation, status transitions, policy preview, operator approval) log to a central normalized log. | `/api/plugins/audit-events`, dashboard logs | GET `/api/plugins/audit-events` | `agent:fred` |
-| **A9** | **PWP Reference Lifecycle** | PWP reference plugin executes all steps: connect -> job queue -> policy evaluation -> approval -> artifact generation -> safe disconnect. | `docs/pwp-reference-lifecycle.md`, `/api/pwp/status` | `python3 scripts/pwp lifecycle demo` | `agent:ned` |
-| **A10**| **Security Assumptions Audit** | Checks ensure zero hardcoded secrets exist, CORS settings are restricted, path traversal is blocked, and inputs are redacted. | `docs/security.md`, `scripts/public_security_readiness_audit.py` | `python3 scripts/public_security_readiness_audit.py` | `agent:fred` |
-
----
-
-### Section B: Dashboard Primary Touchpoint
-*Focuses on transition from Telegram-first/headless commands to validated UI controls.*
-
-| # | Rubric Item / Objective | 10/10 Definition (Green) | Proof Surface | Current Evidence Path / Command | Owner Lane |
-|:---|:---|:---|:---|:---|:---|
-| **B1** | **No Raw Shell Access** | UI restricts arbitrary terminal box inputs, ensuring all operations are validated Gateway API calls. | Dashboard HTML templates, API endpoints | `python3 scripts/public_launch_smoke.py` ("dashboard markers") | `agent:fred` |
-| **B2** | **Guided Job Creation** | Job forms are dynamically generated from plugin schemas, ensuring input validations and token redactions occur before posting. | `/api/plugins/jobs`, dashboard form views | GET `/api/plugins/catalog` (checking action schemas) | `agent:ned` |
-| **B3** | **Interactive Approvals** | Dashboard displays approval context (policy reason, risk, target) and exposes button overrides for pending jobs. | `/api/plugins/jobs/{id}/approve`, dashboard controls | POST `/api/plugins/jobs/{job_id}/approve` | `agent:fred` |
-| **B4** | **Artifact Publish/Export Gating** | Export and publication actions remain blocked in UI and API until approval states are satisfied and logged. | `/api/plugins/artifacts/{id}/publish-ready` | POST `/api/plugins/artifacts/{artifact_id}/publish-ready` | `agent:fred` |
-| **B5** | **Audit Log Filters & Pagination** | Audit dashboard supports querying and filtering logs by plugin, job, artifact type, or severity with no UI freezes. | `/api/plugins/audit-events`, UI log viewer | GET `/api/plugins/audit-events?plugin_name=pwp-design-token-plugin` | `agent:fred` |
-| **B6** | **Interactive Smoke Runner** | Diagnostic triggers (public smoke, security audit) can be launched from the dashboard with live terminal/log streaming. | Dashboard diagnostics panel | POST `/api/plugins/jobs` with diagnostic action | `agent:fred` |
-
----
-
-### Section C: Plugin Ecosystem & Maturity Ladder
-*Focuses on manifest contracts, class designs, and custom capabilities.*
-
-| # | Rubric Item / Objective | 10/10 Definition (Green) | Proof Surface | Current Evidence Path / Command | Owner Lane |
-|:---|:---|:---|:---|:---|:---|
-| **C1** | **Plugin Base Interface Compliance** | Plugins implement the base `PrismaticPlugin` class and support optional discovery hooks without crashing old loaders. | `prismatic/interface/plugin.py`, `/api/plugins/catalog` | `plugin-load-gate` verification | `agent:fred` |
-| **C2** | **Manifest Capability Map** | Every plugin declares a `plugin-manifest.yaml` specifying categories, required capabilities, endpoints, and governance rules. | Manifest files under `plugins/` | `python3 scripts/plugin_architecture validate <manifest_path>` | `agent:ned` |
-| **C3** | **MCP Integration & Auth Redaction** | MCP servers are registered HTTP/stdio sidecars with redacted credentials and structured resource descriptions. | Manifest `mcp_servers`, catalog payload | GET `/api/plugins/catalog` checking MCP fields | `agent:ned` |
-| **C4** | **API Route Registry** | Plugin manifests declare custom routes that the gateway exposes, matching the plugin's internal service endpoints. | Manifest `endpoints`, `/api/plugins/architecture` | GET `/api/plugins/architecture` | `agent:ned` |
+| ID | Category | Rubric Item | Current Score | Target Score | 10/10 Definition | Evidence | Gap | Blocker | Owner | Next Action |
+|:---|:---|:---|:---:|:---:|:---|:---|:---|:---|:---|:---|
+| A1 | Public Launch & Local Setup | Local Installation | TBD by GRO-3838 | 10 | Clean local clone, virtual environment creation, and `pip install -e ".[gateway]"` installs all core and API dependencies without conflict. | Proof surface: `pyproject.toml`, `setup-dual-venvs.sh`, `scripts/public_launch_smoke.py`<br>Required command/path: `PYTHONPATH=. ./.venv_dev/bin/python3 scripts/public_launch_smoke.py` (specifically imports step) | Current baseline score not assigned yet; evidence must be run and attached in GRO-3838. | Awaiting GRO-3838 baseline evidence run. | `agent:fred` | `agent:fred`: run/attach the listed evidence for A1, assign current score, and convert any score <= 8 into a concrete Linear child task. |
+| A2 | Public Launch & Local Setup | Dashboard Startup | TBD by GRO-3838 | 10 | Gateway runs locally on port 9000 and serves dashboard assets cleanly with no HTTP/JS errors or missing resources. | Proof surface: `/dashboard`, `scripts/public_launch_smoke.py` ("Gateway API smoke" step)<br>Required command/path: `prismatic-gateway --host 127.0.0.1 --port 9000` & `python3 scripts/dashboard_visual_qa.py` | Current baseline score not assigned yet; evidence must be run and attached in GRO-3838. | Awaiting GRO-3838 baseline evidence run. | `agent:fred` | `agent:fred`: run/attach the listed evidence for A2, assign current score, and convert any score <= 8 into a concrete Linear child task. |
+| A3 | Public Launch & Local Setup | Shipped Plugins Load | TBD by GRO-3838 | 10 | All default plugins in `plugins/` (including PWP) load successfully through the loader, verifying manifest schema compatibility. | Proof surface: `/api/plugins/catalog`, `prismatic/core/registry.py`<br>Required command/path: `plugin-load-gate` or `python3 -m prismatic.quality.plugin_load` | Current baseline score not assigned yet; evidence must be run and attached in GRO-3838. | Awaiting GRO-3838 baseline evidence run. | `agent:ned` | `agent:ned`: run/attach the listed evidence for A3, assign current score, and convert any score <= 8 into a concrete Linear child task. |
+| A4 | Public Launch & Local Setup | Governance Summary Visibility | TBD by GRO-3838 | 10 | The gateway exposes a detailed operator checklist count (risk, permissions, blockers) for each plugin, rendered on dashboard cards. | Proof surface: `/api/plugins/governance`, `dashboard.html` (`plugin-dashboard-health-cards` marker)<br>Required command/path: GET `/api/plugins/governance` | Current baseline score not assigned yet; evidence must be run and attached in GRO-3838. | Awaiting GRO-3838 baseline evidence run. | `agent:fred` | `agent:fred`: run/attach the listed evidence for A4, assign current score, and convert any score <= 8 into a concrete Linear child task. |
+| A5 | Public Launch & Local Setup | Policy Gate Visibility | TBD by GRO-3838 | 10 | Gateway exposes inline policy decisions, allowing users to preview evaluation results (allow/block/needs_approval) for plugin jobs. | Proof surface: `/api/plugins/policy/preview`, dashboard policy cards<br>Required command/path: POST `/api/plugins/policy/preview` | Current baseline score not assigned yet; evidence must be run and attached in GRO-3838. | Awaiting GRO-3838 baseline evidence run. | `agent:fred` | `agent:fred`: run/attach the listed evidence for A5, assign current score, and convert any score <= 8 into a concrete Linear child task. |
+| A6 | Public Launch & Local Setup | Durable Job State | TBD by GRO-3838 | 10 | Job registry persists job history, lifecycle phases, inputs, and errors to a localized, atomic JSON file. | Proof surface: `/api/plugins/jobs`, `$PRISMATIC_PLUGIN_JOBS_STATE`<br>Required command/path: GET `/api/plugins/jobs` & check `prismatic_state/plugin_jobs.json` | Current baseline score not assigned yet; evidence must be run and attached in GRO-3838. | Awaiting GRO-3838 baseline evidence run. | `agent:ned` | `agent:ned`: run/attach the listed evidence for A6, assign current score, and convert any score <= 8 into a concrete Linear child task. |
+| A7 | Public Launch & Local Setup | Durable Artifact & Provenance | TBD by GRO-3838 | 10 | Emitted plugin outputs are registered with prompts, file SHA256 hashes, sizes, and provider details, surviving plugin disconnect. | Proof surface: `/api/plugins/artifacts`, `$PRISMATIC_PLUGIN_ARTIFACTS_STATE`<br>Required command/path: GET `/api/plugins/artifacts` & check `prismatic_state/plugin_artifacts.json` | Current baseline score not assigned yet; evidence must be run and attached in GRO-3838. | Awaiting GRO-3838 baseline evidence run. | `agent:ned` | `agent:ned`: run/attach the listed evidence for A7, assign current score, and convert any score <= 8 into a concrete Linear child task. |
+| A8 | Public Launch & Local Setup | Audit Event Stream | TBD by GRO-3838 | 10 | All execution milestones (job creation, status transitions, policy preview, operator approval) log to a central normalized log. | Proof surface: `/api/plugins/audit-events`, dashboard logs<br>Required command/path: GET `/api/plugins/audit-events` | Current baseline score not assigned yet; evidence must be run and attached in GRO-3838. | Awaiting GRO-3838 baseline evidence run. | `agent:fred` | `agent:fred`: run/attach the listed evidence for A8, assign current score, and convert any score <= 8 into a concrete Linear child task. |
+| A9 | Public Launch & Local Setup | PWP Reference Lifecycle | TBD by GRO-3838 | 10 | PWP reference plugin executes all steps: connect -> job queue -> policy evaluation -> approval -> artifact generation -> safe disconnect. | Proof surface: `docs/pwp-reference-lifecycle.md`, `/api/pwp/status`<br>Required command/path: `python3 scripts/pwp lifecycle demo` | Current baseline score not assigned yet; evidence must be run and attached in GRO-3838. | Awaiting GRO-3838 baseline evidence run. | `agent:ned` | `agent:ned`: run/attach the listed evidence for A9, assign current score, and convert any score <= 8 into a concrete Linear child task. |
+| A10 | Public Launch & Local Setup | Security Assumptions Audit | TBD by GRO-3838 | 10 | Checks ensure zero hardcoded secrets exist, CORS settings are restricted, path traversal is blocked, and inputs are redacted. | Proof surface: `docs/security.md`, `scripts/public_security_readiness_audit.py`<br>Required command/path: `python3 scripts/public_security_readiness_audit.py` | Current baseline score not assigned yet; evidence must be run and attached in GRO-3838. | Awaiting GRO-3838 baseline evidence run. | `agent:fred` | `agent:fred`: run/attach the listed evidence for A10, assign current score, and convert any score <= 8 into a concrete Linear child task. |
+| B1 | Dashboard Primary Touchpoint | No Raw Shell Access | TBD by GRO-3838 | 10 | UI restricts arbitrary terminal box inputs, ensuring all operations are validated Gateway API calls. | Proof surface: Dashboard HTML templates, API endpoints<br>Required command/path: `python3 scripts/public_launch_smoke.py` ("dashboard markers") | Current baseline score not assigned yet; evidence must be run and attached in GRO-3838. | Awaiting GRO-3838 baseline evidence run. | `agent:fred` | `agent:fred`: run/attach the listed evidence for B1, assign current score, and convert any score <= 8 into a concrete Linear child task. |
+| B2 | Dashboard Primary Touchpoint | Guided Job Creation | TBD by GRO-3838 | 10 | Job forms are dynamically generated from plugin schemas, ensuring input validations and token redactions occur before posting. | Proof surface: `/api/plugins/jobs`, dashboard form views<br>Required command/path: GET `/api/plugins/catalog` (checking action schemas) | Current baseline score not assigned yet; evidence must be run and attached in GRO-3838. | Awaiting GRO-3838 baseline evidence run. | `agent:ned` | `agent:ned`: run/attach the listed evidence for B2, assign current score, and convert any score <= 8 into a concrete Linear child task. |
+| B3 | Dashboard Primary Touchpoint | Interactive Approvals | TBD by GRO-3838 | 10 | Dashboard displays approval context (policy reason, risk, target) and exposes button overrides for pending jobs. | Proof surface: `/api/plugins/jobs/{id}/approve`, dashboard controls<br>Required command/path: POST `/api/plugins/jobs/{job_id}/approve` | Current baseline score not assigned yet; evidence must be run and attached in GRO-3838. | Awaiting GRO-3838 baseline evidence run. | `agent:fred` | `agent:fred`: run/attach the listed evidence for B3, assign current score, and convert any score <= 8 into a concrete Linear child task. |
+| B4 | Dashboard Primary Touchpoint | Artifact Publish/Export Gating | TBD by GRO-3838 | 10 | Export and publication actions remain blocked in UI and API until approval states are satisfied and logged. | Proof surface: `/api/plugins/artifacts/{id}/publish-ready`<br>Required command/path: POST `/api/plugins/artifacts/{artifact_id}/publish-ready` | Current baseline score not assigned yet; evidence must be run and attached in GRO-3838. | Awaiting GRO-3838 baseline evidence run. | `agent:fred` | `agent:fred`: run/attach the listed evidence for B4, assign current score, and convert any score <= 8 into a concrete Linear child task. |
+| B5 | Dashboard Primary Touchpoint | Audit Log Filters & Pagination | TBD by GRO-3838 | 10 | Audit dashboard supports querying and filtering logs by plugin, job, artifact type, or severity with no UI freezes. | Proof surface: `/api/plugins/audit-events`, UI log viewer<br>Required command/path: GET `/api/plugins/audit-events?plugin_name=pwp-design-token-plugin` | Current baseline score not assigned yet; evidence must be run and attached in GRO-3838. | Awaiting GRO-3838 baseline evidence run. | `agent:fred` | `agent:fred`: run/attach the listed evidence for B5, assign current score, and convert any score <= 8 into a concrete Linear child task. |
+| B6 | Dashboard Primary Touchpoint | Interactive Smoke Runner | TBD by GRO-3838 | 10 | Diagnostic triggers (public smoke, security audit) can be launched from the dashboard with live terminal/log streaming. | Proof surface: Dashboard diagnostics panel<br>Required command/path: POST `/api/plugins/jobs` with diagnostic action | Current baseline score not assigned yet; evidence must be run and attached in GRO-3838. | Awaiting GRO-3838 baseline evidence run. | `agent:fred` | `agent:fred`: run/attach the listed evidence for B6, assign current score, and convert any score <= 8 into a concrete Linear child task. |
+| C1 | Plugin Ecosystem & Maturity Ladder | Plugin Base Interface Compliance | TBD by GRO-3838 | 10 | Plugins implement the base `PrismaticPlugin` class and support optional discovery hooks without crashing old loaders. | Proof surface: `prismatic/interface/plugin.py`, `/api/plugins/catalog`<br>Required command/path: `plugin-load-gate` verification | Current baseline score not assigned yet; evidence must be run and attached in GRO-3838. | Awaiting GRO-3838 baseline evidence run. | `agent:fred` | `agent:fred`: run/attach the listed evidence for C1, assign current score, and convert any score <= 8 into a concrete Linear child task. |
+| C2 | Plugin Ecosystem & Maturity Ladder | Manifest Capability Map | TBD by GRO-3838 | 10 | Every plugin declares a `plugin-manifest.yaml` specifying categories, required capabilities, endpoints, and governance rules. | Proof surface: Manifest files under `plugins/`<br>Required command/path: `python3 scripts/plugin_architecture validate <manifest_path>` | Current baseline score not assigned yet; evidence must be run and attached in GRO-3838. | Awaiting GRO-3838 baseline evidence run. | `agent:ned` | `agent:ned`: run/attach the listed evidence for C2, assign current score, and convert any score <= 8 into a concrete Linear child task. |
+| C3 | Plugin Ecosystem & Maturity Ladder | MCP Integration & Auth Redaction | TBD by GRO-3838 | 10 | MCP servers are registered HTTP/stdio sidecars with redacted credentials and structured resource descriptions. | Proof surface: Manifest `mcp_servers`, catalog payload<br>Required command/path: GET `/api/plugins/catalog` checking MCP fields | Current baseline score not assigned yet; evidence must be run and attached in GRO-3838. | Awaiting GRO-3838 baseline evidence run. | `agent:ned` | `agent:ned`: run/attach the listed evidence for C3, assign current score, and convert any score <= 8 into a concrete Linear child task. |
+| C4 | Plugin Ecosystem & Maturity Ladder | API Route Registry | TBD by GRO-3838 | 10 | Plugin manifests declare custom routes that the gateway exposes, matching the plugin's internal service endpoints. | Proof surface: Manifest `endpoints`, `/api/plugins/architecture`<br>Required command/path: GET `/api/plugins/architecture` | Current baseline score not assigned yet; evidence must be run and attached in GRO-3838. | Awaiting GRO-3838 baseline evidence run. | `agent:ned` | `agent:ned`: run/attach the listed evidence for C4, assign current score, and convert any score <= 8 into a concrete Linear child task. |
+| D1 | Media Plugin Readiness | Media Class Validation | TBD by GRO-3838 | 10 | Media blueprints validate against standard types (`video`, `images`, `music-sfx`, `game-assets`, `asset-forge-3d`). | Proof surface: `docs/plugin-blueprints/`, blueprint catalog<br>Required command/path: `python3 scripts/plugin_architecture blueprint prismatic-video --class video` | Current baseline score not assigned yet; evidence must be run and attached in GRO-3838. | Awaiting GRO-3838 baseline evidence run. | `agent:ned` | `agent:ned`: run/attach the listed evidence for D1, assign current score, and convert any score <= 8 into a concrete Linear child task. |
+| D2 | Media Plugin Readiness | Structured Governance Preset | TBD by GRO-3838 | 10 | Manifest contains detailed risk profiles, required approval gates, cost limits, and audit logs. | Proof surface: Manifest governance rules, API validation<br>Required command/path: GET `/api/plugins/governance` (verifying media blueprints) | Current baseline score not assigned yet; evidence must be run and attached in GRO-3838. | Awaiting GRO-3838 baseline evidence run. | `agent:fred` | `agent:fred`: run/attach the listed evidence for D2, assign current score, and convert any score <= 8 into a concrete Linear child task. |
+| D3 | Media Plugin Readiness | Prompt & Model Provenance | TBD by GRO-3838 | 10 | Media artifact registry details prompts, provider models, and source assets, allowing trace-back of generation. | Proof surface: Universal artifact store payloads<br>Required command/path: GET `/api/plugins/artifacts` returning media properties | Current baseline score not assigned yet; evidence must be run and attached in GRO-3838. | Awaiting GRO-3838 baseline evidence run. | `agent:ned` | `agent:ned`: run/attach the listed evidence for D3, assign current score, and convert any score <= 8 into a concrete Linear child task. |
+| D4 | Media Plugin Readiness | Cost & Provider Policies | TBD by GRO-3838 | 10 | Budget/token limits are evaluated before sending prompts to external APIs; jobs are blocked if quotas are exceeded. | Proof surface: `prismatic/plugin_policy.py` rules<br>Required command/path: POST `/api/plugins/policy/preview` with high-cost mockup | Current baseline score not assigned yet; evidence must be run and attached in GRO-3838. | Awaiting GRO-3838 baseline evidence run. | `agent:fred` | `agent:fred`: run/attach the listed evidence for D4, assign current score, and convert any score <= 8 into a concrete Linear child task. |
+| E1 | Business Plugin Readiness | Business Category Scope | TBD by GRO-3838 | 10 | Plugins identify with classes (`seo-ops`, `booking-ops`, `crm`, `billing`, `business-intelligence`) and speak business terms. | Proof surface: Manifest categories, API catalog<br>Required command/path: `python3 scripts/plugin_architecture catalog` (filter category) | Current baseline score not assigned yet; evidence must be run and attached in GRO-3838. | Awaiting GRO-3838 baseline evidence run. | `agent:ned` | `agent:ned`: run/attach the listed evidence for E1, assign current score, and convert any score <= 8 into a concrete Linear child task. |
+| E2 | Business Plugin Readiness | PII / Payment Security Gating | TBD by GRO-3838 | 10 | Security gates identify and block PII/payment data exposure in logs, requiring double-token approvals for updates. | Proof surface: `prismatic/plugin_policy.py` checks<br>Required command/path: Job request with mock customer payload checks | Current baseline score not assigned yet; evidence must be run and attached in GRO-3838. | Awaiting GRO-3838 baseline evidence run. | `agent:fred` | `agent:fred`: run/attach the listed evidence for E2, assign current score, and convert any score <= 8 into a concrete Linear child task. |
+| E3 | Business Plugin Readiness | Disconnect Data Continuity | TBD by GRO-3838 | 10 | Business plugins disconnect without removing generated reports, customer lists, or invoices from the database. | Proof surface: Universal artifact/jobs stores<br>Required command/path: PWP lifecycle disconnect validation | Current baseline score not assigned yet; evidence must be run and attached in GRO-3838. | Awaiting GRO-3838 baseline evidence run. | `agent:fred` | `agent:fred`: run/attach the listed evidence for E3, assign current score, and convert any score <= 8 into a concrete Linear child task. |
+| F1 | Golden Flow & Mobile Continuity | Multi-Agent Workspace Sync | TBD by GRO-3838 | 10 | Code changes and workspace handoffs occur under lane governance without merge conflicts or lease breaches. | Proof surface: `PRISMATIC_ENGINE.yaml` lane assignments<br>Required command/path: `python3 scripts/pre-push-hook.py` & `git status` check | Current baseline score not assigned yet; evidence must be run and attached in GRO-3838. | Awaiting GRO-3838 baseline evidence run. | `agent:fred` | `agent:fred`: run/attach the listed evidence for F1, assign current score, and convert any score <= 8 into a concrete Linear child task. |
+| F2 | Golden Flow & Mobile Continuity | Dual-Surface Operations | TBD by GRO-3838 | 10 | Dashboard serves as the central data model while Telegram serves status updates, alarms, and quick mobile decisions. | Proof surface: Telegram bot adapter, Gateway events<br>Required command/path: Verification of notification payload delivery | Current baseline score not assigned yet; evidence must be run and attached in GRO-3838. | Awaiting GRO-3838 baseline evidence run. | `agent:fred` | `agent:fred`: run/attach the listed evidence for F2, assign current score, and convert any score <= 8 into a concrete Linear child task. |
 
 ---
 
-### Section D: Media Plugin Readiness
-*Focuses on creative-media capabilities, mesh files, image providers, and cost gates.*
+## 3. Required Evidence Commands for Baseline Scoring
 
-| # | Rubric Item / Objective | 10/10 Definition (Green) | Proof Surface | Current Evidence Path / Command | Owner Lane |
-|:---|:---|:---|:---|:---|:---|
-| **D1** | **Media Class Validation** | Media blueprints validate against standard types (`video`, `images`, `music-sfx`, `game-assets`, `asset-forge-3d`). | `docs/plugin-blueprints/`, blueprint catalog | `python3 scripts/plugin_architecture blueprint prismatic-video --class video` | `agent:ned` |
-| **D2** | **Structured Governance Preset** | Manifest contains detailed risk profiles, required approval gates, cost limits, and audit logs. | Manifest governance rules, API validation | GET `/api/plugins/governance` (verifying media blueprints) | `agent:fred` |
-| **D3** | **Prompt & Model Provenance** | Media artifact registry details prompts, provider models, and source assets, allowing trace-back of generation. | Universal artifact store payloads | GET `/api/plugins/artifacts` returning media properties | `agent:ned` |
-| **D4** | **Cost & Provider Policies** | Budget/token limits are evaluated before sending prompts to external APIs; jobs are blocked if quotas are exceeded. | `prismatic/plugin_policy.py` rules | POST `/api/plugins/policy/preview` with high-cost mockup | `agent:fred` |
+The following commands are **required evidence commands** for GRO-3838. This document does not claim they have freshly passed unless a follow-up proof artifact or log is attached.
 
----
-
-### Section E: Business Plugin Readiness
-*Focuses on operations, CRM, booking systems, billing, and PII handling.*
-
-| # | Rubric Item / Objective | 10/10 Definition (Green) | Proof Surface | Current Evidence Path / Command | Owner Lane |
-|:---|:---|:---|:---|:---|:---|
-| **E1** | **Business Category Scope** | Plugins identify with classes (`seo-ops`, `booking-ops`, `crm`, `billing`, `business-intelligence`) and speak business terms. | Manifest categories, API catalog | `python3 scripts/plugin_architecture catalog` (filter category) | `agent:ned` |
-| **E2** | **PII / Payment Security Gating** | Security gates identify and block PII/payment data exposure in logs, requiring double-token approvals for updates. | `prismatic/plugin_policy.py` checks | Job request with mock customer payload checks | `agent:fred` |
-| **E3** | **Disconnect Data Continuity** | Business plugins disconnect without removing generated reports, customer lists, or invoices from the database. | Universal artifact/jobs stores | PWP lifecycle disconnect validation | `agent:fred` |
-
----
-
-### Section F: Golden Flow & Mobile Continuity
-*Focuses on multi-agent collaboration, mobile alerts, and Telegram continuity.*
-
-| # | Rubric Item / Objective | 10/10 Definition (Green) | Proof Surface | Current Evidence Path / Command | Owner Lane |
-|:---|:---|:---|:---|:---|:---|
-| **F1** | **Multi-Agent Workspace Sync** | Code changes and workspace handoffs occur under lane governance without merge conflicts or lease breaches. | `PRISMATIC_ENGINE.yaml` lane assignments | `python3 scripts/pre-push-hook.py` & `git status` check | `agent:fred` |
-| **F2** | **Dual-Surface Operations** | Dashboard serves as the central data model while Telegram serves status updates, alarms, and quick mobile decisions. | Telegram bot adapter, Gateway events | Verification of notification payload delivery | `agent:fred` |
-
----
-
-## 3. Evidence of Local Execution & Verification
-
-To satisfy the 10/10 rubric closure requirement, both local diagnostic suites were executed successfully under the python environment:
-
-1. **Public Launch Smoke Test:**
+1. **Public Launch Smoke Test**
    - **Command:** `PYTHONPATH=. ./.venv_dev/bin/python3 scripts/public_launch_smoke.py`
-   - **Result:** Complete verification of core imports, CLI help Positional args, Plugin Catalog, Shipped Plugins Load Gate, Gateway API, Public Docs existence, and Dashboard HTML markers.
-   - **Marker Output:** `PUBLIC_LAUNCH_SMOKE_OK`
+   - **Expected marker:** `PUBLIC_LAUNCH_SMOKE_OK`
+   - **Use for:** public launch, local setup, plugin catalog, dashboard HTML marker, and shipped-plugin loading evidence.
 
-2. **Public Security Readiness Audit:**
+2. **Public Security Readiness Audit**
    - **Command:** `PYTHONPATH=. ./.venv_dev/bin/python3 scripts/public_security_readiness_audit.py`
-   - **Result:** Complete verification of zero raw credentials, `.env.example` configurations, restricted CORS settings, policy secrets redaction, and local path traversal protection.
-   - **Marker Output:** `PUBLIC_SECURITY_READINESS_OK`
+   - **Expected marker:** `PUBLIC_SECURITY_READINESS_OK`
+   - **Use for:** credential redaction, CORS, policy secrets, path traversal, and public security readiness evidence.
 
-3. **Release Smoke Audit:**
+3. **Release Smoke Audit**
    - **Command:** `PYTHONPATH=. ./.venv_dev/bin/python3 scripts/release_smoke.py`
-   - **Result:** Runs and verifies project entrypoints, plugins loading, launch smoke, security audit, and dashboard visual QA.
-   - **Marker Output:** `RELEASE_SMOKE_OK`
+   - **Expected marker:** `RELEASE_SMOKE_OK`
+   - **Use for:** integrated release-readiness evidence across entrypoints, plugin loading, launch smoke, security audit, and dashboard visual QA.
+
+## 4. Follow-up Execution Contract
+
+- GRO-3838 should run the baseline evidence commands, assign each `Current Score`, and replace `TBD by GRO-3838` with scored evidence.
+- GRO-3839 should turn this ledger shape into a reusable closure ledger template and AGY handoff protocol.
+- Do not mark a row Green without evidence.
+- Do not treat missing evidence as proof of failure; record it as a gap/blocker until the command is run or inspected.
