@@ -1,0 +1,62 @@
+{
+  "artifacts": {
+    "agent_output": "demo_workspace/agent_output.py",
+    "capture_checklist": "capture-checklist.md",
+    "demo_script": "demo-script.md",
+    "feedback_package": "three-user-feedback-package.md",
+    "fixture": "fixture-event.json"
+  },
+  "cleanup_status": "clean",
+  "fixture": {
+    "expected_agent": "agy",
+    "github_branch": "feature/demo-90-proof-loop",
+    "github_event": "pull_request.opened",
+    "github_repo": "example/prismatic-demo-repo",
+    "issue_id": "fixture-linear-demo-0001",
+    "issue_identifier": "DEMO-90",
+    "issue_title": "Demo: verify Prismatic guarded agent dispatch",
+    "labels": [
+      "dispatch:ready",
+      "agent:agy",
+      "proof-loop:demo",
+      "github:fixture"
+    ],
+    "verification_command": "python3 -m py_compile demo_workspace/agent_output.py"
+  },
+  "routed_agent": "agy",
+  "run_id": "demo-41eb9494e7b3",
+  "scope": "ad hoc targeted fixture demo; no production Linear/GitHub/AGY calls; not canonical/full-suite green",
+  "stages": [
+    {
+      "detail": "Fixture Linear issue DEMO-90 carries dispatch:ready + agent:agy labels; GitHub fixture branch feature/demo-90-proof-loop is attached.",
+      "stage": "trigger",
+      "status": "verified",
+      "timestamp": "2026-07-15T19:06:34.203658+00:00"
+    },
+    {
+      "detail": "Labels routed issue DEMO-90 to agent:agy.",
+      "stage": "routing",
+      "status": "verified",
+      "timestamp": "2026-07-15T19:06:34.203694+00:00"
+    },
+    {
+      "detail": "Fixture AGY work product written to demo_workspace/agent_output.py without external side effects.",
+      "stage": "bounded_agent_execution",
+      "status": "verified",
+      "timestamp": "2026-07-15T19:06:34.203950+00:00"
+    },
+    {
+      "detail": "python3 -m py_compile demo_workspace/agent_output.py passed for demo_workspace/agent_output.py.",
+      "stage": "verification",
+      "status": "verified",
+      "timestamp": "2026-07-15T19:06:34.205603+00:00"
+    },
+    {
+      "detail": "No Linear/GitHub/AGY network calls were made; generated artifacts are contained in the output directory.",
+      "stage": "cleanup",
+      "status": "verified",
+      "timestamp": "2026-07-15T19:06:34.205615+00:00"
+    }
+  ],
+  "verdict": "PASS"
+}

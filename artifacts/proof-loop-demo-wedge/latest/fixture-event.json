@@ -1,0 +1,24 @@
+{
+  "github_event": {
+    "branch": "feature/demo-90-proof-loop",
+    "repository": "example/prismatic-demo-repo",
+    "source": "github.fixture",
+    "type": "pull_request.opened"
+  },
+  "linear_event": {
+    "issue": {
+      "id": "fixture-linear-demo-0001",
+      "identifier": "DEMO-90",
+      "labels": [
+        "dispatch:ready",
+        "agent:agy",
+        "proof-loop:demo",
+        "github:fixture"
+      ],
+      "title": "Demo: verify Prismatic guarded agent dispatch"
+    },
+    "source": "linear.fixture",
+    "type": "issueLabelAdded"
+  },
+  "run_id": "demo-41eb9494e7b3"
+}
