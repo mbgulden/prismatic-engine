@@ -195,10 +195,23 @@ Artifacts are registered under `plugart_<id>` with the following contract:
 
 ## 7. Scorecard Maturity Matrix
 
+This PR defines the shared vocabulary and review contract for GRO-3891. It is a design/specification deliverable, not fresh end-to-end implementation proof. Current scores therefore stay review-pending until the listed evidence commands are run against the merged contract and attached to the issue/PR.
+
 | ID | Category | Rubric Item | Current Score | Target Score | Evidence | Gap | Blocker | Owner | Next Action |
 |:---|:---|:---|:---:|:---:|:---|:---|:---|:---|:---|
-| **A6** | Unified State | Durable Job State | **10** | 10 | `/api/plugins/jobs` returns jobs;<br>`plugin_jobs.json` verified. | None | None | `agent:ned` | Maintain tests. |
-| **A7** | Unified State | Durable Artifact & Provenance | **10** | 10 | `/api/plugins/artifacts` returns artifacts;<br>`plugin_artifacts.json` verified. | None | None | `agent:ned` | Maintain tests. |
-| **A8** | Unified State | Audit Event Stream | **10** | 10 | `/api/plugins/audit-events` matches stream schema. | None | None | `agent:fred` | Maintain tests. |
-| **A9** | Unified State | PWP Reference Lifecycle | **10** | 10 | PWP lifecycle demo executes successfully. | None | None | `agent:ned` | Maintain tests. |
-| **F2** | Unified State | Dual-Surface Operations | **10** | 10 | `verify_shipped_plugins_load` and public/security/release smoke checks pass. | None | None | `agent:fred` | Maintain tests. |
+| **A6** | Unified State | Durable Job State | **TBD by follow-up verification** | 10 | Required: `PYTHONPATH=. python3 scripts/app_surface_golden_demo.py` or equivalent API proof showing `/api/plugins/jobs` uses this vocabulary. | Contract defined here; fresh API/dashboard proof not attached to this PR. | Pending verification artifact. | `agent:fred` | Run the golden app-surface verifier after merge and attach log path + marker. |
+| **A7** | Unified State | Durable Artifact & Provenance | **TBD by follow-up verification** | 10 | Required: proof that `/api/plugins/artifacts` emits `plugart_*` records with the provenance fields in §5.5. | Contract defined here; artifact-store evidence not attached to this PR. | Pending verification artifact. | `agent:fred` | Capture artifact API response and provenance record hash in the closure ledger. |
+| **A8** | Unified State | Audit Event Stream | **TBD by follow-up verification** | 10 | Required: event-log/API proof containing the normalized event types in §5.6. | Event vocabulary defined here; event-bus readback not attached to this PR. | Pending verification artifact. | `agent:fred` | Run audit-event readback and attach event types observed. |
+| **A9** | Unified State | PWP Reference Lifecycle | **TBD by follow-up verification** | 10 | Required: lifecycle command output with repo-relative log/evidence path. | Lifecycle command claimed by AGY output, but no repo-relative log is attached to this PR. | Pending verification artifact. | `agent:fred` | Re-run lifecycle proof or link existing accepted evidence if already merged. |
+| **F2** | Unified State | Dual-Surface Operations | **TBD by follow-up verification** | 10 | Required: `verify_shipped_plugins_load`, public launch smoke, security readiness, release smoke/check logs from current head. | Design vocabulary exists; dual API/dashboard proof is not attached here. | Pending verification artifact. | `agent:fred` | Run public/security/release commands and attach exact markers before closure. |
+
+## 8. Acceptance Boundary and Follow-up Evidence
+
+GRO-3891 acceptance requires the dashboard, API, and docs to share one state/event vocabulary and for lifecycle transitions to be traceable without private side-channel knowledge. This PR satisfies the **contract-definition** part of that requirement by creating the shared vocabulary and scorecard gates. It intentionally does **not** claim implementation closure or 10/10 runtime maturity by itself.
+
+Before GRO-3891 can be marked Done, a reviewer must attach fresh evidence showing the merged contract is exercised by the app surface. Minimum acceptable evidence:
+
+1. A repo-relative or durable artifact path for `scripts/app_surface_golden_demo.py` output containing `APP_SURFACE_GOLDEN_DEMO_OK`.
+2. Readback showing job, artifact/provenance, approval, publish/export, and audit-event states use the vocabulary in this document.
+3. A clear statement of whether proof is API/TestClient-only or includes live dashboard visual proof.
+4. Linear/PR review signoff from Fred or the staging governor; AGY dispatch success alone is not acceptance.
