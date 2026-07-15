@@ -55,6 +55,7 @@ SKIP_DIRS = {
     "dist",
     "node_modules",
     "prismatic_state",
+    "worktrees",
 }
 
 REQUIRED_DOC_MARKERS = {
