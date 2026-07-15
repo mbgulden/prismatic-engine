@@ -550,6 +550,7 @@
                 <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-rose-500 min-h-[90px]">
                     <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Failed</span>
                     <span id="stat-failed" class="text-2xl font-bold text-rose-400 mt-2">0</span>
+                    <span class="text-[10px] text-slate-500 mt-1">Terminal/retryable rows are counted separately below.</span>
                 </div>
                 <!-- Consumer Recovery -->
                 <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-violet-500 min-h-[90px]">
@@ -567,6 +568,7 @@
                             <div id="stat-pool-dlq" class="text-lg font-bold text-fuchsia-400 leading-none">0</div>
                         </div>
                     </div>
+                    <div class="mt-2 text-[10px] text-slate-500">Recovery state is live/DLQ, not hidden inside failed queue rows.</div>
                 </div>
             </section>
 
@@ -633,9 +635,17 @@
                 <!-- Right Column: Queue History Table -->
                 <div class="lg:col-span-2 glass-panel p-5 rounded-xl space-y-4 flex flex-col justify-between">
                     <div class="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-800 pb-3 gap-3">
-                        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider">
-                            Webhook Ingestion Queue
-                        </h2>
+                        <div>
+                            <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider">
+                                Webhook Ingestion Queue
+                            </h2>
+                            <div class="mt-1 flex flex-wrap gap-2 text-[10px] uppercase tracking-wider text-slate-500">
+                                <span id="queue-source-badge" class="font-mono text-cyan-300">source = linear_webhook_queue.db</span>
+                                <span id="queue-terminal-badge">terminal rows: 0</span>
+                                <span id="queue-stale-badge">stale rows: 0</span>
+                                <span id="queue-live-badge">live rows: 0</span>
+                            </div>
+                        </div>
                         <div class="flex items-center space-x-3 w-full sm:w-auto">
                             <!-- Search Box -->
                             <div class="relative flex-grow sm:flex-grow-0">
@@ -658,6 +668,21 @@
                             </button>
                         </div>
                         <div id="queue-focus-taxonomy" class="mt-2 flex flex-wrap gap-1"></div>
+                    </div>
+
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3 text-xs text-slate-400 grid gap-2 md:grid-cols-3">
+                        <div>
+                            <div class="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Retry action</div>
+                            <div class="mt-1">Resets the selected row to <span class="font-mono text-amber-300">pending</span>; it does not prove the dispatcher executed it immediately.</div>
+                        </div>
+                        <div>
+                            <div class="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Purge action</div>
+                            <div class="mt-1">Purges terminal rows only: completed, failed, stale, skipped, no-op, and dispatched statuses.</div>
+                        </div>
+                        <div>
+                            <div class="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Recovery context</div>
+                            <div class="mt-1">Dead-letter/live consumer state comes from recovery status and is shown beside queue depth.</div>
+                        </div>
                     </div>
 
                     <div class="overflow-x-auto">
@@ -2068,18 +2093,36 @@
         }
 
         async function purgeQueue() {
-            if (!confirm("Are you sure you want to purge completed/failed tasks from the queue?")) return;
+            if (!confirm("Purge terminal queue rows only? Pending and processing work will be kept.")) return;
             try {
                 const r = await fetch(`${API_PREFIX}/webhooks/queue/purge`, { method: "POST" });
                 if (r.ok) {
-                    showToast("Queue history purged");
+                    const payload = await r.json().catch(() => ({}));
+                    showToast(`Purged ${payload.deleted ?? 0} terminal row(s)`);
                     fetchData();
                 } else {
-                    showToast("Failed to purge queue", true);
+                    showToast("Failed to purge terminal rows", true);
                 }
             } catch (e) {
                 showToast("Network error", true);
             }
+        }
+
+        function updateQueueSemantics(queue) {
+            const items = queue.items || [];
+            const terminalStatuses = new Set(['completed', 'failed', 'stale', 'skipped', 'skipped_non_issue', 'skipped_no_agent_label', 'no_op', 'dispatched']);
+            const sourceEl = document.getElementById('queue-source-badge');
+            const terminalEl = document.getElementById('queue-terminal-badge');
+            const staleEl = document.getElementById('queue-stale-badge');
+            const liveEl = document.getElementById('queue-live-badge');
+            const source = queue.source || 'unknown';
+            const terminal = items.filter(item => terminalStatuses.has(String(item.dispatch_status || '').toLowerCase()) || String(item.dispatch_status || '').toLowerCase().startsWith('failed')).length;
+            const stale = items.filter(item => String(item.dispatch_status || '').toLowerCase().includes('stale')).length;
+            const live = items.filter(item => ['pending', 'processing'].includes(String(item.dispatch_status || '').toLowerCase())).length;
+            if (sourceEl) sourceEl.textContent = `source = ${source}`;
+            if (terminalEl) terminalEl.textContent = `terminal rows: ${terminal}`;
+            if (staleEl) staleEl.textContent = `stale rows: ${stale}`;
+            if (liveEl) liveEl.textContent = `live rows: ${live}`;
         }
 
         // Searching / Filtering
@@ -2112,8 +2155,8 @@
                         <td class="py-3 px-3">${getStatusBadge(item.dispatch_status)}</td>
                         <td class="py-3 px-3 text-slate-500 text-xs">${formatDate(item.queued_at)}</td>
                         <td class="py-3 px-3 text-right">
-                            <button onclick="event.stopPropagation(); retryTask(${item.id})" class="text-xs text-indigo-400 hover:text-indigo-300 font-semibold px-2 py-1 rounded bg-indigo-500/5 hover:bg-indigo-500/10 border border-indigo-500/10 transition">
-                                Retry
+                            <button title="Reset selected row to pending; does not run the dispatcher immediately" onclick="event.stopPropagation(); retryTask(${item.id})" class="text-xs text-indigo-400 hover:text-indigo-300 font-semibold px-2 py-1 rounded bg-indigo-500/5 hover:bg-indigo-500/10 border border-indigo-500/10 transition">
+                                Reset to pending
                             </button>
                         </td>
                     </tr>
@@ -2352,10 +2395,12 @@
                     const queue = queueBody ? JSON.parse(queueBody) : { items: [], total: 0 };
                     loadedQueueItems = queue.items || [];
                     document.getElementById("queue-total-badge").textContent = `${queue.total ?? loadedQueueItems.length} total`;
+                    updateQueueSemantics(queue);
                     filterQueue();
                 } else {
                     loadedQueueItems = [];
                     document.getElementById("queue-total-badge").textContent = `queue error`;
+                    updateQueueSemantics({ source: 'queue api error', items: [] });
                     document.getElementById("queue-tbody").innerHTML = `<tr><td colspan="6" class="py-8 text-center text-rose-400 italic">Queue API unavailable (${queueRes.status}): ${escapeHtml(queueBody.slice(0, 240))}</td></tr>`;
                 }
 
