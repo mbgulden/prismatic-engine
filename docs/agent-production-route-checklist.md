@@ -226,3 +226,28 @@ Remaining blockers:
 ```
 
 If the route is not fully fixed, say `Remaining blockers:` plainly and do not use a final OK marker.
+
+---
+
+## 11. Review gate and prompt imports
+
+Before submitting production-facing work, import the review question block from:
+
+```text
+docs/production-durability-review-gate.md
+```
+
+When preparing AGY/Fred/Kai/Ned/Jules work, paste or link the reusable brief from:
+
+```text
+docs/prompts/production-durability-agent-brief.md
+```
+
+Required markers:
+
+```text
+PRODUCTION_DURABILITY_REVIEW_GATE_OK
+PRODUCTION_DURABILITY_AGENT_BRIEF_OK
+PRODUCTION_WORKTREE_DURABILITY_PLAN_OK
+```
+

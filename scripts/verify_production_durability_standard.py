@@ -25,6 +25,9 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 STANDARD_DOC = REPO_ROOT / "docs" / "prismatic-production-durability-standard.md"
 CHECKLIST_DOC = REPO_ROOT / "docs" / "agent-production-route-checklist.md"
+REVIEW_GATE_DOC = REPO_ROOT / "docs" / "production-durability-review-gate.md"
+AGENT_BRIEF_DOC = REPO_ROOT / "docs" / "prompts" / "production-durability-agent-brief.md"
+WORKTREE_PLAN_DOC = REPO_ROOT / "docs" / "production-worktree-durability-migration-plan.md"
 GATEWAY_SERVER = REPO_ROOT / "prismatic" / "gateway" / "server.py"
 FINAL_MARKER = "PRODUCTION_DURABILITY_VERIFIER_OK"
 
@@ -42,6 +45,9 @@ STANDARD_REQUIRED = [
     "PRODUCTION_DURABILITY_PROOF_PACKET",
     "ad_hoc_targeted",
     "canonical_suite_green",
+    "PRODUCTION_DURABILITY_REVIEW_GATE_OK",
+    "PRODUCTION_DURABILITY_AGENT_BRIEF_OK",
+    "PRODUCTION_WORKTREE_DURABILITY_PLAN_OK",
     "PRISMATIC_PRODUCTION_DURABILITY_STANDARD_OK",
 ]
 
@@ -57,6 +63,41 @@ CHECKLIST_REQUIRED = [
     "Public / authenticated proof gate",
     "Rollback / cleanup proof gate",
     "verification_scope=ad_hoc_targeted",
+    "PRODUCTION_DURABILITY_REVIEW_GATE_OK",
+    "PRODUCTION_DURABILITY_AGENT_BRIEF_OK",
+    "PRODUCTION_WORKTREE_DURABILITY_PLAN_OK",
+]
+
+
+REVIEW_GATE_REQUIRED = [
+    "PRODUCTION_DURABILITY_REVIEW_GATE_OK",
+    "Does this affect a live route/service/dashboard?",
+    "production-safe branch/worktree proof",
+    "local gateway/service proof",
+    "public/authenticated proof",
+    "screenshot/browser proof",
+    "rollback path",
+    "future GitHub PR templates",
+]
+
+AGENT_BRIEF_REQUIRED = [
+    "PRODUCTION_DURABILITY_AGENT_BRIEF_OK",
+    "do **not** work from the mutable production checkout",
+    "Use a clean branch or clean production-safe worktree",
+    "Verify locally first",
+    "Deploy intentionally",
+    "Attach browser or screenshot proof",
+    "Do not claim production fixed from code/static checks alone",
+]
+
+WORKTREE_PLAN_REQUIRED = [
+    "PRODUCTION_WORKTREE_DURABILITY_PLAN_OK",
+    "WorkingDirectory: /home/ubuntu/work/prismatic-engine",
+    "live service source != mutable multi-agent development checkout",
+    "/home/ubuntu/.prismatic/runtime/prismatic-engine",
+    "Why not implemented in this slice",
+    "Required follow-up",
+    "GRO-3942",
 ]
 
 WORKSPACE_ROUTE_HINTS = ("workspace-tree", "workspace_tree", "workspace")
@@ -185,6 +226,9 @@ def main() -> int:
     for path, required, name in [
         (STANDARD_DOC, STANDARD_REQUIRED, "standard_doc"),
         (CHECKLIST_DOC, CHECKLIST_REQUIRED, "agent_checklist"),
+        (REVIEW_GATE_DOC, REVIEW_GATE_REQUIRED, "review_gate"),
+        (AGENT_BRIEF_DOC, AGENT_BRIEF_REQUIRED, "agent_brief"),
+        (WORKTREE_PLAN_DOC, WORKTREE_PLAN_REQUIRED, "worktree_plan"),
     ]:
         if not path.exists():
             add_check(checks, name, "fail", path=str(path), error="missing")

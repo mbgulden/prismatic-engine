@@ -362,3 +362,96 @@ PRISMATIC_PRODUCTION_DURABILITY_STANDARD_OK
 ```
 
 `PRISMATIC_PRODUCTION_DURABILITY_STANDARD_OK` means the standard/checklist/verifier have shipped and passed targeted verification. It does **not** mean any specific production route is fixed unless that route has its own proof packet.
+
+---
+
+## 14. Review gate and agent prompt integration
+
+Production-facing changes must import the canonical review gate from:
+
+```text
+docs/production-durability-review-gate.md
+```
+
+Required marker:
+
+```text
+PRODUCTION_DURABILITY_REVIEW_GATE_OK
+```
+
+Agent task prompts that may affect production must include or link:
+
+```text
+docs/prompts/production-durability-agent-brief.md
+```
+
+Required marker:
+
+```text
+PRODUCTION_DURABILITY_AGENT_BRIEF_OK
+```
+
+This repo currently has no central GitHub PR template. When a central template is added, it should import the question block from `docs/production-durability-review-gate.md` rather than rewriting a parallel checklist.
+
+---
+
+## 15. `/workspace-tree` immediate case study and first enforcement target
+
+The current `/workspace-tree` failure mode is the first required case study for this standard:
+
+```text
+/workspace-tree rendered as a black page because production routing/source/fallback behavior was not durably verified.
+```
+
+This standard is broader than `/workspace-tree`; it applies to:
+
+- dashboard routes;
+- plugin pages;
+- gateway API routes;
+- public operator surfaces;
+- project-specific production apps like Active Oahu;
+- Human Design Engine production apps;
+- future Prismatic-managed services.
+
+But `/workspace-tree` is the first enforcement target. A `/workspace-tree` fix may not claim production fixed unless it includes:
+
+- clean production-safe branch/worktree proof;
+- local gateway `/health` and route table proof;
+- local `/workspace-tree` route proof;
+- local `/api/workspace-tree/preview` safe-path proof;
+- traversal/encoded traversal/absolute path blocking proof;
+- intentional deploy/restart/reload proof;
+- public/authenticated route proof;
+- screenshot/browser proof showing the page is not black/blank;
+- rollback path.
+
+---
+
+## 16. Production worktree durability policy
+
+The Prismatic gateway currently has a named production source risk documented in:
+
+```text
+docs/production-worktree-durability-migration-plan.md
+```
+
+Required marker:
+
+```text
+PRODUCTION_WORKTREE_DURABILITY_PLAN_OK
+```
+
+Policy invariant:
+
+```text
+live service source != mutable multi-agent development checkout
+```
+
+Preferred durable runtime path:
+
+```text
+/home/ubuntu/.prismatic/runtime/prismatic-engine
+```
+
+Changing systemd runtime source is a production operation and must not be silently folded into unrelated documentation work. If the migration is not implemented in the current slice, the risk must be stated plainly and tracked as a follow-up issue/PR.
+
