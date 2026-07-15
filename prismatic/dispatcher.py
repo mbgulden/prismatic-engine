@@ -32,9 +32,10 @@ import sys
 import time
 import threading
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 # ── Relative package imports ──────────────────────────────────
 from .providers.signals import create_signal_provider
@@ -580,6 +581,137 @@ def is_dispatch_ready(issue: dict[str, Any]) -> bool:
     return DISPATCH_READY_LABEL in issue_label_names(issue)
 
 
+DispatchPreflightStatus = Literal[
+    "ready",
+    "blocked",
+    "deferred",
+    "needs_manual_review",
+]
+
+
+@dataclass(frozen=True)
+class DispatchPreflightDecision:
+    """Side-effect-free dispatcher launch decision for one Linear issue."""
+
+    status: DispatchPreflightStatus
+    reason: str
+    identifier: str
+    agent: str
+    model: str | None = None
+    launch_allowed: bool = False
+
+
+AGY_MODEL_ALIAS_NORMALIZATION: dict[str, str] = {
+    "gemini-3.5-flash-high": "Gemini 3.5 Flash (High)",
+    "gemini-3.5-flash-medium": "Gemini 3.5 Flash (Medium)",
+    "gemini-3.5-flash-med": "Gemini 3.5 Flash (Medium)",
+    "gemini-3.5-flash-low": "Gemini 3.5 Flash (Low)",
+}
+
+HUMAN_REVIEW_LABELS = frozenset({"agent:needs-human-review", "agent:pending-human"})
+
+
+def normalize_agy_model_name(model: str | None) -> str | None:
+    """Return the AGY CLI model name, correcting legacy invalid aliases."""
+
+    if not model:
+        return model
+    return AGY_MODEL_ALIAS_NORMALIZATION.get(model, model)
+
+
+def preflight_dispatch_decision(
+    issue: dict[str, Any],
+    agent_name: str,
+    *,
+    launched_count: int = 0,
+    single_task_identifier: str | None = None,
+    policy_decision: Any | None = None,
+) -> DispatchPreflightDecision:
+    """Classify one queued Linear issue before any dispatcher launch.
+
+    This keeps the no-side-effect parts of dispatch auditable: launch-gate label,
+    lane contract, human-review holds, AGY model alias normalization, staged
+    single-task proof guard, and credit-policy decision.
+    """
+
+    identifier = str(issue.get("identifier") or issue.get("id") or "<unknown>")
+    labels = set(issue_label_names(issue))
+    model = normalize_agy_model_name(get_agy_model_from_labels(sorted(labels)))
+
+    if labels & HUMAN_REVIEW_LABELS:
+        held = ",".join(sorted(labels & HUMAN_REVIEW_LABELS))
+        return DispatchPreflightDecision(
+            "needs_manual_review",
+            f"human_review_label:{held}",
+            identifier,
+            agent_name,
+            model=model,
+        )
+
+    if not is_dispatch_ready(issue):
+        return DispatchPreflightDecision(
+            "deferred",
+            f"missing_label:{DISPATCH_READY_LABEL}",
+            identifier,
+            agent_name,
+            model=model,
+        )
+
+    dispatchable, held = filter_dispatchable_issues([issue], agent_name)
+    if not dispatchable:
+        reason = held[0][1] if held else "lane_contract_blocked"
+        return DispatchPreflightDecision(
+            "blocked",
+            reason,
+            identifier,
+            agent_name,
+            model=model,
+        )
+
+    if agent_name == "agy" and single_task_identifier:
+        if identifier != single_task_identifier:
+            return DispatchPreflightDecision(
+                "blocked",
+                f"agy_single_task_gate:{single_task_identifier}",
+                identifier,
+                agent_name,
+                model=model,
+            )
+        if launched_count >= 1:
+            return DispatchPreflightDecision(
+                "blocked",
+                "agy_single_task_gate:already_launched",
+                identifier,
+                agent_name,
+                model=model,
+            )
+
+    if policy_decision is not None:
+        action = getattr(policy_decision, "action", None)
+        reason = str(getattr(policy_decision, "reason", "") or "policy_decision")
+        if action == PolicyAction.DENY:
+            return DispatchPreflightDecision(
+                "blocked", f"credit_policy:{reason}", identifier, agent_name, model=model
+            )
+        if action == PolicyAction.ASK_USER:
+            return DispatchPreflightDecision(
+                "needs_manual_review",
+                f"credit_policy:{reason}",
+                identifier,
+                agent_name,
+                model=model,
+            )
+
+    return DispatchPreflightDecision(
+        "ready",
+        "dispatch_preflight_ok",
+        identifier,
+        agent_name,
+        model=model,
+        launch_allowed=True,
+    )
+
+
 def report_lane_starvation(agent_name: str, candidate_count: int, gated_count: int) -> None:
     """Emit a visible no-runnable-work signal for an agent lane."""
     label = f"agent:{agent_name}"
@@ -1061,7 +1193,7 @@ def launch_agy(
                 labels = []
 
         # ── AGY model routing: inject --model flag ──────────────
-        model = get_agy_model_from_labels(labels)
+        model = normalize_agy_model_name(get_agy_model_from_labels(labels))
         if model:
             # Check for --model already in cmd (from circuit breaker or other)
             existing_model = None
