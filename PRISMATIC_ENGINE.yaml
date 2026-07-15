@@ -42,7 +42,9 @@ agents:
   ned:
     role: Code Execution & Task Agent
     lanes:
-      owner: ["scripts/", "prismatic/", "plugins/"]
+      # Ned owns execution/runtime work plus HumanDesignEngine operational docs
+      # that are produced alongside HDE scripts and bot runtime changes.
+      owner: ["scripts/", "prismatic/", "plugins/", "docs/hd-engine/", "docs/hde-", "docs/human-design-engine/"]
       read_only: ["content/", "assets/", "designs/", "research/"]
     branch_prefix: "ned/"
 

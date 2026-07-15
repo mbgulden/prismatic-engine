@@ -4,15 +4,15 @@ From `PRISMATIC_ENGINE.yaml` in the prismatic-engine repo. Use this when the pre
 
 | Agent | Write Lanes | Read-Only Lanes |
 |-------|------------|-----------------|
-| **Fred** (orchestrator) | `src/`, `infra/`, `deploy/`, `.github/` | `content/`, `active-oahu/` |
-| **AGY** (research) | `docs/`, `research/`, `assets/` | `src/`, `content/` |
-| **Ned** (executor) | `src/`, `tests/`, `scripts/` | `docs/`, `content/` |
-| **Jules** (validator) | `docs/`, `.github/` | `src/`, `content/` |
+| **Fred** (orchestrator) | `*` | none |
+| **AGY** (research) | `assets/`, `designs/`, `research/` | `src/`, `content/`, `active-oahu/` |
+| **Ned** (executor) | `scripts/`, `prismatic/`, `plugins/`, `docs/hd-engine/`, `docs/hde-*`, `docs/human-design-engine/` | `content/`, `assets/`, `designs/`, `research/` |
+| **Jules** (validator) | PR/review only | `*` |
 
 ## What This Means for Ned
 
-- **Ned CAN push:** `src/`, `tests/`, `scripts/`, `prismatic/`, `plugins/` files
-- **Ned CANNOT push:** `docs/`, `research/`, `content/`, `active-oahu/`, `infra/`, `deploy/`, `.github/` — these will be rejected
+- **Ned CAN push:** `scripts/`, `prismatic/`, `plugins/`, and HumanDesignEngine docs under `docs/hd-engine/`, `docs/hde-*`, or `docs/human-design-engine/`
+- **Ned CANNOT push:** unrelated `docs/`, `research/`, `content/`, `active-oahu/`, `infra/`, `deploy/`, `.github/` — these will be rejected
 - **`config/` is unowned** — not in any agent's write lane. Use `--no-verify` for pipeline configs and convention-layer infrastructure.
 - **Root-level files** (`PRISMATIC_ENGINE.yaml`, `COMMIT_CONVENTION.md`, `README.md`) are outside all lanes — use `--no-verify` for convention-layer work.
 
@@ -20,12 +20,13 @@ From `PRISMATIC_ENGINE.yaml` in the prismatic-engine repo. Use this when the pre
 
 | Scenario | Action |
 |----------|--------|
-| Documentation files in `docs/` (AGY's lane) | `--no-verify` — Ned created them, AGY can't |
-| Pipeline config in `config/` (unowned) | `--no-verify` — infrastructure layer |
-| Root governance files (`.yaml`, `.md`) | `--no-verify` — convention layer, Phase 1 only |
-| Normal code in `src/`, `tests/`, `scripts/` | Push normally — Ned's owned lanes |
+| HumanDesignEngine docs under `docs/hd-engine/`, `docs/hde-*`, or `docs/human-design-engine/` | Push normally — Ned's HDE docs lane |
+| Unrelated documentation outside Ned's HDE docs lane | Ask owning lane/orchestrator to split or route the PR |
+| Pipeline config in `config/` (unowned) | Ask Fred/orchestrator to route convention-layer work |
+| Root governance files (`.yaml`, `.md`) | Ask Fred/orchestrator to route convention-layer work |
+| Normal runtime work in `scripts/`, `prismatic/`, `plugins/` | Push normally — Ned's owned lanes |
 
-**Rule of thumb:** if the file is documentation, configuration, or governance that an agent created on behalf of another lane, `--no-verify` is correct. If it's actual code in Ned's lanes, the hook should pass normally.
+**Rule of thumb:** if the file is HDE operational documentation produced with Ned's execution/runtime work, it belongs in Ned's HDE docs lane. If it is unrelated documentation, configuration, or governance, route it instead of bypassing the hook.
 
 ## Production Push Block
 
