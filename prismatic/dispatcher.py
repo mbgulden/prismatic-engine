@@ -833,7 +833,198 @@ def add_comment(issue_id: str, body: str) -> bool:
     return data.get("commentCreate", {}).get("success", False)
 
 
-# ═══════════════════════════════════════════════════════════════
+@dataclass(frozen=True)
+class AssignedAgentWakeResult:
+    """Outcome of resolving, preflighting, waking, and writing back one issue."""
+
+    identifier: str
+    issue_id: str
+    agent: str | None
+    status: str
+    reason: str
+    woke: bool = False
+    wrote_back: bool = False
+    preflight: DispatchPreflightDecision | None = None
+
+
+def get_issue_by_identifier(identifier: str) -> dict[str, Any] | None:
+    """Fetch one Linear issue by identifier/ID and normalize dispatch fields."""
+
+    query = """
+    query IssueByIdentifier($id: String!) {
+        issue(id: $id) {
+            id
+            identifier
+            title
+            description
+            state { name type }
+            assignee { id name }
+            labels { nodes { id name } }
+            url
+        }
+    }
+    """
+    data = gql(query, {"id": identifier})
+    issue = data.get("issue")
+    if not issue:
+        return None
+    return {
+        "id": issue["id"],
+        "identifier": issue.get("identifier") or identifier,
+        "title": issue.get("title", ""),
+        "description": issue.get("description", ""),
+        "state": issue.get("state", {}),
+        "assignee": issue.get("assignee"),
+        "labels": [lab["name"] for lab in issue.get("labels", {}).get("nodes", [])],
+        "url": issue.get("url", ""),
+    }
+
+
+def resolve_assigned_agent(issue: dict[str, Any]) -> tuple[str | None, str]:
+    """Return the single assigned ``agent:*`` label or a blocker reason."""
+
+    labels = [label for label in issue_label_names(issue) if label.startswith("agent:")]
+    agent_labels: list[str] = []
+    for label in labels:
+        if label.count(":") != 1 or label in HUMAN_REVIEW_LABELS:
+            continue
+        suffix = label.split(":", 1)[1].strip().lower()
+        # AGY model-tier labels are routing/config, not assignment labels.
+        if suffix.startswith("agy-"):
+            continue
+        agent_labels.append(label)
+    if not agent_labels:
+        return None, "missing_agent_label"
+    unique_agents = sorted({label.split(":", 1)[1].strip().lower() for label in agent_labels})
+    if len(unique_agents) != 1:
+        return None, "ambiguous_agent_labels:" + ",".join(unique_agents)
+    return unique_agents[0], "assigned_agent_resolved"
+
+
+def wake_assigned_agent_for_issue(
+    issue: dict[str, Any],
+    *,
+    cycle_id: str | None = None,
+    single_task_identifier: str | None = None,
+    writeback: bool = True,
+) -> AssignedAgentWakeResult:
+    """Resolve the assigned agent, preflight it, wake it, and write back status.
+
+    This single-issue contract is used by queued webhook drain recovery and
+    shares the same preflight helper and launchers as the lane dispatcher so
+    Fred, Kai, Ned, AGY, and future configured agents use one path.
+    """
+
+    issue_id = str(issue.get("id") or issue.get("identifier") or "")
+    identifier = str(issue.get("identifier") or issue_id or "<unknown>")
+    agent_name, reason = resolve_assigned_agent(issue)
+    if not agent_name:
+        return AssignedAgentWakeResult(identifier, issue_id, None, "no_op", reason)
+
+    config = AGENT_CONFIG.get(agent_name)
+    launcher = AGENT_LAUNCHERS.get(agent_name)
+    if not config or not launcher:
+        return AssignedAgentWakeResult(
+            identifier,
+            issue_id,
+            agent_name,
+            "blocked",
+            f"unsupported_agent:{agent_name}",
+        )
+
+    preflight = preflight_dispatch_decision(
+        issue,
+        agent_name,
+        single_task_identifier=single_task_identifier,
+    )
+    if not preflight.launch_allowed:
+        if writeback and issue_id:
+            try:
+                add_comment(
+                    issue_id,
+                    "⚠️ **Assigned-agent wake blocked**\n\n"
+                    f"Agent: `{agent_name}`\n"
+                    f"Status: `{preflight.status}`\n"
+                    f"Reason: `{preflight.reason}`",
+                )
+            except Exception:
+                pass
+        return AssignedAgentWakeResult(
+            identifier,
+            issue_id,
+            agent_name,
+            preflight.status,
+            preflight.reason,
+            preflight=preflight,
+        )
+
+    labels = issue_label_names(issue)
+    launch_kwargs: dict[str, Any] = {"title": issue.get("title", "")}
+    if config.get("mode") == "launch":
+        launch_kwargs.update(
+            {
+                "identifier": identifier,
+                "labels": labels,
+                "cycle_id": cycle_id,
+            }
+        )
+    result = launcher(issue_id, **launch_kwargs)
+    woke = bool(result)
+    wrote_back = False
+    if woke and writeback and issue_id:
+        try:
+            wrote_back = add_comment(
+                issue_id,
+                "🤖 **Assigned-agent wake dispatched**\n\n"
+                f"Agent: `{agent_name}`\n"
+                f"Identifier: `{identifier}`\n"
+                f"Reason: `{preflight.reason}`\n"
+                f"Cycle: `{cycle_id or 'single-issue'}`",
+            )
+        except Exception:
+            wrote_back = False
+    return AssignedAgentWakeResult(
+        identifier,
+        issue_id,
+        agent_name,
+        "dispatched" if woke else "failed",
+        "wake_dispatched" if woke else "wake_failed",
+        woke=woke,
+        wrote_back=wrote_back,
+        preflight=preflight,
+    )
+
+
+def dispatch_issue_by_identifier(
+    identifier: str,
+    *,
+    single_task_identifier: str | None = None,
+    writeback: bool = True,
+) -> bool:
+    """Resolve and wake the assigned agent for one Linear issue identifier.
+
+    Returns a bool for ``scripts/drain_webhook_queue.py``: truthy only after a
+    wake was actually dispatched. Blocked/deferred/manual-review/no-op states
+    remain visible through the writeback comment and logs.
+    """
+
+    issue = get_issue_by_identifier(identifier)
+    if not issue:
+        print(f"[dispatcher] no issue found for identifier={identifier}")
+        return False
+    result = wake_assigned_agent_for_issue(
+        issue,
+        cycle_id=datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"),
+        single_task_identifier=single_task_identifier,
+        writeback=writeback,
+    )
+    print(
+        "[dispatcher] assigned-agent wake "
+        f"{result.status}: {identifier} agent={result.agent} reason={result.reason}"
+    )
+    return result.woke
+
+
 # Durable Launch Records
 # ═══════════════════════════════════════════════════════════════
 
@@ -1025,6 +1216,13 @@ AGENT_CONFIG: dict[str, dict[str, Any]] = {
         "timeout": 600,
         "next_label": "agent::agy",
         "description": "Active Oahu Tours bot — review & deploy",
+    },
+    "ned": {
+        "executable": "ned",
+        "mode": "signal",
+        "timeout": 600,
+        "next_label": "agent::fred",
+        "description": "Infrastructure/code execution agent — scripts, plugins, ops automation",
     },
     "agy": {
         "executable": AGY_PATH,
@@ -1350,10 +1548,34 @@ def launch_codex(
         return None
 
 
+def signal_agent(
+    agent_name: str,
+    issue_id: str,
+    title: str = "",
+    priority: int = 3,
+    signal_type: str = "",
+) -> bool:
+    """Signal any file-backed assigned agent by writing a nudge file."""
+    provider = _get_signal_provider()
+    return provider.send_work(
+        target=agent_name,
+        issue_id=issue_id,
+        title=title or f"Work on {issue_id}",
+        priority=priority,
+        signal_type=signal_type,
+    )
+
+
+def signal_ned(issue_id: str, title: str = "", priority: int = 3) -> bool:
+    """Signal agent:ned through the same file-backed wake path."""
+    return signal_agent("ned", issue_id, title=title, priority=priority)
+
+
 # Map agent name → launch function
 AGENT_LAUNCHERS: dict[str, Callable[..., Any]] = {
     "fred": signal_fred,
     "kai": signal_kai,
+    "ned": signal_ned,
     "agy": launch_agy,
     "jules": launch_jules,
     "codex": launch_codex,
