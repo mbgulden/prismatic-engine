@@ -462,7 +462,7 @@
                         <div id="operator-attention-title" class="mt-2 text-base font-bold text-slate-100">Checking control-plane signals…</div>
                         <div id="operator-attention-detail" class="mt-1 text-xs text-slate-400">Ranking dispatcher, recovery, queue, quota, merge, and timeline evidence.</div>
                     </div>
-                    <button id="operator-attention-action" onclick="switchTab('telemetry')" class="self-start lg:self-center px-3 py-2 rounded-lg border border-indigo-500/30 text-indigo-200 hover:bg-indigo-500/10 text-xs font-bold uppercase tracking-wider transition">
+                    <button id="operator-attention-action" onclick="handleOperatorAttentionAction()" class="self-start lg:self-center px-3 py-2 rounded-lg border border-indigo-500/30 text-indigo-200 hover:bg-indigo-500/10 text-xs font-bold uppercase tracking-wider transition">
                         Open Telemetry
                     </button>
                 </div>
@@ -644,6 +644,20 @@
                             </div>
                             <span id="queue-total-badge" class="bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2.5 py-1 rounded-lg text-xs font-bold whitespace-nowrap">0 total</span>
                         </div>
+                    </div>
+
+                    <div id="queue-focus-context" class="hidden rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-slate-300">
+                        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                            <div>
+                                <div class="text-[10px] uppercase tracking-wider text-amber-300 font-bold">Operator attention target</div>
+                                <div id="queue-focus-title" class="mt-1 font-semibold text-slate-100">No queue item selected</div>
+                                <div id="queue-focus-detail" class="mt-1 text-slate-400">Open from the dashboard attention rail to focus a specific queue item.</div>
+                            </div>
+                            <button onclick="clearQueueFocus()" class="self-start sm:self-center text-[10px] uppercase tracking-wider font-bold text-slate-400 hover:text-slate-200 border border-slate-700/70 rounded px-2 py-1">
+                                Clear focus
+                            </button>
+                        </div>
+                        <div id="queue-focus-taxonomy" class="mt-2 flex flex-wrap gap-1"></div>
                     </div>
 
                     <div class="overflow-x-auto">
@@ -1197,6 +1211,9 @@
         const API_PREFIX = "/api/gateway";
         let activeTab = 'dashboard';
         let loadedQueueItems = [];
+        let queueAttentionTargetId = null;
+        let lastFailureTaxonomy = [];
+        let operatorAttentionAction = { tabName: 'telemetry', itemId: null };
         let loadedNativeCrons = [];
         let pendingCronDeleteId = null;
         let pollingInterval = null;
@@ -2082,8 +2099,13 @@
                 const emptyText = loadedQueueItems.length === 0 ? "Durable ingestion queue is empty" : "No matching events";
                 tbody.innerHTML = `<tr><td colspan="6" class="py-8 text-center text-slate-500 italic">${emptyText}</td></tr>`;
             } else {
-                tbody.innerHTML = filtered.map(item => `
-                    <tr onclick="openModal(${item.id})" class="border-b border-slate-800/50 hover:bg-slate-900/20 transition duration-150 cursor-pointer">
+                tbody.innerHTML = filtered.map(item => {
+                    const isFocused = String(item.id) === String(queueAttentionTargetId);
+                    const rowClass = isFocused
+                        ? "border-b border-amber-500/40 bg-amber-500/10 ring-1 ring-amber-500/30 transition duration-150 cursor-pointer"
+                        : "border-b border-slate-800/50 hover:bg-slate-900/20 transition duration-150 cursor-pointer";
+                    return `
+                    <tr id="queue-row-${item.id}" data-queue-row-id="${item.id}" onclick="openModal(${item.id})" class="${rowClass}">
                         <td class="py-3 px-3 font-semibold text-slate-200">${item.identifier || "N/A"}</td>
                         <td class="py-3 px-3">${getAgentBadge(item.agent_name)}</td>
                         <td class="py-3 px-3 text-slate-400 capitalize text-xs">${item.action || "update"}</td>
@@ -2095,8 +2117,10 @@
                             </button>
                         </td>
                     </tr>
-                `).join("");
+                `;
+                }).join("");
             }
+            renderQueueFocusContext();
         }
 
         // Sparklines drawing helper
@@ -2178,6 +2202,64 @@
             document.getElementById("foundation-console").textContent = "Console cleared.\n";
         }
 
+        function pickQueueAttentionTarget(items = []) {
+            const priority = ["pending", "processing", "failed", "queued", "processed", "completed"];
+            return [...items].sort((a, b) => {
+                const ai = priority.indexOf(String(a.dispatch_status || a.status || "").toLowerCase());
+                const bi = priority.indexOf(String(b.dispatch_status || b.status || "").toLowerCase());
+                return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi) || Number(a.id || 0) - Number(b.id || 0);
+            })[0] || null;
+        }
+
+        function queueTargetLabel(item) {
+            if (!item) return "queue item";
+            return item.identifier || item.event_id || `Queue #${item.id}`;
+        }
+
+        function taxonomyChips(limit = 4) {
+            return (lastFailureTaxonomy || []).slice(0, limit).map(item => {
+                const label = item.label || item.code || item.name || "taxonomy";
+                const layer = item.layer ? ` · ${item.layer}` : "";
+                return `<span class="px-2 py-0.5 rounded-full text-[10px] bg-slate-900/80 text-amber-100 border border-amber-500/20">${escapeHtml(label + layer)}</span>`;
+            }).join("");
+        }
+
+        function renderQueueFocusContext() {
+            const panel = document.getElementById("queue-focus-context");
+            if (!panel) return;
+            const item = loadedQueueItems.find(x => String(x.id) === String(queueAttentionTargetId));
+            if (!item) {
+                panel.classList.add("hidden");
+                return;
+            }
+            panel.classList.remove("hidden");
+            document.getElementById("queue-focus-title").textContent = `${queueTargetLabel(item)} · ${item.agent_name || "unassigned"} · ${item.dispatch_status || item.status || "unknown"}`;
+            document.getElementById("queue-focus-detail").textContent = `Queued ${formatDate(item.queued_at)} · event ${item.event_type || "unknown"} · action ${item.action || "update"}`;
+            document.getElementById("queue-focus-taxonomy").innerHTML = taxonomyChips() || `<span class="text-slate-500 italic">Failure taxonomy not loaded yet.</span>`;
+        }
+
+        function clearQueueFocus() {
+            queueAttentionTargetId = null;
+            const input = document.getElementById("search-input");
+            if (input) input.value = "";
+            filterQueue();
+        }
+
+        async function focusQueueItemFromAttention(itemId) {
+            queueAttentionTargetId = itemId;
+            switchTab('telemetry');
+            await fetchTelemetryData();
+            const item = loadedQueueItems.find(x => String(x.id) === String(itemId));
+            if (item) {
+                const input = document.getElementById("search-input");
+                if (input) input.value = queueTargetLabel(item);
+                filterQueue();
+                document.getElementById("queue-focus-context")?.scrollIntoView({ behavior: "smooth", block: "center" });
+                document.getElementById(`queue-row-${item.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+                openModal(item.id);
+            }
+        }
+
         // Fetch API States
         async function fetchData() {
             // Global telemetry poll
@@ -2231,6 +2313,7 @@
                     const payload = await taxonomyRes.json();
                     const grid = document.getElementById("failure-taxonomy-grid");
                     const taxonomy = payload.failure_taxonomy || [];
+                    lastFailureTaxonomy = taxonomy;
                     grid.innerHTML = taxonomy.map(item => `
                         <article class="glass-panel p-3 rounded-xl border border-slate-800/70">
                             <div class="flex items-center justify-between gap-3">
@@ -2401,7 +2484,15 @@
             }
         }
 
-        function setOperatorAttention(tone, badgeText, title, detail, actionLabel, tabName, reasons = []) {
+        async function handleOperatorAttentionAction() {
+            if (operatorAttentionAction?.itemId !== null && operatorAttentionAction?.itemId !== undefined) {
+                await focusQueueItemFromAttention(operatorAttentionAction.itemId);
+                return;
+            }
+            switchTab(operatorAttentionAction?.tabName || 'telemetry');
+        }
+
+        function setOperatorAttention(tone, badgeText, title, detail, actionLabel, tabName, reasons = [], itemId = null) {
             const toneClass = {
                 green: "px-2 py-0.5 rounded-full text-[10px] font-bold border border-emerald-500/20 text-emerald-400 bg-emerald-500/10",
                 amber: "px-2 py-0.5 rounded-full text-[10px] font-bold border border-amber-500/20 text-amber-400 bg-amber-500/10",
@@ -2419,9 +2510,9 @@
             }
             if (titleEl) titleEl.textContent = title;
             if (detailEl) detailEl.textContent = detail;
+            operatorAttentionAction = { tabName, itemId };
             if (action) {
                 action.textContent = actionLabel;
-                action.onclick = () => switchTab(tabName);
             }
             if (reasonEl) {
                 reasonEl.innerHTML = reasons.slice(0, 5).map(reason => `<span class="px-2 py-1 rounded-full border border-slate-800/80 bg-slate-950/50">${escapeHtml(reason)}</span>`).join("");
@@ -2457,6 +2548,22 @@
                     return setOperatorAttention("red", "ACTION", "Dispatcher loop needs attention", dispatcher.silent_stall.message || "Silent-stall guard is triggered; inspect telemetry before launching more work.", "Open Telemetry", "telemetry", reasons);
                 }
                 if (queueTotal > 0) {
+                    const target = pickQueueAttentionTarget(queue.items || []);
+                    const targetLabel = queueTargetLabel(target);
+                    if (target) {
+                        reasons.push(`${queueTotal} queued event${queueTotal === 1 ? "" : "s"}`);
+                        reasons.push(targetLabel);
+                        return setOperatorAttention(
+                            "amber",
+                            "QUEUE",
+                            "Ingestion queue has pending work",
+                            `Focus ${targetLabel}: ${target.agent_name || "unassigned"} · ${target.dispatch_status || target.status || "unknown"}. Failure taxonomy context opens with the queue row.`,
+                            `Open ${targetLabel}`,
+                            "telemetry",
+                            reasons,
+                            target.id
+                        );
+                    }
                     reasons.push(`${queueTotal} queued event${queueTotal === 1 ? "" : "s"}`);
                     return setOperatorAttention("amber", "QUEUE", "Ingestion queue has pending work", "Review retry/purge controls and failure taxonomy before assuming dispatch is healthy.", "Open Ingestion", "telemetry", reasons);
                 }
