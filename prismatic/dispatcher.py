@@ -901,6 +901,28 @@ def resolve_assigned_agent(issue: dict[str, Any]) -> tuple[str | None, str]:
     return unique_agents[0], "assigned_agent_resolved"
 
 
+def _write_assigned_agent_wake_blocker(
+    issue_id: str,
+    *,
+    agent_name: str | None,
+    status: str,
+    reason: str,
+) -> bool:
+    """Best-effort Linear writeback for blocked/manual-review wake decisions."""
+    if not issue_id:
+        return False
+    try:
+        return add_comment(
+            issue_id,
+            "⚠️ **Assigned-agent wake needs manual review**\n\n"
+            f"Agent: `{agent_name or 'unresolved'}`\n"
+            f"Status: `{status}`\n"
+            f"Reason: `{reason}`",
+        )
+    except Exception:
+        return False
+
+
 def wake_assigned_agent_for_issue(
     issue: dict[str, Any],
     *,
@@ -919,17 +941,41 @@ def wake_assigned_agent_for_issue(
     identifier = str(issue.get("identifier") or issue_id or "<unknown>")
     agent_name, reason = resolve_assigned_agent(issue)
     if not agent_name:
-        return AssignedAgentWakeResult(identifier, issue_id, None, "no_op", reason)
+        wrote_back = False
+        if writeback:
+            wrote_back = _write_assigned_agent_wake_blocker(
+                issue_id,
+                agent_name=None,
+                status="needs_manual_review",
+                reason=reason,
+            )
+        return AssignedAgentWakeResult(
+            identifier,
+            issue_id,
+            None,
+            "needs_manual_review",
+            reason,
+            wrote_back=wrote_back,
+        )
 
     config = AGENT_CONFIG.get(agent_name)
     launcher = AGENT_LAUNCHERS.get(agent_name)
     if not config or not launcher:
+        wrote_back = False
+        if writeback:
+            wrote_back = _write_assigned_agent_wake_blocker(
+                issue_id,
+                agent_name=agent_name,
+                status="needs_manual_review",
+                reason=f"unsupported_agent:{agent_name}",
+            )
         return AssignedAgentWakeResult(
             identifier,
             issue_id,
             agent_name,
-            "blocked",
+            "needs_manual_review",
             f"unsupported_agent:{agent_name}",
+            wrote_back=wrote_back,
         )
 
     preflight = preflight_dispatch_decision(
