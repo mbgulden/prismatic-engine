@@ -30,9 +30,9 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 from prismatic.gateway.event_bus import get_event_bus
 from prismatic.gateway.ipc_bridge import UnixSocketListener, create_event_ingest_route
@@ -1532,7 +1532,7 @@ async def github_webhook(request: Request) -> dict[str, Any]:
         if expected is None:
             _webhook_counters["github_auth_failed"] += 1
             await _publish_webhook_auth_failed("github")
-            from fastapi.responses import JSONResponse
+            from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
             return JSONResponse({"status": "auth-failed"}, status_code=401)
     try:
@@ -1578,7 +1578,7 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
             if expected is None:
                 _webhook_counters["linear_auth_failed"] += 1
                 await _publish_webhook_auth_failed("linear")
-                from fastapi.responses import JSONResponse
+                from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
                 return JSONResponse({"status": "auth-failed"}, status_code=401)
     try:
@@ -1667,7 +1667,7 @@ async def schedules_chat_command(payload: dict[str, Any]) -> dict[str, Any]:
 async def mutate_schedule(schedule_id: str, payload: dict[str, Any]):
     """Mutate a schedule with owner-aware policy check."""
     from prismatic.schedules import request_schedule_mutation, UnauthorizedMutationError
-    from fastapi.responses import JSONResponse
+    from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
     enabled = payload.get("enabled")
     schedule_expr = payload.get("schedule_expr")
@@ -1696,7 +1696,7 @@ async def list_native_crons_endpoint(
 @app.post("/native-crons/{cron_id}/action")
 async def native_cron_action(cron_id: str, payload: dict[str, Any]):
     """Pause/resume/deactivate/activate/delete/run a PE-native cron."""
-    from fastapi.responses import JSONResponse
+    from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
     from prismatic.native_crons import mutate_native_cron
 
     action = payload.get("action")
@@ -1714,6 +1714,275 @@ async def native_cron_action(cron_id: str, payload: dict[str, Any]):
         return JSONResponse(status_code=404, content={"error": str(e)})
     except Exception as exc:
         return JSONResponse(status_code=500, content={"error": str(exc)})
+
+
+# ── Production workspace-tree compatibility surface ─────────────────────
+# These read-only routes are intentionally small and dependency-light. They
+# keep the operator page visible without CDN JavaScript and provide the local
+# proof targets required by the Production Durability Standard.
+WORKSPACE_TREE_MAX_PREVIEW_BYTES = int(os.environ.get("PRISMATIC_WORKSPACE_TREE_MAX_PREVIEW_BYTES", "524288"))
+WORKSPACE_TREE_PREVIEW_EXTENSIONS = {
+    ".cfg",
+    ".css",
+    ".env",
+    ".gitignore",
+    ".html",
+    ".ini",
+    ".js",
+    ".json",
+    ".jsx",
+    ".md",
+    ".py",
+    ".sh",
+    ".toml",
+    ".ts",
+    ".tsx",
+    ".txt",
+    ".yaml",
+    ".yml",
+}
+WORKSPACE_TREE_IGNORED_DIRS = {
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+    "env",
+    "node_modules",
+    "venv",
+}
+
+
+def _workspace_tree_roots() -> dict[str, Path]:
+    """Return production-safe workspace roots for read-only tree/preview APIs."""
+    roots: dict[str, Path] = {}
+    raw = os.environ.get("PRISMATIC_WORKSPACE_ROOTS", "")
+    for entry in raw.split(os.pathsep):
+        if not entry.strip():
+            continue
+        if "=" in entry:
+            label, value = entry.split("=", 1)
+        else:
+            value = entry
+            label = Path(value).name or "workspace"
+        path = Path(value).expanduser().resolve()
+        if path.exists() and path.is_dir():
+            roots[label.strip() or path.name] = path
+
+    repo_root = Path(__file__).resolve().parents[2]
+    roots.setdefault("Prismatic Engine", repo_root)
+    work_dir = Path("/home/ubuntu/work")
+    if work_dir.exists():
+        for child in sorted(work_dir.iterdir(), key=lambda item: item.name.lower()):
+            if child.is_dir() and not child.name.startswith("."):
+                label = " ".join(part.capitalize() for part in child.name.replace("_", "-").split("-"))
+                roots.setdefault(label, child.resolve())
+    return roots
+
+
+def _workspace_tree_resolve(file: str) -> Path:
+    """Resolve a requested file under an allowed workspace root, blocking traversal."""
+    requested = (file or "").strip()
+    if not requested:
+        requested = "README.md"
+    raw_path = Path(requested).expanduser()
+    roots = _workspace_tree_roots()
+
+    candidates: list[Path] = []
+    if raw_path.is_absolute():
+        candidates.append(raw_path)
+    else:
+        for root in roots.values():
+            candidates.append(root / raw_path)
+
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve(strict=False)
+        except OSError:
+            continue
+        for root in roots.values():
+            try:
+                if resolved.is_relative_to(root.resolve()):
+                    return resolved
+            except (OSError, ValueError):
+                continue
+    raise HTTPException(status_code=403, detail="workspace-tree path blocked")
+
+
+def _workspace_tree_node(path: Path, root: Path, depth: int = 0, max_depth: int = 2) -> dict[str, Any]:
+    rel = str(path.relative_to(root)) if path != root else ""
+    if path.is_file():
+        stat = path.stat()
+        return {
+            "name": path.name,
+            "type": "file",
+            "path": str(path),
+            "relative_path": rel,
+            "size": stat.st_size,
+            "previewable": path.suffix.lower() in WORKSPACE_TREE_PREVIEW_EXTENSIONS,
+        }
+    children: list[dict[str, Any]] = []
+    if depth < max_depth:
+        try:
+            for child in sorted(path.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower()))[:200]:
+                if child.name.startswith(".") or child.name in WORKSPACE_TREE_IGNORED_DIRS:
+                    continue
+                children.append(_workspace_tree_node(child, root, depth + 1, max_depth))
+        except OSError:
+            children = []
+    return {
+        "name": path.name or str(path),
+        "type": "directory",
+        "path": str(path),
+        "relative_path": rel,
+        "children": children,
+    }
+
+
+def _workspace_tree_preview_payload(file: str) -> dict[str, Any]:
+    target = _workspace_tree_resolve(file)
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="workspace-tree file not found")
+    if target.suffix.lower() not in WORKSPACE_TREE_PREVIEW_EXTENSIONS:
+        raise HTTPException(status_code=415, detail="workspace-tree file type is not previewable")
+    stat = target.stat()
+    if stat.st_size > WORKSPACE_TREE_MAX_PREVIEW_BYTES:
+        raise HTTPException(status_code=413, detail="workspace-tree file too large for preview")
+    try:
+        content = target.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(status_code=415, detail="workspace-tree file is not UTF-8 text") from exc
+    roots = _workspace_tree_roots()
+    relative = None
+    root_label = None
+    for label, root in roots.items():
+        try:
+            if target.resolve().is_relative_to(root.resolve()):
+                relative = str(target.resolve().relative_to(root.resolve()))
+                root_label = label
+                break
+        except (OSError, ValueError):
+            continue
+    return {
+        "ok": True,
+        "name": target.name,
+        "path": str(target),
+        "relative_path": relative or target.name,
+        "workspace": root_label,
+        "size": stat.st_size,
+        "content": content,
+        "lines": content.count("\n") + 1,
+    }
+
+
+def _workspace_tree_html(file: str) -> str:
+    roots = _workspace_tree_roots()
+    try:
+        preview = _workspace_tree_preview_payload(file)
+        preview_status = "Loaded preview"
+        preview_content = preview["content"][:20000]
+        preview_name = preview["relative_path"]
+    except HTTPException as exc:
+        preview = {"ok": False, "detail": exc.detail, "status_code": exc.status_code}
+        preview_status = f"Preview unavailable ({exc.status_code}): {exc.detail}"
+        preview_content = ""
+        preview_name = file or "README.md"
+
+    root_items = "".join(
+        f"<li><strong>{label}</strong><br><code>{root}</code></li>" for label, root in roots.items()
+    )
+    safe_content = (
+        preview_content.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    )
+    safe_name = str(preview_name).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return f"""<!doctype html>
+<html lang=\"en\">
+<head>
+  <meta charset=\"utf-8\">
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
+  <title>Prismatic Workspace Tree</title>
+  <style>
+    :root {{ color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif; background:#07111f; color:#e5edf7; }}
+    body {{ margin:0; padding:32px; background:linear-gradient(135deg,#07111f,#101a2e); }}
+    main {{ max-width:1120px; margin:0 auto; }}
+    .card {{ border:1px solid #2f4668; border-radius:18px; padding:20px; margin:18px 0; background:rgba(15,23,42,.88); box-shadow:0 18px 45px rgba(0,0,0,.28); }}
+    h1 {{ margin:0 0 8px; font-size:clamp(2rem,5vw,3.4rem); }}
+    h2 {{ margin-top:0; color:#93c5fd; }}
+    code, pre {{ background:#020617; color:#dbeafe; border-radius:10px; }}
+    code {{ padding:2px 6px; }}
+    pre {{ padding:16px; overflow:auto; max-height:520px; white-space:pre-wrap; }}
+    .status {{ color:#86efac; font-weight:700; }}
+    a {{ color:#7dd3fc; }}
+  </style>
+</head>
+<body>
+<main data-route=\"workspace-tree\">
+  <section class=\"card\">
+    <h1>Prismatic Workspace Tree</h1>
+    <p class=\"status\">Visible fallback content loaded without CDN JavaScript.</p>
+    <p>This production-safe read-only route previews files under configured workspace roots and blocks traversal.</p>
+  </section>
+  <section class=\"card\">
+    <h2>{safe_name}</h2>
+    <p>{preview_status}</p>
+    <p>API: <a href=\"/api/workspaces\">/api/workspaces</a> · <a href=\"/api/workspace-tree/preview?file={safe_name}\">preview JSON</a></p>
+    <pre>{safe_content or json.dumps(preview, indent=2)}</pre>
+  </section>
+  <section class=\"card\">
+    <h2>Workspace roots</h2>
+    <ul>{root_items}</ul>
+  </section>
+</main>
+<script src=\"/workspace-tree/index.js\" defer></script>
+</body>
+</html>"""
+
+
+@app.get("/api/workspaces")
+async def workspace_tree_workspaces() -> dict[str, Any]:
+    roots = _workspace_tree_roots()
+    return {
+        "ok": True,
+        "workspaces": [
+            {
+                "name": label,
+                "path": str(root),
+                "exists": root.exists(),
+                "tree": _workspace_tree_node(root, root, max_depth=1) if root.exists() else None,
+            }
+            for label, root in roots.items()
+        ],
+        "workspace_count": len(roots),
+        "max_preview_bytes": WORKSPACE_TREE_MAX_PREVIEW_BYTES,
+    }
+
+
+@app.get("/api/workspace-tree/preview")
+async def workspace_tree_preview(file: str = Query(...)) -> dict[str, Any]:
+    return _workspace_tree_preview_payload(file)
+
+
+@app.get("/workspace-tree/index.js")
+async def workspace_tree_index_js() -> PlainTextResponse:
+    script = """
+(() => {
+  document.documentElement.dataset.workspaceTreeJs = 'loaded';
+  const marker = document.createElement('p');
+  marker.textContent = 'Workspace tree enhancement loaded.';
+  marker.style.color = '#bae6fd';
+  const main = document.querySelector('main[data-route="workspace-tree"]');
+  if (main) main.appendChild(marker);
+})();
+""".strip()
+    return PlainTextResponse(script, media_type="application/javascript")
+
+
+@app.get("/workspace-tree")
+async def workspace_tree_page(file: str = Query("docs/prismatic-production-durability-standard.md")) -> HTMLResponse:
+    return HTMLResponse(_workspace_tree_html(file))
 
 
 def get_linear_secrets():
