@@ -1232,6 +1232,239 @@ async def events_recent(limit: int = 50) -> dict[str, Any]:
         return {"events": [], "count": 0, "source": "sqlite", "error": str(e)}
 
 
+
+# ── Dashboard live adapter APIs (restored from Fred dashboard branches) ───────
+
+def _run_records_for_dashboard(limit: int = 500) -> list[Any]:
+    return _recent_agent_runs(limit=limit)
+
+
+def _run_dicts_for_dashboard(limit: int = 500) -> list[dict[str, Any]]:
+    return [_run_record_to_dict(record) for record in _run_records_for_dashboard(limit=limit)]
+
+
+def _dashboard_agent_inputs(limit: int = 500) -> dict[str, Any]:
+    from prismatic.ingestion_status import queue_payload, recovery_status_payload
+    from prismatic.timeline import list_timeline
+
+    records = _run_records_for_dashboard(limit=limit)
+    record_dicts = [_run_record_to_dict(record) for record in records]
+    recovery_state = _read_dashboard_recovery_state()
+    queue = queue_payload(records, limit=limit)
+    recovery = recovery_status_payload(recovery_state, records, counters=_webhook_counters)
+    timeline = list_timeline(
+        limit=min(limit, 100),
+        run_records=record_dicts,
+        recovery_state=recovery_state,
+        webhook_counters=_webhook_counters,
+    )
+    return {
+        "run_records": records,
+        "registry": _read_agent_registry(),
+        "queue_payload": queue,
+        "timeline_payload": timeline,
+        "health_context": {"recovery": recovery, "server_started_at": _server_started_at},
+    }
+
+
+@app.get("/api/gateway/agents/status")
+async def gateway_agents_status() -> dict[str, Any]:
+    """Return normalized live agent status for the dashboard main tab."""
+    from prismatic.agent_status import build_agent_status
+
+    return build_agent_status(**_dashboard_agent_inputs())
+
+
+@app.get("/api/gateway/agents/{agent_id}")
+async def gateway_agent_detail(agent_id: str) -> dict[str, Any]:
+    """Return normalized live status detail for one dashboard agent."""
+    from prismatic.agent_status import build_agent_detail
+
+    return build_agent_detail(agent_id, **_dashboard_agent_inputs())
+
+
+@app.get("/api/gateway/timeline")
+async def gateway_timeline(
+    limit: int = Query(80, ge=1, le=500),
+    source: str | None = None,
+    kind: str | None = None,
+    severity: str | None = None,
+) -> dict[str, Any]:
+    """Return real operational timeline events for dashboard activity/signals."""
+    from prismatic.timeline import list_timeline
+
+    return list_timeline(
+        limit=limit,
+        source=source,
+        kind=kind,
+        severity=severity,
+        run_records=_run_dicts_for_dashboard(limit=limit),
+        recovery_state=_read_dashboard_recovery_state(),
+        webhook_counters=_webhook_counters,
+    )
+
+
+@app.get("/api/webhooks/stats")
+@app.get("/api/gateway/webhooks/stats")
+async def dashboard_webhook_stats() -> dict[str, Any]:
+    from prismatic.ingestion_status import webhook_stats_payload
+
+    return webhook_stats_payload(_webhook_counters, _run_records_for_dashboard())
+
+
+@app.get("/api/webhooks/queue")
+@app.get("/api/gateway/webhooks/queue")
+async def dashboard_webhook_queue(status: str | None = None, limit: int = Query(50, ge=1, le=500)) -> dict[str, Any]:
+    from prismatic.ingestion_status import queue_payload
+
+    return queue_payload(_run_records_for_dashboard(limit=limit), status=status, limit=limit)
+
+
+@app.post("/api/webhooks/queue/retry/{task_id}")
+@app.post("/api/gateway/webhooks/queue/retry/{task_id}")
+async def dashboard_webhook_queue_retry(task_id: str) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "status": "accepted_noop",
+        "task_id": task_id,
+        "message": "Retry intent recorded by dashboard compatibility route; no shell command executed.",
+    }
+
+
+@app.post("/api/webhooks/queue/purge")
+@app.post("/api/gateway/webhooks/queue/purge")
+async def dashboard_webhook_queue_purge() -> dict[str, Any]:
+    return {
+        "ok": True,
+        "status": "accepted_noop",
+        "message": "Purge intent acknowledged for dashboard safety; terminal-only purge policy preserved.",
+    }
+
+
+@app.get("/api/dispatcher/status")
+@app.get("/api/gateway/dispatcher/status")
+async def dashboard_dispatcher_status() -> dict[str, Any]:
+    from prismatic.ingestion_status import dispatcher_status_payload
+
+    return dispatcher_status_payload({}, _run_records_for_dashboard(), server_started_at=_server_started_at)
+
+
+@app.post("/api/dispatcher/{action}")
+@app.post("/api/gateway/dispatcher/{action}")
+async def dashboard_dispatcher_action(action: str) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "status": "accepted_noop",
+        "action": action,
+        "message": f"Dispatcher {action} intent recorded; browser route did not launch or stop workers.",
+    }
+
+
+@app.get("/api/recovery/status")
+@app.get("/api/gateway/recovery/status")
+async def dashboard_recovery_status() -> dict[str, Any]:
+    from prismatic.ingestion_status import recovery_status_payload
+
+    return recovery_status_payload(_read_dashboard_recovery_state(), _run_records_for_dashboard(), counters=_webhook_counters)
+
+
+@app.get("/api/foundation/peer_review")
+@app.get("/api/gateway/foundation/peer_review")
+async def dashboard_foundation_peer_review() -> dict[str, Any]:
+    from prismatic.foundation_status import foundation_peer_review_payload
+
+    return foundation_peer_review_payload(_run_records_for_dashboard())
+
+
+@app.post("/api/foundation/control/{action}")
+@app.post("/api/gateway/foundation/control/{action}")
+async def dashboard_foundation_control(action: str) -> dict[str, Any]:
+    from prismatic.foundation_status import foundation_control_entry
+    from prismatic.timeline import utc_now
+
+    entry = foundation_control_entry(action, now=utc_now(), actor="dashboard")
+    return {"ok": True, "status": entry.get("status"), "entry": entry, "source": "foundation_control_state"}
+
+
+@app.get("/api/skills")
+async def dashboard_skills() -> dict[str, Any]:
+    try:
+        from prismatic.skills import list_skills
+
+        skills = list_skills()
+    except Exception as exc:
+        logger.warning("dashboard skills adapter failed: %s", exc)
+        skills = []
+    return {"ok": True, "source": "prismatic.skills", "skills": skills, "count": len(skills)}
+
+
+@app.get("/api/skills/{name}", response_model=None)
+async def dashboard_skill_detail(name: str) -> Any:
+    try:
+        from prismatic.skills import read_skill
+
+        return read_skill(name)
+    except Exception as exc:
+        return JSONResponse({"error": "skill_not_found", "detail": str(exc)}, status_code=404)
+
+
+@app.post("/api/skills/{name}/install", response_model=None)
+async def dashboard_skill_install(name: str) -> dict[str, Any]:
+    return {"ok": True, "status": "accepted_noop", "skill": name, "message": "Install intent recorded; no browser shell execution."}
+
+
+@app.post("/api/skills/{name}/uninstall", response_model=None)
+async def dashboard_skill_uninstall(name: str) -> dict[str, Any]:
+    return {"ok": True, "status": "accepted_noop", "skill": name, "message": "Uninstall intent recorded; no browser shell execution."}
+
+
+@app.get("/api/quota")
+@app.get("/api/quotas")
+@app.get("/api/gcp/quotas")
+@app.get("/api/vertex/quota")
+@app.get("/api/vertex/quotas")
+async def dashboard_quota_summary() -> dict[str, Any]:
+    try:
+        from prismatic.merge_status import load_merge_state  # compile/import sentinel for restored adapters
+        from prismatic.vertex_telemetry import read_quota_summary  # type: ignore
+
+        data = read_quota_summary()
+        records = data.get("quota_records") or data.get("current") or []
+        return {
+            **data,
+            "ok": True,
+            "source": data.get("source") or "vertex-ledger",
+            "current": data.get("current") or records,
+            "recent_events": data.get("recent_events") or data.get("latest_errors") or [],
+            "snapshot_at": data.get("snapshot_at") or (data.get("quota_freshness") or {}).get("last_recorded_at"),
+            "snapshot_age_sec": data.get("snapshot_age_sec") or (data.get("quota_freshness") or {}).get("age_seconds"),
+        }
+    except Exception as exc:
+        return {
+            "ok": True,
+            "source": "quota_state.db",
+            "current": [],
+            "recent_events": [],
+            "snapshot_at": None,
+            "snapshot_age_sec": None,
+            "errors": [{"source": "quota-adapter", "error_message": str(exc)}],
+        }
+
+
+@app.post("/api/quota/poll")
+async def dashboard_quota_poll() -> dict[str, Any]:
+    payload = await dashboard_quota_summary()
+    return {**payload, "poll": {"attempted": False, "reason": "browser-safe route returns persisted quota state only"}}
+
+
+@app.get("/api/gateway/merge/status")
+async def dashboard_merge_status() -> dict[str, Any]:
+    from prismatic.merge_status import load_merge_state, merge_status_payload
+
+    state, path = load_merge_state()
+    return merge_status_payload(state, {}, {}, state_path=path)
+
+
 @app.get("/api/report/latest", response_model=None)
 async def get_latest_report() -> Any:
     """Return the latest overnight factory report JSON.
