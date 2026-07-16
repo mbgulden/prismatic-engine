@@ -1941,79 +1941,29 @@ def _workspace_tree_html(file: str) -> str:
 </html>"""
 
 
-def _operator_entry_html(route: str) -> str:
-    route_label = "Operator Dashboard"
-    route_description = "Dashboard" if route == "dashboard" else "Product / Operator Entry"
-    return f"""<!doctype html>
-<html lang=\"en\">
-<head>
-  <meta charset=\"utf-8\">
-  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
-  <title>Prismatic Engine Operator Dashboard</title>
-  <style>
-    :root {{ color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif; background:#07111f; color:#e5edf7; }}
-    body {{ margin:0; padding:32px; background:linear-gradient(135deg,#07111f,#111827 55%,#172554); }}
-    main {{ max-width:1120px; margin:0 auto; }}
-    .hero, .card {{ border:1px solid #2f4668; border-radius:18px; padding:22px; margin:18px 0; background:rgba(15,23,42,.9); box-shadow:0 18px 45px rgba(0,0,0,.28); }}
-    h1 {{ margin:0 0 10px; font-size:clamp(2rem,5vw,3.4rem); }}
-    h2 {{ margin-top:0; color:#93c5fd; }}
-    a {{ color:#7dd3fc; font-weight:700; }}
-    code {{ background:#020617; color:#dbeafe; border-radius:10px; padding:2px 6px; }}
-    .status {{ color:#86efac; font-weight:800; }}
-    .grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:16px; }}
-    ul {{ padding-left:20px; }}
-  </style>
-</head>
-<body>
-<main data-route=\"operator-entry\">
-  <section class=\"hero\">
-    <h1>Prismatic Engine Operator Dashboard</h1>
-    <p class=\"status\">Operator surface restored. This fallback page renders without CDN JavaScript.</p>
-    <p>The gateway is alive and serving the durable operator entry surface from the production runtime. Route role: {route_description}.</p>
-  </section>
-  <section class=\"grid\" aria-label=\"Operator links\">
-    <article class=\"card\">
-      <h2>Workspace Tree</h2>
-      <p>Browse and preview approved workspace files through the read-only compatibility surface.</p>
-      <p><a href=\"/workspace-tree\">Open /workspace-tree</a></p>
-    </article>
-    <article class=\"card\">
-      <h2>Gateway Health</h2>
-      <p>Check process uptime and basic gateway liveness.</p>
-      <p><a href=\"/health\">Open /health</a></p>
-    </article>
-    <article class=\"card\">
-      <h2>Plugins / Governance</h2>
-      <p>Inspect current plugin catalog and governance readiness APIs.</p>
-      <p><a href=\"/api/plugins/catalog\">/api/plugins/catalog</a><br><a href=\"/api/plugins/governance\">/api/plugins/governance</a></p>
-    </article>
-    <article class=\"card\">
-      <h2>Merge Backlog</h2>
-      <p>Operator API for governance backlog state when public proxy routing allows it.</p>
-      <p><a href=\"/api/governance/merge-backlog\">/api/governance/merge-backlog</a></p>
-    </article>
-  </section>
-  <section class=\"card\">
-    <h2>Production safety notes</h2>
-    <ul>
-      <li>No filesystem preview is performed on this entry page.</li>
-      <li>Path traversal protections remain in the dedicated <code>/workspace-tree</code> preview API.</li>
-      <li>If an API link returns JSON or access policy output, the gateway route is still reachable and should be inspected through operator tooling.</li>
-    </ul>
-  </section>
-</main>
-</body>
-</html>"""
+_GOVERNANCE_DASHBOARD_HTML = Path(__file__).resolve().parent / "templates" / "dashboard.html"
 
 
-@app.get("/")
-async def product_operator_entry() -> HTMLResponse:
-    return HTMLResponse(_operator_entry_html("root"))
+def _serve_governance_dashboard_html() -> HTMLResponse:
+    """Serve the canonical Prismatic governance/control-plane dashboard."""
+    if not _GOVERNANCE_DASHBOARD_HTML.exists():
+        return HTMLResponse(
+            "Prismatic governance dashboard HTML not found",
+            status_code=404,
+        )
+    return HTMLResponse(_GOVERNANCE_DASHBOARD_HTML.read_text(encoding="utf-8"))
 
 
-@app.get("/dashboard")
-async def dashboard_operator_entry() -> HTMLResponse:
-    return HTMLResponse(_operator_entry_html("dashboard"))
+@app.get("/", response_class=HTMLResponse)
+async def serve_governance_index() -> HTMLResponse:
+    """Governance gateway root: serve the canonical dashboard, not fallback shell."""
+    return _serve_governance_dashboard_html()
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def serve_governance_dashboard() -> HTMLResponse:
+    """Serve the canonical Prismatic governance/control-plane dashboard."""
+    return _serve_governance_dashboard_html()
 
 
 @app.get("/api/workspaces")
