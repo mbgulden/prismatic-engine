@@ -1990,6 +1990,27 @@ async def workspace_tree_preview(file: str = Query(...)) -> dict[str, Any]:
     return _workspace_tree_preview_payload(file)
 
 
+@app.get("/api/workspace-tree/node")
+async def workspace_tree_node(file: str = Query(...), depth: int = Query(1, ge=0, le=3)) -> dict[str, Any]:
+    """Return a safe directory subtree under an allowed workspace root."""
+    target = _workspace_tree_resolve(file)
+    if not target.exists() or not target.is_dir():
+        raise HTTPException(status_code=404, detail="workspace-tree directory not found")
+    roots = _workspace_tree_roots()
+    for label, root in roots.items():
+        try:
+            target.relative_to(root)
+        except ValueError:
+            continue
+        return {
+            "ok": True,
+            "root_label": label,
+            "root": str(root),
+            "tree": _workspace_tree_node(target, root, max_depth=depth),
+        }
+    raise HTTPException(status_code=403, detail="workspace-tree path blocked")
+
+
 @app.get("/workspace-tree/index.js")
 async def workspace_tree_index_js() -> PlainTextResponse:
     script = """
