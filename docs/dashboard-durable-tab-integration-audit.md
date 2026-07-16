@@ -85,7 +85,7 @@ LOG=/tmp/fred-dashboard-durable-tab-integration-production-verify.log
 SCOPE=durable dashboard tab adapters and mobile Workspace Tree viewer without replacing canonical dashboard
 AD_HOC_OR_CANONICAL=ad-hoc targeted plus CI green for PRs #288 and #289
 NOT_CLAIMING=canonical_full_suite_green,agy_completed_work_integration_gate
-MARKER=DASHBOARD_DURABLE_TAB_INTEGRATION_OK,DASHBOARD_WORKSPACE_TREE_MOBILE_OK
+MARKER=DASHBOARD_DURABLE_TAB_INTEGRATION_AUDIT_OK,DASHBOARD_DURABLE_TAB_INTEGRATION_OK,DASHBOARD_WORKSPACE_TREE_MOBILE_OK
 ```
 
 Fresh changed-path stale-guard verifier for `dashboard.html`:
