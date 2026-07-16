@@ -48,6 +48,7 @@ from .capability_router import default_capability_registry, route_issue
 from .lane_contracts import filter_dispatchable_issues, starvation_signal_for
 from .mode_switch import get_mode_switch, OrchestrationMode
 from .core.governor import DistributedComputeGovernor
+from .handoff_contracts import extract_handoff_packet, validation_result
 
 # ── IPC Bridge event emission (best-effort) ─────────────────────
 try:
@@ -123,7 +124,50 @@ def check_active_processes() -> int:
     return released
 
 
-def dispatch_local_tasks(dedup: Any, local_task_queue: Any | None = None) -> int:
+def _handoff_preflight_message(identifier: str, result: Any) -> str:
+    errors = "\n".join(f"- {error}" for error in result.errors)
+    if not errors:
+        errors = "- unknown handoff contract validation failure"
+    return (
+        "🚫 **Handoff contract preflight failed**\n\n"
+        f"Issue/task: `{identifier}`\n"
+        f"Status: `{result.status}`\n"
+        f"Reason: `{result.reason}`\n"
+        f"Target agent: `{result.target_agent or 'needs_manual_review'}`\n\n"
+        f"Errors:\n{errors}\n\n"
+        "No agent was launched. Fix the handoff packet and rerun dispatch."
+    )
+
+
+def handoff_dispatch_preflight(container: Any, agent_name: str, identifier: str = "") -> Any:
+    """Fail closed for invalid embedded handoff packets before launching agents.
+
+    Missing handoff metadata means the issue/task is not using the GRO-549
+    handoff contract yet and should continue through the existing dispatch path.
+    """
+    packet = extract_handoff_packet(container)
+    if packet is None:
+        return None
+    result = validation_result(packet)
+    if result.ok and result.target_agent and result.target_agent != agent_name.lower():
+        return type(result)(
+            ok=False,
+            status="blocked",
+            reason="target_agent_mismatch",
+            errors=(f"handoff target agent {result.target_agent!r} does not match dispatch lane {agent_name!r}",),
+            target_agent=result.target_agent,
+        )
+    return result
+
+
+def _mark_handoff_preflight_failure(issue_id: str, identifier: str, result: Any) -> None:
+    try:
+        add_comment(issue_id, _handoff_preflight_message(identifier, result))
+    except Exception:
+        pass
+
+
+def dispatch_local_tasks(dedup: Any, cycle_id: str | None = None, local_task_queue: Any | None = None) -> int:
     if local_task_queue is None:
         try:
             from prismatic.local_tasks import get_default_queue
@@ -132,12 +176,35 @@ def dispatch_local_tasks(dedup: Any, local_task_queue: Any | None = None) -> int
             return 0
     dispatched = 0
     for task in local_task_queue.list_queued(limit=25):
+        preflight = handoff_dispatch_preflight(task, task.agent, task.id)
+        if preflight is not None and not preflight.ok:
+            status = "needs_manual_review" if preflight.is_manual_review else "blocked"
+            local_task_queue.update_status(
+                task.id,
+                status,
+                metadata_patch={
+                    "handoff_preflight_status": preflight.status,
+                    "handoff_preflight_reason": preflight.reason,
+                    "handoff_preflight_errors": list(preflight.errors),
+                },
+            )
+            print(
+                f"[dispatcher] 🚫 Handoff preflight {preflight.status} "
+                f"for local task {task.id}: {preflight.reason}"
+            )
+            continue
         launcher = AGENT_LAUNCHERS.get(task.agent)
         if not launcher:
             continue
-        result = launcher(task.id, title=task.title, workspace=task.workspace)
+        result = launcher(task.id, title=task.title, task=task.title, workspace=task.workspace)
         if result:
-            local_task_queue.update_status(task.id, "dispatched")
+            metadata_patch = {}
+            if preflight is not None:
+                metadata_patch = {
+                    "handoff_preflight_status": preflight.status,
+                    "handoff_preflight_reason": preflight.reason,
+                }
+            local_task_queue.update_status(task.id, "dispatched", metadata_patch=metadata_patch or None)
             dispatched += 1
     return dispatched
 
@@ -2422,6 +2489,19 @@ def dispatch_once(
 
             # Skip if already dispatched this cycle
             if dedup.is_processed(issue_id, label, cycle_id):
+                continue
+
+            preflight = handoff_dispatch_preflight(issue, agent_name, identifier)
+            if preflight is not None and not preflight.ok:
+                print(
+                    f"[dispatcher] 🚫 Handoff preflight {preflight.status} "
+                    f"for {agent_name} → {identifier}: {preflight.reason}"
+                )
+                _mark_handoff_preflight_failure(issue_id, identifier, preflight)
+                counts["needs_manual_review" if preflight.is_manual_review else "blocked"] = (
+                    counts.get("needs_manual_review" if preflight.is_manual_review else "blocked", 0) + 1
+                )
+                dedup.mark_processed(issue_id, label, cycle_id)
                 continue
 
             launcher = AGENT_LAUNCHERS.get(agent_name)

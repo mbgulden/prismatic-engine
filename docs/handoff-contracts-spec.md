@@ -205,12 +205,28 @@ Expected fixture behavior:
 | `production-proof-missing.json` | nonzero |
 | `ambiguous-target-agent.json` | nonzero |
 
-The CLI validator is intentionally standalone for this slice. It does **not** wire validation into dispatcher preflight yet.
+The CLI validator is intentionally standalone for local review, and the dispatcher preflight imports the same reusable validation helpers before launching agents. This slice only gates embedded handoff packets at the dispatch boundary; it does **not** start the broader completed-work integration gate.
+
+## Dispatcher preflight enforcement
+
+Assigned-agent dispatch now fails closed when an incoming issue/task carries an embedded `handoff_packet`, `handoff_contract`, or `handoff` payload that violates this contract.
+
+Required runtime behavior:
+
+| Case | Dispatcher preflight result |
+|---|---|
+| valid `pass.json`-style packet | allowed; existing dispatch path may proceed |
+| missing result / no durable output contract | blocked before dispatch |
+| out-of-lane changed path | blocked before dispatch |
+| production fixed claim without production proof | blocked before dispatch |
+| ambiguous or empty target agent | `needs_manual_review`; no agent launched |
+
+The preflight writes a concise failure reason and validation errors to the local task metadata or Linear comment path so dashboard/Linear follow-up can show why no agent launched.
 
 ## Next implementation slices
 
-1. Wire validator into assigned-agent dispatch preflight.
-2. Add dispatcher fixtures for pass/missing-result/out-of-lane/production-proof-missing cases.
+1. Build the broader AGY completed-work integration gate using this preflight primitive.
+2. Add dispatcher fixtures for additional webhook/Linear payload shapes.
 3. Add Linear writeback templates for validation failures.
 
-Until dispatcher preflight lands, this document, schema, fixtures, focused tests, and CLI validator are the review contract and source of truth for GRO-549.
+Until the broader integration gate lands, this document, schema, fixtures, focused tests, CLI validator, and dispatcher preflight are the review contract and source of truth for GRO-549.
