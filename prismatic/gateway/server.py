@@ -1936,7 +1936,7 @@ def _workspace_tree_html(file: str) -> str:
     <ul>{root_items}</ul>
   </section>
 </main>
-<script src=\"/workspace-tree/index.js\" defer></script>
+<script src=\"/workspace-tree/index.js?v=20260716\" defer></script>
 </body>
 </html>"""
 
