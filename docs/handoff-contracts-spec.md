@@ -183,11 +183,34 @@ This spec complements, but does not replace:
 - GitHub PR review gates,
 - production durability requirements for live routes/services.
 
+## Validator usage
+
+The review-contract schema and semantic checks can be run against a handoff packet with:
+
+```bash
+python scripts/validate_handoff_contract.py tests/fixtures/handoff-contracts/pass.json
+python scripts/validate_handoff_contract.py tests/fixtures/handoff-contracts/missing-result.json
+python scripts/validate_handoff_contract.py tests/fixtures/handoff-contracts/out-of-lane.json
+python scripts/validate_handoff_contract.py tests/fixtures/handoff-contracts/production-proof-missing.json
+python scripts/validate_handoff_contract.py tests/fixtures/handoff-contracts/ambiguous-target-agent.json
+```
+
+Expected fixture behavior:
+
+| Fixture | Expected |
+|---|---:|
+| `pass.json` | exit 0 |
+| `missing-result.json` | nonzero |
+| `out-of-lane.json` | nonzero |
+| `production-proof-missing.json` | nonzero |
+| `ambiguous-target-agent.json` | nonzero |
+
+The CLI validator is intentionally standalone for this slice. It does **not** wire validation into dispatcher preflight yet.
+
 ## Next implementation slices
 
-1. Add a JSON Schema for the handoff object.
-2. Add a small CLI validator for handoff packets.
-3. Wire validator into assigned-agent dispatch preflight.
-4. Add fixtures for pass/missing-result/out-of-lane/production-proof-missing cases.
+1. Wire validator into assigned-agent dispatch preflight.
+2. Add dispatcher fixtures for pass/missing-result/out-of-lane/production-proof-missing cases.
+3. Add Linear writeback templates for validation failures.
 
-Until those slices land, this document is the review contract and source of truth for GRO-549.
+Until dispatcher preflight lands, this document, schema, fixtures, focused tests, and CLI validator are the review contract and source of truth for GRO-549.
