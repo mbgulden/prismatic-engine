@@ -1,0 +1,37 @@
+{
+  "handoff_id": "GRO-549:ambiguous-target-agent",
+  "source": {
+    "agent": "fred"
+  },
+  "target": {
+    "agent": "",
+    "required_capabilities": [
+      "repo_read"
+    ]
+  },
+  "work": {
+    "issue": "GRO-549",
+    "scope": "ambiguous handoff",
+    "base": "origin/main",
+    "allowed_paths": [
+      "docs/handoff-contracts-spec.md"
+    ],
+    "production_facing": false
+  },
+  "acceptance": {
+    "expected_markers": [
+      "HANDOFF_CONTRACTS_SPEC_OK"
+    ],
+    "not_claiming": [
+      "runtime_enforcement"
+    ]
+  },
+  "retry": {
+    "on_missing_result": "pause_and_require_review"
+  },
+  "evidence": {
+    "required_artifacts": [
+      "Linear comment"
+    ]
+  }
+}
