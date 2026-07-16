@@ -878,28 +878,36 @@
         <!-- SECTION 4: WORKSPACES -->
         <div id="section-workspaces" class="hidden space-y-6">
             <div class="glass-panel p-5 rounded-xl space-y-4">
-                <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-3 flex justify-between items-center">
-                    <span>Registered Workspaces</span>
-                    <button class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-3 py-1.5 rounded transition">
-                        + Register Context
-                    </button>
+                <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <span>Workspace Tree</span>
+                    <span class="text-[10px] text-slate-500 font-mono normal-case tracking-normal">navigable folder structure + file viewer · powered by /api/workspaces</span>
                 </h2>
-                <div class="overflow-x-auto">
-                    <table class="w-full text-left text-sm border-collapse">
-                        <thead>
-                            <tr class="border-b border-slate-800 text-slate-500 text-xs font-bold uppercase tracking-wider">
-                                <th class="py-2.5 px-3">Workspace Name</th>
-                                <th class="py-2.5 px-3">Host Directory Path</th>
-                                <th class="py-2.5 px-3">Branch</th>
-                                <th class="py-2.5 px-3">Files</th>
-                                <th class="py-2.5 px-3">Size</th>
-                                <th class="py-2.5 px-3">Status</th>
-                            </tr>
-                        </thead>
-                        <tbody id="workspaces-tbody" class="divide-y divide-slate-800/30">
-                            <!-- Populated dynamically -->
-                        </tbody>
-                    </table>
+                <div class="grid grid-cols-1 xl:grid-cols-[420px_minmax(0,1fr)] gap-4 min-h-[640px]">
+                    <section class="rounded-xl border border-slate-800 bg-slate-950/60 overflow-hidden flex flex-col min-h-[640px]">
+                        <div class="p-3 border-b border-slate-800 flex items-center justify-between gap-3">
+                            <div>
+                                <div class="text-xs font-bold uppercase tracking-wider text-slate-400">Folders</div>
+                                <div id="workspace-tree-status" class="text-[11px] text-slate-500 mt-1">Loading workspace roots…</div>
+                            </div>
+                            <a href="/workspace-tree" class="text-[10px] font-bold uppercase tracking-wider text-cyan-400 hover:text-cyan-300">Open legacy view</a>
+                        </div>
+                        <div id="workspace-tree-roots" class="p-3 space-y-3 overflow-auto flex-1 font-mono text-xs">
+                            <div class="text-slate-500 italic">Loading workspace tree…</div>
+                        </div>
+                    </section>
+                    <section class="rounded-xl border border-slate-800 bg-slate-950/60 overflow-hidden flex flex-col min-h-[640px]">
+                        <div class="p-3 border-b border-slate-800 flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+                            <div>
+                                <div class="text-xs font-bold uppercase tracking-wider text-slate-400">File Viewer</div>
+                                <div id="workspace-preview-name" class="text-[11px] text-slate-500 mt-1 font-mono">Select a file from the tree.</div>
+                            </div>
+                            <div class="flex flex-wrap gap-2">
+                                <button id="workspace-copy-link" type="button" onclick="copyWorkspaceDeepLink()" class="px-2.5 py-1.5 rounded-lg border border-slate-700 text-slate-300 hover:text-white hover:border-cyan-500 text-[10px] font-bold uppercase tracking-wider">Copy Telegram Link</button>
+                                <a id="workspace-legacy-link" href="/workspace-tree" class="px-2.5 py-1.5 rounded-lg border border-slate-700 text-slate-300 hover:text-white hover:border-cyan-500 text-[10px] font-bold uppercase tracking-wider">Open Standalone</a>
+                            </div>
+                        </div>
+                        <pre id="workspace-file-preview" class="m-0 p-4 overflow-auto flex-1 text-xs leading-relaxed text-slate-200 whitespace-pre-wrap"><code>Select a file from the Workspace Tree to preview it here.</code></pre>
+                    </section>
                 </div>
             </div>
         </div>
@@ -1246,12 +1254,6 @@
                 config: "harness:codex-cli"
             }
         };
-
-        const mockWorkspaces = [
-            { id: "linear-growth", name: "Linear · GrowthWebDev", path: "/home/ubuntu/work/linear-growth-context", branch: "main", status: "connected", files: 142, size: "2.4 MB" },
-            { id: "github-mbgulden", name: "GitHub · mbgulden", path: "/home/ubuntu/work/agentic-swarm-ops", branch: "main", status: "connected", files: 89, size: "1.8 MB" },
-            { id: "gdrive-context", name: "Google Drive · Context", path: "/home/ubuntu/mounts/google-drive-context", branch: "n/a", status: "stalled", files: 34, size: "480 KB" }
-        ];
 
         const mockSkills = [
             { id: "code-review", name: "Code Reviewer", desc: "Automated PR sanity checking, security vulnerability scan, and performance reviews.", version: "v1.2", status: "Active" },
@@ -2350,15 +2352,7 @@
             `).join("");
             
             // Workspaces List Summary
-            const wsSummary = document.getElementById("dashboard-workspaces");
-            wsSummary.innerHTML = mockWorkspaces.map(ws => `
-                <tr class="border-b border-slate-800/40 hover:bg-slate-900/10 transition">
-                    <td class="py-2.5 px-3 font-semibold text-slate-200">${ws.name}</td>
-                    <td class="py-2.5 px-3 text-slate-400 font-mono">${ws.branch}</td>
-                    <td class="py-2.5 px-3 text-[10px] uppercase font-bold ${ws.status === 'connected' ? 'text-emerald-400' : 'text-amber-400'}">${ws.status}</td>
-                    <td class="py-2.5 px-3 text-slate-500">${ws.files} files</td>
-                </tr>
-            `).join("");
+            renderDashboardWorkspacesSummary();
         }
 
         function setSummaryBadge(badgeId, metaId, tone, badgeText, metaText) {
@@ -2444,42 +2438,157 @@
             }
         }
 
-        async function renderWorkspacesView() {
+        function escapeHTML(value) {
+            return String(value ?? "").replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch]));
+        }
+
+        let workspaceTreeState = { workspaces: [], selectedFile: null };
+
+        function workspaceNodeIcon(node) {
+            return node.type === "directory" ? "▸" : "•";
+        }
+
+        function workspaceNodePath(node) {
+            return node.path || node.relative_path || node.name || "";
+        }
+
+        function renderWorkspaceNode(node, depth = 0) {
+            const path = workspaceNodePath(node);
+            const label = node.name || node.relative_path || path || "workspace";
+            const isDir = node.type === "directory";
+            const previewable = node.previewable !== false;
+            const children = Array.isArray(node.children) ? node.children : [];
+            const indent = Math.min(depth * 14, 72);
+            const buttonClass = isDir
+                ? "text-cyan-300 hover:text-white hover:bg-cyan-500/10"
+                : previewable
+                    ? "text-slate-300 hover:text-white hover:bg-slate-800/70"
+                    : "text-slate-500 cursor-not-allowed";
+            const action = isDir
+                ? `onclick="toggleWorkspaceDirectory('${encodeURIComponent(path)}', this)"`
+                : previewable
+                    ? `onclick="previewWorkspaceFile('${encodeURIComponent(path)}')"`
+                    : "disabled";
+            const childHtml = children.length
+                ? `<div class="workspace-node-children ml-3 border-l border-slate-800/80 pl-2">${children.map(child => renderWorkspaceNode(child, depth + 1)).join("")}</div>`
+                : `<div class="workspace-node-children ml-3 border-l border-slate-800/80 pl-2 hidden"></div>`;
+            return `<div class="workspace-node" data-path="${escapeHTML(path)}" style="margin-left:${indent}px">
+                <button type="button" class="w-full text-left px-2 py-1.5 rounded ${buttonClass}" ${action}>
+                    <span class="inline-block w-4 text-slate-500">${workspaceNodeIcon(node)}</span><span>${escapeHTML(label)}</span>
+                    ${node.size ? `<span class="float-right text-[10px] text-slate-600">${node.size}b</span>` : ""}
+                </button>
+                ${isDir ? childHtml : ""}
+            </div>`;
+        }
+
+        async function toggleWorkspaceDirectory(encodedPath, button) {
+            const path = decodeURIComponent(encodedPath);
+            const wrapper = button.closest(".workspace-node");
+            const childrenEl = wrapper?.querySelector(":scope > .workspace-node-children");
+            if (!childrenEl) return;
+            if (childrenEl.dataset.loaded === "true") {
+                childrenEl.classList.toggle("hidden");
+                button.querySelector("span").textContent = childrenEl.classList.contains("hidden") ? "▸" : "▾";
+                return;
+            }
+            childrenEl.classList.remove("hidden");
+            childrenEl.innerHTML = `<div class="px-2 py-1 text-slate-500 italic">Loading…</div>`;
             try {
-                const locksRes = await fetch("/locks");
-                const staleRes = await fetch("/locks/stale");
-                if (locksRes.ok && staleRes.ok) {
-                    const locks = await locksRes.json();
-                    const stale = await staleRes.json();
-                    
-                    const stalePaths = new Set(stale.map(s => s.filePath));
-                    const tbody = document.getElementById("workspaces-tbody");
-                    
-                    if (locks.length === 0) {
-                        tbody.innerHTML = `<tr><td colspan="6" class="py-6 text-center text-slate-500 italic">No active file locks acquired by agents.</td></tr>`;
-                        return;
-                    }
-                    
-                    tbody.innerHTML = locks.map(lock => {
-                        const isStale = stalePaths.has(lock.filePath);
-                        const statusTag = isStale 
-                            ? `<span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold border bg-rose-500/10 text-rose-400 border-rose-500/20 uppercase">stale</span>`
-                            : `<span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold border bg-emerald-500/10 text-emerald-400 border-emerald-500/20 uppercase">active</span>`;
-                        
-                        return `
-                            <tr class="border-b border-slate-800/40 hover:bg-slate-900/10 transition">
-                                <td class="py-3 px-3 font-semibold text-slate-200">${lock.filePath.split('/').pop()}</td>
-                                <td class="py-3 px-3 font-mono text-slate-400 text-xs">${lock.filePath}</td>
-                                <td class="py-3 px-3 font-mono text-indigo-400 text-xs">${lock.agentId}</td>
-                                <td class="py-3 px-3 text-slate-400">${formatDate(lock.timestamp / 1000)}</td>
-                                <td class="py-3 px-3 text-slate-400">${formatDate(lock.lastHeartbeat / 1000)}</td>
-                                <td class="py-3 px-3">${statusTag}</td>
-                            </tr>
-                        `;
-                    }).join("");
-                }
+                const res = await fetch(`/api/workspace-tree/node?file=${encodeURIComponent(path)}&depth=1`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const node = data.tree || {};
+                const children = Array.isArray(node.children) ? node.children : [];
+                childrenEl.dataset.loaded = "true";
+                childrenEl.innerHTML = children.length
+                    ? children.map(child => renderWorkspaceNode(child, 0)).join("")
+                    : `<div class="px-2 py-1 text-slate-500 italic">Empty folder.</div>`;
+                button.querySelector("span").textContent = "▾";
             } catch (err) {
-                console.error("Error loading locks registry:", err);
+                childrenEl.innerHTML = `<div class="px-2 py-1 text-rose-400">Could not load folder: ${escapeHTML(err.message)}</div>`;
+            }
+        }
+
+        async function previewWorkspaceFile(encodedPath) {
+            const path = decodeURIComponent(encodedPath);
+            const nameEl = document.getElementById("workspace-preview-name");
+            const previewEl = document.getElementById("workspace-file-preview");
+            const legacyLink = document.getElementById("workspace-legacy-link");
+            if (!previewEl || !nameEl) return;
+            workspaceTreeState.selectedFile = path;
+            nameEl.textContent = path;
+            previewEl.textContent = "Loading file preview…";
+            if (legacyLink) legacyLink.href = `/workspace-tree?file=${encodeURIComponent(path)}`;
+            const url = new URL(window.location.href);
+            url.searchParams.set("file", path);
+            window.history.replaceState({}, "", url.toString());
+            try {
+                const res = await fetch(`/api/workspace-tree/preview?file=${encodeURIComponent(path)}`);
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+                previewEl.textContent = data.content || "";
+                nameEl.textContent = `${data.root_label || "workspace"} / ${data.relative_path || path}`;
+            } catch (err) {
+                previewEl.textContent = `Preview unavailable: ${err.message}`;
+            }
+        }
+
+        function copyWorkspaceDeepLink() {
+            const path = workspaceTreeState.selectedFile;
+            const url = new URL(window.location.origin + "/dashboard");
+            if (path) url.searchParams.set("file", path);
+            navigator.clipboard?.writeText(url.toString());
+        }
+
+        async function renderDashboardWorkspacesSummary() {
+            const wsSummary = document.getElementById("dashboard-workspaces");
+            if (!wsSummary) return;
+            try {
+                const res = await fetch("/api/workspaces");
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const workspaces = (data.workspaces || []).slice(0, 6);
+                wsSummary.innerHTML = workspaces.map(ws => {
+                    const tree = ws.tree || {};
+                    const childCount = Array.isArray(tree.children) ? tree.children.length : 0;
+                    const status = ws.exists ? "connected" : "missing";
+                    return `<tr class="border-b border-slate-800/40 hover:bg-slate-900/10 transition">
+                        <td class="py-2.5 px-3 font-semibold text-slate-200">${escapeHTML(ws.name)}</td>
+                        <td class="py-2.5 px-3 text-slate-400 font-mono">${escapeHTML(ws.path)}</td>
+                        <td class="py-2.5 px-3 text-[10px] uppercase font-bold ${ws.exists ? 'text-emerald-400' : 'text-rose-400'}">${status}</td>
+                        <td class="py-2.5 px-3 text-slate-500">${childCount} entries</td>
+                    </tr>`;
+                }).join("") || `<tr><td colspan="4" class="py-4 text-center text-slate-500 italic">No workspace roots returned.</td></tr>`;
+            } catch (err) {
+                wsSummary.innerHTML = `<tr><td colspan="4" class="py-4 text-center text-rose-400">Workspace summary unavailable: ${escapeHTML(err.message)}</td></tr>`;
+            }
+        }
+
+        async function renderWorkspacesView() {
+            const rootsEl = document.getElementById("workspace-tree-roots");
+            const statusEl = document.getElementById("workspace-tree-status");
+            if (!rootsEl) return;
+            rootsEl.innerHTML = `<div class="text-slate-500 italic">Loading workspace tree…</div>`;
+            try {
+                const res = await fetch("/api/workspaces");
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                workspaceTreeState.workspaces = data.workspaces || [];
+                if (statusEl) statusEl.textContent = `${data.workspace_count || workspaceTreeState.workspaces.length} roots · click folders to expand · click files to preview`;
+                rootsEl.innerHTML = workspaceTreeState.workspaces.map(ws => {
+                    const rootNode = ws.tree || { name: ws.name, type: "directory", path: ws.path, children: [] };
+                    rootNode.name = ws.name || rootNode.name;
+                    rootNode.path = ws.path || rootNode.path;
+                    return `<div class="rounded-lg border border-slate-800/70 bg-slate-950/50 p-2">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500 mb-1">${escapeHTML(ws.path || "")}</div>
+                        ${renderWorkspaceNode(rootNode, 0)}
+                    </div>`;
+                }).join("") || `<div class="text-slate-500 italic">No workspace roots configured.</div>`;
+                const requested = new URLSearchParams(window.location.search).get("file");
+                if (requested) await previewWorkspaceFile(encodeURIComponent(requested));
+            } catch (err) {
+                rootsEl.innerHTML = `<div class="text-rose-400">Workspace Tree unavailable: ${escapeHTML(err.message)}</div>`;
+                if (statusEl) statusEl.textContent = "Workspace Tree failed to load.";
             }
         }
 
@@ -2740,7 +2849,13 @@
 
         document.addEventListener("DOMContentLoaded", () => {
             applyTheme();
-            fetchData();
+            const initialParams = new URLSearchParams(window.location.search);
+            const initialTab = (window.location.hash === "#workspaces" || initialParams.has("file")) ? "workspaces" : "dashboard";
+            if (initialTab === "workspaces") {
+                switchTab("workspaces");
+            } else {
+                fetchData();
+            }
             loadPluginGovernance();
             loadPWPStatus();
             connectWS();
