@@ -209,6 +209,8 @@ The CLI validator is intentionally standalone for local review, and the dispatch
 
 ## Dispatcher preflight enforcement
 
+Marker: `HANDOFF_CONTRACT_DISPATCH_PREFLIGHT_OK`
+
 Assigned-agent dispatch now fails closed when an incoming issue/task carries an embedded `handoff_packet`, `handoff_contract`, or `handoff` payload that violates this contract.
 
 Required runtime behavior:
