@@ -2106,7 +2106,7 @@
         // Quotas poll hook
         async function pollQuota() {
             try {
-                const r = await fetch("/api/quota/poll", { method: "POST" });
+                const r = await fetch(`${API_PREFIX}/quota/poll`, { method: "POST" });
                 if (r.ok) {
                     showToast("Quota sync initiated");
                     setTimeout(fetchData, 2000);
@@ -2599,7 +2599,7 @@
             const grid = document.getElementById("skills-grid");
             grid.innerHTML = `<div class="col-span-full text-slate-500 italic">Loading live skill registry…</div>`;
             try {
-                const res = await fetch("/api/skills");
+                const res = await fetch(`${API_PREFIX}/skills`);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
                 const skills = data.skills || [];
@@ -2635,7 +2635,7 @@
         async function toggleSkillInstall(encodedSkillId, action) {
             const skillId = decodeURIComponent(encodedSkillId);
             try {
-                const res = await fetch(`/api/skills/${encodeURIComponent(skillId)}/${action}`, { method: 'POST' });
+                const res = await fetch(`${API_PREFIX}/skills/${encodeURIComponent(skillId)}/${action}`, { method: 'POST' });
                 const data = await res.json().catch(() => ({}));
                 if (!res.ok || data.ok === false) throw new Error(data.error || `HTTP ${res.status}`);
                 showToast(`${action === 'install' ? 'Installed' : 'Uninstalled'} ${skillId}`);
@@ -2680,7 +2680,7 @@
 
         async function fetchQuotaSummary() {
             try {
-                const quotaRes = await fetch("/api/quota");
+                const quotaRes = await fetch(`${API_PREFIX}/quota`);
                 if (quotaRes.ok) {
                     const data = await quotaRes.json();
                     const activeModels = (data.current || []).length;
@@ -2776,7 +2776,7 @@
 
         async function fetchQuotaData() {
             try {
-                const quotaRes = await fetch("/api/quota");
+                const quotaRes = await fetch(`${API_PREFIX}/quota`);
                 if (quotaRes.ok) {
                     const data = await quotaRes.json();
                     

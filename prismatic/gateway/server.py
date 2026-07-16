@@ -1387,6 +1387,7 @@ async def dashboard_foundation_control(action: str) -> dict[str, Any]:
 
 
 @app.get("/api/skills")
+@app.get("/api/gateway/skills")
 async def dashboard_skills() -> dict[str, Any]:
     try:
         from prismatic.skills import list_skills
@@ -1399,6 +1400,7 @@ async def dashboard_skills() -> dict[str, Any]:
 
 
 @app.get("/api/skills/{name}", response_model=None)
+@app.get("/api/gateway/skills/{name}", response_model=None)
 async def dashboard_skill_detail(name: str) -> Any:
     try:
         from prismatic.skills import read_skill
@@ -1409,16 +1411,19 @@ async def dashboard_skill_detail(name: str) -> Any:
 
 
 @app.post("/api/skills/{name}/install", response_model=None)
+@app.post("/api/gateway/skills/{name}/install", response_model=None)
 async def dashboard_skill_install(name: str) -> dict[str, Any]:
     return {"ok": True, "status": "accepted_noop", "skill": name, "message": "Install intent recorded; no browser shell execution."}
 
 
 @app.post("/api/skills/{name}/uninstall", response_model=None)
+@app.post("/api/gateway/skills/{name}/uninstall", response_model=None)
 async def dashboard_skill_uninstall(name: str) -> dict[str, Any]:
     return {"ok": True, "status": "accepted_noop", "skill": name, "message": "Uninstall intent recorded; no browser shell execution."}
 
 
 @app.get("/api/quota")
+@app.get("/api/gateway/quota")
 @app.get("/api/quotas")
 @app.get("/api/gcp/quotas")
 @app.get("/api/vertex/quota")
@@ -1452,6 +1457,7 @@ async def dashboard_quota_summary() -> dict[str, Any]:
 
 
 @app.post("/api/quota/poll")
+@app.post("/api/gateway/quota/poll")
 async def dashboard_quota_poll() -> dict[str, Any]:
     payload = await dashboard_quota_summary()
     return {**payload, "poll": {"attempted": False, "reason": "browser-safe route returns persisted quota state only"}}
