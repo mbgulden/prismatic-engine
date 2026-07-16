@@ -1942,13 +1942,14 @@ def _workspace_tree_html(file: str) -> str:
 
 
 def _operator_entry_html(route: str) -> str:
-    route_label = "Dashboard" if route == "dashboard" else "Product / Operator Entry"
+    route_label = "Operator Dashboard"
+    route_description = "Dashboard" if route == "dashboard" else "Product / Operator Entry"
     return f"""<!doctype html>
 <html lang=\"en\">
 <head>
   <meta charset=\"utf-8\">
   <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
-  <title>Prismatic Engine {route_label}</title>
+  <title>Prismatic Engine Operator Dashboard</title>
   <style>
     :root {{ color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif; background:#07111f; color:#e5edf7; }}
     body {{ margin:0; padding:32px; background:linear-gradient(135deg,#07111f,#111827 55%,#172554); }}
@@ -1966,9 +1967,9 @@ def _operator_entry_html(route: str) -> str:
 <body>
 <main data-route=\"operator-entry\">
   <section class=\"hero\">
-    <h1>Prismatic Engine {route_label}</h1>
+    <h1>Prismatic Engine Operator Dashboard</h1>
     <p class=\"status\">Operator surface restored. This fallback page renders without CDN JavaScript.</p>
-    <p>The gateway is alive and serving a durable product/operator entrypoint from the production runtime.</p>
+    <p>The gateway is alive and serving the durable operator entry surface from the production runtime. Route role: {route_description}.</p>
   </section>
   <section class=\"grid\" aria-label=\"Operator links\">
     <article class=\"card\">
@@ -1982,7 +1983,7 @@ def _operator_entry_html(route: str) -> str:
       <p><a href=\"/health\">Open /health</a></p>
     </article>
     <article class=\"card\">
-      <h2>Plugin Catalog</h2>
+      <h2>Plugins / Governance</h2>
       <p>Inspect current plugin catalog and governance readiness APIs.</p>
       <p><a href=\"/api/plugins/catalog\">/api/plugins/catalog</a><br><a href=\"/api/plugins/governance\">/api/plugins/governance</a></p>
     </article>
