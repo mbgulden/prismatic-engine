@@ -203,6 +203,37 @@
                 </div>
             </section>
 
+            <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-emerald-500/80 shadow-lg shadow-emerald-950/10" data-proof-marker="agy-completed-work-gate-card">
+                <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <h2 class="text-sm font-bold text-slate-200 uppercase tracking-[0.18em]">AGY Completed Work Gate</h2>
+                            <span id="completed-work-gate-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-slate-700 bg-slate-800 text-slate-300">Checking</span>
+                        </div>
+                        <p class="text-xs text-slate-500">Contract gate for completed AGY handoff packets before Fred merge review. No auto-merge.</p>
+                    </div>
+                    <div class="text-[11px] text-slate-400 font-mono" id="completed-work-gate-marker">AGY_COMPLETED_WORK_INTEGRATION_GATE_OK</div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mt-4 text-xs">
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Classification</div>
+                        <div id="completed-work-classification" class="mt-1 font-semibold text-slate-100">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Eligible</div>
+                        <div id="completed-work-eligible" class="mt-1 font-semibold text-slate-100">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Linear state</div>
+                        <div id="completed-work-linear" class="mt-1 text-[11px] text-slate-300">Awaiting gate proof</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Reason</div>
+                        <div id="completed-work-reason" class="mt-1 text-[11px] text-slate-400">No packet evaluated yet</div>
+                    </div>
+                </div>
+            </section>
+
             <!-- Morning Briefing Card (Overnight Report) -->
             <section id="morning-briefing-card" class="glass-panel p-5 rounded-2xl border-l-2 border-l-indigo-500/80 shadow-lg shadow-indigo-950/10 space-y-4">
                 <div class="flex items-center justify-between border-b border-slate-800/80 pb-3">
@@ -2192,6 +2223,7 @@
             if (activeTab === 'dashboard') {
                 renderDashboardSummary();
                 await fetchQuotaSummary();
+                await fetchCompletedWorkGate();
                 await fetchMorningBriefing();
             } else if (activeTab === 'merge') {
                 await fetchMergeData();
@@ -2715,6 +2747,39 @@
                 }
             } catch (err) {
                 console.error("Error loading quota summary:", err);
+            }
+        }
+
+        async function fetchCompletedWorkGate() {
+            const badge = document.getElementById("completed-work-gate-badge");
+            const classification = document.getElementById("completed-work-classification");
+            const eligible = document.getElementById("completed-work-eligible");
+            const linear = document.getElementById("completed-work-linear");
+            const reason = document.getElementById("completed-work-reason");
+            try {
+                const res = await fetch(`${API_PREFIX}/completed-work/gate/demo`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const gate = data.gate || {};
+                const isMergeCandidate = gate.classification === "merge_ready";
+                if (badge) {
+                    badge.textContent = isMergeCandidate ? "Review Ready" : "Needs Attention";
+                    badge.className = `px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${isMergeCandidate ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300' : 'border-amber-500/20 bg-amber-500/10 text-amber-300'}`;
+                }
+                if (classification) classification.textContent = gate.classification || "unknown";
+                if (eligible) eligible.textContent = gate.eligible_for_merge ? "candidate only" : "no";
+                if (linear) linear.textContent = gate.linear_status || "No Linear status";
+                if (reason) reason.textContent = (gate.reasons || ["No reason supplied"])[0];
+            } catch (err) {
+                console.error("Error loading completed-work gate:", err);
+                if (badge) {
+                    badge.textContent = "Unavailable";
+                    badge.className = "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-rose-500/20 bg-rose-500/10 text-rose-300";
+                }
+                if (classification) classification.textContent = "unavailable";
+                if (eligible) eligible.textContent = "no";
+                if (linear) linear.textContent = "Gateway unavailable";
+                if (reason) reason.textContent = String(err?.message || err || "unknown error");
             }
         }
 
