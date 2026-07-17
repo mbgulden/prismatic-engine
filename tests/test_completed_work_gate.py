@@ -101,6 +101,8 @@ def test_demo_schema_and_state_are_machine_readable():
     assert schema["marker"] == AGY_COMPLETED_WORK_MARKER
     assert "merge_ready" in schema["classifications"]
     assert schema["non_claims"] == ["no_auto_merge", "no_bulk_agy_dispatch", "contract_gate_only"]
+    assert "non_claims" in schema["minimum_packet"]["proof"]
+    assert "not_claiming" not in schema["minimum_packet"]["proof"]
     assert demo["status"] == "ok"
     assert demo["mode"] == "fixture"
     assert demo["gate"]["classification"] == "merge_ready"
