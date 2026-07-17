@@ -190,5 +190,116 @@ def test_queue_status_api_fields_expose_assigned_agent_state(tmp_path: Path, mon
     assert latest_event["dispatch_status"] == "dispatched"
 
 
+def test_result_writeback_completed_persists_dry_run_preview(tmp_path: Path, monkeypatch):
+    q, dispatcher = setup_runtime(tmp_path, monkeypatch)
+    enqueue(q, payload("GRO-TEST-WB-DONE", "kai"))
+    dispatch = dispatch_identifier(dispatcher, "GRO-TEST-WB-DONE")
+
+    result = dispatcher.record_assigned_agent_result_writeback(
+        run_id=dispatch["run_id"],
+        result_status="completed",
+        result_summary="Fixture agent completed acceptance checks.",
+    )
+    row = latest(q)
+
+    assert result["marker"] == "ASSIGNED_AGENT_RESULT_WRITEBACK_OK"
+    assert result["status"] == "dry_run"
+    assert result["linear_mutation"] is False
+    assert row["result_status"] == "completed"
+    assert row["dispatch_status"] == "completed"
+    assert row["writeback_status"] == "dry_run"
+    assert row["writeback_mode"] == "linear_comment_preview"
+    assert "Fixture agent completed" in row["writeback_preview"]
+    assert row["retry_status"] == "not_required"
+    assert row["recovery_status"] == "completed"
+
+
+def test_result_writeback_blocker_records_operator_visible_blocker(tmp_path: Path, monkeypatch):
+    q, dispatcher = setup_runtime(tmp_path, monkeypatch)
+    enqueue(q, payload("GRO-TEST-WB-BLOCKED", "fred"))
+    dispatch = dispatch_identifier(dispatcher, "GRO-TEST-WB-BLOCKED")
+
+    result = dispatcher.record_assigned_agent_result_writeback(
+        run_id=dispatch["run_id"],
+        result_status="blocked",
+        blocker_summary="Missing deploy credential.",
+    )
+    row = latest(q)
+
+    assert result["status"] == "dry_run"
+    assert row["result_status"] == "blocked"
+    assert row["dispatch_status"] == "blocked"
+    assert row["blocker_summary"] == "Missing deploy credential."
+    assert row["retry_status"] == "blocked_until_operator_review"
+    assert row["recovery_status"] == "blocked"
+    assert "Missing deploy credential" in row["writeback_preview"]
+
+
+def test_result_writeback_failed_is_retry_eligible_and_retry_updates_recovery_state(tmp_path: Path, monkeypatch):
+    q, dispatcher = setup_runtime(tmp_path, monkeypatch)
+    enqueue(q, payload("GRO-TEST-WB-FAILED", "agy"))
+    dispatch = dispatch_identifier(dispatcher, "GRO-TEST-WB-FAILED")
+
+    dispatcher.record_assigned_agent_result_writeback(
+        run_id=dispatch["run_id"],
+        result_status="failed",
+        result_summary="Runner exited non-zero.",
+    )
+    failed = latest(q)
+    assert failed["result_status"] == "failed"
+    assert failed["retry_status"] == "retry_eligible"
+    assert failed["recovery_status"] == "failed_retryable"
+
+    retry = q.retry_task(failed["event_id"])
+    assert retry["ok"] is True
+    assert retry["item"]["dispatch_status"] == "pending"
+    assert retry["item"]["retry_status"] == "retry_requested"
+    assert retry["item"]["retry_count"] == 1
+    assert retry["item"]["recovery_status"] == "queued_for_retry"
+
+
+def test_result_writeback_live_request_without_authorization_is_blocked(tmp_path: Path, monkeypatch):
+    q, dispatcher = setup_runtime(tmp_path, monkeypatch)
+    monkeypatch.delenv("PRISMATIC_LINEAR_WRITEBACK_AUTHORIZED", raising=False)
+    enqueue(q, payload("GRO-TEST-WB-LIVE-BLOCK", "kai"))
+    dispatch = dispatch_identifier(dispatcher, "GRO-TEST-WB-LIVE-BLOCK")
+
+    result = dispatcher.record_assigned_agent_result_writeback(
+        run_id=dispatch["run_id"],
+        result_status="completed",
+        result_summary="Should not mutate Linear.",
+        dry_run=False,
+    )
+    row = latest(q)
+
+    assert result["ok"] is False
+    assert result["status"] == "blocked_live_unauthorized"
+    assert result["linear_mutation"] is False
+    assert row["writeback_status"] == "blocked_live_unauthorized"
+    assert row["retry_status"] == "operator_authorization_required"
+    assert row["recovery_status"] == "writeback_blocked"
+
+
+def test_queue_status_exposes_result_writeback_fields(tmp_path: Path, monkeypatch):
+    q, dispatcher = setup_runtime(tmp_path, monkeypatch)
+    enqueue(q, payload("GRO-TEST-WB-API", "fred"))
+    dispatch = dispatch_identifier(dispatcher, "GRO-TEST-WB-API")
+    dispatcher.record_assigned_agent_result_writeback(
+        run_id=dispatch["run_id"],
+        result_status="blocked",
+        blocker_summary="Needs operator review.",
+    )
+
+    status = q.queue_status_payload()
+    latest_event = status["latest_event"]
+
+    assert status["result_writeback_marker"] == "ASSIGNED_AGENT_RESULT_WRITEBACK_OK"
+    assert latest_event["result_status"] == "blocked"
+    assert latest_event["writeback_status"] == "dry_run"
+    assert latest_event["writeback_mode"] == "linear_comment_preview"
+    assert latest_event["retry_status"] == "blocked_until_operator_review"
+    assert latest_event["recovery_status"] == "blocked"
+
+
 def test_old_poller_gate_remains_absent_and_disabled():
     assert not Path("/home/ubuntu/.prismatic/allow-poll-dispatcher").exists()
