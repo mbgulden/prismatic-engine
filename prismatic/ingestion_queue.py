@@ -20,6 +20,7 @@ from typing import Any
 LINEAR_WEBHOOK_QUEUE_ACTIVE_MARKER = "LINEAR_WEBHOOK_QUEUE_ACTIVE_OK"
 ASSIGNED_AGENT_EVENT_DISPATCH_MARKER = "ASSIGNED_AGENT_EVENT_DISPATCH_OK"
 ASSIGNED_AGENT_RESULT_WRITEBACK_MARKER = "ASSIGNED_AGENT_RESULT_WRITEBACK_OK"
+ASSIGNED_AGENT_DISPATCH_RECOVERY_MARKER = "ASSIGNED_AGENT_DISPATCH_RECOVERY_OK"
 QUEUE_TABLE = "linear_webhook_queue"
 COUNTERS_TABLE = "webhook_counters"
 DRAIN_STATUS_TABLE = "webhook_drain_status"
@@ -527,6 +528,7 @@ def queue_status_payload(extra_counters: dict[str, int] | None = None) -> dict[s
         "marker": LINEAR_WEBHOOK_QUEUE_ACTIVE_MARKER,
         "assigned_agent_marker": ASSIGNED_AGENT_EVENT_DISPATCH_MARKER,
         "result_writeback_marker": ASSIGNED_AGENT_RESULT_WRITEBACK_MARKER,
+        "dispatch_recovery_marker": ASSIGNED_AGENT_DISPATCH_RECOVERY_MARKER,
         "source": "linear_webhook_queue.db",
         "db_path": str(queue_db_path()),
         "queue_depth": stats["queue_depths"].get("pending", 0),

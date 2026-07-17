@@ -1565,6 +1565,7 @@ AGENT_LAUNCHERS: dict[str, Callable[..., Any]] = {
 
 ASSIGNED_AGENT_EVENT_DISPATCH_MARKER = "ASSIGNED_AGENT_EVENT_DISPATCH_OK"
 ASSIGNED_AGENT_RESULT_WRITEBACK_MARKER = "ASSIGNED_AGENT_RESULT_WRITEBACK_OK"
+ASSIGNED_AGENT_DISPATCH_RECOVERY_MARKER = "ASSIGNED_AGENT_DISPATCH_RECOVERY_OK"
 ASSIGNED_AGENT_KNOWN_AGENTS = {"kai", "fred", "agy"}
 ASSIGNED_AGENT_TERMINAL_STATUSES = {
     "dispatched",
@@ -1885,6 +1886,61 @@ def record_assigned_agent_result_writeback(
         writeback_preview=preview,
     )
     return {"ok": True, "marker": ASSIGNED_AGENT_RESULT_WRITEBACK_MARKER, "status": "dry_run", "item": updated, "writeback_preview": preview, "linear_mutation": False}
+
+
+def run_assigned_agent_dispatch_recovery(
+    *,
+    identifier: str,
+    result_status: str = "completed",
+    result_summary: str = "",
+    blocker_summary: str = "",
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """Prove resolver → preflight → wake → result writeback for one controlled task.
+
+    This is intentionally narrow: it operates on exactly one pending durable queue row
+    for *identifier*, uses the exact-agent dispatch primitive, and records only the
+    safe dry-run Linear writeback preview unless a future explicit live path is
+    separately authorized and implemented.
+    """
+    dispatch = dispatch_issue_by_identifier(identifier, dry_run=dry_run)
+    if not dispatch or not dispatch.get("ok"):
+        return {
+            "ok": False,
+            "marker": ASSIGNED_AGENT_DISPATCH_RECOVERY_MARKER,
+            "status": dispatch.get("status") if isinstance(dispatch, dict) else "dispatch_failed",
+            "dispatch": dispatch,
+            "writeback": None,
+            "linear_mutation": False,
+        }
+    writeback = record_assigned_agent_result_writeback(
+        run_id=str(dispatch.get("run_id") or ""),
+        identifier=identifier,
+        result_status=result_status,
+        result_summary=result_summary,
+        blocker_summary=blocker_summary,
+        dry_run=True,
+    )
+    item = writeback.get("item") if isinstance(writeback, dict) else {}
+    phases = {
+        "resolver": bool(item and item.get("resolver_status") == "resolved"),
+        "preflight": bool(item and item.get("preflight_status") == "passed"),
+        "wake": bool(dispatch.get("wakes") and len(dispatch.get("wakes") or []) == 1),
+        "result_writeback": bool(writeback.get("ok") and writeback.get("linear_mutation") is False),
+    }
+    ok = all(phases.values())
+    return {
+        "ok": ok,
+        "marker": ASSIGNED_AGENT_DISPATCH_RECOVERY_MARKER,
+        "status": "ok" if ok else "incomplete",
+        "identifier": identifier,
+        "target_agent": dispatch.get("target_agent"),
+        "run_id": dispatch.get("run_id"),
+        "phases": phases,
+        "dispatch": dispatch,
+        "writeback": writeback,
+        "linear_mutation": False,
+    }
 
 
 def dispatch_issue_by_identifier(identifier: str, **kwargs: Any) -> dict[str, Any] | None:
