@@ -57,6 +57,10 @@ from prismatic.agy_merge_backlog import (
 from prismatic.budget_caps import read_budget_caps, write_budget_caps
 from prismatic.completed_work_gate import completed_work_gate_schema, demo_completed_work_gate_state
 from prismatic.lock import _read_locks as read_swarm_locks
+from prismatic.linear_rate_limit import (
+    LINEAR_RATE_LIMIT_CIRCUIT_BREAKER_MARKER,
+    get_linear_rate_limit_snapshot,
+)
 from prismatic.plugin_architecture import MEDIA_CAPABILITY_CLASSES, plugin_catalog
 from prismatic.plugin_artifacts import store_from_env as plugin_artifact_store
 from prismatic.plugin_health import get_plugin_health
@@ -1504,7 +1508,19 @@ async def dashboard_webhook_queue_purge() -> dict[str, Any]:
 async def dashboard_dispatcher_status() -> dict[str, Any]:
     from prismatic.ingestion_status import dispatcher_status_payload
 
-    return dispatcher_status_payload({}, _run_records_for_dashboard(), server_started_at=_server_started_at)
+    payload = dispatcher_status_payload({}, _run_records_for_dashboard(), server_started_at=_server_started_at)
+    payload["linear_rate_limit"] = get_linear_rate_limit_snapshot()
+    return payload
+
+
+@app.get("/api/linear/rate-limit")
+@app.get("/api/gateway/linear/rate-limit")
+async def dashboard_linear_rate_limit() -> dict[str, Any]:
+    return {
+        "ok": True,
+        "marker": LINEAR_RATE_LIMIT_CIRCUIT_BREAKER_MARKER,
+        "linear_rate_limit": get_linear_rate_limit_snapshot(),
+    }
 
 
 @app.post("/api/dispatcher/{action}")
