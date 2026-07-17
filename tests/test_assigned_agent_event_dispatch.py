@@ -301,5 +301,38 @@ def test_queue_status_exposes_result_writeback_fields(tmp_path: Path, monkeypatc
     assert latest_event["recovery_status"] == "blocked"
 
 
+def test_dispatch_recovery_proves_resolver_preflight_wake_and_writeback_for_one_controlled_task(tmp_path: Path, monkeypatch):
+    q, dispatcher = setup_runtime(tmp_path, monkeypatch)
+    enqueue(q, payload("GRO-TEST-RECOVERY-OK", "kai"))
+
+    proof = dispatcher.run_assigned_agent_dispatch_recovery(
+        identifier="GRO-TEST-RECOVERY-OK",
+        result_status="completed",
+        result_summary="Controlled recovery task completed.",
+    )
+    row = latest(q)
+    status = q.queue_status_payload()
+
+    assert proof["marker"] == "ASSIGNED_AGENT_DISPATCH_RECOVERY_OK"
+    assert proof["ok"] is True
+    assert proof["phases"] == {
+        "resolver": True,
+        "preflight": True,
+        "wake": True,
+        "result_writeback": True,
+    }
+    assert proof["dispatch"]["marker"] == "ASSIGNED_AGENT_EVENT_DISPATCH_OK"
+    assert proof["dispatch"]["wakes"] == ["kai"]
+    assert proof["writeback"]["marker"] == "ASSIGNED_AGENT_RESULT_WRITEBACK_OK"
+    assert proof["writeback"]["linear_mutation"] is False
+    assert row["resolver_status"] == "resolved"
+    assert row["preflight_status"] == "passed"
+    assert row["claim_owner"] == "kai"
+    assert row["result_status"] == "completed"
+    assert row["writeback_status"] == "dry_run"
+    assert row["retry_status"] == "not_required"
+    assert status["dispatch_recovery_marker"] == "ASSIGNED_AGENT_DISPATCH_RECOVERY_OK"
+
+
 def test_old_poller_gate_remains_absent_and_disabled():
     assert not Path("/home/ubuntu/.prismatic/allow-poll-dispatcher").exists()
