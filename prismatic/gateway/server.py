@@ -54,6 +54,24 @@ from prismatic.agy_merge_backlog import (
     list_merge_backlog,
     verify_merge_backlog_item,
 )
+from prismatic.agy_overnight_guard import (
+    AGY_OVERNIGHT_READINESS_GUARD_MARKER,
+    AgyOvernightGuardStore,
+    evaluate_overnight_readiness,
+    list_overnight_run_attempts,
+    record_guard_decision,
+    set_operator_pause,
+)
+from prismatic.agy_limited_overnight_runner import (
+    AGY_LIMITED_OVERNIGHT_DRY_RUN_BLOCKED_MARKER,
+    AGY_LIMITED_OVERNIGHT_DRY_RUN_MARKER,
+    AGY_LIMITED_OVERNIGHT_RUNNER_MARKER,
+    LimitedOvernightRunStore,
+    RunnerRequest,
+    run_limited_overnight_dry_run,
+    status_payload as limited_overnight_status_payload,
+    stop_latest_run as stop_limited_overnight_run,
+)
 from prismatic.budget_caps import read_budget_caps, write_budget_caps
 from prismatic.completed_work_gate import completed_work_gate_schema, demo_completed_work_gate_state
 from prismatic.lock import _read_locks as read_swarm_locks
@@ -1115,6 +1133,125 @@ async def verify_agy_merge_backlog(completed_work_id: str) -> dict[str, Any]:
         return verify_merge_backlog_item(completed_work_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="completed work row not found") from exc
+
+
+@app.get("/api/agy/overnight-guard")
+@app.get("/api/gateway/agy/overnight-guard")
+async def get_agy_overnight_guard() -> dict[str, Any]:
+    """Return current limited overnight readiness guard status. No task launch."""
+
+    decision = evaluate_overnight_readiness()
+    persisted = record_guard_decision(decision)
+    return {
+        "status": "ok",
+        "marker": AGY_OVERNIGHT_READINESS_GUARD_MARKER,
+        "guard": decision.as_dict(),
+        "persisted_decision": persisted.as_dict(),
+        "recent_runs": [run.as_dict() for run in list_overnight_run_attempts(limit=10)],
+        "operator_pause": AgyOvernightGuardStore().operator_pause(),
+        "tasks_launched": 0,
+    }
+
+
+@app.post("/api/agy/overnight-guard/evaluate")
+@app.post("/api/gateway/agy/overnight-guard/evaluate")
+async def evaluate_agy_overnight_guard(body: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Evaluate/persist a dry-run overnight readiness decision. No task launch."""
+
+    payload = body or {}
+    agents = payload.get("allowed_agents") or payload.get("agents") or ["agy"]
+    if not isinstance(agents, list):
+        raise HTTPException(status_code=422, detail="allowed_agents must be a list")
+    decision = evaluate_overnight_readiness(
+        requested_by=str(payload.get("requested_by") or "fred"),
+        allowed_agents=[str(agent) for agent in agents],
+        max_tasks=int(payload.get("max_tasks", payload.get("max_tasks_per_run", 1))),
+        auto_merge=bool(payload.get("auto_merge", False)),
+        production_deploy=bool(payload.get("production_deploy", False)),
+        real_github_pr_create=bool(payload.get("real_github_pr_create", False)),
+        bulk_dispatch=bool(payload.get("bulk_dispatch", False)),
+        gateway_healthy=bool(payload.get("gateway_healthy", True)),
+        operator_summary_required=bool(payload.get("operator_summary_required", True)),
+        required_preflight_ok=bool(payload.get("required_preflight_ok", True)),
+    )
+    persisted = record_guard_decision(decision)
+    return {
+        "status": "ok",
+        "marker": AGY_OVERNIGHT_READINESS_GUARD_MARKER,
+        "guard": decision.as_dict(),
+        "persisted_decision": persisted.as_dict(),
+        "dry_run": True,
+        "tasks_launched": 0,
+        "non_claims": {
+            "overnight_autopilot_active": False,
+            "auto_merge_enabled": False,
+            "bulk_agy_dispatch": False,
+            "production_deploy": False,
+            "real_github_pr_created": False,
+        },
+    }
+
+
+@app.post("/api/agy/overnight-guard/pause")
+@app.post("/api/gateway/agy/overnight-guard/pause")
+async def pause_agy_overnight_guard() -> dict[str, Any]:
+    state = set_operator_pause(True)
+    return {"status": "paused", **state}
+
+
+@app.post("/api/agy/overnight-guard/resume")
+@app.post("/api/gateway/agy/overnight-guard/resume")
+async def resume_agy_overnight_guard() -> dict[str, Any]:
+    state = set_operator_pause(False)
+    return {"status": "resumed", **state}
+
+
+@app.get("/api/agy/overnight-guard/runs")
+@app.get("/api/gateway/agy/overnight-guard/runs")
+async def list_agy_overnight_guard_runs(limit: int = Query(default=20, ge=1, le=200)) -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "marker": AGY_OVERNIGHT_READINESS_GUARD_MARKER,
+        "count": len(list_overnight_run_attempts(limit=limit)),
+        "runs": [run.as_dict() for run in list_overnight_run_attempts(limit=limit)],
+        "tasks_launched": 0,
+    }
+
+
+@app.post("/api/agy/limited-overnight/dry-run")
+@app.post("/api/gateway/agy/limited-overnight/dry-run")
+async def run_agy_limited_overnight_dry_run(body: dict[str, Any] | None = None) -> JSONResponse:
+    request = RunnerRequest.from_mapping(body or {})
+    result = run_limited_overnight_dry_run(request)
+    status_code = 200 if result.get("ok") else 409
+    return JSONResponse(result, status_code=status_code)
+
+
+@app.get("/api/agy/limited-overnight/runs")
+@app.get("/api/gateway/agy/limited-overnight/runs")
+async def list_agy_limited_overnight_runs(limit: int = Query(default=20, ge=1, le=200)) -> dict[str, Any]:
+    return limited_overnight_status_payload(limit=limit)
+
+
+@app.get("/api/agy/limited-overnight/runs/{run_id}")
+@app.get("/api/gateway/agy/limited-overnight/runs/{run_id}")
+async def get_agy_limited_overnight_run(run_id: str) -> dict[str, Any]:
+    try:
+        run = LimitedOvernightRunStore().get(run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="limited overnight run not found") from exc
+    return {
+        "status": "ok",
+        "marker": run.get("marker") or AGY_LIMITED_OVERNIGHT_RUNNER_MARKER,
+        "run": run,
+        "non_claims": run.get("non_claims", {}),
+    }
+
+
+@app.post("/api/agy/limited-overnight/stop")
+@app.post("/api/gateway/agy/limited-overnight/stop")
+async def stop_agy_limited_overnight() -> dict[str, Any]:
+    return stop_limited_overnight_run()
 
 
 @app.get("/locks")
