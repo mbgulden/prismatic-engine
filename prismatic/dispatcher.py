@@ -1564,6 +1564,7 @@ AGENT_LAUNCHERS: dict[str, Callable[..., Any]] = {
 }
 
 ASSIGNED_AGENT_EVENT_DISPATCH_MARKER = "ASSIGNED_AGENT_EVENT_DISPATCH_OK"
+ASSIGNED_AGENT_RESULT_WRITEBACK_MARKER = "ASSIGNED_AGENT_RESULT_WRITEBACK_OK"
 ASSIGNED_AGENT_KNOWN_AGENTS = {"kai", "fred", "agy"}
 ASSIGNED_AGENT_TERMINAL_STATUSES = {
     "dispatched",
@@ -1784,6 +1785,106 @@ def dispatch_assigned_agent_event(
         last_error="launcher returned no process/result",
     )
     return {"ok": False, "marker": ASSIGNED_AGENT_EVENT_DISPATCH_MARKER, "status": "failed", "target_agent": target, "wakes": [], "reason": "launcher returned no process/result"}
+
+
+def _assigned_result_preview(
+    *,
+    identifier: str,
+    target_agent: str,
+    result_status: str,
+    result_summary: str,
+    blocker_summary: str,
+    run_id: str,
+) -> str:
+    title = "completed" if result_status == "completed" else ("blocked" if result_status == "blocked" else "failed")
+    detail = result_summary or blocker_summary or "No details provided."
+    return (
+        f"[{ASSIGNED_AGENT_RESULT_WRITEBACK_MARKER}] {target_agent or 'assigned agent'} {title} {identifier}.\n\n"
+        f"Run: {run_id or 'unknown'}\n"
+        f"Status: {result_status}\n"
+        f"Summary: {detail}\n"
+        "\nDry-run writeback proof: no live Linear mutation was made."
+    )
+
+
+def record_assigned_agent_result_writeback(
+    *,
+    event_id: str = "",
+    run_id: str = "",
+    identifier: str = "",
+    result_status: str,
+    result_summary: str = "",
+    blocker_summary: str = "",
+    dry_run: bool | None = None,
+) -> dict[str, Any]:
+    """Persist agent completion/blocker result and safe Linear writeback state.
+
+    Live Linear mutation is intentionally fail-closed unless
+    PRISMATIC_LINEAR_WRITEBACK_AUTHORIZED=1 and dry_run=False. The default path
+    records the exact comment/update preview as durable operator-visible state.
+    """
+    from .ingestion_queue import QUEUE_TABLE, _connect, normalize_row, record_result_writeback
+
+    if result_status not in {"completed", "blocked", "failed"}:
+        raise ValueError(f"unsupported result_status: {result_status}")
+    with _connect() as conn:
+        clauses: list[str] = []
+        params: list[str] = []
+        if event_id:
+            clauses.append("event_id = ?")
+            params.append(event_id)
+        if run_id:
+            clauses.append("run_id = ?")
+            params.append(run_id)
+        if identifier:
+            clauses.append("identifier = ?")
+            params.append(identifier)
+        if not clauses:
+            return {"ok": False, "marker": ASSIGNED_AGENT_RESULT_WRITEBACK_MARKER, "status": "not_found", "reason": "event_id, run_id, or identifier required", "linear_mutation": False}
+        row = conn.execute(
+            f"SELECT * FROM {QUEUE_TABLE} WHERE {' OR '.join(clauses)} ORDER BY COALESCE(updated_at, received_at, 0) DESC, id DESC LIMIT 1",
+            params,
+        ).fetchone()
+    if row is None:
+        return {"ok": False, "marker": ASSIGNED_AGENT_RESULT_WRITEBACK_MARKER, "status": "not_found", "reason": "queue row not found", "linear_mutation": False}
+    item = normalize_row(row)
+    resolved_event_id = str(item.get("event_id") or event_id)
+    preview = _assigned_result_preview(
+        identifier=str(item.get("identifier") or identifier),
+        target_agent=str(item.get("target_agent") or item.get("claim_owner") or item.get("agent_name") or "assigned-agent"),
+        result_status=result_status,
+        result_summary=result_summary,
+        blocker_summary=blocker_summary,
+        run_id=str(item.get("run_id") or run_id),
+    )
+    requested_live = dry_run is False
+    authorized = os.environ.get("PRISMATIC_LINEAR_WRITEBACK_AUTHORIZED") == "1"
+    if requested_live and not authorized:
+        updated = record_result_writeback(
+            resolved_event_id,
+            result_status=result_status,
+            result_summary=result_summary,
+            blocker_summary=blocker_summary,
+            writeback_status="blocked_live_unauthorized",
+            writeback_mode="linear_comment_preview",
+            writeback_preview=preview,
+            retry_status="operator_authorization_required",
+            recovery_status="writeback_blocked",
+            last_error="live Linear writeback requested without PRISMATIC_LINEAR_WRITEBACK_AUTHORIZED=1",
+        )
+        return {"ok": False, "marker": ASSIGNED_AGENT_RESULT_WRITEBACK_MARKER, "status": "blocked_live_unauthorized", "item": updated, "writeback_preview": preview, "linear_mutation": False}
+    # Authorized live mutation remains intentionally unimplemented in this slice;
+    # proving dry-run writeback is the safe acceptance target.
+    updated = record_result_writeback(
+        resolved_event_id,
+        result_status=result_status,
+        result_summary=result_summary,
+        blocker_summary=blocker_summary,
+        writeback_status="dry_run",
+        writeback_mode="linear_comment_preview",
+        writeback_preview=preview,
+    )
+    return {"ok": True, "marker": ASSIGNED_AGENT_RESULT_WRITEBACK_MARKER, "status": "dry_run", "item": updated, "writeback_preview": preview, "linear_mutation": False}
 
 
 def dispatch_issue_by_identifier(identifier: str, **kwargs: Any) -> dict[str, Any] | None:

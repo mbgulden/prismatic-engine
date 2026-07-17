@@ -19,12 +19,13 @@ from typing import Any
 
 LINEAR_WEBHOOK_QUEUE_ACTIVE_MARKER = "LINEAR_WEBHOOK_QUEUE_ACTIVE_OK"
 ASSIGNED_AGENT_EVENT_DISPATCH_MARKER = "ASSIGNED_AGENT_EVENT_DISPATCH_OK"
+ASSIGNED_AGENT_RESULT_WRITEBACK_MARKER = "ASSIGNED_AGENT_RESULT_WRITEBACK_OK"
 QUEUE_TABLE = "linear_webhook_queue"
 COUNTERS_TABLE = "webhook_counters"
 DRAIN_STATUS_TABLE = "webhook_drain_status"
-REPLAYABLE_STATUSES = {"failed", "stale", "skipped_no_agent_label", "skipped_non_issue", "no_op"}
-PURGE_STATUSES = {"completed", "failed", "stale", "skipped_no_agent_label", "skipped_non_issue", "no_op", "dispatched"}
-TERMINAL_STATUSES = {"completed", "dispatched", "no_op", "failed", "stale", "skipped_no_agent_label", "skipped_non_issue"}
+REPLAYABLE_STATUSES = {"failed", "blocked", "stale", "skipped_no_agent_label", "skipped_non_issue", "no_op"}
+PURGE_STATUSES = {"completed", "failed", "blocked", "stale", "skipped_no_agent_label", "skipped_non_issue", "no_op", "dispatched"}
+TERMINAL_STATUSES = {"completed", "dispatched", "no_op", "failed", "blocked", "stale", "skipped_no_agent_label", "skipped_non_issue"}
 
 
 def state_dir() -> Path:
@@ -77,6 +78,16 @@ def ensure_queue_db() -> Path:
                 preflight_status TEXT,
                 claim_owner TEXT,
                 run_id TEXT,
+                result_status TEXT,
+                result_summary TEXT,
+                blocker_summary TEXT,
+                writeback_status TEXT,
+                writeback_mode TEXT,
+                writeback_preview TEXT,
+                writeback_at REAL,
+                retry_status TEXT,
+                retry_count INTEGER DEFAULT 0,
+                recovery_status TEXT,
                 last_error TEXT,
                 updated_at REAL
             )
@@ -103,6 +114,16 @@ def ensure_queue_db() -> Path:
             "preflight_status": "TEXT",
             "claim_owner": "TEXT",
             "run_id": "TEXT",
+            "result_status": "TEXT",
+            "result_summary": "TEXT",
+            "blocker_summary": "TEXT",
+            "writeback_status": "TEXT",
+            "writeback_mode": "TEXT",
+            "writeback_preview": "TEXT",
+            "writeback_at": "REAL",
+            "retry_status": "TEXT",
+            "retry_count": "INTEGER DEFAULT 0",
+            "recovery_status": "TEXT",
             "last_error": "TEXT",
             "updated_at": "REAL",
         }
@@ -252,7 +273,7 @@ def normalize_status(status: Any) -> str:
         return "dispatched"
     if clean in {"running", "processing"}:
         return "processing"
-    if clean in {"pending", "queued", "stale", "skipped_no_agent_label", "skipped_non_issue", "no_op", "completed", "dispatched", "failed", "deferred_rate_limit", "needs_manual_review", "blocked_preflight", "preflight_failed", "claimed", "processing"}:
+    if clean in {"pending", "queued", "stale", "skipped_no_agent_label", "skipped_non_issue", "no_op", "completed", "dispatched", "failed", "blocked", "deferred_rate_limit", "needs_manual_review", "blocked_preflight", "preflight_failed", "claimed", "processing"}:
         return clean
     return clean or "pending"
 
@@ -281,6 +302,16 @@ def normalize_row(row: sqlite3.Row | dict[str, Any] | None) -> dict[str, Any]:
         "preflight_status": data.get("preflight_status") or "",
         "claim_owner": data.get("claim_owner") or "",
         "run_id": data.get("run_id") or "",
+        "result_status": data.get("result_status") or "",
+        "result_summary": data.get("result_summary") or "",
+        "blocker_summary": data.get("blocker_summary") or "",
+        "writeback_status": data.get("writeback_status") or "",
+        "writeback_mode": data.get("writeback_mode") or "",
+        "writeback_preview": data.get("writeback_preview") or "",
+        "writeback_at": data.get("writeback_at"),
+        "retry_status": data.get("retry_status") or "",
+        "retry_count": int(data.get("retry_count") or 0),
+        "recovery_status": data.get("recovery_status") or "",
         "last_error": data.get("last_error") or "",
         "updated_at": data.get("updated_at"),
         "raw_json": raw_json,
@@ -330,7 +361,7 @@ def queue_stats_payload(extra_counters: dict[str, int] | None = None) -> dict[st
         counters = {row[name_col]: int(row["value"] or 0) for row in conn.execute(f"SELECT {name_col}, value FROM {COUNTERS_TABLE}").fetchall()}
     depths = Counter(normalize_status(row["dispatch_status"]) for row in rows)
     failed = sum(1 for row in rows if normalize_status(row["dispatch_status"]) == "failed")
-    processed_statuses = {"completed", "failed", "dispatched", "no_op", "skipped_no_agent_label"}
+    processed_statuses = {"completed", "failed", "dispatched", "no_op", "skipped_no_agent_label", "blocked"}
     processed = sum(1 for row in rows if normalize_status(row["dispatch_status"]) in processed_statuses)
     latencies: list[float] = []
     for row in rows:
@@ -403,6 +434,16 @@ def update_assigned_dispatch_state(event_id: str, **fields: Any) -> dict[str, An
         "preflight_status",
         "claim_owner",
         "run_id",
+        "result_status",
+        "result_summary",
+        "blocker_summary",
+        "writeback_status",
+        "writeback_mode",
+        "writeback_preview",
+        "writeback_at",
+        "retry_status",
+        "retry_count",
+        "recovery_status",
         "last_error",
     }
     updates = {key: value for key, value in fields.items() if key in allowed}
@@ -423,6 +464,51 @@ def update_assigned_dispatch_state(event_id: str, **fields: Any) -> dict[str, An
     return normalize_row(row)
 
 
+def record_result_writeback(
+    event_id: str,
+    *,
+    result_status: str,
+    result_summary: str = "",
+    blocker_summary: str = "",
+    writeback_status: str = "dry_run",
+    writeback_mode: str = "linear_comment_preview",
+    writeback_preview: str = "",
+    retry_status: str = "",
+    recovery_status: str = "",
+    last_error: str = "",
+) -> dict[str, Any]:
+    """Persist assigned-agent result/blocker writeback state for one queue row."""
+    if result_status not in {"completed", "blocked", "failed"}:
+        raise ValueError(f"unsupported result_status: {result_status}")
+    if not writeback_preview:
+        headline = "Agent result" if result_status == "completed" else "Agent blocker"
+        details = result_summary or blocker_summary or result_status
+        writeback_preview = f"[{ASSIGNED_AGENT_RESULT_WRITEBACK_MARKER}] {headline}: {details}"
+    if result_status == "completed":
+        retry_status = retry_status or "not_required"
+        recovery_status = recovery_status or "completed"
+    elif result_status == "blocked":
+        retry_status = retry_status or "blocked_until_operator_review"
+        recovery_status = recovery_status or "blocked"
+    else:
+        retry_status = retry_status or "retry_eligible"
+        recovery_status = recovery_status or "failed_retryable"
+    return update_assigned_dispatch_state(
+        event_id,
+        dispatch_status=result_status,
+        result_status=result_status,
+        result_summary=result_summary,
+        blocker_summary=blocker_summary,
+        writeback_status=writeback_status,
+        writeback_mode=writeback_mode,
+        writeback_preview=writeback_preview,
+        writeback_at=time.time(),
+        retry_status=retry_status,
+        recovery_status=recovery_status,
+        last_error=last_error,
+    )
+
+
 def queue_status_payload(extra_counters: dict[str, int] | None = None) -> dict[str, Any]:
     stats = queue_stats_payload(extra_counters=extra_counters)
     queue = queue_payload(limit=1)
@@ -440,6 +526,7 @@ def queue_status_payload(extra_counters: dict[str, int] | None = None) -> dict[s
         "ok": True,
         "marker": LINEAR_WEBHOOK_QUEUE_ACTIVE_MARKER,
         "assigned_agent_marker": ASSIGNED_AGENT_EVENT_DISPATCH_MARKER,
+        "result_writeback_marker": ASSIGNED_AGENT_RESULT_WRITEBACK_MARKER,
         "source": "linear_webhook_queue.db",
         "db_path": str(queue_db_path()),
         "queue_depth": stats["queue_depths"].get("pending", 0),
@@ -454,7 +541,6 @@ def queue_status_payload(extra_counters: dict[str, int] | None = None) -> dict[s
         "stats": stats,
         "non_claims": {
             "linear_mutations_applied": False,
-            "result_writeback_complete": False,
         },
     }
 
@@ -469,8 +555,17 @@ def retry_task(task_id: str | int) -> dict[str, Any]:
         if row is None:
             return {"ok": False, "status": "not_found", "updated": 0, "task_id": task, "message": f"Queue task {task} not found"}
         conn.execute(
-            f"UPDATE {QUEUE_TABLE} SET dispatch_status = 'pending', processed_at = NULL WHERE id = ?",
-            (row["id"],),
+            f"""
+            UPDATE {QUEUE_TABLE}
+            SET dispatch_status = 'pending',
+                processed_at = NULL,
+                retry_status = 'retry_requested',
+                retry_count = COALESCE(retry_count, 0) + 1,
+                recovery_status = 'queued_for_retry',
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (time.time(), row["id"]),
         )
         conn.commit()
         updated = conn.total_changes
