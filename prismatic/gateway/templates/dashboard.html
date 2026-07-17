@@ -203,16 +203,16 @@
                 </div>
             </section>
 
-            <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-emerald-500/80 shadow-lg shadow-emerald-950/10" data-proof-marker="agy-completed-work-gate-card">
+            <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-emerald-500/80 shadow-lg shadow-emerald-950/10" data-proof-marker="agy-completed-work-ingestion-card">
                 <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                     <div class="space-y-1">
                         <div class="flex items-center gap-2 flex-wrap">
                             <h2 class="text-sm font-bold text-slate-200 uppercase tracking-[0.18em]">AGY Completed Work Gate</h2>
                             <span id="completed-work-gate-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-slate-700 bg-slate-800 text-slate-300">Checking</span>
                         </div>
-                        <p class="text-xs text-slate-500">Contract gate for completed AGY handoff packets before Fred merge review. No auto-merge.</p>
+                        <p class="text-xs text-slate-500">Persisted AGY handoff rows run through the gate before Fred merge review. No auto-merge.</p>
                     </div>
-                    <div class="text-[11px] text-slate-400 font-mono" id="completed-work-gate-marker">AGY_COMPLETED_WORK_INTEGRATION_GATE_OK</div>
+                    <div class="text-[11px] text-slate-400 font-mono" id="completed-work-gate-marker">AGY_COMPLETED_WORK_INGESTION_OK</div>
                 </div>
                 <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mt-4 text-xs">
                     <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
@@ -2757,21 +2757,23 @@
             const linear = document.getElementById("completed-work-linear");
             const reason = document.getElementById("completed-work-reason");
             try {
-                const res = await fetch(`${API_PREFIX}/completed-work/gate/demo`);
+                const res = await fetch(`${API_PREFIX}/agy/completed-work?limit=1`);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
-                const gate = data.gate || {};
+                const latest = (data.completed_work || [])[0];
+                const gate = latest?.gate || {};
+                const count = data.count ?? 0;
                 const isMergeCandidate = gate.classification === "merge_ready";
                 if (badge) {
-                    badge.textContent = isMergeCandidate ? "Review Ready" : "Needs Attention";
-                    badge.className = `px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${isMergeCandidate ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300' : 'border-amber-500/20 bg-amber-500/10 text-amber-300'}`;
+                    badge.textContent = count > 0 ? (isMergeCandidate ? "Review Ready" : "Needs Attention") : "No Rows";
+                    badge.className = `px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${count > 0 ? (isMergeCandidate ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300' : 'border-amber-500/20 bg-amber-500/10 text-amber-300') : 'border-slate-700 bg-slate-800 text-slate-300'}`;
                 }
-                if (classification) classification.textContent = gate.classification || "unknown";
+                if (classification) classification.textContent = gate.classification || "no_rows";
                 if (eligible) eligible.textContent = gate.eligible_for_merge ? "candidate only" : "no";
-                if (linear) linear.textContent = gate.linear_status || "No Linear status";
-                if (reason) reason.textContent = (gate.reasons || ["No reason supplied"])[0];
+                if (linear) linear.textContent = gate.linear_status || `${count} persisted row${count === 1 ? "" : "s"}`;
+                if (reason) reason.textContent = (gate.reasons || ["No completed AGY rows persisted yet"])[0];
             } catch (err) {
-                console.error("Error loading completed-work gate:", err);
+                console.error("Error loading completed-work rows:", err);
                 if (badge) {
                     badge.textContent = "Unavailable";
                     badge.className = "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-rose-500/20 bg-rose-500/10 text-rose-300";
