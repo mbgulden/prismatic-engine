@@ -43,6 +43,7 @@ from .credit_policy_engine import (
     evaluate_agent_launch,
     AGENT_PROVIDER_MAP,
 )
+from .budget_caps import budget_caps_configured, evaluate_budget_caps, read_budget_caps
 from .telemetry import get_collector
 from .capability_router import default_capability_registry, route_issue
 from .lane_contracts import filter_dispatchable_issues, starvation_signal_for
@@ -2512,6 +2513,42 @@ def dispatch_once(
                 pass  # Telemetry is best-effort
             # ── End credit telemetry ───────────────────────────────
             # ── End credit policy ──────────────────────────────────
+
+            if budget_caps_configured():
+                try:
+                    dashboard_data = get_collector().get_dashboard_data(hours=24)
+                    daily_spend = float(dashboard_data.get("total_credits", 0) or 0)
+                except Exception:
+                    daily_spend = 0.0
+                budget_decision = evaluate_budget_caps(daily_spend, read_budget_caps())
+                if not budget_decision.allowed:
+                    identifier = issue.get("identifier", issue_id)
+                    print(
+                        f"[dispatcher] 💰 AUTO-PAUSED {agent_name} → {identifier}: "
+                        f"{budget_decision.reason}"
+                    )
+                    try:
+                        add_comment(
+                            issue_id,
+                            "💰 **Budget cap auto-pause**: "
+                            f"{budget_decision.reason}. Dispatch skipped before agent launch.",
+                        )
+                    except Exception:
+                        pass
+                    try:
+                        estimated_cost = int(decision.estimated_cost)
+                    except (TypeError, ValueError):
+                        estimated_cost = 0
+                    log_completed_pipeline_metrics(
+                        issue_id=issue_id,
+                        agent=agent_name,
+                        status="blocked",
+                        reason=budget_decision.reason,
+                        cost=estimated_cost,
+                    )
+                    counts["budget_paused"] = counts.get("budget_paused", 0) + 1
+                    dedup.mark_processed(issue_id, label, cycle_id)
+                    continue
 
             try:
                 if throttle_dispatch:
