@@ -121,6 +121,13 @@ def pending_events(
 def update_status(
     conn: sqlite3.Connection, event_id: str, status: str, note: str = ""
 ) -> None:
+    try:
+        from prismatic.ingestion_queue import update_event_status
+
+        update_event_status(event_id, status)
+        return
+    except Exception:
+        pass
     cur = conn.cursor()
     if note:
         # Keep raw_json untouched, append a note into a side table if you want
@@ -172,7 +179,7 @@ def has_agent_label(raw_json: str) -> bool:
 
 def drain(args: argparse.Namespace, dispatch_fn=None) -> int:
     state_dir = Path(
-        os.environ.get("PRISMATIC_STATE_DIR", REPO_ROOT / "prismatic_state")
+        os.environ.get("PRISMATIC_STATE_DIR", str(Path.home() / ".prismatic" / "db"))
     )
     db_path = state_dir / "linear_webhook_queue.db"
     if not db_path.exists():
@@ -212,6 +219,13 @@ def drain(args: argparse.Namespace, dispatch_fn=None) -> int:
             until=args.until,
         )
         if not events:
+            if not args.dry_run:
+                try:
+                    from prismatic.ingestion_queue import record_drain_result
+
+                    record_drain_result("no_op", {"processed": 0, "dispatched": 0, "no_op": 0, "failed": 0, "stale": n_stale, "dry_run": False})
+                except Exception as exc:
+                    print(f"[drain] WARN: could not record drain result: {exc}")
             print(f"[drain] No pending events (db at {db_path})")
             return 0
 
@@ -230,6 +244,7 @@ def drain(args: argparse.Namespace, dispatch_fn=None) -> int:
         dispatched = 0
         no_op = 0
         failed = 0
+        stale = n_stale
         for ev in events:
             eid = ev["event_id"]
             ident = ev["identifier"]
@@ -239,12 +254,14 @@ def drain(args: argparse.Namespace, dispatch_fn=None) -> int:
             # Filter decisions — only mutate DB when not dry-run
             if etype != "Issue" or action not in ("create", "update"):
                 if not args.dry_run:
-                    update_status(conn, eid, "skipped_non_issue")
+                    update_status(conn, eid, "no_op")
+                    no_op += 1
                 continue
 
             if not has_agent_label(ev["raw_json"]):
                 if not args.dry_run:
-                    update_status(conn, eid, "skipped_no_agent_label")
+                    update_status(conn, eid, "no_op")
+                    no_op += 1
                 continue
 
             if args.dry_run:
@@ -271,9 +288,18 @@ def drain(args: argparse.Namespace, dispatch_fn=None) -> int:
 
         if not args.dry_run:
             conn.commit()
+        result = "ok" if failed == 0 else "failed"
+        counts = {"dispatched": dispatched, "no_op": no_op, "failed": failed, "stale": stale, "dry_run": bool(args.dry_run), "processed": len(events)}
+        if not args.dry_run:
+            try:
+                from prismatic.ingestion_queue import record_drain_result
+
+                record_drain_result(result, counts)
+            except Exception as exc:
+                print(f"[drain] WARN: could not record drain result: {exc}")
         print(
             f"[drain] Done: dispatched={dispatched} no_op={no_op} "
-            f"failed={failed} stale={n_stale} dry_run={args.dry_run}"
+            f"failed={failed} stale={stale} dry_run={args.dry_run}"
         )
         return 0 if failed == 0 else 1
     finally:
@@ -310,7 +336,7 @@ def main() -> int:
 
     if args.stale_only:
         state_dir = Path(
-            os.environ.get("PRISMATIC_STATE_DIR", REPO_ROOT / "prismatic_state")
+            os.environ.get("PRISMATIC_STATE_DIR", str(Path.home() / ".prismatic" / "db"))
         )
         db_path = state_dir / "linear_webhook_queue.db"
         if not db_path.exists():

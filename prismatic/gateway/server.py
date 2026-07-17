@@ -1470,38 +1470,41 @@ async def gateway_timeline(
 @app.get("/api/webhooks/stats")
 @app.get("/api/gateway/webhooks/stats")
 async def dashboard_webhook_stats() -> dict[str, Any]:
-    from prismatic.ingestion_status import webhook_stats_payload
+    from prismatic.ingestion_queue import queue_stats_payload
 
-    return webhook_stats_payload(_webhook_counters, _run_records_for_dashboard())
+    return queue_stats_payload(extra_counters=_webhook_counters)
 
 
 @app.get("/api/webhooks/queue")
 @app.get("/api/gateway/webhooks/queue")
 async def dashboard_webhook_queue(status: str | None = None, limit: int = Query(50, ge=1, le=500)) -> dict[str, Any]:
-    from prismatic.ingestion_status import queue_payload
+    from prismatic.ingestion_queue import queue_payload
 
-    return queue_payload(_run_records_for_dashboard(limit=limit), status=status, limit=limit)
+    return queue_payload(status=status, limit=limit)
+
+
+@app.get("/api/webhooks/queue/status")
+@app.get("/api/gateway/webhooks/queue/status")
+async def dashboard_webhook_queue_status() -> dict[str, Any]:
+    from prismatic.ingestion_queue import queue_status_payload
+
+    return queue_status_payload(extra_counters=_webhook_counters)
 
 
 @app.post("/api/webhooks/queue/retry/{task_id}")
 @app.post("/api/gateway/webhooks/queue/retry/{task_id}")
 async def dashboard_webhook_queue_retry(task_id: str) -> dict[str, Any]:
-    return {
-        "ok": True,
-        "status": "accepted_noop",
-        "task_id": task_id,
-        "message": "Retry intent recorded by dashboard compatibility route; no shell command executed.",
-    }
+    from prismatic.ingestion_queue import retry_task
+
+    return retry_task(task_id)
 
 
 @app.post("/api/webhooks/queue/purge")
 @app.post("/api/gateway/webhooks/queue/purge")
 async def dashboard_webhook_queue_purge() -> dict[str, Any]:
-    return {
-        "ok": True,
-        "status": "accepted_noop",
-        "message": "Purge intent acknowledged for dashboard safety; terminal-only purge policy preserved.",
-    }
+    from prismatic.ingestion_queue import purge_queue
+
+    return purge_queue()
 
 
 @app.get("/api/dispatcher/status")
@@ -2001,6 +2004,17 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
         event = json.loads(body) if body else {}
     except Exception:
         event = {"raw": body.decode("utf-8", errors="replace")}
+    queue_result: dict[str, Any] = {"queued": False, "reason": "not-attempted"}
+    try:
+        from prismatic.ingestion_queue import enqueue_linear_event, increment_counter
+
+        queue_result = enqueue_linear_event(event, raw_body=body)
+        increment_counter("linear_received", 1)
+        if queue_result.get("inserted"):
+            increment_counter("queued", 1)
+    except Exception as exc:
+        queue_result = {"queued": False, "status": "failed", "reason": str(exc)[:160]}
+        logger.error("Linear webhook durable queue insert failed: %s", exc)
     try:
         from prismatic.gateway.event_bus import get_event_bus
 
@@ -2015,7 +2029,7 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
             _webhook_counters["linear_published"] += 1
     except Exception as e:
         logger.error("Linear webhook bus publish failed: %s", e)
-    return {"status": "ok", "message": "webhook received"}
+    return {"status": "ok", "message": "webhook received", "queue": queue_result}
 
 
 @app.post("/webhooks/linear")
