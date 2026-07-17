@@ -20,7 +20,7 @@ dedup connection so the stall-tracker lookup returns no rows.
 """
 
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, ANY
 import os
 import sys
 
@@ -222,6 +222,71 @@ class TestDispatcherActivation(unittest.TestCase):
         # Since LinearBudgetExhaustedError is raised, the loop skips.
         # It should NOT call the launcher for any agent.
         self.assertEqual(len(called_agents), 0, "No agents should be dispatched when budget is exhausted")
+
+    @patch('prismatic.dispatcher.recover_stalled_agy')
+    @patch('prismatic.dispatcher.gql')
+    @patch('prismatic.providers.github.GitHubProvider')
+    @patch('prismatic.dispatcher.get_issues_with_label')
+    @patch('prismatic.dispatcher.AGENT_LAUNCHERS')
+    @patch('prismatic.dispatcher.EventRouterDedup')
+    @patch('prismatic.dispatcher.evaluate_agent_launch')
+    @patch('prismatic.dispatcher.log_completed_pipeline_metrics')
+    @patch('prismatic.dispatcher.add_comment')
+    @patch('prismatic.dispatcher.get_collector')
+    @patch('prismatic.dispatcher.read_budget_caps')
+    @patch('prismatic.dispatcher.evaluate_budget_caps')
+    @patch('prismatic.dispatcher.budget_caps_configured')
+    def test_dispatch_once_auto_pauses_when_budget_caps_reached(
+        self,
+        mock_budget_caps_configured,
+        mock_evaluate_budget_caps,
+        mock_read_budget_caps,
+        mock_get_collector,
+        mock_add_comment,
+        mock_log_metrics,
+        mock_evaluate,
+        mock_dedup_cls,
+        mock_launchers,
+        mock_get_issues,
+        mock_github_provider_cls,
+        mock_gql,
+        mock_recover_stalled,
+    ):
+        """Configured Resources budget caps block dispatch before launcher execution."""
+        mock_dedup = mock_dedup_cls.return_value
+        mock_dedup.is_processed.return_value = False
+        mock_dedup._conn.cursor.return_value.fetchone.return_value = None
+
+        mock_evaluate.return_value.action = dispatcher.PolicyAction.ALLOW
+        mock_evaluate.return_value.estimated_cost = 12
+        mock_github_provider_cls.return_value.has_credentials.return_value = True
+        mock_gql.return_value = _empty_comments()
+
+        def issues_for_label(label, **_kwargs):
+            if label == "agent::fred":
+                return [{"id": "fred_issue", "title": "Fred task", "identifier": "GRO-FRED", "labels": [label]}]
+            return []
+
+        mock_get_issues.side_effect = issues_for_label
+        launcher = MagicMock(return_value=True)
+        mock_launchers.get.return_value = launcher
+
+        mock_budget_caps_configured.return_value = True
+        mock_read_budget_caps.return_value = {"daily_limit": 15.0, "per_model": {}, "auto_pause": True}
+        mock_get_collector.return_value.get_dashboard_data.return_value = {"total_credits": 18.5}
+        budget_decision = MagicMock()
+        budget_decision.allowed = False
+        budget_decision.reason = "Daily budget cap reached (18.50 >= 15.00)"
+        mock_evaluate_budget_caps.return_value = budget_decision
+
+        counts = dispatcher.dispatch_once(mock_dedup, pipelines={"pipelines": {}})
+
+        launcher.assert_not_called()
+        mock_add_comment.assert_called_once()
+        self.assertIn("Budget cap auto-pause", mock_add_comment.call_args.args[1])
+        mock_log_metrics.assert_called_once()
+        mock_dedup.mark_processed.assert_called_with("fred_issue", "agent:fred", ANY)
+        self.assertEqual(counts.get("budget_paused"), 1)
 
 
 if __name__ == "__main__":

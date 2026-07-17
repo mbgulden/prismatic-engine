@@ -40,6 +40,7 @@ from prismatic.gateway.ws_broadcaster import (
     start_ws_broadcaster,
     stop_ws_broadcaster,
 )
+from prismatic.budget_caps import read_budget_caps, write_budget_caps
 from prismatic.lock import _read_locks as read_swarm_locks
 from prismatic.plugin_architecture import MEDIA_CAPABILITY_CLASSES, plugin_catalog
 from prismatic.plugin_artifacts import store_from_env as plugin_artifact_store
@@ -952,6 +953,22 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
 
 # ── Lock Management API ─────────────────────────────────────────────
+
+
+@app.get("/api/quota/caps")
+@app.get("/api/gateway/quota/caps")
+async def get_budget_caps() -> dict[str, Any]:
+    """Return Resources panel budget caps."""
+
+    return read_budget_caps()
+
+
+@app.post("/api/quota/caps")
+@app.post("/api/gateway/quota/caps")
+async def set_budget_caps(body: dict[str, Any]) -> dict[str, Any]:
+    """Persist Resources panel budget caps."""
+
+    return write_budget_caps(body)
 
 
 @app.get("/locks")

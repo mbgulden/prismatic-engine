@@ -151,7 +151,7 @@
                 Plugins
             </button>
             <button id="tab-btn-quota" onclick="switchTab('quota')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
-                GCP Quotas
+                Resources
             </button>
         </div>
     </div>
@@ -1079,11 +1079,29 @@
         <div id="section-quota" class="hidden space-y-6">
             <div class="glass-panel p-5 rounded-xl space-y-4">
                 <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-3 flex justify-between items-center">
-                    <span>Vertex AI GCP Quota Utilization</span>
+                    <span>Resources · Model usage and budget caps</span>
                     <button onclick="pollQuota()" class="bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 border border-indigo-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">
                         Trigger Sync
                     </button>
                 </h2>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs" data-proof-marker="resources-budget-caps-controls">
+                    <label class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3 space-y-2">
+                        <span class="block text-[10px] uppercase tracking-wider text-slate-500">Daily budget cap</span>
+                        <input id="budget-daily-limit" type="number" min="0" step="0.01" class="w-full rounded-lg bg-slate-950 border border-slate-800 px-3 py-2 text-slate-100" value="15.00">
+                    </label>
+                    <label class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3 space-y-2">
+                        <span class="block text-[10px] uppercase tracking-wider text-slate-500">Auto-pause dispatches</span>
+                        <select id="budget-auto-pause" class="w-full rounded-lg bg-slate-950 border border-slate-800 px-3 py-2 text-slate-100">
+                            <option value="true">Enabled</option>
+                            <option value="false">Disabled</option>
+                        </select>
+                    </label>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3 space-y-2">
+                        <span class="block text-[10px] uppercase tracking-wider text-slate-500">Controls</span>
+                        <button onclick="saveBudgetCaps()" class="w-full bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-300 border border-emerald-500/20 px-3 py-2 rounded-lg text-xs font-semibold transition">Save caps</button>
+                        <div id="budget-caps-status" class="text-[11px] text-slate-500">Loading budget caps</div>
+                    </div>
+                </div>
                 <div class="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
                     <div id="quota-sync-status">Awaiting quota snapshot</div>
                     <div id="quota-sync-age" class="font-mono">—</div>
@@ -2186,6 +2204,7 @@
             } else if (activeTab === 'signals') {
                 await renderSignalsView();
             } else if (activeTab === 'quota') {
+                await fetchBudgetCaps();
                 await fetchQuotaData();
             }
         }
@@ -2771,6 +2790,49 @@
                 }
             } catch (err) {
                 console.error("Error loading morning briefing:", err);
+            }
+        }
+
+        async function fetchBudgetCaps() {
+            const status = document.getElementById("budget-caps-status");
+            try {
+                const res = await fetch(`${API_PREFIX}/quota/caps`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const caps = await res.json();
+                const daily = document.getElementById("budget-daily-limit");
+                const autoPause = document.getElementById("budget-auto-pause");
+                if (daily) daily.value = Number(caps.daily_limit ?? 15).toFixed(2);
+                if (autoPause) autoPause.value = String(caps.auto_pause !== false);
+                if (status) status.textContent = `Loaded · ${caps.auto_pause !== false ? 'auto-pause on' : 'auto-pause off'}`;
+            } catch (err) {
+                console.error("Error loading budget caps:", err);
+                if (status) status.textContent = "Budget caps unavailable";
+            }
+        }
+
+        async function saveBudgetCaps() {
+            const status = document.getElementById("budget-caps-status");
+            const daily = document.getElementById("budget-daily-limit");
+            const autoPause = document.getElementById("budget-auto-pause");
+            const payload = {
+                daily_limit: Number(daily?.value || 0),
+                per_model: {},
+                auto_pause: autoPause?.value !== "false"
+            };
+            try {
+                const res = await fetch(`${API_PREFIX}/quota/caps`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const caps = await res.json();
+                if (status) status.textContent = `Saved · daily ${Number(caps.daily_limit).toFixed(2)}`;
+                showToast("Budget caps saved");
+            } catch (err) {
+                console.error("Error saving budget caps:", err);
+                if (status) status.textContent = "Save failed";
+                showToast("Budget cap save failed", true);
             }
         }
 
