@@ -41,6 +41,7 @@ from prismatic.gateway.ws_broadcaster import (
     stop_ws_broadcaster,
 )
 from prismatic.budget_caps import read_budget_caps, write_budget_caps
+from prismatic.completed_work_gate import completed_work_gate_schema, demo_completed_work_gate_state
 from prismatic.lock import _read_locks as read_swarm_locks
 from prismatic.plugin_architecture import MEDIA_CAPABILITY_CLASSES, plugin_catalog
 from prismatic.plugin_artifacts import store_from_env as plugin_artifact_store
@@ -969,6 +970,25 @@ async def set_budget_caps(body: dict[str, Any]) -> dict[str, Any]:
     """Persist Resources panel budget caps."""
 
     return write_budget_caps(body)
+
+
+@app.get("/api/completed-work/gate/schema")
+@app.get("/api/gateway/completed-work/gate/schema")
+async def completed_work_gate_contract_schema() -> dict[str, Any]:
+    """Return the AGY completed-work integration gate contract."""
+
+    return completed_work_gate_schema()
+
+
+@app.get("/api/completed-work/gate/demo")
+@app.get("/api/gateway/completed-work/gate/demo")
+async def completed_work_gate_demo() -> dict[str, Any]:
+    """Return fixture-only gate status for dashboard/API proof.
+
+    This endpoint never merges, dispatches, or mutates external AGY branches.
+    """
+
+    return demo_completed_work_gate_state()
 
 
 @app.get("/locks")
