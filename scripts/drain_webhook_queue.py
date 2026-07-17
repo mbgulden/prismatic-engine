@@ -259,6 +259,8 @@ def drain(args: argparse.Namespace, dispatch_fn=None) -> int:
         no_op = 0
         failed = 0
         deferred = 0
+        manual_review = 0
+        blocked_preflight = 0
         stale = n_stale
         for ev in events:
             eid = ev["event_id"]
@@ -268,12 +270,6 @@ def drain(args: argparse.Namespace, dispatch_fn=None) -> int:
 
             # Filter decisions — only mutate DB when not dry-run
             if etype != "Issue" or action not in ("create", "update"):
-                if not args.dry_run:
-                    update_status(conn, eid, "no_op")
-                    no_op += 1
-                continue
-
-            if not has_agent_label(ev["raw_json"]):
                 if not args.dry_run:
                     update_status(conn, eid, "no_op")
                     no_op += 1
@@ -292,10 +288,29 @@ def drain(args: argparse.Namespace, dispatch_fn=None) -> int:
 
             try:
                 result = dispatch_fn(identifier=ident)
-                if result:
+                result_status = "dispatched" if result else "no_op"
+                if isinstance(result, dict):
+                    result_status = str(result.get("status") or ("dispatched" if result.get("ok") else "no_op"))
+                if result_status == "dispatched":
                     update_status(conn, eid, "dispatched")
                     dispatched += 1
                     print(f"[drain]   ✓ {ident} dispatched")
+                elif result_status == "deferred_rate_limit":
+                    update_status(conn, eid, "deferred_rate_limit")
+                    deferred += 1
+                    print(f"[drain]   ⏸ {ident} deferred by assigned-agent preflight")
+                elif result_status == "needs_manual_review":
+                    update_status(conn, eid, "needs_manual_review")
+                    manual_review += 1
+                    print(f"[drain]   ? {ident} needs manual review")
+                elif result_status in {"blocked_preflight", "preflight_failed"}:
+                    update_status(conn, eid, "blocked_preflight")
+                    blocked_preflight += 1
+                    print(f"[drain]   ⛔ {ident} blocked by preflight")
+                elif result_status == "failed":
+                    update_status(conn, eid, "failed")
+                    failed += 1
+                    print(f"[drain]   ✗ {ident} failed")
                 else:
                     update_status(conn, eid, "no_op")
                     no_op += 1
@@ -310,8 +325,8 @@ def drain(args: argparse.Namespace, dispatch_fn=None) -> int:
 
         if not args.dry_run:
             conn.commit()
-        result = "failed" if failed else ("deferred_rate_limit" if deferred else "ok")
-        counts = {"dispatched": dispatched, "no_op": no_op, "failed": failed, "deferred": deferred, "stale": stale, "dry_run": bool(args.dry_run), "processed": len(events)}
+        result = "failed" if failed else ("deferred_rate_limit" if deferred else ("blocked_preflight" if blocked_preflight else ("needs_manual_review" if manual_review else "ok")))
+        counts = {"dispatched": dispatched, "no_op": no_op, "failed": failed, "deferred": deferred, "needs_manual_review": manual_review, "blocked_preflight": blocked_preflight, "stale": stale, "dry_run": bool(args.dry_run), "processed": len(events)}
         if not args.dry_run:
             try:
                 from prismatic.ingestion_queue import record_drain_result
@@ -321,7 +336,7 @@ def drain(args: argparse.Namespace, dispatch_fn=None) -> int:
                 print(f"[drain] WARN: could not record drain result: {exc}")
         print(
             f"[drain] Done: dispatched={dispatched} no_op={no_op} "
-            f"failed={failed} deferred={deferred} stale={stale} dry_run={args.dry_run}"
+            f"failed={failed} deferred={deferred} manual_review={manual_review} blocked_preflight={blocked_preflight} stale={stale} dry_run={args.dry_run}"
         )
         return 0 if failed == 0 else 1
     finally:

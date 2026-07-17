@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 LINEAR_WEBHOOK_QUEUE_ACTIVE_MARKER = "LINEAR_WEBHOOK_QUEUE_ACTIVE_OK"
+ASSIGNED_AGENT_EVENT_DISPATCH_MARKER = "ASSIGNED_AGENT_EVENT_DISPATCH_OK"
 QUEUE_TABLE = "linear_webhook_queue"
 COUNTERS_TABLE = "webhook_counters"
 DRAIN_STATUS_TABLE = "webhook_drain_status"
@@ -69,7 +70,15 @@ def ensure_queue_db() -> Path:
                 dispatch_status TEXT DEFAULT 'pending',
                 agent_name TEXT,
                 processed_at TIMESTAMP,
-                queued_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                queued_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                target_agent TEXT,
+                routing_source TEXT,
+                resolver_status TEXT,
+                preflight_status TEXT,
+                claim_owner TEXT,
+                run_id TEXT,
+                last_error TEXT,
+                updated_at REAL
             )
             """
         )
@@ -88,6 +97,14 @@ def ensure_queue_db() -> Path:
             "agent_name": "TEXT",
             "processed_at": "TIMESTAMP",
             "queued_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+            "target_agent": "TEXT",
+            "routing_source": "TEXT",
+            "resolver_status": "TEXT",
+            "preflight_status": "TEXT",
+            "claim_owner": "TEXT",
+            "run_id": "TEXT",
+            "last_error": "TEXT",
+            "updated_at": "REAL",
         }
         for column, ddl in migrations.items():
             if column not in existing:
@@ -214,10 +231,10 @@ def enqueue_linear_event(payload: dict[str, Any], *, raw_body: bytes | None = No
             conn.execute(
                 f"""
                 INSERT OR IGNORE INTO {QUEUE_TABLE}
-                    (event_id, identifier, event_type, action, received_at, raw_json, dispatch_status, agent_name)
-                VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+                    (event_id, identifier, event_type, action, received_at, raw_json, dispatch_status, agent_name, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)
                 """,
-                (event_id, identifier, event_type, action, received_at, raw_json, agent_name),
+                (event_id, identifier, event_type, action, received_at, raw_json, agent_name, received_at),
             )
         inserted = existing is None and conn.total_changes > 0
         row = conn.execute(f"SELECT * FROM {QUEUE_TABLE} WHERE event_id = ? ORDER BY id DESC LIMIT 1", (event_id,)).fetchone()
@@ -235,7 +252,7 @@ def normalize_status(status: Any) -> str:
         return "dispatched"
     if clean in {"running", "processing"}:
         return "processing"
-    if clean in {"pending", "queued", "stale", "skipped_no_agent_label", "no_op", "completed", "dispatched", "failed"}:
+    if clean in {"pending", "queued", "stale", "skipped_no_agent_label", "skipped_non_issue", "no_op", "completed", "dispatched", "failed", "deferred_rate_limit", "needs_manual_review", "blocked_preflight", "preflight_failed", "claimed", "processing"}:
         return clean
     return clean or "pending"
 
@@ -258,6 +275,14 @@ def normalize_row(row: sqlite3.Row | dict[str, Any] | None) -> dict[str, Any]:
         "queued_at": data.get("queued_at") or data.get("received_at") or "",
         "received_at": data.get("received_at"),
         "processed_at": data.get("processed_at"),
+        "target_agent": data.get("target_agent") or data.get("agent_name") or "",
+        "routing_source": data.get("routing_source") or "",
+        "resolver_status": data.get("resolver_status") or "",
+        "preflight_status": data.get("preflight_status") or "",
+        "claim_owner": data.get("claim_owner") or "",
+        "run_id": data.get("run_id") or "",
+        "last_error": data.get("last_error") or "",
+        "updated_at": data.get("updated_at"),
         "raw_json": raw_json,
     }
 
@@ -359,12 +384,43 @@ def update_event_status(event_id: str, status: str) -> None:
         conn.execute(
             f"""
             UPDATE {QUEUE_TABLE}
-            SET dispatch_status = ?, processed_at = COALESCE(?, processed_at)
+            SET dispatch_status = ?, processed_at = COALESCE(?, processed_at), updated_at = ?
             WHERE event_id = ?
             """,
-            (status, processed_at, event_id),
+            (status, processed_at, time.time(), event_id),
         )
         conn.commit()
+
+
+def update_assigned_dispatch_state(event_id: str, **fields: Any) -> dict[str, Any]:
+    """Persist assigned-agent resolver/preflight/dispatch state for one queue row."""
+    ensure_queue_db()
+    allowed = {
+        "dispatch_status",
+        "target_agent",
+        "routing_source",
+        "resolver_status",
+        "preflight_status",
+        "claim_owner",
+        "run_id",
+        "last_error",
+    }
+    updates = {key: value for key, value in fields.items() if key in allowed}
+    if not updates:
+        with _connect() as conn:
+            row = conn.execute(f"SELECT * FROM {QUEUE_TABLE} WHERE event_id = ?", (event_id,)).fetchone()
+        return normalize_row(row)
+    status = updates.get("dispatch_status")
+    if status and normalize_status(status) in TERMINAL_STATUSES | {"needs_manual_review", "blocked_preflight", "deferred_rate_limit"}:
+        updates.setdefault("processed_at", time.time())
+    updates["updated_at"] = time.time()
+    set_clause = ", ".join(f"{key} = ?" for key in updates)
+    values = [*updates.values(), event_id]
+    with _connect() as conn:
+        conn.execute(f"UPDATE {QUEUE_TABLE} SET {set_clause} WHERE event_id = ?", values)
+        row = conn.execute(f"SELECT * FROM {QUEUE_TABLE} WHERE event_id = ?", (event_id,)).fetchone()
+        conn.commit()
+    return normalize_row(row)
 
 
 def queue_status_payload(extra_counters: dict[str, int] | None = None) -> dict[str, Any]:
@@ -383,6 +439,7 @@ def queue_status_payload(extra_counters: dict[str, int] | None = None) -> dict[s
     return {
         "ok": True,
         "marker": LINEAR_WEBHOOK_QUEUE_ACTIVE_MARKER,
+        "assigned_agent_marker": ASSIGNED_AGENT_EVENT_DISPATCH_MARKER,
         "source": "linear_webhook_queue.db",
         "db_path": str(queue_db_path()),
         "queue_depth": stats["queue_depths"].get("pending", 0),
@@ -396,9 +453,8 @@ def queue_status_payload(extra_counters: dict[str, int] | None = None) -> dict[s
         "last_drain_counts": drain_counts,
         "stats": stats,
         "non_claims": {
-            "event_driven_dispatch_complete": False,
-            "assigned_agent_dispatch_complete": False,
             "linear_mutations_applied": False,
+            "result_writeback_complete": False,
         },
     }
 

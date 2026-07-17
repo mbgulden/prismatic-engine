@@ -1563,6 +1563,242 @@ AGENT_LAUNCHERS: dict[str, Callable[..., Any]] = {
     "codex": launch_codex,
 }
 
+ASSIGNED_AGENT_EVENT_DISPATCH_MARKER = "ASSIGNED_AGENT_EVENT_DISPATCH_OK"
+ASSIGNED_AGENT_KNOWN_AGENTS = {"kai", "fred", "agy"}
+ASSIGNED_AGENT_TERMINAL_STATUSES = {
+    "dispatched",
+    "completed",
+    "no_op",
+    "failed",
+    "stale",
+    "needs_manual_review",
+    "blocked_preflight",
+    "preflight_failed",
+    "deferred_rate_limit",
+}
+
+
+@dataclass
+class AssignedAgentResolution:
+    status: str
+    target_agent: str = ""
+    routing_source: str = ""
+    reason: str = ""
+    candidates: list[str] = field(default_factory=list)
+
+
+@dataclass
+class AssignedAgentPreflight:
+    status: str
+    allowed: bool
+    reason: str = ""
+
+
+def _assigned_agent_enabled(agent: str) -> bool:
+    disabled = {
+        item.strip().lower()
+        for item in os.environ.get("PRISMATIC_DISABLED_AGENTS", "").split(",")
+        if item.strip()
+    }
+    enabled = {
+        item.strip().lower()
+        for item in os.environ.get("PRISMATIC_ENABLED_AGENTS", "kai,fred,agy").split(",")
+        if item.strip()
+    }
+    return agent in enabled and agent not in disabled
+
+
+def _assigned_agent_payload(row_or_payload: dict[str, Any]) -> dict[str, Any]:
+    raw = row_or_payload.get("raw_json")
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+    return row_or_payload
+
+
+def _assigned_agent_label_candidates(payload: dict[str, Any]) -> list[tuple[str, str]]:
+    maybe_data = payload.get("data")
+    data: dict[str, Any] = maybe_data if isinstance(maybe_data, dict) else {}
+    labels = data.get("labels") or payload.get("labels") or {}
+    if isinstance(labels, dict):
+        nodes = labels.get("nodes", [])
+    elif isinstance(labels, list):
+        nodes = labels
+    else:
+        nodes = []
+    candidates: list[tuple[str, str]] = []
+    for node in nodes:
+        name = str(node.get("name") if isinstance(node, dict) else node or "").strip()
+        normalized = name.replace("::", ":")
+        if normalized.startswith("agent:"):
+            agent = normalized.split(":", 1)[1].strip().lower()
+            if agent:
+                candidates.append((agent, "label"))
+    for key in ("agent", "agent_name", "target_agent"):
+        value = payload.get(key) or data.get(key)
+        if value:
+            candidates.append((str(value).strip().lower(), key))
+    return candidates
+
+
+def resolve_assigned_agent(row_or_payload: dict[str, Any]) -> AssignedAgentResolution:
+    """Resolve exactly one intended agent from durable event/task metadata."""
+    payload = _assigned_agent_payload(row_or_payload)
+    candidates = _assigned_agent_label_candidates(payload)
+    unique = sorted({agent for agent, _source in candidates if agent})
+    if not unique:
+        return AssignedAgentResolution("needs_manual_review", reason="no known agent metadata", candidates=[])
+    unknown = [agent for agent in unique if agent not in ASSIGNED_AGENT_KNOWN_AGENTS]
+    if unknown:
+        return AssignedAgentResolution("needs_manual_review", reason=f"unknown/disabled agent: {','.join(unknown)}", candidates=unique)
+    if len(unique) != 1:
+        return AssignedAgentResolution("needs_manual_review", reason=f"conflicting agents: {','.join(unique)}", candidates=unique)
+    agent = unique[0]
+    routing_source = next((source for cand, source in candidates if cand == agent), "metadata")
+    return AssignedAgentResolution("resolved", target_agent=agent, routing_source=routing_source, candidates=unique)
+
+
+def preflight_assigned_agent(
+    row: dict[str, Any],
+    resolution: AssignedAgentResolution,
+    *,
+    launchers: dict[str, Callable[..., Any]] | None = None,
+) -> AssignedAgentPreflight:
+    """Fail closed before waking exactly one resolved agent."""
+    status = str(row.get("dispatch_status") or row.get("status") or "pending").lower()
+    if status in ASSIGNED_AGENT_TERMINAL_STATUSES or status in {"claimed", "processing", "running"}:
+        return AssignedAgentPreflight("blocked_preflight", False, f"row already {status}")
+    if resolution.status != "resolved" or not resolution.target_agent:
+        return AssignedAgentPreflight("needs_manual_review", False, resolution.reason or "agent unresolved")
+    agent = resolution.target_agent
+    if not _assigned_agent_enabled(agent):
+        return AssignedAgentPreflight("blocked_preflight", False, f"agent disabled: {agent}")
+    launcher_map = launchers or AGENT_LAUNCHERS
+    if agent not in launcher_map:
+        return AssignedAgentPreflight("blocked_preflight", False, f"no launcher for {agent}")
+    if agent == "agy" and not os.environ.get("PRISMATIC_ASSIGNED_AGENT_DRY_RUN"):
+        if not os.path.exists(AGY_PATH):
+            return AssignedAgentPreflight("blocked_preflight", False, f"AGY binary missing: {AGY_PATH}")
+    try:
+        ensure_linear_circuit_closed(source="assigned_agent_event_dispatch.preflight")
+    except LinearRateLimitCircuitOpen as exc:
+        return AssignedAgentPreflight("deferred_rate_limit", False, str(exc))
+    except Exception as exc:
+        return AssignedAgentPreflight("blocked_preflight", False, f"rate-limit gate unavailable: {exc}")
+    return AssignedAgentPreflight("passed", True, "ok")
+
+
+def dispatch_assigned_agent_event(
+    row: dict[str, Any],
+    *,
+    launchers: dict[str, Callable[..., Any]] | None = None,
+    dry_run: bool | None = None,
+) -> dict[str, Any]:
+    """Resolve, preflight, and wake exactly one intended agent for one queue event."""
+    from .ingestion_queue import update_assigned_dispatch_state
+
+    event_id = str(row.get("event_id") or row.get("id") or "")
+    identifier = str(row.get("identifier") or "")
+    payload = _assigned_agent_payload(row)
+    labels = [agent for agent, _source in _assigned_agent_label_candidates(payload)]
+    resolution = resolve_assigned_agent(row)
+    update_assigned_dispatch_state(
+        event_id,
+        target_agent=resolution.target_agent,
+        routing_source=resolution.routing_source,
+        resolver_status=resolution.status,
+        last_error=resolution.reason,
+        dispatch_status="pending" if resolution.status == "resolved" else "needs_manual_review",
+    )
+    if resolution.status != "resolved":
+        return {
+            "ok": False,
+            "marker": ASSIGNED_AGENT_EVENT_DISPATCH_MARKER,
+            "status": "needs_manual_review",
+            "target_agent": "",
+            "wakes": [],
+            "reason": resolution.reason,
+        }
+    preflight = preflight_assigned_agent(row, resolution, launchers=launchers)
+    if not preflight.allowed:
+        status = "deferred_rate_limit" if preflight.status == "deferred_rate_limit" else "blocked_preflight"
+        update_assigned_dispatch_state(
+            event_id,
+            target_agent=resolution.target_agent,
+            routing_source=resolution.routing_source,
+            resolver_status=resolution.status,
+            preflight_status=preflight.status,
+            dispatch_status=status,
+            last_error=preflight.reason,
+        )
+        return {
+            "ok": False,
+            "marker": ASSIGNED_AGENT_EVENT_DISPATCH_MARKER,
+            "status": status,
+            "target_agent": resolution.target_agent,
+            "wakes": [],
+            "reason": preflight.reason,
+        }
+    target = resolution.target_agent
+    run_id = f"assigned-{target}-{uuid.uuid4().hex[:10]}"
+    dry = bool(os.environ.get("PRISMATIC_ASSIGNED_AGENT_DRY_RUN")) if dry_run is None else bool(dry_run)
+    if dry:
+        update_assigned_dispatch_state(
+            event_id,
+            target_agent=target,
+            routing_source=resolution.routing_source,
+            resolver_status=resolution.status,
+            preflight_status=preflight.status,
+            dispatch_status="dispatched",
+            claim_owner=target,
+            run_id=run_id,
+            last_error="dry-run wake recorded",
+        )
+        return {"ok": True, "marker": ASSIGNED_AGENT_EVENT_DISPATCH_MARKER, "status": "dispatched", "target_agent": target, "wakes": [target], "run_id": run_id, "dry_run": True}
+    launcher_map = launchers or AGENT_LAUNCHERS
+    proc = launcher_map[target](identifier, title=str(payload.get("title") or identifier), labels=labels, identifier=identifier)
+    if proc:
+        update_assigned_dispatch_state(
+            event_id,
+            target_agent=target,
+            routing_source=resolution.routing_source,
+            resolver_status=resolution.status,
+            preflight_status=preflight.status,
+            dispatch_status="dispatched",
+            claim_owner=target,
+            run_id=run_id,
+            last_error="",
+        )
+        return {"ok": True, "marker": ASSIGNED_AGENT_EVENT_DISPATCH_MARKER, "status": "dispatched", "target_agent": target, "wakes": [target], "run_id": run_id}
+    update_assigned_dispatch_state(
+        event_id,
+        target_agent=target,
+        routing_source=resolution.routing_source,
+        resolver_status=resolution.status,
+        preflight_status=preflight.status,
+        dispatch_status="failed",
+        last_error="launcher returned no process/result",
+    )
+    return {"ok": False, "marker": ASSIGNED_AGENT_EVENT_DISPATCH_MARKER, "status": "failed", "target_agent": target, "wakes": [], "reason": "launcher returned no process/result"}
+
+
+def dispatch_issue_by_identifier(identifier: str, **kwargs: Any) -> dict[str, Any] | None:
+    """Compatibility entrypoint for bounded queue drain: exact-agent only, no broad scan."""
+    from .ingestion_queue import QUEUE_TABLE, _connect, normalize_row
+
+    with _connect() as conn:
+        row = conn.execute(
+            f"SELECT * FROM {QUEUE_TABLE} WHERE identifier = ? AND dispatch_status = 'pending' ORDER BY COALESCE(received_at, 0) ASC, id ASC LIMIT 1",
+            (identifier,),
+        ).fetchone()
+    if row is None:
+        return {"ok": False, "status": "no_op", "reason": "no pending queue row for identifier", "wakes": []}
+    return dispatch_assigned_agent_event(normalize_row(row), **kwargs)
+
 
 # ═══════════════════════════════════════════════════════════════
 # Process observer — fixes GRO-2979 / GRO-2978 closure gap.
