@@ -136,7 +136,7 @@ class AgyCompletedWorkStore:
         source_is_stale: bool = False,
         conflicts: Sequence[str] | None = None,
     ) -> CompletedWorkRow:
-        normalized_packet = _json_object(packet, "packet")
+        normalized_packet = normalize_agy_result_packet(packet)
         gate = classify_completed_work(
             normalized_packet,
             dirty_source=dirty_source,
