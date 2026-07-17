@@ -2351,6 +2351,7 @@
                     const text = document.getElementById("disp-status-text");
 
                     const linearLimit = disp.linear_rate_limit || {};
+                    const pollingBudget = disp.polling_budget || {};
                     if (linearLimit.cooldown_active) {
                         badge.className = "flex items-center space-x-1.5 bg-amber-500/10 px-2.5 py-1 rounded-full text-xs font-bold text-amber-400 border border-amber-500/20";
                         dot.className = "w-2 h-2 rounded-full bg-amber-500";
@@ -2360,12 +2361,12 @@
                         badge.className = "flex items-center space-x-1.5 bg-emerald-500/10 px-2.5 py-1 rounded-full text-xs font-bold text-emerald-400 border border-emerald-500/20";
                         dot.className = "w-2 h-2 rounded-full bg-emerald-500 status-pulse";
                         text.textContent = "ACTIVE";
-                        setSummaryBadge("summary-dispatcher-badge", "summary-dispatcher-meta", "green", "ACTIVE", `Cycle #${disp.cycle_number || 0} · ${disp.active_agents?.length || 0} agent(s) live`);
+                        setSummaryBadge("summary-dispatcher-badge", "summary-dispatcher-meta", "green", "ACTIVE", `Cycle #${disp.cycle_number || 0} · ${disp.active_agents?.length || 0} agent(s) live · Linear ${pollingBudget.last_cycle_calls ?? pollingBudget.calls_used_this_cycle ?? 0}/${pollingBudget.max_calls_per_cycle ?? '—'} · cache ${pollingBudget.cache_hits ?? 0}/${pollingBudget.cache_misses ?? 0}`);
                     } else {
                         badge.className = "flex items-center space-x-1.5 bg-slate-800 px-2.5 py-1 rounded-full text-xs font-bold text-slate-400 border border-slate-700/30";
                         dot.className = "w-2 h-2 rounded-full bg-slate-500";
                         text.textContent = "IDLE";
-                        setSummaryBadge("summary-dispatcher-badge", "summary-dispatcher-meta", "slate", "IDLE", `Cycle #${disp.cycle_number || 0} · last seen ${disp.last_cycle_at ? formatDate(disp.last_cycle_at) : "Never"}`);
+                        setSummaryBadge("summary-dispatcher-badge", "summary-dispatcher-meta", "slate", "IDLE", `Cycle #${disp.cycle_number || 0} · last seen ${disp.last_cycle_at ? formatDate(disp.last_cycle_at) : "Never"} · Linear ${pollingBudget.last_cycle_calls ?? pollingBudget.calls_used_this_cycle ?? 0}/${pollingBudget.max_calls_per_cycle ?? '—'} · ${pollingBudget.last_skip_reason || 'poll fallback bounded'}`);
                     }
 
                     document.getElementById("disp-cycle").textContent = disp.cycle_number || 0;
