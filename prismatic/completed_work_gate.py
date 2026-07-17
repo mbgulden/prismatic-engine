@@ -42,7 +42,6 @@ REQUIRED_PROOF_FIELDS = {
     "log",
     "scope",
     "ad_hoc_or_canonical",
-    "not_claiming",
     "marker",
 }
 REQUIRED_LANE_FIELDS = {"allowed_paths", "touched_paths"}
@@ -120,7 +119,7 @@ def completed_work_gate_schema() -> dict[str, Any]:
                 "log": "/tmp/...",
                 "scope": "...",
                 "ad_hoc_or_canonical": "ad-hoc targeted|canonical suite",
-                "not_claiming": "...",
+                "non_claims": ["production_deployed", "auto_merge"],
                 "marker": "...",
             },
             "lane_scope": {"allowed_paths": [], "touched_paths": []},
@@ -165,7 +164,7 @@ def demo_completed_work_packet() -> dict[str, Any]:
             "log": "/tmp/agy-demo-proof.log",
             "scope": "demo fixture only",
             "ad_hoc_or_canonical": "ad-hoc targeted",
-            "not_claiming": "production_deployed,auto_merge",
+            "non_claims": ["production_deployed", "auto_merge"],
             "marker": AGY_COMPLETED_WORK_MARKER,
         },
         "lane_scope": {
@@ -275,8 +274,12 @@ def _classify(gate_input: CompletedWorkGateInput) -> CompletedWorkGateState:
     proof_log = _string(proof.get("log"))
     proof_scope = _string(proof.get("scope"))
     proof_marker = _string(proof.get("marker"))
+    proof_non_claims = normalize_non_claims(proof)
     if not proof_command or not proof_log or not proof_scope or not proof_marker:
         reasons.append("proof command/log/scope/marker must be non-empty")
+        return _state(GateClassification.BLOCKED_MISSING_PROOF, packet, reasons)
+    if not proof_non_claims:
+        reasons.append("proof must include non_claims or legacy not_claiming")
         return _state(GateClassification.BLOCKED_MISSING_PROOF, packet, reasons)
     if not proof_log.startswith("/tmp/"):
         reasons.append("proof log must point to /tmp evidence")
@@ -338,6 +341,35 @@ def _linear_status(classification: GateClassification) -> str:
         GateClassification.REJECTED: "Rejected: invalid handoff contract",
     }
     return statuses[classification]
+
+
+def normalize_non_claims(proof: Mapping[str, Any]) -> tuple[str, ...]:
+    """Normalize proof non-claims without treating them as positive claims.
+
+    Older packets used `not_claiming: "a,b"`; newer packets should use
+    `non_claims: ["a", "b"]`. Returning a separate tuple prevents validators
+    from scanning a negated claim string and falsely flagging words like
+    `auto_merge` as an asserted capability.
+    """
+
+    raw = proof.get("non_claims")
+    values: list[str] = []
+    if isinstance(raw, Sequence) and not isinstance(raw, (str, bytes)):
+        values.extend(item.strip() for item in raw if isinstance(item, str) and item.strip())
+    legacy = proof.get("not_claiming")
+    if isinstance(legacy, str):
+        values.extend(part.strip() for part in legacy.replace(";", ",").split(",") if part.strip())
+    elif isinstance(legacy, Sequence) and not isinstance(legacy, (str, bytes)):
+        values.extend(item.strip() for item in legacy if isinstance(item, str) and item.strip())
+    # Stable de-dupe preserving order.
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        key = value.lower()
+        if key not in seen:
+            seen.add(key)
+            deduped.append(value)
+    return tuple(deduped)
 
 
 def _out_of_scope_paths(touched_paths: Sequence[str], allowed_paths: Sequence[str]) -> list[str]:

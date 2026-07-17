@@ -40,6 +40,12 @@ from prismatic.gateway.ws_broadcaster import (
     start_ws_broadcaster,
     stop_ws_broadcaster,
 )
+from prismatic.agy_completed_work import (
+    AGY_COMPLETED_WORK_INGESTION_MARKER,
+    get_completed_work,
+    ingest_completed_work,
+    list_completed_work,
+)
 from prismatic.budget_caps import read_budget_caps, write_budget_caps
 from prismatic.completed_work_gate import completed_work_gate_schema, demo_completed_work_gate_state
 from prismatic.lock import _read_locks as read_swarm_locks
@@ -989,6 +995,60 @@ async def completed_work_gate_demo() -> dict[str, Any]:
     """
 
     return demo_completed_work_gate_state()
+
+
+@app.post("/api/agy/completed-work/ingest")
+@app.post("/api/gateway/agy/completed-work/ingest")
+async def ingest_agy_completed_work(body: dict[str, Any]) -> dict[str, Any]:
+    """Persist a completed AGY result packet and gate it for review."""
+
+    packet = body.get("packet") if "packet" in body else body
+    if not isinstance(packet, dict):
+        raise HTTPException(status_code=422, detail="packet must be a JSON object")
+    try:
+        row = ingest_completed_work(
+            packet,
+            dirty_source=bool(body.get("dirty_source", False)),
+            source_is_stale=bool(body.get("source_is_stale", False)),
+            conflicts=body.get("conflicts") if isinstance(body.get("conflicts"), list) else None,
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "status": "accepted",
+        "marker": AGY_COMPLETED_WORK_INGESTION_MARKER,
+        "completed_work": row.as_dict(),
+    }
+
+
+@app.get("/api/agy/completed-work")
+@app.get("/api/gateway/agy/completed-work")
+async def list_agy_completed_work(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
+    """List persisted completed AGY rows, newest first."""
+
+    rows = [row.as_dict() for row in list_completed_work(limit=limit)]
+    return {
+        "status": "ok",
+        "marker": AGY_COMPLETED_WORK_INGESTION_MARKER,
+        "count": len(rows),
+        "completed_work": rows,
+    }
+
+
+@app.get("/api/agy/completed-work/{completed_work_id}")
+@app.get("/api/gateway/agy/completed-work/{completed_work_id}")
+async def get_agy_completed_work(completed_work_id: str) -> dict[str, Any]:
+    """Return one persisted AGY completed-work row."""
+
+    try:
+        row = get_completed_work(completed_work_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="completed work row not found") from exc
+    return {
+        "status": "ok",
+        "marker": AGY_COMPLETED_WORK_INGESTION_MARKER,
+        "completed_work": row.as_dict(),
+    }
 
 
 @app.get("/locks")
