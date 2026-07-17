@@ -689,6 +689,9 @@
                             <span id="queue-total-badge" class="bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2.5 py-1 rounded-lg text-xs font-bold whitespace-nowrap">0 total</span>
                         </div>
                     </div>
+                    <div id="queue-contract-summary" data-marker="LINEAR_WEBHOOK_QUEUE_ACTIVE_OK" class="text-[11px] text-slate-500 bg-slate-950/40 border border-slate-800/60 rounded-lg px-3 py-2">
+                        source = linear_webhook_queue.db · latest event: — · last drain: never_run
+                    </div>
 
                     <div class="overflow-x-auto">
                         <table class="w-full text-left text-sm border-collapse">
@@ -2334,6 +2337,14 @@
                 }
 
                 // 2. Queue
+                const queueStatusRes = await fetch(`${API_PREFIX}/webhooks/queue/status`);
+                if (queueStatusRes.ok) {
+                    const queueStatus = await queueStatusRes.json();
+                    const summary = document.getElementById("queue-contract-summary");
+                    if (summary) {
+                        summary.textContent = `source = ${queueStatus.source || 'linear_webhook_queue.db'} · marker = ${queueStatus.marker || '—'} · latest event: ${queueStatus.latest_event_identifier || '—'} / ${queueStatus.latest_event_status || '—'} · last drain: ${queueStatus.last_drain_result || 'never_run'}`;
+                    }
+                }
                 const queueRes = await fetch(`${API_PREFIX}/webhooks/queue`);
                 if (queueRes.ok) {
                     const queue = await queueRes.json();
