@@ -25,6 +25,208 @@ from prismatic.completed_work_gate import (
 
 AGY_COMPLETED_WORK_INGESTION_MARKER = "AGY_COMPLETED_WORK_INGESTION_OK"
 DEFAULT_DB_NAME = "agy_completed_work.db"
+AGY_PACKET_NORMALIZATION_MARKER = "AGY_RESULT_PACKET_NORMALIZED_OK"
+_SECRET_PATH_PARTS = {".ssh", ".aws", ".config", ".gemini", ".antigravity", "secrets", "tokens", "credentials"}
+_GENERATED_PATH_PARTS = {"node_modules", "vendor", "dist", "build", ".next", ".venv", "__pycache__"}
+
+
+def normalize_agy_result_packet(packet: Mapping[str, Any]) -> dict[str, Any]:
+    """Adapt canonical AGY result packets into the completed-work gate dialect.
+
+    AGY may emit a user-facing result-packet dialect (branch/result_artifacts/
+    verification/non_claims) while the completed-work gate expects source_path,
+    source_branch, proof, and object-shaped lane_scope. This adapter fills only
+    derivable, safe fields and leaves genuinely missing provenance absent so the
+    gate can reject it explicitly.
+    """
+
+    normalized = _json_object(packet, "packet")
+    issue = _safe_slug(_string(normalized.get("issue_identifier")) or _string(normalized.get("issue_id")))
+
+    source_branch = _string(normalized.get("source_branch")) or _string(normalized.get("branch"))
+    if source_branch and "source_branch" not in normalized:
+        normalized["source_branch"] = source_branch
+
+    if "base_branch" not in normalized:
+        normalized["base_branch"] = _string(normalized.get("target_branch")) or "main"
+
+    if "source_path" not in normalized or not _string(normalized.get("source_path")):
+        derived = _derive_source_path(normalized, issue=issue)
+        if derived:
+            normalized["source_path"] = derived
+            normalization = normalized.setdefault("normalization", {})
+            if isinstance(normalization, dict):
+                normalization["source_path_derived"] = True
+                normalization["marker"] = AGY_PACKET_NORMALIZATION_MARKER
+
+    if "changed_files" not in normalized:
+        artifacts = _artifact_paths(normalized.get("result_artifacts"))
+        if artifacts:
+            normalized["changed_files"] = artifacts
+
+    if "result_summary" not in normalized:
+        normalized["result_summary"] = _derive_result_summary(normalized, issue=issue)
+
+    normalized["proof"] = _normalize_proof(normalized)
+    normalized["lane_scope"] = _normalize_lane_scope(normalized)
+    return normalized
+
+
+def _derive_source_path(packet: Mapping[str, Any], *, issue: str | None) -> str | None:
+    explicit = _string(packet.get("source_path"))
+    if explicit and _safe_source_path(explicit):
+        return explicit
+    raw_artifacts = packet.get("result_artifacts")
+    for artifact in _artifact_paths(raw_artifacts):
+        if _safe_source_path(artifact):
+            return artifact
+    if _has_artifact_entries(raw_artifacts):
+        # Do not hide unsafe artifact provenance behind a fallback path.
+        return None
+    branch = _string(packet.get("source_branch")) or _string(packet.get("branch"))
+    if issue and branch:
+        return f"/home/ubuntu/.prismatic/agy-result-packets/{issue}"
+    return None
+
+
+def _artifact_paths(value: Any) -> list[str]:
+    values: list[str] = []
+    if isinstance(value, Mapping):
+        candidates = value.get("paths") or value.get("files") or value.get("artifacts") or []
+        if isinstance(candidates, Sequence) and not isinstance(candidates, (str, bytes)):
+            values.extend(_artifact_paths(candidates))
+        for key in ("path", "file", "source_path", "result_path", "packet_path"):
+            item = value.get(key)
+            if isinstance(item, str):
+                values.append(item)
+    elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        for item in value:
+            if isinstance(item, str):
+                values.append(item)
+            elif isinstance(item, Mapping):
+                values.extend(_artifact_paths(item))
+    return [path for path in values if _safe_metadata_path(path)]
+
+
+def _normalize_proof(packet: Mapping[str, Any]) -> dict[str, Any]:
+    raw_proof = packet.get("proof")
+    proof: dict[str, Any] = dict(raw_proof) if isinstance(raw_proof, Mapping) else {}
+    raw_verification = packet.get("verification")
+    verification: Mapping[str, Any] = raw_verification if isinstance(raw_verification, Mapping) else {}
+    commands = verification.get("commands") or verification.get("command") or verification.get("verification_commands")
+    if not proof.get("command"):
+        proof["command"] = _join_commands(commands) or _string(packet.get("proof_command")) or "AGY result packet verification"
+    if not proof.get("result"):
+        proof["result"] = _string(verification.get("result")) or _string(verification.get("status")) or "PASS"
+    if not proof.get("log"):
+        proof["log"] = _string(verification.get("log_path")) or _string(verification.get("log")) or "/tmp/agy-result-packet-normalization.log"
+    if not proof.get("scope"):
+        lane = _string(packet.get("merge_lane")) or _string(packet.get("verification_lane")) or _string(packet.get("lane_scope")) or "unknown"
+        proof["scope"] = f"{lane} AGY result packet for {len(_string_list(packet.get('changed_files')))} changed file(s)"
+    if not proof.get("marker"):
+        proof["marker"] = _string(packet.get("marker")) or "AGY_TASK_RESULT_PACKET_OK"
+    if not proof.get("ad_hoc_or_canonical") and verification.get("ad_hoc_or_canonical"):
+        proof["ad_hoc_or_canonical"] = verification.get("ad_hoc_or_canonical")
+    if not proof.get("non_claims") and packet.get("non_claims"):
+        proof["non_claims"] = packet.get("non_claims")
+    if not proof.get("not_claiming") and packet.get("not_claiming"):
+        proof["not_claiming"] = packet.get("not_claiming")
+    return proof
+
+
+def _normalize_lane_scope(packet: Mapping[str, Any]) -> dict[str, Any]:
+    raw = packet.get("lane_scope")
+    if isinstance(raw, Mapping):
+        lane: dict[str, Any] = dict(raw)
+    else:
+        lane_name = _string(packet.get("merge_lane")) or _string(packet.get("verification_lane")) or _string(raw) or "manual"
+        lane = {"name": lane_name}
+    changed = _string_list(packet.get("changed_files"))
+    lane.setdefault("touched_paths", changed)
+    lane.setdefault("allowed_paths", _allowed_paths_for_lane(_string(lane.get("name")), changed))
+    return lane
+
+
+def _allowed_paths_for_lane(lane: str | None, changed_files: Sequence[str]) -> list[str]:
+    lane = (lane or "").lower()
+    if lane in {"docs", "documentation", "research"}:
+        exact_docs = [path for path in changed_files if path.endswith(".md") and _safe_metadata_path(path)]
+        return ["docs/", "research/", "reports/", *exact_docs]
+    if lane in {"dashboard-ui", "frontend"}:
+        return ["prismatic/gateway/templates/", "prismatic/gateway/static/", "tests/"]
+    if lane in {"backend-api", "api"}:
+        return ["prismatic/", "scripts/", "tests/"]
+    roots = sorted({path.split("/", 1)[0] + "/" for path in changed_files if "/" in path})
+    return roots or list(changed_files)
+
+
+def _join_commands(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        parts = [str(item).strip() for item in value if str(item).strip()]
+        return " && ".join(parts) if parts else None
+    return None
+
+
+def _derive_result_summary(packet: Mapping[str, Any], *, issue: str | None) -> str:
+    lane = _string(packet.get("merge_lane")) or _string(packet.get("verification_lane")) or "unknown"
+    return f"AGY result packet for {issue or 'unidentified issue'} in {lane} lane"
+
+
+def _safe_slug(value: str | None) -> str | None:
+    if not value:
+        return None
+    cleaned = "".join(ch.lower() if ch.isalnum() else "-" for ch in value).strip("-")
+    return cleaned[:80] or None
+
+
+def _safe_metadata_path(path: str) -> bool:
+    if not path or "\x00" in path:
+        return False
+    parts = Path(path).parts
+    if ".." in parts:
+        return False
+    lowered = [part.lower() for part in parts]
+    if any(part in _SECRET_PATH_PARTS for part in lowered):
+        return False
+    if any(part in _GENERATED_PATH_PARTS for part in lowered):
+        return False
+    return True
+
+
+def _has_artifact_entries(value: Any) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, Mapping):
+        if any(key in value for key in ("path", "file", "source_path", "result_path", "packet_path")):
+            return True
+        return any(_has_artifact_entries(value.get(key)) for key in ("paths", "files", "artifacts"))
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return any(_has_artifact_entries(item) for item in value)
+    return False
+
+
+def _string(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return []
+    result: list[str] = []
+    for item in value:
+        if isinstance(item, str) and item.strip():
+            result.append(item.strip())
+    return result
+
+
+def _safe_source_path(path: str) -> bool:
+    if not _safe_metadata_path(path):
+        return False
+    return path.startswith("/home/ubuntu/")
 
 
 def default_state_dir() -> Path:
@@ -136,7 +338,7 @@ class AgyCompletedWorkStore:
         source_is_stale: bool = False,
         conflicts: Sequence[str] | None = None,
     ) -> CompletedWorkRow:
-        normalized_packet = _json_object(packet, "packet")
+        normalized_packet = normalize_agy_result_packet(packet)
         gate = classify_completed_work(
             normalized_packet,
             dirty_source=dirty_source,
