@@ -53,6 +53,10 @@ def test_dispatch_once_skips_broad_linear_pollers_when_circuit_open(monkeypatch,
 def test_dispatch_once_stops_broad_polling_after_midcycle_budget_error(monkeypatch, tmp_path: Path):
     state = tmp_path / "linear_state.json"
     monkeypatch.setenv("PRISMATIC_LINEAR_RATE_LIMIT_STATE", str(state))
+    monkeypatch.setenv("PRISMATIC_POLL_PIPELINE_SCAN_CADENCE", "1")
+    monkeypatch.setenv("PRISMATIC_POLL_ROUTE_SCAN_CADENCE", "1")
+    dispatcher._POLL_CYCLE_NUMBER = 0
+    dispatcher._CURRENT_POLL_BUDGET = None
     monkeypatch.setattr(dispatcher, "dispatch_local_tasks", MagicMock(return_value=0))
     route = MagicMock(return_value=0)
     cleanup = MagicMock(return_value=0)
@@ -69,7 +73,7 @@ def test_dispatch_once_stops_broad_polling_after_midcycle_budget_error(monkeypat
 
     counts = dispatcher.dispatch_once(MagicMock(), pipelines={"pipelines": {}})
 
-    assert counts["linear_circuit_open"] == 1
+    assert counts["linear_call_budget_exhausted"] == 1
     assert counts["broad_poll_skipped"] == 1
     route.assert_not_called()
     get_issues.assert_not_called()

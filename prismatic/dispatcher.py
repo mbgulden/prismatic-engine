@@ -32,6 +32,7 @@ import sys
 import time
 import threading
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Callable
@@ -68,6 +69,78 @@ except ImportError:
 
 class LinearBudgetExhaustedError(RuntimeError):
     """Raised when the Linear API budget is exhausted for this cycle."""
+
+
+DISPATCHER_POLLING_BUDGET_MARKER = "DISPATCHER_POLLING_BUDGET_OK"
+DEFAULT_POLL_MAX_CALLS_PER_CYCLE = int(os.environ.get("PRISMATIC_POLL_MAX_LINEAR_CALLS_PER_CYCLE", "6"))
+DEFAULT_LABEL_SCAN_TTL_SECONDS = int(os.environ.get("PRISMATIC_POLL_LABEL_SCAN_TTL_SECONDS", "300"))
+DEFAULT_ROUTE_SCAN_CADENCE = int(os.environ.get("PRISMATIC_POLL_ROUTE_SCAN_CADENCE", "10"))
+DEFAULT_AGENT_SCAN_CADENCE = int(os.environ.get("PRISMATIC_POLL_AGENT_SCAN_CADENCE", "1"))
+DEFAULT_RECOVERY_SCAN_CADENCE = int(os.environ.get("PRISMATIC_POLL_RECOVERY_SCAN_CADENCE", "20"))
+DEFAULT_ORIGIN_SCAN_CADENCE = int(os.environ.get("PRISMATIC_POLL_ORIGIN_SCAN_CADENCE", "20"))
+DEFAULT_PIPELINE_SCAN_CADENCE = int(os.environ.get("PRISMATIC_POLL_PIPELINE_SCAN_CADENCE", "20"))
+_POLL_CYCLE_NUMBER = 0
+_CURRENT_POLL_BUDGET: "LinearCycleBudget | None" = None
+_LABEL_SCAN_CACHE: dict[tuple[str, str, int], tuple[float, list[dict[str, Any]]]] = {}
+_LAST_POLL_BUDGET_STATUS: dict[str, Any] = {}
+
+
+@dataclass
+class LinearCycleBudget:
+    max_calls: int
+    cycle_number: int
+    poll_fallback_enabled: bool
+    calls_used: int = 0
+    calls_by_source: dict[str, int] = field(default_factory=dict)
+    cache_hits: int = 0
+    cache_misses: int = 0
+    skipped_sections: list[str] = field(default_factory=list)
+    last_skip_reason: str | None = None
+
+    def remaining(self) -> int:
+        return max(0, self.max_calls - self.calls_used)
+
+    def consume(self, source: str) -> None:
+        if self.calls_used >= self.max_calls:
+            self.last_skip_reason = f"linear call budget exhausted before {source}"
+            raise LinearBudgetExhaustedError(self.last_skip_reason)
+        self.calls_used += 1
+        self.calls_by_source[source] = self.calls_by_source.get(source, 0) + 1
+
+    def skip(self, section: str, reason: str) -> None:
+        if section not in self.skipped_sections:
+            self.skipped_sections.append(section)
+        self.last_skip_reason = reason
+
+    def as_dict(self, *, rate_limit_cooldown_active: bool = False) -> dict[str, Any]:
+        return {
+            "marker": DISPATCHER_POLLING_BUDGET_MARKER,
+            "poll_fallback_enabled": self.poll_fallback_enabled,
+            "cycle_number": self.cycle_number,
+            "max_calls_per_cycle": self.max_calls,
+            "calls_used_this_cycle": self.calls_used,
+            "last_cycle_calls": self.calls_used,
+            "calls_remaining_this_cycle": self.remaining(),
+            "calls_by_source": dict(sorted(self.calls_by_source.items())),
+            "cache_hits": self.cache_hits,
+            "cache_misses": self.cache_misses,
+            "skipped_sections": list(self.skipped_sections),
+            "last_skip_reason": self.last_skip_reason,
+            "rate_limit_cooldown_active": rate_limit_cooldown_active,
+            "label_scan_ttl_seconds": label_scan_ttl_seconds(),
+            "cadence": {
+                "pipeline_scan": scan_cadence("pipeline_scan"),
+                "route_scan": scan_cadence("route_scan"),
+                "agent_scan": scan_cadence("agent_scan"),
+                "recovery_scan": scan_cadence("recovery_scan"),
+                "origin_scan": scan_cadence("origin_scan"),
+            },
+            "non_claims": {
+                "webhook_queue_active": False,
+                "assigned_agent_event_dispatch": False,
+                "linear_mutation_applied": False,
+            },
+        }
 
 
 mode_switch = get_mode_switch()
@@ -447,6 +520,117 @@ def log_completed_pipeline_metrics(
         print(f"[dispatcher] Failed to write metrics: {exc}")
 
 
+def _env_int(name: str, default: int) -> int:
+    try:
+        return max(0, int(os.environ.get(name, str(default))))
+    except ValueError:
+        return default
+
+
+def poll_fallback_enabled() -> bool:
+    value = os.environ.get("PRISMATIC_POLL_FALLBACK_ENABLED", "1").strip().lower()
+    return value not in {"0", "false", "no", "off", "disabled"}
+
+
+def poll_max_calls_per_cycle() -> int:
+    return _env_int("PRISMATIC_POLL_MAX_LINEAR_CALLS_PER_CYCLE", DEFAULT_POLL_MAX_CALLS_PER_CYCLE)
+
+
+def label_scan_ttl_seconds() -> int:
+    return _env_int("PRISMATIC_POLL_LABEL_SCAN_TTL_SECONDS", DEFAULT_LABEL_SCAN_TTL_SECONDS)
+
+
+def scan_cadence(section: str) -> int:
+    defaults = {
+        "pipeline_scan": DEFAULT_PIPELINE_SCAN_CADENCE,
+        "route_scan": DEFAULT_ROUTE_SCAN_CADENCE,
+        "agent_scan": DEFAULT_AGENT_SCAN_CADENCE,
+        "recovery_scan": DEFAULT_RECOVERY_SCAN_CADENCE,
+        "origin_scan": DEFAULT_ORIGIN_SCAN_CADENCE,
+    }
+    env_names = {
+        "pipeline_scan": "PRISMATIC_POLL_PIPELINE_SCAN_CADENCE",
+        "route_scan": "PRISMATIC_POLL_ROUTE_SCAN_CADENCE",
+        "agent_scan": "PRISMATIC_POLL_AGENT_SCAN_CADENCE",
+        "recovery_scan": "PRISMATIC_POLL_RECOVERY_SCAN_CADENCE",
+        "origin_scan": "PRISMATIC_POLL_ORIGIN_SCAN_CADENCE",
+    }
+    return max(1, _env_int(env_names[section], defaults[section]))
+
+
+def _polling_budget_state_path() -> Path:
+    explicit = os.environ.get("PRISMATIC_DISPATCHER_POLLING_BUDGET_STATE")
+    if explicit:
+        return Path(explicit)
+    state_dir = Path(os.environ.get("PRISMATIC_STATE_DIR", str(Path.cwd() / "prismatic_state")))
+    return state_dir / "dispatcher_polling_budget_state.json"
+
+
+def _persist_polling_budget_status(status: dict[str, Any]) -> None:
+    global _LAST_POLL_BUDGET_STATUS
+    _LAST_POLL_BUDGET_STATUS = status
+    try:
+        path = _polling_budget_state_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps(status, indent=2, sort_keys=True))
+        tmp.replace(path)
+    except Exception as exc:
+        print(f"[dispatcher] polling budget status write failed: {exc}")
+
+
+def get_dispatcher_polling_budget_snapshot() -> dict[str, Any]:
+    if _LAST_POLL_BUDGET_STATUS:
+        return dict(_LAST_POLL_BUDGET_STATUS)
+    path = _polling_budget_state_path()
+    try:
+        raw = json.loads(path.read_text())
+        if isinstance(raw, dict):
+            return raw
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        pass
+    snapshot = get_linear_rate_limit_snapshot()
+    return {
+        "marker": DISPATCHER_POLLING_BUDGET_MARKER,
+        "poll_fallback_enabled": poll_fallback_enabled(),
+        "cycle_number": 0,
+        "max_calls_per_cycle": poll_max_calls_per_cycle(),
+        "calls_used_this_cycle": 0,
+        "last_cycle_calls": 0,
+        "calls_remaining_this_cycle": poll_max_calls_per_cycle(),
+        "calls_by_source": {},
+        "cache_hits": 0,
+        "cache_misses": 0,
+        "skipped_sections": [],
+        "last_skip_reason": None,
+        "rate_limit_cooldown_active": bool(snapshot.get("cooldown_active")),
+        "label_scan_ttl_seconds": label_scan_ttl_seconds(),
+        "cadence": {
+            "pipeline_scan": scan_cadence("pipeline_scan"),
+            "route_scan": scan_cadence("route_scan"),
+            "agent_scan": scan_cadence("agent_scan"),
+            "recovery_scan": scan_cadence("recovery_scan"),
+            "origin_scan": scan_cadence("origin_scan"),
+        },
+        "non_claims": {
+            "webhook_queue_active": False,
+            "assigned_agent_event_dispatch": False,
+            "linear_mutation_applied": False,
+        },
+    }
+
+
+def section_due(section: str, cycle_number: int) -> bool:
+    cadence = scan_cadence(section)
+    return cadence <= 1 or cycle_number % cadence == 0
+
+
+def skip_budget_section(section: str, reason: str) -> None:
+    if _CURRENT_POLL_BUDGET is not None:
+        _CURRENT_POLL_BUDGET.skip(section, reason)
+    print(f"[dispatcher] polling budget skip {section}: {reason}")
+
+
 # ═══════════════════════════════════════════════════════════════
 # Linear GraphQL helpers
 # ═══════════════════════════════════════════════════════════════
@@ -477,6 +661,9 @@ def gql(query: str, variables: dict[str, Any] | None = None, *, source: str = "d
         ensure_linear_circuit_closed(source=source)
     except LinearRateLimitCircuitOpen as exc:
         raise LinearBudgetExhaustedError(str(exc)) from exc
+
+    if _CURRENT_POLL_BUDGET is not None:
+        _CURRENT_POLL_BUDGET.consume(source)
 
     api_key = _linear_api_key()
     payload = json.dumps(
@@ -627,6 +814,18 @@ def get_issues_with_label(
     if not tid:
         raise RuntimeError("TEAM_ID is not set")
 
+    cache_key = (tid, label_name, max_issues)
+    ttl = label_scan_ttl_seconds()
+    now = time.monotonic()
+    if ttl > 0:
+        cached = _LABEL_SCAN_CACHE.get(cache_key)
+        if cached and now - cached[0] <= ttl:
+            if _CURRENT_POLL_BUDGET is not None:
+                _CURRENT_POLL_BUDGET.cache_hits += 1
+            return json.loads(json.dumps(cached[1]))
+    if _CURRENT_POLL_BUDGET is not None:
+        _CURRENT_POLL_BUDGET.cache_misses += 1
+
     query = """
     query TeamIssues($teamId: String!, $first: Int!) {
         team(id: $teamId) {
@@ -645,7 +844,7 @@ def get_issues_with_label(
         }
     }
     """
-    data = gql(query, {"teamId": tid, "first": max_issues})
+    data = gql(query, {"teamId": tid, "first": max_issues}, source=f"dispatcher.get_issues_with_label:{label_name}")
     issues = data.get("team", {}).get("issues", {}).get("nodes", [])
 
     results = []
@@ -665,6 +864,8 @@ def get_issues_with_label(
                 }
             )
 
+    if ttl > 0:
+        _LABEL_SCAN_CACHE[cache_key] = (now, json.loads(json.dumps(results)))
     return results
 
 
@@ -2286,6 +2487,15 @@ def dispatch_once(
         Dict with counts: ``dispatched``, ``pipeline_setup``,
         ``stale_killed``, ``errors``.
     """
+    global _POLL_CYCLE_NUMBER, _CURRENT_POLL_BUDGET
+    _POLL_CYCLE_NUMBER += 1
+    cycle_number = _POLL_CYCLE_NUMBER
+    cycle_budget = LinearCycleBudget(
+        max_calls=max(1, poll_max_calls_per_cycle()),
+        cycle_number=cycle_number,
+        poll_fallback_enabled=poll_fallback_enabled(),
+    )
+    _CURRENT_POLL_BUDGET = cycle_budget
     counts: dict[str, int] = {
         "dispatched": 0,
         "pipeline_setup": 0,
@@ -2298,6 +2508,10 @@ def dispatch_once(
         "local_dispatched": 0,
         "linear_circuit_open": 0,
         "broad_poll_skipped": 0,
+        "linear_calls_used": 0,
+        "linear_call_budget_exhausted": 0,
+        "poll_cache_hits": 0,
+        "poll_cache_misses": 0,
     }
     cycle_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
 
@@ -2318,37 +2532,48 @@ def dispatch_once(
         except (FileNotFoundError, ValueError):
             pipelines = {"pipelines": {}}
 
-    linear_poll_allowed = linear_broad_poll_allowed(source="dispatcher.dispatch_once")
-    if not linear_poll_allowed:
+    rate_limit_snapshot = get_linear_rate_limit_snapshot()
+    linear_poll_allowed = poll_fallback_enabled() and linear_broad_poll_allowed(source="dispatcher.dispatch_once")
+    if not poll_fallback_enabled():
+        counts["broad_poll_skipped"] = 1
+        skip_budget_section("poll_fallback", "poll fallback disabled; webhook/event path is primary")
+    elif not linear_poll_allowed:
         counts["linear_circuit_open"] = 1
         counts["broad_poll_skipped"] = 1
+        skip_budget_section("rate_limit_cooldown", "Linear rate-limit cooldown active before broad scans")
 
     # 1. Set up new pipeline issues
-    if linear_poll_allowed:
+    if linear_poll_allowed and section_due("pipeline_scan", cycle_number):
         try:
             setup_issues = setup_pipeline_issues()
             counts["pipeline_setup"] = len(setup_issues)
         except LinearBudgetExhaustedError as exc:
-            print(f"[dispatcher] setup_pipeline_issues skipped by Linear circuit: {exc}")
-            counts["linear_circuit_open"] = 1
+            print(f"[dispatcher] setup_pipeline_issues skipped by Linear budget/circuit: {exc}")
+            counts["linear_call_budget_exhausted"] = 1
             counts["broad_poll_skipped"] = 1
             linear_poll_allowed = False
         except Exception as exc:
             print(f"[dispatcher] setup_pipeline_issues error: {exc}")
             counts["errors"] += 1
+    elif linear_poll_allowed:
+        counts["broad_poll_skipped"] = 1
+        skip_budget_section("pipeline_scan", f"cadence skip cycle={cycle_number} cadence={scan_cadence('pipeline_scan')}")
 
     # 1b. Assign ready-but-unclaimed work by capability + capacity.
-    if linear_poll_allowed:
+    if linear_poll_allowed and section_due("route_scan", cycle_number):
         try:
             counts["capability_routed"] = route_dispatch_ready_issues()
         except LinearBudgetExhaustedError as exc:
-            print(f"[dispatcher] route_dispatch_ready_issues skipped by Linear circuit: {exc}")
-            counts["linear_circuit_open"] = 1
+            print(f"[dispatcher] route_dispatch_ready_issues skipped by Linear budget/circuit: {exc}")
+            counts["linear_call_budget_exhausted"] = 1
             counts["broad_poll_skipped"] = 1
             linear_poll_allowed = False
         except Exception as exc:
             print(f"[dispatcher] route_dispatch_ready_issues error: {exc}")
             counts["errors"] += 1
+    elif linear_poll_allowed:
+        counts["broad_poll_skipped"] = 1
+        skip_budget_section("route_scan", f"cadence skip cycle={cycle_number} cadence={scan_cadence('route_scan')}")
 
     # ── AI Ultra Credit Tracker ───────────────────────────
     throttle_dispatch = False
@@ -2385,16 +2610,20 @@ def dispatch_once(
 
     # 2. Dispatch to each agent. Use the explicit lane contract for each
     #    queue instead of treating ``agent:*`` as a complete routing rule.
+    agent_scan_due = linear_poll_allowed and section_due("agent_scan", cycle_number)
+    if linear_poll_allowed and not agent_scan_due:
+        counts["broad_poll_skipped"] = 1
+        skip_budget_section("agent_scan", f"cadence skip cycle={cycle_number} cadence={scan_cadence('agent_scan')}")
     for agent_name, config in AGENT_CONFIG.items():
-        if not linear_poll_allowed:
+        if not linear_poll_allowed or not agent_scan_due:
             counts["broad_poll_skipped"] = 1
             continue
         label = f"agent::{agent_name}"
         try:
             issues = get_issues_with_label(label)
         except LinearBudgetExhaustedError as exc:
-            print(f"[dispatcher] Error fetching issues for {label}: Linear circuit open: {exc}")
-            counts["linear_circuit_open"] = 1
+            print(f"[dispatcher] Error fetching issues for {label}: Linear budget/circuit open: {exc}")
+            counts["linear_call_budget_exhausted"] = 1
             counts["broad_poll_skipped"] = 1
             linear_poll_allowed = False
             continue
@@ -2703,20 +2932,23 @@ def dispatch_once(
         counts["errors"] += 1
 
     # 4. Recover stalled AGY (after enough cycles)
-    if linear_poll_allowed:
+    if linear_poll_allowed and section_due("recovery_scan", cycle_number):
         try:
             recover_stalled_agy(max_retries=MAX_CYCLES_BEFORE_RECOVER)
         except LinearBudgetExhaustedError as exc:
-            print(f"[dispatcher] recover_stalled_agy skipped by Linear circuit: {exc}")
-            counts["linear_circuit_open"] = 1
+            print(f"[dispatcher] recover_stalled_agy skipped by Linear budget/circuit: {exc}")
+            counts["linear_call_budget_exhausted"] = 1
             counts["broad_poll_skipped"] = 1
             linear_poll_allowed = False
         except Exception as exc:
             print(f"[dispatcher] recover_stalled_agy error: {exc}")
             counts["errors"] += 1
+    elif linear_poll_allowed:
+        counts["broad_poll_skipped"] = 1
+        skip_budget_section("recovery_scan", f"cadence skip cycle={cycle_number} cadence={scan_cadence('recovery_scan')}")
 
     # 5. Detect origin completions — signal origin agents when reviews finish
-    if linear_poll_allowed:
+    if linear_poll_allowed and section_due("origin_scan", cycle_number):
         try:
             origin_count = detect_origin_completions(dedup, cycle_id)
             if origin_count:
@@ -2726,13 +2958,23 @@ def dispatch_once(
                 )
                 counts["dispatched"] += origin_count
         except LinearBudgetExhaustedError as exc:
-            print(f"[dispatcher] detect_origin_completions skipped by Linear circuit: {exc}")
-            counts["linear_circuit_open"] = 1
+            print(f"[dispatcher] detect_origin_completions skipped by Linear budget/circuit: {exc}")
+            counts["linear_call_budget_exhausted"] = 1
             counts["broad_poll_skipped"] = 1
         except Exception as exc:
             print(f"[dispatcher] detect_origin_completions error: {exc}")
             counts["errors"] += 1
+    elif linear_poll_allowed:
+        counts["broad_poll_skipped"] = 1
+        skip_budget_section("origin_scan", f"cadence skip cycle={cycle_number} cadence={scan_cadence('origin_scan')}")
 
+    counts["linear_calls_used"] = cycle_budget.calls_used
+    counts["poll_cache_hits"] = cycle_budget.cache_hits
+    counts["poll_cache_misses"] = cycle_budget.cache_misses
+    status = cycle_budget.as_dict(rate_limit_cooldown_active=bool(rate_limit_snapshot.get("cooldown_active")))
+    status["counts"] = dict(counts)
+    _persist_polling_budget_status(status)
+    _CURRENT_POLL_BUDGET = None
     return counts
 
 

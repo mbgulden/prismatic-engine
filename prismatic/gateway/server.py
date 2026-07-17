@@ -61,6 +61,7 @@ from prismatic.linear_rate_limit import (
     LINEAR_RATE_LIMIT_CIRCUIT_BREAKER_MARKER,
     get_linear_rate_limit_snapshot,
 )
+from prismatic.dispatcher import get_dispatcher_polling_budget_snapshot
 from prismatic.plugin_architecture import MEDIA_CAPABILITY_CLASSES, plugin_catalog
 from prismatic.plugin_artifacts import store_from_env as plugin_artifact_store
 from prismatic.plugin_health import get_plugin_health
@@ -1510,6 +1511,7 @@ async def dashboard_dispatcher_status() -> dict[str, Any]:
 
     payload = dispatcher_status_payload({}, _run_records_for_dashboard(), server_started_at=_server_started_at)
     payload["linear_rate_limit"] = get_linear_rate_limit_snapshot()
+    payload["polling_budget"] = get_dispatcher_polling_budget_snapshot()
     return payload
 
 
@@ -1520,6 +1522,7 @@ async def dashboard_linear_rate_limit() -> dict[str, Any]:
         "ok": True,
         "marker": LINEAR_RATE_LIMIT_CIRCUIT_BREAKER_MARKER,
         "linear_rate_limit": get_linear_rate_limit_snapshot(),
+        "polling_budget": get_dispatcher_polling_budget_snapshot(),
     }
 
 
