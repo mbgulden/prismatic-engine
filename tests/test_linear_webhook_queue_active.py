@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 def client_for_state(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("PRISMATIC_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PRISMATIC_LINEAR_RATE_LIMIT_STATE", str(tmp_path / "linear_rate_limit_state.json"))
     import prismatic.gateway.server as server
 
     server = importlib.reload(server)
@@ -126,3 +127,70 @@ def test_retry_and_purge_are_real_queue_mutations(tmp_path: Path, monkeypatch):
     assert purge["status"] == "ok"
     assert purge["deleted"] == 1
     assert client.get("/api/gateway/webhooks/queue").json()["total"] == 0
+
+
+def test_rate_limit_cooldown_defers_without_dispatch_attempt(tmp_path: Path, monkeypatch):
+    client = client_for_state(tmp_path, monkeypatch)
+    client.post("/api/gateway/linear", json=fixture_payload("evt-gro-test-cooldown"))
+
+    from prismatic.linear_rate_limit import LinearRateLimitState
+
+    LinearRateLimitState(tmp_path / "linear_rate_limit_state.json").trip(
+        reason="fixture cooldown",
+        source="test.webhook_drain",
+        remaining=0,
+        limit=100,
+    )
+
+    calls: list[str] = []
+
+    def fake_dispatch(*, identifier: str):
+        calls.append(identifier)
+        return {"ok": True}
+
+    repo = Path(__file__).resolve().parents[1]
+    drainer = load_drainer(repo)
+    args = argparse.Namespace(
+        max=1,
+        dry_run=False,
+        stale_only=False,
+        backfill=False,
+        reset=False,
+        since=None,
+        until=None,
+    )
+    rc = drainer.drain(args, dispatch_fn=fake_dispatch)
+
+    assert rc == 0
+    assert calls == []
+    queue = client.get("/api/gateway/webhooks/queue").json()
+    assert queue["items"][0]["dispatch_status"] == "deferred_rate_limit"
+    status = client.get("/api/gateway/webhooks/queue/status").json()
+    assert status["marker"] == "LINEAR_WEBHOOK_QUEUE_ACTIVE_OK"
+    assert status["latest_event_status"] == "deferred_rate_limit"
+    assert status["last_drain_result"] == "deferred_rate_limit"
+    assert status["last_drain_counts"]["processed"] == 1
+    assert status["last_drain_counts"]["deferred"] == 1
+    assert status["last_drain_counts"]["dispatched"] == 0
+
+
+def test_webhook_drain_units_use_runtime_path_if_present():
+    candidate_paths = [
+        Path("/etc/systemd/system/prismatic-webhook-drain.service"),
+        Path("/etc/systemd/system/prismatic-webhook-drain.timer"),
+        Path("/home/ubuntu/.config/systemd/user/prismatic-webhook-drain.service"),
+        Path("/home/ubuntu/.config/systemd/user/prismatic-webhook-drain.timer"),
+    ]
+    inspected = 0
+    for unit in candidate_paths:
+        if not unit.exists() or unit.is_symlink():
+            continue
+        text = unit.read_text(errors="replace")
+        inspected += 1
+        if "ExecStart" in text:
+            assert "/home/ubuntu/work/prismatic-engine" not in text
+            assert (
+                "/home/ubuntu/.prismatic/runtime/prismatic-engine" in text
+                or "/home/ubuntu/.prismatic/venv_stable" in text
+            )
+    assert inspected >= 0

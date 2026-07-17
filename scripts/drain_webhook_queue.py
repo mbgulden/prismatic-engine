@@ -156,6 +156,20 @@ def reset_all_pending(conn: sqlite3.Connection) -> int:
     return cur.rowcount
 
 
+def _linear_dispatch_allowed() -> tuple[bool, str]:
+    """Return whether a drain dispatch attempt may spend Linear budget."""
+    try:
+        from prismatic import linear_rate_limit
+
+        linear_rate_limit.ensure_linear_circuit_closed(source="webhook_drain.dispatch")
+        return True, "ok"
+    except Exception as exc:
+        if exc.__class__.__name__ == "LinearRateLimitCircuitOpen":
+            return False, str(exc)
+        # Fail closed on circuit-breaker read errors; this drain is a safety net.
+        return False, f"linear circuit unavailable: {exc}"
+
+
 def has_agent_label(raw_json: str) -> bool:
     """Best-effort check: parse the raw payload for agent:* labels."""
     import json
@@ -244,6 +258,7 @@ def drain(args: argparse.Namespace, dispatch_fn=None) -> int:
         dispatched = 0
         no_op = 0
         failed = 0
+        deferred = 0
         stale = n_stale
         for ev in events:
             eid = ev["event_id"]
@@ -268,6 +283,13 @@ def drain(args: argparse.Namespace, dispatch_fn=None) -> int:
                 print(f"[drain]   DRY: would dispatch {ident} ({action})")
                 continue
 
+            allowed, block_reason = _linear_dispatch_allowed()
+            if not allowed:
+                update_status(conn, eid, "deferred_rate_limit")
+                deferred += 1
+                print(f"[drain]   ⏸ {ident} deferred: {block_reason}")
+                continue
+
             try:
                 result = dispatch_fn(identifier=ident)
                 if result:
@@ -288,8 +310,8 @@ def drain(args: argparse.Namespace, dispatch_fn=None) -> int:
 
         if not args.dry_run:
             conn.commit()
-        result = "ok" if failed == 0 else "failed"
-        counts = {"dispatched": dispatched, "no_op": no_op, "failed": failed, "stale": stale, "dry_run": bool(args.dry_run), "processed": len(events)}
+        result = "failed" if failed else ("deferred_rate_limit" if deferred else "ok")
+        counts = {"dispatched": dispatched, "no_op": no_op, "failed": failed, "deferred": deferred, "stale": stale, "dry_run": bool(args.dry_run), "processed": len(events)}
         if not args.dry_run:
             try:
                 from prismatic.ingestion_queue import record_drain_result
@@ -299,7 +321,7 @@ def drain(args: argparse.Namespace, dispatch_fn=None) -> int:
                 print(f"[drain] WARN: could not record drain result: {exc}")
         print(
             f"[drain] Done: dispatched={dispatched} no_op={no_op} "
-            f"failed={failed} stale={stale} dry_run={args.dry_run}"
+            f"failed={failed} deferred={deferred} stale={stale} dry_run={args.dry_run}"
         )
         return 0 if failed == 0 else 1
     finally:
