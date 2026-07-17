@@ -234,6 +234,37 @@
                 </div>
             </section>
 
+            <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-cyan-500/80 shadow-lg shadow-cyan-950/10" data-proof-marker="agy-merge-backlog-card">
+                <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <h2 class="text-sm font-bold text-slate-200 uppercase tracking-[0.18em]">AGY Merge Backlog</h2>
+                            <span id="merge-backlog-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-slate-700 bg-slate-800 text-slate-300">Checking</span>
+                        </div>
+                        <p class="text-xs text-slate-500">Dry-run PR plan and verification gate from persisted completed-work rows. Auto-merge disabled.</p>
+                    </div>
+                    <div class="text-[11px] text-slate-400 font-mono" id="merge-backlog-marker">AGY_CLEAN_PR_AND_VERIFICATION_GATE_OK</div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mt-4 text-xs">
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Action</div>
+                        <div id="merge-backlog-action" class="mt-1 font-semibold text-slate-100">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Verification</div>
+                        <div id="merge-backlog-verification" class="mt-1 font-semibold text-slate-100">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Dry-run PR branch</div>
+                        <div id="merge-backlog-branch" class="mt-1 text-[11px] text-slate-300 break-all">No row planned yet</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Auto-merge</div>
+                        <div id="merge-backlog-auto-merge" class="mt-1 text-[11px] text-slate-400">Disabled</div>
+                    </div>
+                </div>
+            </section>
+
             <!-- Morning Briefing Card (Overnight Report) -->
             <section id="morning-briefing-card" class="glass-panel p-5 rounded-2xl border-l-2 border-l-indigo-500/80 shadow-lg shadow-indigo-950/10 space-y-4">
                 <div class="flex items-center justify-between border-b border-slate-800/80 pb-3">
@@ -2224,6 +2255,7 @@
                 renderDashboardSummary();
                 await fetchQuotaSummary();
                 await fetchCompletedWorkGate();
+                await fetchMergeBacklog();
                 await fetchMorningBriefing();
             } else if (activeTab === 'merge') {
                 await fetchMergeData();
@@ -2782,6 +2814,40 @@
                 if (eligible) eligible.textContent = "no";
                 if (linear) linear.textContent = "Gateway unavailable";
                 if (reason) reason.textContent = String(err?.message || err || "unknown error");
+            }
+        }
+
+        async function fetchMergeBacklog() {
+            const badge = document.getElementById("merge-backlog-badge");
+            const action = document.getElementById("merge-backlog-action");
+            const verification = document.getElementById("merge-backlog-verification");
+            const branch = document.getElementById("merge-backlog-branch");
+            const autoMerge = document.getElementById("merge-backlog-auto-merge");
+            try {
+                const res = await fetch(`${API_PREFIX}/agy/merge-backlog?limit=1`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const item = (data.merge_backlog || [])[0];
+                const count = data.count ?? 0;
+                const pass = item?.verification_gate === "pass";
+                if (badge) {
+                    badge.textContent = count > 0 ? (pass ? "Gate Pass" : "Review") : "No Rows";
+                    badge.className = `px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${count > 0 ? (pass ? 'border-cyan-500/20 bg-cyan-500/10 text-cyan-300' : 'border-amber-500/20 bg-amber-500/10 text-amber-300') : 'border-slate-700 bg-slate-800 text-slate-300'}`;
+                }
+                if (action) action.textContent = item?.recommended_action || "no_rows";
+                if (verification) verification.textContent = item ? `${item.verification_gate} · ${item.verification_lane}` : "no_rows";
+                if (branch) branch.textContent = item?.pr_branch || "No row planned yet";
+                if (autoMerge) autoMerge.textContent = item?.eligible_for_auto_merge ? "ERROR: enabled" : "Disabled";
+            } catch (err) {
+                console.error("Error loading AGY merge backlog:", err);
+                if (badge) {
+                    badge.textContent = "Unavailable";
+                    badge.className = "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-rose-500/20 bg-rose-500/10 text-rose-300";
+                }
+                if (action) action.textContent = "unavailable";
+                if (verification) verification.textContent = "blocked";
+                if (branch) branch.textContent = String(err?.message || err || "Gateway unavailable");
+                if (autoMerge) autoMerge.textContent = "Disabled";
             }
         }
 

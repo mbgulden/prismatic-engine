@@ -46,6 +46,14 @@ from prismatic.agy_completed_work import (
     ingest_completed_work,
     list_completed_work,
 )
+from prismatic.agy_merge_backlog import (
+    AGY_CLEAN_PR_AND_VERIFICATION_GATE_MARKER,
+    AGY_CLEAN_PR_CREATE_UPDATE_MARKER,
+    AGY_PR_VERIFICATION_GATE_MARKER,
+    get_merge_backlog_item,
+    list_merge_backlog,
+    verify_merge_backlog_item,
+)
 from prismatic.budget_caps import read_budget_caps, write_budget_caps
 from prismatic.completed_work_gate import completed_work_gate_schema, demo_completed_work_gate_state
 from prismatic.lock import _read_locks as read_swarm_locks
@@ -1049,6 +1057,59 @@ async def get_agy_completed_work(completed_work_id: str) -> dict[str, Any]:
         "marker": AGY_COMPLETED_WORK_INGESTION_MARKER,
         "completed_work": row.as_dict(),
     }
+
+
+@app.get("/api/agy/merge-backlog")
+@app.get("/api/gateway/agy/merge-backlog")
+async def list_agy_merge_backlog(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
+    """List dry-run AGY merge backlog decisions from persisted completed-work rows."""
+
+    rows = [item.as_dict() for item in list_merge_backlog(limit=limit)]
+    return {
+        "status": "ok",
+        "marker": AGY_CLEAN_PR_AND_VERIFICATION_GATE_MARKER,
+        "count": len(rows),
+        "merge_backlog": rows,
+        "non_claims": {
+            "auto_merge": False,
+            "production_deploy": False,
+            "github_pr_created": False,
+            "agy_dispatch": False,
+        },
+    }
+
+
+@app.get("/api/agy/merge-backlog/{completed_work_id}")
+@app.get("/api/gateway/agy/merge-backlog/{completed_work_id}")
+async def get_agy_merge_backlog(completed_work_id: str) -> dict[str, Any]:
+    """Return one dry-run AGY merge backlog decision."""
+
+    try:
+        item = get_merge_backlog_item(completed_work_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="completed work row not found") from exc
+    return {
+        "status": "ok",
+        "marker": AGY_CLEAN_PR_CREATE_UPDATE_MARKER,
+        "merge_backlog": item.as_dict(),
+        "non_claims": {
+            "auto_merge": False,
+            "production_deploy": False,
+            "github_pr_created": False,
+            "agy_dispatch": False,
+        },
+    }
+
+
+@app.post("/api/agy/merge-backlog/{completed_work_id}/verify")
+@app.post("/api/gateway/agy/merge-backlog/{completed_work_id}/verify")
+async def verify_agy_merge_backlog(completed_work_id: str) -> dict[str, Any]:
+    """Evaluate the lane verification gate for one completed-work row."""
+
+    try:
+        return verify_merge_backlog_item(completed_work_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="completed work row not found") from exc
 
 
 @app.get("/locks")
