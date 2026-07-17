@@ -48,6 +48,13 @@ from .telemetry import get_collector
 from .capability_router import default_capability_registry, route_issue
 from .lane_contracts import filter_dispatchable_issues, starvation_signal_for
 from .mode_switch import get_mode_switch, OrchestrationMode
+from .linear_rate_limit import (
+    LinearRateLimitCircuitOpen,
+    ensure_linear_circuit_closed,
+    get_linear_rate_limit_snapshot,
+    record_linear_response_headers,
+    trip_linear_circuit_from_error,
+)
 from .core.governor import DistributedComputeGovernor
 
 # ── IPC Bridge event emission (best-effort) ─────────────────────
@@ -456,25 +463,20 @@ def _linear_api_key() -> str:
     return key
 
 
-def gql(query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Execute a Linear GraphQL query or mutation.
+def gql(query: str, variables: dict[str, Any] | None = None, *, source: str = "dispatcher.gql") -> dict[str, Any]:
+    """Execute a Linear GraphQL query or mutation with request-count circuit breaking.
 
     Uses the ``LINEAR_API_KEY`` env var for authentication. No
     ``Bearer`` prefix is added — the raw key value is used directly
     as the HTTP ``Authorization`` header (Linear's API token format).
-
-    Args:
-        query: GraphQL query/mutation string.
-        variables: Optional dict of variable values.
-
-    Returns:
-        The ``data`` dict from the response.
-
-    Raises:
-        RuntimeError: On HTTP or GraphQL errors.
     """
     import urllib.request
     import urllib.error
+
+    try:
+        ensure_linear_circuit_closed(source=source)
+    except LinearRateLimitCircuitOpen as exc:
+        raise LinearBudgetExhaustedError(str(exc)) from exc
 
     api_key = _linear_api_key()
     payload = json.dumps(
@@ -497,18 +499,47 @@ def gql(query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             body = json.loads(resp.read().decode("utf-8"))
+            record_linear_response_headers(resp.headers, source=source)
     except urllib.error.HTTPError as exc:
-        body = exc.read().decode(errors="replace")
-        raise RuntimeError(f"Linear API HTTP {exc.code}: {body[:500]}") from exc
+        raw_body = exc.read().decode(errors="replace")
+        try:
+            error_payload: Any = json.loads(raw_body)
+        except json.JSONDecodeError:
+            error_payload = raw_body
+        tripped = trip_linear_circuit_from_error(error_payload, source=source)
+        if tripped:
+            raise LinearBudgetExhaustedError(
+                f"Linear API rate-limit circuit open: {tripped.get('reason')}"
+            ) from exc
+        raise RuntimeError(f"Linear API HTTP {exc.code}: {raw_body[:500]}") from exc
     except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
         raise RuntimeError(f"Linear API request failed: {exc}") from exc
 
     if "errors" in body:
+        tripped = trip_linear_circuit_from_error(body, source=source)
+        if tripped:
+            raise LinearBudgetExhaustedError(
+                f"Linear API rate-limit circuit open: {tripped.get('reason')}"
+            )
         raise RuntimeError(
             f"Linear API error(s): {json.dumps(body['errors'], indent=2)[:1000]}"
         )
 
     return body.get("data", {})
+
+
+def linear_broad_poll_allowed(*, source: str = "dispatcher.broad_poll") -> bool:
+    """Return False when request-count cooldown should skip broad Linear scans."""
+
+    snapshot = get_linear_rate_limit_snapshot()
+    if snapshot.get("cooldown_active"):
+        print(
+            "[dispatcher] Linear rate-limit circuit open; "
+            f"skipping broad poll source={source} until {snapshot.get('cooldown_until')} "
+            f"reason={snapshot.get('reason')}"
+        )
+        return False
+    return True
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -2265,6 +2296,8 @@ def dispatch_once(
         "missing_dispatch_ready": 0,
         "governor_pruned": 0,
         "local_dispatched": 0,
+        "linear_circuit_open": 0,
+        "broad_poll_skipped": 0,
     }
     cycle_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
 
@@ -2285,20 +2318,37 @@ def dispatch_once(
         except (FileNotFoundError, ValueError):
             pipelines = {"pipelines": {}}
 
+    linear_poll_allowed = linear_broad_poll_allowed(source="dispatcher.dispatch_once")
+    if not linear_poll_allowed:
+        counts["linear_circuit_open"] = 1
+        counts["broad_poll_skipped"] = 1
+
     # 1. Set up new pipeline issues
-    try:
-        setup_issues = setup_pipeline_issues()
-        counts["pipeline_setup"] = len(setup_issues)
-    except Exception as exc:
-        print(f"[dispatcher] setup_pipeline_issues error: {exc}")
-        counts["errors"] += 1
+    if linear_poll_allowed:
+        try:
+            setup_issues = setup_pipeline_issues()
+            counts["pipeline_setup"] = len(setup_issues)
+        except LinearBudgetExhaustedError as exc:
+            print(f"[dispatcher] setup_pipeline_issues skipped by Linear circuit: {exc}")
+            counts["linear_circuit_open"] = 1
+            counts["broad_poll_skipped"] = 1
+            linear_poll_allowed = False
+        except Exception as exc:
+            print(f"[dispatcher] setup_pipeline_issues error: {exc}")
+            counts["errors"] += 1
 
     # 1b. Assign ready-but-unclaimed work by capability + capacity.
-    try:
-        counts["capability_routed"] = route_dispatch_ready_issues()
-    except Exception as exc:
-        print(f"[dispatcher] route_dispatch_ready_issues error: {exc}")
-        counts["errors"] += 1
+    if linear_poll_allowed:
+        try:
+            counts["capability_routed"] = route_dispatch_ready_issues()
+        except LinearBudgetExhaustedError as exc:
+            print(f"[dispatcher] route_dispatch_ready_issues skipped by Linear circuit: {exc}")
+            counts["linear_circuit_open"] = 1
+            counts["broad_poll_skipped"] = 1
+            linear_poll_allowed = False
+        except Exception as exc:
+            print(f"[dispatcher] route_dispatch_ready_issues error: {exc}")
+            counts["errors"] += 1
 
     # ── AI Ultra Credit Tracker ───────────────────────────
     throttle_dispatch = False
@@ -2336,9 +2386,18 @@ def dispatch_once(
     # 2. Dispatch to each agent. Use the explicit lane contract for each
     #    queue instead of treating ``agent:*`` as a complete routing rule.
     for agent_name, config in AGENT_CONFIG.items():
+        if not linear_poll_allowed:
+            counts["broad_poll_skipped"] = 1
+            continue
         label = f"agent::{agent_name}"
         try:
             issues = get_issues_with_label(label)
+        except LinearBudgetExhaustedError as exc:
+            print(f"[dispatcher] Error fetching issues for {label}: Linear circuit open: {exc}")
+            counts["linear_circuit_open"] = 1
+            counts["broad_poll_skipped"] = 1
+            linear_poll_allowed = False
+            continue
         except Exception as exc:
             print(f"[dispatcher] Error fetching issues for {label}: {exc}")
             counts["errors"] += 1
@@ -2644,24 +2703,35 @@ def dispatch_once(
         counts["errors"] += 1
 
     # 4. Recover stalled AGY (after enough cycles)
-    try:
-        recover_stalled_agy(max_retries=MAX_CYCLES_BEFORE_RECOVER)
-    except Exception as exc:
-        print(f"[dispatcher] recover_stalled_agy error: {exc}")
-        counts["errors"] += 1
+    if linear_poll_allowed:
+        try:
+            recover_stalled_agy(max_retries=MAX_CYCLES_BEFORE_RECOVER)
+        except LinearBudgetExhaustedError as exc:
+            print(f"[dispatcher] recover_stalled_agy skipped by Linear circuit: {exc}")
+            counts["linear_circuit_open"] = 1
+            counts["broad_poll_skipped"] = 1
+            linear_poll_allowed = False
+        except Exception as exc:
+            print(f"[dispatcher] recover_stalled_agy error: {exc}")
+            counts["errors"] += 1
 
     # 5. Detect origin completions — signal origin agents when reviews finish
-    try:
-        origin_count = detect_origin_completions(dedup, cycle_id)
-        if origin_count:
-            print(
-                f"[dispatcher] 🔔 Signaled {origin_count} "
-                f"origin agent(s) for review completion"
-            )
-            counts["dispatched"] += origin_count
-    except Exception as exc:
-        print(f"[dispatcher] detect_origin_completions error: {exc}")
-        counts["errors"] += 1
+    if linear_poll_allowed:
+        try:
+            origin_count = detect_origin_completions(dedup, cycle_id)
+            if origin_count:
+                print(
+                    f"[dispatcher] 🔔 Signaled {origin_count} "
+                    f"origin agent(s) for review completion"
+                )
+                counts["dispatched"] += origin_count
+        except LinearBudgetExhaustedError as exc:
+            print(f"[dispatcher] detect_origin_completions skipped by Linear circuit: {exc}")
+            counts["linear_circuit_open"] = 1
+            counts["broad_poll_skipped"] = 1
+        except Exception as exc:
+            print(f"[dispatcher] detect_origin_completions error: {exc}")
+            counts["errors"] += 1
 
     return counts
 

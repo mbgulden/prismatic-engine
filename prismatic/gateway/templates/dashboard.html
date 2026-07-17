@@ -2350,7 +2350,13 @@
                     const dot = document.getElementById("disp-status-dot");
                     const text = document.getElementById("disp-status-text");
 
-                    if (disp.status === "active") {
+                    const linearLimit = disp.linear_rate_limit || {};
+                    if (linearLimit.cooldown_active) {
+                        badge.className = "flex items-center space-x-1.5 bg-amber-500/10 px-2.5 py-1 rounded-full text-xs font-bold text-amber-400 border border-amber-500/20";
+                        dot.className = "w-2 h-2 rounded-full bg-amber-500";
+                        text.textContent = "LINEAR COOLDOWN";
+                        setSummaryBadge("summary-dispatcher-badge", "summary-dispatcher-meta", "amber", "LINEAR COOLDOWN", `${linearLimit.reason || 'Rate-limit circuit open'} · reset ${linearLimit.cooldown_until || linearLimit.reset_at || 'unknown'}`);
+                    } else if (disp.status === "active") {
                         badge.className = "flex items-center space-x-1.5 bg-emerald-500/10 px-2.5 py-1 rounded-full text-xs font-bold text-emerald-400 border border-emerald-500/20";
                         dot.className = "w-2 h-2 rounded-full bg-emerald-500 status-pulse";
                         text.textContent = "ACTIVE";
