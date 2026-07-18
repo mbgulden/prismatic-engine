@@ -12,15 +12,21 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from prismatic.agy_completed_work import ingest_completed_work
+from prismatic.agy_completed_work import ingest_completed_work  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("packet", help="Path to AGY result packet JSON, or '-' for stdin")
+    parser.add_argument(
+        "packet", help="Path to AGY result packet JSON, or '-' for stdin"
+    )
     parser.add_argument("--db", dest="db_path", help="Optional SQLite DB path")
-    parser.add_argument("--dirty-source", action="store_true", help="Classify as clean_rebuild_required")
-    parser.add_argument("--source-is-stale", action="store_true", help="Classify as superseded")
+    parser.add_argument(
+        "--dirty-source", action="store_true", help="Classify as clean_rebuild_required"
+    )
+    parser.add_argument(
+        "--source-is-stale", action="store_true", help="Classify as superseded"
+    )
     parser.add_argument(
         "--conflict",
         dest="conflicts",
@@ -56,7 +62,22 @@ def main() -> int:
         source_is_stale=args.source_is_stale,
         conflicts=args.conflicts,
     )
-    print(json.dumps({"status": "ok", "completed_work": row.as_dict()}, indent=2, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "status": "ok",
+                "completed_work": row.as_dict(),
+                "non_claims": {
+                    "auto_merge": False,
+                    "production_deploy": False,
+                    "github_pr_created": False,
+                    "agy_dispatch": False,
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
     return 0
 
 

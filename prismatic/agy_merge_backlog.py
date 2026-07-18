@@ -14,7 +14,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from prismatic.agy_completed_work import CompletedWorkRow, get_completed_work, list_completed_work
+from prismatic.agy_completed_work import (
+    CompletedWorkRow,
+    get_completed_work,
+    list_completed_work,
+)
 from prismatic.completed_work_gate import GateClassification
 
 AGY_CLEAN_PR_CREATE_UPDATE_MARKER = "AGY_CLEAN_PR_CREATE_UPDATE_OK"
@@ -98,6 +102,7 @@ LANE_POLICY: dict[str, dict[str, Any]] = {
     },
 }
 
+
 @dataclass(frozen=True)
 class VerificationGateDecision:
     verification_gate: str
@@ -116,6 +121,7 @@ class VerificationGateDecision:
             "reasons": list(self.reasons),
             "marker": self.marker,
         }
+
 
 @dataclass(frozen=True)
 class MergeBacklogItem:
@@ -174,12 +180,16 @@ class MergeBacklogItem:
 
 def build_merge_backlog_item(row: CompletedWorkRow) -> MergeBacklogItem:
     packet = row.packet
-    changed_files = tuple(str(path) for path in packet.get("changed_files", []) if isinstance(path, str))
+    changed_files = tuple(
+        str(path) for path in packet.get("changed_files", []) if isinstance(path, str)
+    )
     classification = row.classification
     action = _CLASSIFICATION_TO_ACTION.get(classification, "rejected")
     lane = verification_lane_for_row(row)
     verification = evaluate_verification_gate(row, lane=lane)
-    base_branch = _normalize_base_branch(row.base_branch or packet.get("base_branch") or "main")
+    base_branch = _normalize_base_branch(
+        row.base_branch or packet.get("base_branch") or "main"
+    )
     issue_identifier = _issue_identifier(packet, row)
     merge_backlog_id = merge_backlog_id_for(row)
     pr_branch = deterministic_pr_branch(issue_identifier, row, changed_files)
@@ -221,7 +231,9 @@ def build_merge_backlog_item(row: CompletedWorkRow) -> MergeBacklogItem:
     )
 
 
-def evaluate_verification_gate(row: CompletedWorkRow, *, lane: str | None = None) -> VerificationGateDecision:
+def evaluate_verification_gate(
+    row: CompletedWorkRow, *, lane: str | None = None
+) -> VerificationGateDecision:
     lane = lane or verification_lane_for_row(row)
     if lane not in _VERIFICATION_LANES:
         lane = "unknown"
@@ -238,38 +250,69 @@ def evaluate_verification_gate(row: CompletedWorkRow, *, lane: str | None = None
     reasons: list[str] = []
     if row.classification != GateClassification.MERGE_READY.value:
         reasons.append(f"completed-work classification is {row.classification}")
-        gate = "blocked" if row.classification.startswith("blocked") or row.classification in {"rejected", "superseded", "clean_rebuild_required"} else "manual_review"
+        gate = (
+            "blocked"
+            if row.classification.startswith("blocked")
+            or row.classification
+            in {"rejected", "superseded", "clean_rebuild_required"}
+            else "manual_review"
+        )
         return VerificationGateDecision(gate, lane, True, policy, tuple(reasons), None)
     if lane in {"mixed", "manual-review", "unknown"}:
         reasons.append(f"lane {lane} requires manual review")
-        return VerificationGateDecision("manual_review", lane, True, policy, tuple(reasons), None)
+        return VerificationGateDecision(
+            "manual_review", lane, True, policy, tuple(reasons), None
+        )
     if proof_result != "PASS":
         reasons.append(f"proof result is {proof_result or 'missing'}")
-        return VerificationGateDecision("blocked", lane, True, policy, tuple(reasons), None)
+        return VerificationGateDecision(
+            "blocked", lane, True, policy, tuple(reasons), None
+        )
     if not log.startswith("/tmp/"):
         reasons.append("proof log must point to /tmp evidence")
-        return VerificationGateDecision("blocked", lane, True, policy, tuple(reasons), None)
-    missing_terms = [term for term in policy.get("required_terms", ()) if term.lower() not in text]
+        return VerificationGateDecision(
+            "blocked", lane, True, policy, tuple(reasons), None
+        )
+    missing_terms = [
+        term for term in policy.get("required_terms", ()) if term.lower() not in text
+    ]
     if missing_terms:
         reasons.append("proof missing lane evidence: " + ", ".join(missing_terms))
-        return VerificationGateDecision("blocked", lane, True, policy, tuple(reasons), None)
+        return VerificationGateDecision(
+            "blocked", lane, True, policy, tuple(reasons), None
+        )
     reasons.append(f"{lane} verification policy satisfied from completed-work proof")
-    return VerificationGateDecision("pass", lane, True, policy, tuple(reasons), AGY_PR_VERIFICATION_GATE_MARKER)
+    return VerificationGateDecision(
+        "pass", lane, True, policy, tuple(reasons), AGY_PR_VERIFICATION_GATE_MARKER
+    )
 
 
-def list_merge_backlog(*, db_path: str | Path | None = None, limit: int = 50) -> list[MergeBacklogItem]:
-    return [build_merge_backlog_item(row) for row in list_completed_work(db_path=db_path, limit=limit)]
+def list_merge_backlog(
+    *, db_path: str | Path | None = None, limit: int = 50
+) -> list[MergeBacklogItem]:
+    return [
+        build_merge_backlog_item(row)
+        for row in list_completed_work(db_path=db_path, limit=limit)
+    ]
 
 
-def get_merge_backlog_item(completed_work_id: str, *, db_path: str | Path | None = None) -> MergeBacklogItem:
-    return build_merge_backlog_item(get_completed_work(completed_work_id, db_path=db_path))
+def get_merge_backlog_item(
+    completed_work_id: str, *, db_path: str | Path | None = None
+) -> MergeBacklogItem:
+    return build_merge_backlog_item(
+        get_completed_work(completed_work_id, db_path=db_path)
+    )
 
 
-def verify_merge_backlog_item(completed_work_id: str, *, db_path: str | Path | None = None) -> dict[str, Any]:
+def verify_merge_backlog_item(
+    completed_work_id: str, *, db_path: str | Path | None = None
+) -> dict[str, Any]:
     item = get_merge_backlog_item(completed_work_id, db_path=db_path)
     return {
         "status": "ok",
-        "marker": AGY_PR_VERIFICATION_GATE_MARKER if item.verification_gate == "pass" else "AGY_CLEAN_PR_VERIFICATION_GATE_BLOCKED",
+        "marker": AGY_PR_VERIFICATION_GATE_MARKER
+        if item.verification_gate == "pass"
+        else "AGY_CLEAN_PR_VERIFICATION_GATE_BLOCKED",
         "merge_backlog": item.as_dict(),
         "verification_gate": item.verification_gate,
         "eligible_for_auto_merge": False,
@@ -284,10 +327,14 @@ def verify_merge_backlog_item(completed_work_id: str, *, db_path: str | Path | N
 
 def verification_lane_for_row(row: CompletedWorkRow) -> str:
     packet = row.packet
-    explicit = str(packet.get("verification_lane") or packet.get("lane") or "").strip().lower()
+    explicit = (
+        str(packet.get("verification_lane") or packet.get("lane") or "").strip().lower()
+    )
     if explicit in _VERIFICATION_LANES:
         return explicit
-    changed_files = [str(path) for path in packet.get("changed_files", []) if isinstance(path, str)]
+    changed_files = [
+        str(path) for path in packet.get("changed_files", []) if isinstance(path, str)
+    ]
     if not changed_files:
         return "unknown"
     lanes = {_lane_for_path(path) for path in changed_files}
@@ -301,13 +348,21 @@ def verification_lane_for_row(row: CompletedWorkRow) -> str:
     return "mixed"
 
 
-def deterministic_pr_branch(issue_identifier: str | None, row: CompletedWorkRow, changed_files: Sequence[str]) -> str:
+def deterministic_pr_branch(
+    issue_identifier: str | None, row: CompletedWorkRow, changed_files: Sequence[str]
+) -> str:
     issue = _slug(issue_identifier or "agy")
-    digest = hashlib.sha256(json.dumps({"id": row.id, "files": list(changed_files)}, sort_keys=True).encode()).hexdigest()[:8]
+    digest = hashlib.sha256(
+        json.dumps(
+            {"id": row.id, "files": list(changed_files)}, sort_keys=True
+        ).encode()
+    ).hexdigest()[:8]
     return f"feature/agy-clean-pr-{issue}-{digest}"
 
 
-def deterministic_pr_title(issue_identifier: str | None, row: CompletedWorkRow, action: str) -> str:
+def deterministic_pr_title(
+    issue_identifier: str | None, row: CompletedWorkRow, action: str
+) -> str:
     prefix = f"{issue_identifier}: " if issue_identifier else ""
     if action == "open_or_update_pr":
         return f"{prefix}Integrate AGY completed work"
@@ -322,7 +377,14 @@ def deterministic_pr_body(
 ) -> str:
     raw_proof = row.packet.get("proof")
     proof: Mapping[str, Any] = raw_proof if isinstance(raw_proof, Mapping) else {}
-    changed = "\n".join(f"- `{path}`" for path in row.packet.get("changed_files", []) if isinstance(path, str)) or "- none provided"
+    changed = (
+        "\n".join(
+            f"- `{path}`"
+            for path in row.packet.get("changed_files", [])
+            if isinstance(path, str)
+        )
+        or "- none provided"
+    )
     non_claims = ", ".join(row.non_claims) or "none provided"
     return "\n".join(
         [
@@ -363,9 +425,13 @@ def _lane_for_path(path: str) -> str:
     p = path.strip()
     if p.startswith("docs/") or p.endswith(".md"):
         return "docs"
-    if p.startswith("research/") or p.startswith("scripts/reports/") or p.startswith("scripts/audits/"):
+    if (
+        p.startswith("research/")
+        or p.startswith("scripts/reports/")
+        or p.startswith("scripts/audits/")
+    ):
         return "research"
-    if "gateway/templates/" in p or p.endswith(('.html', '.css', '.js', '.ts', '.tsx')):
+    if "gateway/templates/" in p or p.endswith((".html", ".css", ".js", ".ts", ".tsx")):
         return "dashboard-ui"
     if p.startswith("prismatic/") or p.startswith("tests/") or p.startswith("scripts/"):
         return "backend-api"
@@ -377,7 +443,9 @@ def _issue_identifier(packet: Mapping[str, Any], row: CompletedWorkRow) -> str |
         value = packet.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
-    text = " ".join(str(value) for value in [row.source_branch, row.source_path, row.id] if value)
+    text = " ".join(
+        str(value) for value in [row.source_branch, row.source_path, row.id] if value
+    )
     match = re.search(r"[A-Z]{2,10}-\d+", text)
     return match.group(0) if match else None
 

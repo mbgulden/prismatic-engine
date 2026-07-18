@@ -13,7 +13,10 @@ def _rows(db_path):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
-        return [dict(row) for row in conn.execute("SELECT * FROM launch_records ORDER BY created_at")]
+        return [
+            dict(row)
+            for row in conn.execute("SELECT * FROM launch_records ORDER BY created_at")
+        ]
     finally:
         conn.close()
 
@@ -72,6 +75,7 @@ def test_launch_agy_persists_pid_command_and_worktree_handle(tmp_path, monkeypat
     monkeypatch.setenv("PRISMATIC_WORKTREE_PATH", str(worktree))
     monkeypatch.delenv("PRISMATIC_SANDBOX_PATH", raising=False)
     monkeypatch.setattr(dispatcher, "AGY_PATH", "/bin/echo")
+    monkeypatch.setenv("PRISMATIC_AGY_USE_SYSTEMD_SCOPE", "0")
     monkeypatch.setattr(dispatcher, "get_agy_model_from_labels", lambda labels: None)
 
     proc = MagicMock()
@@ -102,5 +106,8 @@ def test_launch_agy_persists_pid_command_and_worktree_handle(tmp_path, monkeypat
     assert row["cycle_id"] == "cycle-3490"
     assert row["request_id"] == "req-1"
     cmd = json.loads(row["command_json"])
-    assert cmd[:3] == ["/bin/echo", "--headless", "--issue"]
-    assert "Persist launch records" in cmd
+    assert cmd[:2] == ["/bin/echo", "--print"]
+    assert "Persist launch records" in cmd[2]
+    assert "--dangerously-skip-permissions" in cmd
+    assert "--print-timeout" in cmd
+    assert "--log-file" in cmd

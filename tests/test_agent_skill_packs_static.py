@@ -4,7 +4,12 @@ import re
 from pathlib import Path
 
 
-DOC = Path(__file__).resolve().parents[1] / "docs" / "agent-skill-packs" / "completed-work-skill-packs.md"
+DOC = (
+    Path(__file__).resolve().parents[1]
+    / "docs"
+    / "agent-skill-packs"
+    / "completed-work-skill-packs.md"
+)
 TEXT = DOC.read_text()
 
 
@@ -31,7 +36,14 @@ REQUIRED_AGENT_PACKS = [
 def test_shared_contract_exists() -> None:
     assert DOC.exists()
     assert "Canonical completed-work packet contract" in TEXT
-    for field in ["agent", "source_path", "changed_files", "proof", "non_claims", "marker"]:
+    for field in [
+        "agent",
+        "source_path",
+        "changed_files",
+        "proof",
+        "non_claims",
+        "marker",
+    ]:
         assert f"`{field}`" in TEXT
     for pack in REQUIRED_SHARED_PACKS:
         assert pack in TEXT
@@ -39,7 +51,9 @@ def test_shared_contract_exists() -> None:
 
 def test_agy_packet_example_has_source_path() -> None:
     assert "### AGY structured result packet" in TEXT
-    agy_section = TEXT.split("### AGY structured result packet", 1)[1].split("### Fred clean PR builder packet", 1)[0]
+    agy_section = TEXT.split("### AGY structured result packet", 1)[1].split(
+        "### Fred clean PR builder packet", 1
+    )[0]
     assert '"agent": "agy"' in agy_section
     assert '"source_path"' in agy_section
     assert "AGY_STRUCTURED_RESULT_PACKET_OK" in agy_section
@@ -49,8 +63,17 @@ def test_proof_packet_example_has_command_result_log_scope_nonclaims_marker() ->
     assert "Proof packet contract" in TEXT
     for key in ["COMMAND=", "RESULT=", "LOG=", "SCOPE=", "NOT_CLAIMING=", "MARKER="]:
         assert key in TEXT
-    canonical_json = TEXT.split("### Canonical JSON shape", 1)[1].split("## Proof packet contract", 1)[0]
-    for key in ['"command"', '"result"', '"log"', '"scope"', '"non_claims"', '"marker"']:
+    canonical_json = TEXT.split("### Canonical JSON shape", 1)[1].split(
+        "## Proof packet contract", 1
+    )[0]
+    for key in [
+        '"command"',
+        '"result"',
+        '"log"',
+        '"scope"',
+        '"non_claims"',
+        '"marker"',
+    ]:
         assert key in canonical_json
 
 
@@ -77,11 +100,14 @@ def test_agent_specific_skill_matrix_present() -> None:
 def test_dispatch_preflight_and_writeback_language_present() -> None:
     for key in [
         "dispatch_preflight:",
+        "AGY_OUTPUT_CAPTURE_WRAPPER_STARTED",
         "skill_pack_state=loaded",
         "skill_pack_state=unavailable_or_not_reported",
         "packet_contract_version=prismatic-completed-work-v1",
         "packet_validation=passed",
         "packet_validation=required",
+        "agy/agy-structured-result-packet",
+        "agy/agy-model-preflight",
     ]:
         assert key in TEXT
 

@@ -12,13 +12,23 @@ from prismatic.agy_merge_backlog import (
 from prismatic.completed_work_gate import demo_completed_work_packet
 
 
-def packet(*, lane="backend-api", changed_files=None, result="PASS", command="python3 -m pytest -q tests/test_agy_merge_backlog.py", marker="AGY_PR_VERIFICATION_GATE_OK"):
+def packet(
+    *,
+    lane="backend-api",
+    changed_files=None,
+    result="PASS",
+    command="python3 -m pytest -q tests/test_agy_merge_backlog.py",
+    marker="AGY_PR_VERIFICATION_GATE_OK",
+):
     p = deepcopy(demo_completed_work_packet())
     p["issue_identifier"] = "GRO-3837"
     p["source_branch"] = "feature/agy/GRO-3837-clean-pr"
     p["base_branch"] = "origin/main"
     p["verification_lane"] = lane
-    p["changed_files"] = changed_files or ["prismatic/agy_merge_backlog.py", "tests/test_agy_merge_backlog.py"]
+    p["changed_files"] = changed_files or [
+        "prismatic/agy_merge_backlog.py",
+        "tests/test_agy_merge_backlog.py",
+    ]
     p["proof"].update(
         {
             "result": result,
@@ -89,15 +99,48 @@ def test_manual_review_conflict_stays_manual(tmp_path):
 
 def test_verification_gate_handles_dashboard_backend_docs_research_lanes(tmp_path):
     cases = [
-        ("backend-api", ["prismatic/agy_merge_backlog.py"], "python3 -m pytest -q tests/test_agy_merge_backlog.py", "pass"),
-        ("dashboard-ui", ["prismatic/gateway/templates/dashboard.html"], "node --check /tmp/hermes-dashboard-inline-agy-merge-backlog.js && curl /dashboard", "pass"),
-        ("docs", ["docs/agy.md"], "python3 - <<'PY'\nprint('/tmp/doc-proof')\nPY", "pass"),
-        ("research", ["scripts/reports/agy.md"], "python3 - <<'PY'\nprint('/tmp/research-proof')\nPY", "pass"),
-        ("mixed", ["prismatic/agy_merge_backlog.py", "docs/agy.md"], "python3 -m pytest -q tests/test_agy_merge_backlog.py", "manual_review"),
-        ("unknown", ["weird/file.bin"], "python3 -m pytest -q tests/test_agy_merge_backlog.py", "manual_review"),
+        (
+            "backend-api",
+            ["prismatic/agy_merge_backlog.py"],
+            "python3 -m pytest -q tests/test_agy_merge_backlog.py",
+            "pass",
+        ),
+        (
+            "dashboard-ui",
+            ["prismatic/gateway/templates/dashboard.html"],
+            "node --check /tmp/hermes-dashboard-inline-agy-merge-backlog.js && curl /dashboard",
+            "pass",
+        ),
+        (
+            "docs",
+            ["docs/agy.md"],
+            "python3 - <<'PY'\nprint('/tmp/doc-proof')\nPY",
+            "pass",
+        ),
+        (
+            "research",
+            ["scripts/reports/agy.md"],
+            "python3 - <<'PY'\nprint('/tmp/research-proof')\nPY",
+            "pass",
+        ),
+        (
+            "mixed",
+            ["prismatic/agy_merge_backlog.py", "docs/agy.md"],
+            "python3 -m pytest -q tests/test_agy_merge_backlog.py",
+            "manual_review",
+        ),
+        (
+            "unknown",
+            ["weird/file.bin"],
+            "python3 -m pytest -q tests/test_agy_merge_backlog.py",
+            "manual_review",
+        ),
     ]
     for lane, files, command, expected in cases:
-        row = ingest(tmp_path / f"{lane}.db", packet(lane=lane, changed_files=files, command=command))
+        row = ingest(
+            tmp_path / f"{lane}.db",
+            packet(lane=lane, changed_files=files, command=command),
+        )
         item = build_merge_backlog_item(row)
         assert item.verification_lane == lane
         assert item.verification_gate == expected
@@ -107,7 +150,11 @@ def test_verification_gate_handles_dashboard_backend_docs_research_lanes(tmp_pat
 def test_dashboard_lane_blocks_without_js_dashboard_proof(tmp_path):
     row = ingest(
         tmp_path / "cw.db",
-        packet(lane="dashboard-ui", changed_files=["prismatic/gateway/templates/dashboard.html"], command="python3 -m pytest -q tests/test_agy_merge_backlog.py"),
+        packet(
+            lane="dashboard-ui",
+            changed_files=["prismatic/gateway/templates/dashboard.html"],
+            command="python3 -m pytest -q tests/test_agy_merge_backlog.py",
+        ),
     )
 
     item = build_merge_backlog_item(row)

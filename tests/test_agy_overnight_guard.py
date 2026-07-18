@@ -22,7 +22,10 @@ from prismatic.agy_overnight_guard import (
 REPO = Path(__file__).resolve().parents[1]
 
 
-def agy_packet(issue: str = "LOCAL-AGY-OVERNIGHT-GUARD-TEST", marker: str = "AGY_TASK_RESULT_PACKET_OK") -> dict:
+def agy_packet(
+    issue: str = "LOCAL-AGY-OVERNIGHT-GUARD-TEST",
+    marker: str = "AGY_TASK_RESULT_PACKET_OK",
+) -> dict:
     return {
         "agent": "agy",
         "issue_identifier": issue,
@@ -30,7 +33,13 @@ def agy_packet(issue: str = "LOCAL-AGY-OVERNIGHT-GUARD-TEST", marker: str = "AGY
         "base_branch": "main",
         "merge_lane": "docs",
         "changed_files": ["docs/agy-overnight-guard-test.md"],
-        "result_artifacts": [{"path": f"/home/ubuntu/.prismatic/agy-canaries/{issue}/RESULT.md"}],
+        "result_artifacts": [
+            {
+                "path": str(
+                    Path.home() / ".prismatic" / "agy-canaries" / issue / "RESULT.md"
+                )
+            }
+        ],
         "result_summary": "AGY one-task guard fixture",
         "verification": {
             "result": "PASS",
@@ -64,7 +73,10 @@ def seed_limited_overnight_success(monkeypatch, tmp_path):
     monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(completed_db))
     monkeypatch.setenv("PRISMATIC_AGY_OVERNIGHT_GUARD_STATE", str(guard_db))
     row = ingest_completed_work(
-        agy_packet("LOCAL-AGY-LIMITED-OVERNIGHT-GUARD-TEST", marker="AGY_LIMITED_OVERNIGHT_DRY_RUN_PACKET_OK"),
+        agy_packet(
+            "LOCAL-AGY-LIMITED-OVERNIGHT-GUARD-TEST",
+            marker="AGY_LIMITED_OVERNIGHT_DRY_RUN_PACKET_OK",
+        ),
         db_path=completed_db,
     )
     return row, guard_db
@@ -86,7 +98,9 @@ def test_allows_exactly_configured_agy_one_and_two_task_policy(monkeypatch, tmp_
     assert two.requested_max_tasks == 2
 
 
-def test_limited_overnight_dry_run_marker_satisfies_readiness_for_prompt2(monkeypatch, tmp_path):
+def test_limited_overnight_dry_run_marker_satisfies_readiness_for_prompt2(
+    monkeypatch, tmp_path
+):
     seed_limited_overnight_success(monkeypatch, tmp_path)
 
     result = evaluate_overnight_readiness(max_tasks=2, allowed_agents=["agy"])
@@ -99,18 +113,35 @@ def test_limited_overnight_dry_run_marker_satisfies_readiness_for_prompt2(monkey
 def test_blocks_auto_merge_production_bulk_and_high_task_count(monkeypatch, tmp_path):
     seed_one_task_success(monkeypatch, tmp_path)
 
-    assert "auto_merge=true is forbidden" in evaluate_overnight_readiness(auto_merge=True).blockers
-    assert "production_deploy=true is forbidden" in evaluate_overnight_readiness(production_deploy=True).blockers
-    assert "bulk dispatch requested" in evaluate_overnight_readiness(bulk_dispatch=True).blockers
+    assert (
+        "auto_merge=true is forbidden"
+        in evaluate_overnight_readiness(auto_merge=True).blockers
+    )
+    assert (
+        "production_deploy=true is forbidden"
+        in evaluate_overnight_readiness(production_deploy=True).blockers
+    )
+    assert (
+        "bulk dispatch requested"
+        in evaluate_overnight_readiness(bulk_dispatch=True).blockers
+    )
     high = evaluate_overnight_readiness(max_tasks=3)
     assert high.allowed is False
     assert "max_tasks exceeds allowed cap 2" in high.blockers
 
 
-def test_blocks_unknown_agent_unresolved_failure_pause_and_missing_preflight(monkeypatch, tmp_path):
+def test_blocks_unknown_agent_unresolved_failure_pause_and_missing_preflight(
+    monkeypatch, tmp_path
+):
     _, guard_db = seed_one_task_success(monkeypatch, tmp_path)
-    assert "unknown or disabled agent requested: ned" in evaluate_overnight_readiness(allowed_agents=["agy", "ned"]).blockers
-    assert "required skills/preflight missing" in evaluate_overnight_readiness(required_preflight_ok=False).blockers
+    assert (
+        "unknown or disabled agent requested: ned"
+        in evaluate_overnight_readiness(allowed_agents=["agy", "ned"]).blockers
+    )
+    assert (
+        "required skills/preflight missing"
+        in evaluate_overnight_readiness(required_preflight_ok=False).blockers
+    )
 
     store = AgyOvernightGuardStore(guard_db)
     store.record_overnight_run_attempt(
@@ -132,8 +163,12 @@ def test_blocks_unknown_agent_unresolved_failure_pause_and_missing_preflight(mon
 
 
 def test_blocks_when_required_lane_markers_missing(monkeypatch, tmp_path):
-    monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(tmp_path / "empty_completed.db"))
-    monkeypatch.setenv("PRISMATIC_AGY_OVERNIGHT_GUARD_STATE", str(tmp_path / "guard.db"))
+    monkeypatch.setenv(
+        "PRISMATIC_AGY_COMPLETED_WORK_DB", str(tmp_path / "empty_completed.db")
+    )
+    monkeypatch.setenv(
+        "PRISMATIC_AGY_OVERNIGHT_GUARD_STATE", str(tmp_path / "guard.db")
+    )
 
     result = evaluate_overnight_readiness()
 
@@ -146,7 +181,9 @@ def test_persistence_records_decisions_and_run_attempts(monkeypatch, tmp_path):
     seed_one_task_success(monkeypatch, tmp_path)
     decision = evaluate_overnight_readiness(max_tasks=1)
     persisted = record_guard_decision(decision)
-    run = record_overnight_run_attempt(run_status="not_started", summary="guard dry-run only")
+    run = record_overnight_run_attempt(
+        run_status="not_started", summary="guard dry-run only"
+    )
 
     assert persisted.guard_decision_id.startswith("agy-ogd-")
     assert persisted.last_success_marker == "AGY_AUTOPILOT_ONE_TASK_DRY_RUN_OK"
@@ -185,7 +222,21 @@ def test_cli_status_evaluate_pause_resume_from_repo_root(monkeypatch, tmp_path):
     assert eval_cmd.returncode == 0, eval_cmd.stdout
     assert json.loads(eval_cmd.stdout)["guard"]["readiness_state"] == "ready"
 
-    pause = subprocess.run([sys.executable, str(script), "pause"], cwd=REPO, env=env, stdout=subprocess.PIPE, text=True, timeout=60)
+    pause = subprocess.run(
+        [sys.executable, str(script), "pause"],
+        cwd=REPO,
+        env=env,
+        stdout=subprocess.PIPE,
+        text=True,
+        timeout=60,
+    )
     assert json.loads(pause.stdout)["operator_pause"] is True
-    resume = subprocess.run([sys.executable, str(script), "resume"], cwd=REPO, env=env, stdout=subprocess.PIPE, text=True, timeout=60)
+    resume = subprocess.run(
+        [sys.executable, str(script), "resume"],
+        cwd=REPO,
+        env=env,
+        stdout=subprocess.PIPE,
+        text=True,
+        timeout=60,
+    )
     assert json.loads(resume.stdout)["operator_pause"] is False

@@ -234,6 +234,28 @@
                 </div>
             </section>
 
+            <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-fuchsia-500/80 shadow-lg shadow-fuchsia-950/10" data-proof-marker="raw-agent-output-repair-queue-card">
+                <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <h2 class="text-sm font-bold text-slate-200 uppercase tracking-[0.18em]">Raw Agent Output Queue</h2>
+                            <span id="raw-output-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-slate-700 bg-slate-800 text-slate-300">Checking</span>
+                        </div>
+                        <p class="text-xs text-slate-500">Real persisted worst-output rows before normalization. Repair preview and rerun request are operator-controlled only.</p>
+                    </div>
+                    <div class="text-[11px] text-slate-400 font-mono" id="raw-output-marker">RAW_AGENT_OUTPUT_REPAIR_QUEUE_OK</div>
+                </div>
+                <div class="grid grid-cols-2 md:grid-cols-6 gap-3 mt-4 text-xs">
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3"><div class="text-[10px] uppercase tracking-wider text-slate-500">Accepted</div><div id="raw-output-accepted" class="mt-1 font-semibold text-slate-100">—</div></div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3"><div class="text-[10px] uppercase tracking-wider text-slate-500">Normalized</div><div id="raw-output-normalized" class="mt-1 font-semibold text-slate-100">—</div></div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3"><div class="text-[10px] uppercase tracking-wider text-slate-500">Rejected</div><div id="raw-output-rejected" class="mt-1 font-semibold text-slate-100">—</div></div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3"><div class="text-[10px] uppercase tracking-wider text-slate-500">Repairable</div><div id="raw-output-repairable" class="mt-1 font-semibold text-slate-100">—</div></div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3"><div class="text-[10px] uppercase tracking-wider text-slate-500">Rerun required</div><div id="raw-output-rerun-required" class="mt-1 font-semibold text-slate-100">—</div></div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3"><div class="text-[10px] uppercase tracking-wider text-slate-500">Policy violation</div><div id="raw-output-policy-violation" class="mt-1 font-semibold text-slate-100">—</div></div>
+                </div>
+                <div id="raw-output-latest" class="mt-3 text-[11px] text-slate-400 font-mono break-all">No persisted raw output rows loaded yet</div>
+            </section>
+
             <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-cyan-500/80 shadow-lg shadow-cyan-950/10" data-proof-marker="agy-merge-backlog-card">
                 <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                     <div class="space-y-1">
@@ -993,17 +1015,31 @@
         </div>
 
         <!-- SECTION 6: SIGNALS -->
-        <div id="section-signals" class="hidden space-y-6">
+        <div id="section-signals" class="hidden space-y-6" data-proof-marker="assigned-agent-signals-dashboard">
             <div class="glass-panel p-5 rounded-xl space-y-4">
-                <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-3">
-                    Inbound Signals Log
-                </h2>
+                <div class="border-b border-slate-800 pb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Agent Signals Cockpit</h2>
+                        <p class="text-xs text-slate-500 mt-1">Telegram-visible wake/action/result breadcrumbs plus compact transcript tails. Linear remains source of truth.</p>
+                    </div>
+                    <div id="signals-summary" class="text-xs text-slate-500">Loading signals…</div>
+                </div>
+                <div class="flex gap-2 overflow-x-auto pb-1" data-proof-marker="signals-mobile-agent-tabs" id="signals-agent-tabs">
+                    <button onclick="setSignalsAgent('all')" data-agent-tab="all" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs font-bold uppercase border bg-indigo-600/20 text-indigo-300 border-indigo-500/30">All</button>
+                    <button onclick="setSignalsAgent('kai')" data-agent-tab="kai" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs font-bold uppercase border bg-slate-900 text-slate-400 border-slate-800">Kai</button>
+                    <button onclick="setSignalsAgent('fred')" data-agent-tab="fred" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs font-bold uppercase border bg-slate-900 text-slate-400 border-slate-800">Fred</button>
+                    <button onclick="setSignalsAgent('agy')" data-agent-tab="agy" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs font-bold uppercase border bg-slate-900 text-slate-400 border-slate-800">AGY</button>
+                    <button onclick="setSignalsAgent('george')" data-agent-tab="george" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs font-bold uppercase border bg-slate-900 text-slate-400 border-slate-800">George</button>
+                </div>
+                <div id="signals-agent-panes" class="grid grid-cols-1 xl:grid-cols-2 gap-4" data-proof-marker="signals-agent-pane-grid">
+                    <!-- Populated dynamically with one pane per agent; mobile uses the tabs above to show one stream at a time. -->
+                </div>
                 <div class="bg-slate-950 rounded-lg border border-slate-900 overflow-hidden font-mono text-xs">
                     <div class="bg-slate-900 border-b border-slate-800 px-4 py-2 text-slate-500 font-bold uppercase flex justify-between">
-                        <span>Console Output</span>
-                        <span>listening on ws://localhost:9000/ws</span>
+                        <span>All Signals Console</span>
+                        <span>ws://localhost:9000/ws + /api/gateway/signals</span>
                     </div>
-                    <div class="p-4 space-y-2 max-h-[400px] overflow-y-auto" id="signals-log-box">
+                    <div class="p-4 space-y-2 max-h-[360px] overflow-y-auto" id="signals-log-box">
                         <!-- Populated dynamically -->
                     </div>
                 </div>
@@ -1528,12 +1564,25 @@
             }
         }
 
+        let activeSignalsAgent = 'all';
+        let latestSignalsPayload = { items: [], by_agent: {}, counts: {} };
+
+        function setSignalsAgent(agent) {
+            activeSignalsAgent = agent || 'all';
+            document.querySelectorAll('.signals-agent-tab').forEach(btn => {
+                const active = btn.dataset.agentTab === activeSignalsAgent;
+                btn.className = `signals-agent-tab px-3 py-1.5 rounded-lg text-xs font-bold uppercase border ${active ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500/30' : 'bg-slate-900 text-slate-400 border-slate-800'}`;
+            });
+            renderSignalPanes(latestSignalsPayload);
+        }
+
         function addLocalSignal(source, text) {
             const container = document.getElementById("signals-log-box");
+            if (!container) return;
             const time = new Date().toLocaleTimeString();
             const div = document.createElement("div");
             div.className = "text-slate-300";
-            div.innerHTML = `<span class="text-slate-500 font-bold">[${time}]</span> <span class="text-indigo-400 font-semibold">[${source}]</span> ${text}`;
+            div.innerHTML = `<span class="text-slate-500 font-bold">[${time}]</span> <span class="text-indigo-400 font-semibold">[${source}]</span> ${escapeHtml(text)}`;
             container.appendChild(div);
             container.scrollTop = container.scrollHeight;
         }
@@ -2258,6 +2307,7 @@
                 renderDashboardSummary();
                 await fetchQuotaSummary();
                 await fetchCompletedWorkGate();
+                await fetchRawAgentOutputQueue();
                 await fetchMergeBacklog();
                 await fetchMorningBriefing();
             } else if (activeTab === 'merge') {
@@ -2748,34 +2798,82 @@
             }
         }
 
+        function signalSeverityColor(value) {
+            const severity = String(value || 'info').toLowerCase();
+            if (severity.includes('error') || severity.includes('fail')) return 'text-rose-400 border-rose-500/20 bg-rose-500/10';
+            if (severity.includes('warn') || severity.includes('block')) return 'text-amber-400 border-amber-500/20 bg-amber-500/10';
+            if (severity.includes('success') || severity.includes('complete') || severity.includes('dispatch')) return 'text-emerald-400 border-emerald-500/20 bg-emerald-500/10';
+            return 'text-indigo-400 border-indigo-500/20 bg-indigo-500/10';
+        }
+
+        function signalCard(item) {
+            const ts = item.timestamp || item.created_at || item.started_at;
+            const color = signalSeverityColor(item.severity || item.status);
+            const transcript = item.transcript ? `<pre class="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-lg bg-slate-950/80 border border-slate-900 p-2 text-[10px] leading-relaxed text-slate-400">${escapeHtml(item.transcript)}</pre>` : '';
+            return `
+                <div class="rounded-lg border border-slate-900 bg-slate-950/60 p-3 space-y-2" data-agent-signal-card>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <span class="text-slate-500 font-mono text-[10px]">${escapeHtml(ts ? formatDate(ts) : '—')}</span>
+                        <span class="px-2 py-0.5 rounded border text-[10px] font-bold uppercase ${color}">${escapeHtml(item.event_type || item.status || 'event')}</span>
+                        ${item.issue_id ? `<span class="text-[10px] text-slate-400 font-mono">${escapeHtml(item.issue_id)}</span>` : ''}
+                    </div>
+                    <div class="text-xs text-slate-300 whitespace-pre-wrap">${escapeHtml(item.message || item.status || 'Signal event')}</div>
+                    <div class="flex flex-wrap gap-2 text-[10px] text-slate-500">
+                        ${item.run_id ? `<span>run=${escapeHtml(item.run_id)}</span>` : ''}
+                        ${item.log_path ? `<span>log=${escapeHtml(item.log_path)}</span>` : ''}
+                        <span>source=${escapeHtml(item.source || 'unknown')}</span>
+                    </div>
+                    ${transcript}
+                </div>
+            `;
+        }
+
+        function renderSignalPanes(payload) {
+            latestSignalsPayload = payload || latestSignalsPayload || { items: [], by_agent: {}, counts: {} };
+            const panes = document.getElementById('signals-agent-panes');
+            const summary = document.getElementById('signals-summary');
+            const consoleBox = document.getElementById('signals-log-box');
+            if (!panes || !consoleBox) return;
+            const agents = ['kai', 'fred', 'agy', 'george'];
+            const byAgent = latestSignalsPayload.by_agent || {};
+            const items = latestSignalsPayload.items || [];
+            const visibleAgents = activeSignalsAgent === 'all' ? agents : [activeSignalsAgent];
+            if (summary) {
+                const counts = latestSignalsPayload.counts || {};
+                summary.textContent = `${items.length} signals · Kai ${counts.kai || 0} · Fred ${counts.fred || 0} · AGY ${counts.agy || 0} · George ${counts.george || 0}`;
+            }
+            panes.innerHTML = visibleAgents.map(agent => {
+                const agentItems = byAgent[agent] || [];
+                return `
+                    <section class="rounded-xl border border-slate-900 bg-slate-950/40 overflow-hidden" data-agent-pane="${agent}">
+                        <div class="px-4 py-3 border-b border-slate-900 bg-slate-900/60 flex items-center justify-between">
+                            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300">${escapeHtml(agent)} stream</h3>
+                            <span class="text-[10px] text-slate-500">${agentItems.length} events</span>
+                        </div>
+                        <div class="p-3 space-y-3 max-h-[520px] overflow-y-auto">
+                            ${agentItems.length ? agentItems.slice(0, 25).map(signalCard).join('') : `<div class="text-xs text-slate-500 italic py-6 text-center">No ${escapeHtml(agent)} signals yet.</div>`}
+                        </div>
+                    </section>
+                `;
+            }).join('');
+            consoleBox.innerHTML = items.length ? items.slice(0, 80).map(item => {
+                const ts = item.timestamp || item.created_at || item.started_at;
+                const color = signalSeverityColor(item.severity || item.status).split(' ')[0];
+                return `<div class="text-slate-300 border-b border-slate-900/80 pb-2 mb-2"><span class="text-slate-500 font-bold">[${escapeHtml(ts ? formatDate(ts) : '—')}]</span> <span class="${color} font-semibold">[${escapeHtml(item.agent || item.source || 'signal')}]</span> <span>${escapeHtml(item.event_type || item.status || 'event')}</span> <span class="text-slate-500">${escapeHtml(item.issue_id || '')}</span></div>`;
+            }).join('') : `<div class="text-slate-500 italic">No assigned-agent signals recorded yet.</div>`;
+        }
+
         async function renderSignalsView() {
             const container = document.getElementById("signals-log-box");
-            container.innerHTML = `<div class="text-slate-500 italic">Loading live operational timeline…</div>`;
+            if (container) container.innerHTML = `<div class="text-slate-500 italic">Loading assigned-agent signal streams…</div>`;
             try {
-                const res = await fetch("/api/gateway/timeline?limit=80");
+                const res = await fetch("/api/gateway/signals?limit=200");
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const payload = await res.json();
-                const items = payload.items || payload.timeline || [];
-                if (items.length === 0) {
-                    container.innerHTML = `<div class="text-slate-500 italic">No operational timeline events recorded.</div>`;
-                    return;
-                }
-                container.innerHTML = items.map(item => {
-                    const ts = item.timestamp || item.created_at || item.started_at;
-                    const severity = String(item.severity || item.status || 'info').toLowerCase();
-                    const color = severity.includes('error') || severity.includes('fail') ? 'text-rose-400' : severity.includes('success') || severity.includes('complete') ? 'text-emerald-400' : severity.includes('warn') ? 'text-amber-400' : 'text-indigo-400';
-                    return `
-                        <div class="text-slate-300 border-b border-slate-900/80 pb-2 mb-2">
-                            <span class="text-slate-500 font-bold">[${escapeHtml(ts ? formatDate(ts) : '—')}]</span>
-                            <span class="${color} font-semibold">[${escapeHtml(item.source || item.kind || 'Timeline')}]</span>
-                            <span class="font-semibold">${escapeHtml(item.title || item.message || 'Operational event')}</span>
-                            ${item.message && item.title ? `<div class="text-xs text-slate-500 mt-1">${escapeHtml(item.message)}</div>` : ''}
-                        </div>
-                    `;
-                }).join("");
+                renderSignalPanes(payload);
             } catch (err) {
-                console.error("Error loading operational timeline:", err);
-                container.innerHTML = `<div class="text-rose-400 italic">Signals timeline API unavailable: ${escapeHtml(err.message || err)}</div>`;
+                console.error("Error loading agent signals:", err);
+                if (container) container.innerHTML = `<div class="text-rose-400 italic">Signals API unavailable: ${escapeHtml(err.message || err)}</div>`;
             }
         }
 
@@ -2832,6 +2930,41 @@
                 if (eligible) eligible.textContent = "no";
                 if (linear) linear.textContent = "Gateway unavailable";
                 if (reason) reason.textContent = String(err?.message || err || "unknown error");
+            }
+        }
+
+        async function fetchRawAgentOutputQueue() {
+            const badge = document.getElementById("raw-output-badge");
+            const latestEl = document.getElementById("raw-output-latest");
+            const setText = (id, value) => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = String(value ?? 0);
+            };
+            try {
+                const res = await fetch(`${API_PREFIX}/agents/raw-output?limit=1`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const counts = data.counts || {};
+                setText("raw-output-accepted", counts.accepted);
+                setText("raw-output-normalized", counts.normalized);
+                setText("raw-output-rejected", counts.rejected);
+                setText("raw-output-repairable", counts.repairable);
+                setText("raw-output-rerun-required", counts.rerun_required);
+                setText("raw-output-policy-violation", counts.policy_violation);
+                const latest = (data.raw_outputs || [])[0];
+                if (latestEl) latestEl.textContent = latest ? `${latest.raw_output_id} · ${latest.normalization_status} · ${latest.repair_hint || "no_hint"}` : "No persisted raw output rows";
+                if (badge) {
+                    const rejected = counts.rejected || 0;
+                    badge.textContent = data.count > 0 ? (rejected ? "Needs Review" : "Clean") : "No Rows";
+                    badge.className = `px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${data.count > 0 ? (rejected ? 'border-amber-500/20 bg-amber-500/10 text-amber-300' : 'border-fuchsia-500/20 bg-fuchsia-500/10 text-fuchsia-300') : 'border-slate-700 bg-slate-800 text-slate-300'}`;
+                }
+            } catch (err) {
+                console.error("Error loading raw agent output queue:", err);
+                if (badge) {
+                    badge.textContent = "Unavailable";
+                    badge.className = "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-rose-500/20 bg-rose-500/10 text-rose-300";
+                }
+                if (latestEl) latestEl.textContent = String(err?.message || err || "Gateway unavailable");
             }
         }
 

@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from prismatic.agy_completed_work import ingest_completed_work
-from prismatic.agy_overnight_guard import AGY_OVERNIGHT_READINESS_GUARD_MARKER, record_overnight_run_attempt
+from prismatic.agy_overnight_guard import (
+    AGY_OVERNIGHT_READINESS_GUARD_MARKER,
+    record_overnight_run_attempt,
+)
 from prismatic.gateway import server
 
 
@@ -15,7 +20,13 @@ def agy_packet(issue: str = "LOCAL-AGY-OVERNIGHT-GUARD-API") -> dict:
         "base_branch": "main",
         "merge_lane": "docs",
         "changed_files": ["docs/agy-overnight-guard-api.md"],
-        "result_artifacts": [{"path": f"/home/ubuntu/.prismatic/agy-canaries/{issue}/RESULT.md"}],
+        "result_artifacts": [
+            {
+                "path": str(
+                    Path.home() / ".prismatic" / "agy-canaries" / issue / "RESULT.md"
+                )
+            }
+        ],
         "result_summary": "AGY one-task API guard fixture",
         "verification": {
             "result": "PASS",
@@ -56,7 +67,10 @@ def test_overnight_guard_api_status_evaluate_and_gateway_alias(monkeypatch, tmp_
     assert body["guard"]["latest_completed_work_id"] == row.id
     assert body["tasks_launched"] == 0
 
-    local = client.post("/api/agy/overnight-guard/evaluate", json={"max_tasks": 2, "allowed_agents": ["agy"]})
+    local = client.post(
+        "/api/agy/overnight-guard/evaluate",
+        json={"max_tasks": 2, "allowed_agents": ["agy"]},
+    )
     assert local.status_code == 200
     eval_body = local.json()
     assert eval_body["marker"] == AGY_OVERNIGHT_READINESS_GUARD_MARKER
@@ -65,13 +79,20 @@ def test_overnight_guard_api_status_evaluate_and_gateway_alias(monkeypatch, tmp_
     assert eval_body["non_claims"]["auto_merge_enabled"] is False
 
 
-def test_overnight_guard_api_blocks_bad_requests_and_persists_pause(monkeypatch, tmp_path):
+def test_overnight_guard_api_blocks_bad_requests_and_persists_pause(
+    monkeypatch, tmp_path
+):
     seed(monkeypatch, tmp_path)
     client = TestClient(server.app)
 
     blocked = client.post(
         "/api/gateway/agy/overnight-guard/evaluate",
-        json={"max_tasks": 3, "allowed_agents": ["agy", "ned"], "auto_merge": True, "bulk_dispatch": True},
+        json={
+            "max_tasks": 3,
+            "allowed_agents": ["agy", "ned"],
+            "auto_merge": True,
+            "bulk_dispatch": True,
+        },
     )
     assert blocked.status_code == 200
     guard = blocked.json()["guard"]

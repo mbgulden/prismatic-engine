@@ -69,7 +69,15 @@ def canonical_agy_packet():
         "merge_lane": "docs",
         "changed_files": ["docs/agy-result-packet-contract.md"],
         "result_artifacts": [
-            {"path": "/home/ubuntu/.prismatic/agy-results/GRO-AGY-NORM-1/RESULT.md"}
+            {
+                "path": str(
+                    Path.home()
+                    / ".prismatic"
+                    / "agy-results"
+                    / "GRO-AGY-NORM-1"
+                    / "RESULT.md"
+                )
+            }
         ],
         "verification": {
             "result": "PASS",
@@ -140,7 +148,11 @@ def test_list_orders_newest_first(tmp_path):
 def test_non_claims_list_avoids_false_positive_claim_validation():
     p = packet()
     p["proof"].pop("not_claiming", None)
-    p["proof"]["non_claims"] = ["production_deployed", "auto_merge", "bulk_agy_dispatch"]
+    p["proof"]["non_claims"] = [
+        "production_deployed",
+        "auto_merge",
+        "bulk_agy_dispatch",
+    ]
 
     state = classify_completed_work(p)
 
@@ -170,10 +182,19 @@ def test_canonical_agy_result_packet_normalizes_source_path_and_merges_ready(tmp
 
     assert row.classification == "merge_ready"
     assert row.source_branch == "feature/agy-normalized-result"
-    assert row.source_path == "/home/ubuntu/.prismatic/agy-results/GRO-AGY-NORM-1/RESULT.md"
+    assert row.source_path == str(
+        Path.home() / ".prismatic" / "agy-results" / "GRO-AGY-NORM-1" / "RESULT.md"
+    )
     assert row.packet["normalization"]["marker"] == AGY_PACKET_NORMALIZATION_MARKER
-    assert row.packet["lane_scope"]["allowed_paths"][:3] == ["docs/", "research/", "reports/"]
-    assert row.packet["proof"]["command"] == "python3 -m pytest -q tests/test_agy_completed_work.py"
+    assert row.packet["lane_scope"]["allowed_paths"][:3] == [
+        "docs/",
+        "research/",
+        "reports/",
+    ]
+    assert (
+        row.packet["proof"]["command"]
+        == "python3 -m pytest -q tests/test_agy_completed_work.py"
+    )
     assert row.non_claims == ("production_deploy", "auto_merge_enabled")
 
 
@@ -183,7 +204,12 @@ def test_blocked_one_task_fixture_normalizes_out_of_rejected_contract(tmp_path):
     row = store.ingest(blocked_one_task_packet())
 
     assert row.classification != "rejected"
-    assert row.source_path == "/home/ubuntu/.prismatic/agy-result-packets/local-agy-canary-one-task-20260717"
+    assert row.source_path == str(
+        Path.home()
+        / ".prismatic"
+        / "agy-result-packets"
+        / "local-agy-canary-one-task-20260717"
+    )
     assert row.packet["normalization"]["marker"] == AGY_PACKET_NORMALIZATION_MARKER
     assert row.packet["lane_scope"]["touched_paths"] == ["agy-one-task-lane-note.md"]
     # The local/* canary branch is still not merge-ready; that is a scope/manual-review decision,
@@ -208,7 +234,7 @@ def test_missing_source_path_and_underivable_provenance_still_rejects(tmp_path):
 def test_source_path_derivation_rejects_unsafe_artifact_paths(tmp_path):
     store = AgyCompletedWorkStore(tmp_path / "agy_completed_work.db")
     unsafe = canonical_agy_packet()
-    unsafe["result_artifacts"] = [{"path": "/home/ubuntu/.ssh/id_rsa"}]
+    unsafe["result_artifacts"] = [{"path": str(Path.home() / ".ssh" / "id_rsa")}]
 
     row = store.ingest(unsafe)
 
@@ -217,7 +243,9 @@ def test_source_path_derivation_rejects_unsafe_artifact_paths(tmp_path):
     assert "missing packet fields: source_path" in row.gate["reasons"]
 
     traversal = canonical_agy_packet()
-    traversal["result_artifacts"] = [{"path": "/home/ubuntu/work/prismatic-engine/../secret.md"}]
+    traversal["result_artifacts"] = [
+        {"path": str(Path.home() / "work" / "prismatic-engine" / ".." / "secret.md")}
+    ]
     row2 = store.ingest(traversal)
     assert row2.classification == "rejected"
     assert row2.source_path is None
@@ -228,7 +256,12 @@ def test_derived_source_path_is_stable_and_deterministic():
     second = normalize_agy_result_packet(blocked_one_task_packet())
 
     assert first["source_path"] == second["source_path"]
-    assert first["source_path"] == "/home/ubuntu/.prismatic/agy-result-packets/local-agy-canary-one-task-20260717"
+    assert first["source_path"] == str(
+        Path.home()
+        / ".prismatic"
+        / "agy-result-packets"
+        / "local-agy-canary-one-task-20260717"
+    )
 
 
 def test_packet_normalization_preserves_non_claims_without_positive_proof():
@@ -252,7 +285,9 @@ def test_ingest_cli_runs_from_outside_repo(tmp_path):
     proc = subprocess.run(
         [
             sys.executable,
-            str(Path(__file__).resolve().parents[1] / "scripts" / "ingest_agy_result.py"),
+            str(
+                Path(__file__).resolve().parents[1] / "scripts" / "ingest_agy_result.py"
+            ),
             str(packet_path),
             "--db",
             str(db_path),
@@ -267,4 +302,7 @@ def test_ingest_cli_runs_from_outside_repo(tmp_path):
 
     assert payload["status"] == "ok"
     assert payload["completed_work"]["classification"] == "merge_ready"
-    assert payload["completed_work"]["ingestion_marker"] == AGY_COMPLETED_WORK_INGESTION_MARKER
+    assert (
+        payload["completed_work"]["ingestion_marker"]
+        == AGY_COMPLETED_WORK_INGESTION_MARKER
+    )

@@ -43,7 +43,7 @@ def blocked_guard(**kwargs):
 
 
 def packet(tmp_path: Path, issue: str = "AGY-LIMITED-TEST") -> dict:
-    source = Path("/home/ubuntu/.prismatic/agy-test-artifacts") / tmp_path.name
+    source = Path.home() / ".prismatic" / "agy-test-artifacts" / tmp_path.name
     artifact = source / "OBSERVATION.md"
     return {
         "agent": "agy",
@@ -131,7 +131,9 @@ def test_runner_blocks_when_assigned_agent_markers_are_absent(tmp_path):
         {"agent": "agy", "max_tasks": 1},
         db_path=tmp_path / "runs.db",
         assigned_agent_status_fn=assigned_agent_missing,
-        guard_fn=lambda **kwargs: pytest.fail("guard must not run when assigned-agent runway is unhealthy"),
+        guard_fn=lambda **kwargs: pytest.fail(
+            "guard must not run when assigned-agent runway is unhealthy"
+        ),
         model_preflight_fn=lambda model: pytest.fail("model preflight must not run"),
         agy_launch_fn=lambda model: pytest.fail("AGY must not launch"),
     )
@@ -156,21 +158,34 @@ def test_runner_blocks_when_guard_blocks(tmp_path):
 
 def test_runner_blocks_operator_pause(tmp_path):
     def paused_guard(**kwargs):
-        return {"allowed": False, "readiness_state": "paused", "reason": "operator pause", "marker": "AGY_OVERNIGHT_READINESS_GUARD_OK"}
+        return {
+            "allowed": False,
+            "readiness_state": "paused",
+            "reason": "operator pause",
+            "marker": "AGY_OVERNIGHT_READINESS_GUARD_OK",
+        }
 
-    result = run_limited_overnight_dry_run({"agent": "agy"}, db_path=tmp_path / "runs.db", guard_fn=paused_guard, assigned_agent_status_fn=assigned_agent_ok)
+    result = run_limited_overnight_dry_run(
+        {"agent": "agy"},
+        db_path=tmp_path / "runs.db",
+        guard_fn=paused_guard,
+        assigned_agent_status_fn=assigned_agent_ok,
+    )
     assert result["status"] == "blocked"
     assert "guard readiness blocked" in result["reason"]
     assert result["run"]["launched_tasks"] == 0
 
 
-@pytest.mark.parametrize("payload,reason", [
-    ({"max_tasks": 2}, "max_tasks > 1"),
-    ({"auto_merge": True}, "auto_merge requested"),
-    ({"production_deploy": True}, "production_deploy requested"),
-    ({"real_github_pr_create": True}, "real_github_pr_create requested"),
-    ({"bulk_dispatch": True}, "bulk dispatch requested"),
-])
+@pytest.mark.parametrize(
+    "payload,reason",
+    [
+        ({"max_tasks": 2}, "max_tasks > 1"),
+        ({"auto_merge": True}, "auto_merge requested"),
+        ({"production_deploy": True}, "production_deploy requested"),
+        ({"real_github_pr_create": True}, "real_github_pr_create requested"),
+        ({"bulk_dispatch": True}, "bulk dispatch requested"),
+    ],
+)
 def test_runner_blocks_forbidden_requests_before_launch(tmp_path, payload, reason):
     result = run_limited_overnight_dry_run(
         {"agent": "agy", **payload},
@@ -251,7 +266,10 @@ def test_status_payload_reads_real_state(tmp_path):
     status = status_payload(db_path=tmp_path / "runs.db")
     assert status["marker"] == AGY_LIMITED_OVERNIGHT_RUNNER_MARKER
     assert status["latest"]["run_id"] == result["run"]["run_id"]
-    assert status["latest"]["assigned_agent_writeback_state"] == "dry_run_no_live_linear_mutation"
+    assert (
+        status["latest"]["assigned_agent_writeback_state"]
+        == "dry_run_no_live_linear_mutation"
+    )
 
 
 def test_cli_preflight_and_status_work_from_outside_repo_root(tmp_path):
@@ -260,7 +278,11 @@ def test_cli_preflight_and_status_work_from_outside_repo_root(tmp_path):
     repo = Path(__file__).resolve().parents[1]
     env["PYTHONPATH"] = str(repo)
     status = subprocess.run(
-        [sys.executable, str(repo / "scripts/agy_limited_overnight_runner.py"), "status"],
+        [
+            sys.executable,
+            str(repo / "scripts/agy_limited_overnight_runner.py"),
+            "status",
+        ],
         cwd="/tmp",
         env=env,
         stdout=subprocess.PIPE,
@@ -271,7 +293,15 @@ def test_cli_preflight_and_status_work_from_outside_repo_root(tmp_path):
     assert status.returncode == 0, status.stdout
     assert "AGY_LIMITED_OVERNIGHT_RUNNER_OK" in status.stdout
     blocked = subprocess.run(
-        [sys.executable, str(repo / "scripts/agy_limited_overnight_runner.py"), "preflight", "--max-tasks", "2", "--agent", "agy"],
+        [
+            sys.executable,
+            str(repo / "scripts/agy_limited_overnight_runner.py"),
+            "preflight",
+            "--max-tasks",
+            "2",
+            "--agent",
+            "agy",
+        ],
         cwd="/tmp",
         env=env,
         stdout=subprocess.PIPE,
