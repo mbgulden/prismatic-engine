@@ -89,6 +89,24 @@ def ok_model(model: str):
     return True, "OK"
 
 
+def assigned_agent_ok():
+    return {
+        "marker": "LINEAR_WEBHOOK_QUEUE_ACTIVE_OK",
+        "assigned_agent_marker": "ASSIGNED_AGENT_EVENT_DISPATCH_OK",
+        "result_writeback_marker": "ASSIGNED_AGENT_RESULT_WRITEBACK_OK",
+        "dispatch_recovery_marker": "ASSIGNED_AGENT_DISPATCH_RECOVERY_OK",
+    }
+
+
+def assigned_agent_missing():
+    return {
+        "marker": "LINEAR_WEBHOOK_QUEUE_ACTIVE_OK",
+        "assigned_agent_marker": "MISSING",
+        "result_writeback_marker": "ASSIGNED_AGENT_RESULT_WRITEBACK_OK",
+        "dispatch_recovery_marker": "ASSIGNED_AGENT_DISPATCH_RECOVERY_OK",
+    }
+
+
 def run_with(tmp_path: Path, **overrides):
     launched = {"count": 0}
 
@@ -101,10 +119,25 @@ def run_with(tmp_path: Path, **overrides):
         req,
         db_path=tmp_path / "runs.db",
         guard_fn=allowed_guard,
+        assigned_agent_status_fn=assigned_agent_ok,
         model_preflight_fn=ok_model,
         agy_launch_fn=launch,
     )
     return result, launched
+
+
+def test_runner_blocks_when_assigned_agent_markers_are_absent(tmp_path):
+    result = run_limited_overnight_dry_run(
+        {"agent": "agy", "max_tasks": 1},
+        db_path=tmp_path / "runs.db",
+        assigned_agent_status_fn=assigned_agent_missing,
+        guard_fn=lambda **kwargs: pytest.fail("guard must not run when assigned-agent runway is unhealthy"),
+        model_preflight_fn=lambda model: pytest.fail("model preflight must not run"),
+        agy_launch_fn=lambda model: pytest.fail("AGY must not launch"),
+    )
+    assert result["marker"] == AGY_LIMITED_OVERNIGHT_DRY_RUN_BLOCKED_MARKER
+    assert "assigned-agent recovery markers missing" in result["reason"]
+    assert result["run"]["launched_tasks"] == 0
 
 
 def test_runner_blocks_when_guard_blocks(tmp_path):
@@ -112,6 +145,7 @@ def test_runner_blocks_when_guard_blocks(tmp_path):
         {"agent": "agy", "max_tasks": 1},
         db_path=tmp_path / "runs.db",
         guard_fn=blocked_guard,
+        assigned_agent_status_fn=assigned_agent_ok,
         model_preflight_fn=ok_model,
         agy_launch_fn=lambda model: pytest.fail("AGY must not launch"),
     )
@@ -124,7 +158,7 @@ def test_runner_blocks_operator_pause(tmp_path):
     def paused_guard(**kwargs):
         return {"allowed": False, "readiness_state": "paused", "reason": "operator pause", "marker": "AGY_OVERNIGHT_READINESS_GUARD_OK"}
 
-    result = run_limited_overnight_dry_run({"agent": "agy"}, db_path=tmp_path / "runs.db", guard_fn=paused_guard)
+    result = run_limited_overnight_dry_run({"agent": "agy"}, db_path=tmp_path / "runs.db", guard_fn=paused_guard, assigned_agent_status_fn=assigned_agent_ok)
     assert result["status"] == "blocked"
     assert "guard readiness blocked" in result["reason"]
     assert result["run"]["launched_tasks"] == 0
@@ -135,12 +169,14 @@ def test_runner_blocks_operator_pause(tmp_path):
     ({"auto_merge": True}, "auto_merge requested"),
     ({"production_deploy": True}, "production_deploy requested"),
     ({"real_github_pr_create": True}, "real_github_pr_create requested"),
+    ({"bulk_dispatch": True}, "bulk dispatch requested"),
 ])
 def test_runner_blocks_forbidden_requests_before_launch(tmp_path, payload, reason):
     result = run_limited_overnight_dry_run(
         {"agent": "agy", **payload},
         db_path=tmp_path / "runs.db",
         guard_fn=allowed_guard,
+        assigned_agent_status_fn=assigned_agent_ok,
         model_preflight_fn=lambda model: pytest.fail("model preflight must not run"),
         agy_launch_fn=lambda model: pytest.fail("AGY must not launch"),
     )
@@ -154,6 +190,7 @@ def test_runner_launches_zero_tasks_on_failed_model_preflight(tmp_path):
         {"agent": "agy"},
         db_path=tmp_path / "runs.db",
         guard_fn=allowed_guard,
+        assigned_agent_status_fn=assigned_agent_ok,
         model_preflight_fn=lambda model: (False, "no model"),
         agy_launch_fn=lambda model: pytest.fail("AGY must not launch"),
     )
@@ -182,9 +219,11 @@ def test_runner_launches_exactly_one_task_persists_and_ingests_completed_work(tm
     assert result["completed_work_id"]
     assert result["merge_backlog_id"]
     assert result["verification_gate"] == "pass"
+    assert result["assigned_agent_writeback_state"] == "dry_run_no_live_linear_mutation"
     stored = LimitedOvernightRunStore(tmp_path / "runs.db").get(result["run"]["run_id"])
     assert stored["status"] == "pass"
     assert stored["completed_work_id"] == result["completed_work_id"]
+    assert stored["assigned_agent_writeback_state"] == "dry_run_no_live_linear_mutation"
 
 
 def test_runner_handles_invalid_packet_as_blocked_without_second_task(tmp_path):
@@ -198,6 +237,7 @@ def test_runner_handles_invalid_packet_as_blocked_without_second_task(tmp_path):
         {"agent": "agy"},
         db_path=tmp_path / "runs.db",
         guard_fn=allowed_guard,
+        assigned_agent_status_fn=assigned_agent_ok,
         model_preflight_fn=ok_model,
         agy_launch_fn=bad_launch,
     )
@@ -211,6 +251,7 @@ def test_status_payload_reads_real_state(tmp_path):
     status = status_payload(db_path=tmp_path / "runs.db")
     assert status["marker"] == AGY_LIMITED_OVERNIGHT_RUNNER_MARKER
     assert status["latest"]["run_id"] == result["run"]["run_id"]
+    assert status["latest"]["assigned_agent_writeback_state"] == "dry_run_no_live_linear_mutation"
 
 
 def test_cli_preflight_and_status_work_from_outside_repo_root(tmp_path):
