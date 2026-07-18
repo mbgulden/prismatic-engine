@@ -81,3 +81,29 @@ def test_merge_backlog_api_local_aliases_and_unknown_404(monkeypatch, tmp_path):
 
     missing_verify = client.post("/api/gateway/agy/merge-backlog/no-such-row/verify")
     assert missing_verify.status_code == 404
+
+
+def test_prompt5_pr_candidate_endpoint_is_explicit_operator_metadata_only(
+    monkeypatch, tmp_path
+):
+    row = seed(monkeypatch, tmp_path)
+    client = TestClient(server.app)
+
+    res = client.post(
+        f"/api/gateway/agy/merge-backlog/{row.id}/pr-candidate",
+        json={"requested_by": "dashboard-test", "action": "stage_pr_candidate"},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["marker"] == "PROMPT5_PR_CANDIDATE_LIFECYCLE_OK"
+    assert body["lifecycle_state"] == "candidate_metadata_ready"
+    assert body["operator_action_required"] is True
+    assert body["candidate"]["recommended_action"] == "open_or_update_pr"
+    assert body["candidate"]["eligible_for_auto_merge"] is False
+    assert body["side_effects"]["github_pr_created"] is False
+    assert body["side_effects"]["auto_merge"] is False
+    assert body["side_effects"]["production_deploy"] is False
+    assert body["non_claims"]["real_github_pr_created"] is False
+
+    missing = client.post("/api/gateway/agy/merge-backlog/no-such-row/pr-candidate")
+    assert missing.status_code == 404
