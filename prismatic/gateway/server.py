@@ -66,6 +66,11 @@ from prismatic.agy_merge_backlog import (
     list_merge_backlog,
     verify_merge_backlog_item,
 )
+from prismatic.agy_executor_runs import (
+    build_prompt6_executor_canary_dry_run,
+    get_executor_run,
+    list_executor_runs,
+)
 from prismatic.agy_overnight_guard import (
     AGY_OVERNIGHT_READINESS_GUARD_MARKER,
     AgyOvernightGuardStore,
@@ -1309,6 +1314,51 @@ def gateway_agy_merge_backlog_approved_real_pr_executor(
     completed_work_id: str, payload: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     return agy_merge_backlog_approved_real_pr_executor(completed_work_id, payload)
+
+
+@app.get("/api/agy/executor-runs")
+def agy_executor_runs(limit: int = Query(25, ge=1, le=100)) -> dict[str, Any]:
+    return list_executor_runs(limit=limit)
+
+
+@app.get("/api/gateway/agy/executor-runs")
+def gateway_agy_executor_runs(limit: int = Query(25, ge=1, le=100)) -> dict[str, Any]:
+    return agy_executor_runs(limit=limit)
+
+
+@app.get("/api/agy/executor-runs/{run_id}")
+def agy_executor_run_detail(run_id: str) -> dict[str, Any]:
+    try:
+        return get_executor_run(run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="executor run not found") from exc
+
+
+@app.get("/api/gateway/agy/executor-runs/{run_id}")
+def gateway_agy_executor_run_detail(run_id: str) -> dict[str, Any]:
+    return agy_executor_run_detail(run_id)
+
+
+@app.post("/api/agy/executor-runs/canary-dry-run")
+def agy_executor_runs_canary_dry_run(
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    body = payload or {}
+    return build_prompt6_executor_canary_dry_run(
+        completed_work_id=str(body.get("completed_work_id") or "") or None,
+        requested_by=str(body.get("requested_by") or "dashboard"),
+        executor_mode=str(body.get("executor_mode") or "dry_run"),
+        execute=bool(body.get("execute", False)),
+        allow_real_side_effects=bool(body.get("allow_real_side_effects", False)),
+        log_path=str(body.get("log_path") or "") or None,
+    )
+
+
+@app.post("/api/gateway/agy/executor-runs/canary-dry-run")
+def gateway_agy_executor_runs_canary_dry_run(
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return agy_executor_runs_canary_dry_run(payload)
 
 
 @app.get("/api/agy/merge-backlog/{completed_work_id}")
