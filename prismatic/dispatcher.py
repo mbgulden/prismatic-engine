@@ -28,6 +28,7 @@ import re
 import signal
 import sqlite3
 import subprocess
+import shutil
 import sys
 import time
 import threading
@@ -1683,7 +1684,8 @@ def preflight_assigned_agent(
     if agent not in launcher_map:
         return AssignedAgentPreflight("blocked_preflight", False, f"no launcher for {agent}")
     if agent == "agy" and not os.environ.get("PRISMATIC_ASSIGNED_AGENT_DRY_RUN"):
-        if not os.path.exists(AGY_PATH):
+        agy_exists = os.path.exists(AGY_PATH) if os.path.isabs(AGY_PATH) else bool(shutil.which(AGY_PATH))
+        if not agy_exists:
             return AssignedAgentPreflight("blocked_preflight", False, f"AGY binary missing: {AGY_PATH}")
     try:
         ensure_linear_circuit_closed(source="assigned_agent_event_dispatch.preflight")
@@ -1762,7 +1764,11 @@ def dispatch_assigned_agent_event(
         )
         return {"ok": True, "marker": ASSIGNED_AGENT_EVENT_DISPATCH_MARKER, "status": "dispatched", "target_agent": target, "wakes": [target], "run_id": run_id, "dry_run": True}
     launcher_map = launchers or AGENT_LAUNCHERS
-    proc = launcher_map[target](identifier, title=str(payload.get("title") or identifier), labels=labels, identifier=identifier)
+    title = str(payload.get("title") or identifier)
+    if target in {"fred", "kai"}:
+        proc = launcher_map[target](identifier, title=title, priority=3)
+    else:
+        proc = launcher_map[target](identifier, title=title, labels=labels, identifier=identifier)
     if proc:
         update_assigned_dispatch_state(
             event_id,
