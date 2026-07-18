@@ -5,7 +5,10 @@ from prismatic.agy_merge_backlog import (
     AGY_CLEAN_PR_AND_VERIFICATION_GATE_MARKER,
     AGY_CLEAN_PR_CREATE_UPDATE_MARKER,
     AGY_PR_VERIFICATION_GATE_MARKER,
+    PROMPT5_REAL_PR_APPROVAL_GATE_MARKER,
     build_merge_backlog_item,
+    build_real_pr_creation_approval_gate,
+    build_real_pr_creation_approved_action,
     get_merge_backlog_item,
     verify_merge_backlog_item,
 )
@@ -237,3 +240,65 @@ def test_prompt53_operator_pr_creation_dry_run_is_side_effect_free(
     assert plan["side_effects"]["linear_comment_posted"] is False
     assert plan["non_claims"]["real_github_pr_created"] is False
     assert "PROMPT5_OPERATOR_PR_DRY_RUN_OK" in plan["linear_writeback"]["body"]
+
+
+def test_prompt54_real_pr_creation_approval_gate_requires_explicit_token(
+    monkeypatch, tmp_path
+):
+    db = tmp_path / "approval.db"
+    monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(db))
+    row = ingest(db, packet(lane="backend-api"))
+
+    blocked = build_real_pr_creation_approval_gate(
+        row.id,
+        requested_by="kai-test",
+        approved_by="operator",
+        approval_token="wrong-token",
+    )
+    assert blocked["status"] == "blocked"
+    assert blocked["approval_record"]["approved"] is False
+    assert blocked["approval_record"]["approval_token_matched"] is False
+    assert blocked["policy_gate"]["checks"]["approval_token_matches"] is False
+    assert blocked["real_pr_creation_action"]["exposed"] is False
+    assert blocked["side_effects"]["github_pr_created"] is False
+
+    approved = build_real_pr_creation_approval_gate(
+        row.id,
+        requested_by="kai-test",
+        approved_by="operator",
+        approval_token=f"APPROVE_REAL_PR:{row.id}",
+        approval_note="explicit approval test",
+    )
+    assert approved["status"] == "ok"
+    assert approved["marker"] == PROMPT5_REAL_PR_APPROVAL_GATE_MARKER
+    assert approved["approval_record"]["approved"] is True
+    assert approved["approval_record"]["approval_token_matched"] is True
+    assert approved["policy_gate"]["status"] == "pass"
+    assert approved["policy_gate"]["scope_confirmed"] is True
+    assert approved["policy_gate"]["proof_confirmed"] is True
+    assert approved["policy_gate"]["requires_separate_approved_action"] is True
+    assert approved["real_pr_creation_action"]["exposed"] is True
+    assert (
+        approved["real_pr_creation_action"]["requires_final_operator_trigger"] is True
+    )
+    assert approved["real_pr_creation_action"]["executed"] is False
+    assert approved["real_pr_creation_action"]["github_pr_created"] is False
+    assert approved["side_effects"]["git_branch_created"] is False
+    assert approved["side_effects"]["github_pr_created"] is False
+    assert approved["side_effects"]["linear_comment_posted"] is False
+    assert approved["non_claims"]["real_github_pr_created"] is False
+
+    action = build_real_pr_creation_approved_action(
+        row.id,
+        requested_by="kai-test",
+        approved_by="operator",
+        approval_token=f"APPROVE_REAL_PR:{row.id}",
+        approval_id=approved["approval_record"]["approval_id"],
+    )
+    assert action["status"] == "ok"
+    assert action["marker"] == PROMPT5_REAL_PR_APPROVAL_GATE_MARKER
+    assert action["real_pr_creation_action"]["status"] == "ready_for_future_executor"
+    assert action["real_pr_creation_action"]["approval_id_matched"] is True
+    assert action["real_pr_creation_action"]["execution_implemented"] is False
+    assert action["real_pr_creation_action"]["executed"] is False
+    assert action["side_effects"]["github_pr_created"] is False

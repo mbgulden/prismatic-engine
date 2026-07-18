@@ -27,6 +27,7 @@ AGY_PR_VERIFICATION_GATE_MARKER = "AGY_PR_VERIFICATION_GATE_OK"
 AGY_CLEAN_PR_AND_VERIFICATION_GATE_MARKER = "AGY_CLEAN_PR_AND_VERIFICATION_GATE_OK"
 PROMPT5_PR_CANDIDATE_LIFECYCLE_MARKER = "PROMPT5_PR_CANDIDATE_LIFECYCLE_OK"
 PROMPT5_OPERATOR_PR_DRY_RUN_MARKER = "PROMPT5_OPERATOR_PR_DRY_RUN_OK"
+PROMPT5_REAL_PR_APPROVAL_GATE_MARKER = "PROMPT5_REAL_PR_APPROVAL_GATE_OK"
 
 MERGE_BACKLOG_ACTIONS = {
     "open_or_update_pr",
@@ -428,6 +429,222 @@ def build_operator_pr_creation_dry_run(
         },
         "reasons": candidate.get("reasons", []),
         "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _real_pr_approval_token(completed_work_id: str) -> str:
+    return f"APPROVE_REAL_PR:{completed_work_id}"
+
+
+def build_real_pr_creation_approval_gate(
+    completed_work_id: str,
+    *,
+    requested_by: str = "operator",
+    approved_by: str | None = None,
+    approval_token: str | None = None,
+    approval_note: str | None = None,
+    action: str = "record_real_pr_creation_approval",
+    expose_real_pr_action: bool = True,
+) -> dict[str, Any]:
+    """Record an explicit operator approval gate for future real PR creation.
+
+    Prompt 5.4 is still side-effect-free by default. This function records the
+    approval/policy decision in the returned payload and exposes a separate
+    approved-action plan only after the dry-run plan is valid, the policy gate
+    passes, and the operator supplies the exact approval token. It does not
+    create branches, open GitHub PRs, post Linear comments, enable auto-merge,
+    dispatch AGY, or deploy production.
+    """
+
+    dry_run = build_operator_pr_creation_dry_run(
+        completed_work_id,
+        requested_by=requested_by,
+        action="operator_pr_creation_dry_run",
+    )
+    item = get_merge_backlog_item(completed_work_id)
+    expected_token = _real_pr_approval_token(item.completed_work_id)
+    approval_valid = bool(approved_by) and approval_token == expected_token
+    dry_run_ready = (
+        dry_run.get("status") == "ok" and dry_run.get("dry_run_only") is True
+    )
+    verification_gate = dry_run.get("verification_gate_selection", {})
+    policy_checks = {
+        "dry_run_plan_ready": dry_run_ready,
+        "verification_gate_selected": verification_gate.get("status") == "selected",
+        "verification_required_before_real_pr": verification_gate.get(
+            "required_before_real_pr"
+        )
+        is True,
+        "scope_is_merge_ready": item.classification
+        == GateClassification.MERGE_READY.value,
+        "recommended_action_open_or_update_pr": item.recommended_action
+        == "open_or_update_pr",
+        "approval_token_matches": approval_valid,
+        "auto_merge_disabled": dry_run.get("side_effects", {}).get("auto_merge")
+        is False,
+        "production_deploy_disabled": dry_run.get("side_effects", {}).get(
+            "production_deploy"
+        )
+        is False,
+    }
+    policy_passed = all(policy_checks.values())
+    approval_id_source = (
+        f"{item.completed_work_id}:{approved_by or 'unapproved'}:{approval_token or ''}"
+    )
+    approval_id = (
+        "real-pr-approval-"
+        + hashlib.sha256(approval_id_source.encode()).hexdigest()[:16]
+    )
+    blocked_reasons = [name for name, ok in policy_checks.items() if not ok]
+    real_pr_action_exposed = bool(expose_real_pr_action and policy_passed)
+    create_command = dry_run.get("github_pr_plan", {}).get("create_command", "")
+    approved_command = create_command.replace(
+        "DRY_RUN_ONLY: ", "APPROVED_ACTION_ONLY: ", 1
+    )
+    linear_body = (
+        "## Prompt 5.4 real PR creation approval gate\n\n"
+        "```text\n"
+        f"RESULT={'PASS' if policy_passed else 'BLOCKED'}\n"
+        f"MARKER={PROMPT5_REAL_PR_APPROVAL_GATE_MARKER if policy_passed else 'PROMPT5_REAL_PR_APPROVAL_GATE_BLOCKED'}\n"
+        f"completed_work_id={item.completed_work_id}\n"
+        f"approval_id={approval_id}\n"
+        f"approved_by={approved_by or 'missing'}\n"
+        f"real_pr_action_exposed={str(real_pr_action_exposed).lower()}\n"
+        "real_github_pr_created=false\n"
+        "git_branch_created=false\n"
+        "auto_merge_enabled=false\n"
+        "production_deployed=false\n"
+        "```"
+    )
+    return {
+        "status": "ok" if policy_passed else "blocked",
+        "marker": PROMPT5_REAL_PR_APPROVAL_GATE_MARKER
+        if policy_passed
+        else "PROMPT5_REAL_PR_APPROVAL_GATE_BLOCKED",
+        "completed_work_id": item.completed_work_id,
+        "merge_backlog_id": item.merge_backlog_id,
+        "requested_by": requested_by or "operator",
+        "operator_action": action or "record_real_pr_creation_approval",
+        "approval_record": {
+            "approval_id": approval_id,
+            "approved": policy_passed,
+            "approved_by": approved_by,
+            "approval_note": approval_note or "",
+            "approval_token_hint": expected_token,
+            "approval_token_matched": approval_valid,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        },
+        "policy_gate": {
+            "status": "pass" if policy_passed else "blocked",
+            "checks": policy_checks,
+            "blocked_reasons": blocked_reasons,
+            "scope_confirmed": policy_checks["scope_is_merge_ready"],
+            "proof_confirmed": policy_checks["verification_gate_selected"]
+            and policy_checks["verification_required_before_real_pr"],
+            "requires_separate_approved_action": True,
+        },
+        "dry_run_plan": dry_run,
+        "real_pr_creation_action": {
+            "exposed": real_pr_action_exposed,
+            "endpoint": f"/api/gateway/agy/merge-backlog/{item.completed_work_id}/pr-create-approved",
+            "method": "POST",
+            "requires_approval_id": approval_id,
+            "requires_final_operator_trigger": True,
+            "command": approved_command if real_pr_action_exposed else None,
+            "executed": False,
+            "github_pr_created": False,
+        },
+        "dashboard_writeback": {
+            "visible": True,
+            "status": "approved-action-ready" if policy_passed else "blocked",
+            "marker": PROMPT5_REAL_PR_APPROVAL_GATE_MARKER
+            if policy_passed
+            else "PROMPT5_REAL_PR_APPROVAL_GATE_BLOCKED",
+        },
+        "linear_writeback": {
+            "enabled": True,
+            "target_issue": item.issue_identifier,
+            "body": linear_body,
+            "posted": False,
+            "dry_run_payload_only": True,
+        },
+        "side_effects": {
+            "git_branch_created": False,
+            "github_pr_created": False,
+            "auto_merge": False,
+            "production_deploy": False,
+            "agy_dispatch": False,
+            "linear_comment_posted": False,
+        },
+        "non_claims": {
+            "real_github_pr_created": False,
+            "git_branch_created": False,
+            "auto_merge_enabled": False,
+            "production_deployed": False,
+            "agy_dispatch": False,
+        },
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def build_real_pr_creation_approved_action(
+    completed_work_id: str,
+    *,
+    approval_id: str | None = None,
+    approved_by: str | None = None,
+    approval_token: str | None = None,
+    requested_by: str = "operator",
+) -> dict[str, Any]:
+    """Expose the separate approved real-PR action without executing it.
+
+    This is the final pre-execution surface. It requires the Prompt 5.4 approval
+    gate to pass and the approval id to match. It still does not run git or gh;
+    an actual side-effecting executor must be a future separately authorized
+    implementation.
+    """
+
+    gate = build_real_pr_creation_approval_gate(
+        completed_work_id,
+        requested_by=requested_by,
+        approved_by=approved_by,
+        approval_token=approval_token,
+        action="real_pr_creation_approved_action",
+    )
+    approval_matches = approval_id == gate.get("approval_record", {}).get("approval_id")
+    allowed = gate.get("status") == "ok" and approval_matches
+    action_payload = dict(gate.get("real_pr_creation_action", {}))
+    action_payload.update(
+        {
+            "status": "ready_for_future_executor" if allowed else "blocked",
+            "approval_id_matched": approval_matches,
+            "execution_implemented": False,
+            "executed": False,
+            "github_pr_created": False,
+        }
+    )
+    return {
+        "status": "ok" if allowed else "blocked",
+        "marker": PROMPT5_REAL_PR_APPROVAL_GATE_MARKER
+        if allowed
+        else "PROMPT5_REAL_PR_APPROVED_ACTION_BLOCKED",
+        "completed_work_id": completed_work_id,
+        "approval_gate": gate,
+        "real_pr_creation_action": action_payload,
+        "side_effects": {
+            "git_branch_created": False,
+            "github_pr_created": False,
+            "auto_merge": False,
+            "production_deploy": False,
+            "agy_dispatch": False,
+            "linear_comment_posted": False,
+        },
+        "non_claims": {
+            "real_github_pr_created": False,
+            "git_branch_created": False,
+            "auto_merge_enabled": False,
+            "production_deployed": False,
+            "agy_dispatch": False,
+        },
     }
 
 

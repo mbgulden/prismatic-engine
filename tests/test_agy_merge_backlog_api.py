@@ -139,3 +139,67 @@ def test_prompt53_operator_pr_dry_run_endpoint_returns_plan_without_side_effects
 
     missing = client.post("/api/gateway/agy/merge-backlog/no-such-row/pr-dry-run")
     assert missing.status_code == 404
+
+
+def test_prompt54_real_pr_approval_gate_api_requires_explicit_approval(
+    monkeypatch, tmp_path
+):
+    row = seed(monkeypatch, tmp_path)
+    client = TestClient(server.app)
+
+    blocked = client.post(
+        f"/api/gateway/agy/merge-backlog/{row.id}/pr-approval",
+        json={
+            "requested_by": "dashboard-test",
+            "approved_by": "operator",
+            "approval_token": "wrong-token",
+        },
+    )
+    assert blocked.status_code == 200
+    blocked_body = blocked.json()
+    assert blocked_body["status"] == "blocked"
+    assert blocked_body["approval_record"]["approved"] is False
+    assert blocked_body["real_pr_creation_action"]["exposed"] is False
+    assert blocked_body["side_effects"]["github_pr_created"] is False
+
+    approved = client.post(
+        f"/api/gateway/agy/merge-backlog/{row.id}/pr-approval",
+        json={
+            "requested_by": "dashboard-test",
+            "approved_by": "operator",
+            "approval_token": f"APPROVE_REAL_PR:{row.id}",
+            "approval_note": "explicit api approval test",
+        },
+    )
+    assert approved.status_code == 200
+    body = approved.json()
+    assert body["marker"] == "PROMPT5_REAL_PR_APPROVAL_GATE_OK"
+    assert body["approval_record"]["approved"] is True
+    assert body["policy_gate"]["status"] == "pass"
+    assert body["policy_gate"]["requires_separate_approved_action"] is True
+    assert body["real_pr_creation_action"]["exposed"] is True
+    assert body["real_pr_creation_action"]["executed"] is False
+    assert body["side_effects"]["github_pr_created"] is False
+    assert body["non_claims"]["real_github_pr_created"] is False
+
+    action = client.post(
+        f"/api/gateway/agy/merge-backlog/{row.id}/pr-create-approved",
+        json={
+            "requested_by": "dashboard-test",
+            "approved_by": "operator",
+            "approval_token": f"APPROVE_REAL_PR:{row.id}",
+            "approval_id": body["approval_record"]["approval_id"],
+        },
+    )
+    assert action.status_code == 200
+    action_body = action.json()
+    assert action_body["status"] == "ok"
+    assert (
+        action_body["real_pr_creation_action"]["status"] == "ready_for_future_executor"
+    )
+    assert action_body["real_pr_creation_action"]["execution_implemented"] is False
+    assert action_body["real_pr_creation_action"]["executed"] is False
+    assert action_body["side_effects"]["github_pr_created"] is False
+
+    missing = client.post("/api/gateway/agy/merge-backlog/no-such-row/pr-approval")
+    assert missing.status_code == 404
