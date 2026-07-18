@@ -67,9 +67,11 @@ from prismatic.agy_merge_backlog import (
     verify_merge_backlog_item,
 )
 from prismatic.agy_executor_runs import (
+    PROMPT7_EXECUTOR_API_AUDIT_WRITEBACK_MARKER,
     build_prompt6_executor_canary_dry_run,
     get_executor_run,
     list_executor_runs,
+    record_executor_run,
 )
 from prismatic.agy_overnight_guard import (
     AGY_OVERNIGHT_READINESS_GUARD_MARKER,
@@ -1292,7 +1294,7 @@ def agy_merge_backlog_approved_real_pr_executor(
 ) -> dict[str, Any]:
     body = payload or {}
     try:
-        return execute_approved_real_pr_creation(
+        result = execute_approved_real_pr_creation(
             completed_work_id,
             approval_id=str(body.get("approval_id") or "") or None,
             approved_by=str(body.get("approved_by") or "") or None,
@@ -1303,6 +1305,50 @@ def agy_merge_backlog_approved_real_pr_executor(
             executor_mode=str(body.get("executor_mode") or "dry_run"),
             allow_real_side_effects=bool(body.get("allow_real_side_effects", False)),
         )
+        side_effects = (
+            result.get("side_effects", {})
+            if isinstance(result.get("side_effects"), dict)
+            else {}
+        )
+        executor_result = (
+            result.get("executor_result", {})
+            if isinstance(result.get("executor_result"), dict)
+            else {}
+        )
+        result.setdefault(
+            "real_github_pr_created",
+            bool(
+                executor_result.get("real_github_pr_created")
+                or side_effects.get("real_github_pr_created")
+                or side_effects.get("github_pr_created")
+            ),
+        )
+        result.setdefault(
+            "git_branch_created",
+            bool(
+                executor_result.get("git_branch_created")
+                or side_effects.get("git_branch_created")
+            ),
+        )
+        result.setdefault("auto_merge_enabled", bool(side_effects.get("auto_merge")))
+        result.setdefault(
+            "production_deployed", bool(side_effects.get("production_deploy"))
+        )
+        result.setdefault("AGY_dispatch", False)
+        audit_run = record_executor_run(
+            result,
+            requested_by=str(body.get("requested_by") or "operator"),
+            log_path=str(body.get("log_path") or "") or None,
+        )
+        result["audit_writeback"] = {
+            "status": "ok",
+            "marker": PROMPT7_EXECUTOR_API_AUDIT_WRITEBACK_MARKER,
+            "recorded": True,
+            "run_id": audit_run["run_id"],
+            "executor_run_marker": audit_run["marker"],
+        }
+        result["executor_run_id"] = audit_run["run_id"]
+        return result
     except KeyError as exc:
         raise HTTPException(
             status_code=404, detail="completed work row not found"

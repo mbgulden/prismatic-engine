@@ -31,7 +31,9 @@ def packet():
 
 def seed(monkeypatch, tmp_path):
     db = tmp_path / "completed_work.db"
+    executor_runs = tmp_path / "executor-runs.json"
     monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(db))
+    monkeypatch.setenv("PRISMATIC_AGY_EXECUTOR_RUNS_STATE", str(executor_runs))
     row = ingest_completed_work(packet(), db_path=db)
     return row
 
@@ -267,6 +269,16 @@ def test_prompt55_approved_real_pr_executor_api_and_dashboard_are_safe(
     assert body["side_effects"]["github_pr_created"] is False
     assert body["side_effects"]["auto_merge"] is False
     assert body["side_effects"]["production_deploy"] is False
+    assert (
+        body["audit_writeback"]["marker"] == "PROMPT7_EXECUTOR_API_AUDIT_WRITEBACK_OK"
+    )
+    assert body["audit_writeback"]["recorded"] is True
+    assert body["executor_run_id"] == body["audit_writeback"]["run_id"]
+    executor_runs = client.get("/api/gateway/agy/executor-runs?limit=5")
+    assert executor_runs.status_code == 200
+    assert any(
+        run["run_id"] == body["executor_run_id"] for run in executor_runs.json()["runs"]
+    )
 
     real_blocked = client.post(
         f"/api/gateway/agy/merge-backlog/{row.id}/pr-executor",
@@ -294,6 +306,7 @@ def test_prompt55_approved_real_pr_executor_api_and_dashboard_are_safe(
     assert "prompt5-approved-real-pr-executor-action" in text
     assert "Plan Approved PR Executor" in text
     assert "stageApprovedPrExecutor" in text
+    assert "audit_writeback" in text
 
     missing = client.post("/api/gateway/agy/merge-backlog/no-such-row/pr-executor")
     assert missing.status_code == 404
