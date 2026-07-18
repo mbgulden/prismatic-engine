@@ -26,6 +26,7 @@ AGY_CLEAN_PR_CREATE_UPDATE_MARKER = "AGY_CLEAN_PR_CREATE_UPDATE_OK"
 AGY_PR_VERIFICATION_GATE_MARKER = "AGY_PR_VERIFICATION_GATE_OK"
 AGY_CLEAN_PR_AND_VERIFICATION_GATE_MARKER = "AGY_CLEAN_PR_AND_VERIFICATION_GATE_OK"
 PROMPT5_PR_CANDIDATE_LIFECYCLE_MARKER = "PROMPT5_PR_CANDIDATE_LIFECYCLE_OK"
+PROMPT5_OPERATOR_PR_DRY_RUN_MARKER = "PROMPT5_OPERATOR_PR_DRY_RUN_OK"
 
 MERGE_BACKLOG_ACTIONS = {
     "open_or_update_pr",
@@ -287,6 +288,147 @@ def evaluate_verification_gate(
     return VerificationGateDecision(
         "pass", lane, True, policy, tuple(reasons), AGY_PR_VERIFICATION_GATE_MARKER
     )
+
+
+def _verification_gate_selection(item: MergeBacklogItem) -> dict[str, Any]:
+    """Select a conservative dry-run verification gate for a future clean PR."""
+
+    commands = [
+        "$HOME/.local/bin/ruff check prismatic/agy_merge_backlog.py prismatic/gateway/server.py",
+        "$HOME/.local/bin/ruff format --check prismatic/agy_merge_backlog.py prismatic/gateway/server.py",
+        "python3 -m py_compile prismatic/agy_merge_backlog.py prismatic/gateway/server.py",
+    ]
+    test_targets = [
+        "tests/test_agy_merge_backlog.py",
+        "tests/test_agy_merge_backlog_api.py",
+    ]
+    if item.verification_lane in {"backend-api", "integration"}:
+        commands.append(
+            "PYTHONPATH=$PWD $HOME/.prismatic/venv_stable/bin/python -m pytest "
+            + " ".join(test_targets)
+            + " -q"
+        )
+        gate = "backend_api_focused"
+    else:
+        commands.append(
+            "PYTHONPATH=$PWD $HOME/.prismatic/venv_stable/bin/python -m pytest tests/test_agy_merge_backlog.py -q"
+        )
+        gate = "completed_work_focused"
+    return {
+        "gate": gate,
+        "status": "selected",
+        "commands": commands,
+        "required_before_real_pr": True,
+        "ad_hoc_or_canonical": "ad-hoc targeted",
+        "not_claiming": [
+            "canonical_full_suite_green",
+            "real_github_pr_created",
+            "auto_merge_enabled",
+        ],
+    }
+
+
+def build_operator_pr_creation_dry_run(
+    completed_work_id: str,
+    *,
+    requested_by: str = "operator",
+    action: str = "operator_pr_creation_dry_run",
+    linear_writeback: bool = True,
+) -> dict[str, Any]:
+    """Build an operator-approved dry-run branch/PR plan without GitHub side effects.
+
+    Prompt 5.3 continues the metadata-only lane: an explicit operator action can
+    produce a branch/PR plan, verification gate selection, and Linear/dashboard
+    writeback payload, but it still must not create branches, open GitHub PRs,
+    enable auto-merge, dispatch AGY, or deploy production.
+    """
+
+    candidate = build_pr_candidate_lifecycle(
+        completed_work_id, requested_by=requested_by, action="stage_pr_candidate"
+    )
+    item = get_merge_backlog_item(completed_work_id)
+    allowed = candidate.get("status") == "ok"
+    issue_slug = _slug(item.issue_identifier or item.completed_work_id)[:24]
+    branch_name = f"agent/{issue_slug}-{item.completed_work_id[:8]}-dry-run"
+    pr_title = (
+        candidate.get("candidate", {}).get("title")
+        or f"AGY completed work {item.issue_identifier}"
+    )
+    verification = _verification_gate_selection(item)
+    linear_body = (
+        "## Prompt 5.3 operator PR dry-run plan\n\n"
+        "```text\n"
+        f"RESULT={'PASS' if allowed else 'BLOCKED'}\n"
+        f"MARKER={PROMPT5_OPERATOR_PR_DRY_RUN_MARKER if allowed else 'PROMPT5_OPERATOR_PR_DRY_RUN_BLOCKED'}\n"
+        f"completed_work_id={item.completed_work_id}\n"
+        f"planned_branch={branch_name}\n"
+        f"verification_gate={verification['gate']}\n"
+        "real_github_pr_created=false\n"
+        "auto_merge_enabled=false\n"
+        "production_deployed=false\n"
+        "```"
+    )
+    return {
+        "status": "ok" if allowed else "blocked",
+        "marker": PROMPT5_OPERATOR_PR_DRY_RUN_MARKER
+        if allowed
+        else "PROMPT5_OPERATOR_PR_DRY_RUN_BLOCKED",
+        "completed_work_id": item.completed_work_id,
+        "merge_backlog_id": item.merge_backlog_id,
+        "requested_by": requested_by or "operator",
+        "operator_action": action or "operator_pr_creation_dry_run",
+        "operator_approved_action": True,
+        "dry_run_only": True,
+        "candidate_metadata": candidate.get("candidate"),
+        "branch_plan": {
+            "base": "origin/main",
+            "branch": branch_name,
+            "checkout_command": f"git switch -C {branch_name} origin/main",
+            "apply_completed_work_command": "DRY_RUN_ONLY: apply the completed-work artifact set after operator approval",
+            "push_command": f"DRY_RUN_ONLY: git push -u origin {branch_name}",
+            "executed": False,
+        },
+        "github_pr_plan": {
+            "title": pr_title,
+            "body": candidate.get("candidate", {}).get("body"),
+            "base": "main",
+            "head": branch_name,
+            "create_command": f"DRY_RUN_ONLY: gh pr create --base main --head {branch_name} --title {pr_title!r}",
+            "created": False,
+        },
+        "verification_gate_selection": verification,
+        "dashboard_writeback": {
+            "visible": True,
+            "status": "ready" if allowed else "blocked",
+            "marker": PROMPT5_OPERATOR_PR_DRY_RUN_MARKER
+            if allowed
+            else "PROMPT5_OPERATOR_PR_DRY_RUN_BLOCKED",
+        },
+        "linear_writeback": {
+            "enabled": bool(linear_writeback),
+            "target_issue": item.issue_identifier,
+            "body": linear_body,
+            "posted": False,
+            "dry_run_payload_only": True,
+        },
+        "side_effects": {
+            "git_branch_created": False,
+            "github_pr_created": False,
+            "auto_merge": False,
+            "production_deploy": False,
+            "agy_dispatch": False,
+            "linear_comment_posted": False,
+        },
+        "non_claims": {
+            "real_github_pr_created": False,
+            "git_branch_created": False,
+            "auto_merge_enabled": False,
+            "production_deployed": False,
+            "agy_dispatch": False,
+        },
+        "reasons": candidate.get("reasons", []),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 def list_merge_backlog(

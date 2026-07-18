@@ -107,3 +107,35 @@ def test_prompt5_pr_candidate_endpoint_is_explicit_operator_metadata_only(
 
     missing = client.post("/api/gateway/agy/merge-backlog/no-such-row/pr-candidate")
     assert missing.status_code == 404
+
+
+def test_prompt53_operator_pr_dry_run_endpoint_returns_plan_without_side_effects(
+    monkeypatch, tmp_path
+):
+    row = seed(monkeypatch, tmp_path)
+    client = TestClient(server.app)
+
+    res = client.post(
+        f"/api/gateway/agy/merge-backlog/{row.id}/pr-dry-run",
+        json={
+            "requested_by": "dashboard-test",
+            "action": "operator_pr_creation_dry_run",
+        },
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["marker"] == "PROMPT5_OPERATOR_PR_DRY_RUN_OK"
+    assert body["dry_run_only"] is True
+    assert body["operator_approved_action"] is True
+    assert body["branch_plan"]["executed"] is False
+    assert body["github_pr_plan"]["created"] is False
+    assert body["github_pr_plan"]["create_command"].startswith("DRY_RUN_ONLY:")
+    assert body["verification_gate_selection"]["status"] == "selected"
+    assert body["linear_writeback"]["posted"] is False
+    assert body["linear_writeback"]["dry_run_payload_only"] is True
+    assert body["side_effects"]["github_pr_created"] is False
+    assert body["side_effects"]["linear_comment_posted"] is False
+    assert body["non_claims"]["git_branch_created"] is False
+
+    missing = client.post("/api/gateway/agy/merge-backlog/no-such-row/pr-dry-run")
+    assert missing.status_code == 404

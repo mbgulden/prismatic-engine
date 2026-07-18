@@ -57,6 +57,7 @@ from prismatic.agy_completed_work import (
 from prismatic.agy_merge_backlog import (
     AGY_CLEAN_PR_AND_VERIFICATION_GATE_MARKER,
     AGY_CLEAN_PR_CREATE_UPDATE_MARKER,
+    build_operator_pr_creation_dry_run,
     build_pr_candidate_lifecycle,
     get_merge_backlog_item,
     list_merge_backlog,
@@ -1198,6 +1199,29 @@ async def list_agy_merge_backlog(
             "agy_dispatch": False,
         },
     }
+
+
+@app.post("/api/agy/merge-backlog/{completed_work_id}/pr-dry-run")
+def agy_merge_backlog_operator_pr_dry_run(
+    completed_work_id: str, payload: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    body = payload or {}
+    try:
+        return build_operator_pr_creation_dry_run(
+            completed_work_id,
+            requested_by=str(body.get("requested_by") or "dashboard-operator"),
+            action=str(body.get("action") or "operator_pr_creation_dry_run"),
+            linear_writeback=bool(body.get("linear_writeback", True)),
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/gateway/agy/merge-backlog/{completed_work_id}/pr-dry-run")
+def gateway_agy_merge_backlog_operator_pr_dry_run(
+    completed_work_id: str, payload: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    return agy_merge_backlog_operator_pr_dry_run(completed_work_id, payload)
 
 
 @app.get("/api/agy/merge-backlog/{completed_work_id}")

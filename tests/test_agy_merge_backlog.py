@@ -200,3 +200,40 @@ def test_prompt5_pr_candidate_lifecycle_is_metadata_only(monkeypatch, tmp_path):
     assert candidate["side_effects"]["auto_merge"] is False
     assert candidate["side_effects"]["production_deploy"] is False
     assert candidate["non_claims"]["real_github_pr_created"] is False
+
+
+def test_prompt53_operator_pr_creation_dry_run_is_side_effect_free(
+    monkeypatch, tmp_path
+):
+    from prismatic.agy_merge_backlog import (
+        PROMPT5_OPERATOR_PR_DRY_RUN_MARKER,
+        build_operator_pr_creation_dry_run,
+    )
+
+    db = tmp_path / "candidate.db"
+    monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(db))
+    row = ingest(db, packet(lane="backend-api"))
+
+    plan = build_operator_pr_creation_dry_run(
+        row.id, requested_by="kai-test", action="operator_pr_creation_dry_run"
+    )
+
+    assert plan["status"] == "ok"
+    assert plan["marker"] == PROMPT5_OPERATOR_PR_DRY_RUN_MARKER
+    assert plan["operator_approved_action"] is True
+    assert plan["dry_run_only"] is True
+    assert plan["branch_plan"]["executed"] is False
+    assert plan["github_pr_plan"]["created"] is False
+    assert plan["github_pr_plan"]["create_command"].startswith("DRY_RUN_ONLY:")
+    assert plan["verification_gate_selection"]["gate"] == "backend_api_focused"
+    assert plan["verification_gate_selection"]["required_before_real_pr"] is True
+    assert plan["linear_writeback"]["enabled"] is True
+    assert plan["linear_writeback"]["posted"] is False
+    assert plan["linear_writeback"]["dry_run_payload_only"] is True
+    assert plan["side_effects"]["git_branch_created"] is False
+    assert plan["side_effects"]["github_pr_created"] is False
+    assert plan["side_effects"]["auto_merge"] is False
+    assert plan["side_effects"]["production_deploy"] is False
+    assert plan["side_effects"]["linear_comment_posted"] is False
+    assert plan["non_claims"]["real_github_pr_created"] is False
+    assert "PROMPT5_OPERATOR_PR_DRY_RUN_OK" in plan["linear_writeback"]["body"]
