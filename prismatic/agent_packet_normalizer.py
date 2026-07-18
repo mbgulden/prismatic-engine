@@ -91,6 +91,8 @@ def normalize_agent_output(raw_text: str, *, expected_agent: str | None = None) 
             rerun_allowed=False,
         )
 
+    original_hint = repair_hint_for_packet(packet, expected_agent=expected_agent)
+
     try:
         normalized = normalize_agy_result_packet(packet)
         gate = classify_completed_work(normalized)
@@ -104,8 +106,12 @@ def normalize_agent_output(raw_text: str, *, expected_agent: str | None = None) 
             rerun_allowed=False,
         )
 
-    hint = repair_hint_for_packet(normalized, expected_agent=expected_agent, gate_reasons=gate.reasons)
-    canonical_id = _canonical_packet_id(normalized) if gate.classification == GateClassification.MERGE_READY else None
+    hint = original_hint or repair_hint_for_packet(normalized, expected_agent=expected_agent, gate_reasons=gate.reasons)
+    canonical_id = (
+        _canonical_packet_id(normalized)
+        if gate.classification == GateClassification.MERGE_READY and hint is None
+        else None
+    )
 
     if hint == "secret_like_content_detected":
         status = NormalizationStatus.REJECTED_POLICY_VIOLATION
@@ -113,16 +119,16 @@ def normalize_agent_output(raw_text: str, *, expected_agent: str | None = None) 
     elif hint == "wrong_agent_or_ambiguous_agent":
         status = NormalizationStatus.REJECTED_POLICY_VIOLATION
         rerun_allowed = False
-    elif gate.classification == GateClassification.MERGE_READY:
-        warnings = _normalization_warnings(normalized)
-        status = NormalizationStatus.NORMALIZED_WITH_WARNINGS if warnings else NormalizationStatus.ACCEPTED
-        return NormalizationResult(status, normalized, canonical_id, None, None, False, tuple(warnings))
     elif hint in {"missing_proof_log", "missing_non_claims", "production_claim_without_proof"}:
         status = NormalizationStatus.REJECTED_REPAIRABLE
         rerun_allowed = False
     elif hint in {"missing_source_path", "invalid_changed_files", "agent_prose_only"}:
         status = NormalizationStatus.REJECTED_RERUN_REQUIRED
         rerun_allowed = True
+    elif gate.classification == GateClassification.MERGE_READY:
+        warnings = _normalization_warnings(normalized)
+        status = NormalizationStatus.NORMALIZED_WITH_WARNINGS if warnings else NormalizationStatus.ACCEPTED
+        return NormalizationResult(status, normalized, canonical_id, None, None, False, tuple(warnings))
     else:
         status = NormalizationStatus.REJECTED_REPAIRABLE
         rerun_allowed = False

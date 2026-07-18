@@ -73,7 +73,6 @@ from prismatic.agy_limited_overnight_runner import (
     stop_latest_run as stop_limited_overnight_run,
 )
 from prismatic.agent_raw_output_queue import (
-    RawAgentOutputStore,
     get_raw_output,
     list_raw_outputs,
     mark_rerun_requested,
@@ -1044,6 +1043,68 @@ async def completed_work_gate_demo() -> dict[str, Any]:
     """
 
     return demo_completed_work_gate_state()
+
+
+@app.get("/api/agents/raw-output")
+@app.get("/api/gateway/agents/raw-output")
+async def list_agent_raw_output(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
+    """Expose real persisted raw output queue state. No fixtures."""
+
+    rows = [row.as_dict() for row in list_raw_outputs(limit=limit)]
+    return {
+        "status": "ok",
+        "marker": RAW_AGENT_OUTPUT_REPAIR_QUEUE_MARKER,
+        "count": len(rows),
+        "counts": queue_counts(),
+        "raw_outputs": rows,
+        "non_claims": {
+            "demo_fixture_rows": False,
+            "auto_repair_success": False,
+            "auto_rerun_enabled": False,
+            "auto_merge_enabled": False,
+            "production_deploy": False,
+        },
+    }
+
+
+@app.get("/api/agents/raw-output/{raw_output_id}")
+@app.get("/api/gateway/agents/raw-output/{raw_output_id}")
+async def get_agent_raw_output(raw_output_id: str) -> dict[str, Any]:
+    try:
+        row = get_raw_output(raw_output_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="raw output row not found") from exc
+    return {
+        "status": "ok",
+        "marker": RAW_AGENT_OUTPUT_REPAIR_QUEUE_MARKER,
+        "raw_output": row.as_dict(),
+    }
+
+
+@app.post("/api/agents/raw-output/{raw_output_id}/repair-preview")
+@app.post("/api/gateway/agents/raw-output/{raw_output_id}/repair-preview")
+async def preview_agent_raw_output_repair(raw_output_id: str) -> dict[str, Any]:
+    try:
+        return raw_output_repair_preview(raw_output_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="raw output row not found") from exc
+
+
+@app.post("/api/agents/raw-output/{raw_output_id}/mark-rerun-requested")
+@app.post("/api/gateway/agents/raw-output/{raw_output_id}/mark-rerun-requested")
+async def request_agent_raw_output_rerun(raw_output_id: str) -> dict[str, Any]:
+    try:
+        row = mark_rerun_requested(raw_output_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="raw output row not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {
+        "status": "rerun_requested",
+        "marker": RAW_AGENT_OUTPUT_REPAIR_QUEUE_MARKER,
+        "auto_rerun_enabled": False,
+        "raw_output": row.as_dict(),
+    }
 
 
 @app.post("/api/agy/completed-work/ingest")
