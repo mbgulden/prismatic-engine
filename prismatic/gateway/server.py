@@ -72,6 +72,15 @@ from prismatic.agy_limited_overnight_runner import (
     status_payload as limited_overnight_status_payload,
     stop_latest_run as stop_limited_overnight_run,
 )
+from prismatic.agy_unattended_window import (
+    UnattendedWindowRequest,
+    UnattendedWindowStore,
+    approve_window,
+    evaluate_unattended_window,
+    request_approval as request_unattended_window_approval,
+    set_pause as set_unattended_window_pause,
+    status_payload as unattended_window_status_payload,
+)
 from prismatic.budget_caps import read_budget_caps, write_budget_caps
 from prismatic.completed_work_gate import completed_work_gate_schema, demo_completed_work_gate_state
 from prismatic.lock import _read_locks as read_swarm_locks
@@ -1252,6 +1261,59 @@ async def get_agy_limited_overnight_run(run_id: str) -> dict[str, Any]:
 @app.post("/api/gateway/agy/limited-overnight/stop")
 async def stop_agy_limited_overnight() -> dict[str, Any]:
     return stop_limited_overnight_run()
+
+
+@app.get("/api/agy/unattended-window/status")
+@app.get("/api/gateway/agy/unattended-window/status")
+async def get_agy_unattended_window_status(limit: int = Query(default=20, ge=1, le=200)) -> dict[str, Any]:
+    return unattended_window_status_payload(limit=limit)
+
+
+@app.post("/api/agy/unattended-window/evaluate")
+@app.post("/api/gateway/agy/unattended-window/evaluate")
+async def evaluate_agy_unattended_window(body: dict[str, Any] | None = None) -> JSONResponse:
+    request = UnattendedWindowRequest.from_mapping(body or {})
+    result = evaluate_unattended_window(request)
+    status_code = 200 if result.get("allowed") else 409
+    return JSONResponse(result, status_code=status_code)
+
+
+@app.post("/api/agy/unattended-window/request-approval")
+@app.post("/api/gateway/agy/unattended-window/request-approval")
+async def request_agy_unattended_window_approval(body: dict[str, Any] | None = None) -> dict[str, Any]:
+    request = UnattendedWindowRequest.from_mapping(body or {})
+    return request_unattended_window_approval(request)
+
+
+@app.post("/api/agy/unattended-window/approve")
+@app.post("/api/gateway/agy/unattended-window/approve")
+async def approve_agy_unattended_window(body: dict[str, Any] | None = None) -> JSONResponse:
+    request = UnattendedWindowRequest.from_mapping(body or {})
+    result = approve_window(request)
+    status_code = 200 if result.get("allowed") else 409
+    return JSONResponse(result, status_code=status_code)
+
+
+@app.post("/api/agy/unattended-window/pause")
+@app.post("/api/gateway/agy/unattended-window/pause")
+async def pause_agy_unattended_window() -> dict[str, Any]:
+    return set_unattended_window_pause(True)
+
+
+@app.post("/api/agy/unattended-window/resume")
+@app.post("/api/gateway/agy/unattended-window/resume")
+async def resume_agy_unattended_window() -> dict[str, Any]:
+    return set_unattended_window_pause(False)
+
+
+@app.get("/api/agy/unattended-window/evaluations/{evaluation_id}")
+@app.get("/api/gateway/agy/unattended-window/evaluations/{evaluation_id}")
+async def get_agy_unattended_window_evaluation(evaluation_id: str) -> dict[str, Any]:
+    try:
+        item = UnattendedWindowStore().get(evaluation_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="unattended window evaluation not found") from exc
+    return {"status": "ok", "evaluation": item}
 
 
 @app.get("/locks")
