@@ -58,6 +58,8 @@ from prismatic.agy_merge_backlog import (
     AGY_CLEAN_PR_AND_VERIFICATION_GATE_MARKER,
     AGY_CLEAN_PR_CREATE_UPDATE_MARKER,
     build_operator_pr_creation_dry_run,
+    build_real_pr_creation_approval_gate,
+    build_real_pr_creation_approved_action,
     build_pr_candidate_lifecycle,
     get_merge_backlog_item,
     list_merge_backlog,
@@ -1222,6 +1224,60 @@ def gateway_agy_merge_backlog_operator_pr_dry_run(
     completed_work_id: str, payload: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     return agy_merge_backlog_operator_pr_dry_run(completed_work_id, payload)
+
+
+@app.post("/api/agy/merge-backlog/{completed_work_id}/pr-approval")
+def agy_merge_backlog_real_pr_approval_gate(
+    completed_work_id: str, payload: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    body = payload or {}
+    try:
+        return build_real_pr_creation_approval_gate(
+            completed_work_id,
+            requested_by=str(body.get("requested_by") or "operator"),
+            approved_by=str(body.get("approved_by") or "") or None,
+            approval_token=str(body.get("approval_token") or "") or None,
+            approval_note=str(body.get("approval_note") or "") or None,
+            action=str(body.get("action") or "record_real_pr_creation_approval"),
+            expose_real_pr_action=bool(body.get("expose_real_pr_action", True)),
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail="completed work row not found"
+        ) from exc
+
+
+@app.post("/api/gateway/agy/merge-backlog/{completed_work_id}/pr-approval")
+def gateway_agy_merge_backlog_real_pr_approval_gate(
+    completed_work_id: str, payload: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    return agy_merge_backlog_real_pr_approval_gate(completed_work_id, payload)
+
+
+@app.post("/api/agy/merge-backlog/{completed_work_id}/pr-create-approved")
+def agy_merge_backlog_real_pr_create_approved_action(
+    completed_work_id: str, payload: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    body = payload or {}
+    try:
+        return build_real_pr_creation_approved_action(
+            completed_work_id,
+            approval_id=str(body.get("approval_id") or "") or None,
+            approved_by=str(body.get("approved_by") or "") or None,
+            approval_token=str(body.get("approval_token") or "") or None,
+            requested_by=str(body.get("requested_by") or "operator"),
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail="completed work row not found"
+        ) from exc
+
+
+@app.post("/api/gateway/agy/merge-backlog/{completed_work_id}/pr-create-approved")
+def gateway_agy_merge_backlog_real_pr_create_approved_action(
+    completed_work_id: str, payload: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    return agy_merge_backlog_real_pr_create_approved_action(completed_work_id, payload)
 
 
 @app.get("/api/agy/merge-backlog/{completed_work_id}")
