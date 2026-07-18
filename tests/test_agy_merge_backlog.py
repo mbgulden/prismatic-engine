@@ -16,6 +16,14 @@ from prismatic.agy_merge_backlog import (
     verify_merge_backlog_item,
 )
 from prismatic.completed_work_gate import demo_completed_work_packet
+from prismatic.agy_executor_runs import (
+    PROMPT6_EXECUTOR_AUDIT_CANARY_BLOCKED,
+    PROMPT6_EXECUTOR_AUDIT_CANARY_MARKER,
+    build_prompt6_executor_canary_dry_run,
+    get_executor_run,
+    list_executor_runs,
+    record_executor_run,
+)
 
 
 def packet(
@@ -414,3 +422,92 @@ def test_prompt55_approved_real_pr_executor_guards_modes(monkeypatch, tmp_path):
     assert real_blocked["side_effects"]["real_github_pr_created"] is False
     assert real_blocked["non_claims"]["auto_merge_enabled"] is False
     assert real_blocked["non_claims"]["production_deployed"] is False
+
+
+def test_prompt6_executor_run_records_persist_and_are_readable(tmp_path):
+    payload = {
+        "status": "ok",
+        "marker": PROMPT5_APPROVED_REAL_PR_EXECUTOR_MARKER,
+        "completed_work_id": "cw-prompt6",
+        "requested_by": "test",
+        "executor_mode": "dry_run",
+        "commands_rendered": True,
+        "commands_executed": False,
+        "executor_plan": {"execute_requested": False, "allow_real_side_effects": False},
+        "executor_result": {
+            "real_github_pr_created": False,
+            "git_branch_created": False,
+        },
+        "side_effects": {
+            "real_github_pr_created": False,
+            "git_branch_created": False,
+        },
+        "approval_gate": {"approval_record": {"approval_id": "approval-prompt6"}},
+        "policy_gate": {"blocked_reasons": []},
+    }
+    state = tmp_path / "executor-runs.json"
+
+    run = record_executor_run(payload, requested_by="test", state_path=state)
+
+    assert run["marker"] == PROMPT6_EXECUTOR_AUDIT_CANARY_MARKER
+    assert run["completed_work_id"] == "cw-prompt6"
+    assert run["commands_rendered"] is True
+    assert run["commands_executed"] is False
+    assert run["real_github_pr_created"] is False
+    assert run["git_branch_created"] is False
+    listed = list_executor_runs(state_path=state)
+    assert listed["count"] == 1
+    assert listed["runs"][0]["run_id"] == run["run_id"]
+    detail = get_executor_run(run["run_id"], state_path=state)
+    assert detail["run"]["approval_id"] == "approval-prompt6"
+
+
+def test_prompt6_canary_dry_run_records_safe_executor_contract(tmp_path, monkeypatch):
+    monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(tmp_path / "cw.db"))
+    monkeypatch.setenv("PRISMATIC_AGY_EXECUTOR_RUNS_STATE", str(tmp_path / "runs.json"))
+    monkeypatch.delenv("PRISMATIC_ALLOW_REAL_PR_EXECUTOR", raising=False)
+
+    canary = build_prompt6_executor_canary_dry_run(
+        requested_by="test",
+        state_path=tmp_path / "runs.json",
+    )
+
+    assert canary["status"] == "ok"
+    assert canary["marker"] == PROMPT6_EXECUTOR_AUDIT_CANARY_MARKER
+    assert canary["executor_mode"] == "dry_run"
+    assert canary["commands_rendered"] is True
+    assert canary["commands_executed"] is False
+    assert canary["real_github_pr_created"] is False
+    assert canary["git_branch_created"] is False
+    assert canary["auto_merge_enabled"] is False
+    assert canary["production_deployed"] is False
+    assert canary["AGY_dispatch"] is False
+    assert canary["executor_result"]["executor_plan"]["execute_requested"] is False
+    assert (
+        canary["executor_result"]["executor_plan"]["allow_real_side_effects"] is False
+    )
+    listed = list_executor_runs(state_path=tmp_path / "runs.json")
+    assert listed["runs"][0]["run_id"] == canary["run_id"]
+
+
+def test_prompt6_real_mode_canary_blocks_without_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(tmp_path / "cw.db"))
+    monkeypatch.setenv("PRISMATIC_AGY_EXECUTOR_RUNS_STATE", str(tmp_path / "runs.json"))
+    monkeypatch.delenv("PRISMATIC_ALLOW_REAL_PR_EXECUTOR", raising=False)
+
+    blocked = build_prompt6_executor_canary_dry_run(
+        requested_by="test",
+        executor_mode="real",
+        execute=True,
+        allow_real_side_effects=True,
+        state_path=tmp_path / "runs.json",
+    )
+
+    assert blocked["status"] == "blocked"
+    assert blocked["marker"] == PROMPT6_EXECUTOR_AUDIT_CANARY_BLOCKED
+    assert blocked["executor_mode"] == "real"
+    assert blocked["commands_rendered"] is True
+    assert blocked["commands_executed"] is False
+    assert blocked["real_github_pr_created"] is False
+    assert blocked["git_branch_created"] is False
+    assert "real_executor_env_enabled" in blocked["blocked_reasons"]

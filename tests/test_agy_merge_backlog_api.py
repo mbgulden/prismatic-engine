@@ -297,3 +297,72 @@ def test_prompt55_approved_real_pr_executor_api_and_dashboard_are_safe(
 
     missing = client.post("/api/gateway/agy/merge-backlog/no-such-row/pr-executor")
     assert missing.status_code == 404
+
+
+def test_prompt6_executor_run_api_and_dashboard_are_safe(monkeypatch, tmp_path):
+    monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(tmp_path / "cw.db"))
+    monkeypatch.setenv("PRISMATIC_AGY_EXECUTOR_RUNS_STATE", str(tmp_path / "runs.json"))
+    monkeypatch.delenv("PRISMATIC_ALLOW_REAL_PR_EXECUTOR", raising=False)
+    client = TestClient(server.app)
+
+    canary = client.post(
+        "/api/gateway/agy/executor-runs/canary-dry-run",
+        json={
+            "requested_by": "dashboard-test",
+            "executor_mode": "dry_run",
+            "execute": False,
+            "allow_real_side_effects": False,
+        },
+    )
+    assert canary.status_code == 200
+    body = canary.json()
+    assert body["status"] == "ok"
+    assert body["marker"] == "PROMPT6_EXECUTOR_AUDIT_CANARY_OK"
+    assert body["executor_mode"] == "dry_run"
+    assert body["commands_rendered"] is True
+    assert body["commands_executed"] is False
+    assert body["real_github_pr_created"] is False
+    assert body["git_branch_created"] is False
+    assert body["auto_merge_enabled"] is False
+    assert body["production_deployed"] is False
+    assert body["AGY_dispatch"] is False
+    run_id = body["run_id"]
+
+    listed = client.get("/api/gateway/agy/executor-runs?limit=3")
+    assert listed.status_code == 200
+    listed_body = listed.json()
+    assert listed_body["count"] == 1
+    assert listed_body["runs"][0]["run_id"] == run_id
+
+    detail = client.get(f"/api/gateway/agy/executor-runs/{run_id}")
+    assert detail.status_code == 200
+    assert detail.json()["run"]["marker"] == "PROMPT6_EXECUTOR_AUDIT_CANARY_OK"
+
+    real_blocked = client.post(
+        "/api/gateway/agy/executor-runs/canary-dry-run",
+        json={
+            "requested_by": "dashboard-test",
+            "executor_mode": "real",
+            "execute": True,
+            "allow_real_side_effects": True,
+        },
+    )
+    assert real_blocked.status_code == 200
+    real_body = real_blocked.json()
+    assert real_body["status"] == "blocked"
+    assert real_body["marker"] == "PROMPT6_EXECUTOR_AUDIT_CANARY_BLOCKED"
+    assert "real_executor_env_enabled" in real_body["blocked_reasons"]
+    assert real_body["commands_executed"] is False
+    assert real_body["real_github_pr_created"] is False
+    assert real_body["git_branch_created"] is False
+
+    missing = client.get("/api/gateway/agy/executor-runs/no-such-run")
+    assert missing.status_code == 404
+
+    dashboard = client.get("/dashboard")
+    assert dashboard.status_code == 200
+    text = dashboard.text
+    assert "prompt6-executor-audit-canary" in text
+    assert "Run Executor Canary Dry Run" in text
+    assert "runPrompt6ExecutorCanaryDryRun" in text
+    assert "recent_executor_run_history" in text
