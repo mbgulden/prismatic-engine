@@ -173,3 +173,30 @@ def test_get_and_verify_helpers_use_persisted_rows(tmp_path):
     assert verified["verification_gate"] == "pass"
     assert verified["eligible_for_auto_merge"] is False
     assert verified["non_claims"]["auto_merge"] is False
+
+
+def test_prompt5_pr_candidate_lifecycle_is_metadata_only(monkeypatch, tmp_path):
+    from prismatic.agy_merge_backlog import (
+        PROMPT5_PR_CANDIDATE_LIFECYCLE_MARKER,
+        build_pr_candidate_lifecycle,
+    )
+
+    db = tmp_path / "candidate.db"
+    monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(db))
+    row = ingest(db, packet(lane="backend-api"))
+    candidate = build_pr_candidate_lifecycle(
+        row.id,
+        requested_by="kai-test",
+        action="stage_pr_candidate",
+    )
+
+    assert candidate["marker"] == PROMPT5_PR_CANDIDATE_LIFECYCLE_MARKER
+    assert candidate["status"] == "ok"
+    assert candidate["lifecycle_state"] == "candidate_metadata_ready"
+    assert candidate["operator_action_required"] is True
+    assert candidate["candidate"]["eligible_for_auto_merge"] is False
+    assert candidate["side_effects"]["candidate_metadata_created"] is True
+    assert candidate["side_effects"]["github_pr_created"] is False
+    assert candidate["side_effects"]["auto_merge"] is False
+    assert candidate["side_effects"]["production_deploy"] is False
+    assert candidate["non_claims"]["real_github_pr_created"] is False

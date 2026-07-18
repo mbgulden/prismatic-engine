@@ -57,6 +57,7 @@ from prismatic.agy_completed_work import (
 from prismatic.agy_merge_backlog import (
     AGY_CLEAN_PR_AND_VERIFICATION_GATE_MARKER,
     AGY_CLEAN_PR_CREATE_UPDATE_MARKER,
+    build_pr_candidate_lifecycle,
     get_merge_backlog_item,
     list_merge_backlog,
     verify_merge_backlog_item,
@@ -1252,6 +1253,34 @@ async def get_agy_overnight_guard() -> dict[str, Any]:
         "operator_pause": AgyOvernightGuardStore().operator_pause(),
         "tasks_launched": 0,
     }
+
+
+@app.post("/api/agy/merge-backlog/{completed_work_id}/pr-candidate")
+@app.post("/api/gateway/agy/merge-backlog/{completed_work_id}/pr-candidate")
+async def stage_agy_pr_candidate(
+    completed_work_id: str,
+    body: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Stage deterministic clean-PR candidate metadata after explicit operator action.
+
+    This endpoint is intentionally metadata-only: no git mutation, no GitHub PR
+    creation, no auto-merge, no production deploy, and no AGY dispatch.
+    """
+
+    payload = body or {}
+    try:
+        result = build_pr_candidate_lifecycle(
+            completed_work_id,
+            requested_by=str(payload.get("requested_by") or "operator"),
+            action=str(payload.get("action") or "stage_pr_candidate"),
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail="completed work row not found"
+        ) from exc
+    if result.get("status") == "blocked":
+        return {**result, "http_status": 200}
+    return result
 
 
 @app.post("/api/agy/overnight-guard/evaluate")

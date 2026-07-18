@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -24,6 +25,7 @@ from prismatic.completed_work_gate import GateClassification
 AGY_CLEAN_PR_CREATE_UPDATE_MARKER = "AGY_CLEAN_PR_CREATE_UPDATE_OK"
 AGY_PR_VERIFICATION_GATE_MARKER = "AGY_PR_VERIFICATION_GATE_OK"
 AGY_CLEAN_PR_AND_VERIFICATION_GATE_MARKER = "AGY_CLEAN_PR_AND_VERIFICATION_GATE_OK"
+PROMPT5_PR_CANDIDATE_LIFECYCLE_MARKER = "PROMPT5_PR_CANDIDATE_LIFECYCLE_OK"
 
 MERGE_BACKLOG_ACTIONS = {
     "open_or_update_pr",
@@ -320,6 +322,74 @@ def verify_merge_backlog_item(
             "auto_merge": False,
             "production_deploy": False,
             "github_pr_created": False,
+            "agy_dispatch": False,
+        },
+    }
+
+
+def build_pr_candidate_lifecycle(
+    completed_work_id: str,
+    *,
+    requested_by: str = "operator",
+    action: str = "stage_pr_candidate",
+) -> dict[str, Any]:
+    """Build explicit operator-action PR candidate metadata without side effects.
+
+    This is Prompt 5.2's safe lifecycle surface: it converts a completed-work row
+    into deterministic clean-PR candidate metadata only after an explicit operator
+    action. It does not create git branches, open GitHub PRs, enable auto-merge,
+    dispatch AGY, or deploy production.
+    """
+
+    item = get_merge_backlog_item(completed_work_id)
+    gate = verify_merge_backlog_item(completed_work_id)
+    allowed = (
+        item.recommended_action == "open_or_update_pr"
+        and gate.get("verification_gate") == "pass"
+        and item.classification == GateClassification.MERGE_READY.value
+    )
+    lifecycle_state = "candidate_metadata_ready" if allowed else "blocked"
+    reasons = list(item.reasons)
+    if not allowed:
+        reasons.append("completed work is not eligible for clean PR candidate metadata")
+
+    return {
+        "status": "ok" if allowed else "blocked",
+        "marker": PROMPT5_PR_CANDIDATE_LIFECYCLE_MARKER,
+        "completed_work_id": item.completed_work_id,
+        "merge_backlog_id": item.merge_backlog_id,
+        "requested_by": requested_by or "operator",
+        "operator_action": action or "stage_pr_candidate",
+        "operator_action_required": True,
+        "lifecycle_state": lifecycle_state,
+        "candidate": {
+            "pr_branch": item.pr_branch,
+            "pr_title": item.pr_title,
+            "pr_body": item.pr_body,
+            "base_branch": item.base_branch,
+            "source_branch": item.source_branch,
+            "changed_files": list(item.changed_files),
+            "recommended_action": item.recommended_action,
+            "verification_gate": item.verification_gate,
+            "verification_lane": item.verification_lane,
+            "eligible_for_auto_merge": False,
+        },
+        "verification": gate,
+        "reasons": reasons,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "side_effects": {
+            "candidate_metadata_created": allowed,
+            "git_mutation": False,
+            "github_pr_created": False,
+            "auto_merge": False,
+            "production_deploy": False,
+            "agy_dispatch": False,
+        },
+        "non_claims": {
+            "auto_merge_enabled": False,
+            "production_deployed": False,
+            "real_github_pr_created": False,
+            "git_branch_created": False,
             "agy_dispatch": False,
         },
     }
