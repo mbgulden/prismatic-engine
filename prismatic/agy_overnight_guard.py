@@ -241,7 +241,7 @@ def evaluate_overnight_readiness(
         blockers.append("merge backlog unavailable or latest row missing")
     if policy.requires_verification_gate_healthy and not verify_ok:
         blockers.append("verification gate unavailable or latest row not passing")
-    if policy.requires_one_task_success and one_task_marker != "AGY_AUTOPILOT_ONE_TASK_DRY_RUN_OK":
+    if policy.requires_one_task_success and one_task_marker not in {"AGY_AUTOPILOT_ONE_TASK_DRY_RUN_OK", "AGY_LIMITED_OVERNIGHT_DRY_RUN_OK"}:
         blockers.append("latest one-task AGY proof missing")
     if auto_merge or policy.auto_merge_enabled:
         blockers.append("auto_merge=true is forbidden")
@@ -566,6 +566,16 @@ def _one_task_success_marker(latest_cw: Any | None, latest_backlog: Any | None, 
     packet: Mapping[str, Any] = latest_cw.packet if isinstance(latest_cw.packet, Mapping) else {}
     raw_normalization = packet.get("normalization")
     normalization: Mapping[str, Any] = raw_normalization if isinstance(raw_normalization, Mapping) else {}
+    if packet.get("marker") == "AGY_LIMITED_OVERNIGHT_DRY_RUN_PACKET_OK" and (
+        latest_cw.classification == "merge_ready"
+        and latest_cw.agent == "agy"
+        and latest_cw.proof_result == "PASS"
+        and latest_backlog.recommended_action == "open_or_update_pr"
+        and latest_backlog.verification_gate == "pass"
+        and latest_backlog.eligible_for_auto_merge is False
+        and verify_payload.get("eligible_for_auto_merge") is False
+    ):
+        return "AGY_LIMITED_OVERNIGHT_DRY_RUN_OK"
     if (
         latest_cw.classification == "merge_ready"
         and latest_cw.agent == "agy"
