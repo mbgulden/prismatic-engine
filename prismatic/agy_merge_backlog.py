@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from datetime import datetime, timezone
 from dataclasses import dataclass
@@ -28,6 +29,7 @@ AGY_CLEAN_PR_AND_VERIFICATION_GATE_MARKER = "AGY_CLEAN_PR_AND_VERIFICATION_GATE_
 PROMPT5_PR_CANDIDATE_LIFECYCLE_MARKER = "PROMPT5_PR_CANDIDATE_LIFECYCLE_OK"
 PROMPT5_OPERATOR_PR_DRY_RUN_MARKER = "PROMPT5_OPERATOR_PR_DRY_RUN_OK"
 PROMPT5_REAL_PR_APPROVAL_GATE_MARKER = "PROMPT5_REAL_PR_APPROVAL_GATE_OK"
+PROMPT5_APPROVED_REAL_PR_EXECUTOR_MARKER = "PROMPT5_APPROVED_REAL_PR_EXECUTOR_OK"
 
 MERGE_BACKLOG_ACTIONS = {
     "open_or_update_pr",
@@ -646,6 +648,235 @@ def build_real_pr_creation_approved_action(
             "agy_dispatch": False,
         },
     }
+
+
+_EXECUTOR_MODES = {"dry_run", "mocked", "real"}
+
+
+def _executor_side_effects(
+    *, mocked: bool = False, real: bool = False
+) -> dict[str, Any]:
+    return {
+        "git_branch_created": bool(real),
+        "github_pr_created": bool(real),
+        "mock_git_branch_created": bool(mocked),
+        "mock_github_pr_created": bool(mocked),
+        "real_github_pr_created": bool(real),
+        "auto_merge": False,
+        "production_deploy": False,
+        "agy_dispatch": False,
+        "linear_comment_posted": False,
+    }
+
+
+def build_approved_real_pr_executor_plan(
+    completed_work_id: str,
+    *,
+    approval_id: str | None = None,
+    approved_by: str | None = None,
+    approval_token: str | None = None,
+    requested_by: str = "operator",
+    final_operator_trigger: bool = False,
+    execute: bool = False,
+    executor_mode: str = "dry_run",
+    allow_real_side_effects: bool = False,
+) -> dict[str, Any]:
+    """Build the Prompt 5.5 approved PR executor plan.
+
+    The default path is a rendered command plan only. Mocked execution can prove
+    orchestration without invoking git/gh. Real execution is policy-gated and
+    additionally kill-switched by PRISMATIC_ALLOW_REAL_PR_EXECUTOR=1; this
+    function never runs commands directly.
+    """
+
+    mode = (executor_mode or "dry_run").strip().lower()
+    mode_known = mode in _EXECUTOR_MODES
+    if not mode_known:
+        mode = "blocked"
+    approved_action = build_real_pr_creation_approved_action(
+        completed_work_id,
+        approval_id=approval_id,
+        approved_by=approved_by,
+        approval_token=approval_token,
+        requested_by=requested_by,
+    )
+    gate_ok = approved_action.get("status") == "ok"
+    item = get_merge_backlog_item(completed_work_id)
+    dry_run = approved_action.get("approval_gate", {}).get("dry_run_plan", {})
+    branch_plan = dry_run.get("branch_plan", {})
+    github_pr_plan = dry_run.get("github_pr_plan", {})
+    verification = dry_run.get("verification_gate_selection", {})
+    planned_branch = branch_plan.get("branch") or item.pr_branch
+    pr_title = (
+        github_pr_plan.get("title") or f"AGY completed work {item.issue_identifier}"
+    )
+    commands = [
+        f"git switch -C {planned_branch} origin/main",
+        "apply completed-work artifact set after final operator trigger",
+        "git status --short",
+        *(verification.get("commands") or []),
+        f"git push -u origin {planned_branch}",
+        f"gh pr create --base main --head {planned_branch} --title {pr_title!r}",
+    ]
+    real_env_enabled = os.environ.get("PRISMATIC_ALLOW_REAL_PR_EXECUTOR") == "1"
+    policy_checks = {
+        "approval_gate_passed": gate_ok,
+        "approval_id_matched": approved_action.get("real_pr_creation_action", {}).get(
+            "approval_id_matched"
+        )
+        is True,
+        "approval_token_matches": approved_action.get("approval_gate", {})
+        .get("approval_record", {})
+        .get("approval_token_matched")
+        is True,
+        "approved_by_present": bool(approved_by),
+        "final_operator_trigger": bool(final_operator_trigger),
+        "execute_requested": bool(execute),
+        "executor_mode_known": mode_known,
+        "auto_merge_disabled": True,
+        "production_deploy_disabled": True,
+    }
+    if mode == "real":
+        policy_checks.update(
+            {
+                "allow_real_side_effects": bool(allow_real_side_effects),
+                "real_executor_env_enabled": real_env_enabled,
+            }
+        )
+    elif mode == "mocked":
+        policy_checks["mocked_executor_selected"] = True
+    else:
+        policy_checks["dry_run_safe_default"] = mode == "dry_run"
+
+    ready = all(policy_checks.values())
+    commands_executed = ready and execute and mode == "mocked"
+    real_execution_allowed = ready and execute and mode == "real"
+    marker = (
+        PROMPT5_APPROVED_REAL_PR_EXECUTOR_MARKER
+        if (mode == "dry_run" and gate_ok and mode_known)
+        or commands_executed
+        or real_execution_allowed
+        else "PROMPT5_APPROVED_REAL_PR_EXECUTOR_BLOCKED"
+    )
+    status = "ok" if marker == PROMPT5_APPROVED_REAL_PR_EXECUTOR_MARKER else "blocked"
+    blocked_reasons = [name for name, ok in policy_checks.items() if not ok]
+    return {
+        "status": status,
+        "marker": marker,
+        "completed_work_id": item.completed_work_id,
+        "merge_backlog_id": item.merge_backlog_id,
+        "requested_by": requested_by or "operator",
+        "executor_mode": mode,
+        "commands_rendered": True,
+        "commands_executed": commands_executed,
+        "executor_backend": "mock"
+        if mode == "mocked"
+        else ("real" if mode == "real" else "dry_run"),
+        "approval_gate": approved_action.get("approval_gate"),
+        "policy_gate": {
+            "status": "pass" if ready else "blocked",
+            "checks": policy_checks,
+            "blocked_reasons": blocked_reasons,
+            "requires_final_operator_trigger": True,
+            "requires_env_kill_switch_for_real": mode == "real",
+        },
+        "executor_plan": {
+            "branch": planned_branch,
+            "base": "origin/main",
+            "pr_base": "main",
+            "pr_title": pr_title,
+            "commands": commands,
+            "execute_requested": bool(execute),
+            "final_operator_trigger": bool(final_operator_trigger),
+            "allow_real_side_effects": bool(allow_real_side_effects),
+        },
+        "executor_result": {
+            "status": "mocked_success"
+            if commands_executed
+            else (
+                "ready_for_real_runner" if real_execution_allowed else "not_executed"
+            ),
+            "mocked": commands_executed,
+            "real_execution_allowed": real_execution_allowed,
+            "github_pr_created": commands_executed,
+            "real_github_pr_created": False,
+            "git_branch_created": False,
+        },
+        "dashboard_writeback": {
+            "visible": True,
+            "status": status,
+            "marker": marker,
+        },
+        "side_effects": _executor_side_effects(mocked=commands_executed, real=False),
+        "non_claims": {
+            "real_github_pr_created_by_completed_work_lane": False,
+            "git_branch_created_by_completed_work_lane": False,
+            "auto_merge_enabled": False,
+            "production_deployed": False,
+            "agy_dispatch": False,
+        },
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def execute_approved_real_pr_creation(
+    completed_work_id: str,
+    *,
+    approval_id: str | None = None,
+    approved_by: str | None = None,
+    approval_token: str | None = None,
+    requested_by: str = "operator",
+    final_operator_trigger: bool = False,
+    execute: bool = False,
+    executor_mode: str = "dry_run",
+    allow_real_side_effects: bool = False,
+    command_runner: Any | None = None,
+) -> dict[str, Any]:
+    """Execute the approved executor contract only through mocked or injected runners.
+
+    API/default callers get a dry-run or blocked payload. Tests may supply a
+    command_runner for the real-mode contract; this module does not directly
+    shell out to git or gh.
+    """
+
+    plan = build_approved_real_pr_executor_plan(
+        completed_work_id,
+        approval_id=approval_id,
+        approved_by=approved_by,
+        approval_token=approval_token,
+        requested_by=requested_by,
+        final_operator_trigger=final_operator_trigger,
+        execute=execute,
+        executor_mode=executor_mode,
+        allow_real_side_effects=allow_real_side_effects,
+    )
+    if plan["executor_mode"] != "real" or plan["status"] != "ok":
+        return plan
+    if command_runner is None:
+        plan["status"] = "blocked"
+        plan["marker"] = "PROMPT5_APPROVED_REAL_PR_EXECUTOR_BLOCKED"
+        plan["policy_gate"]["status"] = "blocked"
+        plan["policy_gate"]["blocked_reasons"].append(
+            "real_executor_requires_injected_command_runner"
+        )
+        plan["executor_result"]["status"] = "not_executed"
+        plan["executor_result"]["real_execution_allowed"] = False
+        return plan
+    results = [command_runner(command) for command in plan["executor_plan"]["commands"]]
+    plan["commands_executed"] = True
+    plan["executor_result"] = {
+        "status": "real_runner_completed",
+        "mocked": False,
+        "real_execution_allowed": True,
+        "command_results": results,
+        "github_pr_created": True,
+        "real_github_pr_created": True,
+        "git_branch_created": True,
+    }
+    plan["side_effects"] = _executor_side_effects(real=True)
+    plan["non_claims"]["real_github_pr_created_by_completed_work_lane"] = False
+    plan["non_claims"]["git_branch_created_by_completed_work_lane"] = False
+    return plan
 
 
 def list_merge_backlog(

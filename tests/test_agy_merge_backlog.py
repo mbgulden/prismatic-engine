@@ -6,6 +6,9 @@ from prismatic.agy_merge_backlog import (
     AGY_CLEAN_PR_CREATE_UPDATE_MARKER,
     AGY_PR_VERIFICATION_GATE_MARKER,
     PROMPT5_REAL_PR_APPROVAL_GATE_MARKER,
+    PROMPT5_APPROVED_REAL_PR_EXECUTOR_MARKER,
+    build_approved_real_pr_executor_plan,
+    execute_approved_real_pr_creation,
     build_merge_backlog_item,
     build_real_pr_creation_approval_gate,
     build_real_pr_creation_approved_action,
@@ -302,3 +305,112 @@ def test_prompt54_real_pr_creation_approval_gate_requires_explicit_token(
     assert action["real_pr_creation_action"]["execution_implemented"] is False
     assert action["real_pr_creation_action"]["executed"] is False
     assert action["side_effects"]["github_pr_created"] is False
+
+
+def test_prompt55_approved_real_pr_executor_guards_modes(monkeypatch, tmp_path):
+    db = tmp_path / "executor.db"
+    monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(db))
+    monkeypatch.delenv("PRISMATIC_ALLOW_REAL_PR_EXECUTOR", raising=False)
+    row = ingest(db, packet(lane="backend-api"))
+
+    missing = build_approved_real_pr_executor_plan(
+        row.id,
+        requested_by="kai-test",
+        approved_by="operator",
+        approval_token=f"APPROVE_REAL_PR:{row.id}",
+        final_operator_trigger=True,
+        execute=False,
+        executor_mode="dry_run",
+    )
+    assert missing["status"] == "blocked"
+    assert "approval_id_matched" in missing["policy_gate"]["blocked_reasons"]
+    assert missing["commands_rendered"] is True
+    assert missing["commands_executed"] is False
+    assert missing["side_effects"]["real_github_pr_created"] is False
+
+    gate = build_real_pr_creation_approval_gate(
+        row.id,
+        requested_by="kai-test",
+        approved_by="operator",
+        approval_token=f"APPROVE_REAL_PR:{row.id}",
+    )
+    approval_id = gate["approval_record"]["approval_id"]
+
+    wrong = build_approved_real_pr_executor_plan(
+        row.id,
+        requested_by="kai-test",
+        approved_by="operator",
+        approval_token="wrong-token",
+        approval_id=approval_id,
+        final_operator_trigger=True,
+        execute=False,
+        executor_mode="dry_run",
+    )
+    assert wrong["status"] == "blocked"
+    assert wrong["side_effects"]["github_pr_created"] is False
+
+    dry = build_approved_real_pr_executor_plan(
+        row.id,
+        requested_by="kai-test",
+        approved_by="operator",
+        approval_token=f"APPROVE_REAL_PR:{row.id}",
+        approval_id=approval_id,
+        final_operator_trigger=True,
+        execute=False,
+        executor_mode="dry_run",
+    )
+    assert dry["status"] == "ok"
+    assert dry["marker"] == PROMPT5_APPROVED_REAL_PR_EXECUTOR_MARKER
+    assert dry["executor_mode"] == "dry_run"
+    assert dry["commands_rendered"] is True
+    assert dry["commands_executed"] is False
+    assert any(
+        command.startswith("git switch -C")
+        for command in dry["executor_plan"]["commands"]
+    )
+    assert any(
+        "gh pr create" in command for command in dry["executor_plan"]["commands"]
+    )
+    assert dry["executor_result"]["real_github_pr_created"] is False
+    assert dry["side_effects"]["git_branch_created"] is False
+    assert dry["side_effects"]["github_pr_created"] is False
+    assert dry["side_effects"]["auto_merge"] is False
+    assert dry["side_effects"]["production_deploy"] is False
+
+    mocked = execute_approved_real_pr_creation(
+        row.id,
+        requested_by="kai-test",
+        approved_by="operator",
+        approval_token=f"APPROVE_REAL_PR:{row.id}",
+        approval_id=approval_id,
+        final_operator_trigger=True,
+        execute=True,
+        executor_mode="mocked",
+    )
+    assert mocked["status"] == "ok"
+    assert mocked["commands_executed"] is True
+    assert mocked["executor_backend"] == "mock"
+    assert mocked["executor_result"]["mocked"] is True
+    assert mocked["executor_result"]["github_pr_created"] is True
+    assert mocked["executor_result"]["real_github_pr_created"] is False
+    assert mocked["side_effects"]["mock_github_pr_created"] is True
+    assert mocked["side_effects"]["real_github_pr_created"] is False
+
+    real_blocked = execute_approved_real_pr_creation(
+        row.id,
+        requested_by="kai-test",
+        approved_by="operator",
+        approval_token=f"APPROVE_REAL_PR:{row.id}",
+        approval_id=approval_id,
+        final_operator_trigger=True,
+        execute=True,
+        executor_mode="real",
+        allow_real_side_effects=True,
+        command_runner=lambda command: (_ for _ in ()).throw(AssertionError(command)),
+    )
+    assert real_blocked["status"] == "blocked"
+    assert "real_executor_env_enabled" in real_blocked["policy_gate"]["blocked_reasons"]
+    assert real_blocked["commands_executed"] is False
+    assert real_blocked["side_effects"]["real_github_pr_created"] is False
+    assert real_blocked["non_claims"]["auto_merge_enabled"] is False
+    assert real_blocked["non_claims"]["production_deployed"] is False

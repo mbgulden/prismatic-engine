@@ -58,6 +58,7 @@ from prismatic.agy_merge_backlog import (
     AGY_CLEAN_PR_AND_VERIFICATION_GATE_MARKER,
     AGY_CLEAN_PR_CREATE_UPDATE_MARKER,
     build_operator_pr_creation_dry_run,
+    execute_approved_real_pr_creation,
     build_real_pr_creation_approval_gate,
     build_real_pr_creation_approved_action,
     build_pr_candidate_lifecycle,
@@ -1278,6 +1279,36 @@ def gateway_agy_merge_backlog_real_pr_create_approved_action(
     completed_work_id: str, payload: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     return agy_merge_backlog_real_pr_create_approved_action(completed_work_id, payload)
+
+
+@app.post("/api/agy/merge-backlog/{completed_work_id}/pr-executor")
+def agy_merge_backlog_approved_real_pr_executor(
+    completed_work_id: str, payload: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    body = payload or {}
+    try:
+        return execute_approved_real_pr_creation(
+            completed_work_id,
+            approval_id=str(body.get("approval_id") or "") or None,
+            approved_by=str(body.get("approved_by") or "") or None,
+            approval_token=str(body.get("approval_token") or "") or None,
+            requested_by=str(body.get("requested_by") or "operator"),
+            final_operator_trigger=bool(body.get("final_operator_trigger", False)),
+            execute=bool(body.get("execute", False)),
+            executor_mode=str(body.get("executor_mode") or "dry_run"),
+            allow_real_side_effects=bool(body.get("allow_real_side_effects", False)),
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail="completed work row not found"
+        ) from exc
+
+
+@app.post("/api/gateway/agy/merge-backlog/{completed_work_id}/pr-executor")
+def gateway_agy_merge_backlog_approved_real_pr_executor(
+    completed_work_id: str, payload: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    return agy_merge_backlog_approved_real_pr_executor(completed_work_id, payload)
 
 
 @app.get("/api/agy/merge-backlog/{completed_work_id}")
