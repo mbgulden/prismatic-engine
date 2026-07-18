@@ -22,7 +22,7 @@ from prismatic.agy_overnight_guard import (
 REPO = Path(__file__).resolve().parents[1]
 
 
-def agy_packet(issue: str = "LOCAL-AGY-OVERNIGHT-GUARD-TEST") -> dict:
+def agy_packet(issue: str = "LOCAL-AGY-OVERNIGHT-GUARD-TEST", marker: str = "AGY_TASK_RESULT_PACKET_OK") -> dict:
     return {
         "agent": "agy",
         "issue_identifier": issue,
@@ -45,7 +45,7 @@ def agy_packet(issue: str = "LOCAL-AGY-OVERNIGHT-GUARD-TEST") -> dict:
             "production_deploy",
             "real_github_pr_created",
         ],
-        "marker": "AGY_TASK_RESULT_PACKET_OK",
+        "marker": marker,
     }
 
 
@@ -55,6 +55,18 @@ def seed_one_task_success(monkeypatch, tmp_path):
     monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(completed_db))
     monkeypatch.setenv("PRISMATIC_AGY_OVERNIGHT_GUARD_STATE", str(guard_db))
     row = ingest_completed_work(agy_packet(), db_path=completed_db)
+    return row, guard_db
+
+
+def seed_limited_overnight_success(monkeypatch, tmp_path):
+    completed_db = tmp_path / "completed_work.db"
+    guard_db = tmp_path / "overnight_guard.db"
+    monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(completed_db))
+    monkeypatch.setenv("PRISMATIC_AGY_OVERNIGHT_GUARD_STATE", str(guard_db))
+    row = ingest_completed_work(
+        agy_packet("LOCAL-AGY-LIMITED-OVERNIGHT-GUARD-TEST", marker="AGY_LIMITED_OVERNIGHT_DRY_RUN_PACKET_OK"),
+        db_path=completed_db,
+    )
     return row, guard_db
 
 
@@ -72,6 +84,16 @@ def test_allows_exactly_configured_agy_one_and_two_task_policy(monkeypatch, tmp_
     assert one.policy["real_github_pr_create_enabled"] is False
     assert two.allowed is True
     assert two.requested_max_tasks == 2
+
+
+def test_limited_overnight_dry_run_marker_satisfies_readiness_for_prompt2(monkeypatch, tmp_path):
+    seed_limited_overnight_success(monkeypatch, tmp_path)
+
+    result = evaluate_overnight_readiness(max_tasks=2, allowed_agents=["agy"])
+
+    assert result.allowed is True
+    assert result.latest_one_task_success_marker == "AGY_LIMITED_OVERNIGHT_DRY_RUN_OK"
+    assert "latest one-task AGY proof missing" not in result.blockers
 
 
 def test_blocks_auto_merge_production_bulk_and_high_task_count(monkeypatch, tmp_path):
