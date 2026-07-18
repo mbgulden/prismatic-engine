@@ -203,3 +203,97 @@ def test_prompt54_real_pr_approval_gate_api_requires_explicit_approval(
 
     missing = client.post("/api/gateway/agy/merge-backlog/no-such-row/pr-approval")
     assert missing.status_code == 404
+
+
+def test_prompt55_approved_real_pr_executor_api_and_dashboard_are_safe(
+    monkeypatch, tmp_path
+):
+    row = seed(monkeypatch, tmp_path)
+    monkeypatch.delenv("PRISMATIC_ALLOW_REAL_PR_EXECUTOR", raising=False)
+    client = TestClient(server.app)
+
+    blocked = client.post(
+        f"/api/gateway/agy/merge-backlog/{row.id}/pr-executor",
+        json={
+            "requested_by": "dashboard-test",
+            "approved_by": "operator",
+            "approval_token": f"APPROVE_REAL_PR:{row.id}",
+            "approval_id": "missing",
+            "final_operator_trigger": True,
+            "execute": False,
+            "executor_mode": "dry_run",
+            "allow_real_side_effects": False,
+        },
+    )
+    assert blocked.status_code == 200
+    blocked_body = blocked.json()
+    assert blocked_body["status"] == "blocked"
+    assert blocked_body["commands_rendered"] is True
+    assert blocked_body["commands_executed"] is False
+    assert blocked_body["side_effects"]["github_pr_created"] is False
+
+    approval = client.post(
+        f"/api/gateway/agy/merge-backlog/{row.id}/pr-approval",
+        json={
+            "requested_by": "dashboard-test",
+            "approved_by": "operator",
+            "approval_token": f"APPROVE_REAL_PR:{row.id}",
+        },
+    )
+    assert approval.status_code == 200
+    approval_id = approval.json()["approval_record"]["approval_id"]
+
+    dry = client.post(
+        f"/api/gateway/agy/merge-backlog/{row.id}/pr-executor",
+        json={
+            "requested_by": "dashboard-test",
+            "approved_by": "operator",
+            "approval_token": f"APPROVE_REAL_PR:{row.id}",
+            "approval_id": approval_id,
+            "final_operator_trigger": True,
+            "execute": False,
+            "executor_mode": "dry_run",
+            "allow_real_side_effects": False,
+        },
+    )
+    assert dry.status_code == 200
+    body = dry.json()
+    assert body["marker"] == "PROMPT5_APPROVED_REAL_PR_EXECUTOR_OK"
+    assert body["executor_mode"] == "dry_run"
+    assert body["commands_rendered"] is True
+    assert body["commands_executed"] is False
+    assert body["executor_result"]["real_github_pr_created"] is False
+    assert body["side_effects"]["git_branch_created"] is False
+    assert body["side_effects"]["github_pr_created"] is False
+    assert body["side_effects"]["auto_merge"] is False
+    assert body["side_effects"]["production_deploy"] is False
+
+    real_blocked = client.post(
+        f"/api/gateway/agy/merge-backlog/{row.id}/pr-executor",
+        json={
+            "requested_by": "dashboard-test",
+            "approved_by": "operator",
+            "approval_token": f"APPROVE_REAL_PR:{row.id}",
+            "approval_id": approval_id,
+            "final_operator_trigger": True,
+            "execute": True,
+            "executor_mode": "real",
+            "allow_real_side_effects": True,
+        },
+    )
+    assert real_blocked.status_code == 200
+    real_body = real_blocked.json()
+    assert real_body["status"] == "blocked"
+    assert "real_executor_env_enabled" in real_body["policy_gate"]["blocked_reasons"]
+    assert real_body["commands_executed"] is False
+    assert real_body["side_effects"]["real_github_pr_created"] is False
+
+    dashboard = client.get("/dashboard")
+    assert dashboard.status_code == 200
+    text = dashboard.text
+    assert "prompt5-approved-real-pr-executor-action" in text
+    assert "Plan Approved PR Executor" in text
+    assert "stageApprovedPrExecutor" in text
+
+    missing = client.post("/api/gateway/agy/merge-backlog/no-such-row/pr-executor")
+    assert missing.status_code == 404
