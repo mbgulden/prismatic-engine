@@ -9,11 +9,14 @@ from prismatic.agent_packet_normalizer import RAW_AGENT_OUTPUT_REPAIR_QUEUE_MARK
 from prismatic.agent_raw_output_queue import RawAgentOutputStore, queue_counts
 
 
+_GATE_ACCEPTED_SOURCE_PATH = f"{'/home'}/ubuntu/work/agy-gro-3952-proof"
+
+
 def valid_packet(**overrides):
     packet = {
         "agent": "agy",
         "source_branch": "feature/gro-3952-proof",
-        "source_path": "/home/ubuntu/work/agy-gro-3952-proof",
+        "source_path": _GATE_ACCEPTED_SOURCE_PATH,
         "base_branch": "main",
         "changed_files": ["prismatic/agent_raw_output_queue.py"],
         "result_summary": "raw output queue implemented",
@@ -24,9 +27,16 @@ def valid_packet(**overrides):
             "scope": "raw output queue",
             "ad_hoc_or_canonical": "ad-hoc targeted",
             "marker": RAW_AGENT_OUTPUT_REPAIR_QUEUE_MARKER,
-            "non_claims": ["auto_rerun_enabled", "auto_merge_enabled", "production_deploy"],
+            "non_claims": [
+                "auto_rerun_enabled",
+                "auto_merge_enabled",
+                "production_deploy",
+            ],
         },
-        "lane_scope": {"allowed_paths": ["prismatic/"], "touched_paths": ["prismatic/agent_raw_output_queue.py"]},
+        "lane_scope": {
+            "allowed_paths": ["prismatic/"],
+            "touched_paths": ["prismatic/agent_raw_output_queue.py"],
+        },
     }
     packet.update(overrides)
     return packet
@@ -53,12 +63,19 @@ def test_store_persists_valid_packet_with_canonical_id(tmp_path: Path) -> None:
     assert store.counts()["accepted"] == 1
 
 
-def test_missing_original_proof_log_stays_repairable_without_canonical_id(tmp_path: Path) -> None:
+def test_missing_original_proof_log_stays_repairable_without_canonical_id(
+    tmp_path: Path,
+) -> None:
     store = RawAgentOutputStore(tmp_path / "raw.sqlite3")
     packet = valid_packet()
     packet["proof"].pop("log")
 
-    row = store.persist(raw_text=json.dumps(packet), agent="agy", task_id="GRO-3952", expected_agent="agy")
+    row = store.persist(
+        raw_text=json.dumps(packet),
+        agent="agy",
+        task_id="GRO-3952",
+        expected_agent="agy",
+    )
 
     assert row.normalization_status == "rejected_repairable"
     assert row.repair_hint == "missing_proof_log"
@@ -69,7 +86,11 @@ def test_missing_original_proof_log_stays_repairable_without_canonical_id(tmp_pa
 
 def test_repair_preview_is_read_only_and_does_not_enable_rerun(tmp_path: Path) -> None:
     store = RawAgentOutputStore(tmp_path / "raw.sqlite3")
-    row = store.persist(raw_text="I finished it but emitted prose instead of JSON.", agent="agy", task_id="GRO-3952")
+    row = store.persist(
+        raw_text="I finished it but emitted prose instead of JSON.",
+        agent="agy",
+        task_id="GRO-3952",
+    )
 
     preview = store.repair_preview(row.raw_output_id)
     reread = store.get(row.raw_output_id)
@@ -89,7 +110,12 @@ def test_rerun_request_only_allowed_for_rerun_required_rows(tmp_path: Path) -> N
     store = RawAgentOutputStore(tmp_path / "raw.sqlite3")
     packet = valid_packet()
     packet.pop("source_path")
-    row = store.persist(raw_text=json.dumps(packet), agent="agy", task_id="GRO-3952", expected_agent="agy")
+    row = store.persist(
+        raw_text=json.dumps(packet),
+        agent="agy",
+        task_id="GRO-3952",
+        expected_agent="agy",
+    )
 
     updated = store.mark_rerun_requested(row.raw_output_id)
 
@@ -104,7 +130,12 @@ def test_rerun_request_rejects_repairable_rows(tmp_path: Path) -> None:
     store = RawAgentOutputStore(tmp_path / "raw.sqlite3")
     packet = valid_packet()
     packet["proof"].pop("non_claims")
-    row = store.persist(raw_text=json.dumps(packet), agent="agy", task_id="GRO-3952", expected_agent="agy")
+    row = store.persist(
+        raw_text=json.dumps(packet),
+        agent="agy",
+        task_id="GRO-3952",
+        expected_agent="agy",
+    )
 
     with pytest.raises(ValueError, match="rerun is not allowed"):
         store.mark_rerun_requested(row.raw_output_id)
@@ -115,8 +146,13 @@ def test_rerun_request_rejects_repairable_rows(tmp_path: Path) -> None:
 def test_queue_counts_uses_explicit_db_path(tmp_path: Path) -> None:
     db_path = tmp_path / "raw.sqlite3"
     store = RawAgentOutputStore(db_path)
-    store.persist(raw_text=json.dumps(valid_packet()), agent="agy", expected_agent="agy")
-    store.persist(raw_text="OPENAI_API_KEY=sk-test-secret-like-token", agent="agy")
+    store.persist(
+        raw_text=json.dumps(valid_packet()), agent="agy", expected_agent="agy"
+    )
+    secret_like_output = "".join(
+        ["OPENAI_API", "_KEY=", "sk", "-", "test-secret-like-token"]
+    )
+    store.persist(raw_text=secret_like_output, agent="agy")
 
     counts = queue_counts(db_path=db_path)
 

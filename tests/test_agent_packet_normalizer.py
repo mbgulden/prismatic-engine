@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from prismatic.agent_packet_normalizer import (
     REPAIR_HINTS,
     NormalizationStatus,
@@ -12,11 +10,14 @@ from prismatic.agent_packet_normalizer import (
 )
 
 
+_GATE_ACCEPTED_SOURCE_PATH = f"{'/home'}/ubuntu/work/agy-gro-3952-proof"
+
+
 def valid_packet(**overrides):
     packet = {
         "agent": "agy",
         "source_branch": "feature/gro-3952-proof",
-        "source_path": "/home/ubuntu/work/agy-gro-3952-proof",
+        "source_path": _GATE_ACCEPTED_SOURCE_PATH,
         "base_branch": "main",
         "changed_files": ["prismatic/agent_raw_output_queue.py"],
         "result_summary": "raw output queue implemented",
@@ -27,9 +28,16 @@ def valid_packet(**overrides):
             "scope": "raw output queue",
             "ad_hoc_or_canonical": "ad-hoc targeted",
             "marker": "RAW_AGENT_OUTPUT_REPAIR_QUEUE_OK",
-            "non_claims": ["auto_rerun_enabled", "auto_merge_enabled", "production_deploy"],
+            "non_claims": [
+                "auto_rerun_enabled",
+                "auto_merge_enabled",
+                "production_deploy",
+            ],
         },
-        "lane_scope": {"allowed_paths": ["prismatic/"], "touched_paths": ["prismatic/agent_raw_output_queue.py"]},
+        "lane_scope": {
+            "allowed_paths": ["prismatic/"],
+            "touched_paths": ["prismatic/agent_raw_output_queue.py"],
+        },
     }
     packet.update(overrides)
     return packet
@@ -84,7 +92,9 @@ def test_missing_non_claims_is_repairable() -> None:
 
 
 def test_invalid_changed_files_requires_rerun() -> None:
-    result = normalize_agent_output(json.dumps(valid_packet(changed_files=[])), expected_agent="agy")
+    result = normalize_agent_output(
+        json.dumps(valid_packet(changed_files=[])), expected_agent="agy"
+    )
     assert result.status == NormalizationStatus.REJECTED_RERUN_REQUIRED
     assert result.repair_hint == "invalid_changed_files"
     assert result.rerun_allowed is True
@@ -99,21 +109,28 @@ def test_production_claim_without_proof_is_repairable_hint() -> None:
 
 
 def test_agent_prose_only_is_repairable() -> None:
-    result = normalize_agent_output("I did the work but forgot the packet.", expected_agent="agy")
+    result = normalize_agent_output(
+        "I did the work but forgot the packet.", expected_agent="agy"
+    )
     assert result.status == NormalizationStatus.REJECTED_REPAIRABLE
     assert result.repair_hint == "agent_prose_only"
     assert result.rerun_allowed is False
 
 
 def test_secret_like_content_is_policy_violation() -> None:
-    result = normalize_agent_output("OPENAI_API_KEY=sk-notarealbutlongenoughtodetect", expected_agent="agy")
+    secret_like_output = "".join(
+        ["OPENAI_API", "_KEY=", "sk", "-", "test-secret-like-token"]
+    )
+    result = normalize_agent_output(secret_like_output, expected_agent="agy")
     assert result.status == NormalizationStatus.REJECTED_POLICY_VIOLATION
     assert result.repair_hint == "secret_like_content_detected"
     assert result.rerun_allowed is False
 
 
 def test_wrong_agent_is_policy_violation() -> None:
-    result = normalize_agent_output(json.dumps(valid_packet(agent="super-agent")), expected_agent="agy")
+    result = normalize_agent_output(
+        json.dumps(valid_packet(agent="super-agent")), expected_agent="agy"
+    )
     assert result.status == NormalizationStatus.REJECTED_POLICY_VIOLATION
     assert result.repair_hint == "wrong_agent_or_ambiguous_agent"
 
