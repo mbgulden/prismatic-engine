@@ -1638,6 +1638,176 @@ def launch_visible_hermes_agent(
         return None
 
 
+AGY_SHARED_SKILL_PACKS = [
+    "shared/prismatic-completed-work-contract",
+    "shared/prismatic-proof-packet",
+    "shared/prismatic-non-claims",
+    "shared/prismatic-safe-file-scope",
+]
+
+AGY_AGENT_SKILL_PACKS = [
+    "agy/agy-structured-result-packet",
+    "agy/agy-one-task-scope",
+    "agy/agy-dashboard-work",
+    "agy/agy-model-preflight",
+]
+
+
+def _redact_agent_context_text(value: str) -> str:
+    """Best-effort redaction before writing work-packet context files."""
+    redacted = re.sub(
+        r"(?i)(api[_-]?key|token|secret|password)\s*[:=]\s*[^\s`'\"]+",
+        r"\1=[REDACTED]",
+        value,
+    )
+    redacted = re.sub(r"ghp_[A-Za-z0-9_]{20,}", "[REDACTED_GITHUB_TOKEN]", redacted)
+    redacted = re.sub(
+        r"github_pat_[A-Za-z0-9_]{20,}", "[REDACTED_GITHUB_TOKEN]", redacted
+    )
+    redacted = re.sub(
+        r"xox[baprs]-[A-Za-z0-9-]{10,}", "[REDACTED_SLACK_TOKEN]", redacted
+    )
+    redacted = re.sub(r"AKIA[0-9A-Z]{16}", "[REDACTED_AWS_KEY]", redacted)
+    return redacted
+
+
+def _write_agy_context_pack(
+    *,
+    context_dir: Path,
+    issue_id: str,
+    identifier: str,
+    title_or_task: str,
+    expected_marker: str,
+    blocked_marker: str,
+    labels: list[str] | None,
+    worktree_path: str,
+    log_path: Path,
+) -> dict[str, str]:
+    """Write Kai/Michael-style work packet files for AGY print-mode launches.
+
+    Keep the CLI prompt small and put durable workflow memory in files. AGY is
+    instructed to read the work packet, then emit the same compact completed-work
+    packet contract Fred documented for future agent lanes.
+    """
+    context_dir.mkdir(parents=True, exist_ok=True)
+    safe_title = _redact_agent_context_text(title_or_task or identifier or issue_id)
+    safe_labels = [_redact_agent_context_text(str(label)) for label in (labels or [])]
+    shared_packs = ",".join(AGY_SHARED_SKILL_PACKS)
+    agent_packs = ",".join(AGY_AGENT_SKILL_PACKS)
+
+    work_packet = f"""# AGY Work Packet — {identifier}
+
+Status marker: `AGY_CLI_CONTEXT_PACK_OK`
+
+## Assignment
+
+| Field | Value |
+|---|---|
+| agent | `agy` |
+| issue_id | `{issue_id}` |
+| identifier | `{identifier}` |
+| title_or_task | `{safe_title}` |
+| worktree_path | `{worktree_path}` |
+| output_log | `{log_path}` |
+
+## Labels
+
+```text
+{chr(10).join(safe_labels) if safe_labels else "none_provided"}
+```
+
+## Scope rules
+
+1. Work only this assignment.
+2. Do not launch other agents.
+3. Do not enable auto-merge.
+4. Do not deploy production.
+5. Do not create a real GitHub PR unless this exact packet explicitly says it is authorized.
+6. Keep detailed command/test output in a log or artifact file; stdout must end with the compact packet.
+
+## Required final compact output
+
+```text
+skill_pack_state=loaded
+shared_skill_packs={shared_packs}
+agent_skill_packs={agent_packs}
+packet_contract_version=prismatic-completed-work-v1
+packet_validation=passed
+COMMAND=<exact command/proof you ran or observation-only proof>
+RESULT=<PASS|BLOCKED|FAIL>
+LOG=<path or summary>
+SCOPE=<what you verified>
+AD_HOC_OR_CANONICAL=<ad-hoc targeted|canonical suite>
+NOT_CLAIMING=<explicit non-claims>
+MARKER={expected_marker}
+```
+
+If blocked, use `MARKER={blocked_marker}` and include a concrete blocker.
+"""
+
+    packet_contract = f"""# AGY Packet Contract
+
+This is the standardized Prismatic completed-work output contract. It is the
+same contract used by Fred/George/Kai review lanes so AGY output can flow into
+completed-work ingestion, dashboard status, Linear writeback, raw-output repair,
+and future merge/review gates without bespoke parsing.
+
+## Skill packs represented in this packet
+
+```text
+{chr(10).join([*AGY_SHARED_SKILL_PACKS, *AGY_AGENT_SKILL_PACKS])}
+```
+
+## Non-claims to include unless explicitly proven and authorized
+
+```text
+auto_merge_enabled
+production_deploy
+real_github_pr_created
+live_Linear_mutations_without_approval
+bulk_agy_dispatch
+canonical_full_suite_green
+```
+"""
+
+    context_pack = f"""# AGY CLI Context Pack
+
+Read these files before working:
+
+1. `WORK_PACKET.md` — assignment, scope, proof, marker, and output contract.
+2. `PACKET_CONTRACT.md` — standardized output/non-claims contract.
+
+## Launch optimization
+
+The dispatcher intentionally keeps the `agy --print` prompt tiny and stores
+workflow memory here on disk. This reduces prompt bloat while preserving the
+standardized work-packet theory Michael/Kai have been using: durable context in
+files, compact packet on stdout, infrastructure fallback when output is malformed.
+
+## Expected marker
+
+```text
+{expected_marker}
+```
+
+## Blocked marker
+
+```text
+{blocked_marker}
+```
+"""
+
+    files = {
+        "work_packet": context_dir / "WORK_PACKET.md",
+        "packet_contract": context_dir / "PACKET_CONTRACT.md",
+        "context_pack": context_dir / "CONTEXT_PACK.md",
+    }
+    files["work_packet"].write_text(work_packet, encoding="utf-8")
+    files["packet_contract"].write_text(packet_contract, encoding="utf-8")
+    files["context_pack"].write_text(context_pack, encoding="utf-8")
+    return {key: str(path) for key, path in files.items()}
+
+
 def launch_agy(
     issue_id: str,
     task: str = "",
@@ -1699,51 +1869,32 @@ def launch_agy(
             if (identifier or issue_id) == "GRO-3954"
             else f"AGY_ASSIGNED_AGENT_{re.sub(r'[^A-Za-z0-9]+', '_', identifier or issue_id).upper()}_BLOCKED"
         )
-        shared_skill_packs = [
-            "shared/prismatic-completed-work-contract",
-            "shared/prismatic-proof-packet",
-            "shared/prismatic-non-claims",
-            "shared/prismatic-safe-file-scope",
-        ]
-        agy_skill_packs = [
-            "agy/agy-structured-result-packet",
-            "agy/agy-one-task-scope",
-            "agy/agy-dashboard-work",
-            "agy/agy-model-preflight",
-        ]
-        prompt = (
-            f"You are AGY working one Prismatic Engine Linear task: {identifier or issue_id}.\n"
-            f"Issue/title: {task or title or identifier or issue_id}\n\n"
-            "MANDATORY SKILL PACKS — treat these as loaded/called before you work:\n"
-            + "\n".join(f"- {pack}" for pack in [*shared_skill_packs, *agy_skill_packs])
-            + "\n\n"
-            "Do only this scoped task. Do not launch other agents, do not enable auto-merge, "
-            "do not deploy production, and do not create real GitHub PRs unless explicitly assigned.\n\n"
-            "You MUST finish by printing a compact completed-work packet to stdout with exact lines. "
-            "If you cannot complete the task, print RESULT=BLOCKED and a concrete blocker.\n"
-            "The dispatcher captures stdout into the AGY output log and the reconciler only classifies exact packet lines.\n\n"
-            "Required final lines:\n"
-            "skill_pack_state=loaded\n"
-            f"shared_skill_packs={','.join(shared_skill_packs)}\n"
-            f"agent_skill_packs={','.join(agy_skill_packs)}\n"
-            "packet_contract_version=prismatic-completed-work-v1\n"
-            "packet_validation=passed\n"
-            "COMMAND=<exact command/proof you ran or observation-only proof>\n"
-            "RESULT=<PASS|BLOCKED|FAIL>\n"
-            "LOG=<path or summary>\n"
-            "SCOPE=<what you verified>\n"
-            "AD_HOC_OR_CANONICAL=<ad-hoc targeted|canonical suite>\n"
-            "NOT_CLAIMING=<explicit non-claims>\n"
-            f"MARKER={expected_marker}  # use MARKER={blocked_marker} when RESULT=BLOCKED\n"
-        )
         run_log_dir = Path(
             os.environ.get("PRISMATIC_AGENT_RUN_LOG_DIR", "/tmp/prismatic-agent-runs")
         )
         run_log_dir.mkdir(parents=True, exist_ok=True)
         log_token = re.sub(r"[^A-Za-z0-9_.-]+", "-", identifier or issue_id)[:80]
-        log_path = (
-            run_log_dir
-            / f"agy-{log_token}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.log"
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        log_path = run_log_dir / f"agy-{log_token}-{timestamp}.log"
+        worktree_path = os.environ.get("PRISMATIC_WORKTREE_PATH") or os.getcwd()
+        context_dir = run_log_dir / f"agy-{log_token}-{timestamp}-context"
+        context_files = _write_agy_context_pack(
+            context_dir=context_dir,
+            issue_id=issue_id,
+            identifier=identifier or issue_id,
+            title_or_task=task or title or identifier or issue_id,
+            expected_marker=expected_marker,
+            blocked_marker=blocked_marker,
+            labels=labels,
+            worktree_path=worktree_path,
+            log_path=log_path,
+        )
+        prompt = (
+            f"You are AGY working one Prismatic Engine task: {identifier or issue_id}.\n"
+            f"Read this context pack first: {context_files['context_pack']}\n"
+            f"Then follow this work packet exactly: {context_files['work_packet']}\n"
+            "Keep stdout compact. Finish with the exact standardized completed-work packet lines from WORK_PACKET.md.\n"
+            f"Expected success marker: {expected_marker}. Blocked marker: {blocked_marker}.\n"
         )
         cmd = [
             resolved_agy_path,
@@ -1753,7 +1904,9 @@ def launch_agy(
             "--print-timeout",
             os.environ.get("PRISMATIC_AGY_PRINT_TIMEOUT", "45m0s"),
             "--add-dir",
-            os.environ.get("PRISMATIC_WORKTREE_PATH") or os.getcwd(),
+            worktree_path,
+            "--add-dir",
+            str(context_dir),
             "--log-file",
             str(log_path),
         ]
@@ -1807,9 +1960,11 @@ def launch_agy(
                 [
                     "set +e",
                     "printf '%s\\n' 'AGY_OUTPUT_CAPTURE_WRAPPER_STARTED' >> \"$PRISMATIC_AGY_OUTPUT_LOG\"",
+                    f"printf '%s\\n' 'context_pack_path={context_files['context_pack']}' >> \"$PRISMATIC_AGY_OUTPUT_LOG\"",
+                    f"printf '%s\\n' 'work_packet_path={context_files['work_packet']}' >> \"$PRISMATIC_AGY_OUTPUT_LOG\"",
                     "printf '%s\\n' 'skill_pack_state=loaded' >> \"$PRISMATIC_AGY_OUTPUT_LOG\"",
-                    "printf '%s\\n' 'shared_skill_packs=shared/prismatic-completed-work-contract,shared/prismatic-proof-packet,shared/prismatic-non-claims,shared/prismatic-safe-file-scope' >> \"$PRISMATIC_AGY_OUTPUT_LOG\"",
-                    "printf '%s\\n' 'agent_skill_packs=agy/agy-structured-result-packet,agy/agy-one-task-scope,agy/agy-dashboard-work,agy/agy-model-preflight' >> \"$PRISMATIC_AGY_OUTPUT_LOG\"",
+                    f"printf '%s\\n' 'shared_skill_packs={','.join(AGY_SHARED_SKILL_PACKS)}' >> \"$PRISMATIC_AGY_OUTPUT_LOG\"",
+                    f"printf '%s\\n' 'agent_skill_packs={','.join(AGY_AGENT_SKILL_PACKS)}' >> \"$PRISMATIC_AGY_OUTPUT_LOG\"",
                     "printf '%s\\n' 'packet_contract_version=prismatic-completed-work-v1' >> \"$PRISMATIC_AGY_OUTPUT_LOG\"",
                     f'{quoted_cmd} >> "$PRISMATIC_AGY_OUTPUT_LOG" 2>&1',
                     "rc=$?",
@@ -1873,6 +2028,21 @@ def launch_agy(
             labels=labels,
             cycle_id=cycle_id,
             request_id=request_id,
+            execution_context=json.dumps(
+                {
+                    "agent": "agy",
+                    "issue_id": issue_id,
+                    "identifier": identifier or issue_id,
+                    "context_pack_dir": str(context_dir),
+                    "context_pack": context_files,
+                    "output_log": str(log_path),
+                    "worktree_path": worktree_path,
+                    "expected_marker": expected_marker,
+                    "blocked_marker": blocked_marker,
+                    "marker": "AGY_CLI_CONTEXT_PACK_OK",
+                },
+                sort_keys=True,
+            ),
         )
         print(f"[dispatcher] Launched AGY (pid={proc.pid}) for issue {issue_id}")
         _emit_agent_event(
