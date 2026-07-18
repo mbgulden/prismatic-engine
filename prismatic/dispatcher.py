@@ -1168,6 +1168,7 @@ def record_launch_record(
     sandbox_path: str | None = None,
     worktree_path: str | None = None,
     branch: str | None = None,
+    execution_context: str | None = None,
     status: str = "launched",
     db_path: str | None = None,
 ) -> str:
@@ -1189,6 +1190,7 @@ def record_launch_record(
         worktree_path=wt_path,
         branch=branch_name,
         sandbox_path=sandbox,
+        execution_context=execution_context,
     )
     target_db = db_path or _launch_records_db_path()
     db_dir = os.path.dirname(target_db)
