@@ -59,6 +59,18 @@ skill_pack_state=unavailable_or_not_reported
 packet_validation=required
 ```
 
+For AGY print-mode dispatch, the dispatcher must also make the skills observable in the captured output stream before the model works, because the reconciler cannot assume AGY actually loaded external Hermes skills. The dispatcher should set `PRISMATIC_AGY_OUTPUT_LOG=<reconciler-read-log>` and the launch wrapper should write:
+
+```text
+AGY_OUTPUT_CAPTURE_WRAPPER_STARTED
+skill_pack_state=loaded
+shared_skill_packs=shared/prismatic-completed-work-contract,shared/prismatic-proof-packet,shared/prismatic-non-claims,shared/prismatic-safe-file-scope
+agent_skill_packs=agy/agy-structured-result-packet,agy/agy-one-task-scope,agy/agy-dashboard-work,agy/agy-model-preflight
+packet_contract_version=prismatic-completed-work-v1
+```
+
+and must append a conservative `RESULT=BLOCKED` packet when AGY exits without exact compact packet lines.
+
 ## Canonical completed-work packet contract
 
 Required fields:

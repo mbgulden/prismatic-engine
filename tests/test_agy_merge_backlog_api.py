@@ -13,7 +13,10 @@ def packet():
     p["source_branch"] = "feature/agy/GRO-3837-clean-pr"
     p["base_branch"] = "origin/main"
     p["verification_lane"] = "backend-api"
-    p["changed_files"] = ["prismatic/agy_merge_backlog.py", "tests/test_agy_merge_backlog.py"]
+    p["changed_files"] = [
+        "prismatic/agy_merge_backlog.py",
+        "tests/test_agy_merge_backlog.py",
+    ]
     p["proof"].update(
         {
             "command": "python3 -m pytest -q tests/test_agy_merge_backlog.py tests/test_agy_merge_backlog_api.py",
@@ -33,7 +36,9 @@ def seed(monkeypatch, tmp_path):
     return row
 
 
-def test_merge_backlog_api_list_detail_and_verify_use_persisted_rows(monkeypatch, tmp_path):
+def test_merge_backlog_api_list_detail_and_verify_use_persisted_rows(
+    monkeypatch, tmp_path
+):
     row = seed(monkeypatch, tmp_path)
     client = TestClient(server.app)
 

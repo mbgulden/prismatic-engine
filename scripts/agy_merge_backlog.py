@@ -26,7 +26,9 @@ def _print(payload: dict[str, Any]) -> None:
 
 
 def cmd_list(args: argparse.Namespace) -> int:
-    items = [item.as_dict() for item in list_merge_backlog(db_path=args.db, limit=args.limit)]
+    items = [
+        item.as_dict() for item in list_merge_backlog(db_path=args.db, limit=args.limit)
+    ]
     _print(
         {
             "status": "ok",
@@ -138,18 +140,29 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--db", default=None)
         p.set_defaults(func=func)
 
-    open_parser = sub.add_parser("open-pr", help="Dry-run PR opening plan; no side effects by default")
+    open_parser = sub.add_parser(
+        "open-pr", help="Dry-run PR opening plan; no side effects by default"
+    )
     open_parser.add_argument("completed_work_id")
     open_parser.add_argument("--db", default=None)
     open_parser.add_argument("--dry-run", action="store_true", default=True)
-    open_parser.add_argument("--apply", action="store_true", help="Reserved for a future explicitly-authorized slice")
+    open_parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Reserved for a future explicitly-authorized slice",
+    )
     open_parser.set_defaults(func=cmd_open_pr)
 
     args = parser.parse_args(argv)
     try:
         return int(args.func(args))
     except KeyError as exc:
-        _print({"status": "not_found", "detail": f"completed work row not found: {exc.args[0]}"})
+        _print(
+            {
+                "status": "not_found",
+                "detail": f"completed work row not found: {exc.args[0]}",
+            }
+        )
         return 4
 
 

@@ -109,7 +109,7 @@ def completed_work_gate_schema() -> dict[str, Any]:
         "minimum_packet": {
             "agent": "agy",
             "source_branch": "feature/...",
-            "source_path": "/home/ubuntu/...",
+            "source_path": str(Path.home() / "..."),
             "base_branch": "origin/main",
             "changed_files": [],
             "result_summary": "...",
@@ -154,7 +154,7 @@ def demo_completed_work_packet() -> dict[str, Any]:
     return {
         "agent": "agy",
         "source_branch": "feature/agy-demo-completed-work",
-        "source_path": "/home/ubuntu/work/agy-demo-completed-work",
+        "source_path": str(Path.home() / "work" / "agy-demo-completed-work"),
         "base_branch": "origin/main",
         "changed_files": ["prismatic/demo.py", "tests/test_demo.py"],
         "result_summary": "Demo completed-work packet for gate contract proof.",
@@ -205,8 +205,11 @@ def _classify(gate_input: CompletedWorkGateInput) -> CompletedWorkGateState:
         return _state(GateClassification.MANUAL_REVIEW_SCOPE, packet, reasons)
 
     source_path = _string(packet.get("source_path"))
-    if not source_path or not source_path.startswith("/home/ubuntu/"):
-        reasons.append("source_path must be an absolute /home/ubuntu path")
+    home_prefix = f"{Path.home()}/"
+    if not source_path or not source_path.startswith(home_prefix):
+        reasons.append(
+            "source_path must be an absolute path under the operator home directory"
+        )
         return _state(GateClassification.MANUAL_REVIEW_SCOPE, packet, reasons)
 
     base_branch = _string(packet.get("base_branch"))
@@ -285,7 +288,9 @@ def _classify(gate_input: CompletedWorkGateInput) -> CompletedWorkGateState:
         reasons.append("proof log must point to /tmp evidence")
         return _state(GateClassification.BLOCKED_MISSING_PROOF, packet, reasons)
 
-    reasons.append("packet passed contract, lane, and proof checks; manual merge still required")
+    reasons.append(
+        "packet passed contract, lane, and proof checks; manual merge still required"
+    )
     return _state(GateClassification.MERGE_READY, packet, reasons)
 
 
@@ -301,7 +306,8 @@ def _state(
     return CompletedWorkGateState(
         classification=classification,
         eligible_for_merge=eligible,
-        requires_clean_rebuild=classification is GateClassification.CLEAN_REBUILD_REQUIRED,
+        requires_clean_rebuild=classification
+        is GateClassification.CLEAN_REBUILD_REQUIRED,
         reasons=tuple(reasons),
         agent=_string(packet.get("agent")),
         source_branch=_string(packet.get("source_branch")),
@@ -355,12 +361,18 @@ def normalize_non_claims(proof: Mapping[str, Any]) -> tuple[str, ...]:
     raw = proof.get("non_claims")
     values: list[str] = []
     if isinstance(raw, Sequence) and not isinstance(raw, (str, bytes)):
-        values.extend(item.strip() for item in raw if isinstance(item, str) and item.strip())
+        values.extend(
+            item.strip() for item in raw if isinstance(item, str) and item.strip()
+        )
     legacy = proof.get("not_claiming")
     if isinstance(legacy, str):
-        values.extend(part.strip() for part in legacy.replace(";", ",").split(",") if part.strip())
+        values.extend(
+            part.strip() for part in legacy.replace(";", ",").split(",") if part.strip()
+        )
     elif isinstance(legacy, Sequence) and not isinstance(legacy, (str, bytes)):
-        values.extend(item.strip() for item in legacy if isinstance(item, str) and item.strip())
+        values.extend(
+            item.strip() for item in legacy if isinstance(item, str) and item.strip()
+        )
     # Stable de-dupe preserving order.
     deduped: list[str] = []
     seen: set[str] = set()
@@ -372,17 +384,25 @@ def normalize_non_claims(proof: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(deduped)
 
 
-def _out_of_scope_paths(touched_paths: Sequence[str], allowed_paths: Sequence[str]) -> list[str]:
+def _out_of_scope_paths(
+    touched_paths: Sequence[str], allowed_paths: Sequence[str]
+) -> list[str]:
     if not allowed_paths:
         return list(touched_paths)
-    clean_allowed = tuple(path.rstrip("/") + "/" if not path.endswith("/") else path for path in allowed_paths)
+    clean_allowed = tuple(
+        path.rstrip("/") + "/" if not path.endswith("/") else path
+        for path in allowed_paths
+    )
     out: list[str] = []
     for touched in touched_paths:
         normalized = touched.lstrip("/")
         if ".." in Path(normalized).parts:
             out.append(touched)
             continue
-        if not any(normalized.startswith(prefix) or normalized == prefix.rstrip("/") for prefix in clean_allowed):
+        if not any(
+            normalized.startswith(prefix) or normalized == prefix.rstrip("/")
+            for prefix in clean_allowed
+        ):
             out.append(touched)
     return out
 

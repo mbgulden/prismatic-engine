@@ -30,7 +30,15 @@ from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
@@ -49,7 +57,6 @@ from prismatic.agy_completed_work import (
 from prismatic.agy_merge_backlog import (
     AGY_CLEAN_PR_AND_VERIFICATION_GATE_MARKER,
     AGY_CLEAN_PR_CREATE_UPDATE_MARKER,
-    AGY_PR_VERIFICATION_GATE_MARKER,
     get_merge_backlog_item,
     list_merge_backlog,
     verify_merge_backlog_item,
@@ -63,8 +70,6 @@ from prismatic.agy_overnight_guard import (
     set_operator_pause,
 )
 from prismatic.agy_limited_overnight_runner import (
-    AGY_LIMITED_OVERNIGHT_DRY_RUN_BLOCKED_MARKER,
-    AGY_LIMITED_OVERNIGHT_DRY_RUN_MARKER,
     AGY_LIMITED_OVERNIGHT_RUNNER_MARKER,
     LimitedOvernightRunStore,
     RunnerRequest,
@@ -72,6 +77,14 @@ from prismatic.agy_limited_overnight_runner import (
     status_payload as limited_overnight_status_payload,
     stop_latest_run as stop_limited_overnight_run,
 )
+from prismatic.agent_raw_output_queue import (
+    get_raw_output,
+    list_raw_outputs,
+    mark_rerun_requested,
+    queue_counts,
+    repair_preview as raw_output_repair_preview,
+)
+from prismatic.agent_packet_normalizer import RAW_AGENT_OUTPUT_REPAIR_QUEUE_MARKER
 from prismatic.agy_unattended_window import (
     UnattendedWindowRequest,
     UnattendedWindowStore,
@@ -82,7 +95,10 @@ from prismatic.agy_unattended_window import (
     status_payload as unattended_window_status_payload,
 )
 from prismatic.budget_caps import read_budget_caps, write_budget_caps
-from prismatic.completed_work_gate import completed_work_gate_schema, demo_completed_work_gate_state
+from prismatic.completed_work_gate import (
+    completed_work_gate_schema,
+    demo_completed_work_gate_state,
+)
 from prismatic.lock import _read_locks as read_swarm_locks
 from prismatic.linear_rate_limit import (
     LINEAR_RATE_LIMIT_CIRCUIT_BREAKER_MARKER,
@@ -1037,6 +1053,70 @@ async def completed_work_gate_demo() -> dict[str, Any]:
     return demo_completed_work_gate_state()
 
 
+@app.get("/api/agents/raw-output")
+@app.get("/api/gateway/agents/raw-output")
+async def list_agent_raw_output(
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict[str, Any]:
+    """Expose real persisted raw output queue state. No fixtures."""
+
+    rows = [row.as_dict() for row in list_raw_outputs(limit=limit)]
+    return {
+        "status": "ok",
+        "marker": RAW_AGENT_OUTPUT_REPAIR_QUEUE_MARKER,
+        "count": len(rows),
+        "counts": queue_counts(),
+        "raw_outputs": rows,
+        "non_claims": {
+            "demo_fixture_rows": False,
+            "auto_repair_success": False,
+            "auto_rerun_enabled": False,
+            "auto_merge_enabled": False,
+            "production_deploy": False,
+        },
+    }
+
+
+@app.get("/api/agents/raw-output/{raw_output_id}")
+@app.get("/api/gateway/agents/raw-output/{raw_output_id}")
+async def get_agent_raw_output(raw_output_id: str) -> dict[str, Any]:
+    try:
+        row = get_raw_output(raw_output_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="raw output row not found") from exc
+    return {
+        "status": "ok",
+        "marker": RAW_AGENT_OUTPUT_REPAIR_QUEUE_MARKER,
+        "raw_output": row.as_dict(),
+    }
+
+
+@app.post("/api/agents/raw-output/{raw_output_id}/repair-preview")
+@app.post("/api/gateway/agents/raw-output/{raw_output_id}/repair-preview")
+async def preview_agent_raw_output_repair(raw_output_id: str) -> dict[str, Any]:
+    try:
+        return raw_output_repair_preview(raw_output_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="raw output row not found") from exc
+
+
+@app.post("/api/agents/raw-output/{raw_output_id}/mark-rerun-requested")
+@app.post("/api/gateway/agents/raw-output/{raw_output_id}/mark-rerun-requested")
+async def request_agent_raw_output_rerun(raw_output_id: str) -> dict[str, Any]:
+    try:
+        row = mark_rerun_requested(raw_output_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="raw output row not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {
+        "status": "rerun_requested",
+        "marker": RAW_AGENT_OUTPUT_REPAIR_QUEUE_MARKER,
+        "auto_rerun_enabled": False,
+        "raw_output": row.as_dict(),
+    }
+
+
 @app.post("/api/agy/completed-work/ingest")
 @app.post("/api/gateway/agy/completed-work/ingest")
 async def ingest_agy_completed_work(body: dict[str, Any]) -> dict[str, Any]:
@@ -1050,7 +1130,9 @@ async def ingest_agy_completed_work(body: dict[str, Any]) -> dict[str, Any]:
             packet,
             dirty_source=bool(body.get("dirty_source", False)),
             source_is_stale=bool(body.get("source_is_stale", False)),
-            conflicts=body.get("conflicts") if isinstance(body.get("conflicts"), list) else None,
+            conflicts=body.get("conflicts")
+            if isinstance(body.get("conflicts"), list)
+            else None,
         )
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -1063,7 +1145,9 @@ async def ingest_agy_completed_work(body: dict[str, Any]) -> dict[str, Any]:
 
 @app.get("/api/agy/completed-work")
 @app.get("/api/gateway/agy/completed-work")
-async def list_agy_completed_work(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
+async def list_agy_completed_work(
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict[str, Any]:
     """List persisted completed AGY rows, newest first."""
 
     rows = [row.as_dict() for row in list_completed_work(limit=limit)]
@@ -1083,7 +1167,9 @@ async def get_agy_completed_work(completed_work_id: str) -> dict[str, Any]:
     try:
         row = get_completed_work(completed_work_id)
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail="completed work row not found") from exc
+        raise HTTPException(
+            status_code=404, detail="completed work row not found"
+        ) from exc
     return {
         "status": "ok",
         "marker": AGY_COMPLETED_WORK_INGESTION_MARKER,
@@ -1093,7 +1179,9 @@ async def get_agy_completed_work(completed_work_id: str) -> dict[str, Any]:
 
 @app.get("/api/agy/merge-backlog")
 @app.get("/api/gateway/agy/merge-backlog")
-async def list_agy_merge_backlog(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
+async def list_agy_merge_backlog(
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict[str, Any]:
     """List dry-run AGY merge backlog decisions from persisted completed-work rows."""
 
     rows = [item.as_dict() for item in list_merge_backlog(limit=limit)]
@@ -1119,7 +1207,9 @@ async def get_agy_merge_backlog(completed_work_id: str) -> dict[str, Any]:
     try:
         item = get_merge_backlog_item(completed_work_id)
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail="completed work row not found") from exc
+        raise HTTPException(
+            status_code=404, detail="completed work row not found"
+        ) from exc
     return {
         "status": "ok",
         "marker": AGY_CLEAN_PR_CREATE_UPDATE_MARKER,
@@ -1141,7 +1231,9 @@ async def verify_agy_merge_backlog(completed_work_id: str) -> dict[str, Any]:
     try:
         return verify_merge_backlog_item(completed_work_id)
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail="completed work row not found") from exc
+        raise HTTPException(
+            status_code=404, detail="completed work row not found"
+        ) from exc
 
 
 @app.get("/api/agy/overnight-guard")
@@ -1164,7 +1256,9 @@ async def get_agy_overnight_guard() -> dict[str, Any]:
 
 @app.post("/api/agy/overnight-guard/evaluate")
 @app.post("/api/gateway/agy/overnight-guard/evaluate")
-async def evaluate_agy_overnight_guard(body: dict[str, Any] | None = None) -> dict[str, Any]:
+async def evaluate_agy_overnight_guard(
+    body: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Evaluate/persist a dry-run overnight readiness decision. No task launch."""
 
     payload = body or {}
@@ -1217,7 +1311,9 @@ async def resume_agy_overnight_guard() -> dict[str, Any]:
 
 @app.get("/api/agy/overnight-guard/runs")
 @app.get("/api/gateway/agy/overnight-guard/runs")
-async def list_agy_overnight_guard_runs(limit: int = Query(default=20, ge=1, le=200)) -> dict[str, Any]:
+async def list_agy_overnight_guard_runs(
+    limit: int = Query(default=20, ge=1, le=200),
+) -> dict[str, Any]:
     return {
         "status": "ok",
         "marker": AGY_OVERNIGHT_READINESS_GUARD_MARKER,
@@ -1229,7 +1325,9 @@ async def list_agy_overnight_guard_runs(limit: int = Query(default=20, ge=1, le=
 
 @app.post("/api/agy/limited-overnight/dry-run")
 @app.post("/api/gateway/agy/limited-overnight/dry-run")
-async def run_agy_limited_overnight_dry_run(body: dict[str, Any] | None = None) -> JSONResponse:
+async def run_agy_limited_overnight_dry_run(
+    body: dict[str, Any] | None = None,
+) -> JSONResponse:
     request = RunnerRequest.from_mapping(body or {})
     result = run_limited_overnight_dry_run(request)
     status_code = 200 if result.get("ok") else 409
@@ -1238,7 +1336,9 @@ async def run_agy_limited_overnight_dry_run(body: dict[str, Any] | None = None) 
 
 @app.get("/api/agy/limited-overnight/runs")
 @app.get("/api/gateway/agy/limited-overnight/runs")
-async def list_agy_limited_overnight_runs(limit: int = Query(default=20, ge=1, le=200)) -> dict[str, Any]:
+async def list_agy_limited_overnight_runs(
+    limit: int = Query(default=20, ge=1, le=200),
+) -> dict[str, Any]:
     return limited_overnight_status_payload(limit=limit)
 
 
@@ -1248,7 +1348,9 @@ async def get_agy_limited_overnight_run(run_id: str) -> dict[str, Any]:
     try:
         run = LimitedOvernightRunStore().get(run_id)
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail="limited overnight run not found") from exc
+        raise HTTPException(
+            status_code=404, detail="limited overnight run not found"
+        ) from exc
     return {
         "status": "ok",
         "marker": run.get("marker") or AGY_LIMITED_OVERNIGHT_RUNNER_MARKER,
@@ -1265,13 +1367,17 @@ async def stop_agy_limited_overnight() -> dict[str, Any]:
 
 @app.get("/api/agy/unattended-window/status")
 @app.get("/api/gateway/agy/unattended-window/status")
-async def get_agy_unattended_window_status(limit: int = Query(default=20, ge=1, le=200)) -> dict[str, Any]:
+async def get_agy_unattended_window_status(
+    limit: int = Query(default=20, ge=1, le=200),
+) -> dict[str, Any]:
     return unattended_window_status_payload(limit=limit)
 
 
 @app.post("/api/agy/unattended-window/evaluate")
 @app.post("/api/gateway/agy/unattended-window/evaluate")
-async def evaluate_agy_unattended_window(body: dict[str, Any] | None = None) -> JSONResponse:
+async def evaluate_agy_unattended_window(
+    body: dict[str, Any] | None = None,
+) -> JSONResponse:
     request = UnattendedWindowRequest.from_mapping(body or {})
     result = evaluate_unattended_window(request)
     status_code = 200 if result.get("allowed") else 409
@@ -1280,14 +1386,18 @@ async def evaluate_agy_unattended_window(body: dict[str, Any] | None = None) -> 
 
 @app.post("/api/agy/unattended-window/request-approval")
 @app.post("/api/gateway/agy/unattended-window/request-approval")
-async def request_agy_unattended_window_approval(body: dict[str, Any] | None = None) -> dict[str, Any]:
+async def request_agy_unattended_window_approval(
+    body: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     request = UnattendedWindowRequest.from_mapping(body or {})
     return request_unattended_window_approval(request)
 
 
 @app.post("/api/agy/unattended-window/approve")
 @app.post("/api/gateway/agy/unattended-window/approve")
-async def approve_agy_unattended_window(body: dict[str, Any] | None = None) -> JSONResponse:
+async def approve_agy_unattended_window(
+    body: dict[str, Any] | None = None,
+) -> JSONResponse:
     request = UnattendedWindowRequest.from_mapping(body or {})
     result = approve_window(request)
     status_code = 200 if result.get("allowed") else 409
@@ -1312,7 +1422,9 @@ async def get_agy_unattended_window_evaluation(evaluation_id: str) -> dict[str, 
     try:
         item = UnattendedWindowStore().get(evaluation_id)
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail="unattended window evaluation not found") from exc
+        raise HTTPException(
+            status_code=404, detail="unattended window evaluation not found"
+        ) from exc
     return {"status": "ok", "evaluation": item}
 
 
@@ -1594,15 +1706,18 @@ async def events_recent(limit: int = 50) -> dict[str, Any]:
         return {"events": [], "count": 0, "source": "sqlite", "error": str(e)}
 
 
-
 # ── Dashboard live adapter APIs (restored from Fred dashboard branches) ───────
+
 
 def _run_records_for_dashboard(limit: int = 500) -> list[Any]:
     return _recent_agent_runs(limit=limit)
 
 
 def _run_dicts_for_dashboard(limit: int = 500) -> list[dict[str, Any]]:
-    return [_run_record_to_dict(record) for record in _run_records_for_dashboard(limit=limit)]
+    return [
+        _run_record_to_dict(record)
+        for record in _run_records_for_dashboard(limit=limit)
+    ]
 
 
 def _dashboard_agent_inputs(limit: int = 500) -> dict[str, Any]:
@@ -1613,7 +1728,9 @@ def _dashboard_agent_inputs(limit: int = 500) -> dict[str, Any]:
     record_dicts = [_run_record_to_dict(record) for record in records]
     recovery_state = _read_dashboard_recovery_state()
     queue = queue_payload(records, limit=limit)
-    recovery = recovery_status_payload(recovery_state, records, counters=_webhook_counters)
+    recovery = recovery_status_payload(
+        recovery_state, records, counters=_webhook_counters
+    )
     timeline = list_timeline(
         limit=min(limit, 100),
         run_records=record_dicts,
@@ -1625,7 +1742,10 @@ def _dashboard_agent_inputs(limit: int = 500) -> dict[str, Any]:
         "registry": _read_agent_registry(),
         "queue_payload": queue,
         "timeline_payload": timeline,
-        "health_context": {"recovery": recovery, "server_started_at": _server_started_at},
+        "health_context": {
+            "recovery": recovery,
+            "server_started_at": _server_started_at,
+        },
     }
 
 
@@ -1643,6 +1763,17 @@ async def gateway_agent_detail(agent_id: str) -> dict[str, Any]:
     from prismatic.agent_status import build_agent_detail
 
     return build_agent_detail(agent_id, **_dashboard_agent_inputs())
+
+
+@app.get("/api/gateway/signals")
+async def gateway_agent_signals(
+    limit: int = Query(200, ge=1, le=1000),
+    agent: str | None = None,
+) -> dict[str, Any]:
+    """Return durable assigned-agent signal/chat/transcript stream for dashboard Signals."""
+    from prismatic.agent_signal_stream import list_agent_signals
+
+    return list_agent_signals(limit=limit, agent=agent, include_log_tails=True)
 
 
 @app.get("/api/gateway/timeline")
@@ -1676,7 +1807,9 @@ async def dashboard_webhook_stats() -> dict[str, Any]:
 
 @app.get("/api/webhooks/queue")
 @app.get("/api/gateway/webhooks/queue")
-async def dashboard_webhook_queue(status: str | None = None, limit: int = Query(50, ge=1, le=500)) -> dict[str, Any]:
+async def dashboard_webhook_queue(
+    status: str | None = None, limit: int = Query(50, ge=1, le=500)
+) -> dict[str, Any]:
     from prismatic.ingestion_queue import queue_payload
 
     return queue_payload(status=status, limit=limit)
@@ -1711,7 +1844,9 @@ async def dashboard_webhook_queue_purge() -> dict[str, Any]:
 async def dashboard_dispatcher_status() -> dict[str, Any]:
     from prismatic.ingestion_status import dispatcher_status_payload
 
-    payload = dispatcher_status_payload({}, _run_records_for_dashboard(), server_started_at=_server_started_at)
+    payload = dispatcher_status_payload(
+        {}, _run_records_for_dashboard(), server_started_at=_server_started_at
+    )
     payload["linear_rate_limit"] = get_linear_rate_limit_snapshot()
     payload["polling_budget"] = get_dispatcher_polling_budget_snapshot()
     return payload
@@ -1744,7 +1879,11 @@ async def dashboard_dispatcher_action(action: str) -> dict[str, Any]:
 async def dashboard_recovery_status() -> dict[str, Any]:
     from prismatic.ingestion_status import recovery_status_payload
 
-    return recovery_status_payload(_read_dashboard_recovery_state(), _run_records_for_dashboard(), counters=_webhook_counters)
+    return recovery_status_payload(
+        _read_dashboard_recovery_state(),
+        _run_records_for_dashboard(),
+        counters=_webhook_counters,
+    )
 
 
 @app.get("/api/foundation/peer_review")
@@ -1762,7 +1901,12 @@ async def dashboard_foundation_control(action: str) -> dict[str, Any]:
     from prismatic.timeline import utc_now
 
     entry = foundation_control_entry(action, now=utc_now(), actor="dashboard")
-    return {"ok": True, "status": entry.get("status"), "entry": entry, "source": "foundation_control_state"}
+    return {
+        "ok": True,
+        "status": entry.get("status"),
+        "entry": entry,
+        "source": "foundation_control_state",
+    }
 
 
 @app.get("/api/skills")
@@ -1775,7 +1919,12 @@ async def dashboard_skills() -> dict[str, Any]:
     except Exception as exc:
         logger.warning("dashboard skills adapter failed: %s", exc)
         skills = []
-    return {"ok": True, "source": "prismatic.skills", "skills": skills, "count": len(skills)}
+    return {
+        "ok": True,
+        "source": "prismatic.skills",
+        "skills": skills,
+        "count": len(skills),
+    }
 
 
 @app.get("/api/skills/{name}", response_model=None)
@@ -1786,19 +1935,31 @@ async def dashboard_skill_detail(name: str) -> Any:
 
         return read_skill(name)
     except Exception as exc:
-        return JSONResponse({"error": "skill_not_found", "detail": str(exc)}, status_code=404)
+        return JSONResponse(
+            {"error": "skill_not_found", "detail": str(exc)}, status_code=404
+        )
 
 
 @app.post("/api/skills/{name}/install", response_model=None)
 @app.post("/api/gateway/skills/{name}/install", response_model=None)
 async def dashboard_skill_install(name: str) -> dict[str, Any]:
-    return {"ok": True, "status": "accepted_noop", "skill": name, "message": "Install intent recorded; no browser shell execution."}
+    return {
+        "ok": True,
+        "status": "accepted_noop",
+        "skill": name,
+        "message": "Install intent recorded; no browser shell execution.",
+    }
 
 
 @app.post("/api/skills/{name}/uninstall", response_model=None)
 @app.post("/api/gateway/skills/{name}/uninstall", response_model=None)
 async def dashboard_skill_uninstall(name: str) -> dict[str, Any]:
-    return {"ok": True, "status": "accepted_noop", "skill": name, "message": "Uninstall intent recorded; no browser shell execution."}
+    return {
+        "ok": True,
+        "status": "accepted_noop",
+        "skill": name,
+        "message": "Uninstall intent recorded; no browser shell execution.",
+    }
 
 
 @app.get("/api/quota")
@@ -1809,7 +1970,6 @@ async def dashboard_skill_uninstall(name: str) -> dict[str, Any]:
 @app.get("/api/vertex/quotas")
 async def dashboard_quota_summary() -> dict[str, Any]:
     try:
-        from prismatic.merge_status import load_merge_state  # compile/import sentinel for restored adapters
         from prismatic.vertex_telemetry import read_quota_summary  # type: ignore
 
         data = read_quota_summary()
@@ -1819,9 +1979,13 @@ async def dashboard_quota_summary() -> dict[str, Any]:
             "ok": True,
             "source": data.get("source") or "vertex-ledger",
             "current": data.get("current") or records,
-            "recent_events": data.get("recent_events") or data.get("latest_errors") or [],
-            "snapshot_at": data.get("snapshot_at") or (data.get("quota_freshness") or {}).get("last_recorded_at"),
-            "snapshot_age_sec": data.get("snapshot_age_sec") or (data.get("quota_freshness") or {}).get("age_seconds"),
+            "recent_events": data.get("recent_events")
+            or data.get("latest_errors")
+            or [],
+            "snapshot_at": data.get("snapshot_at")
+            or (data.get("quota_freshness") or {}).get("last_recorded_at"),
+            "snapshot_age_sec": data.get("snapshot_age_sec")
+            or (data.get("quota_freshness") or {}).get("age_seconds"),
         }
     except Exception as exc:
         return {
@@ -1839,7 +2003,13 @@ async def dashboard_quota_summary() -> dict[str, Any]:
 @app.post("/api/gateway/quota/poll")
 async def dashboard_quota_poll() -> dict[str, Any]:
     payload = await dashboard_quota_summary()
-    return {**payload, "poll": {"attempted": False, "reason": "browser-safe route returns persisted quota state only"}}
+    return {
+        **payload,
+        "poll": {
+            "attempted": False,
+            "reason": "browser-safe route returns persisted quota state only",
+        },
+    }
 
 
 @app.get("/api/gateway/merge/status")
@@ -2150,7 +2320,7 @@ async def github_webhook(request: Request) -> dict[str, Any]:
         if expected is None:
             _webhook_counters["github_auth_failed"] += 1
             await _publish_webhook_auth_failed("github")
-            from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+            from fastapi.responses import JSONResponse
 
             return JSONResponse({"status": "auth-failed"}, status_code=401)
     try:
@@ -2196,7 +2366,7 @@ async def linear_webhook(request: Request) -> dict[str, Any]:
             if expected is None:
                 _webhook_counters["linear_auth_failed"] += 1
                 await _publish_webhook_auth_failed("linear")
-                from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+                from fastapi.responses import JSONResponse
 
                 return JSONResponse({"status": "auth-failed"}, status_code=401)
     try:
@@ -2296,7 +2466,7 @@ async def schedules_chat_command(payload: dict[str, Any]) -> dict[str, Any]:
 async def mutate_schedule(schedule_id: str, payload: dict[str, Any]):
     """Mutate a schedule with owner-aware policy check."""
     from prismatic.schedules import request_schedule_mutation, UnauthorizedMutationError
-    from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+    from fastapi.responses import JSONResponse
 
     enabled = payload.get("enabled")
     schedule_expr = payload.get("schedule_expr")
@@ -2325,7 +2495,7 @@ async def list_native_crons_endpoint(
 @app.post("/native-crons/{cron_id}/action")
 async def native_cron_action(cron_id: str, payload: dict[str, Any]):
     """Pause/resume/deactivate/activate/delete/run a PE-native cron."""
-    from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+    from fastapi.responses import JSONResponse
     from prismatic.native_crons import mutate_native_cron
 
     action = payload.get("action")
@@ -2349,7 +2519,9 @@ async def native_cron_action(cron_id: str, payload: dict[str, Any]):
 # These read-only routes are intentionally small and dependency-light. They
 # keep the operator page visible without CDN JavaScript and provide the local
 # proof targets required by the Production Durability Standard.
-WORKSPACE_TREE_MAX_PREVIEW_BYTES = int(os.environ.get("PRISMATIC_WORKSPACE_TREE_MAX_PREVIEW_BYTES", "524288"))
+WORKSPACE_TREE_MAX_PREVIEW_BYTES = int(
+    os.environ.get("PRISMATIC_WORKSPACE_TREE_MAX_PREVIEW_BYTES", "524288")
+)
 WORKSPACE_TREE_PREVIEW_EXTENSIONS = {
     ".cfg",
     ".css",
@@ -2403,11 +2575,16 @@ def _workspace_tree_roots() -> dict[str, Path]:
 
     repo_root = Path(__file__).resolve().parents[2]
     roots.setdefault("Prismatic Engine", repo_root)
-    work_dir = Path("/home/ubuntu/work")
+    work_dir = Path(
+        os.environ.get("PRISMATIC_WORKSPACE_ROOT", str(Path.home() / "work"))
+    )
     if work_dir.exists():
         for child in sorted(work_dir.iterdir(), key=lambda item: item.name.lower()):
             if child.is_dir() and not child.name.startswith("."):
-                label = " ".join(part.capitalize() for part in child.name.replace("_", "-").split("-"))
+                label = " ".join(
+                    part.capitalize()
+                    for part in child.name.replace("_", "-").split("-")
+                )
                 roots.setdefault(label, child.resolve())
     return roots
 
@@ -2441,7 +2618,9 @@ def _workspace_tree_resolve(file: str) -> Path:
     raise HTTPException(status_code=403, detail="workspace-tree path blocked")
 
 
-def _workspace_tree_node(path: Path, root: Path, depth: int = 0, max_depth: int = 2) -> dict[str, Any]:
+def _workspace_tree_node(
+    path: Path, root: Path, depth: int = 0, max_depth: int = 2
+) -> dict[str, Any]:
     rel = str(path.relative_to(root)) if path != root else ""
     if path.is_file():
         stat = path.stat()
@@ -2456,8 +2635,13 @@ def _workspace_tree_node(path: Path, root: Path, depth: int = 0, max_depth: int 
     children: list[dict[str, Any]] = []
     if depth < max_depth:
         try:
-            for child in sorted(path.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower()))[:200]:
-                if child.name.startswith(".") or child.name in WORKSPACE_TREE_IGNORED_DIRS:
+            for child in sorted(
+                path.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower())
+            )[:200]:
+                if (
+                    child.name.startswith(".")
+                    or child.name in WORKSPACE_TREE_IGNORED_DIRS
+                ):
                     continue
                 children.append(_workspace_tree_node(child, root, depth + 1, max_depth))
         except OSError:
@@ -2476,14 +2660,20 @@ def _workspace_tree_preview_payload(file: str) -> dict[str, Any]:
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="workspace-tree file not found")
     if target.suffix.lower() not in WORKSPACE_TREE_PREVIEW_EXTENSIONS:
-        raise HTTPException(status_code=415, detail="workspace-tree file type is not previewable")
+        raise HTTPException(
+            status_code=415, detail="workspace-tree file type is not previewable"
+        )
     stat = target.stat()
     if stat.st_size > WORKSPACE_TREE_MAX_PREVIEW_BYTES:
-        raise HTTPException(status_code=413, detail="workspace-tree file too large for preview")
+        raise HTTPException(
+            status_code=413, detail="workspace-tree file too large for preview"
+        )
     try:
         content = target.read_text(encoding="utf-8")
     except UnicodeDecodeError as exc:
-        raise HTTPException(status_code=415, detail="workspace-tree file is not UTF-8 text") from exc
+        raise HTTPException(
+            status_code=415, detail="workspace-tree file is not UTF-8 text"
+        ) from exc
     roots = _workspace_tree_roots()
     relative = None
     root_label = None
@@ -2521,12 +2711,18 @@ def _workspace_tree_html(file: str) -> str:
         preview_name = file or "README.md"
 
     root_items = "".join(
-        f"<li><strong>{label}</strong><br><code>{root}</code></li>" for label, root in roots.items()
+        f"<li><strong>{label}</strong><br><code>{root}</code></li>"
+        for label, root in roots.items()
     )
     safe_content = (
         preview_content.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     )
-    safe_name = str(preview_name).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    safe_name = (
+        str(preview_name)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
     return f"""<!doctype html>
 <html lang=\"en\">
 <head>
@@ -2570,7 +2766,9 @@ def _workspace_tree_html(file: str) -> str:
 </html>"""
 
 
-_GOVERNANCE_DASHBOARD_HTML = Path(__file__).resolve().parent / "templates" / "dashboard.html"
+_GOVERNANCE_DASHBOARD_HTML = (
+    Path(__file__).resolve().parent / "templates" / "dashboard.html"
+)
 
 
 def _serve_governance_dashboard_html() -> HTMLResponse:
@@ -2605,7 +2803,9 @@ async def workspace_tree_workspaces() -> dict[str, Any]:
                 "name": label,
                 "path": str(root),
                 "exists": root.exists(),
-                "tree": _workspace_tree_node(root, root, max_depth=1) if root.exists() else None,
+                "tree": _workspace_tree_node(root, root, max_depth=1)
+                if root.exists()
+                else None,
             }
             for label, root in roots.items()
         ],
@@ -2620,11 +2820,15 @@ async def workspace_tree_preview(file: str = Query(...)) -> dict[str, Any]:
 
 
 @app.get("/api/workspace-tree/node")
-async def workspace_tree_node(file: str = Query(...), depth: int = Query(1, ge=0, le=3)) -> dict[str, Any]:
+async def workspace_tree_node(
+    file: str = Query(...), depth: int = Query(1, ge=0, le=3)
+) -> dict[str, Any]:
     """Return a safe directory subtree under an allowed workspace root."""
     target = _workspace_tree_resolve(file)
     if not target.exists() or not target.is_dir():
-        raise HTTPException(status_code=404, detail="workspace-tree directory not found")
+        raise HTTPException(
+            status_code=404, detail="workspace-tree directory not found"
+        )
     roots = _workspace_tree_roots()
     for label, root in roots.items():
         try:
@@ -2656,7 +2860,9 @@ async def workspace_tree_index_js() -> PlainTextResponse:
 
 
 @app.get("/workspace-tree")
-async def workspace_tree_page(file: str = Query("docs/prismatic-production-durability-standard.md")) -> HTMLResponse:
+async def workspace_tree_page(
+    file: str = Query("docs/prismatic-production-durability-standard.md"),
+) -> HTMLResponse:
     return HTMLResponse(_workspace_tree_html(file))
 
 
