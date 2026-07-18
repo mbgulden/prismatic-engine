@@ -322,3 +322,159 @@ no_secrets_in_docs=true
 ```text
 NOT_CLAIMING=skills_installed_in_all_live_profiles,agents_retrained,overnight_autopilot_active,auto_merge_enabled,production_deploy,canonical_full_suite_green
 ```
+
+## Invalid packet fixtures & repair hints (GRO-3954)
+
+This section maps invalid completed-work packet scenarios to machine-readable and operator-readable repair hints to assist in automatic error diagnosis and triage.
+
+### Invalid packet fixtures
+
+#### 1. Missing source path (`missing_source_path`)
+```json
+{
+  "agent": "agy",
+  "task_id": "GRO-3954",
+  "changed_files": ["docs/completed-work-skill-packs.md"],
+  "proof": {
+    "command": "python3 -m pytest",
+    "result": "PASS",
+    "log": "/tmp/verify.log",
+    "scope": "fixtures verify",
+    "marker": "AGY_PACKET_FIXTURES_REPAIR_HINTS_OK"
+  },
+  "non_claims": ["production_deploy"],
+  "recommended_next_action": "operator_review"
+}
+```
+
+#### 2. Missing proof log (`missing_proof_log`)
+```json
+{
+  "agent": "agy",
+  "task_id": "GRO-3954",
+  "source_path": "/home/ubuntu/work/prismatic-engine",
+  "changed_files": ["docs/completed-work-skill-packs.md"],
+  "proof": {
+    "command": "python3 -m pytest",
+    "result": "PASS",
+    "scope": "fixtures verify",
+    "marker": "AGY_PACKET_FIXTURES_REPAIR_HINTS_OK"
+  },
+  "non_claims": ["production_deploy"],
+  "recommended_next_action": "operator_review"
+}
+```
+
+#### 3. Missing non-claims (`missing_non_claims`)
+```json
+{
+  "agent": "agy",
+  "task_id": "GRO-3954",
+  "source_path": "/home/ubuntu/work/prismatic-engine",
+  "changed_files": ["docs/completed-work-skill-packs.md"],
+  "proof": {
+    "command": "python3 -m pytest",
+    "result": "PASS",
+    "log": "/tmp/verify.log",
+    "scope": "fixtures verify",
+    "marker": "AGY_PACKET_FIXTURES_REPAIR_HINTS_OK"
+  },
+  "recommended_next_action": "operator_review"
+}
+```
+
+#### 4. Invalid changed files (`invalid_changed_files`)
+```json
+{
+  "agent": "agy",
+  "task_id": "GRO-3954",
+  "source_path": "/home/ubuntu/work/prismatic-engine",
+  "changed_files": [],
+  "artifacts": [],
+  "proof": {
+    "command": "python3 -m pytest",
+    "result": "PASS",
+    "log": "/tmp/verify.log",
+    "scope": "fixtures verify",
+    "marker": "AGY_PACKET_FIXTURES_REPAIR_HINTS_OK"
+  },
+  "non_claims": ["production_deploy"],
+  "recommended_next_action": "operator_review"
+}
+```
+
+#### 5. Production claim without proof (`production_claim_without_proof`)
+```json
+{
+  "agent": "agy",
+  "task_id": "GRO-3954",
+  "source_path": "/home/ubuntu/work/prismatic-engine",
+  "changed_files": ["docs/completed-work-skill-packs.md"],
+  "proof": {
+    "command": "python3 -m pytest",
+    "result": "PASS",
+    "log": "/tmp/verify.log",
+    "scope": "production deployed successfully to prod",
+    "marker": "AGY_PACKET_FIXTURES_REPAIR_HINTS_OK"
+  },
+  "non_claims": [],
+  "recommended_next_action": "operator_review"
+}
+```
+
+#### 6. Agent prose only (`agent_prose_only`)
+```text
+I have finished the task and verified all the tests. Everything is green. Let's merge this.
+```
+
+#### 7. Secret-like content detected (`secret_like_content_detected`)
+```json
+{
+  "agent": "agy",
+  "task_id": "GRO-3954",
+  "source_path": "/home/ubuntu/work/prismatic-engine",
+  "changed_files": ["docs/completed-work-skill-packs.md"],
+  "proof": {
+    "command": "python3 -m pytest",
+    "result": "PASS",
+    "log": "/tmp/verify.log",
+    "scope": "leak credentials",
+    "marker": "AGY_PACKET_FIXTURES_REPAIR_HINTS_OK"
+  },
+  "non_claims": ["production_deploy"],
+  "recommended_next_action": "operator_review",
+  "leaked_field": "ghp_invalid_token"
+}
+```
+
+#### 8. Wrong agent or ambiguous agent (`wrong_agent_or_ambiguous_agent`)
+```json
+{
+  "agent": "super-agent",
+  "task_id": "GRO-3954",
+  "source_path": "/home/ubuntu/work/prismatic-engine",
+  "changed_files": ["docs/completed-work-skill-packs.md"],
+  "proof": {
+    "command": "python3 -m pytest",
+    "result": "PASS",
+    "log": "/tmp/verify.log",
+    "scope": "fixtures verify",
+    "marker": "AGY_PACKET_FIXTURES_REPAIR_HINTS_OK"
+  },
+  "non_claims": ["production_deploy"],
+  "recommended_next_action": "operator_review"
+}
+```
+
+### Repair-hint taxonomy
+
+| Code | Operator-Readable Hint | Machine-Readable Rule |
+|---|---|---|
+| `ERR_MISSING_SOURCE_PATH` | The packet lacks a `source_path` or it does not point to a valid `/home/ubuntu/` absolute directory. Verify agent config/worktree placement. | `{"action": "block_and_require_worktree_check"}` |
+| `ERR_MISSING_PROOF_LOG` | Proof block is missing the `log` field, or the log path does not start with `/tmp/`. The validator cannot check proof execution. | `{"action": "block_and_require_log_verify"}` |
+| `ERR_MISSING_NON_CLAIMS` | Proof block lacks explicit `non_claims` declaration. The agent must explicitly acknowledge the boundaries of execution. | `{"action": "block_and_require_non_claims_declare"}` |
+| `ERR_INVALID_CHANGED_FILES` | `changed_files` list is missing or empty on a task asserting code changes. Declare changed files or supply observation-only artifacts. | `{"action": "block_and_verify_git_diff"}` |
+| `ERR_PRODUCTION_CLAIM_WITHOUT_PROOF` | Agent claimed production deployment or live mutation without proof. Ensure `non_claims` explicitly lists all negated claims. | `{"action": "block_and_reject_production_claims"}` |
+| `ERR_AGENT_PROSE_ONLY` | Output contains conversational prose only. Missing structured completed-work JSON block or marker lines. | `{"action": "block_and_parse_structured_json"}` |
+| `ERR_SECRET_LIKE_CONTENT_DETECTED` | Output or payload contains secret-like patterns (e.g., `ghp_` tokens or private keys). Block integration immediately. | `{"action": "quarantine_and_rotate_secrets"}` |
+| `ERR_WRONG_OR_AMBIGUOUS_AGENT` | The `agent` field does not match the resolved assigned worker, or is ambiguous. | `{"action": "reject_untrusted_agent"}` |

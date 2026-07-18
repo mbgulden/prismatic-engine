@@ -109,3 +109,21 @@ def test_no_secrets_in_docs() -> None:
     ]
     for pattern in forbidden_patterns:
         assert not re.search(pattern, TEXT), pattern
+
+
+def test_invalid_packet_fixtures_and_repair_hints_present() -> None:
+    assert "## Invalid packet fixtures & repair hints (GRO-3954)" in TEXT
+    assert "### Invalid packet fixtures" in TEXT
+    assert "### Repair-hint taxonomy" in TEXT
+    for hint_code in [
+        "ERR_MISSING_SOURCE_PATH",
+        "ERR_MISSING_PROOF_LOG",
+        "ERR_MISSING_NON_CLAIMS",
+        "ERR_INVALID_CHANGED_FILES",
+        "ERR_PRODUCTION_CLAIM_WITHOUT_PROOF",
+        "ERR_AGENT_PROSE_ONLY",
+        "ERR_SECRET_LIKE_CONTENT_DETECTED",
+        "ERR_WRONG_OR_AMBIGUOUS_AGENT",
+    ]:
+        assert hint_code in TEXT
+

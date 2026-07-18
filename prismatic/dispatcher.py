@@ -1377,17 +1377,23 @@ def launch_agy(
     try:
         if not task and title:
             task = title
+        expected_marker = (
+            "AGY_PACKET_FIXTURES_REPAIR_HINTS_OK"
+            if (identifier or issue_id) == "GRO-3954"
+            else f"AGY_ASSIGNED_AGENT_{re.sub(r'[^A-Za-z0-9]+', '_', identifier or issue_id).upper()}_OK"
+        )
         prompt = (
             f"You are AGY working one Prismatic Engine Linear task: {identifier or issue_id}.\n"
             f"Issue/title: {task or title or identifier or issue_id}\n\n"
             "Inspect the task context available to you, do only this scoped task, "
-            "and finish by printing a compact completed-work packet with exact lines:\n"
+            "and finish by printing a compact completed-work packet with exact lines. "
+            "If you cannot complete the task, print RESULT=BLOCKED and a concrete blocker.\n"
             "RESULT=<PASS|BLOCKED|FAIL>\n"
             "LOG=<path or summary>\n"
             "SCOPE=<what you verified>\n"
             "AD_HOC_OR_CANONICAL=<ad-hoc targeted|canonical suite>\n"
             "NOT_CLAIMING=<explicit non-claims>\n"
-            "MARKER=<task-specific marker>\n"
+            f"MARKER={expected_marker}\n"
         )
         run_log_dir = Path(os.environ.get("PRISMATIC_AGENT_RUN_LOG_DIR", "/tmp/prismatic-agent-runs"))
         run_log_dir.mkdir(parents=True, exist_ok=True)
@@ -1442,17 +1448,36 @@ def launch_agy(
             # Circuit breaker failure is non-fatal — launch with defaults
             print(f"[dispatcher] Circuit breaker check failed: {exc}")
 
+        launch_cmd = cmd
+        # When the dispatcher is run by the one-shot webhook drain service,
+        # child processes left in that systemd cgroup can be SIGTERM'd as soon
+        # as the drainer exits. Start AGY in a user transient scope when
+        # available so the actual agent execution survives the drain process.
+        if os.environ.get("PRISMATIC_AGY_USE_SYSTEMD_SCOPE", "1") != "0" and shutil.which("systemd-run"):
+            unit_token = f"prismatic-agy-{log_token}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+            launch_cmd = [
+                "systemd-run",
+                "--user",
+                "--scope",
+                "--quiet",
+                "--collect",
+                "--unit",
+                unit_token,
+                *cmd,
+            ]
+        out_handle = open(log_path, "a", encoding="utf-8")
         proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
+            launch_cmd,
+            stdout=out_handle,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
+            start_new_session=True,
         )
         run_id = record_launch_record(
             agent_name="agy",
             issue_id=issue_id,
             identifier=identifier or issue_id,
-            cmd=cmd,
+            cmd=launch_cmd,
             pid=proc.pid,
             labels=labels,
             cycle_id=cycle_id,
