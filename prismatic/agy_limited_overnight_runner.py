@@ -19,6 +19,7 @@ from prismatic.agy_overnight_guard import (
     evaluate_overnight_readiness,
     record_guard_decision,
 )
+from prismatic.ingestion_queue import queue_status_payload
 
 AGY_LIMITED_OVERNIGHT_RUNNER_MARKER = "AGY_LIMITED_OVERNIGHT_RUNNER_OK"
 AGY_LIMITED_OVERNIGHT_DRY_RUN_MARKER = "AGY_LIMITED_OVERNIGHT_DRY_RUN_OK"
@@ -26,6 +27,13 @@ AGY_LIMITED_OVERNIGHT_DRY_RUN_BLOCKED_MARKER = "AGY_LIMITED_OVERNIGHT_DRY_RUN_BL
 AGY_LIMITED_OVERNIGHT_PACKET_MARKER = "AGY_LIMITED_OVERNIGHT_DRY_RUN_PACKET_OK"
 DEFAULT_DB_NAME = "agy_limited_overnight_runs.db"
 DEFAULT_MODEL = "Gemini 3.5 Flash (Medium)"
+ASSIGNED_AGENT_WRITEBACK_DRY_RUN_STATE = "dry_run_no_live_linear_mutation"
+REQUIRED_ASSIGNED_AGENT_MARKERS = {
+    "marker": "LINEAR_WEBHOOK_QUEUE_ACTIVE_OK",
+    "assigned_agent_marker": "ASSIGNED_AGENT_EVENT_DISPATCH_OK",
+    "result_writeback_marker": "ASSIGNED_AGENT_RESULT_WRITEBACK_OK",
+    "dispatch_recovery_marker": "ASSIGNED_AGENT_DISPATCH_RECOVERY_OK",
+}
 
 NON_CLAIMS = {
     "overnight_autopilot_unbounded": False,
@@ -142,11 +150,15 @@ class LimitedOvernightRunStore:
                     real_github_pr_created INTEGER NOT NULL,
                     bulk_dispatch INTEGER NOT NULL,
                     stop_on_first_failure INTEGER NOT NULL,
+                    assigned_agent_writeback_state TEXT,
                     non_claims_json TEXT NOT NULL,
                     payload_json TEXT NOT NULL
                 )
                 """
             )
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(agy_limited_overnight_runs)").fetchall()}
+            if "assigned_agent_writeback_state" not in columns:
+                conn.execute("ALTER TABLE agy_limited_overnight_runs ADD COLUMN assigned_agent_writeback_state TEXT")
             conn.commit()
 
     def upsert(self, row: Mapping[str, Any]) -> dict[str, Any]:
@@ -174,6 +186,7 @@ class LimitedOvernightRunStore:
         payload.setdefault("real_github_pr_created", False)
         payload.setdefault("bulk_dispatch", False)
         payload.setdefault("stop_on_first_failure", True)
+        payload.setdefault("assigned_agent_writeback_state", "pending")
         payload.setdefault("non_claims", NON_CLAIMS)
         values = (
             payload["run_id"], payload["created_at"], payload["updated_at"], payload["status"], payload["marker"],
@@ -183,8 +196,8 @@ class LimitedOvernightRunStore:
             1 if payload.get("runner_called_guard") else 0, 1 if payload.get("model_preflight_ok") else 0,
             1 if payload.get("auto_merge") else 0, 1 if payload.get("production_deploy") else 0,
             1 if payload.get("real_github_pr_created") else 0, 1 if payload.get("bulk_dispatch") else 0,
-            1 if payload.get("stop_on_first_failure") else 0, json.dumps(payload.get("non_claims") or NON_CLAIMS, sort_keys=True),
-            json.dumps(payload, sort_keys=True),
+            1 if payload.get("stop_on_first_failure") else 0, str(payload.get("assigned_agent_writeback_state") or "pending"),
+            json.dumps(payload.get("non_claims") or NON_CLAIMS, sort_keys=True), json.dumps(payload, sort_keys=True),
         )
         with self._connect() as conn:
             conn.execute(
@@ -195,8 +208,8 @@ class LimitedOvernightRunStore:
                     merge_backlog_id, verification_gate, stop_reason, guard_allowed,
                     guard_marker, runner_called_guard, model_preflight_ok,
                     auto_merge, production_deploy, real_github_pr_created,
-                    bulk_dispatch, stop_on_first_failure, non_claims_json, payload_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    bulk_dispatch, stop_on_first_failure, assigned_agent_writeback_state, non_claims_json, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(run_id) DO UPDATE SET
                     updated_at=excluded.updated_at, status=excluded.status, marker=excluded.marker,
                     resolved_agent=excluded.resolved_agent, launched_tasks=excluded.launched_tasks,
@@ -204,6 +217,7 @@ class LimitedOvernightRunStore:
                     verification_gate=excluded.verification_gate, stop_reason=excluded.stop_reason,
                     guard_allowed=excluded.guard_allowed, guard_marker=excluded.guard_marker,
                     runner_called_guard=excluded.runner_called_guard, model_preflight_ok=excluded.model_preflight_ok,
+                    assigned_agent_writeback_state=excluded.assigned_agent_writeback_state,
                     payload_json=excluded.payload_json
                 """,
                 values,
@@ -244,6 +258,8 @@ def row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     data["real_github_pr_created"] = bool(data.get("real_github_pr_created"))
     data["bulk_dispatch"] = bool(data.get("bulk_dispatch"))
     data["stop_on_first_failure"] = bool(data.get("stop_on_first_failure"))
+    if not data.get("assigned_agent_writeback_state"):
+        data["assigned_agent_writeback_state"] = ASSIGNED_AGENT_WRITEBACK_DRY_RUN_STATE
     data["non_claims"] = json.loads(data.pop("non_claims_json") or "{}")
     data["payload"] = json.loads(data.pop("payload_json") or "{}")
     return data
@@ -261,6 +277,14 @@ def status_payload(*, db_path: str | Path | None = None, limit: int = 20) -> dic
         "count": len(runs),
         "non_claims": NON_CLAIMS,
     }
+
+
+def _assigned_agent_runway_preflight(status: Mapping[str, Any] | None = None) -> tuple[bool, str, dict[str, Any]]:
+    payload = dict(status or queue_status_payload())
+    missing = [f"{key}={expected}" for key, expected in REQUIRED_ASSIGNED_AGENT_MARKERS.items() if payload.get(key) != expected]
+    if missing:
+        return False, "assigned-agent recovery markers missing: " + ", ".join(missing), payload
+    return True, "assigned-agent recovery markers live", payload
 
 
 def _blocked(run: dict[str, Any], reason: str, *, store: LimitedOvernightRunStore) -> dict[str, Any]:
@@ -353,6 +377,7 @@ def run_limited_overnight_dry_run(
     guard_fn: Callable[..., Any] | None = None,
     model_preflight_fn: Callable[[str], tuple[bool, str]] | None = None,
     agy_launch_fn: Callable[[str], tuple[int, str]] | None = None,
+    assigned_agent_status_fn: Callable[[], Mapping[str, Any]] | None = None,
     execute: bool = True,
 ) -> dict[str, Any]:
     req = request if isinstance(request, RunnerRequest) else RunnerRequest.from_mapping(request)
@@ -375,6 +400,7 @@ def run_limited_overnight_dry_run(
         "real_github_pr_created": False,
         "bulk_dispatch": req.bulk_dispatch,
         "stop_on_first_failure": req.stop_on_first_failure,
+        "assigned_agent_writeback_state": "pending",
         "non_claims": NON_CLAIMS,
         "request": req.as_dict(),
     }
@@ -382,6 +408,16 @@ def run_limited_overnight_dry_run(
     validation_error = _validate_request(req)
     if validation_error:
         return _blocked(run, validation_error, store=store)
+
+    status_callable = assigned_agent_status_fn or queue_status_payload
+    assigned_ok, assigned_reason, assigned_payload = _assigned_agent_runway_preflight(status_callable())
+    run.update({
+        "assigned_agent_runway": assigned_payload,
+        "assigned_agent_writeback_state": ASSIGNED_AGENT_WRITEBACK_DRY_RUN_STATE,
+    })
+    store.upsert(run)
+    if not assigned_ok:
+        return _blocked(run, assigned_reason, store=store)
 
     guard_callable = guard_fn or evaluate_overnight_readiness
     decision = guard_callable(
@@ -449,6 +485,7 @@ def run_limited_overnight_dry_run(
         "completed_work_ingested": True,
         "merge_backlog_evaluated": True,
         "verification_gate_evaluated": True,
+        "assigned_agent_writeback_state": ASSIGNED_AGENT_WRITEBACK_DRY_RUN_STATE,
     })
     if gate != "pass":
         return _blocked(run, f"verification gate {gate}", store=store)
@@ -472,6 +509,7 @@ def run_limited_overnight_dry_run(
         "merge_backlog_evaluated": True,
         "verification_gate_evaluated": True,
         "dashboard_or_api_readback": True,
+        "assigned_agent_writeback_state": ASSIGNED_AGENT_WRITEBACK_DRY_RUN_STATE,
         "completed_work_id": row.id,
         "merge_backlog_id": backlog.merge_backlog_id,
         "verification_gate": gate,
