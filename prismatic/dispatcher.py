@@ -1369,7 +1369,8 @@ def launch_agy(
     except Exception:
         pass
 
-    if not os.path.exists(AGY_PATH):
+    resolved_agy_path = AGY_PATH if os.path.isabs(AGY_PATH) else shutil.which(AGY_PATH)
+    if not resolved_agy_path or not os.path.exists(resolved_agy_path):
         print(f"[dispatcher] AGY binary not found at {AGY_PATH}")
         return None
 
@@ -1377,7 +1378,7 @@ def launch_agy(
         if not task and title:
             task = title
         cmd = [
-            AGY_PATH,
+            resolved_agy_path,
             "--headless",
             "--issue",
             issue_id,

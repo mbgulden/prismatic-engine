@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 from pathlib import Path
 
 
@@ -141,6 +142,48 @@ def test_unknown_agent_fails_closed_and_wakes_nobody(tmp_path: Path, monkeypatch
     assert result["status"] == "needs_manual_review"
     assert result["wakes"] == []
     assert row["dispatch_status"] == "needs_manual_review"
+
+
+def test_real_fred_wake_uses_signal_launcher_signature(tmp_path: Path, monkeypatch):
+    q, dispatcher = setup_runtime(tmp_path, monkeypatch)
+    monkeypatch.delenv("PRISMATIC_ASSIGNED_AGENT_DRY_RUN", raising=False)
+    enqueue(q, payload("GRO-TEST-FRED-REAL", "fred"))
+    calls = []
+
+    def fake_fred(issue_id: str, title: str = "", priority: int = 3):
+        calls.append({"issue_id": issue_id, "title": title, "priority": priority})
+        return True
+
+    result = dispatcher.dispatch_issue_by_identifier(
+        "GRO-TEST-FRED-REAL", launchers={"fred": fake_fred}, dry_run=False
+    )
+    row = latest(q)
+
+    assert result["marker"] == "ASSIGNED_AGENT_EVENT_DISPATCH_OK"
+    assert result["status"] == "dispatched"
+    assert result["wakes"] == ["fred"]
+    assert calls == [{"issue_id": "GRO-TEST-FRED-REAL", "title": "GRO-TEST-FRED-REAL", "priority": 3}]
+    assert row["dispatch_status"] == "dispatched"
+    assert row["claim_owner"] == "fred"
+
+
+def test_agy_preflight_accepts_binary_found_on_path(tmp_path: Path, monkeypatch):
+    q, dispatcher = setup_runtime(tmp_path, monkeypatch)
+    monkeypatch.delenv("PRISMATIC_ASSIGNED_AGENT_DRY_RUN", raising=False)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    agy_bin = bin_dir / "agy"
+    agy_bin.write_text("#!/bin/sh\nexit 0\n")
+    agy_bin.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ.get('PATH', '')}")
+    row = enqueue(q, payload("GRO-TEST-AGY-PATH", "agy"))
+    row = latest(q)
+
+    resolution = dispatcher.resolve_assigned_agent(row)
+    preflight = dispatcher.preflight_assigned_agent(row, resolution, launchers={"agy": lambda *a, **k: True})
+
+    assert resolution.status == "resolved"
+    assert preflight.status == "passed"
 
 
 def test_already_claimed_running_completed_rows_are_not_double_dispatched(tmp_path: Path, monkeypatch):
