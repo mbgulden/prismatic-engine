@@ -1377,14 +1377,34 @@ def launch_agy(
     try:
         if not task and title:
             task = title
+        prompt = (
+            f"You are AGY working one Prismatic Engine Linear task: {identifier or issue_id}.\n"
+            f"Issue/title: {task or title or identifier or issue_id}\n\n"
+            "Inspect the task context available to you, do only this scoped task, "
+            "and finish by printing a compact completed-work packet with exact lines:\n"
+            "RESULT=<PASS|BLOCKED|FAIL>\n"
+            "LOG=<path or summary>\n"
+            "SCOPE=<what you verified>\n"
+            "AD_HOC_OR_CANONICAL=<ad-hoc targeted|canonical suite>\n"
+            "NOT_CLAIMING=<explicit non-claims>\n"
+            "MARKER=<task-specific marker>\n"
+        )
+        run_log_dir = Path(os.environ.get("PRISMATIC_AGENT_RUN_LOG_DIR", "/tmp/prismatic-agent-runs"))
+        run_log_dir.mkdir(parents=True, exist_ok=True)
+        log_token = re.sub(r"[^A-Za-z0-9_.-]+", "-", identifier or issue_id)[:80]
+        log_path = run_log_dir / f"agy-{log_token}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.log"
         cmd = [
             resolved_agy_path,
-            "--headless",
-            "--issue",
-            issue_id,
+            "--print",
+            prompt,
+            "--dangerously-skip-permissions",
+            "--print-timeout",
+            os.environ.get("PRISMATIC_AGY_PRINT_TIMEOUT", "45m0s"),
+            "--add-dir",
+            os.environ.get("PRISMATIC_WORKTREE_PATH") or os.getcwd(),
+            "--log-file",
+            str(log_path),
         ]
-        if task:
-            cmd.extend(["--task", task])
 
         # ── Resolve issue labels if not provided ────────────────
         if labels is None:
