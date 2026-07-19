@@ -104,6 +104,60 @@ def test_completed_work_api_ingests_text_and_lists_bridge_payload(
     )
 
 
+def test_one_agent_dashboard_linear_dry_run_bridge(monkeypatch, tmp_path):
+    db = tmp_path / "completed_work.db"
+    monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(db))
+    monkeypatch.setenv("PRISMATIC_AGY_EXECUTOR_RUNS_STATE", str(tmp_path / "runs.json"))
+    client = TestClient(server.app)
+
+    ingested = client.post(
+        "/api/gateway/agy/completed-work/ingest",
+        json={
+            "completed_work_text": completed_work_text(
+                marker="ONE_AGENT_BRIDGE_PACKET_OK"
+            )
+        },
+    )
+    assert ingested.status_code == 200
+    completed = ingested.json()["completed_work"]
+
+    bridge = client.get(
+        f"/api/gateway/agy/completed-work/{completed['id']}/dashboard-linear-dry-run",
+        params={"requested_by": "dashboard-test"},
+    )
+    assert bridge.status_code == 200
+    body = bridge.json()
+    assert body["marker"] == "ONE_AGENT_COMPLETED_WORK_TO_DASHBOARD_LINEAR_DRY_RUN_OK"
+    assert (
+        body["dashboard"]["marker"]
+        == "ONE_AGENT_COMPLETED_WORK_TO_DASHBOARD_LINEAR_DRY_RUN_OK"
+    )
+    assert body["dashboard"]["status"] == "ready"
+    assert body["dashboard"]["integration_classification"] == "pass_ready_for_review"
+    assert body["linear_writeback"]["posted"] is False
+    assert body["linear_writeback"]["dry_run"] is True
+    assert body["side_effects"]["linear_comment_posted"] is False
+    assert body["side_effects"]["github_pr_created"] is False
+    assert body["side_effects"]["auto_merge_enabled"] is False
+    assert body["pr_dry_run"]["linear_writeback"]["posted"] is False
+    assert body["pr_dry_run"]["side_effects"]["github_pr_created"] is False
+
+    latest = client.get(
+        "/api/gateway/agy/completed-work/dashboard-linear-dry-run/latest"
+    )
+    assert latest.status_code == 200
+    assert latest.json()["completed_work"]["id"] == completed["id"]
+
+
+def test_dashboard_renders_one_agent_completed_work_bridge_marker():
+    html = Path("prismatic/gateway/templates/dashboard.html").read_text(
+        encoding="utf-8"
+    )
+    assert "ONE_AGENT_COMPLETED_WORK_TO_DASHBOARD_LINEAR_DRY_RUN_OK" in html
+    assert "dashboard-linear-dry-run/latest" in html
+    assert "Dashboard + Linear Dry Run" in html
+
+
 def test_merge_backlog_api_list_detail_and_verify_use_persisted_rows(
     monkeypatch, tmp_path
 ):
