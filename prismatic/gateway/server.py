@@ -1197,6 +1197,120 @@ async def get_agy_completed_work(completed_work_id: str) -> dict[str, Any]:
     }
 
 
+ONE_AGENT_DASHBOARD_LINEAR_DRY_RUN_MARKER = (
+    "ONE_AGENT_COMPLETED_WORK_TO_DASHBOARD_LINEAR_DRY_RUN_OK"
+)
+
+
+def _one_agent_dashboard_linear_payload(
+    completed_work_id: str, requested_by: str = "dashboard"
+) -> dict[str, Any]:
+    row = get_completed_work(completed_work_id)
+    completed = row.as_dict()
+    pr_dry_run = build_operator_pr_creation_dry_run(
+        completed_work_id,
+        requested_by=requested_by,
+        action="one_agent_dashboard_linear_dry_run",
+        linear_writeback=True,
+    )
+    linear_writeback = completed.get("linear_writeback") or {}
+    pr_linear_writeback = pr_dry_run.get("linear_writeback") or {}
+    dashboard = {
+        "status": "ready"
+        if completed.get("integration_classification") == "pass_ready_for_review"
+        else "needs_attention",
+        "agent": completed.get("agent"),
+        "completed_work_id": completed_work_id,
+        "issue_identifier": completed.get("packet", {}).get("issue_identifier"),
+        "proof_marker": completed.get("proof_marker"),
+        "integration_classification": completed.get("integration_classification"),
+        "merge_backlog_action": pr_dry_run.get("pr_candidate", {}).get("action")
+        or pr_dry_run.get("status"),
+        "linear_writeback_status": linear_writeback.get("status"),
+        "linear_writeback_posted": False,
+        "linear_writeback_dry_run": True,
+        "marker": ONE_AGENT_DASHBOARD_LINEAR_DRY_RUN_MARKER,
+    }
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_DASHBOARD_LINEAR_DRY_RUN_MARKER,
+        "completed_work": completed,
+        "dashboard": dashboard,
+        "linear_writeback": {
+            "posted": False,
+            "dry_run": True,
+            "source": "completed_work_bridge",
+            "completed_work_payload": linear_writeback,
+            "pr_dry_run_payload": pr_linear_writeback,
+            "body": pr_linear_writeback.get("body") or linear_writeback.get("body"),
+            "marker": ONE_AGENT_DASHBOARD_LINEAR_DRY_RUN_MARKER,
+        },
+        "pr_dry_run": pr_dry_run,
+        "side_effects": {
+            "linear_comment_posted": False,
+            "github_pr_created": False,
+            "git_branch_created": False,
+            "auto_merge_enabled": False,
+            "production_deployed": False,
+        },
+        "non_claims": {
+            "real_Linear_writeback_posted": False,
+            "real_github_pr_created": False,
+            "auto_merge_enabled": False,
+            "production_deployed": False,
+            "bulk_agent_dispatch": False,
+            "overnight_autopilot": False,
+        },
+    }
+
+
+@app.get("/api/agy/completed-work/{completed_work_id}/dashboard-linear-dry-run")
+@app.get("/api/gateway/agy/completed-work/{completed_work_id}/dashboard-linear-dry-run")
+async def get_one_agent_completed_work_dashboard_linear_dry_run(
+    completed_work_id: str,
+    requested_by: str = Query(default="dashboard"),
+) -> dict[str, Any]:
+    """Return a one-agent dashboard + Linear writeback dry-run bridge payload."""
+
+    try:
+        return _one_agent_dashboard_linear_payload(
+            completed_work_id, requested_by=requested_by
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail="completed work row not found"
+        ) from exc
+
+
+@app.get("/api/agy/completed-work/dashboard-linear-dry-run/latest")
+@app.get("/api/gateway/agy/completed-work/dashboard-linear-dry-run/latest")
+async def get_latest_one_agent_completed_work_dashboard_linear_dry_run(
+    requested_by: str = Query(default="dashboard"),
+) -> dict[str, Any]:
+    """Return the newest one-agent dashboard + Linear dry-run bridge payload."""
+
+    rows = list_completed_work(limit=1)
+    if not rows:
+        return {
+            "status": "empty",
+            "marker": ONE_AGENT_DASHBOARD_LINEAR_DRY_RUN_MARKER,
+            "completed_work": None,
+            "dashboard": {
+                "status": "empty",
+                "marker": ONE_AGENT_DASHBOARD_LINEAR_DRY_RUN_MARKER,
+            },
+            "linear_writeback": {"posted": False, "dry_run": True},
+            "side_effects": {
+                "linear_comment_posted": False,
+                "github_pr_created": False,
+                "git_branch_created": False,
+                "auto_merge_enabled": False,
+                "production_deployed": False,
+            },
+        }
+    return _one_agent_dashboard_linear_payload(rows[0].id, requested_by=requested_by)
+
+
 @app.get("/api/agy/merge-backlog")
 @app.get("/api/gateway/agy/merge-backlog")
 async def list_agy_merge_backlog(
