@@ -658,3 +658,88 @@ def test_agy_context_pack_redacts_token_like_assignment(tmp_path):
     assert "should-not-leak" not in text
     assert "token=[REDACTED]" in text
     assert "api_key=[REDACTED]" in text
+
+
+def test_jules_cli_context_pack_uses_new_session_and_records_context(
+    tmp_path, monkeypatch
+):
+    from prismatic import dispatcher
+
+    state_dir = tmp_path / "state"
+    run_dir = tmp_path / "runs"
+    fake_jules = tmp_path / "jules"
+    fake_jules.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'JULES_FAKE_ARGS=%s\\n' \"$*\"\n"
+        "printf 'Created session: jules-session-123\\n'\n"
+        "case \" $* \" in *' --issue '*|*' --task '*|*' --print '*|*' --log-file '*|*' --model '*) exit 7;; esac\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_jules.chmod(0o755)
+
+    monkeypatch.setenv("PRISMATIC_STATE_DIR", str(state_dir))
+    monkeypatch.setenv(
+        "PRISMATIC_LAUNCH_RECORDS_DB_PATH", str(state_dir / "event_router.db")
+    )
+    monkeypatch.setenv("PRISMATIC_AGENT_RUN_LOG_DIR", str(run_dir))
+    monkeypatch.setenv("PRISMATIC_WORKTREE_PATH", str(tmp_path))
+    monkeypatch.setattr(dispatcher, "JULES_PATH", str(fake_jules))
+
+    proc = dispatcher.launch_jules(
+        "GRO-JULES",
+        title="Review bounded task token=do-not-leak",
+        identifier="GRO-JULES",
+        labels=["agent:jules", "api_key=do-not-leak-either"],
+    )
+    assert proc is not None
+    assert proc.wait(timeout=20) == 0
+
+    logs = list(run_dir.glob("jules-GRO-JULES-*.log"))
+    assert logs
+    text = logs[0].read_text(encoding="utf-8")
+    assert "JULES_SESSION_CAPTURE_STARTED" in text
+    assert "context_pack_path=" in text
+    assert "work_packet_path=" in text
+    assert "skill_pack_state=loaded" in text
+    assert "jules/jules-session-handle-capture" in text
+    assert "JULES_FAKE_ARGS=new" in text
+    assert "Created session: jules-session-123" in text
+
+    with sqlite3.connect(state_dir / "event_router.db") as con:
+        row = con.execute(
+            "select command_json, execution_context "
+            "from launch_records where identifier='GRO-JULES'"
+        ).fetchone()
+    assert row
+    command_json, execution_context_json = row
+    execution_context = json.loads(execution_context_json)
+    assert "JULES_CLI_SESSION_CONTEXT_PACK_OK" in execution_context_json
+    assert "jules remote list --session" in execution_context["reconcile_hint"]
+    assert "--issue" not in command_json
+    assert "--task" not in command_json
+    assert "--print" not in command_json
+    assert "--log-file" not in command_json
+    assert "--model" not in command_json
+    assert '"new"' in command_json
+
+    context_pack = Path(execution_context["context_pack"]["context_pack"])
+    work_packet = Path(execution_context["context_pack"]["work_packet"])
+    packet_contract = Path(execution_context["context_pack"]["packet_contract"])
+    assert context_pack.exists()
+    assert work_packet.exists()
+    assert packet_contract.exists()
+    context_text = context_pack.read_text(encoding="utf-8")
+    work_packet_text = work_packet.read_text(encoding="utf-8")
+    packet_contract_text = packet_contract.read_text(encoding="utf-8")
+    assert "jules new <compact prompt>" in context_text
+    assert "unsupported AGY-style flags" in context_text
+    assert "JULES_CLI_SESSION_CONTEXT_PACK_OK" in work_packet_text
+    assert "MARKER=JULES_ASSIGNED_AGENT_GRO_JULES_OK" in work_packet_text
+    assert "MARKER=JULES_ASSIGNED_AGENT_GRO_JULES_BLOCKED" in work_packet_text
+    assert "same Prismatic completed-work packet contract" in packet_contract_text
+    combined_text = "\n".join([context_text, work_packet_text, packet_contract_text])
+    assert "do-not-leak" not in combined_text
+    assert "do-not-leak-either" not in combined_text
+    assert "token=[REDACTED]" in combined_text
+    assert "api_key=[REDACTED]" in combined_text

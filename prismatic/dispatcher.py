@@ -2054,6 +2054,156 @@ def launch_agy(
         return None
 
 
+JULES_SHARED_SKILL_PACKS = [
+    "shared/prismatic-completed-work-contract",
+    "shared/prismatic-proof-packet",
+    "shared/prismatic-non-claims",
+    "shared/prismatic-safe-file-scope",
+]
+
+JULES_AGENT_SKILL_PACKS = [
+    "jules/jules-session-result-packet",
+    "jules/jules-bounded-review-scope",
+    "jules/jules-session-handle-capture",
+]
+
+
+def _write_jules_context_pack(
+    *,
+    context_dir: Path,
+    issue_id: str,
+    identifier: str,
+    title_or_task: str,
+    expected_marker: str,
+    blocked_marker: str,
+    labels: list[str] | None,
+    worktree_path: str,
+    log_path: Path,
+) -> dict[str, str]:
+    """Write durable Jules context files for async ``jules new`` sessions."""
+    context_dir.mkdir(parents=True, exist_ok=True)
+    safe_title = _redact_agent_context_text(title_or_task or identifier or issue_id)
+    safe_labels = [_redact_agent_context_text(str(label)) for label in (labels or [])]
+    shared_packs = ",".join(JULES_SHARED_SKILL_PACKS)
+    agent_packs = ",".join(JULES_AGENT_SKILL_PACKS)
+
+    work_packet = f"""# Jules Work Packet — {identifier}
+
+Status marker: `JULES_CLI_SESSION_CONTEXT_PACK_OK`
+
+## Assignment
+
+| Field | Value |
+|---|---|
+| agent | `jules` |
+| issue_id | `{issue_id}` |
+| identifier | `{identifier}` |
+| title_or_task | `{safe_title}` |
+| worktree_path | `{worktree_path}` |
+| session_capture_log | `{log_path}` |
+
+## Labels
+
+```text
+{chr(10).join(safe_labels) if safe_labels else "none_provided"}
+```
+
+## Jules scope rules
+
+1. Treat this as one bounded Jules review/test/QA session.
+2. Do not launch other agents.
+3. Do not enable auto-merge or deploy production.
+4. Do not create or merge real GitHub PRs unless explicitly authorized in this packet.
+5. Keep noisy detail in Jules session output or artifacts; final pulled results must normalize into the compact packet below.
+
+## Required normalized result packet
+
+```text
+skill_pack_state=loaded
+shared_skill_packs={shared_packs}
+agent_skill_packs={agent_packs}
+packet_contract_version=prismatic-completed-work-v1
+packet_validation=passed
+COMMAND=<jules new / remote pull command or observation proof>
+RESULT=<PASS|BLOCKED|FAIL>
+LOG=<Jules session log/result path>
+SCOPE=<what Jules reviewed/tested>
+AD_HOC_OR_CANONICAL=<ad-hoc targeted|canonical suite>
+NOT_CLAIMING=<explicit non-claims>
+MARKER={expected_marker}
+```
+
+If blocked, use `MARKER={blocked_marker}` with the concrete blocker.
+"""
+
+    packet_contract = f"""# Jules Packet Contract
+
+Jules is async/session-based on this host. Dispatch must use `jules new`, store
+the session capture log/handle, and later reconcile `jules remote pull` output
+into the same Prismatic completed-work packet contract used by AGY/Fred/George/Kai.
+
+## Skill packs represented
+
+```text
+{chr(10).join([*JULES_SHARED_SKILL_PACKS, *JULES_AGENT_SKILL_PACKS])}
+```
+
+## Non-claims to include unless explicitly proven and authorized
+
+```text
+auto_merge_enabled
+production_deploy
+real_github_pr_created
+live_Linear_mutations_without_approval
+bulk_jules_dispatch
+canonical_full_suite_green
+```
+"""
+
+    context_pack = f"""# Jules CLI Context Pack
+
+Read these files before working:
+
+1. `WORK_PACKET.md` — assignment, bounded scope, markers, and result packet shape.
+2. `PACKET_CONTRACT.md` — standardized output/non-claims contract.
+
+## Launch optimization
+
+The dispatcher intentionally uses the installed Jules CLI shape:
+
+```text
+jules new <compact prompt>
+```
+
+It does not use unsupported AGY-style flags such as `--issue`, `--task`,
+`--print`, `--log-file`, `--add-dir`, or `--model`. Durable workflow memory
+lives in this context directory; the Jules session handle/output is captured in
+the launch log for later reconciliation.
+
+## Expected marker
+
+```text
+{expected_marker}
+```
+
+## Blocked marker
+
+```text
+{blocked_marker}
+```
+"""
+
+    files = {
+        "work_packet": context_dir / "WORK_PACKET.md",
+        "packet_contract": context_dir / "PACKET_CONTRACT.md",
+        "context_pack": context_dir / "CONTEXT_PACK.md",
+    }
+    files["work_packet"].write_text(work_packet, encoding="utf-8")
+    files["packet_contract"].write_text(packet_contract, encoding="utf-8")
+    files["context_pack"].write_text(context_pack, encoding="utf-8")
+    return {key: str(path) for key, path in files.items()}
+
+
 def launch_jules(
     issue_id: str,
     task: str = "",
@@ -2063,31 +2213,73 @@ def launch_jules(
     cycle_id: str | None = None,
     request_id: str | None = None,
 ) -> subprocess.Popen | None:
-    """Launch the Jules CLI for the given issue.
+    """Launch an async Jules CLI session for the given issue.
 
-    Args:
-        issue_id: Linear issue UUID or identifier.
-        task: Optional task description.
-
-    Returns:
-        ``subprocess.Popen`` handle, or ``None`` if launch failed.
+    Jules on this host uses ``jules new`` session creation rather than AGY-style
+    ``--issue``/``--task`` flags. The dispatcher therefore writes durable context
+    files, launches a compact prompt, captures the session output log, and stores
+    enough metadata for a later ``jules remote pull`` reconciliation step.
     """
-    if not os.path.exists(JULES_PATH):
+    resolved_jules_path = (
+        JULES_PATH if os.path.isabs(JULES_PATH) else shutil.which(JULES_PATH)
+    )
+    if not resolved_jules_path or not os.path.exists(resolved_jules_path):
         print(f"[dispatcher] Jules binary not found at {JULES_PATH}")
         return None
 
     try:
         if not task and title:
             task = title
-        cmd = [JULES_PATH, "--issue", issue_id]
-        if task:
-            cmd.extend(["--task", task])
+        expected_marker = f"JULES_ASSIGNED_AGENT_{re.sub(r'[^A-Za-z0-9]+', '_', identifier or issue_id).upper()}_OK"
+        blocked_marker = f"JULES_ASSIGNED_AGENT_{re.sub(r'[^A-Za-z0-9]+', '_', identifier or issue_id).upper()}_BLOCKED"
+        run_log_dir = Path(
+            os.environ.get("PRISMATIC_AGENT_RUN_LOG_DIR", "/tmp/prismatic-agent-runs")
+        )
+        run_log_dir.mkdir(parents=True, exist_ok=True)
+        log_token = re.sub(r"[^A-Za-z0-9_.-]+", "-", identifier or issue_id)[:80]
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        log_path = run_log_dir / f"jules-{log_token}-{timestamp}.log"
+        worktree_path = os.environ.get("PRISMATIC_WORKTREE_PATH") or os.getcwd()
+        context_dir = run_log_dir / f"jules-{log_token}-{timestamp}-context"
+        context_files = _write_jules_context_pack(
+            context_dir=context_dir,
+            issue_id=issue_id,
+            identifier=identifier or issue_id,
+            title_or_task=task or title or identifier or issue_id,
+            expected_marker=expected_marker,
+            blocked_marker=blocked_marker,
+            labels=labels,
+            worktree_path=worktree_path,
+            log_path=log_path,
+        )
+        prompt = (
+            f"You are Jules working one bounded Prismatic Engine review/test task: {identifier or issue_id}.\n"
+            f"Read this context pack first: {context_files['context_pack']}\n"
+            f"Then follow this work packet exactly: {context_files['work_packet']}\n"
+            "When your session result is pulled, it must normalize into the compact completed-work packet in WORK_PACKET.md.\n"
+            f"Expected success marker: {expected_marker}. Blocked marker: {blocked_marker}.\n"
+        )
+        cmd = [resolved_jules_path, "new", prompt]
+        jules_repo = os.environ.get("PRISMATIC_JULES_REPO")
+        if jules_repo:
+            cmd = [resolved_jules_path, "new", "--repo", jules_repo, prompt]
 
+        out_handle = open(log_path, "a", encoding="utf-8")
+        out_handle.write("JULES_SESSION_CAPTURE_STARTED\n")
+        out_handle.write(f"context_pack_path={context_files['context_pack']}\n")
+        out_handle.write(f"work_packet_path={context_files['work_packet']}\n")
+        out_handle.write("skill_pack_state=loaded\n")
+        out_handle.write(f"shared_skill_packs={','.join(JULES_SHARED_SKILL_PACKS)}\n")
+        out_handle.write(f"agent_skill_packs={','.join(JULES_AGENT_SKILL_PACKS)}\n")
+        out_handle.write("packet_contract_version=prismatic-completed-work-v1\n")
+        out_handle.flush()
         proc = subprocess.Popen(
             cmd,
-            stdout=subprocess.PIPE,
+            stdout=out_handle,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
+            cwd=worktree_path,
+            start_new_session=True,
         )
         run_id = record_launch_record(
             agent_name="jules",
@@ -2098,6 +2290,22 @@ def launch_jules(
             labels=labels,
             cycle_id=cycle_id,
             request_id=request_id,
+            execution_context=json.dumps(
+                {
+                    "agent": "jules",
+                    "issue_id": issue_id,
+                    "identifier": identifier or issue_id,
+                    "context_pack_dir": str(context_dir),
+                    "context_pack": context_files,
+                    "session_capture_log": str(log_path),
+                    "worktree_path": worktree_path,
+                    "expected_marker": expected_marker,
+                    "blocked_marker": blocked_marker,
+                    "reconcile_hint": "jules remote list --session && jules remote pull --session <session_id>",
+                    "marker": "JULES_CLI_SESSION_CONTEXT_PACK_OK",
+                },
+                sort_keys=True,
+            ),
         )
         print(f"[dispatcher] Launched Jules (pid={proc.pid}) for issue {issue_id}")
         _emit_agent_event(
