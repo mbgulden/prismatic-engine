@@ -1200,6 +1200,9 @@ async def get_agy_completed_work(completed_work_id: str) -> dict[str, Any]:
 ONE_AGENT_DASHBOARD_LINEAR_DRY_RUN_MARKER = (
     "ONE_AGENT_COMPLETED_WORK_TO_DASHBOARD_LINEAR_DRY_RUN_OK"
 )
+ONE_AGENT_VERIFIED_PR_DRY_RUN_MARKER = (
+    "ONE_AGENT_COMPLETED_WORK_TO_VERIFIED_PR_DRY_RUN_OK"
+)
 
 
 def _one_agent_dashboard_linear_payload(
@@ -1309,6 +1312,152 @@ async def get_latest_one_agent_completed_work_dashboard_linear_dry_run(
             },
         }
     return _one_agent_dashboard_linear_payload(rows[0].id, requested_by=requested_by)
+
+
+def _one_agent_verified_pr_dry_run_payload(
+    completed_work_id: str, requested_by: str = "dashboard"
+) -> dict[str, Any]:
+    dashboard_bridge = _one_agent_dashboard_linear_payload(
+        completed_work_id, requested_by=requested_by
+    )
+    pr_dry_run = build_operator_pr_creation_dry_run(
+        completed_work_id,
+        requested_by=requested_by,
+        action="one_agent_verified_pr_dry_run",
+        linear_writeback=True,
+    )
+    verification = verify_merge_backlog_item(completed_work_id)
+    verification_selection = pr_dry_run.get("verification_gate_selection") or {}
+    commands = list(verification_selection.get("commands") or [])
+    completed = dashboard_bridge.get("completed_work") or {}
+    dashboard = dashboard_bridge.get("dashboard") or {}
+    verification_passed = verification.get("verification_gate") == "pass"
+    bridge_ready = dashboard.get("status") == "ready"
+    status = "ready" if verification_passed and bridge_ready else "blocked"
+    verification_artifact = {
+        "status": "dry_run_verified" if status == "ready" else "blocked",
+        "marker": ONE_AGENT_VERIFIED_PR_DRY_RUN_MARKER,
+        "completed_work_id": completed_work_id,
+        "verification_lane": verification.get("verification_lane"),
+        "verification_gate": verification.get("verification_gate"),
+        "selected_commands": commands,
+        "proof_source": "completed_work_packet_and_merge_backlog_verify_gate",
+        "proof_marker": completed.get("proof_marker"),
+        "proof_result": completed.get("proof_result"),
+        "executed_against_real_branch": False,
+        "real_git_branch_created": False,
+        "real_github_pr_created": False,
+        "ad_hoc_or_canonical": "ad-hoc targeted",
+    }
+    linear_body = (
+        "## One-agent verified PR dry-run\n\n"
+        "```text\n"
+        f"RESULT={'PASS' if status == 'ready' else 'BLOCKED'}\n"
+        f"MARKER={ONE_AGENT_VERIFIED_PR_DRY_RUN_MARKER}\n"
+        f"completed_work_id={completed_work_id}\n"
+        f"verification_gate={verification.get('verification_gate')}\n"
+        f"verification_lane={verification.get('verification_lane')}\n"
+        "real_git_branch_created=false\n"
+        "real_github_pr_created=false\n"
+        "real_Linear_writeback_posted=false\n"
+        "auto_merge_enabled=false\n"
+        "production_deployed=false\n"
+        "```"
+    )
+    side_effects = {
+        "linear_comment_posted": False,
+        "github_pr_created": False,
+        "git_branch_created": False,
+        "auto_merge_enabled": False,
+        "production_deployed": False,
+        "bulk_agent_dispatch": False,
+        "overnight_autopilot": False,
+    }
+    return {
+        "status": "ok" if status == "ready" else "blocked",
+        "marker": ONE_AGENT_VERIFIED_PR_DRY_RUN_MARKER,
+        "completed_work": completed,
+        "dashboard": {
+            **dashboard,
+            "status": status,
+            "marker": ONE_AGENT_VERIFIED_PR_DRY_RUN_MARKER,
+            "verified_pr_dry_run": status == "ready",
+            "verification_gate": verification.get("verification_gate"),
+            "verification_lane": verification.get("verification_lane"),
+        },
+        "dashboard_linear_dry_run": dashboard_bridge,
+        "pr_dry_run": pr_dry_run,
+        "verification": verification,
+        "verification_artifact": verification_artifact,
+        "linear_writeback": {
+            "posted": False,
+            "dry_run": True,
+            "source": "verified_pr_dry_run_bridge",
+            "target_issue": completed.get("packet", {}).get("issue_identifier"),
+            "body": linear_body,
+            "marker": ONE_AGENT_VERIFIED_PR_DRY_RUN_MARKER,
+        },
+        "side_effects": side_effects,
+        "non_claims": {
+            "real_github_pr_created": False,
+            "real_git_branch_created": False,
+            "real_Linear_writeback_posted": False,
+            "auto_merge_enabled": False,
+            "production_deployed": False,
+            "bulk_agent_dispatch": False,
+            "overnight_autopilot": False,
+            "canonical_full_suite_green": False,
+        },
+    }
+
+
+@app.get("/api/agy/completed-work/{completed_work_id}/verified-pr-dry-run")
+@app.get("/api/gateway/agy/completed-work/{completed_work_id}/verified-pr-dry-run")
+async def get_one_agent_completed_work_verified_pr_dry_run(
+    completed_work_id: str,
+    requested_by: str = Query(default="dashboard"),
+) -> dict[str, Any]:
+    """Return a one-agent verified PR dry-run payload without side effects."""
+
+    try:
+        return _one_agent_verified_pr_dry_run_payload(
+            completed_work_id, requested_by=requested_by
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail="completed work row not found"
+        ) from exc
+
+
+@app.get("/api/agy/completed-work/verified-pr-dry-run/latest")
+@app.get("/api/gateway/agy/completed-work/verified-pr-dry-run/latest")
+async def get_latest_one_agent_completed_work_verified_pr_dry_run(
+    requested_by: str = Query(default="dashboard"),
+) -> dict[str, Any]:
+    """Return the newest one-agent verified PR dry-run payload."""
+
+    rows = list_completed_work(limit=1)
+    if not rows:
+        return {
+            "status": "empty",
+            "marker": ONE_AGENT_VERIFIED_PR_DRY_RUN_MARKER,
+            "completed_work": None,
+            "dashboard": {
+                "status": "empty",
+                "marker": ONE_AGENT_VERIFIED_PR_DRY_RUN_MARKER,
+            },
+            "linear_writeback": {"posted": False, "dry_run": True},
+            "side_effects": {
+                "linear_comment_posted": False,
+                "github_pr_created": False,
+                "git_branch_created": False,
+                "auto_merge_enabled": False,
+                "production_deployed": False,
+                "bulk_agent_dispatch": False,
+                "overnight_autopilot": False,
+            },
+        }
+    return _one_agent_verified_pr_dry_run_payload(rows[0].id, requested_by=requested_by)
 
 
 @app.get("/api/agy/merge-backlog")
