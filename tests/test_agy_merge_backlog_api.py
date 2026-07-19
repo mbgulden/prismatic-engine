@@ -765,3 +765,124 @@ def test_one_agent_operator_action_approval_api_and_dashboard_are_safe(
     assert "Operator Action Approval" in text
     assert "operator-action-approvals/latest" in text
     assert "fetchOperatorActionApproval" in text
+
+
+def test_one_agent_approved_action_executor_dry_run_api_and_dashboard_are_safe(
+    monkeypatch, tmp_path
+):
+    db = tmp_path / "completed_work.db"
+    promotion_ledger = tmp_path / "promotion-ledger.json"
+    approval_ledger = tmp_path / "operator-approvals.json"
+    executor_ledger = tmp_path / "approved-executors.json"
+    monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(db))
+    monkeypatch.setenv("PRISMATIC_AGY_PROMOTION_LEDGER_STATE", str(promotion_ledger))
+    monkeypatch.setenv("PRISMATIC_AGY_OPERATOR_APPROVAL_STATE", str(approval_ledger))
+    monkeypatch.setenv(
+        "PRISMATIC_AGY_APPROVED_ACTION_EXECUTOR_STATE", str(executor_ledger)
+    )
+    monkeypatch.delenv("PRISMATIC_ALLOW_REAL_APPROVED_ACTION_EXECUTOR", raising=False)
+    row = ingest_completed_work(packet(), db_path=db)
+    client = TestClient(server.app)
+
+    promotion_res = client.post(
+        f"/api/agy/completed-work/{row.id}/promotion-decision",
+        json={"requested_by": "pytest"},
+    )
+    assert promotion_res.status_code == 200
+    promotion = promotion_res.json()["promotion_decision"]
+
+    approval_res = client.post(
+        f"/api/agy/promotion-decisions/{promotion['promotion_decision_id']}/operator-action",
+        json={"operator_decision": "approve", "requested_by": "pytest"},
+    )
+    assert approval_res.status_code == 200
+    approval = approval_res.json()["operator_action_approval"]
+    assert approval["operator_decision"] == "approve"
+    assert approval["policy_gate"] == "pass"
+
+    preview = client.get(
+        f"/api/agy/operator-action-approvals/{approval['operator_action_approval_id']}/executor-dry-run/preview"
+    )
+    assert preview.status_code == 200
+    preview_body = preview.json()
+    assert (
+        preview_body["marker"] == "ONE_AGENT_OPERATOR_APPROVAL_TO_EXECUTOR_DRY_RUN_OK"
+    )
+    assert preview_body["persisted"] is False
+    executor = preview_body["approved_action_executor"]
+    assert (
+        executor["operator_action_approval_id"]
+        == approval["operator_action_approval_id"]
+    )
+    assert executor["promotion_decision_id"] == promotion["promotion_decision_id"]
+    assert executor["completed_work_id"] == row.id
+    assert executor["requested_action"] == "open_or_update_pr"
+    assert executor["executor_mode"] == "dry_run"
+    assert executor["final_authorization_present"] is False
+    assert executor["execution_status"] == "dry_run_ready"
+    assert executor["command_preview"]["dry_run_only"] is True
+    assert "DRY_RUN_ONLY" in executor["command_preview"]["summary"]
+    assert executor["command_preview"]["executed"] is False
+    assert executor["audit_writeback"]["posted"] is False
+    assert executor["audit_writeback"]["dry_run"] is True
+    assert all(value is False for value in executor["side_effects"].values())
+
+    record = client.post(
+        f"/api/agy/operator-action-approvals/{approval['operator_action_approval_id']}/executor-dry-run",
+        json={"requested_by": "pytest"},
+    )
+    assert record.status_code == 200
+    recorded = record.json()["approved_action_executor"]
+    assert record.json()["persisted"] is True
+    assert (
+        recorded["approved_action_executor_id"]
+        == executor["approved_action_executor_id"]
+    )
+    assert recorded["execution_status"] == "dry_run_ready"
+    assert recorded["final_authorization_present"] is False
+    assert recorded["audit_writeback"]["posted"] is False
+    assert all(value is False for value in recorded["side_effects"].values())
+
+    latest = client.get("/api/agy/approved-action-executors/latest")
+    assert latest.status_code == 200
+    assert (
+        latest.json()["approved_action_executor"]["approved_action_executor_id"]
+        == recorded["approved_action_executor_id"]
+    )
+    listed = client.get("/api/agy/approved-action-executors")
+    assert listed.status_code == 200
+    assert listed.json()["count"] == 1
+    detail = client.get(
+        f"/api/agy/approved-action-executors/{recorded['approved_action_executor_id']}"
+    )
+    assert detail.status_code == 200
+    assert (
+        detail.json()["approved_action_executor"]["execution_status"] == "dry_run_ready"
+    )
+
+    reject_res = client.post(
+        f"/api/agy/promotion-decisions/{promotion['promotion_decision_id']}/operator-action",
+        json={"operator_decision": "reject", "requested_by": "pytest"},
+    )
+    assert reject_res.status_code == 200
+    rejected = reject_res.json()["operator_action_approval"]
+    blocked = client.get(
+        f"/api/agy/operator-action-approvals/{rejected['operator_action_approval_id']}/executor-dry-run/preview"
+    )
+    assert blocked.status_code == 200
+    blocked_executor = blocked.json()["approved_action_executor"]
+    assert blocked_executor["execution_status"] == "blocked_operator_approval_required"
+    assert blocked_executor["command_preview"]["would_execute"] is False
+    assert blocked_executor["audit_writeback"]["posted"] is False
+    assert all(value is False for value in blocked_executor["side_effects"].values())
+
+    missing = client.get("/api/gateway/agy/approved-action-executors/no-such-executor")
+    assert missing.status_code == 404
+
+    dashboard = client.get("/dashboard")
+    assert dashboard.status_code == 200
+    text = dashboard.text
+    assert "ONE_AGENT_OPERATOR_APPROVAL_TO_EXECUTOR_DRY_RUN_OK" in text
+    assert "Approved Action Executor Dry Run" in text
+    assert "approved-action-executors/latest" in text
+    assert "fetchApprovedActionExecutor" in text

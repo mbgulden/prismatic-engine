@@ -83,6 +83,14 @@ from prismatic.agy_operator_action_approval import (
     list_operator_action_approvals,
     record_operator_action_approval,
 )
+from prismatic.agy_approved_action_executor import (
+    ONE_AGENT_OPERATOR_APPROVAL_TO_EXECUTOR_DRY_RUN_MARKER,
+    build_approved_action_executor,
+    get_approved_action_executor,
+    latest_or_record_approved_action_executor,
+    list_approved_action_executors,
+    record_approved_action_executor,
+)
 from prismatic.agy_executor_runs import (
     PROMPT7_EXECUTOR_API_AUDIT_WRITEBACK_MARKER,
     build_prompt6_executor_canary_dry_run,
@@ -1730,6 +1738,142 @@ async def get_one_agent_operator_action_approval(
         "marker": ONE_AGENT_LEDGER_TO_OPERATOR_ACTION_APPROVAL_MARKER,
         "operator_action_approval": approval,
         "side_effects": approval["side_effects"],
+    }
+
+
+@app.get(
+    "/api/agy/operator-action-approvals/{operator_action_approval_id}/executor-dry-run/preview"
+)
+@app.get(
+    "/api/gateway/agy/operator-action-approvals/{operator_action_approval_id}/executor-dry-run/preview"
+)
+async def preview_one_agent_approved_action_executor(
+    operator_action_approval_id: str,
+    requested_by: str = Query(default="dashboard"),
+    executor_mode: str = Query(default="dry_run"),
+    final_authorization_token: str | None = Query(default=None),
+) -> dict[str, Any]:
+    """Preview an approved-action executor dry-run request without persisting."""
+
+    try:
+        executor = build_approved_action_executor(
+            operator_action_approval_id,
+            requested_by=requested_by,
+            executor_mode=executor_mode,
+            final_authorization_token=final_authorization_token,
+        ).as_dict()
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail="operator action approval not found"
+        ) from exc
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_OPERATOR_APPROVAL_TO_EXECUTOR_DRY_RUN_MARKER,
+        "approved_action_executor": executor,
+        "persisted": False,
+        "side_effects": executor["side_effects"],
+    }
+
+
+@app.post(
+    "/api/agy/operator-action-approvals/{operator_action_approval_id}/executor-dry-run"
+)
+@app.post(
+    "/api/gateway/agy/operator-action-approvals/{operator_action_approval_id}/executor-dry-run"
+)
+def record_one_agent_approved_action_executor(
+    operator_action_approval_id: str, payload: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Persist a durable approved-action executor dry-run request."""
+
+    body = payload or {}
+    try:
+        executor = record_approved_action_executor(
+            operator_action_approval_id,
+            requested_by=str(body.get("requested_by") or "dashboard"),
+            executor_mode=str(body.get("executor_mode") or "dry_run"),
+            final_authorization_token=body.get("final_authorization_token"),
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail="operator action approval not found"
+        ) from exc
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_OPERATOR_APPROVAL_TO_EXECUTOR_DRY_RUN_MARKER,
+        "approved_action_executor": executor,
+        "persisted": True,
+        "side_effects": executor["side_effects"],
+    }
+
+
+@app.get("/api/agy/approved-action-executors")
+@app.get("/api/gateway/agy/approved-action-executors")
+async def list_one_agent_approved_action_executors(
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict[str, Any]:
+    """List durable approved-action executor dry-run requests."""
+
+    records = list_approved_action_executors(limit=limit)
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_OPERATOR_APPROVAL_TO_EXECUTOR_DRY_RUN_MARKER,
+        "count": len(records),
+        "approved_action_executors": records,
+        "side_effects": {
+            "linear_comment_posted": False,
+            "github_pr_created": False,
+            "auto_merge_enabled": False,
+            "production_deployed": False,
+        },
+    }
+
+
+@app.get("/api/agy/approved-action-executors/latest")
+@app.get("/api/gateway/agy/approved-action-executors/latest")
+async def latest_one_agent_approved_action_executor(
+    requested_by: str = Query(default="dashboard"),
+) -> dict[str, Any]:
+    """Return latest executor dry-run request, materializing one if possible."""
+
+    executor = latest_or_record_approved_action_executor(requested_by=requested_by)
+    if executor is None:
+        return {
+            "status": "empty",
+            "marker": ONE_AGENT_OPERATOR_APPROVAL_TO_EXECUTOR_DRY_RUN_MARKER,
+            "approved_action_executor": None,
+            "side_effects": {
+                "linear_comment_posted": False,
+                "github_pr_created": False,
+                "auto_merge_enabled": False,
+                "production_deployed": False,
+            },
+        }
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_OPERATOR_APPROVAL_TO_EXECUTOR_DRY_RUN_MARKER,
+        "approved_action_executor": executor,
+        "side_effects": executor["side_effects"],
+    }
+
+
+@app.get("/api/agy/approved-action-executors/{approved_action_executor_id}")
+@app.get("/api/gateway/agy/approved-action-executors/{approved_action_executor_id}")
+async def get_one_agent_approved_action_executor(
+    approved_action_executor_id: str,
+) -> dict[str, Any]:
+    """Return one durable approved-action executor dry-run request."""
+
+    executor = get_approved_action_executor(approved_action_executor_id)
+    if executor is None:
+        raise HTTPException(
+            status_code=404, detail="approved action executor not found"
+        )
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_OPERATOR_APPROVAL_TO_EXECUTOR_DRY_RUN_MARKER,
+        "approved_action_executor": executor,
+        "side_effects": executor["side_effects"],
     }
 
 
