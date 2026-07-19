@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import sqlite3
 import sys
@@ -594,6 +595,8 @@ def test_agy_print_mode_wrapper_records_skill_packs_and_forces_blocked_packet(
     assert logs
     text = logs[0].read_text(encoding="utf-8")
     assert "AGY_OUTPUT_CAPTURE_WRAPPER_STARTED" in text
+    assert "context_pack_path=" in text
+    assert "work_packet_path=" in text
     assert "skill_pack_state=loaded" in text
     assert "shared/prismatic-completed-work-contract" in text
     assert "agy/agy-structured-result-packet" in text
@@ -604,11 +607,54 @@ def test_agy_print_mode_wrapper_records_skill_packs_and_forces_blocked_packet(
     with sqlite3.connect(state_dir / "event_router.db") as con:
         rows = list(
             con.execute(
-                "select command_json from launch_records where identifier='GRO-3954'"
+                "select command_json, execution_context "
+                "from launch_records where identifier='GRO-3954'"
             )
         )
     assert rows
     command_json = rows[0][0]
+    execution_context = json.loads(rows[0][1])
     assert "PRISMATIC_AGY_OUTPUT_LOG=" in command_json
     assert "bash" in command_json
     assert "agy/agy-model-preflight" in command_json
+    assert "--add-dir" in command_json
+    assert "CONTEXT_PACK.md" in command_json
+    assert "AGY_CLI_CONTEXT_PACK_OK" in rows[0][1]
+
+    context_pack = Path(execution_context["context_pack"]["context_pack"])
+    work_packet = Path(execution_context["context_pack"]["work_packet"])
+    packet_contract = Path(execution_context["context_pack"]["packet_contract"])
+    assert context_pack.exists()
+    assert work_packet.exists()
+    assert packet_contract.exists()
+    assert "durable context in" in context_pack.read_text(encoding="utf-8")
+    work_packet_text = work_packet.read_text(encoding="utf-8")
+    assert "AGY_CLI_CONTEXT_PACK_OK" in work_packet_text
+    assert "MARKER=AGY_PACKET_FIXTURES_REPAIR_HINTS_OK" in work_packet_text
+    assert "MARKER=AGY_PACKET_FIXTURES_REPAIR_HINTS_BLOCKED" in work_packet_text
+    packet_contract_text = packet_contract.read_text(encoding="utf-8")
+    assert (
+        "standardized Prismatic completed-work output contract" in packet_contract_text
+    )
+
+
+def test_agy_context_pack_redacts_token_like_assignment(tmp_path):
+    from prismatic import dispatcher
+
+    files = dispatcher._write_agy_context_pack(
+        context_dir=tmp_path / "context",
+        issue_id="GRO-SECRET",
+        identifier="GRO-SECRET",
+        title_or_task="Fix bug token=super-secret-value",
+        expected_marker="AGY_ASSIGNED_AGENT_GRO_SECRET_OK",
+        blocked_marker="AGY_ASSIGNED_AGENT_GRO_SECRET_BLOCKED",
+        labels=["agent:agy", "api_key=should-not-leak"],
+        worktree_path="/tmp/worktree",
+        log_path=tmp_path / "agy.log",
+    )
+
+    text = "\n".join(Path(path).read_text(encoding="utf-8") for path in files.values())
+    assert "super-secret-value" not in text
+    assert "should-not-leak" not in text
+    assert "token=[REDACTED]" in text
+    assert "api_key=[REDACTED]" in text
