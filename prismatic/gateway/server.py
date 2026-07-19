@@ -67,6 +67,14 @@ from prismatic.agy_merge_backlog import (
     list_merge_backlog,
     verify_merge_backlog_item,
 )
+from prismatic.agy_promotion_ledger import (
+    ONE_AGENT_PROMOTION_DECISION_LEDGER_MARKER,
+    build_promotion_decision,
+    get_promotion_decision,
+    latest_or_record_decision,
+    list_promotion_decisions,
+    record_promotion_decision,
+)
 from prismatic.agy_executor_runs import (
     PROMPT7_EXECUTOR_API_AUDIT_WRITEBACK_MARKER,
     build_prompt6_executor_canary_dry_run,
@@ -1458,6 +1466,127 @@ async def get_latest_one_agent_completed_work_verified_pr_dry_run(
             },
         }
     return _one_agent_verified_pr_dry_run_payload(rows[0].id, requested_by=requested_by)
+
+
+@app.get("/api/agy/completed-work/{completed_work_id}/promotion-decision/preview")
+@app.get(
+    "/api/gateway/agy/completed-work/{completed_work_id}/promotion-decision/preview"
+)
+async def preview_one_agent_promotion_decision(
+    completed_work_id: str,
+    requested_by: str = Query(default="dashboard"),
+) -> dict[str, Any]:
+    """Preview the promotion decision ledger payload without persisting."""
+
+    try:
+        decision = build_promotion_decision(
+            completed_work_id, requested_by=requested_by
+        ).as_dict()
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail="completed work row not found"
+        ) from exc
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_PROMOTION_DECISION_LEDGER_MARKER,
+        "promotion_decision": decision,
+        "persisted": False,
+        "side_effects": decision["side_effects"],
+    }
+
+
+@app.post("/api/agy/completed-work/{completed_work_id}/promotion-decision")
+@app.post("/api/gateway/agy/completed-work/{completed_work_id}/promotion-decision")
+def record_one_agent_promotion_decision(
+    completed_work_id: str, payload: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Persist a durable promotion decision for one completed-work row."""
+
+    body = payload or {}
+    try:
+        decision = record_promotion_decision(
+            completed_work_id,
+            requested_by=str(body.get("requested_by") or "dashboard"),
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail="completed work row not found"
+        ) from exc
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_PROMOTION_DECISION_LEDGER_MARKER,
+        "promotion_decision": decision,
+        "persisted": True,
+        "side_effects": decision["side_effects"],
+    }
+
+
+@app.get("/api/agy/promotion-decisions")
+@app.get("/api/gateway/agy/promotion-decisions")
+async def list_one_agent_promotion_decisions(
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict[str, Any]:
+    """List durable promotion decision records."""
+
+    records = list_promotion_decisions(limit=limit)
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_PROMOTION_DECISION_LEDGER_MARKER,
+        "count": len(records),
+        "promotion_decisions": records,
+        "side_effects": {
+            "linear_comment_posted": False,
+            "github_pr_created": False,
+            "auto_merge_enabled": False,
+            "bulk_agent_dispatch": False,
+        },
+    }
+
+
+@app.get("/api/agy/promotion-decisions/latest")
+@app.get("/api/gateway/agy/promotion-decisions/latest")
+async def latest_one_agent_promotion_decision(
+    requested_by: str = Query(default="dashboard"),
+) -> dict[str, Any]:
+    """Return the latest ledger record, materializing one for the latest row if needed."""
+
+    decision = latest_or_record_decision(requested_by=requested_by)
+    if decision is None:
+        return {
+            "status": "empty",
+            "marker": ONE_AGENT_PROMOTION_DECISION_LEDGER_MARKER,
+            "promotion_decision": None,
+            "side_effects": {
+                "linear_comment_posted": False,
+                "github_pr_created": False,
+                "auto_merge_enabled": False,
+                "bulk_agent_dispatch": False,
+            },
+        }
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_PROMOTION_DECISION_LEDGER_MARKER,
+        "promotion_decision": decision,
+        "side_effects": decision["side_effects"],
+    }
+
+
+@app.get("/api/agy/promotion-decisions/{promotion_decision_id}")
+@app.get("/api/gateway/agy/promotion-decisions/{promotion_decision_id}")
+async def get_one_agent_promotion_decision(
+    promotion_decision_id: str,
+) -> dict[str, Any]:
+    """Return one durable promotion decision record."""
+
+    decision = get_promotion_decision(promotion_decision_id)
+    if decision is None:
+        raise HTTPException(status_code=404, detail="promotion decision not found")
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_PROMOTION_DECISION_LEDGER_MARKER,
+        "promotion_decision": decision,
+        "side_effects": decision["side_effects"],
+    }
 
 
 @app.get("/api/agy/merge-backlog")
