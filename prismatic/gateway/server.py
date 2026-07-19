@@ -91,6 +91,14 @@ from prismatic.agy_approved_action_executor import (
     list_approved_action_executors,
     record_approved_action_executor,
 )
+from prismatic.agy_final_action_authorization import (
+    ONE_AGENT_EXECUTOR_DRY_RUN_TO_FINAL_AUTHORIZATION_GATE_MARKER,
+    build_final_action_authorization,
+    get_final_action_authorization,
+    latest_or_record_final_action_authorization,
+    list_final_action_authorizations,
+    record_final_action_authorization,
+)
 from prismatic.agy_executor_runs import (
     PROMPT7_EXECUTOR_API_AUDIT_WRITEBACK_MARKER,
     build_prompt6_executor_canary_dry_run,
@@ -1874,6 +1882,152 @@ async def get_one_agent_approved_action_executor(
         "marker": ONE_AGENT_OPERATOR_APPROVAL_TO_EXECUTOR_DRY_RUN_MARKER,
         "approved_action_executor": executor,
         "side_effects": executor["side_effects"],
+    }
+
+
+@app.get(
+    "/api/agy/approved-action-executors/{approved_action_executor_id}/final-authorization/preview"
+)
+@app.get(
+    "/api/gateway/agy/approved-action-executors/{approved_action_executor_id}/final-authorization/preview"
+)
+async def preview_one_agent_final_action_authorization(
+    approved_action_executor_id: str,
+    authorization_decision: str = Query(default="authorize"),
+    requested_by: str = Query(default="dashboard"),
+    authorization_token: str | None = Query(default=None),
+) -> dict[str, Any]:
+    """Preview final authorization for an approved-action executor without persisting."""
+
+    try:
+        authorization = build_final_action_authorization(
+            approved_action_executor_id,
+            authorization_decision=authorization_decision,
+            requested_by=requested_by,
+            authorization_token=authorization_token,
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail="approved action executor not found"
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_EXECUTOR_DRY_RUN_TO_FINAL_AUTHORIZATION_GATE_MARKER,
+        "final_action_authorization": authorization,
+        "persisted": False,
+        "side_effects": authorization["side_effects"],
+    }
+
+
+@app.post(
+    "/api/agy/approved-action-executors/{approved_action_executor_id}/final-authorization"
+)
+@app.post(
+    "/api/gateway/agy/approved-action-executors/{approved_action_executor_id}/final-authorization"
+)
+def record_one_agent_final_action_authorization(
+    approved_action_executor_id: str, payload: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Persist a durable final authorization gate record."""
+
+    body = payload or {}
+    try:
+        authorization = record_final_action_authorization(
+            approved_action_executor_id,
+            authorization_decision=str(
+                body.get("authorization_decision") or "authorize"
+            ),
+            requested_by=str(body.get("requested_by") or "dashboard"),
+            authorization_token=body.get("authorization_token"),
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail="approved action executor not found"
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_EXECUTOR_DRY_RUN_TO_FINAL_AUTHORIZATION_GATE_MARKER,
+        "final_action_authorization": authorization,
+        "persisted": True,
+        "side_effects": authorization["side_effects"],
+    }
+
+
+@app.get("/api/agy/final-action-authorizations")
+@app.get("/api/gateway/agy/final-action-authorizations")
+async def list_one_agent_final_action_authorizations(
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict[str, Any]:
+    """List durable final action authorization gate records."""
+
+    records = list_final_action_authorizations(limit=limit)
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_EXECUTOR_DRY_RUN_TO_FINAL_AUTHORIZATION_GATE_MARKER,
+        "count": len(records),
+        "final_action_authorizations": records,
+        "side_effects": {
+            "linear_comment_posted": False,
+            "github_pr_created": False,
+            "auto_merge_enabled": False,
+            "production_deployed": False,
+            "real_executor_invoked": False,
+        },
+    }
+
+
+@app.get("/api/agy/final-action-authorizations/latest")
+@app.get("/api/gateway/agy/final-action-authorizations/latest")
+async def latest_one_agent_final_action_authorization(
+    requested_by: str = Query(default="dashboard"),
+) -> dict[str, Any]:
+    """Return latest final authorization, auto-recording a safe default if possible."""
+
+    authorization = latest_or_record_final_action_authorization(
+        requested_by=requested_by
+    )
+    if authorization is None:
+        return {
+            "status": "empty",
+            "marker": ONE_AGENT_EXECUTOR_DRY_RUN_TO_FINAL_AUTHORIZATION_GATE_MARKER,
+            "final_action_authorization": None,
+            "side_effects": {
+                "linear_comment_posted": False,
+                "github_pr_created": False,
+                "auto_merge_enabled": False,
+                "production_deployed": False,
+                "real_executor_invoked": False,
+            },
+        }
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_EXECUTOR_DRY_RUN_TO_FINAL_AUTHORIZATION_GATE_MARKER,
+        "final_action_authorization": authorization,
+        "side_effects": authorization["side_effects"],
+    }
+
+
+@app.get("/api/agy/final-action-authorizations/{final_action_authorization_id}")
+@app.get("/api/gateway/agy/final-action-authorizations/{final_action_authorization_id}")
+async def get_one_agent_final_action_authorization(
+    final_action_authorization_id: str,
+) -> dict[str, Any]:
+    """Return one durable final action authorization record."""
+
+    authorization = get_final_action_authorization(final_action_authorization_id)
+    if authorization is None:
+        raise HTTPException(
+            status_code=404, detail="final action authorization not found"
+        )
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_EXECUTOR_DRY_RUN_TO_FINAL_AUTHORIZATION_GATE_MARKER,
+        "final_action_authorization": authorization,
+        "side_effects": authorization["side_effects"],
     }
 
 
