@@ -13,7 +13,11 @@ from prismatic.agy_completed_work import (
     ingest_completed_work_file,
     ingest_completed_work_text,
     normalize_agy_result_packet,
+    packet_record_from_file,
+    packet_record_from_text,
     parse_completed_work_packet_text,
+    persist_packet_record,
+    get_packet_record,
 )
 from prismatic.completed_work_gate import (
     AGY_COMPLETED_WORK_MARKER,
@@ -391,6 +395,103 @@ def test_failed_and_blocked_packets_get_bridge_classifications(tmp_path):
     assert failed.as_dict()["linear_writeback"]["status"] == "needs_repair"
     assert blocked.integration_classification == "blocked_needs_operator"
     assert blocked.as_dict()["linear_writeback"]["status"] == "blocked_needs_operator"
+
+
+def test_packet_record_classifies_valid_blocked_failed_and_malformed(tmp_path):
+    valid = packet_record_from_text(
+        compact_completed_work_text(marker="EXPECTED_PACKET_OK"),
+        expected_marker="EXPECTED_PACKET_OK",
+        launch_record_id="launch-valid",
+        context_metadata={
+            "context_pack_path": "contexts/CONTEXT_PACK.md",
+            "work_packet_path": "contexts/WORK_PACKET.md",
+            "packet_contract_path": "contexts/PACKET_CONTRACT.md",
+        },
+    )
+    blocked = packet_record_from_text(
+        compact_completed_work_text(result="BLOCKED", marker="AGY_BLOCKED_PACKET_OK"),
+        expected_marker="AGY_BLOCKED_PACKET_OK",
+    )
+    failed = packet_record_from_text(
+        compact_completed_work_text(result="FAIL", marker="AGY_FAILED_PACKET_OK"),
+        expected_marker="AGY_FAILED_PACKET_OK",
+    )
+    malformed = packet_record_from_text(
+        compact_completed_work_text().replace(
+            "NOT_CLAIMING=production_deployed,auto_merge_enabled,real_github_pr_created,real_Linear_writeback_posted,bulk_agent_dispatch,overnight_autopilot\n",
+            "",
+        ),
+        expected_marker="AGY_LOG_PACKET_OK",
+    )
+
+    assert valid["classification"] == "packet_valid"
+    assert valid["result"] == "PASS"
+    assert valid["marker"] == "EXPECTED_PACKET_OK"
+    assert valid["launch_record_id"] == "launch-valid"
+    assert valid["context_pack_path"] == "contexts/CONTEXT_PACK.md"
+    assert valid["work_packet_path"] == "contexts/WORK_PACKET.md"
+    assert valid["packet_contract_path"] == "contexts/PACKET_CONTRACT.md"
+    assert blocked["classification"] == "packet_blocked"
+    assert blocked["result"] == "BLOCKED"
+    assert failed["classification"] == "packet_failed"
+    assert failed["result"] == "FAIL"
+    assert malformed["classification"] == "packet_malformed"
+    assert "NOT_CLAIMING" in malformed["missing_fields"]
+
+
+def test_packet_record_classifies_missing_and_marker_conflict(tmp_path):
+    missing_file = tmp_path / "missing-output.log"
+    missing = packet_record_from_file(
+        missing_file, expected_marker="EXPECTED_PACKET_OK"
+    )
+    conflict = packet_record_from_text(
+        compact_completed_work_text(marker="ACTUAL_PACKET_OK"),
+        expected_marker="EXPECTED_PACKET_OK",
+    )
+
+    assert missing["classification"] == "packet_missing"
+    assert missing["result"] is None
+    assert conflict["classification"] == "needs_manual_review"
+    assert conflict["marker"] == "ACTUAL_PACKET_OK"
+    assert conflict["expected_marker"] == "EXPECTED_PACKET_OK"
+
+
+def test_packet_record_redacts_token_like_content_and_persists_readback(tmp_path):
+    text = (
+        compact_completed_work_text()
+        .replace(
+            "RESULT_SUMMARY=AGY log packet integration proof\n",
+            "RESULT_SUMMARY=used token=" + "ghp_" + "a" * 36 + " for proof\n",
+        )
+        .replace(
+            "SCOPE=completed-work log ingestion gate\n",
+            "SCOPE=api_key=" + "b" * 36 + " should redact\n",
+        )
+    )
+    record = packet_record_from_text(text, expected_marker="AGY_LOG_PACKET_OK")
+    stored = persist_packet_record(record, db_path=tmp_path / "agy_completed_work.db")
+    readback = get_packet_record(
+        stored["id"], db_path=tmp_path / "agy_completed_work.db"
+    )
+
+    assert readback["classification"] == "packet_valid"
+    assert "[REDACTED]" in readback["proof_summary"]
+    assert "ghp_" not in json.dumps(readback)
+    assert "sk-supersecret" not in json.dumps(readback)
+
+
+def test_completed_work_row_exposes_packet_classification_and_normalized_record(
+    tmp_path,
+):
+    row = ingest_completed_work_text(
+        compact_completed_work_text(), db_path=tmp_path / "agy_completed_work.db"
+    )
+    payload = row.as_dict()
+
+    assert payload["packet_classification"] == "packet_valid"
+    assert payload["normalized_record"]["classification"] == "packet_valid"
+    assert payload["normalized_record"]["marker"] == "AGY_LOG_PACKET_OK"
+    assert payload["normalized_record"]["log_path"] == "/tmp/agy-log-packet-proof.log"
 
 
 def test_ingest_cli_runs_from_outside_repo(tmp_path):

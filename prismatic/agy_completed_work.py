@@ -37,6 +37,24 @@ INTEGRATION_CLASSIFICATIONS = {
     "superseded": "blocked_needs_operator",
     "rejected": "invalid_repairable",
 }
+PACKET_VALID = "packet_valid"
+PACKET_BLOCKED = "packet_blocked"
+PACKET_FAILED = "packet_failed"
+PACKET_MALFORMED = "packet_malformed"
+PACKET_MISSING = "packet_missing"
+PACKET_NEEDS_MANUAL_REVIEW = "needs_manual_review"
+PACKET_REQUIRED_FIELDS = (
+    "COMMAND",
+    "RESULT",
+    "LOG",
+    "SCOPE",
+    "AD_HOC_OR_CANONICAL",
+    "NOT_CLAIMING",
+    "MARKER",
+)
+_TOKEN_RE = re.compile(
+    r"(?i)(sk-[a-z0-9_-]{12,}|gh[pousr]_[a-z0-9_]{20,}|xox[baprs]-[a-z0-9-]{20,}|bearer\s+[a-z0-9._-]{20,}|[a-z0-9_=-]{32,})"
+)
 _TEMPLATE_VALUE_RE = re.compile(r"^\s*<[^>]+>\s*$")
 _PACKET_LINE_RE = re.compile(r"^([A-Z][A-Z0-9_]*|[A-Za-z][A-Za-z0-9_.-]*)=(.*)$")
 _SECRET_PATH_PARTS = {
@@ -296,6 +314,14 @@ def _has_artifact_entries(value: Any) -> bool:
     return False
 
 
+def _has_value(value: Any) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return bool(value)
+    return value is not None
+
+
 def _string(value: Any) -> str | None:
     if isinstance(value, str) and value.strip():
         return value.strip()
@@ -343,6 +369,216 @@ def integration_classification_for(
     return INTEGRATION_CLASSIFICATIONS.get(gate_classification, "invalid_repairable")
 
 
+def _redact_summary(value: Any) -> Any:
+    if isinstance(value, str):
+        redacted = _TOKEN_RE.sub("[REDACTED]", value)
+        for sensitive in ("token=", "api_key=", "secret=", "password="):
+            lower = redacted.lower()
+            idx = lower.find(sensitive)
+            if idx >= 0:
+                start = idx + len(sensitive)
+                end = redacted.find(" ", start)
+                if end < 0:
+                    end = len(redacted)
+                redacted = redacted[:start] + "[REDACTED]" + redacted[end:]
+        return redacted
+    if isinstance(value, Mapping):
+        result: dict[str, Any] = {}
+        for key, item in value.items():
+            if any(
+                part in str(key).lower()
+                for part in ("token", "secret", "password", "api_key")
+            ):
+                result[str(key)] = "[REDACTED]"
+            else:
+                result[str(key)] = _redact_summary(item)
+        return result
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return [_redact_summary(item) for item in value]
+    return value
+
+
+def _packet_required_missing(packet: Mapping[str, Any]) -> list[str]:
+    proof_value = packet.get("proof")
+    proof: Mapping[str, Any] = proof_value if isinstance(proof_value, Mapping) else {}
+    raw = (
+        packet.get("_raw_fields")
+        if isinstance(packet.get("_raw_fields"), Mapping)
+        else {}
+    )
+    missing: list[str] = []
+    checks = {
+        "COMMAND": proof.get("command") or raw.get("COMMAND"),
+        "RESULT": proof.get("result") or raw.get("RESULT"),
+        "LOG": proof.get("log") or raw.get("LOG"),
+        "SCOPE": proof.get("scope") or raw.get("SCOPE"),
+        "AD_HOC_OR_CANONICAL": proof.get("ad_hoc_or_canonical")
+        or raw.get("AD_HOC_OR_CANONICAL"),
+        "NOT_CLAIMING": proof.get("non_claims")
+        or packet.get("non_claims")
+        or raw.get("NOT_CLAIMING"),
+        "MARKER": proof.get("marker") or raw.get("MARKER"),
+    }
+    for key in PACKET_REQUIRED_FIELDS:
+        if not checks.get(key):
+            missing.append(key)
+    return missing
+
+
+def packet_classification_for(
+    packet: Mapping[str, Any] | None,
+    *,
+    expected_marker: str | None = None,
+    output_available: bool = True,
+) -> str:
+    """Return stable packet-level classification, separate from merge readiness."""
+
+    if not output_available or packet is None:
+        return PACKET_MISSING
+    if _packet_required_missing(packet):
+        return PACKET_MALFORMED
+    proof_value = packet.get("proof")
+    proof: Mapping[str, Any] = proof_value if isinstance(proof_value, Mapping) else {}
+    marker = _string(proof.get("marker"))
+    if expected_marker and marker and marker != expected_marker:
+        return PACKET_NEEDS_MANUAL_REVIEW
+    result = _string(proof.get("result"))
+    if result == "PASS":
+        return PACKET_VALID
+    if result == "BLOCKED":
+        return PACKET_BLOCKED
+    if result == "FAIL":
+        return PACKET_FAILED
+    return PACKET_MALFORMED
+
+
+def normalized_packet_record(
+    packet: Mapping[str, Any] | None,
+    *,
+    expected_marker: str | None = None,
+    launch_record_id: str | None = None,
+    context_metadata: Mapping[str, Any] | None = None,
+    output_available: bool = True,
+) -> dict[str, Any]:
+    """Build the durable read-model shape for an AGY completed-work packet."""
+
+    now = datetime.now(timezone.utc).isoformat()
+    meta = dict(context_metadata or {})
+    proof: Mapping[str, Any] = {}
+    if packet and isinstance(packet.get("proof"), Mapping):
+        proof = packet["proof"]  # type: ignore[index]
+    classification = packet_classification_for(
+        packet, expected_marker=expected_marker, output_available=output_available
+    )
+    changed_files = _string_list(packet.get("changed_files") if packet else None)
+    identifier = _string((packet or {}).get("issue_identifier")) or _string(
+        (packet or {}).get("issue_id")
+    )
+    record_id_source = {
+        "launch_record_id": launch_record_id,
+        "identifier": identifier,
+        "marker": proof.get("marker"),
+        "expected_marker": expected_marker,
+        "log": proof.get("log"),
+        "source_path": (packet or {}).get("source_path"),
+        "classification": classification,
+    }
+    record_id = (
+        "agy-packet-"
+        + hashlib.sha256(
+            json.dumps(record_id_source, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()[:16]
+    )
+    return _redact_summary(
+        {
+            "id": record_id,
+            "agent": _string((packet or {}).get("agent")) or _string(meta.get("agent")),
+            "issue_id": _string((packet or {}).get("issue_id")) or identifier,
+            "identifier": identifier,
+            "launch_record_id": launch_record_id
+            or _string(meta.get("launch_record_id")),
+            "classification": classification,
+            "result": _string(proof.get("result")),
+            "marker": _string(proof.get("marker")),
+            "expected_marker": expected_marker,
+            "blocked_marker": meta.get("blocked_marker"),
+            "log_path": _string(proof.get("log")),
+            "context_pack_path": meta.get("context_pack_path")
+            or (packet or {}).get("context_pack_path"),
+            "work_packet_path": meta.get("work_packet_path")
+            or (packet or {}).get("work_packet_path"),
+            "packet_contract_path": meta.get("packet_contract_path")
+            or (packet or {}).get("packet_contract_path"),
+            "proof_summary": proof.get("scope") or (packet or {}).get("result_summary"),
+            "non_claims": list(
+                proof.get("non_claims") or (packet or {}).get("non_claims") or []
+            ),
+            "changed_files": changed_files,
+            "missing_fields": _packet_required_missing(packet or {}),
+            "created_at": now,
+            "updated_at": now,
+        }
+    )
+
+
+def packet_record_from_text(
+    text: str | None,
+    *,
+    expected_marker: str | None = None,
+    launch_record_id: str | None = None,
+    context_metadata: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    if not text:
+        return normalized_packet_record(
+            None,
+            expected_marker=expected_marker,
+            launch_record_id=launch_record_id,
+            context_metadata=context_metadata,
+            output_available=False,
+        )
+    packet = parse_completed_work_packet_text(text, validate=False)
+    return normalized_packet_record(
+        packet,
+        expected_marker=expected_marker,
+        launch_record_id=launch_record_id,
+        context_metadata=context_metadata,
+        output_available=True,
+    )
+
+
+def packet_record_from_file(
+    path: str | Path | None,
+    *,
+    expected_marker: str | None = None,
+    launch_record_id: str | None = None,
+    context_metadata: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    if path is None:
+        return packet_record_from_text(
+            None,
+            expected_marker=expected_marker,
+            launch_record_id=launch_record_id,
+            context_metadata=context_metadata,
+        )
+    packet_path = Path(path)
+    if not packet_path.exists():
+        return packet_record_from_text(
+            None,
+            expected_marker=expected_marker,
+            launch_record_id=launch_record_id,
+            context_metadata={
+                **dict(context_metadata or {}),
+                "log_path": str(packet_path),
+            },
+        )
+    return packet_record_from_text(
+        packet_path.read_text(encoding="utf-8"),
+        expected_marker=expected_marker,
+        launch_record_id=launch_record_id,
+        context_metadata=context_metadata,
+    )
+
+
 def _linear_writeback_body(row: "CompletedWorkRow") -> str:
     return "\n".join(
         [
@@ -363,7 +599,9 @@ def _linear_writeback_body(row: "CompletedWorkRow") -> str:
     )
 
 
-def parse_completed_work_packet_text(text: str) -> dict[str, Any]:
+def parse_completed_work_packet_text(
+    text: str, *, validate: bool = True
+) -> dict[str, Any]:
     """Parse exact compact completed-work key/value packets from logs.
 
     Template placeholders are preserved and later rejected by the gate helper;
@@ -372,6 +610,7 @@ def parse_completed_work_packet_text(text: str) -> dict[str, Any]:
 
     packet: dict[str, Any] = {"proof": {}}
     proof: dict[str, Any] = packet["proof"]
+    raw_fields: dict[str, str] = {}
     non_claims: list[str] = []
     for raw_line in text.splitlines():
         line = raw_line.strip()
@@ -379,6 +618,7 @@ def parse_completed_work_packet_text(text: str) -> dict[str, Any]:
         if not match:
             continue
         key, raw_value = match.group(1), match.group(2).strip()
+        raw_fields[key.upper()] = raw_value
         value: Any = raw_value
         if key in {"NOT_CLAIMING", "NON_CLAIMS"}:
             non_claims.extend(
@@ -418,7 +658,9 @@ def parse_completed_work_packet_text(text: str) -> dict[str, Any]:
     if non_claims:
         packet["non_claims"] = non_claims
         proof["non_claims"] = non_claims
-    _reject_template_or_incomplete_packet(packet)
+    packet["_raw_fields"] = raw_fields
+    if validate:
+        _reject_template_or_incomplete_packet(packet)
     return packet
 
 
@@ -460,8 +702,9 @@ def _reject_template_or_incomplete_packet(packet: Mapping[str, Any]) -> None:
         "RESULT": proof.get("result"),
         "MARKER": proof.get("marker"),
         "LOG": proof.get("log"),
+        "NOT_CLAIMING": proof.get("non_claims"),
     }
-    missing = [key for key, value in required.items() if not _string(value)]
+    missing = [key for key, value in required.items() if not _has_value(value)]
     if missing:
         raise ValueError(f"missing completed-work packet fields: {', '.join(missing)}")
     for key, value in required.items():
@@ -515,6 +758,23 @@ class CompletedWorkRow:
 
         return integration_classification_for(self.classification, self.proof_result)
 
+    @property
+    def packet_classification(self) -> str:
+        """Stable packet-level state; distinct from merge readiness."""
+
+        expected_marker = _string(self.packet.get("expected_marker"))
+        return packet_classification_for(self.packet, expected_marker=expected_marker)
+
+    def normalized_record(self) -> dict[str, Any]:
+        record = normalized_packet_record(
+            self.packet,
+            expected_marker=_string(self.packet.get("expected_marker")),
+            launch_record_id=_string(self.packet.get("launch_record_id")),
+        )
+        record["created_at"] = self.created_at
+        record["updated_at"] = self.updated_at
+        return record
+
     def linear_writeback_dry_run(self) -> dict[str, Any]:
         """Return the safe Linear payload shape without posting it."""
 
@@ -551,6 +811,7 @@ class CompletedWorkRow:
             "source_path": self.source_path,
             "base_branch": self.base_branch,
             "classification": self.classification,
+            "packet_classification": self.packet_classification,
             "integration_classification": self.integration_classification,
             "eligible_for_merge": self.eligible_for_merge,
             "requires_clean_rebuild": self.requires_clean_rebuild,
@@ -560,6 +821,7 @@ class CompletedWorkRow:
             "ingestion_marker": self.ingestion_marker,
             "integration_marker": AGY_COMPLETED_WORK_INTEGRATION_GATE_MARKER,
             "linear_writeback": self.linear_writeback_dry_run(),
+            "normalized_record": self.normalized_record(),
             "packet": self.packet,
             "gate": self.gate,
             "non_claims": list(self.non_claims),
@@ -610,7 +872,76 @@ class AgyCompletedWorkStore:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_agy_completed_work_classification ON agy_completed_work(classification)"
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS agy_completed_work_packet_records (
+                    id TEXT PRIMARY KEY,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    classification TEXT NOT NULL,
+                    record_json TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_agy_packet_records_created_at ON agy_completed_work_packet_records(created_at DESC)"
+            )
             conn.commit()
+
+    def persist_packet_record(self, record: Mapping[str, Any]) -> dict[str, Any]:
+        payload = dict(record)
+        now = datetime.now(timezone.utc).isoformat()
+        payload.setdefault("created_at", now)
+        payload["updated_at"] = now
+        record_id = (
+            _string(payload.get("id"))
+            or "agy-packet-"
+            + hashlib.sha256(
+                json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+            ).hexdigest()[:16]
+        )
+        payload["id"] = record_id
+        classification = _string(payload.get("classification")) or PACKET_MALFORMED
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO agy_completed_work_packet_records (
+                    id, created_at, updated_at, classification, record_json
+                ) VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    updated_at = excluded.updated_at,
+                    classification = excluded.classification,
+                    record_json = excluded.record_json
+                """,
+                (
+                    record_id,
+                    str(payload["created_at"]),
+                    str(payload["updated_at"]),
+                    classification,
+                    json.dumps(payload, sort_keys=True),
+                ),
+            )
+            conn.commit()
+        return self.get_packet_record(record_id)
+
+    def get_packet_record(self, record_id: str) -> dict[str, Any]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT record_json FROM agy_completed_work_packet_records WHERE id = ?",
+                (record_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(record_id)
+        return json.loads(row["record_json"])
+
+    def list_packet_records(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        limit = max(1, min(int(limit), 200))
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT record_json FROM agy_completed_work_packet_records ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [json.loads(row["record_json"]) for row in rows]
 
     def ingest(
         self,
@@ -725,6 +1056,24 @@ def completed_work_id(packet: Mapping[str, Any]) -> str:
         json.dumps(source, sort_keys=True, default=str).encode("utf-8")
     ).hexdigest()[:16]
     return f"agy-cw-{digest}"
+
+
+def persist_packet_record(
+    record: Mapping[str, Any], *, db_path: str | Path | None = None
+) -> dict[str, Any]:
+    return AgyCompletedWorkStore(db_path).persist_packet_record(record)
+
+
+def get_packet_record(
+    record_id: str, *, db_path: str | Path | None = None
+) -> dict[str, Any]:
+    return AgyCompletedWorkStore(db_path).get_packet_record(record_id)
+
+
+def list_packet_records(
+    *, limit: int = 50, db_path: str | Path | None = None
+) -> list[dict[str, Any]]:
+    return AgyCompletedWorkStore(db_path).list_packet_records(limit=limit)
 
 
 def ingest_completed_work(
