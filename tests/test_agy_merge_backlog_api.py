@@ -886,3 +886,150 @@ def test_one_agent_approved_action_executor_dry_run_api_and_dashboard_are_safe(
     assert "Approved Action Executor Dry Run" in text
     assert "approved-action-executors/latest" in text
     assert "fetchApprovedActionExecutor" in text
+
+
+def test_one_agent_final_action_authorization_gate_api_and_dashboard_are_safe(
+    monkeypatch, tmp_path
+):
+    db = tmp_path / "completed_work.db"
+    promotion_ledger = tmp_path / "promotion-ledger.json"
+    approval_ledger = tmp_path / "operator-approvals.json"
+    executor_ledger = tmp_path / "approved-executors.json"
+    final_auth_ledger = tmp_path / "final-authorizations.json"
+    monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(db))
+    monkeypatch.setenv("PRISMATIC_AGY_PROMOTION_LEDGER_STATE", str(promotion_ledger))
+    monkeypatch.setenv("PRISMATIC_AGY_OPERATOR_APPROVAL_STATE", str(approval_ledger))
+    monkeypatch.setenv(
+        "PRISMATIC_AGY_APPROVED_ACTION_EXECUTOR_STATE", str(executor_ledger)
+    )
+    monkeypatch.setenv(
+        "PRISMATIC_AGY_FINAL_ACTION_AUTHORIZATION_STATE", str(final_auth_ledger)
+    )
+    monkeypatch.delenv("PRISMATIC_ALLOW_REAL_APPROVED_ACTION_EXECUTOR", raising=False)
+    row = ingest_completed_work(packet(), db_path=db)
+    client = TestClient(server.app)
+
+    promotion_res = client.post(
+        f"/api/agy/completed-work/{row.id}/promotion-decision",
+        json={"requested_by": "pytest"},
+    )
+    assert promotion_res.status_code == 200
+    promotion = promotion_res.json()["promotion_decision"]
+    approval_res = client.post(
+        f"/api/agy/promotion-decisions/{promotion['promotion_decision_id']}/operator-action",
+        json={"operator_decision": "approve", "requested_by": "pytest"},
+    )
+    assert approval_res.status_code == 200
+    approval = approval_res.json()["operator_action_approval"]
+    executor_res = client.post(
+        f"/api/agy/operator-action-approvals/{approval['operator_action_approval_id']}/executor-dry-run",
+        json={"requested_by": "pytest"},
+    )
+    assert executor_res.status_code == 200
+    executor = executor_res.json()["approved_action_executor"]
+    assert executor["execution_status"] == "dry_run_ready"
+
+    preview = client.get(
+        f"/api/gateway/agy/approved-action-executors/{executor['approved_action_executor_id']}/final-authorization/preview",
+        params={"authorization_decision": "authorize", "requested_by": "pytest"},
+    )
+    assert preview.status_code == 200
+    preview_body = preview.json()
+    assert (
+        preview_body["marker"]
+        == "ONE_AGENT_EXECUTOR_DRY_RUN_TO_FINAL_AUTHORIZATION_GATE_OK"
+    )
+    assert preview_body["persisted"] is False
+    final_auth = preview_body["final_action_authorization"]
+    assert (
+        final_auth["approved_action_executor_id"]
+        == executor["approved_action_executor_id"]
+    )
+    assert (
+        final_auth["operator_action_approval_id"]
+        == approval["operator_action_approval_id"]
+    )
+    assert final_auth["promotion_decision_id"] == promotion["promotion_decision_id"]
+    assert final_auth["completed_work_id"] == row.id
+    assert final_auth["requested_action"] == "open_or_update_pr"
+    assert final_auth["authorization_decision"] == "authorize"
+    assert final_auth["authorization_token_expected"] == (
+        f"APPROVE_EXECUTE_REAL_ACTION:{approval['operator_action_approval_id']}"
+    )
+    assert final_auth["authorization_token_present"] is False
+    assert final_auth["real_execution_env_present"] is False
+    assert final_auth["policy_gate"] == "blocked"
+    assert final_auth["final_guard_state"] == "blocked_by_default"
+    assert final_auth["execution_eligibility"]["eligible"] is False
+    assert final_auth["execution_eligibility"]["executed"] is False
+    assert all(value is False for value in final_auth["side_effects"].values())
+
+    record = client.post(
+        f"/api/gateway/agy/approved-action-executors/{executor['approved_action_executor_id']}/final-authorization",
+        json={"authorization_decision": "authorize", "requested_by": "pytest"},
+    )
+    assert record.status_code == 200
+    recorded = record.json()["final_action_authorization"]
+    assert record.json()["persisted"] is True
+    assert (
+        recorded["final_action_authorization_id"]
+        == final_auth["final_action_authorization_id"]
+    )
+    assert recorded["final_guard_state"] == "blocked_by_default"
+    assert recorded["authorization_token_present"] is False
+    assert recorded["real_execution_env_present"] is False
+    assert all(value is False for value in recorded["side_effects"].values())
+
+    latest = client.get("/api/gateway/agy/final-action-authorizations/latest")
+    assert latest.status_code == 200
+    assert (
+        latest.json()["final_action_authorization"]["final_action_authorization_id"]
+        == recorded["final_action_authorization_id"]
+    )
+    listed = client.get("/api/agy/final-action-authorizations")
+    assert listed.status_code == 200
+    assert listed.json()["count"] == 1
+    detail = client.get(
+        f"/api/agy/final-action-authorizations/{recorded['final_action_authorization_id']}"
+    )
+    assert detail.status_code == 200
+    assert detail.json()["final_action_authorization"]["policy_gate"] == "blocked"
+
+    rejected = client.post(
+        f"/api/agy/approved-action-executors/{executor['approved_action_executor_id']}/final-authorization",
+        json={"authorization_decision": "reject", "requested_by": "pytest"},
+    )
+    assert rejected.status_code == 200
+    rejected_auth = rejected.json()["final_action_authorization"]
+    assert rejected_auth["authorization_decision"] == "reject"
+    assert rejected_auth["policy_gate"] == "blocked"
+    assert rejected_auth["final_guard_state"] == "rejected_by_operator"
+    assert rejected_auth["execution_eligibility"]["eligible"] is False
+    assert all(value is False for value in rejected_auth["side_effects"].values())
+
+    deferred = client.get(
+        f"/api/agy/approved-action-executors/{executor['approved_action_executor_id']}/final-authorization/preview",
+        params={"authorization_decision": "defer", "requested_by": "pytest"},
+    )
+    assert deferred.status_code == 200
+    deferred_auth = deferred.json()["final_action_authorization"]
+    assert deferred_auth["policy_gate"] == "manual_review"
+    assert deferred_auth["final_guard_state"] == "manual_review"
+
+    invalid = client.get(
+        f"/api/agy/approved-action-executors/{executor['approved_action_executor_id']}/final-authorization/preview",
+        params={"authorization_decision": "launch"},
+    )
+    assert invalid.status_code == 400
+    missing = client.get(
+        "/api/gateway/agy/final-action-authorizations/no-such-final-auth"
+    )
+    assert missing.status_code == 404
+
+    dashboard = client.get("/dashboard")
+    assert dashboard.status_code == 200
+    text = dashboard.text
+    assert "Final Action Authorization Gate" in text
+    assert "ONE_AGENT_EXECUTOR_DRY_RUN_TO_FINAL_AUTHORIZATION_GATE_OK" in text
+    assert "final-action-authorizations/latest" in text
+    assert "fetchFinalActionAuthorization" in text
