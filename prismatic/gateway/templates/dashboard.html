@@ -234,6 +234,37 @@
                 </div>
             </section>
 
+            <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-cyan-500/80 shadow-lg shadow-cyan-950/10" data-proof-marker="one-agent-promotion-decision-ledger-card" data-golden-marker="ONE_AGENT_PROMOTION_DECISION_LEDGER_OK">
+                <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <h2 class="text-sm font-bold text-slate-200 uppercase tracking-[0.18em]">Promotion Decision Ledger</h2>
+                            <span id="promotion-ledger-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-slate-700 bg-slate-800 text-slate-300">Checking</span>
+                        </div>
+                        <p class="text-xs text-slate-500">Durable Objective → Key Result → Function → Evidence → Promotion Decision record for one completed-work row. Local ledger only; no real Linear/GitHub side effects.</p>
+                    </div>
+                    <div class="text-[11px] text-slate-400 font-mono" id="promotion-ledger-marker">ONE_AGENT_PROMOTION_DECISION_LEDGER_OK</div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mt-4 text-xs">
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Decision</div>
+                        <div id="promotion-ledger-decision" class="mt-1 font-semibold text-slate-100">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Verification</div>
+                        <div id="promotion-ledger-verification" class="mt-1 font-semibold text-slate-100">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Ledger state</div>
+                        <div id="promotion-ledger-state" class="mt-1 text-[11px] text-slate-300">Awaiting ledger proof</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Side effects</div>
+                        <div id="promotion-ledger-side-effects" class="mt-1 text-[11px] text-slate-400">No decision recorded yet</div>
+                    </div>
+                </div>
+            </section>
+
             <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-fuchsia-500/80 shadow-lg shadow-fuchsia-950/10" data-proof-marker="raw-agent-output-repair-queue-card">
                 <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                     <div class="space-y-1">
@@ -2323,6 +2354,7 @@
                 renderDashboardSummary();
                 await fetchQuotaSummary();
                 await fetchCompletedWorkGate();
+                await fetchPromotionDecisionLedger();
                 await fetchRawAgentOutputQueue();
                 await fetchMergeBacklog();
                 await fetchMorningBriefing();
@@ -2953,6 +2985,41 @@
                     badge.className = "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-rose-500/20 bg-rose-500/10 text-rose-300";
                 }
                 if (reason) reason.textContent = String(err.message || err);
+            }
+        }
+
+        async function fetchPromotionDecisionLedger() {
+            const badge = document.getElementById("promotion-ledger-badge");
+            const decisionEl = document.getElementById("promotion-ledger-decision");
+            const verificationEl = document.getElementById("promotion-ledger-verification");
+            const stateEl = document.getElementById("promotion-ledger-state");
+            const sideEffectsEl = document.getElementById("promotion-ledger-side-effects");
+            try {
+                const res = await fetch(`${API_PREFIX}/agy/promotion-decisions/latest`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const record = data.promotion_decision;
+                const sideEffects = data.side_effects || record?.side_effects || {};
+                const hasRecord = Boolean(record);
+                const ready = record?.status === "decision_ready";
+                if (badge) {
+                    badge.textContent = hasRecord ? (ready ? "Decision Ready" : "Manual Review") : "No Decision";
+                    badge.className = `px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${hasRecord ? (ready ? 'border-cyan-500/20 bg-cyan-500/10 text-cyan-300' : 'border-amber-500/20 bg-amber-500/10 text-amber-300') : 'border-slate-700 bg-slate-800 text-slate-300'}`;
+                }
+                if (decisionEl) decisionEl.textContent = record?.recommendation || "no_decision";
+                if (verificationEl) verificationEl.textContent = record ? `${record.verification_gate || "unknown"} · ${record.verification_lane || "unknown"}` : "—";
+                if (stateEl) stateEl.textContent = record ? `${record.marker}: ${record.promotion_decision_id}` : "No promotion ledger rows";
+                if (sideEffectsEl) {
+                    const unsafe = sideEffects.linear_comment_posted || sideEffects.github_pr_created || sideEffects.auto_merge_enabled || sideEffects.bulk_agent_dispatch;
+                    sideEffectsEl.textContent = unsafe ? "unsafe side effect detected" : "no real Linear/GitHub/auto-merge side effects";
+                }
+            } catch (err) {
+                console.error("Error loading promotion decision ledger:", err);
+                if (badge) {
+                    badge.textContent = "Unavailable";
+                    badge.className = "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-rose-500/20 bg-rose-500/10 text-rose-300";
+                }
+                if (stateEl) stateEl.textContent = String(err.message || err);
             }
         }
 

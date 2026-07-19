@@ -562,3 +562,82 @@ def test_prompt6_executor_run_api_and_dashboard_are_safe(monkeypatch, tmp_path):
     assert "Run Executor Canary Dry Run" in text
     assert "runPrompt6ExecutorCanaryDryRun" in text
     assert "recent_executor_run_history" in text
+
+
+def test_one_agent_promotion_decision_ledger_api_and_dashboard_are_safe(
+    monkeypatch, tmp_path
+):
+    db = tmp_path / "completed_work.db"
+    ledger = tmp_path / "promotion-ledger.json"
+    monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(db))
+    monkeypatch.setenv("PRISMATIC_AGY_PROMOTION_LEDGER_STATE", str(ledger))
+    monkeypatch.setenv("PRISMATIC_AGY_EXECUTOR_RUNS_STATE", str(tmp_path / "runs.json"))
+    row = ingest_completed_work(packet(), db_path=db)
+    client = TestClient(server.app)
+
+    preview = client.get(
+        f"/api/gateway/agy/completed-work/{row.id}/promotion-decision/preview",
+        params={"requested_by": "dashboard-test"},
+    )
+    assert preview.status_code == 200
+    preview_body = preview.json()
+    assert preview_body["marker"] == "ONE_AGENT_PROMOTION_DECISION_LEDGER_OK"
+    assert preview_body["persisted"] is False
+    assert preview_body["promotion_decision"]["recommendation"] == "open_or_update_pr"
+    assert preview_body["promotion_decision"]["status"] == "decision_ready"
+    assert (
+        preview_body["promotion_decision"]["okf"]["promotion_decision"]
+        == "open_or_update_pr"
+    )
+    assert preview_body["side_effects"]["github_pr_created"] is False
+    assert preview_body["side_effects"]["auto_merge_enabled"] is False
+
+    recorded = client.post(
+        f"/api/gateway/agy/completed-work/{row.id}/promotion-decision",
+        json={"requested_by": "dashboard-test"},
+    )
+    assert recorded.status_code == 200
+    record_body = recorded.json()
+    decision = record_body["promotion_decision"]
+    assert record_body["persisted"] is True
+    assert decision["completed_work_id"] == row.id
+    assert decision["packet_classification"] == "packet_valid"
+    assert decision["integration_classification"] == "pass_ready_for_review"
+    assert decision["verification_gate"] == "pass"
+    assert decision["side_effects"]["linear_comment_posted"] is False
+    assert decision["side_effects"]["github_pr_created"] is False
+    assert decision["side_effects"]["auto_merge_enabled"] is False
+    assert ledger.exists()
+
+    listed = client.get("/api/gateway/agy/promotion-decisions")
+    assert listed.status_code == 200
+    listed_body = listed.json()
+    assert listed_body["count"] == 1
+    assert (
+        listed_body["promotion_decisions"][0]["promotion_decision_id"]
+        == decision["promotion_decision_id"]
+    )
+
+    latest = client.get("/api/gateway/agy/promotion-decisions/latest")
+    assert latest.status_code == 200
+    assert (
+        latest.json()["promotion_decision"]["promotion_decision_id"]
+        == decision["promotion_decision_id"]
+    )
+
+    detail = client.get(
+        f"/api/gateway/agy/promotion-decisions/{decision['promotion_decision_id']}"
+    )
+    assert detail.status_code == 200
+    assert detail.json()["promotion_decision"]["recommendation"] == "open_or_update_pr"
+
+    missing = client.get("/api/gateway/agy/promotion-decisions/no-such-decision")
+    assert missing.status_code == 404
+
+    dashboard = client.get("/dashboard")
+    assert dashboard.status_code == 200
+    text = dashboard.text
+    assert "ONE_AGENT_PROMOTION_DECISION_LEDGER_OK" in text
+    assert "Promotion Decision Ledger" in text
+    assert "promotion-decisions/latest" in text
+    assert "fetchPromotionDecisionLedger" in text
