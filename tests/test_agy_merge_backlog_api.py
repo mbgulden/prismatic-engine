@@ -1033,3 +1033,160 @@ def test_one_agent_final_action_authorization_gate_api_and_dashboard_are_safe(
     assert "ONE_AGENT_EXECUTOR_DRY_RUN_TO_FINAL_AUTHORIZATION_GATE_OK" in text
     assert "final-action-authorizations/latest" in text
     assert "fetchFinalActionAuthorization" in text
+
+
+def test_one_agent_quarantined_execution_adapter_api_and_dashboard_are_safe(
+    monkeypatch, tmp_path
+):
+    db = tmp_path / "completed_work.db"
+    promotion_ledger = tmp_path / "promotion-ledger.json"
+    approval_ledger = tmp_path / "operator-approvals.json"
+    executor_ledger = tmp_path / "approved-executors.json"
+    final_auth_ledger = tmp_path / "final-authorizations.json"
+    adapter_ledger = tmp_path / "quarantined-adapters.json"
+    monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(db))
+    monkeypatch.setenv("PRISMATIC_AGY_PROMOTION_LEDGER_STATE", str(promotion_ledger))
+    monkeypatch.setenv("PRISMATIC_AGY_OPERATOR_APPROVAL_STATE", str(approval_ledger))
+    monkeypatch.setenv(
+        "PRISMATIC_AGY_APPROVED_ACTION_EXECUTOR_STATE", str(executor_ledger)
+    )
+    monkeypatch.setenv(
+        "PRISMATIC_AGY_FINAL_ACTION_AUTHORIZATION_STATE", str(final_auth_ledger)
+    )
+    monkeypatch.setenv(
+        "PRISMATIC_AGY_QUARANTINED_EXECUTION_ADAPTER_STATE", str(adapter_ledger)
+    )
+    monkeypatch.delenv("PRISMATIC_ALLOW_REAL_APPROVED_ACTION_EXECUTOR", raising=False)
+    row = ingest_completed_work(packet(), db_path=db)
+    client = TestClient(server.app)
+
+    promotion = client.post(
+        f"/api/agy/completed-work/{row.id}/promotion-decision",
+        json={"requested_by": "pytest"},
+    ).json()["promotion_decision"]
+    approval = client.post(
+        f"/api/agy/promotion-decisions/{promotion['promotion_decision_id']}/operator-action",
+        json={"operator_decision": "approve", "requested_by": "pytest"},
+    ).json()["operator_action_approval"]
+    executor = client.post(
+        f"/api/agy/operator-action-approvals/{approval['operator_action_approval_id']}/executor-dry-run",
+        json={"requested_by": "pytest"},
+    ).json()["approved_action_executor"]
+    final_auth = client.post(
+        f"/api/agy/approved-action-executors/{executor['approved_action_executor_id']}/final-authorization",
+        json={"authorization_decision": "authorize", "requested_by": "pytest"},
+    ).json()["final_action_authorization"]
+
+    preview = client.get(
+        f"/api/gateway/agy/final-action-authorizations/{final_auth['final_action_authorization_id']}/quarantined-adapter/preview",
+        params={"requested_by": "pytest"},
+    )
+    assert preview.status_code == 200
+    preview_body = preview.json()
+    assert (
+        preview_body["marker"]
+        == "ONE_AGENT_FINAL_AUTHORIZATION_TO_QUARANTINED_EXECUTION_ADAPTER_OK"
+    )
+    assert preview_body["persisted"] is False
+    adapter = preview_body["quarantined_execution_adapter"]
+    assert (
+        adapter["final_action_authorization_id"]
+        == final_auth["final_action_authorization_id"]
+    )
+    assert (
+        adapter["approved_action_executor_id"]
+        == executor["approved_action_executor_id"]
+    )
+    assert (
+        adapter["operator_action_approval_id"]
+        == approval["operator_action_approval_id"]
+    )
+    assert adapter["promotion_decision_id"] == promotion["promotion_decision_id"]
+    assert adapter["completed_work_id"] == row.id
+    assert adapter["requested_action"] == "open_or_update_pr"
+    assert adapter["adapter_mode"] == "quarantine_dry_run"
+    assert adapter["adapter_state"] == "blocked_by_final_guard"
+    assert adapter["egress_policy"]["policy"] == "deny_all_external_by_default"
+    assert adapter["egress_policy"]["external_network_allowed"] is False
+    assert adapter["egress_policy"]["github_api_allowed"] is False
+    assert adapter["egress_policy"]["linear_api_allowed"] is False
+    assert adapter["egress_policy"]["git_write_allowed"] is False
+    assert adapter["egress_policy"]["production_deploy_allowed"] is False
+    assert adapter["egress_policy"]["auto_merge_allowed"] is False
+    assert adapter["egress_policy"]["bulk_agent_dispatch_allowed"] is False
+    assert adapter["command_envelope"]["schema"] == (
+        "prismatic.quarantined_execution_adapter.v1"
+    )
+    assert adapter["command_envelope"]["execute"] is False
+    assert adapter["command_envelope"]["dry_run_only"] is True
+    assert len(adapter["command_envelope_sha256"]) == 64
+    assert adapter["audit_packet"]["audit_packet_id"].startswith("adapter-audit-")
+    assert adapter["audit_packet"]["executed"] is False
+    assert all(value is False for value in adapter["side_effects"].values())
+
+    record = client.post(
+        f"/api/agy/final-action-authorizations/{final_auth['final_action_authorization_id']}/quarantined-adapter",
+        json={"requested_by": "pytest"},
+    )
+    assert record.status_code == 200
+    recorded = record.json()["quarantined_execution_adapter"]
+    assert record.json()["persisted"] is True
+    assert (
+        recorded["quarantined_execution_adapter_id"]
+        == adapter["quarantined_execution_adapter_id"]
+    )
+    assert recorded["adapter_state"] == "blocked_by_final_guard"
+    assert all(value is False for value in recorded["side_effects"].values())
+
+    latest = client.get("/api/gateway/agy/quarantined-execution-adapters/latest")
+    assert latest.status_code == 200
+    assert (
+        latest.json()["quarantined_execution_adapter"][
+            "quarantined_execution_adapter_id"
+        ]
+        == recorded["quarantined_execution_adapter_id"]
+    )
+    listed = client.get("/api/agy/quarantined-execution-adapters")
+    assert listed.status_code == 200
+    assert listed.json()["count"] == 1
+    detail = client.get(
+        f"/api/gateway/agy/quarantined-execution-adapters/{recorded['quarantined_execution_adapter_id']}"
+    )
+    assert detail.status_code == 200
+    assert detail.json()["quarantined_execution_adapter"]["adapter_mode"] == (
+        "quarantine_dry_run"
+    )
+
+    rejected_auth = client.post(
+        f"/api/agy/approved-action-executors/{executor['approved_action_executor_id']}/final-authorization",
+        json={"authorization_decision": "reject", "requested_by": "pytest"},
+    ).json()["final_action_authorization"]
+    rejected_adapter = client.get(
+        f"/api/agy/final-action-authorizations/{rejected_auth['final_action_authorization_id']}/quarantined-adapter/preview"
+    ).json()["quarantined_execution_adapter"]
+    assert rejected_adapter["adapter_state"] == "manual_review"
+    assert rejected_adapter["command_envelope"]["execute"] is False
+    assert all(value is False for value in rejected_adapter["side_effects"].values())
+
+    deferred_auth = client.post(
+        f"/api/agy/approved-action-executors/{executor['approved_action_executor_id']}/final-authorization",
+        json={"authorization_decision": "defer", "requested_by": "pytest"},
+    ).json()["final_action_authorization"]
+    deferred_adapter = client.get(
+        f"/api/agy/final-action-authorizations/{deferred_auth['final_action_authorization_id']}/quarantined-adapter/preview"
+    ).json()["quarantined_execution_adapter"]
+    assert deferred_adapter["adapter_state"] == "manual_review"
+    assert deferred_adapter["command_envelope"]["execute"] is False
+    assert all(value is False for value in deferred_adapter["side_effects"].values())
+
+    missing = client.get(
+        "/api/gateway/agy/quarantined-execution-adapters/no-such-adapter"
+    )
+    assert missing.status_code == 404
+    dashboard = client.get("/dashboard")
+    assert dashboard.status_code == 200
+    text = dashboard.text
+    assert "Quarantined Execution Adapter" in text
+    assert "ONE_AGENT_FINAL_AUTHORIZATION_TO_QUARANTINED_EXECUTION_ADAPTER_OK" in text
+    assert "quarantined-execution-adapters/latest" in text
+    assert "fetchQuarantinedExecutionAdapter" in text
