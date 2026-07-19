@@ -3494,7 +3494,9 @@
             const summaryEl = document.getElementById("real-executor-arming-summary");
             if (!badge || !modeEl || !actionEl || !tokenEl || !envEl || !missingEl || !satisfiedEl || !summaryEl) return;
             try {
-                const data = await fetchJson("/api/agy/real-executor-arming-gates/latest");
+                const response = await fetch("/api/agy/real-executor-arming-gates/latest");
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const data = await response.json();
                 const gate = data.real_executor_arming_gate;
                 if (!gate) {
                     badge.textContent = "No Arming Gate";
