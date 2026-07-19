@@ -52,6 +52,7 @@ from prismatic.agy_completed_work import (
     AGY_COMPLETED_WORK_INGESTION_MARKER,
     get_completed_work,
     ingest_completed_work,
+    ingest_completed_work_text,
     list_completed_work,
 )
 from prismatic.agy_merge_backlog import (
@@ -1134,20 +1135,27 @@ async def request_agent_raw_output_rerun(raw_output_id: str) -> dict[str, Any]:
 async def ingest_agy_completed_work(body: dict[str, Any]) -> dict[str, Any]:
     """Persist a completed AGY result packet and gate it for review."""
 
-    packet = body.get("packet") if "packet" in body else body
-    if not isinstance(packet, dict):
-        raise HTTPException(status_code=422, detail="packet must be a JSON object")
-    try:
-        row = ingest_completed_work(
-            packet,
-            dirty_source=bool(body.get("dirty_source", False)),
-            source_is_stale=bool(body.get("source_is_stale", False)),
-            conflicts=body.get("conflicts")
-            if isinstance(body.get("conflicts"), list)
-            else None,
-        )
-    except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    packet_text = body.get("completed_work_text") or body.get("log_text")
+    if isinstance(packet_text, str):
+        try:
+            row = ingest_completed_work_text(packet_text)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    else:
+        packet = body.get("packet") if "packet" in body else body
+        if not isinstance(packet, dict):
+            raise HTTPException(status_code=422, detail="packet must be a JSON object")
+        try:
+            row = ingest_completed_work(
+                packet,
+                dirty_source=bool(body.get("dirty_source", False)),
+                source_is_stale=bool(body.get("source_is_stale", False)),
+                conflicts=body.get("conflicts")
+                if isinstance(body.get("conflicts"), list)
+                else None,
+            )
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {
         "status": "accepted",
         "marker": AGY_COMPLETED_WORK_INGESTION_MARKER,

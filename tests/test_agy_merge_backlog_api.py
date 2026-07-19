@@ -1,10 +1,31 @@
 from copy import deepcopy
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from prismatic.agy_completed_work import ingest_completed_work
 from prismatic.completed_work_gate import demo_completed_work_packet
 from prismatic.gateway import server
+
+
+def completed_work_text(marker: str = "AGY_API_LOG_PACKET_OK") -> str:
+    return f"""
+COMMAND=$HOME/.prismatic/venv_stable/bin/python -m pytest tests/test_agy_completed_work.py -q
+RESULT=PASS
+LOG=/tmp/agy-api-log-packet-proof.log
+SCOPE=completed-work API text ingestion gate
+AD_HOC_OR_CANONICAL=ad-hoc targeted
+NOT_CLAIMING=production_deployed,auto_merge_enabled,real_github_pr_created,real_Linear_writeback_posted,bulk_agent_dispatch,overnight_autopilot
+MARKER={marker}
+AGENT=agy
+ISSUE_IDENTIFIER=GRO-AGY-API-1
+SOURCE_BRANCH=feature/agy-api-log-packet
+SOURCE_PATH={Path.home() / ".prismatic" / "agy-result-packets" / "GRO-AGY-API-1"}
+BASE_BRANCH=main
+CHANGED_FILES=prismatic/agy_completed_work.py,tests/test_agy_completed_work.py
+RESULT_SUMMARY=AGY compact log packet ingested through API
+VERIFICATION_LANE=backend-api
+""".strip()
 
 
 def packet():
@@ -36,6 +57,51 @@ def seed(monkeypatch, tmp_path):
     monkeypatch.setenv("PRISMATIC_AGY_EXECUTOR_RUNS_STATE", str(executor_runs))
     row = ingest_completed_work(packet(), db_path=db)
     return row
+
+
+def test_completed_work_api_ingests_text_and_lists_bridge_payload(
+    monkeypatch, tmp_path
+):
+    db = tmp_path / "completed_work.db"
+    monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(db))
+    monkeypatch.setenv("PRISMATIC_AGY_EXECUTOR_RUNS_STATE", str(tmp_path / "runs.json"))
+    client = TestClient(server.app)
+
+    ingested = client.post(
+        "/api/gateway/agy/completed-work/ingest",
+        json={"completed_work_text": completed_work_text()},
+    )
+    assert ingested.status_code == 200
+    completed = ingested.json()["completed_work"]
+    assert completed["integration_classification"] == "pass_ready_for_review"
+    assert completed["linear_writeback"]["posted"] is False
+    assert completed["linear_writeback"]["dry_run"] is True
+    assert (
+        completed["linear_writeback"]["marker"]
+        == "AGY_COMPLETED_WORK_INTEGRATION_GATE_OK"
+    )
+    assert "real_Linear_writeback_posted" in completed["non_claims"]
+
+    listed = client.get("/api/gateway/agy/completed-work")
+    assert listed.status_code == 200
+    listed_body = listed.json()
+    assert listed_body["count"] == 1
+    assert listed_body["completed_work"][0]["id"] == completed["id"]
+    assert (
+        listed_body["completed_work"][0]["integration_classification"]
+        == "pass_ready_for_review"
+    )
+
+    rejected = client.post(
+        "/api/gateway/agy/completed-work/ingest",
+        json={
+            "completed_work_text": completed_work_text(marker="<EXPECTED_OK_MARKER>")
+        },
+    )
+    assert rejected.status_code == 422
+    assert (
+        "template completed-work packet field is not proof" in rejected.json()["detail"]
+    )
 
 
 def test_merge_backlog_api_list_detail_and_verify_use_persisted_rows(

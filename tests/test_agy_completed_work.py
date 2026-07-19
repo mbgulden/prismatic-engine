@@ -6,10 +6,14 @@ import sys
 
 from prismatic.agy_completed_work import (
     AGY_COMPLETED_WORK_INGESTION_MARKER,
+    AGY_COMPLETED_WORK_INTEGRATION_GATE_MARKER,
     AGY_PACKET_NORMALIZATION_MARKER,
     AgyCompletedWorkStore,
     completed_work_id,
+    ingest_completed_work_file,
+    ingest_completed_work_text,
     normalize_agy_result_packet,
+    parse_completed_work_packet_text,
 )
 from prismatic.completed_work_gate import (
     AGY_COMPLETED_WORK_MARKER,
@@ -90,6 +94,28 @@ def canonical_agy_packet():
     }
 
 
+def compact_completed_work_text(
+    *, result: str = "PASS", marker: str = "AGY_LOG_PACKET_OK"
+) -> str:
+    return f"""
+COMMAND=$HOME/.prismatic/venv_stable/bin/python -m pytest tests/test_agy_completed_work.py -q
+RESULT={result}
+LOG=/tmp/agy-log-packet-proof.log
+SCOPE=completed-work log ingestion gate
+AD_HOC_OR_CANONICAL=ad-hoc targeted
+NOT_CLAIMING=production_deployed,auto_merge_enabled,real_github_pr_created,real_Linear_writeback_posted,bulk_agent_dispatch,overnight_autopilot
+MARKER={marker}
+AGENT=agy
+ISSUE_IDENTIFIER=GRO-AGY-LOG-1
+SOURCE_BRANCH=feature/agy-log-packet
+SOURCE_PATH={Path.home() / ".prismatic" / "agy-result-packets" / "GRO-AGY-LOG-1"}
+BASE_BRANCH=main
+CHANGED_FILES=prismatic/agy_completed_work.py,tests/test_agy_completed_work.py
+RESULT_SUMMARY=AGY compact log packet ingested safely
+VERIFICATION_LANE=backend-api
+""".strip()
+
+
 def test_ingest_persists_packet_and_gate_state(tmp_path):
     store = AgyCompletedWorkStore(tmp_path / "agy_completed_work.db")
     row = store.ingest(packet())
@@ -101,6 +127,18 @@ def test_ingest_persists_packet_and_gate_state(tmp_path):
     assert row.eligible_for_merge is True
     assert row.gate["classification"] == "merge_ready"
     assert row.packet["agent"] == "agy"
+    assert row.integration_classification == "pass_ready_for_review"
+    assert row.as_dict()["integration_classification"] == "pass_ready_for_review"
+    assert (
+        row.as_dict()["integration_marker"]
+        == AGY_COMPLETED_WORK_INTEGRATION_GATE_MARKER
+    )
+    assert row.as_dict()["linear_writeback"]["posted"] is False
+    assert row.as_dict()["linear_writeback"]["dry_run"] is True
+    assert (
+        row.as_dict()["linear_writeback"]["marker"]
+        == AGY_COMPLETED_WORK_INTEGRATION_GATE_MARKER
+    )
     assert row.non_claims == ("production_deployed", "auto_merge")
 
     fetched = store.get(row.id)
@@ -275,6 +313,84 @@ def test_packet_normalization_preserves_non_claims_without_positive_proof():
         "real_github_pr_created",
     ]
     assert "auto_merge" not in normalized["proof"]
+
+
+def test_ingest_completed_work_text_persists_log_packet(tmp_path):
+    row = ingest_completed_work_text(
+        compact_completed_work_text(), db_path=tmp_path / "agy_completed_work.db"
+    )
+
+    assert row.classification == "merge_ready"
+    assert row.integration_classification == "pass_ready_for_review"
+    assert row.proof_result == "PASS"
+    assert row.proof_marker == "AGY_LOG_PACKET_OK"
+    assert row.as_dict()["linear_writeback"]["posted"] is False
+    assert (
+        row.as_dict()["linear_writeback"]["body"].count(
+            "REAL_LINEAR_WRITEBACK_POSTED=false"
+        )
+        == 1
+    )
+    assert "real_Linear_writeback_posted" in row.non_claims
+    assert "production_deployed" in row.non_claims
+
+
+def test_ingest_completed_work_file_accepts_fred_or_jules_compatible_packet(tmp_path):
+    packet_path = tmp_path / "jules-result.log"
+    packet_path.write_text(
+        compact_completed_work_text(marker="JULES_SESSION_RESULT_OK").replace(
+            "AGENT=agy", "AGENT=jules"
+        ),
+        encoding="utf-8",
+    )
+
+    row = ingest_completed_work_file(
+        packet_path, db_path=tmp_path / "agy_completed_work.db"
+    )
+
+    assert row.agent == "jules"
+    assert row.integration_classification == "pass_ready_for_review"
+    assert row.proof_marker == "JULES_SESSION_RESULT_OK"
+
+
+def test_completed_work_text_rejects_template_placeholder_marker():
+    template = compact_completed_work_text(marker="<EXPECTED_OK_MARKER>")
+
+    try:
+        parse_completed_work_packet_text(template)
+    except ValueError as exc:
+        assert "template completed-work packet field is not proof: MARKER" in str(exc)
+    else:  # pragma: no cover - defensive fail clarity
+        raise AssertionError("template marker should not count as completed work")
+
+
+def test_completed_work_text_rejects_missing_required_packet_lines():
+    missing_log = compact_completed_work_text().replace(
+        "LOG=/tmp/agy-log-packet-proof.log\n", ""
+    )
+
+    try:
+        parse_completed_work_packet_text(missing_log)
+    except ValueError as exc:
+        assert "missing completed-work packet fields: LOG" in str(exc)
+    else:  # pragma: no cover - defensive fail clarity
+        raise AssertionError("missing LOG should be repairable invalid work")
+
+
+def test_failed_and_blocked_packets_get_bridge_classifications(tmp_path):
+    failed = ingest_completed_work_text(
+        compact_completed_work_text(result="FAIL", marker="AGY_LOG_PACKET_FAIL"),
+        db_path=tmp_path / "agy_completed_work.db",
+    )
+    blocked = ingest_completed_work_text(
+        compact_completed_work_text(result="BLOCKED", marker="AGY_LOG_PACKET_BLOCKED"),
+        db_path=tmp_path / "agy_completed_work.db",
+    )
+
+    assert failed.integration_classification == "failed_needs_repair"
+    assert failed.as_dict()["linear_writeback"]["status"] == "needs_repair"
+    assert blocked.integration_classification == "blocked_needs_operator"
+    assert blocked.as_dict()["linear_writeback"]["status"] == "blocked_needs_operator"
 
 
 def test_ingest_cli_runs_from_outside_repo(tmp_path):
