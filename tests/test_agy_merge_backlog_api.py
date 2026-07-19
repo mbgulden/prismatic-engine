@@ -1362,3 +1362,173 @@ def test_one_agent_sandboxed_execution_canary_api_and_dashboard_are_safe(
     assert "ONE_AGENT_QUARANTINED_ADAPTER_TO_SANDBOXED_EXECUTION_CANARY_OK" in text
     assert "sandboxed-execution-canaries/latest" in text
     assert "fetchSandboxedExecutionCanary" in text
+
+
+def test_one_agent_real_executor_arming_gate_api_and_dashboard_are_safe(
+    monkeypatch, tmp_path
+):
+    db = tmp_path / "completed_work.db"
+    promotion_ledger = tmp_path / "promotion-ledger.json"
+    approval_ledger = tmp_path / "operator-approvals.json"
+    executor_ledger = tmp_path / "approved-executors.json"
+    final_auth_ledger = tmp_path / "final-authorizations.json"
+    adapter_ledger = tmp_path / "quarantined-adapters.json"
+    canary_ledger = tmp_path / "sandbox-canaries.json"
+    arming_ledger = tmp_path / "real-executor-arming.json"
+    monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(db))
+    monkeypatch.setenv("PRISMATIC_AGY_PROMOTION_LEDGER_STATE", str(promotion_ledger))
+    monkeypatch.setenv("PRISMATIC_AGY_OPERATOR_APPROVAL_STATE", str(approval_ledger))
+    monkeypatch.setenv(
+        "PRISMATIC_AGY_APPROVED_ACTION_EXECUTOR_STATE", str(executor_ledger)
+    )
+    monkeypatch.setenv(
+        "PRISMATIC_AGY_FINAL_ACTION_AUTHORIZATION_STATE", str(final_auth_ledger)
+    )
+    monkeypatch.setenv(
+        "PRISMATIC_AGY_QUARANTINED_EXECUTION_ADAPTER_STATE", str(adapter_ledger)
+    )
+    monkeypatch.setenv(
+        "PRISMATIC_AGY_SANDBOXED_EXECUTION_CANARY_STATE", str(canary_ledger)
+    )
+    monkeypatch.setenv(
+        "PRISMATIC_AGY_REAL_EXECUTOR_ARMING_GATE_STATE", str(arming_ledger)
+    )
+    monkeypatch.delenv("PRISMATIC_REAL_EXECUTOR_ARMING_TOKEN", raising=False)
+    monkeypatch.delenv("PRISMATIC_ALLOW_REAL_EXECUTOR_ARMING", raising=False)
+    row = ingest_completed_work(packet(), db_path=db)
+    client = TestClient(server.app)
+
+    promotion = client.post(
+        f"/api/agy/completed-work/{row.id}/promotion-decision",
+        json={"requested_by": "pytest"},
+    ).json()["promotion_decision"]
+    approval = client.post(
+        f"/api/agy/promotion-decisions/{promotion['promotion_decision_id']}/operator-action",
+        json={"operator_decision": "approve", "requested_by": "pytest"},
+    ).json()["operator_action_approval"]
+    executor = client.post(
+        f"/api/agy/operator-action-approvals/{approval['operator_action_approval_id']}/executor-dry-run",
+        json={"requested_by": "pytest"},
+    ).json()["approved_action_executor"]
+    authorization = client.post(
+        f"/api/agy/approved-action-executors/{executor['approved_action_executor_id']}/final-authorization",
+        json={"authorization_decision": "authorize", "requested_by": "pytest"},
+    ).json()["final_action_authorization"]
+    adapter = client.post(
+        f"/api/agy/final-action-authorizations/{authorization['final_action_authorization_id']}/quarantined-adapter",
+        json={"requested_by": "pytest"},
+    ).json()["quarantined_execution_adapter"]
+    canary = client.post(
+        f"/api/agy/quarantined-execution-adapters/{adapter['quarantined_execution_adapter_id']}/sandbox-canary",
+        json={"requested_by": "pytest"},
+    ).json()["sandboxed_execution_canary"]
+
+    preview = client.get(
+        f"/api/agy/sandboxed-execution-canaries/{canary['sandboxed_execution_canary_id']}/real-executor-arming/preview"
+    )
+    assert preview.status_code == 200
+    payload = preview.json()
+    assert (
+        payload["marker"]
+        == "ONE_AGENT_SANDBOXED_CANARY_TO_REAL_EXECUTOR_ARMING_GATE_OK"
+    )
+    assert payload["persisted"] is False
+    gate = payload["real_executor_arming_gate"]
+    assert (
+        gate["sandboxed_execution_canary_id"] == canary["sandboxed_execution_canary_id"]
+    )
+    assert (
+        gate["quarantined_execution_adapter_id"]
+        == adapter["quarantined_execution_adapter_id"]
+    )
+    assert (
+        gate["final_action_authorization_id"]
+        == authorization["final_action_authorization_id"]
+    )
+    assert (
+        gate["approved_action_executor_id"] == executor["approved_action_executor_id"]
+    )
+    assert (
+        gate["operator_action_approval_id"] == approval["operator_action_approval_id"]
+    )
+    assert gate["promotion_decision_id"] == promotion["promotion_decision_id"]
+    assert gate["completed_work_id"] == row.id
+    assert gate["requested_action"] == "open_or_update_pr"
+    assert gate["arming_mode"] == "readiness_gate_only"
+    assert gate["arming_state"] == "blocked_missing_real_authorization"
+    assert gate["operator_token_expected"] == (
+        f"ARM_REAL_EXECUTOR:{canary['sandboxed_execution_canary_id']}"
+    )
+    assert gate["operator_token_present"] is False
+    assert gate["real_executor_env_present"] is False
+    assert gate["real_executor_implemented"] is False
+    assert gate["real_executor_invoked"] is False
+    assert gate["execution_eligibility"]["executed"] is False
+    missing_keys = {item["key"] for item in gate["missing_prerequisites"]}
+    assert "operator_token_present" in missing_keys
+    assert "real_executor_env_present" in missing_keys
+    assert "real_executor_implementation_registered" in missing_keys
+    satisfied_keys = {item["key"] for item in gate["satisfied_prerequisites"]}
+    assert "command_envelope_verified" in satisfied_keys
+    assert "sandbox_transcript_present" in satisfied_keys
+    assert "sandbox_side_effects_false" in satisfied_keys
+    assert gate["executor_contract_preview"]["real_executor_invoked"] is False
+    assert gate["executor_contract_preview"]["executed"] is False
+    assert all(value is False for value in gate["side_effects"].values())
+
+    recorded = client.post(
+        f"/api/agy/sandboxed-execution-canaries/{canary['sandboxed_execution_canary_id']}/real-executor-arming",
+        json={"requested_by": "pytest"},
+    )
+    assert recorded.status_code == 200
+    record = recorded.json()["real_executor_arming_gate"]
+    assert recorded.json()["persisted"] is True
+    assert (
+        record["real_executor_arming_gate_id"] == gate["real_executor_arming_gate_id"]
+    )
+
+    latest = client.get("/api/agy/real-executor-arming-gates/latest")
+    assert latest.status_code == 200
+    assert (
+        latest.json()["real_executor_arming_gate"]["real_executor_arming_gate_id"]
+        == record["real_executor_arming_gate_id"]
+    )
+    listed = client.get("/api/gateway/agy/real-executor-arming-gates")
+    assert listed.status_code == 200
+    assert listed.json()["count"] == 1
+    detail = client.get(
+        f"/api/gateway/agy/real-executor-arming-gates/{record['real_executor_arming_gate_id']}"
+    )
+    assert detail.status_code == 200
+    assert detail.json()["real_executor_arming_gate"]["arming_state"] == (
+        "blocked_missing_real_authorization"
+    )
+
+    deferred_auth = client.post(
+        f"/api/agy/approved-action-executors/{executor['approved_action_executor_id']}/final-authorization",
+        json={"authorization_decision": "defer", "requested_by": "pytest"},
+    ).json()["final_action_authorization"]
+    deferred_adapter = client.post(
+        f"/api/agy/final-action-authorizations/{deferred_auth['final_action_authorization_id']}/quarantined-adapter",
+        json={"requested_by": "pytest"},
+    ).json()["quarantined_execution_adapter"]
+    deferred_canary = client.post(
+        f"/api/agy/quarantined-execution-adapters/{deferred_adapter['quarantined_execution_adapter_id']}/sandbox-canary",
+        json={"requested_by": "pytest"},
+    ).json()["sandboxed_execution_canary"]
+    manual_gate = client.get(
+        f"/api/agy/sandboxed-execution-canaries/{deferred_canary['sandboxed_execution_canary_id']}/real-executor-arming/preview"
+    ).json()["real_executor_arming_gate"]
+    assert manual_gate["arming_state"] == "manual_review"
+    assert manual_gate["execution_eligibility"]["executed"] is False
+    assert all(value is False for value in manual_gate["side_effects"].values())
+
+    missing = client.get("/api/gateway/agy/real-executor-arming-gates/no-such-gate")
+    assert missing.status_code == 404
+    dashboard = client.get("/dashboard")
+    assert dashboard.status_code == 200
+    text = dashboard.text
+    assert "Real Executor Arming Gate" in text
+    assert "ONE_AGENT_SANDBOXED_CANARY_TO_REAL_EXECUTOR_ARMING_GATE_OK" in text
+    assert "real-executor-arming-gates/latest" in text
+    assert "fetchRealExecutorArmingGate" in text

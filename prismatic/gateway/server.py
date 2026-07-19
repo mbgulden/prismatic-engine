@@ -115,6 +115,14 @@ from prismatic.agy_sandboxed_execution_canary import (
     list_sandboxed_execution_canaries,
     record_sandboxed_execution_canary,
 )
+from prismatic.agy_real_executor_arming_gate import (
+    ONE_AGENT_SANDBOXED_CANARY_TO_REAL_EXECUTOR_ARMING_GATE_MARKER,
+    build_real_executor_arming_gate,
+    get_real_executor_arming_gate,
+    latest_or_record_real_executor_arming_gate,
+    list_real_executor_arming_gates,
+    record_real_executor_arming_gate,
+)
 from prismatic.agy_executor_runs import (
     PROMPT7_EXECUTOR_API_AUDIT_WRITEBACK_MARKER,
     build_prompt6_executor_canary_dry_run,
@@ -2314,6 +2322,141 @@ async def get_one_agent_sandboxed_execution_canary(
         "marker": ONE_AGENT_QUARANTINED_ADAPTER_TO_SANDBOXED_EXECUTION_CANARY_MARKER,
         "sandboxed_execution_canary": canary,
         "side_effects": canary["side_effects"],
+    }
+
+
+@app.get(
+    "/api/agy/sandboxed-execution-canaries/{sandboxed_execution_canary_id}/real-executor-arming/preview"
+)
+@app.get(
+    "/api/gateway/agy/sandboxed-execution-canaries/{sandboxed_execution_canary_id}/real-executor-arming/preview"
+)
+async def preview_one_agent_real_executor_arming_gate(
+    sandboxed_execution_canary_id: str,
+    requested_by: str = Query(default="dashboard"),
+) -> dict[str, Any]:
+    """Preview real executor arming readiness without persisting."""
+
+    try:
+        gate = build_real_executor_arming_gate(
+            sandboxed_execution_canary_id, requested_by=requested_by
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail="sandboxed execution canary not found"
+        ) from exc
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_SANDBOXED_CANARY_TO_REAL_EXECUTOR_ARMING_GATE_MARKER,
+        "real_executor_arming_gate": gate,
+        "persisted": False,
+        "side_effects": gate["side_effects"],
+    }
+
+
+@app.post(
+    "/api/agy/sandboxed-execution-canaries/{sandboxed_execution_canary_id}/real-executor-arming"
+)
+@app.post(
+    "/api/gateway/agy/sandboxed-execution-canaries/{sandboxed_execution_canary_id}/real-executor-arming"
+)
+def record_one_agent_real_executor_arming_gate(
+    sandboxed_execution_canary_id: str, payload: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Persist a durable real executor arming readiness gate."""
+
+    body = payload or {}
+    try:
+        gate = record_real_executor_arming_gate(
+            sandboxed_execution_canary_id,
+            requested_by=str(body.get("requested_by") or "dashboard"),
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail="sandboxed execution canary not found"
+        ) from exc
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_SANDBOXED_CANARY_TO_REAL_EXECUTOR_ARMING_GATE_MARKER,
+        "real_executor_arming_gate": gate,
+        "persisted": True,
+        "side_effects": gate["side_effects"],
+    }
+
+
+@app.get("/api/agy/real-executor-arming-gates")
+@app.get("/api/gateway/agy/real-executor-arming-gates")
+async def list_one_agent_real_executor_arming_gates(
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict[str, Any]:
+    """List durable real executor arming gate records."""
+
+    records = list_real_executor_arming_gates(limit=limit)
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_SANDBOXED_CANARY_TO_REAL_EXECUTOR_ARMING_GATE_MARKER,
+        "count": len(records),
+        "real_executor_arming_gates": records,
+        "side_effects": {
+            "linear_comment_posted": False,
+            "github_pr_created": False,
+            "auto_merge_enabled": False,
+            "production_deployed": False,
+            "real_executor_armed": False,
+            "real_executor_invoked": False,
+            "executed": False,
+        },
+    }
+
+
+@app.get("/api/agy/real-executor-arming-gates/latest")
+@app.get("/api/gateway/agy/real-executor-arming-gates/latest")
+async def latest_one_agent_real_executor_arming_gate(
+    requested_by: str = Query(default="dashboard"),
+) -> dict[str, Any]:
+    """Return latest real executor arming gate, auto-recording safe default."""
+
+    gate = latest_or_record_real_executor_arming_gate(requested_by=requested_by)
+    if gate is None:
+        return {
+            "status": "empty",
+            "marker": ONE_AGENT_SANDBOXED_CANARY_TO_REAL_EXECUTOR_ARMING_GATE_MARKER,
+            "real_executor_arming_gate": None,
+            "side_effects": {
+                "linear_comment_posted": False,
+                "github_pr_created": False,
+                "auto_merge_enabled": False,
+                "production_deployed": False,
+                "real_executor_armed": False,
+                "real_executor_invoked": False,
+                "executed": False,
+            },
+        }
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_SANDBOXED_CANARY_TO_REAL_EXECUTOR_ARMING_GATE_MARKER,
+        "real_executor_arming_gate": gate,
+        "side_effects": gate["side_effects"],
+    }
+
+
+@app.get("/api/agy/real-executor-arming-gates/{real_executor_arming_gate_id}")
+@app.get("/api/gateway/agy/real-executor-arming-gates/{real_executor_arming_gate_id}")
+async def get_one_agent_real_executor_arming_gate(
+    real_executor_arming_gate_id: str,
+) -> dict[str, Any]:
+    """Return one durable real executor arming gate record."""
+
+    gate = get_real_executor_arming_gate(real_executor_arming_gate_id)
+    if gate is None:
+        raise HTTPException(
+            status_code=404, detail="real executor arming gate not found"
+        )
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_SANDBOXED_CANARY_TO_REAL_EXECUTOR_ARMING_GATE_MARKER,
+        "real_executor_arming_gate": gate,
+        "side_effects": gate["side_effects"],
     }
 
 
