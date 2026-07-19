@@ -641,3 +641,127 @@ def test_one_agent_promotion_decision_ledger_api_and_dashboard_are_safe(
     assert "Promotion Decision Ledger" in text
     assert "promotion-decisions/latest" in text
     assert "fetchPromotionDecisionLedger" in text
+
+
+def test_one_agent_operator_action_approval_api_and_dashboard_are_safe(
+    monkeypatch, tmp_path
+):
+    db = tmp_path / "completed_work.db"
+    promotion_ledger = tmp_path / "promotion-ledger.json"
+    approval_ledger = tmp_path / "operator-approvals.json"
+    monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(db))
+    monkeypatch.setenv("PRISMATIC_AGY_PROMOTION_LEDGER_STATE", str(promotion_ledger))
+    monkeypatch.setenv("PRISMATIC_AGY_OPERATOR_APPROVAL_STATE", str(approval_ledger))
+    monkeypatch.setenv("PRISMATIC_AGY_EXECUTOR_RUNS_STATE", str(tmp_path / "runs.json"))
+    row = ingest_completed_work(packet(), db_path=db)
+    client = TestClient(server.app)
+
+    promotion = client.post(
+        f"/api/gateway/agy/completed-work/{row.id}/promotion-decision",
+        json={"requested_by": "approval-test"},
+    )
+    assert promotion.status_code == 200
+    promotion_decision = promotion.json()["promotion_decision"]
+    assert promotion_decision["status"] == "decision_ready"
+    promotion_decision_id = promotion_decision["promotion_decision_id"]
+
+    preview = client.get(
+        f"/api/gateway/agy/promotion-decisions/{promotion_decision_id}/operator-action/preview",
+        params={"operator_decision": "approve", "requested_by": "dashboard-test"},
+    )
+    assert preview.status_code == 200
+    preview_body = preview.json()
+    assert preview_body["marker"] == "ONE_AGENT_LEDGER_TO_OPERATOR_ACTION_APPROVAL_OK"
+    assert preview_body["persisted"] is False
+    preview_approval = preview_body["operator_action_approval"]
+    assert preview_approval["promotion_decision_id"] == promotion_decision_id
+    assert preview_approval["completed_work_id"] == row.id
+    assert preview_approval["requested_action"] == "open_or_update_pr"
+    assert preview_approval["operator_decision"] == "approve"
+    assert preview_approval["policy_gate"] == "pass"
+    assert preview_approval["execution_preview"]["dry_run_only"] is True
+    assert preview_approval["execution_preview"]["executed"] is False
+    assert (
+        preview_approval["execution_preview"]["side_effects"]["github_pr_created"]
+        is False
+    )
+    assert preview_approval["side_effects"]["linear_comment_posted"] is False
+    assert preview_approval["side_effects"]["github_pr_created"] is False
+    assert preview_approval["side_effects"]["auto_merge_enabled"] is False
+
+    recorded = client.post(
+        f"/api/gateway/agy/promotion-decisions/{promotion_decision_id}/operator-action",
+        json={"operator_decision": "approve", "requested_by": "dashboard-test"},
+    )
+    assert recorded.status_code == 200
+    record_body = recorded.json()
+    approval = record_body["operator_action_approval"]
+    assert record_body["persisted"] is True
+    assert approval["promotion_decision_id"] == promotion_decision_id
+    assert approval["completed_work_id"] == row.id
+    assert approval["requested_action"] == "open_or_update_pr"
+    assert approval["operator_decision"] == "approve"
+    assert approval["policy_gate"] == "pass"
+    assert approval["execution_preview"]["would_execute"] is True
+    assert approval["execution_preview"]["executed"] is False
+    assert approval["side_effects"]["linear_comment_posted"] is False
+    assert approval["side_effects"]["github_pr_created"] is False
+    assert approval["side_effects"]["auto_merge_enabled"] is False
+    assert approval_ledger.exists()
+
+    listed = client.get("/api/gateway/agy/operator-action-approvals")
+    assert listed.status_code == 200
+    listed_body = listed.json()
+    assert listed_body["count"] == 1
+    assert (
+        listed_body["operator_action_approvals"][0]["operator_action_approval_id"]
+        == approval["operator_action_approval_id"]
+    )
+
+    latest = client.get("/api/gateway/agy/operator-action-approvals/latest")
+    assert latest.status_code == 200
+    assert (
+        latest.json()["operator_action_approval"]["operator_action_approval_id"]
+        == approval["operator_action_approval_id"]
+    )
+
+    detail = client.get(
+        f"/api/gateway/agy/operator-action-approvals/{approval['operator_action_approval_id']}"
+    )
+    assert detail.status_code == 200
+    assert detail.json()["operator_action_approval"]["policy_gate"] == "pass"
+
+    rejected = client.post(
+        f"/api/gateway/agy/promotion-decisions/{promotion_decision_id}/operator-action",
+        json={"operator_decision": "reject", "requested_by": "dashboard-test"},
+    )
+    assert rejected.status_code == 200
+    rejected_approval = rejected.json()["operator_action_approval"]
+    assert rejected_approval["operator_decision"] == "reject"
+    assert rejected_approval["policy_gate"] == "blocked"
+    assert rejected_approval["execution_preview"]["would_execute"] is False
+    assert rejected_approval["side_effects"]["github_pr_created"] is False
+
+    deferred = client.get(
+        f"/api/gateway/agy/promotion-decisions/{promotion_decision_id}/operator-action/preview",
+        params={"operator_decision": "defer", "requested_by": "dashboard-test"},
+    )
+    assert deferred.status_code == 200
+    assert deferred.json()["operator_action_approval"]["policy_gate"] == "manual_review"
+
+    invalid = client.get(
+        f"/api/gateway/agy/promotion-decisions/{promotion_decision_id}/operator-action/preview",
+        params={"operator_decision": "launch"},
+    )
+    assert invalid.status_code == 400
+
+    missing = client.get("/api/gateway/agy/operator-action-approvals/no-such-approval")
+    assert missing.status_code == 404
+
+    dashboard = client.get("/dashboard")
+    assert dashboard.status_code == 200
+    text = dashboard.text
+    assert "ONE_AGENT_LEDGER_TO_OPERATOR_ACTION_APPROVAL_OK" in text
+    assert "Operator Action Approval" in text
+    assert "operator-action-approvals/latest" in text
+    assert "fetchOperatorActionApproval" in text
