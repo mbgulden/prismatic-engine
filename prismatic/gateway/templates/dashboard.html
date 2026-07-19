@@ -203,14 +203,14 @@
                 </div>
             </section>
 
-            <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-emerald-500/80 shadow-lg shadow-emerald-950/10" data-proof-marker="agy-completed-work-ingestion-card" data-golden-marker="ONE_AGENT_COMPLETED_WORK_TO_DASHBOARD_LINEAR_DRY_RUN_OK">
+            <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-emerald-500/80 shadow-lg shadow-emerald-950/10" data-proof-marker="agy-completed-work-ingestion-card" data-golden-marker="ONE_AGENT_COMPLETED_WORK_TO_VERIFIED_PR_DRY_RUN_OK">
                 <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                     <div class="space-y-1">
                         <div class="flex items-center gap-2 flex-wrap">
                             <h2 class="text-sm font-bold text-slate-200 uppercase tracking-[0.18em]">AGY Completed Work Gate</h2>
                             <span id="completed-work-gate-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-slate-700 bg-slate-800 text-slate-300">Checking</span>
                         </div>
-                        <p class="text-xs text-slate-500">Persisted AGY handoff rows run through the gate before Fred merge review. No auto-merge.</p>
+                        <p class="text-xs text-slate-500">Persisted AGY handoff rows run through dashboard, Linear, and verified PR dry-run gates before Fred merge review. No real PR, no auto-merge.</p>
                     </div>
                     <div class="text-[11px] text-slate-400 font-mono" id="completed-work-gate-marker">AGY_COMPLETED_WORK_INGESTION_OK</div>
                 </div>
@@ -2921,7 +2921,7 @@
             const linear = document.getElementById("completed-work-linear");
             const reason = document.getElementById("completed-work-reason");
             try {
-                const res = await fetch(`${API_PREFIX}/agy/completed-work/dashboard-linear-dry-run/latest`);
+                const res = await fetch(`${API_PREFIX}/agy/completed-work/verified-pr-dry-run/latest`);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
                 const latest = data.completed_work;
@@ -2931,11 +2931,11 @@
                 const hasRow = Boolean(latest);
                 const ready = dashboard.status === "ready";
                 if (badge) {
-                    badge.textContent = hasRow ? (ready ? "Dashboard + Linear Dry Run" : "Needs Attention") : "No Rows";
+                    badge.textContent = hasRow ? (ready ? "Verified PR Dry Run" : "Needs Attention") : "No Rows";
                     badge.className = `px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${hasRow ? (ready ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300' : 'border-amber-500/20 bg-amber-500/10 text-amber-300') : 'border-slate-700 bg-slate-800 text-slate-300'}`;
                 }
                 if (classification) classification.textContent = dashboard.integration_classification || latest?.integration_classification || "no_rows";
-                if (eligible) eligible.textContent = ready ? "dry-run review" : "no";
+                if (eligible) eligible.textContent = ready ? "verified PR dry-run" : "no";
                 if (linear) {
                     const posted = linearWriteback.posted === true || sideEffects.linear_comment_posted === true;
                     const dryRun = linearWriteback.dry_run !== false;

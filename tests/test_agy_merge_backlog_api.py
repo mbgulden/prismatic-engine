@@ -149,13 +149,76 @@ def test_one_agent_dashboard_linear_dry_run_bridge(monkeypatch, tmp_path):
     assert latest.json()["completed_work"]["id"] == completed["id"]
 
 
+def test_one_agent_completed_work_verified_pr_dry_run_bridge(monkeypatch, tmp_path):
+    db = tmp_path / "completed_work.db"
+    monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(db))
+    monkeypatch.setenv("PRISMATIC_AGY_EXECUTOR_RUNS_STATE", str(tmp_path / "runs.json"))
+    client = TestClient(server.app)
+
+    ingested = client.post(
+        "/api/gateway/agy/completed-work/ingest",
+        json={
+            "completed_work_text": completed_work_text(
+                marker="ONE_AGENT_VERIFIED_PR_PACKET_OK"
+            )
+        },
+    )
+    assert ingested.status_code == 200
+    completed = ingested.json()["completed_work"]
+
+    verified = client.get(
+        f"/api/gateway/agy/completed-work/{completed['id']}/verified-pr-dry-run",
+        params={"requested_by": "dashboard-test"},
+    )
+    assert verified.status_code == 200
+    body = verified.json()
+    assert body["marker"] == "ONE_AGENT_COMPLETED_WORK_TO_VERIFIED_PR_DRY_RUN_OK"
+    assert (
+        body["dashboard"]["marker"]
+        == "ONE_AGENT_COMPLETED_WORK_TO_VERIFIED_PR_DRY_RUN_OK"
+    )
+    assert body["dashboard"]["status"] == "ready"
+    assert body["dashboard"]["verified_pr_dry_run"] is True
+    assert body["dashboard"]["verification_gate"] == "pass"
+    assert body["pr_dry_run"]["github_pr_plan"]["created"] is False
+    assert body["pr_dry_run"]["branch_plan"]["executed"] is False
+    assert body["verification"]["marker"] == "AGY_PR_VERIFICATION_GATE_OK"
+    assert body["verification"]["verification_gate"] == "pass"
+    assert body["verification_artifact"]["status"] == "dry_run_verified"
+    assert (
+        body["verification_artifact"]["marker"]
+        == "ONE_AGENT_COMPLETED_WORK_TO_VERIFIED_PR_DRY_RUN_OK"
+    )
+    assert body["verification_artifact"]["selected_commands"]
+    assert body["verification_artifact"]["real_git_branch_created"] is False
+    assert body["verification_artifact"]["real_github_pr_created"] is False
+    assert body["linear_writeback"]["posted"] is False
+    assert body["linear_writeback"]["dry_run"] is True
+    assert "real_github_pr_created=false" in body["linear_writeback"]["body"]
+    assert body["side_effects"]["linear_comment_posted"] is False
+    assert body["side_effects"]["github_pr_created"] is False
+    assert body["side_effects"]["git_branch_created"] is False
+    assert body["side_effects"]["auto_merge_enabled"] is False
+    assert body["side_effects"]["production_deployed"] is False
+    assert body["non_claims"]["canonical_full_suite_green"] is False
+
+    latest = client.get("/api/gateway/agy/completed-work/verified-pr-dry-run/latest")
+    assert latest.status_code == 200
+    assert latest.json()["completed_work"]["id"] == completed["id"]
+
+    missing = client.get(
+        "/api/gateway/agy/completed-work/no-such-row/verified-pr-dry-run"
+    )
+    assert missing.status_code == 404
+
+
 def test_dashboard_renders_one_agent_completed_work_bridge_marker():
     html = Path("prismatic/gateway/templates/dashboard.html").read_text(
         encoding="utf-8"
     )
-    assert "ONE_AGENT_COMPLETED_WORK_TO_DASHBOARD_LINEAR_DRY_RUN_OK" in html
-    assert "dashboard-linear-dry-run/latest" in html
-    assert "Dashboard + Linear Dry Run" in html
+    assert "ONE_AGENT_COMPLETED_WORK_TO_VERIFIED_PR_DRY_RUN_OK" in html
+    assert "verified-pr-dry-run/latest" in html
+    assert "Verified PR Dry Run" in html
 
 
 def test_merge_backlog_api_list_detail_and_verify_use_persisted_rows(
