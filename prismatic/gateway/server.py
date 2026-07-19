@@ -75,6 +75,14 @@ from prismatic.agy_promotion_ledger import (
     list_promotion_decisions,
     record_promotion_decision,
 )
+from prismatic.agy_operator_action_approval import (
+    ONE_AGENT_LEDGER_TO_OPERATOR_ACTION_APPROVAL_MARKER,
+    build_operator_action_approval,
+    get_operator_action_approval,
+    latest_or_record_operator_action_approval,
+    list_operator_action_approvals,
+    record_operator_action_approval,
+)
 from prismatic.agy_executor_runs import (
     PROMPT7_EXECUTOR_API_AUDIT_WRITEBACK_MARKER,
     build_prompt6_executor_canary_dry_run,
@@ -1586,6 +1594,142 @@ async def get_one_agent_promotion_decision(
         "marker": ONE_AGENT_PROMOTION_DECISION_LEDGER_MARKER,
         "promotion_decision": decision,
         "side_effects": decision["side_effects"],
+    }
+
+
+@app.get("/api/agy/promotion-decisions/{promotion_decision_id}/operator-action/preview")
+@app.get(
+    "/api/gateway/agy/promotion-decisions/{promotion_decision_id}/operator-action/preview"
+)
+async def preview_one_agent_operator_action_approval(
+    promotion_decision_id: str,
+    operator_decision: str = Query(default="approve"),
+    requested_by: str = Query(default="dashboard"),
+    requested_action: str | None = Query(default=None),
+) -> dict[str, Any]:
+    """Preview an operator approve/reject/defer record without persisting."""
+
+    try:
+        approval = build_operator_action_approval(
+            promotion_decision_id,
+            operator_decision=operator_decision,
+            requested_by=requested_by,
+            requested_action=requested_action,
+        ).as_dict()
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail="promotion decision not found"
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_LEDGER_TO_OPERATOR_ACTION_APPROVAL_MARKER,
+        "operator_action_approval": approval,
+        "persisted": False,
+        "side_effects": approval["side_effects"],
+    }
+
+
+@app.post("/api/agy/promotion-decisions/{promotion_decision_id}/operator-action")
+@app.post(
+    "/api/gateway/agy/promotion-decisions/{promotion_decision_id}/operator-action"
+)
+def record_one_agent_operator_action_approval(
+    promotion_decision_id: str, payload: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Persist a durable operator approve/reject/defer record."""
+
+    body = payload or {}
+    try:
+        approval = record_operator_action_approval(
+            promotion_decision_id,
+            operator_decision=str(body.get("operator_decision") or "approve"),
+            requested_by=str(body.get("requested_by") or "dashboard"),
+            requested_action=body.get("requested_action"),
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail="promotion decision not found"
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_LEDGER_TO_OPERATOR_ACTION_APPROVAL_MARKER,
+        "operator_action_approval": approval,
+        "persisted": True,
+        "side_effects": approval["side_effects"],
+    }
+
+
+@app.get("/api/agy/operator-action-approvals")
+@app.get("/api/gateway/agy/operator-action-approvals")
+async def list_one_agent_operator_action_approvals(
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict[str, Any]:
+    """List durable operator action approval records."""
+
+    records = list_operator_action_approvals(limit=limit)
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_LEDGER_TO_OPERATOR_ACTION_APPROVAL_MARKER,
+        "count": len(records),
+        "operator_action_approvals": records,
+        "side_effects": {
+            "linear_comment_posted": False,
+            "github_pr_created": False,
+            "auto_merge_enabled": False,
+            "bulk_agent_dispatch": False,
+        },
+    }
+
+
+@app.get("/api/agy/operator-action-approvals/latest")
+@app.get("/api/gateway/agy/operator-action-approvals/latest")
+async def latest_one_agent_operator_action_approval(
+    requested_by: str = Query(default="dashboard"),
+) -> dict[str, Any]:
+    """Return the latest approval, materializing an approve preview record if needed."""
+
+    approval = latest_or_record_operator_action_approval(requested_by=requested_by)
+    if approval is None:
+        return {
+            "status": "empty",
+            "marker": ONE_AGENT_LEDGER_TO_OPERATOR_ACTION_APPROVAL_MARKER,
+            "operator_action_approval": None,
+            "side_effects": {
+                "linear_comment_posted": False,
+                "github_pr_created": False,
+                "auto_merge_enabled": False,
+                "bulk_agent_dispatch": False,
+            },
+        }
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_LEDGER_TO_OPERATOR_ACTION_APPROVAL_MARKER,
+        "operator_action_approval": approval,
+        "side_effects": approval["side_effects"],
+    }
+
+
+@app.get("/api/agy/operator-action-approvals/{operator_action_approval_id}")
+@app.get("/api/gateway/agy/operator-action-approvals/{operator_action_approval_id}")
+async def get_one_agent_operator_action_approval(
+    operator_action_approval_id: str,
+) -> dict[str, Any]:
+    """Return one durable operator action approval record."""
+
+    approval = get_operator_action_approval(operator_action_approval_id)
+    if approval is None:
+        raise HTTPException(
+            status_code=404, detail="operator action approval not found"
+        )
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_LEDGER_TO_OPERATOR_ACTION_APPROVAL_MARKER,
+        "operator_action_approval": approval,
+        "side_effects": approval["side_effects"],
     }
 
 

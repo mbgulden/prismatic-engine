@@ -1,0 +1,279 @@
+"""Durable operator action approvals for one-agent promotion decisions.
+
+This module is the safe bridge after the promotion-decision ledger: it records
+whether an operator approved, rejected, or deferred the recommended action and
+returns only dry-run execution previews. It never creates GitHub PRs, posts
+Linear comments, enables auto-merge, dispatches agents, or deploys production.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from prismatic.agy_promotion_ledger import (
+    get_promotion_decision,
+    latest_or_record_decision,
+    list_promotion_decisions,
+)
+
+ONE_AGENT_LEDGER_TO_OPERATOR_ACTION_APPROVAL_MARKER = (
+    "ONE_AGENT_LEDGER_TO_OPERATOR_ACTION_APPROVAL_OK"
+)
+VALID_OPERATOR_DECISIONS = {"approve", "reject", "defer"}
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _state_path(path: str | Path | None = None) -> Path:
+    if path:
+        return Path(path)
+    explicit = os.environ.get("PRISMATIC_AGY_OPERATOR_APPROVAL_STATE")
+    if explicit:
+        return Path(explicit)
+    state_dir = os.environ.get("PRISMATIC_STATE_DIR")
+    if state_dir:
+        return Path(state_dir) / "agy_operator_action_approvals.json"
+    return Path("prismatic_state") / "agy_operator_action_approvals.json"
+
+
+def _read(path: str | Path | None = None) -> list[dict[str, Any]]:
+    p = _state_path(path)
+    if not p.exists():
+        return []
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+    if isinstance(data, list):
+        return [item for item in data if isinstance(item, dict)]
+    return []
+
+
+def _write(records: list[dict[str, Any]], path: str | Path | None = None) -> None:
+    p = _state_path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(records, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _approval_id(promotion_decision_id: str, operator_decision: str) -> str:
+    digest = hashlib.sha256(
+        f"{promotion_decision_id}:{operator_decision}".encode("utf-8")
+    ).hexdigest()[:16]
+    return f"operator-approval-{digest}"
+
+
+def _side_effects() -> dict[str, bool]:
+    return {
+        "linear_comment_posted": False,
+        "github_pr_created": False,
+        "git_branch_created": False,
+        "auto_merge_enabled": False,
+        "production_deployed": False,
+        "bulk_agent_dispatch": False,
+        "overnight_autopilot": False,
+    }
+
+
+def _non_claims() -> dict[str, bool]:
+    return {
+        "real_linear_writeback": False,
+        "real_github_pr_creation": False,
+        "auto_merge": False,
+        "bulk_agy_dispatch": False,
+        "broad_overnight_autopilot": False,
+        "production_deploy": False,
+        "canonical_full_suite_green": False,
+        "real_execution": False,
+    }
+
+
+def _normalize_operator_decision(operator_decision: str | None) -> str:
+    decision = str(operator_decision or "approve").strip().lower()
+    if decision not in VALID_OPERATOR_DECISIONS:
+        raise ValueError("operator_decision must be one of approve, reject, or defer")
+    return decision
+
+
+def _policy_gate(
+    promotion_decision: dict[str, Any], operator_decision: str, requested_action: str
+) -> str:
+    if operator_decision == "reject":
+        return "blocked"
+    if operator_decision == "defer":
+        return "manual_review"
+    if (
+        promotion_decision.get("status") == "decision_ready"
+        and promotion_decision.get("recommendation") == requested_action
+        and requested_action == "open_or_update_pr"
+    ):
+        return "pass"
+    return "manual_review"
+
+
+def _execution_preview(
+    promotion_decision: dict[str, Any], requested_action: str, policy_gate: str
+) -> dict[str, Any]:
+    completed_work_id = str(promotion_decision.get("completed_work_id") or "")
+    target_issue = promotion_decision.get("target_issue") or completed_work_id
+    allowed = policy_gate == "pass"
+    return {
+        "dry_run_only": True,
+        "requested_action": requested_action,
+        "would_execute": allowed,
+        "execution_implemented": False,
+        "executed": False,
+        "target_issue": target_issue,
+        "completed_work_id": completed_work_id,
+        "summary": (
+            "DRY_RUN_ONLY: operator approved open/update PR plan; real execution still requires a separate final side-effect gate"
+            if allowed
+            else "DRY_RUN_ONLY: no execution eligible from this operator decision"
+        ),
+        "commands": {
+            "github_pr": "DRY_RUN_ONLY: no gh pr create command executed",
+            "linear": "DRY_RUN_ONLY: no Linear comment posted",
+        },
+        "side_effects": _side_effects(),
+    }
+
+
+@dataclass(frozen=True)
+class OperatorActionApproval:
+    operator_action_approval_id: str
+    promotion_decision_id: str
+    completed_work_id: str
+    requested_action: str
+    operator_decision: str
+    requested_by: str
+    recorded_at: str
+    policy_gate: str
+    execution_preview: dict[str, Any]
+    side_effects: dict[str, bool]
+    non_claims: dict[str, bool]
+    marker: str = ONE_AGENT_LEDGER_TO_OPERATOR_ACTION_APPROVAL_MARKER
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "operator_action_approval_id": self.operator_action_approval_id,
+            "promotion_decision_id": self.promotion_decision_id,
+            "completed_work_id": self.completed_work_id,
+            "requested_action": self.requested_action,
+            "operator_decision": self.operator_decision,
+            "requested_by": self.requested_by,
+            "recorded_at": self.recorded_at,
+            "policy_gate": self.policy_gate,
+            "execution_preview": self.execution_preview,
+            "side_effects": self.side_effects,
+            "non_claims": self.non_claims,
+            "marker": self.marker,
+        }
+
+
+def build_operator_action_approval(
+    promotion_decision_id: str,
+    *,
+    operator_decision: str = "approve",
+    requested_by: str = "operator",
+    requested_action: str | None = None,
+    recorded_at: str | None = None,
+) -> OperatorActionApproval:
+    promotion_decision = get_promotion_decision(promotion_decision_id)
+    if promotion_decision is None:
+        raise KeyError(promotion_decision_id)
+    decision = _normalize_operator_decision(operator_decision)
+    action = str(
+        requested_action or promotion_decision.get("recommendation") or "manual_review"
+    )
+    gate = _policy_gate(promotion_decision, decision, action)
+    return OperatorActionApproval(
+        operator_action_approval_id=_approval_id(promotion_decision_id, decision),
+        promotion_decision_id=promotion_decision_id,
+        completed_work_id=str(promotion_decision.get("completed_work_id") or ""),
+        requested_action=action,
+        operator_decision=decision,
+        requested_by=requested_by or "operator",
+        recorded_at=recorded_at or _now(),
+        policy_gate=gate,
+        execution_preview=_execution_preview(promotion_decision, action, gate),
+        side_effects=_side_effects(),
+        non_claims=_non_claims(),
+    )
+
+
+def record_operator_action_approval(
+    promotion_decision_id: str,
+    *,
+    operator_decision: str = "approve",
+    requested_by: str = "operator",
+    requested_action: str | None = None,
+    state_path: str | Path | None = None,
+) -> dict[str, Any]:
+    approval = build_operator_action_approval(
+        promotion_decision_id,
+        operator_decision=operator_decision,
+        requested_by=requested_by,
+        requested_action=requested_action,
+    )
+    record = approval.as_dict()
+    records = _read(state_path)
+    records = [
+        item
+        for item in records
+        if item.get("operator_action_approval_id")
+        != approval.operator_action_approval_id
+    ]
+    records.insert(0, record)
+    _write(records, state_path)
+    return record
+
+
+def list_operator_action_approvals(
+    *, limit: int = 50, state_path: str | Path | None = None
+) -> list[dict[str, Any]]:
+    records = _read(state_path)
+    records.sort(key=lambda item: str(item.get("recorded_at") or ""), reverse=True)
+    return records[: max(1, min(limit, 200))]
+
+
+def get_operator_action_approval(
+    operator_action_approval_id: str, *, state_path: str | Path | None = None
+) -> dict[str, Any] | None:
+    for record in _read(state_path):
+        if record.get("operator_action_approval_id") == operator_action_approval_id:
+            return record
+    return None
+
+
+def latest_promotion_decision_id() -> str | None:
+    records = list_promotion_decisions(limit=1)
+    if records:
+        return str(records[0].get("promotion_decision_id"))
+    decision = latest_or_record_decision(requested_by="operator-action-approval")
+    if decision:
+        return str(decision.get("promotion_decision_id"))
+    return None
+
+
+def latest_or_record_operator_action_approval(
+    *, requested_by: str = "dashboard", state_path: str | Path | None = None
+) -> dict[str, Any] | None:
+    records = list_operator_action_approvals(limit=1, state_path=state_path)
+    if records:
+        return records[0]
+    promotion_decision_id = latest_promotion_decision_id()
+    if not promotion_decision_id:
+        return None
+    return record_operator_action_approval(
+        promotion_decision_id,
+        operator_decision="approve",
+        requested_by=requested_by,
+        state_path=state_path,
+    )
