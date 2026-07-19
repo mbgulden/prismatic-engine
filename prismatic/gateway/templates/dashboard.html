@@ -459,6 +459,43 @@
                 <div id="sandbox-canary-summary" class="mt-3 text-[11px] text-slate-400 font-mono break-all">Awaiting sandbox canary proof</div>
             </section>
 
+            <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-fuchsia-500/80 shadow-lg shadow-fuchsia-950/10" data-proof-marker="one-agent-real-executor-arming-gate-card">
+                <div class="flex items-start justify-between gap-3">
+                    <div>
+                        <h2 class="text-xs uppercase tracking-[0.24em] text-slate-400">Real Executor Arming Gate</h2>
+                        <p class="mt-2 text-sm text-slate-400">Readiness-only gate that enumerates missing prerequisites before any future real executor could be armed.</p>
+                        <p class="mt-2 font-mono text-[11px] text-fuchsia-300">ONE_AGENT_SANDBOXED_CANARY_TO_REAL_EXECUTOR_ARMING_GATE_OK</p>
+                    </div>
+                    <span id="real-executor-arming-badge" class="rounded-full bg-slate-800/80 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.22em] text-slate-300">Checking</span>
+                </div>
+                <div class="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+                    <div>
+                        <p class="text-[11px] uppercase tracking-[0.18em] text-slate-500">Arming mode</p>
+                        <p id="real-executor-arming-mode" class="mt-1 font-mono text-slate-200">—</p>
+                    </div>
+                    <div>
+                        <p class="text-[11px] uppercase tracking-[0.18em] text-slate-500">Requested action</p>
+                        <p id="real-executor-arming-action" class="mt-1 font-mono text-slate-200">—</p>
+                    </div>
+                    <div>
+                        <p class="text-[11px] uppercase tracking-[0.18em] text-slate-500">Token state</p>
+                        <p id="real-executor-arming-token" class="mt-1 font-mono text-slate-200">—</p>
+                    </div>
+                    <div>
+                        <p class="text-[11px] uppercase tracking-[0.18em] text-slate-500">Env gate</p>
+                        <p id="real-executor-arming-env" class="mt-1 font-mono text-slate-200">—</p>
+                    </div>
+                </div>
+                <div class="mt-4 rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-xs text-slate-300">
+                    <p class="text-[11px] uppercase tracking-[0.18em] text-slate-500">Missing prerequisites</p>
+                    <p id="real-executor-arming-missing" class="mt-1 font-mono">Awaiting arming proof</p>
+                    <p class="mt-3 text-[11px] uppercase tracking-[0.18em] text-slate-500">Satisfied prerequisites</p>
+                    <p id="real-executor-arming-satisfied" class="mt-1 font-mono">Awaiting sandbox proof</p>
+                    <p class="mt-3 text-[11px] uppercase tracking-[0.18em] text-slate-500">Side effects</p>
+                    <p id="real-executor-arming-summary" class="mt-1 font-mono">No arming gate recorded yet</p>
+                </div>
+            </section>
+
             <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-fuchsia-500/80 shadow-lg shadow-fuchsia-950/10" data-proof-marker="raw-agent-output-repair-queue-card">
                 <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                     <div class="space-y-1">
@@ -2554,6 +2591,7 @@
                 await fetchFinalActionAuthorization();
                 await fetchQuarantinedExecutionAdapter();
                 await fetchSandboxedExecutionCanary();
+                await fetchRealExecutorArmingGate();
                 await fetchRawAgentOutputQueue();
                 await fetchMergeBacklog();
                 await fetchMorningBriefing();
@@ -3442,6 +3480,41 @@
                     badge.className = "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-rose-500/20 bg-rose-500/10 text-rose-300";
                 }
                 if (summaryEl) summaryEl.textContent = String(err.message || err);
+            }
+        }
+
+        async function fetchRealExecutorArmingGate() {
+            const badge = document.getElementById("real-executor-arming-badge");
+            const modeEl = document.getElementById("real-executor-arming-mode");
+            const actionEl = document.getElementById("real-executor-arming-action");
+            const tokenEl = document.getElementById("real-executor-arming-token");
+            const envEl = document.getElementById("real-executor-arming-env");
+            const missingEl = document.getElementById("real-executor-arming-missing");
+            const satisfiedEl = document.getElementById("real-executor-arming-satisfied");
+            const summaryEl = document.getElementById("real-executor-arming-summary");
+            if (!badge || !modeEl || !actionEl || !tokenEl || !envEl || !missingEl || !satisfiedEl || !summaryEl) return;
+            try {
+                const data = await fetchJson("/api/agy/real-executor-arming-gates/latest");
+                const gate = data.real_executor_arming_gate;
+                if (!gate) {
+                    badge.textContent = "No Arming Gate";
+                    summaryEl.textContent = "No real executor arming gate recorded yet";
+                    return;
+                }
+                const state = gate.arming_state || "unknown";
+                badge.textContent = state === "blocked_missing_real_authorization" ? "Blocked Missing Authorization" : state.replace(/_/g, " ");
+                modeEl.textContent = gate.arming_mode || "—";
+                actionEl.textContent = gate.requested_action || "—";
+                tokenEl.textContent = gate.operator_token_present ? "present" : "not present";
+                envEl.textContent = gate.real_executor_env_present ? "enabled" : "not enabled";
+                const missing = (gate.missing_prerequisites || []).map((item) => item.key).slice(0, 6).join(", ");
+                missingEl.textContent = missing || "none represented";
+                const satisfied = (gate.satisfied_prerequisites || []).map((item) => item.key).slice(0, 6).join(", ");
+                satisfiedEl.textContent = satisfied || "none represented";
+                summaryEl.textContent = `${gate.marker}: ${gate.arming_reason || "readiness-only gate"}; no real Linear/GitHub/auto-merge side effects`;
+            } catch (err) {
+                badge.textContent = "Error";
+                summaryEl.textContent = `Unable to load real executor arming gate: ${err.message}`;
             }
         }
 
