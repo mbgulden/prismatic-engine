@@ -107,6 +107,14 @@ from prismatic.agy_quarantined_execution_adapter import (
     list_quarantined_execution_adapters,
     record_quarantined_execution_adapter,
 )
+from prismatic.agy_sandboxed_execution_canary import (
+    ONE_AGENT_QUARANTINED_ADAPTER_TO_SANDBOXED_EXECUTION_CANARY_MARKER,
+    build_sandboxed_execution_canary,
+    get_sandboxed_execution_canary,
+    latest_or_record_sandboxed_execution_canary,
+    list_sandboxed_execution_canaries,
+    record_sandboxed_execution_canary,
+)
 from prismatic.agy_executor_runs import (
     PROMPT7_EXECUTOR_API_AUDIT_WRITEBACK_MARKER,
     build_prompt6_executor_canary_dry_run,
@@ -2171,6 +2179,141 @@ async def get_one_agent_quarantined_execution_adapter(
         "marker": ONE_AGENT_FINAL_AUTHORIZATION_TO_QUARANTINED_EXECUTION_ADAPTER_MARKER,
         "quarantined_execution_adapter": adapter,
         "side_effects": adapter["side_effects"],
+    }
+
+
+@app.get(
+    "/api/agy/quarantined-execution-adapters/{quarantined_execution_adapter_id}/sandbox-canary/preview"
+)
+@app.get(
+    "/api/gateway/agy/quarantined-execution-adapters/{quarantined_execution_adapter_id}/sandbox-canary/preview"
+)
+async def preview_one_agent_sandboxed_execution_canary(
+    quarantined_execution_adapter_id: str,
+    requested_by: str = Query(default="dashboard"),
+) -> dict[str, Any]:
+    """Preview sandboxed execution canary without persisting."""
+
+    try:
+        canary = build_sandboxed_execution_canary(
+            quarantined_execution_adapter_id, requested_by=requested_by
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail="quarantined execution adapter not found"
+        ) from exc
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_QUARANTINED_ADAPTER_TO_SANDBOXED_EXECUTION_CANARY_MARKER,
+        "sandboxed_execution_canary": canary,
+        "persisted": False,
+        "side_effects": canary["side_effects"],
+    }
+
+
+@app.post(
+    "/api/agy/quarantined-execution-adapters/{quarantined_execution_adapter_id}/sandbox-canary"
+)
+@app.post(
+    "/api/gateway/agy/quarantined-execution-adapters/{quarantined_execution_adapter_id}/sandbox-canary"
+)
+def record_one_agent_sandboxed_execution_canary(
+    quarantined_execution_adapter_id: str, payload: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Persist a durable sandboxed execution canary record."""
+
+    body = payload or {}
+    try:
+        canary = record_sandboxed_execution_canary(
+            quarantined_execution_adapter_id,
+            requested_by=str(body.get("requested_by") or "dashboard"),
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail="quarantined execution adapter not found"
+        ) from exc
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_QUARANTINED_ADAPTER_TO_SANDBOXED_EXECUTION_CANARY_MARKER,
+        "sandboxed_execution_canary": canary,
+        "persisted": True,
+        "side_effects": canary["side_effects"],
+    }
+
+
+@app.get("/api/agy/sandboxed-execution-canaries")
+@app.get("/api/gateway/agy/sandboxed-execution-canaries")
+async def list_one_agent_sandboxed_execution_canaries(
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict[str, Any]:
+    """List durable sandboxed execution canary records."""
+
+    records = list_sandboxed_execution_canaries(limit=limit)
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_QUARANTINED_ADAPTER_TO_SANDBOXED_EXECUTION_CANARY_MARKER,
+        "count": len(records),
+        "sandboxed_execution_canaries": records,
+        "side_effects": {
+            "linear_comment_posted": False,
+            "github_pr_created": False,
+            "auto_merge_enabled": False,
+            "production_deployed": False,
+            "real_executor_invoked": False,
+            "executed": False,
+        },
+    }
+
+
+@app.get("/api/agy/sandboxed-execution-canaries/latest")
+@app.get("/api/gateway/agy/sandboxed-execution-canaries/latest")
+async def latest_one_agent_sandboxed_execution_canary(
+    requested_by: str = Query(default="dashboard"),
+) -> dict[str, Any]:
+    """Return latest sandbox canary, auto-recording a safe default if possible."""
+
+    canary = latest_or_record_sandboxed_execution_canary(requested_by=requested_by)
+    if canary is None:
+        return {
+            "status": "empty",
+            "marker": ONE_AGENT_QUARANTINED_ADAPTER_TO_SANDBOXED_EXECUTION_CANARY_MARKER,
+            "sandboxed_execution_canary": None,
+            "side_effects": {
+                "linear_comment_posted": False,
+                "github_pr_created": False,
+                "auto_merge_enabled": False,
+                "production_deployed": False,
+                "real_executor_invoked": False,
+                "executed": False,
+            },
+        }
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_QUARANTINED_ADAPTER_TO_SANDBOXED_EXECUTION_CANARY_MARKER,
+        "sandboxed_execution_canary": canary,
+        "side_effects": canary["side_effects"],
+    }
+
+
+@app.get("/api/agy/sandboxed-execution-canaries/{sandboxed_execution_canary_id}")
+@app.get(
+    "/api/gateway/agy/sandboxed-execution-canaries/{sandboxed_execution_canary_id}"
+)
+async def get_one_agent_sandboxed_execution_canary(
+    sandboxed_execution_canary_id: str,
+) -> dict[str, Any]:
+    """Return one durable sandboxed execution canary record."""
+
+    canary = get_sandboxed_execution_canary(sandboxed_execution_canary_id)
+    if canary is None:
+        raise HTTPException(
+            status_code=404, detail="sandboxed execution canary not found"
+        )
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_QUARANTINED_ADAPTER_TO_SANDBOXED_EXECUTION_CANARY_MARKER,
+        "sandboxed_execution_canary": canary,
+        "side_effects": canary["side_effects"],
     }
 
 

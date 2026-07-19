@@ -1190,3 +1190,175 @@ def test_one_agent_quarantined_execution_adapter_api_and_dashboard_are_safe(
     assert "ONE_AGENT_FINAL_AUTHORIZATION_TO_QUARANTINED_EXECUTION_ADAPTER_OK" in text
     assert "quarantined-execution-adapters/latest" in text
     assert "fetchQuarantinedExecutionAdapter" in text
+
+
+def test_one_agent_sandboxed_execution_canary_api_and_dashboard_are_safe(
+    monkeypatch, tmp_path
+):
+    db = tmp_path / "completed_work.db"
+    promotion_ledger = tmp_path / "promotion-ledger.json"
+    approval_ledger = tmp_path / "operator-approvals.json"
+    executor_ledger = tmp_path / "approved-executors.json"
+    final_auth_ledger = tmp_path / "final-authorizations.json"
+    adapter_ledger = tmp_path / "quarantined-adapters.json"
+    canary_ledger = tmp_path / "sandbox-canaries.json"
+    monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(db))
+    monkeypatch.setenv("PRISMATIC_AGY_PROMOTION_LEDGER_STATE", str(promotion_ledger))
+    monkeypatch.setenv("PRISMATIC_AGY_OPERATOR_APPROVAL_STATE", str(approval_ledger))
+    monkeypatch.setenv(
+        "PRISMATIC_AGY_APPROVED_ACTION_EXECUTOR_STATE", str(executor_ledger)
+    )
+    monkeypatch.setenv(
+        "PRISMATIC_AGY_FINAL_ACTION_AUTHORIZATION_STATE", str(final_auth_ledger)
+    )
+    monkeypatch.setenv(
+        "PRISMATIC_AGY_QUARANTINED_EXECUTION_ADAPTER_STATE", str(adapter_ledger)
+    )
+    monkeypatch.setenv(
+        "PRISMATIC_AGY_SANDBOXED_EXECUTION_CANARY_STATE", str(canary_ledger)
+    )
+    monkeypatch.delenv("PRISMATIC_ALLOW_REAL_APPROVED_ACTION_EXECUTOR", raising=False)
+    row = ingest_completed_work(packet(), db_path=db)
+    client = TestClient(server.app)
+
+    promotion = client.post(
+        f"/api/agy/completed-work/{row.id}/promotion-decision",
+        json={"requested_by": "pytest"},
+    ).json()["promotion_decision"]
+    approval = client.post(
+        f"/api/agy/promotion-decisions/{promotion['promotion_decision_id']}/operator-action",
+        json={"operator_decision": "approve", "requested_by": "pytest"},
+    ).json()["operator_action_approval"]
+    executor = client.post(
+        f"/api/agy/operator-action-approvals/{approval['operator_action_approval_id']}/executor-dry-run",
+        json={"requested_by": "pytest"},
+    ).json()["approved_action_executor"]
+    final_auth = client.post(
+        f"/api/agy/approved-action-executors/{executor['approved_action_executor_id']}/final-authorization",
+        json={"authorization_decision": "authorize", "requested_by": "pytest"},
+    ).json()["final_action_authorization"]
+    adapter = client.post(
+        f"/api/agy/final-action-authorizations/{final_auth['final_action_authorization_id']}/quarantined-adapter",
+        json={"requested_by": "pytest"},
+    ).json()["quarantined_execution_adapter"]
+
+    preview = client.get(
+        f"/api/gateway/agy/quarantined-execution-adapters/{adapter['quarantined_execution_adapter_id']}/sandbox-canary/preview",
+        params={"requested_by": "pytest"},
+    )
+    assert preview.status_code == 200
+    preview_body = preview.json()
+    assert (
+        preview_body["marker"]
+        == "ONE_AGENT_QUARANTINED_ADAPTER_TO_SANDBOXED_EXECUTION_CANARY_OK"
+    )
+    assert preview_body["persisted"] is False
+    canary = preview_body["sandboxed_execution_canary"]
+    assert (
+        canary["quarantined_execution_adapter_id"]
+        == adapter["quarantined_execution_adapter_id"]
+    )
+    assert (
+        canary["final_action_authorization_id"]
+        == final_auth["final_action_authorization_id"]
+    )
+    assert (
+        canary["approved_action_executor_id"] == executor["approved_action_executor_id"]
+    )
+    assert (
+        canary["operator_action_approval_id"] == approval["operator_action_approval_id"]
+    )
+    assert canary["promotion_decision_id"] == promotion["promotion_decision_id"]
+    assert canary["completed_work_id"] == row.id
+    assert canary["requested_action"] == "open_or_update_pr"
+    assert canary["canary_mode"] == "sandbox_noop_dry_run"
+    assert canary["sandbox_state"] == "blocked_by_final_guard"
+    assert canary["command_envelope_sha256"] == adapter["command_envelope_sha256"]
+    assert canary["command_envelope_verified"] is True
+    assert canary["sandbox_policy"]["policy"] == "local_noop_no_egress"
+    assert canary["sandbox_policy"]["external_network_allowed"] is False
+    assert canary["sandbox_policy"]["github_api_allowed"] is False
+    assert canary["sandbox_policy"]["linear_api_allowed"] is False
+    assert canary["sandbox_policy"]["git_write_allowed"] is False
+    assert canary["sandbox_policy"]["production_deploy_allowed"] is False
+    assert canary["sandbox_policy"]["auto_merge_allowed"] is False
+    assert canary["sandbox_policy"]["bulk_agent_dispatch_allowed"] is False
+    assert canary["noop_command_plan"]["real_commands_executed"] is False
+    assert canary["noop_command_plan"]["external_calls_executed"] is False
+    assert canary["sandbox_transcript"]["sandbox_transcript_id"].startswith(
+        "sandbox-transcript-"
+    )
+    assert canary["sandbox_transcript"]["executed"] is False
+    assert canary["egress_attempts"] == []
+    assert all(value is False for value in canary["side_effects"].values())
+
+    record = client.post(
+        f"/api/agy/quarantined-execution-adapters/{adapter['quarantined_execution_adapter_id']}/sandbox-canary",
+        json={"requested_by": "pytest"},
+    )
+    assert record.status_code == 200
+    recorded = record.json()["sandboxed_execution_canary"]
+    assert record.json()["persisted"] is True
+    assert (
+        recorded["sandboxed_execution_canary_id"]
+        == canary["sandboxed_execution_canary_id"]
+    )
+    assert recorded["sandbox_state"] == "blocked_by_final_guard"
+    assert all(value is False for value in recorded["side_effects"].values())
+
+    latest = client.get("/api/gateway/agy/sandboxed-execution-canaries/latest")
+    assert latest.status_code == 200
+    assert (
+        latest.json()["sandboxed_execution_canary"]["sandboxed_execution_canary_id"]
+        == recorded["sandboxed_execution_canary_id"]
+    )
+    listed = client.get("/api/agy/sandboxed-execution-canaries")
+    assert listed.status_code == 200
+    assert listed.json()["count"] == 1
+    detail = client.get(
+        f"/api/gateway/agy/sandboxed-execution-canaries/{recorded['sandboxed_execution_canary_id']}"
+    )
+    assert detail.status_code == 200
+    assert (
+        detail.json()["sandboxed_execution_canary"]["command_envelope_verified"] is True
+    )
+
+    rejected_auth = client.post(
+        f"/api/agy/approved-action-executors/{executor['approved_action_executor_id']}/final-authorization",
+        json={"authorization_decision": "reject", "requested_by": "pytest"},
+    ).json()["final_action_authorization"]
+    rejected_adapter = client.post(
+        f"/api/agy/final-action-authorizations/{rejected_auth['final_action_authorization_id']}/quarantined-adapter",
+        json={"requested_by": "pytest"},
+    ).json()["quarantined_execution_adapter"]
+    rejected_canary = client.get(
+        f"/api/agy/quarantined-execution-adapters/{rejected_adapter['quarantined_execution_adapter_id']}/sandbox-canary/preview"
+    ).json()["sandboxed_execution_canary"]
+    assert rejected_canary["sandbox_state"] == "manual_review"
+    assert rejected_canary["noop_command_plan"]["real_commands_executed"] is False
+    assert all(value is False for value in rejected_canary["side_effects"].values())
+
+    deferred_auth = client.post(
+        f"/api/agy/approved-action-executors/{executor['approved_action_executor_id']}/final-authorization",
+        json={"authorization_decision": "defer", "requested_by": "pytest"},
+    ).json()["final_action_authorization"]
+    deferred_adapter = client.post(
+        f"/api/agy/final-action-authorizations/{deferred_auth['final_action_authorization_id']}/quarantined-adapter",
+        json={"requested_by": "pytest"},
+    ).json()["quarantined_execution_adapter"]
+    deferred_canary = client.get(
+        f"/api/agy/quarantined-execution-adapters/{deferred_adapter['quarantined_execution_adapter_id']}/sandbox-canary/preview"
+    ).json()["sandboxed_execution_canary"]
+    assert deferred_canary["sandbox_state"] == "manual_review"
+    assert deferred_canary["noop_command_plan"]["real_commands_executed"] is False
+    assert all(value is False for value in deferred_canary["side_effects"].values())
+
+    missing = client.get("/api/gateway/agy/sandboxed-execution-canaries/no-such-canary")
+    assert missing.status_code == 404
+    dashboard = client.get("/dashboard")
+    assert dashboard.status_code == 200
+    text = dashboard.text
+    assert "Sandboxed Execution Canary" in text
+    assert "ONE_AGENT_QUARANTINED_ADAPTER_TO_SANDBOXED_EXECUTION_CANARY_OK" in text
+    assert "sandboxed-execution-canaries/latest" in text
+    assert "fetchSandboxedExecutionCanary" in text
