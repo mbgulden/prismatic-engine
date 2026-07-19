@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -23,8 +24,21 @@ from prismatic.completed_work_gate import (
 )
 
 AGY_COMPLETED_WORK_INGESTION_MARKER = "AGY_COMPLETED_WORK_INGESTION_OK"
+AGY_COMPLETED_WORK_INTEGRATION_GATE_MARKER = "AGY_COMPLETED_WORK_INTEGRATION_GATE_OK"
 DEFAULT_DB_NAME = "agy_completed_work.db"
 AGY_PACKET_NORMALIZATION_MARKER = "AGY_RESULT_PACKET_NORMALIZED_OK"
+INTEGRATION_CLASSIFICATIONS = {
+    "merge_ready": "pass_ready_for_review",
+    "blocked_missing_proof": "invalid_repairable",
+    "blocked_failed_verification": "failed_needs_repair",
+    "clean_rebuild_required": "invalid_repairable",
+    "manual_review_scope": "blocked_needs_operator",
+    "manual_review_conflict": "blocked_needs_operator",
+    "superseded": "blocked_needs_operator",
+    "rejected": "invalid_repairable",
+}
+_TEMPLATE_VALUE_RE = re.compile(r"^\s*<[^>]+>\s*$")
+_PACKET_LINE_RE = re.compile(r"^([A-Z][A-Z0-9_]*|[A-Za-z][A-Za-z0-9_.-]*)=(.*)$")
 _SECRET_PATH_PARTS = {
     ".ssh",
     ".aws",
@@ -317,6 +331,164 @@ def default_db_path() -> Path:
     ).expanduser()
 
 
+def integration_classification_for(
+    gate_classification: str, proof_result: str | None = None
+) -> str:
+    """Map internal gate states to the operator bridge classifications."""
+
+    if proof_result == "FAIL":
+        return "failed_needs_repair"
+    if proof_result == "BLOCKED":
+        return "blocked_needs_operator"
+    return INTEGRATION_CLASSIFICATIONS.get(gate_classification, "invalid_repairable")
+
+
+def _linear_writeback_body(row: "CompletedWorkRow") -> str:
+    return "\n".join(
+        [
+            "## AGY completed-work integration gate",
+            "",
+            "```text",
+            f"RESULT={row.proof_result or 'UNKNOWN'}",
+            f"MARKER={row.proof_marker or row.ingestion_marker}",
+            f"COMPLETED_WORK_ID={row.id}",
+            f"CLASSIFICATION={row.integration_classification}",
+            f"GATE_CLASSIFICATION={row.classification}",
+            f"LOG={_proof_value(row.packet, 'log') or 'missing'}",
+            "DRY_RUN_LINEAR_WRITEBACK=true",
+            "REAL_LINEAR_WRITEBACK_POSTED=false",
+            f"INTEGRATION_MARKER={AGY_COMPLETED_WORK_INTEGRATION_GATE_MARKER}",
+            "```",
+        ]
+    )
+
+
+def parse_completed_work_packet_text(text: str) -> dict[str, Any]:
+    """Parse exact compact completed-work key/value packets from logs.
+
+    Template placeholders are preserved and later rejected by the gate helper;
+    prose-only prompt/context files do not count as completed work.
+    """
+
+    packet: dict[str, Any] = {"proof": {}}
+    proof: dict[str, Any] = packet["proof"]
+    non_claims: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        match = _PACKET_LINE_RE.match(line)
+        if not match:
+            continue
+        key, raw_value = match.group(1), match.group(2).strip()
+        value: Any = raw_value
+        if key in {"NOT_CLAIMING", "NON_CLAIMS"}:
+            non_claims.extend(
+                item.strip() for item in raw_value.split(",") if item.strip()
+            )
+            continue
+        if key == "RESULT":
+            proof["result"] = raw_value.upper()
+        elif key == "MARKER":
+            proof["marker"] = value
+        elif key == "COMMAND":
+            proof["command"] = value
+        elif key == "LOG":
+            proof["log"] = value
+        elif key == "SCOPE":
+            proof["scope"] = value
+        elif key == "AD_HOC_OR_CANONICAL":
+            proof["ad_hoc_or_canonical"] = value
+        elif key == "AGENT":
+            packet["agent"] = value.lower()
+        elif key in {"ISSUE", "ISSUE_IDENTIFIER"}:
+            packet["issue_identifier"] = value
+        elif key in {"SOURCE_BRANCH", "BRANCH"}:
+            packet["source_branch"] = value
+        elif key == "SOURCE_PATH":
+            packet["source_path"] = value
+        elif key == "BASE_BRANCH":
+            packet["base_branch"] = value
+        elif key == "CHANGED_FILES":
+            packet["changed_files"] = [
+                item.strip() for item in raw_value.split(",") if item.strip()
+            ]
+        elif key == "RESULT_SUMMARY":
+            packet["result_summary"] = value
+        elif key in {"MERGE_LANE", "VERIFICATION_LANE"}:
+            packet["verification_lane"] = value
+    if non_claims:
+        packet["non_claims"] = non_claims
+        proof["non_claims"] = non_claims
+    _reject_template_or_incomplete_packet(packet)
+    return packet
+
+
+def ingest_completed_work_text(
+    text: str,
+    *,
+    db_path: str | Path | None = None,
+    defaults: Mapping[str, Any] | None = None,
+) -> CompletedWorkRow:
+    packet = parse_completed_work_packet_text(text)
+    if defaults:
+        merged = dict(defaults)
+        merged.update(packet)
+        default_proof = defaults.get("proof")
+        packet_proof = packet.get("proof")
+        if isinstance(default_proof, Mapping) and isinstance(packet_proof, Mapping):
+            merged["proof"] = {**dict(default_proof), **dict(packet_proof)}
+        elif isinstance(packet_proof, Mapping):
+            merged["proof"] = dict(packet_proof)
+        packet = merged
+    return ingest_completed_work(packet, db_path=db_path)
+
+
+def ingest_completed_work_file(
+    path: str | Path,
+    *,
+    db_path: str | Path | None = None,
+    defaults: Mapping[str, Any] | None = None,
+) -> CompletedWorkRow:
+    return ingest_completed_work_text(
+        Path(path).read_text(encoding="utf-8"), db_path=db_path, defaults=defaults
+    )
+
+
+def _reject_template_or_incomplete_packet(packet: Mapping[str, Any]) -> None:
+    proof_value = packet.get("proof")
+    proof: Mapping[str, Any] = proof_value if isinstance(proof_value, Mapping) else {}
+    required = {
+        "RESULT": proof.get("result"),
+        "MARKER": proof.get("marker"),
+        "LOG": proof.get("log"),
+    }
+    missing = [key for key, value in required.items() if not _string(value)]
+    if missing:
+        raise ValueError(f"missing completed-work packet fields: {', '.join(missing)}")
+    for key, value in required.items():
+        if _is_template_value(_string(value)):
+            raise ValueError(
+                f"template completed-work packet field is not proof: {key}"
+            )
+    if proof.get("result") not in {"PASS", "FAIL", "BLOCKED"}:
+        raise ValueError("RESULT must be PASS, FAIL, or BLOCKED")
+
+
+def _is_template_value(value: str | None) -> bool:
+    if not value:
+        return False
+    normalized = value.strip()
+    return bool(_TEMPLATE_VALUE_RE.match(normalized)) or normalized in {
+        "PASS / BLOCKED / FAIL",
+        "PASS|FAIL|BLOCKED",
+    }
+
+
+def _proof_value(packet: Mapping[str, Any], key: str) -> str | None:
+    proof_value = packet.get("proof")
+    proof: Mapping[str, Any] = proof_value if isinstance(proof_value, Mapping) else {}
+    return _string(proof.get(key))
+
+
 @dataclass(frozen=True)
 class CompletedWorkRow:
     id: str
@@ -337,6 +509,38 @@ class CompletedWorkRow:
     gate: dict[str, Any]
     non_claims: tuple[str, ...]
 
+    @property
+    def integration_classification(self) -> str:
+        """Friendly bridge classification for API/dashboard/writeback consumers."""
+
+        return integration_classification_for(self.classification, self.proof_result)
+
+    def linear_writeback_dry_run(self) -> dict[str, Any]:
+        """Return the safe Linear payload shape without posting it."""
+
+        issue_identifier = _string(
+            self.packet.get("issue_identifier") or self.packet.get("issue_id")
+        )
+        status = "ready_for_review"
+        if self.integration_classification == "blocked_needs_operator":
+            status = "blocked_needs_operator"
+        elif self.integration_classification in {
+            "failed_needs_repair",
+            "invalid_repairable",
+        }:
+            status = "needs_repair"
+        return {
+            "posted": False,
+            "dry_run": True,
+            "issue_identifier": issue_identifier,
+            "status": status,
+            "completed_work_id": self.id,
+            "classification": self.integration_classification,
+            "gate_classification": self.classification,
+            "marker": AGY_COMPLETED_WORK_INTEGRATION_GATE_MARKER,
+            "body": _linear_writeback_body(self),
+        }
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
@@ -347,12 +551,15 @@ class CompletedWorkRow:
             "source_path": self.source_path,
             "base_branch": self.base_branch,
             "classification": self.classification,
+            "integration_classification": self.integration_classification,
             "eligible_for_merge": self.eligible_for_merge,
             "requires_clean_rebuild": self.requires_clean_rebuild,
             "proof_result": self.proof_result,
             "proof_marker": self.proof_marker,
             "gate_marker": self.gate_marker,
             "ingestion_marker": self.ingestion_marker,
+            "integration_marker": AGY_COMPLETED_WORK_INTEGRATION_GATE_MARKER,
+            "linear_writeback": self.linear_writeback_dry_run(),
             "packet": self.packet,
             "gate": self.gate,
             "non_claims": list(self.non_claims),
@@ -419,6 +626,7 @@ class AgyCompletedWorkStore:
             dirty_source=dirty_source,
             source_is_stale=source_is_stale,
             conflicts=conflicts or (),
+            trusted_agents=("agy", "fred", "jules"),
         )
         raw_proof = normalized_packet.get("proof")
         proof: Mapping[str, Any] = raw_proof if isinstance(raw_proof, Mapping) else {}
