@@ -99,6 +99,14 @@ from prismatic.agy_final_action_authorization import (
     list_final_action_authorizations,
     record_final_action_authorization,
 )
+from prismatic.agy_quarantined_execution_adapter import (
+    ONE_AGENT_FINAL_AUTHORIZATION_TO_QUARANTINED_EXECUTION_ADAPTER_MARKER,
+    build_quarantined_execution_adapter,
+    get_quarantined_execution_adapter,
+    latest_or_record_quarantined_execution_adapter,
+    list_quarantined_execution_adapters,
+    record_quarantined_execution_adapter,
+)
 from prismatic.agy_executor_runs import (
     PROMPT7_EXECUTOR_API_AUDIT_WRITEBACK_MARKER,
     build_prompt6_executor_canary_dry_run,
@@ -2028,6 +2036,141 @@ async def get_one_agent_final_action_authorization(
         "marker": ONE_AGENT_EXECUTOR_DRY_RUN_TO_FINAL_AUTHORIZATION_GATE_MARKER,
         "final_action_authorization": authorization,
         "side_effects": authorization["side_effects"],
+    }
+
+
+@app.get(
+    "/api/agy/final-action-authorizations/{final_action_authorization_id}/quarantined-adapter/preview"
+)
+@app.get(
+    "/api/gateway/agy/final-action-authorizations/{final_action_authorization_id}/quarantined-adapter/preview"
+)
+async def preview_one_agent_quarantined_execution_adapter(
+    final_action_authorization_id: str,
+    requested_by: str = Query(default="dashboard"),
+) -> dict[str, Any]:
+    """Preview quarantined execution adapter envelope without persisting."""
+
+    try:
+        adapter = build_quarantined_execution_adapter(
+            final_action_authorization_id, requested_by=requested_by
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail="final action authorization not found"
+        ) from exc
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_FINAL_AUTHORIZATION_TO_QUARANTINED_EXECUTION_ADAPTER_MARKER,
+        "quarantined_execution_adapter": adapter,
+        "persisted": False,
+        "side_effects": adapter["side_effects"],
+    }
+
+
+@app.post(
+    "/api/agy/final-action-authorizations/{final_action_authorization_id}/quarantined-adapter"
+)
+@app.post(
+    "/api/gateway/agy/final-action-authorizations/{final_action_authorization_id}/quarantined-adapter"
+)
+def record_one_agent_quarantined_execution_adapter(
+    final_action_authorization_id: str, payload: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Persist a durable quarantined execution adapter preview record."""
+
+    body = payload or {}
+    try:
+        adapter = record_quarantined_execution_adapter(
+            final_action_authorization_id,
+            requested_by=str(body.get("requested_by") or "dashboard"),
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail="final action authorization not found"
+        ) from exc
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_FINAL_AUTHORIZATION_TO_QUARANTINED_EXECUTION_ADAPTER_MARKER,
+        "quarantined_execution_adapter": adapter,
+        "persisted": True,
+        "side_effects": adapter["side_effects"],
+    }
+
+
+@app.get("/api/agy/quarantined-execution-adapters")
+@app.get("/api/gateway/agy/quarantined-execution-adapters")
+async def list_one_agent_quarantined_execution_adapters(
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict[str, Any]:
+    """List durable quarantined execution adapter preview records."""
+
+    records = list_quarantined_execution_adapters(limit=limit)
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_FINAL_AUTHORIZATION_TO_QUARANTINED_EXECUTION_ADAPTER_MARKER,
+        "count": len(records),
+        "quarantined_execution_adapters": records,
+        "side_effects": {
+            "linear_comment_posted": False,
+            "github_pr_created": False,
+            "auto_merge_enabled": False,
+            "production_deployed": False,
+            "real_executor_invoked": False,
+            "executed": False,
+        },
+    }
+
+
+@app.get("/api/agy/quarantined-execution-adapters/latest")
+@app.get("/api/gateway/agy/quarantined-execution-adapters/latest")
+async def latest_one_agent_quarantined_execution_adapter(
+    requested_by: str = Query(default="dashboard"),
+) -> dict[str, Any]:
+    """Return latest quarantined adapter, auto-recording a safe default if possible."""
+
+    adapter = latest_or_record_quarantined_execution_adapter(requested_by=requested_by)
+    if adapter is None:
+        return {
+            "status": "empty",
+            "marker": ONE_AGENT_FINAL_AUTHORIZATION_TO_QUARANTINED_EXECUTION_ADAPTER_MARKER,
+            "quarantined_execution_adapter": None,
+            "side_effects": {
+                "linear_comment_posted": False,
+                "github_pr_created": False,
+                "auto_merge_enabled": False,
+                "production_deployed": False,
+                "real_executor_invoked": False,
+                "executed": False,
+            },
+        }
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_FINAL_AUTHORIZATION_TO_QUARANTINED_EXECUTION_ADAPTER_MARKER,
+        "quarantined_execution_adapter": adapter,
+        "side_effects": adapter["side_effects"],
+    }
+
+
+@app.get("/api/agy/quarantined-execution-adapters/{quarantined_execution_adapter_id}")
+@app.get(
+    "/api/gateway/agy/quarantined-execution-adapters/{quarantined_execution_adapter_id}"
+)
+async def get_one_agent_quarantined_execution_adapter(
+    quarantined_execution_adapter_id: str,
+) -> dict[str, Any]:
+    """Return one durable quarantined execution adapter preview record."""
+
+    adapter = get_quarantined_execution_adapter(quarantined_execution_adapter_id)
+    if adapter is None:
+        raise HTTPException(
+            status_code=404, detail="quarantined execution adapter not found"
+        )
+    return {
+        "status": "ok",
+        "marker": ONE_AGENT_FINAL_AUTHORIZATION_TO_QUARANTINED_EXECUTION_ADAPTER_MARKER,
+        "quarantined_execution_adapter": adapter,
+        "side_effects": adapter["side_effects"],
     }
 
 
