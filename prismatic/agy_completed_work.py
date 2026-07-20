@@ -60,6 +60,7 @@ _TOKEN_RE = re.compile(
 )
 _TEMPLATE_VALUE_RE = re.compile(r"^\s*<[^>]+>\s*$")
 _PACKET_LINE_RE = re.compile(r"^([A-Z][A-Z0-9_]*|[A-Za-z][A-Za-z0-9_.-]*)=(.*)$")
+_COMMIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 _SECRET_PATH_PARTS = {
     ".ssh",
     ".aws",
@@ -79,6 +80,13 @@ _GENERATED_PATH_PARTS = {
     ".venv",
     "__pycache__",
 }
+_SECRET_FILENAMES = {
+    ".git-credentials",
+    ".netrc",
+    ".npmrc",
+    ".pypirc",
+}
+_SECRET_FILENAME_PREFIXES = (".env",)
 
 
 def normalize_agy_result_packet(packet: Mapping[str, Any]) -> dict[str, Any]:
@@ -432,9 +440,21 @@ def _safe_path_for_retention(path: Path) -> tuple[bool, str | None]:
         raw = str(path.expanduser())
         if ".." in Path(raw).parts:
             return False, "path_traversal"
+        raw_name = Path(raw).name.lower()
+        if raw_name in _SECRET_FILENAMES or any(
+            raw_name == prefix or raw_name.startswith(f"{prefix}.")
+            for prefix in _SECRET_FILENAME_PREFIXES
+        ):
+            return False, "secret_or_credential_path"
         resolved = path.expanduser().resolve(strict=False)
     except OSError:
         return False, "path_unresolvable"
+    resolved_name = resolved.name.lower()
+    if resolved_name in _SECRET_FILENAMES or any(
+        resolved_name == prefix or resolved_name.startswith(f"{prefix}.")
+        for prefix in _SECRET_FILENAME_PREFIXES
+    ):
+        return False, "secret_or_credential_path"
     parts = {part.lower() for part in resolved.parts}
     if parts & _SECRET_PATH_PARTS:
         return False, "secret_or_credential_path"
@@ -495,6 +515,38 @@ def _manifest_digest(manifest: Mapping[str, Any]) -> str:
     return _sha256_bytes(_json_bytes(body))
 
 
+def _validated_commit_sha(value: Any) -> str | None:
+    text = _string(value)
+    if text and _COMMIT_SHA_RE.fullmatch(text):
+        return text.lower()
+    return None
+
+
+def _commit_identity_for_retention(
+    packet: Mapping[str, Any],
+) -> tuple[str | None, str | None, list[str]]:
+    reasons: list[str] = []
+    raw_source = (
+        packet.get("source_commit_sha")
+        or packet.get("source_commit")
+        or packet.get("commit")
+    )
+    raw_base = packet.get("base_commit_sha") or packet.get("base_commit")
+    source_commit_sha = _validated_commit_sha(raw_source)
+    base_commit_sha = _validated_commit_sha(raw_base)
+    if raw_source is None or _string(raw_source) is None:
+        reasons.append("source_commit_sha_missing")
+    elif source_commit_sha is None:
+        reasons.append("invalid_source_commit_sha")
+    if (
+        raw_base is not None
+        and _string(raw_base) is not None
+        and base_commit_sha is None
+    ):
+        reasons.append("invalid_base_commit_sha")
+    return source_commit_sha, base_commit_sha, reasons
+
+
 def retain_completed_work_evidence(
     *,
     row_id: str,
@@ -519,6 +571,7 @@ def retain_completed_work_evidence(
             "manifest_path": str(manifest_path),
             "manifest_sha256": manifest.get("manifest_sha256"),
             "source_commit_sha": manifest.get("source_commit_sha"),
+            "base_commit_sha": manifest.get("base_commit_sha"),
             "proof_log_retained": bool(manifest.get("retained_proof_log_path")),
         }
 
@@ -589,9 +642,20 @@ def retain_completed_work_evidence(
         else:
             reasons.append("proof_log_missing")
 
+        source_commit_sha, base_commit_sha, commit_reasons = (
+            _commit_identity_for_retention(packet)
+        )
+        reasons.extend(commit_reasons)
+
         if "rejected_unsafe" in {source_status, proof_status}:
             status = "rejected_unsafe"
-        elif source_status != "complete" or proof_status != "complete":
+        elif (
+            source_status != "complete"
+            or proof_status != "complete"
+            or "source_commit_sha_missing" in commit_reasons
+            or "invalid_source_commit_sha" in commit_reasons
+            or "invalid_base_commit_sha" in commit_reasons
+        ):
             status = "partial"
 
         manifest: dict[str, Any] = {
@@ -605,8 +669,8 @@ def retain_completed_work_evidence(
             "base_branch": _string(packet.get("base_branch")),
             "source_path_original": source_path,
             "source_path_exists_at_ingest": source_exists,
-            "source_commit_sha": None,
-            "base_commit_sha": None,
+            "source_commit_sha": source_commit_sha,
+            "base_commit_sha": base_commit_sha,
             "changed_files": _string_list(packet.get("changed_files")),
             "proof_log_original": proof_log,
             "retained_packet_path": str(bundle_dir / retained_packet.name),
@@ -635,6 +699,7 @@ def retain_completed_work_evidence(
             "manifest_path": str(manifest_path),
             "manifest_sha256": final_manifest.get("manifest_sha256"),
             "source_commit_sha": final_manifest.get("source_commit_sha"),
+            "base_commit_sha": final_manifest.get("base_commit_sha"),
             "proof_log_retained": bool(final_manifest.get("retained_proof_log_path")),
         }
 
@@ -886,8 +951,12 @@ def parse_completed_work_packet_text(
             packet["source_branch"] = value
         elif key == "SOURCE_PATH":
             packet["source_path"] = value
+        elif key in {"SOURCE_COMMIT_SHA", "COMMIT"}:
+            packet["source_commit_sha"] = value
         elif key == "BASE_BRANCH":
             packet["base_branch"] = value
+        elif key == "BASE_COMMIT_SHA":
+            packet["base_commit_sha"] = value
         elif key == "CHANGED_FILES":
             packet["changed_files"] = [
                 item.strip() for item in raw_value.split(",") if item.strip()
@@ -1420,6 +1489,7 @@ def _evidence_from_sqlite(row: sqlite3.Row) -> dict[str, Any]:
         "manifest_path": None,
         "manifest_sha256": None,
         "source_commit_sha": None,
+        "base_commit_sha": None,
         "proof_log_retained": False,
         "historical_source_recovered": False,
         "historical_log_recovered": False,

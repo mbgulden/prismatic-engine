@@ -526,14 +526,30 @@ def test_ingest_cli_runs_from_outside_repo(tmp_path):
     )
 
 
-def _retention_packet(tmp_path, *, source_path=None, proof_log=None):
+VALID_SOURCE_SHA = "c" * 40
+VALID_BASE_SHA = "d" * 40
+
+
+def _retention_packet(
+    tmp_path,
+    *,
+    source_path=None,
+    proof_log=None,
+    source_commit_sha=VALID_SOURCE_SHA,
+    base_commit_sha=VALID_BASE_SHA,
+    source_branch="feature/agy-durable-evidence",
+):
     source = Path(source_path) if source_path is not None else tmp_path / "RESULT.md"
     log = Path(proof_log) if proof_log is not None else tmp_path / "proof.log"
     p = packet()
     p["source_path"] = str(source)
     p["proof"]["log"] = str(log)
-    p["source_branch"] = "feature/agy-durable-evidence"
+    p["source_branch"] = source_branch
     p["base_branch"] = "origin/main"
+    if source_commit_sha is not None:
+        p["source_commit_sha"] = source_commit_sha
+    if base_commit_sha is not None:
+        p["base_commit_sha"] = base_commit_sha
     p["changed_files"] = ["prismatic/agy_completed_work.py"]
     p["lane_scope"] = {
         "allowed_paths": ["prismatic/", "tests/"],
@@ -563,8 +579,13 @@ def test_durable_evidence_retains_packet_source_and_proof_after_originals_delete
     proof.unlink()
     manifest = _manifest(row)
 
-    assert row.as_dict()["evidence_retention"]["status"] == "complete"
+    evidence = row.as_dict()["evidence_retention"]
+    assert evidence["status"] == "complete"
+    assert evidence["source_commit_sha"] == VALID_SOURCE_SHA
+    assert evidence["base_commit_sha"] == VALID_BASE_SHA
     assert manifest["retention_status"] == "complete"
+    assert manifest["source_commit_sha"] == VALID_SOURCE_SHA
+    assert manifest["base_commit_sha"] == VALID_BASE_SHA
     assert Path(manifest["retained_packet_path"]).is_file()
     assert Path(manifest["retained_gate_path"]).is_file()
     assert Path(manifest["retained_source_path"]).read_text(encoding="utf-8")
@@ -576,6 +597,137 @@ def test_durable_evidence_retains_packet_source_and_proof_after_originals_delete
     assert "ghp_" not in retained_blob
     assert "a" * 40 not in retained_blob
     assert "[REDACTED]" in retained_blob
+
+
+def test_durable_evidence_rejects_credential_filenames_before_copy(tmp_path):
+    proof = tmp_path / "proof.log"
+    proof.write_text("proof", encoding="utf-8")
+    store = AgyCompletedWorkStore(
+        tmp_path / "agy_completed_work.db", evidence_dir=tmp_path / "evidence"
+    )
+
+    for name in (".env", ".env.local", ".git-credentials", ".netrc"):
+        source = tmp_path / name
+        source.write_text("raw-secret-should-not-copy", encoding="utf-8")
+        row = store.ingest(
+            _retention_packet(tmp_path, source_path=source, proof_log=proof)
+        )
+        manifest = _manifest(row)
+        assert row.as_dict()["evidence_retention"]["status"] == "rejected_unsafe"
+        assert "secret_or_credential_path" in manifest["retention_reasons"]
+        assert manifest["retained_source_path"] is None
+        retained_blob = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in Path(manifest["retained_packet_path"]).parent.iterdir()
+            if path.is_file()
+        )
+        assert "raw-secret-should-not-copy" not in retained_blob
+
+
+def test_durable_evidence_allows_safe_result_and_proof_filenames(tmp_path):
+    source = tmp_path / "RESULT.md"
+    proof = tmp_path / "proof.log"
+    packet_json = tmp_path / "packet.json"
+    source.write_text("source", encoding="utf-8")
+    proof.write_text("proof", encoding="utf-8")
+    packet_json.write_text("packet", encoding="utf-8")
+    store = AgyCompletedWorkStore(
+        tmp_path / "agy_completed_work.db", evidence_dir=tmp_path / "evidence"
+    )
+
+    result_row = store.ingest(
+        _retention_packet(tmp_path, source_path=source, proof_log=proof)
+    )
+    packet_row = store.ingest(
+        _retention_packet(tmp_path, source_path=packet_json, proof_log=proof)
+    )
+
+    assert result_row.as_dict()["evidence_retention"]["status"] == "complete"
+    assert packet_row.as_dict()["evidence_retention"]["status"] == "complete"
+
+
+def test_durable_evidence_commit_identity_round_trip_and_compact_alias(tmp_path):
+    source = tmp_path / "RESULT.md"
+    proof = tmp_path / "proof.log"
+    source.write_text("source", encoding="utf-8")
+    proof.write_text("proof", encoding="utf-8")
+    store = AgyCompletedWorkStore(
+        tmp_path / "agy_completed_work.db", evidence_dir=tmp_path / "evidence"
+    )
+
+    row = store.ingest(_retention_packet(tmp_path, source_path=source, proof_log=proof))
+    manifest = _manifest(row)
+    reloaded = store.get(row.id).as_dict()["evidence_retention"]
+
+    assert manifest["source_commit_sha"] == VALID_SOURCE_SHA
+    assert manifest["base_commit_sha"] == VALID_BASE_SHA
+    assert reloaded["source_commit_sha"] == VALID_SOURCE_SHA
+    assert reloaded["base_commit_sha"] == VALID_BASE_SHA
+
+    compact = f"""
+COMMAND=pytest
+RESULT=PASS
+LOG={proof}
+SCOPE=compact commit alias
+AD_HOC_OR_CANONICAL=ad-hoc targeted
+NOT_CLAIMING=merge,deploy
+AGENT=agy
+SOURCE_BRANCH=feature/compact
+SOURCE_PATH={source}
+BASE_BRANCH=main
+COMMIT={VALID_SOURCE_SHA}
+BASE_COMMIT_SHA={VALID_BASE_SHA}
+CHANGED_FILES=prismatic/agy_completed_work.py
+MARKER=AGY_COMPLETED_WORK_DURABLE_EVIDENCE_REPAIR_OK
+"""
+    parsed = parse_completed_work_packet_text(compact)
+    assert parsed["source_commit_sha"] == VALID_SOURCE_SHA
+    assert parsed["base_commit_sha"] == VALID_BASE_SHA
+
+
+def test_durable_evidence_invalid_or_missing_source_sha_is_partial(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    source = tmp_path / "RESULT.md"
+    proof = tmp_path / "proof.log"
+    source.write_text("source", encoding="utf-8")
+    proof.write_text("proof", encoding="utf-8")
+    store = AgyCompletedWorkStore(
+        tmp_path / "agy_completed_work.db", evidence_dir=tmp_path / "evidence"
+    )
+
+    invalid = store.ingest(
+        _retention_packet(
+            tmp_path,
+            source_path=source,
+            proof_log=proof,
+            source_commit_sha="not-a-sha",
+            base_commit_sha="short",
+            source_branch="feature/invalid-commit-evidence",
+        )
+    )
+    missing = store.ingest(
+        _retention_packet(
+            tmp_path,
+            source_path=source,
+            proof_log=proof,
+            source_commit_sha=None,
+            source_branch="feature/missing-commit-evidence",
+        )
+    )
+
+    invalid_manifest = _manifest(invalid)
+    missing_manifest = _manifest(missing)
+    assert invalid.as_dict()["classification"] == "merge_ready"
+    assert invalid.as_dict()["evidence_retention"]["status"] == "partial"
+    assert invalid_manifest["source_commit_sha"] is None
+    assert invalid_manifest["base_commit_sha"] is None
+    assert "invalid_source_commit_sha" in invalid_manifest["retention_reasons"]
+    assert "invalid_base_commit_sha" in invalid_manifest["retention_reasons"]
+    assert missing.as_dict()["classification"] == "merge_ready"
+    assert missing.as_dict()["evidence_retention"]["status"] == "partial"
+    assert "source_commit_sha_missing" in missing_manifest["retention_reasons"]
 
 
 def test_durable_evidence_reingest_is_idempotent_and_preserves_first_manifest(tmp_path):
