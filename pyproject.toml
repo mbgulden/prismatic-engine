@@ -63,7 +63,7 @@ prismatic-api = "prismatic.api.server:run"
 include = ["prismatic*"]
 
 [tool.setuptools.package-data]
-prismatic = ["skills/**/*", "templates/**/*", "config/**/*"]
+prismatic = ["skills/**/*", "templates/**/*", "config/**/*", "schemas/**/*"]
 
 # ─────────────────────────────────────────────────────────────────────
 # Plugin entry points (Gap 9 / Part B)

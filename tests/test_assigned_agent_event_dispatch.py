@@ -743,3 +743,88 @@ def test_jules_cli_context_pack_uses_new_session_and_records_context(
     assert "do-not-leak-either" not in combined_text
     assert "token=[REDACTED]" in combined_text
     assert "api_key=[REDACTED]" in combined_text
+
+
+def _handoff_packet(agent: str = "fred") -> dict:
+    return {
+        "handoff_id": "handoff-gro-549",
+        "source": {"agent": "george", "system": "linear"},
+        "target": {"agent": agent, "required_capabilities": ["handoff_validation"]},
+        "work": {
+            "issue": "GRO-549",
+            "scope": "test assigned-agent handoff gate",
+            "base": "main",
+            "allowed_paths": ["docs"],
+            "production_facing": False,
+        },
+        "acceptance": {
+            "expected_markers": ["FRED_HANDOFF_CURRENT_EVENT_PATH_REPAIR_OK"],
+            "not_claiming": ["merge", "deploy"],
+        },
+        "retry": {"on_missing_result": "manual_review"},
+        "evidence": {
+            "required_artifacts": ["/tmp/proof.log"],
+            "production_proof": {"required": False, "artifacts": []},
+        },
+        "result": {
+            "status": "pass",
+            "changed_paths": ["docs/handoff.md"],
+            "artifacts": ["/tmp/proof.log"],
+            "claims": [],
+        },
+    }
+
+
+def test_assigned_agent_event_nested_handoff_contract_blocks_mismatch_before_launcher(
+    tmp_path: Path, monkeypatch
+):
+    q, dispatcher = setup_runtime(tmp_path, monkeypatch)
+    item = payload("GRO-HANDOFF-MISMATCH", "fred")
+    item["data"]["handoff_contract"] = _handoff_packet("agy")
+    enqueue(q, item)
+    calls: list[str] = []
+
+    result = dispatch_identifier(dispatcher, "GRO-HANDOFF-MISMATCH")
+    row = latest(q)
+
+    assert result["status"] == "blocked_preflight"
+    assert result["wakes"] == []
+    assert calls == []
+    assert row["preflight_status"] == "blocked_preflight"
+    assert row["dispatch_status"] == "blocked_preflight"
+    assert row["last_error"] == "target_agent_mismatch"
+
+
+def test_assigned_agent_event_invalid_nested_handoff_blocks_and_persists_reason(
+    tmp_path: Path, monkeypatch
+):
+    q, dispatcher = setup_runtime(tmp_path, monkeypatch)
+    item = payload("GRO-HANDOFF-BAD", "fred")
+    bad = _handoff_packet("fred")
+    bad["result"] = {"status": "pass", "changed_paths": ["secret.txt"], "artifacts": []}
+    item["data"]["metadata"] = {"handoff_contract": bad}
+    enqueue(q, item)
+
+    result = dispatch_identifier(dispatcher, "GRO-HANDOFF-BAD")
+    row = latest(q)
+
+    assert result["status"] == "blocked_preflight"
+    assert result["wakes"] == []
+    assert result["reason"] == "handoff_contract_invalid"
+    assert row["preflight_status"] == "blocked_preflight"
+    assert row["dispatch_status"] == "blocked_preflight"
+    assert row["last_error"] == "handoff_contract_invalid"
+
+
+def test_assigned_agent_event_missing_handoff_metadata_still_dispatches(
+    tmp_path: Path, monkeypatch
+):
+    q, dispatcher = setup_runtime(tmp_path, monkeypatch)
+    enqueue(q, payload("GRO-HANDOFF-MISSING", "fred"))
+
+    result = dispatch_identifier(dispatcher, "GRO-HANDOFF-MISSING")
+    row = latest(q)
+
+    assert result["status"] == "dispatched"
+    assert result["wakes"] == ["fred"]
+    assert row["dispatch_status"] == "dispatched"

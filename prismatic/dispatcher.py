@@ -51,6 +51,11 @@ from .telemetry import get_collector
 from .capability_router import default_capability_registry, route_issue
 from .lane_contracts import filter_dispatchable_issues, starvation_signal_for
 from .mode_switch import get_mode_switch
+from .handoff_contracts import (
+    HandoffValidationResult,
+    extract_handoff_packet,
+    validation_result,
+)
 from .linear_rate_limit import (
     LinearRateLimitCircuitOpen,
     ensure_linear_circuit_closed,
@@ -222,6 +227,56 @@ def check_active_processes() -> int:
     return released
 
 
+def _handoff_preflight_message(identifier: str, result: HandoffValidationResult) -> str:
+    errors = "\n".join(f"- {error}" for error in result.errors)
+    if not errors:
+        errors = "- unknown handoff contract validation failure"
+    return (
+        "🚫 **Handoff contract preflight failed**\n\n"
+        f"Issue/task: `{identifier}`\n"
+        f"Status: `{result.status}`\n"
+        f"Reason: `{result.reason}`\n"
+        f"Target agent: `{result.target_agent or 'needs_manual_review'}`\n\n"
+        f"Errors:\n{errors}\n\n"
+        "No agent was launched. Fix the handoff packet and rerun dispatch."
+    )
+
+
+def handoff_dispatch_preflight(
+    container: Any, agent_name: str, identifier: str = ""
+) -> HandoffValidationResult | None:
+    """Fail closed for invalid embedded handoff packets before launching agents.
+
+    Missing handoff metadata means the issue/task is not using the GRO-549
+    handoff contract yet and should continue through the existing dispatch path.
+    """
+    packet = extract_handoff_packet(container)
+    if packet is None:
+        return None
+    result = validation_result(packet)
+    if result.ok and result.target_agent != agent_name:
+        return HandoffValidationResult(
+            ok=False,
+            status="blocked",
+            reason="target_agent_mismatch",
+            errors=(
+                f"handoff target agent {result.target_agent!r} does not match "
+                f"dispatch lane {agent_name!r}",
+            ),
+            target_agent=result.target_agent,
+        )
+    return result
+
+
+def _mark_handoff_preflight_failure(
+    issue_id: str, identifier: str, result: HandoffValidationResult
+) -> None:
+    try:
+        add_comment(issue_id, _handoff_preflight_message(identifier, result))
+    except Exception:
+        pass
+
+
 def dispatch_local_tasks(dedup: Any, local_task_queue: Any | None = None) -> int:
     if local_task_queue is None:
         try:
@@ -232,12 +287,37 @@ def dispatch_local_tasks(dedup: Any, local_task_queue: Any | None = None) -> int
             return 0
     dispatched = 0
     for task in local_task_queue.list_queued(limit=25):
+        preflight = handoff_dispatch_preflight(task, task.agent, task.id)
+        if preflight is not None and not preflight.ok:
+            status = "needs_manual_review" if preflight.is_manual_review else "blocked"
+            local_task_queue.update_status(
+                task.id,
+                status,
+                metadata_patch={
+                    "handoff_preflight_status": preflight.status,
+                    "handoff_preflight_reason": preflight.reason,
+                    "handoff_preflight_errors": list(preflight.errors),
+                },
+            )
+            print(
+                f"[dispatcher] 🚫 Handoff preflight {preflight.status} "
+                f"for local task {task.id}: {preflight.reason}"
+            )
+            continue
         launcher = AGENT_LAUNCHERS.get(task.agent)
         if not launcher:
             continue
         result = launcher(task.id, title=task.title, workspace=task.workspace)
         if result:
-            local_task_queue.update_status(task.id, "dispatched")
+            metadata_patch = None
+            if preflight is not None:
+                metadata_patch = {
+                    "handoff_preflight_status": preflight.status,
+                    "handoff_preflight_reason": preflight.reason,
+                }
+            local_task_queue.update_status(
+                task.id, "dispatched", metadata_patch=metadata_patch
+            )
             dispatched += 1
     return dispatched
 
@@ -2529,6 +2609,18 @@ def preflight_assigned_agent(
             "blocked_preflight", False, f"agent disabled: {agent}"
         )
     launcher_map = launchers or AGENT_LAUNCHERS
+    payload = _assigned_agent_payload(row)
+    handoff_result = handoff_dispatch_preflight(
+        payload, agent, str(row.get("identifier") or "")
+    )
+    if handoff_result is not None and not handoff_result.ok:
+        return AssignedAgentPreflight(
+            handoff_result.status
+            if handoff_result.is_manual_review
+            else "blocked_preflight",
+            False,
+            handoff_result.reason,
+        )
     if agent not in launcher_map:
         return AssignedAgentPreflight(
             "blocked_preflight", False, f"no launcher for {agent}"
@@ -2610,6 +2702,8 @@ def dispatch_assigned_agent_event(
         status = (
             "deferred_rate_limit"
             if preflight.status == "deferred_rate_limit"
+            else "needs_manual_review"
+            if preflight.status == "needs_manual_review"
             else "blocked_preflight"
         )
         update_assigned_dispatch_state(

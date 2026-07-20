@@ -1,0 +1,56 @@
+{
+  "handoff_id": "GRO-549:out-of-lane",
+  "source": {
+    "agent": "fred"
+  },
+  "target": {
+    "agent": "agy",
+    "required_capabilities": [
+      "repo_write"
+    ]
+  },
+  "work": {
+    "issue": "GRO-549",
+    "scope": "schema validation only",
+    "base": "origin/main",
+    "allowed_paths": [
+      "schemas/handoff-contract.schema.json",
+      "tests/fixtures/handoff-contracts/"
+    ],
+    "forbidden_paths": [
+      "content/",
+      "active-oahu/"
+    ],
+    "production_facing": false
+  },
+  "acceptance": {
+    "expected_markers": [
+      "HANDOFF_CONTRACT_SCHEMA_SLICE_OK"
+    ],
+    "not_claiming": [
+      "runtime_enforcement",
+      "canonical_full_suite_green"
+    ]
+  },
+  "retry": {
+    "on_missing_result": "pause_and_require_review",
+    "on_scope_violation": "block_and_comment"
+  },
+  "evidence": {
+    "required_artifacts": [
+      "verification output"
+    ]
+  },
+  "result": {
+    "status": "pass",
+    "changed_paths": [
+      "content/live-page.md"
+    ],
+    "artifacts": [
+      "verification output"
+    ],
+    "claims": [
+      "schema slice complete"
+    ]
+  }
+}
