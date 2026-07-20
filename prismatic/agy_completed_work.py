@@ -12,6 +12,7 @@ import json
 import os
 import re
 import sqlite3
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,6 +27,8 @@ from prismatic.completed_work_gate import (
 AGY_COMPLETED_WORK_INGESTION_MARKER = "AGY_COMPLETED_WORK_INGESTION_OK"
 AGY_COMPLETED_WORK_INTEGRATION_GATE_MARKER = "AGY_COMPLETED_WORK_INTEGRATION_GATE_OK"
 DEFAULT_DB_NAME = "agy_completed_work.db"
+DEFAULT_EVIDENCE_DIR_NAME = "agy-completed-work-evidence"
+MAX_RETAINED_EVIDENCE_BYTES = 2 * 1024 * 1024
 AGY_PACKET_NORMALIZATION_MARKER = "AGY_RESULT_PACKET_NORMALIZED_OK"
 INTEGRATION_CLASSIFICATIONS = {
     "merge_ready": "pass_ready_for_review",
@@ -357,6 +360,15 @@ def default_db_path() -> Path:
     ).expanduser()
 
 
+def default_evidence_dir() -> Path:
+    return Path(
+        os.environ.get(
+            "PRISMATIC_AGY_COMPLETED_WORK_EVIDENCE_DIR",
+            str(default_state_dir() / DEFAULT_EVIDENCE_DIR_NAME),
+        )
+    ).expanduser()
+
+
 def integration_classification_for(
     gate_classification: str, proof_result: str | None = None
 ) -> str:
@@ -396,6 +408,235 @@ def _redact_summary(value: Any) -> Any:
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
         return [_redact_summary(item) for item in value]
     return value
+
+
+def _sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _json_bytes(value: Mapping[str, Any]) -> bytes:
+    return json.dumps(value, sort_keys=True, indent=2, default=str).encode("utf-8")
+
+
+def _write_private(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path.write_bytes(data)
+    try:
+        path.chmod(0o600)
+    except OSError:  # pragma: no cover - platform permission edge
+        pass
+
+
+def _safe_path_for_retention(path: Path) -> tuple[bool, str | None]:
+    try:
+        raw = str(path.expanduser())
+        if ".." in Path(raw).parts:
+            return False, "path_traversal"
+        resolved = path.expanduser().resolve(strict=False)
+    except OSError:
+        return False, "path_unresolvable"
+    parts = {part.lower() for part in resolved.parts}
+    if parts & _SECRET_PATH_PARTS:
+        return False, "secret_or_credential_path"
+    if parts & _GENERATED_PATH_PARTS:
+        return False, "generated_or_vendor_path"
+    allowed_roots = [
+        Path.home().resolve(),
+        default_state_dir().resolve(),
+        Path(tempfile.gettempdir()).resolve(),
+    ]
+    if not any(resolved == root or root in resolved.parents for root in allowed_roots):
+        return False, "outside_allowed_roots"
+    return True, None
+
+
+def _source_file_for_retention(
+    source_path: str | None,
+) -> tuple[Path | None, list[str], str]:
+    if not source_path:
+        return None, ["source_path_missing"], "partial"
+    source = Path(source_path).expanduser()
+    safe, reason = _safe_path_for_retention(source)
+    if not safe:
+        return None, [reason or "source_path_unsafe"], "rejected_unsafe"
+    if source.is_symlink():
+        return None, ["source_path_symlink_rejected"], "rejected_unsafe"
+    if source.is_file():
+        return source, [], "complete"
+    if source.is_dir():
+        for name in ("RESULT.md", "packet.json", "result.json"):
+            candidate = source / name
+            if candidate.is_symlink():
+                return None, ["source_packet_symlink_rejected"], "rejected_unsafe"
+            if candidate.is_file():
+                return candidate, [], "complete"
+        return None, ["source_directory_without_recognized_packet_file"], "partial"
+    if source.exists():
+        return None, ["source_path_special_file_rejected"], "rejected_unsafe"
+    return None, ["source_path_missing_at_ingest"], "partial"
+
+
+def _read_redacted_file(path: Path) -> tuple[bytes | None, list[str], str]:
+    if path.is_symlink():
+        return None, ["file_symlink_rejected"], "rejected_unsafe"
+    if not path.is_file():
+        return None, ["file_missing_or_not_regular"], "partial"
+    size = path.stat().st_size
+    if size > MAX_RETAINED_EVIDENCE_BYTES:
+        return None, ["file_too_large"], "rejected_unsafe"
+    text = path.read_text(encoding="utf-8", errors="replace")
+    redacted = _redact_summary(text)
+    return str(redacted).encode("utf-8"), [], "complete"
+
+
+def _manifest_digest(manifest: Mapping[str, Any]) -> str:
+    body = dict(manifest)
+    body.pop("manifest_sha256", None)
+    return _sha256_bytes(_json_bytes(body))
+
+
+def retain_completed_work_evidence(
+    *,
+    row_id: str,
+    created_at: str,
+    updated_at: str,
+    packet: Mapping[str, Any],
+    gate_payload: Mapping[str, Any],
+    classification: str,
+    packet_classification: str,
+    integration_classification: str,
+    evidence_root: Path,
+) -> dict[str, Any]:
+    """Retain a small immutable redacted evidence bundle for a completed-work row."""
+
+    bundle_dir = evidence_root / row_id
+    manifest_path = bundle_dir / "manifest.json"
+    if manifest_path.is_file():
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        return {
+            "status": manifest.get("retention_status", "unavailable"),
+            "reasons": manifest.get("retention_reasons", []),
+            "manifest_path": str(manifest_path),
+            "manifest_sha256": manifest.get("manifest_sha256"),
+            "source_commit_sha": manifest.get("source_commit_sha"),
+            "proof_log_retained": bool(manifest.get("retained_proof_log_path")),
+        }
+
+    evidence_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with tempfile.TemporaryDirectory(
+        prefix=f".{row_id}-", dir=evidence_root
+    ) as temp_name:
+        temp_dir = Path(temp_name)
+        try:
+            temp_dir.chmod(0o700)
+        except OSError:  # pragma: no cover
+            pass
+        reasons: list[str] = []
+        status = "complete"
+        redacted_packet = _redact_summary(packet)
+        redacted_gate = _redact_summary(gate_payload)
+        packet_bytes = _json_bytes(
+            redacted_packet if isinstance(redacted_packet, Mapping) else {}
+        )
+        gate_bytes = _json_bytes(
+            redacted_gate if isinstance(redacted_gate, Mapping) else {}
+        )
+        retained_packet = temp_dir / "packet.redacted.json"
+        retained_gate = temp_dir / "gate.redacted.json"
+        _write_private(retained_packet, packet_bytes)
+        _write_private(retained_gate, gate_bytes)
+
+        source_path = _string(packet.get("source_path"))
+        source_file, source_reasons, source_status = _source_file_for_retention(
+            source_path
+        )
+        reasons.extend(source_reasons)
+        source_exists = bool(source_file and source_file.exists())
+        retained_source_path: str | None = None
+        source_sha256: str | None = None
+        if source_file:
+            source_bytes, read_reasons, read_status = _read_redacted_file(source_file)
+            reasons.extend(f"source_{reason}" for reason in read_reasons)
+            source_status = read_status if read_status != "complete" else source_status
+            if source_bytes is not None:
+                retained_source = temp_dir / f"source{source_file.suffix or '.txt'}"
+                _write_private(retained_source, source_bytes)
+                retained_source_path = str(bundle_dir / retained_source.name)
+                source_sha256 = _sha256_bytes(source_bytes)
+
+        proof_value = packet.get("proof")
+        proof: Mapping[str, Any] = (
+            proof_value if isinstance(proof_value, Mapping) else {}
+        )
+        proof_log = _string(proof.get("log")) or _string(proof.get("log_path"))
+        proof_log_path: str | None = None
+        proof_log_sha256: str | None = None
+        proof_status = "partial"
+        if proof_log:
+            log_path = Path(proof_log).expanduser()
+            safe, reason = _safe_path_for_retention(log_path)
+            if not safe:
+                reasons.append(f"proof_log_{reason or 'unsafe'}")
+                proof_status = "rejected_unsafe"
+            else:
+                log_bytes, log_reasons, proof_status = _read_redacted_file(log_path)
+                reasons.extend(f"proof_log_{reason}" for reason in log_reasons)
+                if log_bytes is not None:
+                    retained_log = temp_dir / "proof-log.redacted.txt"
+                    _write_private(retained_log, log_bytes)
+                    proof_log_path = str(bundle_dir / retained_log.name)
+                    proof_log_sha256 = _sha256_bytes(log_bytes)
+        else:
+            reasons.append("proof_log_missing")
+
+        if "rejected_unsafe" in {source_status, proof_status}:
+            status = "rejected_unsafe"
+        elif source_status != "complete" or proof_status != "complete":
+            status = "partial"
+
+        manifest: dict[str, Any] = {
+            "schema_version": 1,
+            "completed_work_id": row_id,
+            "created_at": created_at,
+            "updated_at": updated_at,
+            "retention_status": status,
+            "retention_reasons": reasons,
+            "source_branch": _string(packet.get("source_branch")),
+            "base_branch": _string(packet.get("base_branch")),
+            "source_path_original": source_path,
+            "source_path_exists_at_ingest": source_exists,
+            "source_commit_sha": None,
+            "base_commit_sha": None,
+            "changed_files": _string_list(packet.get("changed_files")),
+            "proof_log_original": proof_log,
+            "retained_packet_path": str(bundle_dir / retained_packet.name),
+            "retained_gate_path": str(bundle_dir / retained_gate.name),
+            "retained_source_path": retained_source_path,
+            "retained_proof_log_path": proof_log_path,
+            "packet_sha256": _sha256_bytes(packet_bytes),
+            "gate_sha256": _sha256_bytes(gate_bytes),
+            "source_sha256": source_sha256,
+            "proof_log_sha256": proof_log_sha256,
+            "classification": classification,
+            "packet_classification": packet_classification,
+            "integration_classification": integration_classification,
+            "historical_source_recovered": False,
+            "historical_log_recovered": False,
+        }
+        manifest["manifest_sha256"] = _manifest_digest(manifest)
+        _write_private(temp_dir / "manifest.json", _json_bytes(manifest))
+        if not bundle_dir.exists():
+            temp_dir.replace(bundle_dir)
+        manifest_path = bundle_dir / "manifest.json"
+        final_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        return {
+            "status": final_manifest.get("retention_status", status),
+            "reasons": final_manifest.get("retention_reasons", reasons),
+            "manifest_path": str(manifest_path),
+            "manifest_sha256": final_manifest.get("manifest_sha256"),
+            "source_commit_sha": final_manifest.get("source_commit_sha"),
+            "proof_log_retained": bool(final_manifest.get("retained_proof_log_path")),
+        }
 
 
 def _packet_required_missing(packet: Mapping[str, Any]) -> list[str]:
@@ -751,6 +992,7 @@ class CompletedWorkRow:
     packet: dict[str, Any]
     gate: dict[str, Any]
     non_claims: tuple[str, ...]
+    evidence_retention: dict[str, Any]
 
     @property
     def integration_classification(self) -> str:
@@ -822,6 +1064,7 @@ class CompletedWorkRow:
             "integration_marker": AGY_COMPLETED_WORK_INTEGRATION_GATE_MARKER,
             "linear_writeback": self.linear_writeback_dry_run(),
             "normalized_record": self.normalized_record(),
+            "evidence_retention": self.evidence_retention,
             "packet": self.packet,
             "gate": self.gate,
             "non_claims": list(self.non_claims),
@@ -831,8 +1074,16 @@ class CompletedWorkRow:
 class AgyCompletedWorkStore:
     """SQLite store for completed AGY packets and gate decisions."""
 
-    def __init__(self, db_path: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        db_path: str | Path | None = None,
+        *,
+        evidence_dir: str | Path | None = None,
+    ) -> None:
         self.db_path = Path(db_path) if db_path is not None else default_db_path()
+        self.evidence_dir = (
+            Path(evidence_dir) if evidence_dir is not None else default_evidence_dir()
+        )
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_schema()
 
@@ -862,10 +1113,21 @@ class AgyCompletedWorkStore:
                     ingestion_marker TEXT NOT NULL,
                     packet_json TEXT NOT NULL,
                     gate_json TEXT NOT NULL,
-                    non_claims_json TEXT NOT NULL
+                    non_claims_json TEXT NOT NULL,
+                    evidence_json TEXT NOT NULL DEFAULT '{}'
                 )
                 """
             )
+            columns = {
+                str(row["name"])
+                for row in conn.execute(
+                    "PRAGMA table_info(agy_completed_work)"
+                ).fetchall()
+            }
+            if "evidence_json" not in columns:
+                conn.execute(
+                    "ALTER TABLE agy_completed_work ADD COLUMN evidence_json TEXT NOT NULL DEFAULT '{}'"
+                )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_agy_completed_work_created_at ON agy_completed_work(created_at DESC)"
             )
@@ -968,6 +1230,20 @@ class AgyCompletedWorkStore:
         now = datetime.now(timezone.utc).isoformat()
         row_id = completed_work_id(normalized_packet)
         gate_payload = gate.as_dict()
+        classification = gate.classification.value
+        evidence_retention = retain_completed_work_evidence(
+            row_id=row_id,
+            created_at=now,
+            updated_at=now,
+            packet=normalized_packet,
+            gate_payload=gate_payload,
+            classification=classification,
+            packet_classification=packet_classification_for(normalized_packet),
+            integration_classification=integration_classification_for(
+                classification, gate.proof_result
+            ),
+            evidence_root=self.evidence_dir,
+        )
         values = (
             row_id,
             now,
@@ -976,7 +1252,7 @@ class AgyCompletedWorkStore:
             gate.source_branch,
             gate.source_path,
             gate.base_branch,
-            gate.classification.value,
+            classification,
             1 if gate.eligible_for_merge else 0,
             1 if gate.requires_clean_rebuild else 0,
             gate.proof_result,
@@ -986,6 +1262,7 @@ class AgyCompletedWorkStore:
             json.dumps(normalized_packet, sort_keys=True),
             json.dumps(gate_payload, sort_keys=True),
             json.dumps(list(non_claims), sort_keys=True),
+            json.dumps(evidence_retention, sort_keys=True),
         )
         with self._connect() as conn:
             conn.execute(
@@ -995,8 +1272,8 @@ class AgyCompletedWorkStore:
                     base_branch, classification, eligible_for_merge,
                     requires_clean_rebuild, proof_result, proof_marker,
                     gate_marker, ingestion_marker, packet_json, gate_json,
-                    non_claims_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    non_claims_json, evidence_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     updated_at = excluded.updated_at,
                     agent = excluded.agent,
@@ -1012,7 +1289,8 @@ class AgyCompletedWorkStore:
                     ingestion_marker = excluded.ingestion_marker,
                     packet_json = excluded.packet_json,
                     gate_json = excluded.gate_json,
-                    non_claims_json = excluded.non_claims_json
+                    non_claims_json = excluded.non_claims_json,
+                    evidence_json = agy_completed_work.evidence_json
                 """,
                 values,
             )
@@ -1123,7 +1401,29 @@ def row_from_sqlite(row: sqlite3.Row) -> CompletedWorkRow:
         packet=json.loads(row["packet_json"]),
         gate=json.loads(row["gate_json"]),
         non_claims=tuple(json.loads(row["non_claims_json"])),
+        evidence_retention=_evidence_from_sqlite(row),
     )
+
+
+def _evidence_from_sqlite(row: sqlite3.Row) -> dict[str, Any]:
+    try:
+        raw = row["evidence_json"]
+    except (KeyError, IndexError):
+        raw = None
+    if raw:
+        parsed = json.loads(raw)
+        if parsed:
+            return parsed
+    return {
+        "status": "unavailable",
+        "reasons": ["historical_row_without_retained_evidence"],
+        "manifest_path": None,
+        "manifest_sha256": None,
+        "source_commit_sha": None,
+        "proof_log_retained": False,
+        "historical_source_recovered": False,
+        "historical_log_recovered": False,
+    }
 
 
 def _json_object(value: Mapping[str, Any], name: str) -> dict[str, Any]:
