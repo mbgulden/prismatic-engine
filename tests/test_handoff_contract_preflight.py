@@ -127,3 +127,35 @@ def test_dispatch_local_tasks_routes_ambiguous_target_to_manual_review(
     assert launched == []
     assert stored.status == "needs_manual_review"
     assert stored.metadata["handoff_preflight_reason"] == "ambiguous_target_agent"
+
+
+def test_extracts_nested_linear_data_handoff_contract_json() -> None:
+    packet = load_fixture("pass.json")
+    issue = {"data": {"handoff_contract": json.dumps(packet)}}
+
+    result = dispatcher.handoff_dispatch_preflight(issue, "agy", "GRO-549")
+
+    assert result is not None
+    assert result.ok is True
+
+
+def test_malformed_json_handoff_routes_to_manual_review() -> None:
+    issue = {"data": {"metadata": {"handoff_packet": "not-json"}}}
+
+    result = dispatcher.handoff_dispatch_preflight(issue, "agy", "GRO-549")
+
+    assert result is not None
+    assert result.ok is False
+    assert result.status == "needs_manual_review"
+    assert result.reason == "ambiguous_target_agent"
+
+
+def test_non_object_json_handoff_routes_to_manual_review() -> None:
+    issue = {"handoff_contract": "[]"}
+
+    result = dispatcher.handoff_dispatch_preflight(issue, "agy", "GRO-549")
+
+    assert result is not None
+    assert result.ok is False
+    assert result.status == "needs_manual_review"
+    assert result.reason == "ambiguous_target_agent"

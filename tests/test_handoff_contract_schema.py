@@ -6,7 +6,11 @@ from typing import Any
 
 import pytest
 
-from prismatic.handoff_contracts import validate_packet
+from prismatic.handoff_contracts import (
+    load_default_schema,
+    validate_packet,
+    validation_result,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = ROOT / "schemas" / "handoff-contract.schema.json"
@@ -43,3 +47,36 @@ def test_invalid_handoff_contract_fixtures_fail(
     errors = validate_fixture(packet)
     assert errors, fixture
     assert any(expected_error in error for error in errors), errors
+
+
+def test_packaged_schema_matches_authoring_reference() -> None:
+    assert load_default_schema() == load_json(SCHEMA_PATH)
+
+
+@pytest.mark.parametrize(
+    "packet",
+    [
+        {"work": [], "result": {}, "evidence": {}, "target": {"agent": "fred"}},
+        {"work": {}, "result": "x", "evidence": {}, "target": {"agent": "fred"}},
+        {
+            "work": {},
+            "result": {"status": "pass", "artifacts": [[]]},
+            "evidence": {"required_artifacts": [[]]},
+            "target": {"agent": "fred"},
+        },
+        {"work": {}, "result": {}, "evidence": {}, "target": []},
+        {
+            "work": {},
+            "result": {},
+            "evidence": {},
+            "target": {"agent": "fred"},
+            "source": [],
+        },
+    ],
+)
+def test_malformed_nested_values_fail_closed_without_crashing(packet: Any) -> None:
+    errors = validate_fixture(packet)
+    assert errors
+    result = validation_result(packet, load_json(SCHEMA_PATH))
+    assert result.ok is False
+    assert result.status in {"blocked", "needs_manual_review"}

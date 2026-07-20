@@ -2609,6 +2609,18 @@ def preflight_assigned_agent(
             "blocked_preflight", False, f"agent disabled: {agent}"
         )
     launcher_map = launchers or AGENT_LAUNCHERS
+    payload = _assigned_agent_payload(row)
+    handoff_result = handoff_dispatch_preflight(
+        payload, agent, str(row.get("identifier") or "")
+    )
+    if handoff_result is not None and not handoff_result.ok:
+        return AssignedAgentPreflight(
+            handoff_result.status
+            if handoff_result.is_manual_review
+            else "blocked_preflight",
+            False,
+            handoff_result.reason,
+        )
     if agent not in launcher_map:
         return AssignedAgentPreflight(
             "blocked_preflight", False, f"no launcher for {agent}"
@@ -2690,6 +2702,8 @@ def dispatch_assigned_agent_event(
         status = (
             "deferred_rate_limit"
             if preflight.status == "deferred_rate_limit"
+            else "needs_manual_review"
+            if preflight.status == "needs_manual_review"
             else "blocked_preflight"
         )
         update_assigned_dispatch_state(
