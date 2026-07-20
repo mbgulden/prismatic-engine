@@ -1,4 +1,5 @@
 from copy import deepcopy
+import json
 from pathlib import Path
 import sqlite3
 
@@ -774,6 +775,162 @@ def test_promotion_ledger_blocks_historical_and_incomplete_durable_evidence(
         ]
         is None
     )
+
+
+def test_legacy_promotion_ledger_revalidates_against_current_missing_evidence(
+    monkeypatch, tmp_path
+):
+    db = tmp_path / "completed_work.db"
+    ledger = tmp_path / "promotion-ledger.json"
+    approval_ledger = tmp_path / "operator-approvals.json"
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(db))
+    monkeypatch.setenv("PRISMATIC_AGY_PROMOTION_LEDGER_STATE", str(ledger))
+    monkeypatch.setenv("PRISMATIC_AGY_OPERATOR_APPROVAL_STATE", str(approval_ledger))
+    monkeypatch.setenv("PRISMATIC_AGY_EXECUTOR_RUNS_STATE", str(tmp_path / "runs.json"))
+    row = ingest_completed_work(packet(), db_path=db)
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "UPDATE agy_completed_work SET evidence_json = '{}' WHERE id = ?",
+            (row.id,),
+        )
+        conn.commit()
+    legacy = {
+        "promotion_decision_id": "promotion-59041b8e317299a5",
+        "completed_work_id": row.id,
+        "status": "decision_ready",
+        "recommendation": "open_or_update_pr",
+        "requested_by": "production-legacy",
+        "recorded_at": "2026-07-20T20:00:00+00:00",
+        "operator_request": {"requested_by": "production-legacy"},
+        "side_effects": {"github_pr_created": False, "linear_comment_posted": False},
+        "non_claims": {"production_deploy": False},
+        "marker": "ONE_AGENT_PROMOTION_DECISION_LEDGER_OK",
+    }
+    ledger.write_text(json.dumps([legacy]), encoding="utf-8")
+    client = TestClient(server.app)
+
+    listed = client.get("/api/gateway/agy/promotion-decisions")
+    assert listed.status_code == 200
+    listed_decision = listed.json()["promotion_decisions"][0]
+    assert listed_decision["promotion_decision_id"] == legacy["promotion_decision_id"]
+    assert listed_decision["completed_work_id"] == row.id
+    assert listed_decision["recorded_at"] == legacy["recorded_at"]
+    assert listed_decision["requested_by"] == legacy["requested_by"]
+    assert listed_decision["stored_legacy_record"] is True
+    assert listed_decision["stored_status"] == "decision_ready"
+    assert listed_decision["revalidation_status"] == "held_by_current_evidence"
+    assert listed_decision["status"] == "hold_needs_durable_evidence"
+    assert listed_decision["recommendation"] == "hold_for_durable_evidence"
+    assert (
+        listed_decision["source_decision"]["evidence_retention"]["status"]
+        == "unavailable"
+    )
+
+    detail = client.get(
+        f"/api/gateway/agy/promotion-decisions/{legacy['promotion_decision_id']}"
+    )
+    assert detail.status_code == 200
+    assert detail.json()["promotion_decision"] == listed_decision
+
+    approval_res = client.get(
+        f"/api/gateway/agy/promotion-decisions/{legacy['promotion_decision_id']}/operator-action/preview",
+        params={"operator_decision": "approve", "requested_by": "legacy-test"},
+    )
+    assert approval_res.status_code == 200
+    approval = approval_res.json()["operator_action_approval"]
+    assert approval["policy_gate"] == "manual_review"
+    assert approval["execution_preview"]["would_execute"] is False
+
+
+def test_legacy_promotion_ledger_missing_completed_work_linkage_fails_closed(
+    monkeypatch, tmp_path
+):
+    db = tmp_path / "completed_work.db"
+    ledger = tmp_path / "promotion-ledger.json"
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(db))
+    monkeypatch.setenv("PRISMATIC_AGY_PROMOTION_LEDGER_STATE", str(ledger))
+    monkeypatch.setenv("PRISMATIC_AGY_EXECUTOR_RUNS_STATE", str(tmp_path / "runs.json"))
+    legacy = {
+        "promotion_decision_id": "promotion-corrupt-linkage",
+        "completed_work_id": "agy-cw-missing-row",
+        "status": "decision_ready",
+        "recommendation": "open_or_update_pr",
+        "requested_by": "production-legacy",
+        "recorded_at": "2026-07-20T20:00:00+00:00",
+        "side_effects": {"github_pr_created": False, "linear_comment_posted": False},
+        "non_claims": {"production_deploy": False},
+        "marker": "ONE_AGENT_PROMOTION_DECISION_LEDGER_OK",
+    }
+    ledger.write_text(json.dumps([legacy]), encoding="utf-8")
+    client = TestClient(server.app)
+
+    listed = client.get("/api/gateway/agy/promotion-decisions")
+    assert listed.status_code == 200
+    decision = listed.json()["promotion_decisions"][0]
+    assert decision["revalidation_status"] == "held_by_current_evidence"
+    assert decision["status"] == "manual_review"
+    assert decision["recommendation"] == "manual_review"
+    assert decision["revalidation_reason"].startswith(
+        "completed_work_revalidation_failed:"
+    )
+
+    detail = client.get(
+        "/api/gateway/agy/promotion-decisions/promotion-corrupt-linkage"
+    )
+    assert detail.status_code == 200
+    assert detail.json()["promotion_decision"] == decision
+
+
+def test_legacy_promotion_ledger_can_remain_ready_with_current_complete_evidence(
+    monkeypatch, tmp_path
+):
+    db = tmp_path / "completed_work.db"
+    ledger = tmp_path / "promotion-ledger.json"
+    approval_ledger = tmp_path / "operator-approvals.json"
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(db))
+    monkeypatch.setenv("PRISMATIC_AGY_PROMOTION_LEDGER_STATE", str(ledger))
+    monkeypatch.setenv("PRISMATIC_AGY_OPERATOR_APPROVAL_STATE", str(approval_ledger))
+    monkeypatch.setenv("PRISMATIC_AGY_EXECUTOR_RUNS_STATE", str(tmp_path / "runs.json"))
+    row = ingest_completed_work(retained_packet(tmp_path), db_path=db)
+    legacy = {
+        "promotion_decision_id": "promotion-59041b8e317299a5",
+        "completed_work_id": row.id,
+        "status": "decision_ready",
+        "recommendation": "open_or_update_pr",
+        "requested_by": "production-legacy",
+        "recorded_at": "2026-07-20T20:00:00+00:00",
+        "side_effects": {"github_pr_created": False, "linear_comment_posted": False},
+        "non_claims": {"production_deploy": False},
+        "marker": "ONE_AGENT_PROMOTION_DECISION_LEDGER_OK",
+    }
+    ledger.write_text(json.dumps([legacy]), encoding="utf-8")
+    client = TestClient(server.app)
+
+    detail = client.get(
+        f"/api/gateway/agy/promotion-decisions/{legacy['promotion_decision_id']}"
+    )
+    assert detail.status_code == 200
+    decision = detail.json()["promotion_decision"]
+    assert decision["promotion_decision_id"] == legacy["promotion_decision_id"]
+    assert decision["recorded_at"] == legacy["recorded_at"]
+    assert decision["requested_by"] == legacy["requested_by"]
+    assert decision["stored_legacy_record"] is True
+    assert decision["revalidation_status"] == "passed_current_evidence"
+    assert decision["status"] == "decision_ready"
+    assert decision["recommendation"] == "open_or_update_pr"
+    assert decision["source_decision"]["evidence_retention"]["status"] == "complete"
+
+    approval_res = client.get(
+        f"/api/gateway/agy/promotion-decisions/{legacy['promotion_decision_id']}/operator-action/preview",
+        params={"operator_decision": "approve", "requested_by": "legacy-test"},
+    )
+    assert approval_res.status_code == 200
+    approval = approval_res.json()["operator_action_approval"]
+    assert approval["policy_gate"] == "pass"
+    assert approval["execution_preview"]["would_execute"] is True
 
 
 def test_one_agent_operator_action_approval_api_and_dashboard_are_safe(

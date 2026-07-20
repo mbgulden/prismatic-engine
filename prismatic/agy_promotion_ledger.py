@@ -310,12 +310,97 @@ def record_promotion_decision(
     return record
 
 
+def _fail_closed_revalidation_view(
+    record: dict[str, Any], reason: str
+) -> dict[str, Any]:
+    view = dict(record)
+    view.setdefault("stored_legacy_record", not bool(record.get("source_decision")))
+    view["revalidation_status"] = "held_by_current_evidence"
+    view["revalidation_reason"] = reason
+    view["stored_status"] = record.get("status")
+    view["stored_recommendation"] = record.get("recommendation")
+    view["status"] = "manual_review"
+    view["recommendation"] = "manual_review"
+    view.setdefault("source_decision", {})
+    evidence = dict(view.get("evidence") or {})
+    evidence["current_evidence_revalidation"] = {
+        "status": "failed_closed",
+        "reason": reason,
+        "completed_work_id": record.get("completed_work_id"),
+    }
+    view["evidence"] = evidence
+    return view
+
+
+def _revalidated_record_view(record: dict[str, Any]) -> dict[str, Any]:
+    completed_work_id = str(record.get("completed_work_id") or "")
+    if not completed_work_id:
+        return _fail_closed_revalidation_view(record, "missing_completed_work_id")
+
+    try:
+        current = build_promotion_decision(
+            completed_work_id,
+            requested_by=str(record.get("requested_by") or "ledger-revalidation"),
+            recorded_at=str(record.get("recorded_at") or "") or None,
+        ).as_dict()
+    except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError) as exc:
+        return _fail_closed_revalidation_view(
+            record, f"completed_work_revalidation_failed:{type(exc).__name__}"
+        )
+
+    source_gate = (current.get("evidence") or {}).get("source_decision_gate") or {}
+    if (
+        current.get("status") != "decision_ready"
+        or current.get("recommendation") != "open_or_update_pr"
+    ):
+        view = _fail_closed_revalidation_view(
+            record, "current_completed_work_evidence_not_decision_ready"
+        )
+        view["status"] = str(current.get("status") or "manual_review")
+        if view["status"] == "decision_ready":
+            view["status"] = "manual_review"
+        current_recommendation = str(current.get("recommendation") or "manual_review")
+        view["recommendation"] = (
+            current_recommendation
+            if current_recommendation != "open_or_update_pr"
+            else "manual_review"
+        )
+        view["source_decision"] = current.get("source_decision") or {}
+        evidence = dict(view.get("evidence") or {})
+        evidence["current_evidence_revalidation"] = {
+            "status": "failed_closed",
+            "reason": "current_completed_work_evidence_not_decision_ready",
+            "completed_work_id": completed_work_id,
+            "source_decision_gate": source_gate,
+        }
+        view["evidence"] = evidence
+        return view
+
+    view = dict(record)
+    view.setdefault("stored_legacy_record", not bool(record.get("source_decision")))
+    view["revalidation_status"] = "passed_current_evidence"
+    view["revalidation_reason"] = "current_completed_work_evidence_decision_ready"
+    view["source_decision"] = (
+        current.get("source_decision") or record.get("source_decision") or {}
+    )
+    evidence = dict(view.get("evidence") or {})
+    evidence["current_evidence_revalidation"] = {
+        "status": "passed",
+        "reason": "current_completed_work_evidence_decision_ready",
+        "completed_work_id": completed_work_id,
+        "source_decision_gate": source_gate,
+    }
+    view["evidence"] = evidence
+    return view
+
+
 def list_promotion_decisions(
     *, limit: int = 50, state_path: str | Path | None = None
 ) -> list[dict[str, Any]]:
     records = _read(state_path)
     records.sort(key=lambda item: str(item.get("recorded_at") or ""), reverse=True)
-    return records[: max(1, min(limit, 200))]
+    bounded = records[: max(1, min(limit, 200))]
+    return [_revalidated_record_view(record) for record in bounded]
 
 
 def get_promotion_decision(
@@ -323,7 +408,7 @@ def get_promotion_decision(
 ) -> dict[str, Any] | None:
     for record in _read(state_path):
         if record.get("promotion_decision_id") == promotion_decision_id:
-            return record
+            return _revalidated_record_view(record)
     return None
 
 
