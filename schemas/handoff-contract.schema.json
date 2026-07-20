@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://prismatic.growthwebdev.com/schemas/handoff-contract.schema.json",
+  "title": "Prismatic Handoff Contract",
+  "description": "Review-contract schema for Prismatic agent handoffs. This validates packet shape only; tests add focused cross-field review semantics.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "handoff_id",
+    "source",
+    "target",
+    "work",
+    "acceptance",
+    "retry",
+    "evidence"
+  ],
+  "properties": {
+    "handoff_id": {
+      "type": "string",
+      "minLength": 8
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent"],
+      "properties": {
+        "agent": {"$ref": "#/$defs/non_empty_string"},
+        "system": {"type": "string"},
+        "session_ref": {"type": "string"}
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent", "required_capabilities"],
+      "properties": {
+        "agent": {"$ref": "#/$defs/non_empty_string"},
+        "lane": {"type": "string"},
+        "required_capabilities": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/non_empty_string"}
+        }
+      }
+    },
+    "work": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["issue", "scope", "base", "allowed_paths"],
+      "properties": {
+        "issue": {
+          "type": "string",
+          "pattern": "^[A-Z]+-[0-9]+$"
+        },
+        "title": {"type": "string"},
+        "scope": {"$ref": "#/$defs/non_empty_string"},
+        "branch": {"type": "string"},
+        "base": {"$ref": "#/$defs/non_empty_string"},
+        "allowed_paths": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/repo_path"}
+        },
+        "forbidden_paths": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/repo_path"},
+          "default": []
+        },
+        "production_facing": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "acceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expected_markers", "not_claiming"],
+      "properties": {
+        "expected_markers": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/non_empty_string"}
+        },
+        "verification_commands": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/non_empty_string"},
+          "default": []
+        },
+        "not_claiming": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/non_empty_string"}
+        }
+      }
+    },
+    "retry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["on_missing_result"],
+      "properties": {
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 1
+        },
+        "on_missing_result": {"$ref": "#/$defs/non_empty_string"},
+        "on_scope_violation": {"type": "string"},
+        "on_verification_failure": {"type": "string"}
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required_artifacts"],
+      "properties": {
+        "required_artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/non_empty_string"}
+        },
+        "result_file": {"type": "string"},
+        "production_proof": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["required", "artifacts"],
+          "properties": {
+            "required": {"type": "boolean"},
+            "artifacts": {
+              "type": "array",
+              "items": {"$ref": "#/$defs/non_empty_string"}
+            }
+          }
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["pass", "partial", "blocked"]
+        },
+        "changed_paths": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/repo_path"},
+          "default": []
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/non_empty_string"},
+          "default": []
+        },
+        "claims": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/non_empty_string"},
+          "default": []
+        }
+      }
+    }
+  },
+  "$defs": {
+    "non_empty_string": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "\\S"
+    },
+    "repo_path": {
+      "type": "string",
+      "minLength": 1,
+      "not": {"pattern": "(^/|(^|/)\\.\\.(/|$))"}
+    }
+  }
+}

@@ -1,0 +1,77 @@
+{
+  "handoff_id": "GRO-549:2026-07-16T00:00:00Z:fred-to-agy",
+  "source": {
+    "agent": "fred",
+    "system": "hermes",
+    "session_ref": "telegram-session"
+  },
+  "target": {
+    "agent": "agy",
+    "lane": "design-or-implementation",
+    "required_capabilities": [
+      "repo_read",
+      "repo_write",
+      "linear_comment"
+    ]
+  },
+  "work": {
+    "issue": "GRO-549",
+    "title": "Define and implement Handoff Contracts specification",
+    "scope": "schema plus focused validation fixtures only",
+    "branch": "feature/fred-gro-549-handoff-contracts",
+    "base": "origin/main",
+    "allowed_paths": [
+      "schemas/handoff-contract.schema.json",
+      "tests/fixtures/handoff-contracts/",
+      "tests/test_handoff_contract_schema.py"
+    ],
+    "forbidden_paths": [
+      "content/",
+      "active-oahu/"
+    ],
+    "production_facing": false
+  },
+  "acceptance": {
+    "expected_markers": [
+      "HANDOFF_CONTRACT_SCHEMA_SLICE_OK"
+    ],
+    "verification_commands": [
+      "python3 -m pytest tests/test_handoff_contract_schema.py -q"
+    ],
+    "not_claiming": [
+      "runtime_enforcement",
+      "canonical_full_suite_green"
+    ]
+  },
+  "retry": {
+    "max_attempts": 1,
+    "on_missing_result": "pause_and_require_review",
+    "on_scope_violation": "block_and_comment",
+    "on_verification_failure": "return_to_source_with_evidence"
+  },
+  "evidence": {
+    "required_artifacts": [
+      "PR URL",
+      "commit SHA",
+      "verification output",
+      "Linear comment"
+    ],
+    "result_file": "RESULT.md or equivalent durable summary when sandboxed"
+  },
+  "result": {
+    "status": "pass",
+    "changed_paths": [
+      "schemas/handoff-contract.schema.json",
+      "tests/test_handoff_contract_schema.py"
+    ],
+    "artifacts": [
+      "PR URL",
+      "commit SHA",
+      "verification output",
+      "Linear comment"
+    ],
+    "claims": [
+      "schema slice complete"
+    ]
+  }
+}
