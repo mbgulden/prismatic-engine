@@ -261,9 +261,8 @@ def reconcile_agy() -> list[str]:
         if not ident or not run_id:
             continue
         status = row.get("status")
-        if status in {"completed", "failed", "blocked"}:
-            continue
-        if pid_live(row.get("pid")):
+        terminal = status in {"completed", "failed", "blocked"}
+        if not terminal and pid_live(row.get("pid")):
             out.append(f"AGY_STILL_RUNNING {ident} {run_id}")
             continue
         cmd = json.loads(row.get("command_json") or "[]")
@@ -290,7 +289,10 @@ def reconcile_agy() -> list[str]:
                     "WORK_FAILED" if result_status == "FAIL" else "WORK_RESULT_PACKET"
                 )
             )
-            if not has_marker(ident, marker):
+            marker_present = has_marker(ident, marker)
+            if terminal and marker_present:
+                continue
+            if not marker_present:
                 add_comment(
                     ident,
                     f"AGY completed-work packet from dispatcher log `{log_path}`:\n\n```text\n{packet}\n```",
@@ -300,6 +302,11 @@ def reconcile_agy() -> list[str]:
                 "agy", ident, event_type, marker=marker, log=str(log_path or "")
             )
             out.append(f"AGY_PACKET_WRITTEN {ident} {marker} result={result_status}")
+            continue
+        if terminal:
+            # Historical terminal rows were already classified. Reconcile a real
+            # packet above if writeback was missed, but do not manufacture a new
+            # blocker for an already-terminal row with no packet.
             continue
         if "--headless" in cmd or "--issue" in cmd or "--task" in cmd:
             reason = "AGY launch used obsolete unsupported CLI flags (`--headless/--issue/--task`); process exited without result log. Dispatcher has been patched to use `agy --print ... --log-file ...`."
