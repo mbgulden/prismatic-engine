@@ -14,6 +14,7 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+import re
 from typing import Any
 
 from prismatic.agy_completed_work import get_completed_work, list_completed_work
@@ -82,6 +83,7 @@ class PromotionDecision:
     dry_run_pr_action: str | None
     target_issue: str | None
     evidence: dict[str, Any]
+    source_decision: dict[str, Any]
     side_effects: dict[str, bool]
     non_claims: dict[str, bool]
     marker: str = ONE_AGENT_PROMOTION_DECISION_LEDGER_MARKER
@@ -103,10 +105,67 @@ class PromotionDecision:
             "dry_run_pr_action": self.dry_run_pr_action,
             "target_issue": self.target_issue,
             "evidence": self.evidence,
+            "source_decision": self.source_decision,
             "side_effects": self.side_effects,
             "non_claims": self.non_claims,
             "marker": self.marker,
         }
+
+
+def _valid_source_commit_sha(value: Any) -> str | None:
+    text = str(value or "").strip().lower()
+    if re.fullmatch(r"[0-9a-f]{40}", text):
+        return text
+    return None
+
+
+def _source_decision_summary(source: dict[str, Any]) -> dict[str, Any]:
+    evidence_retention = source.get("evidence_retention")
+    evidence = evidence_retention if isinstance(evidence_retention, dict) else {}
+    return {
+        "status": source.get("status"),
+        "policy_gate": source.get("policy_gate"),
+        "promotion_decision": source.get("promotion_decision")
+        or source.get("recommendation"),
+        "recommendation": source.get("recommendation"),
+        "reasons": list(source.get("reasons") or []),
+        "packet_classification": source.get("packet_classification"),
+        "completed_work_classification": source.get("completed_work_classification"),
+        "integration_classification": source.get("integration_classification"),
+        "proof_result": source.get("proof_result"),
+        "proof_marker": source.get("proof_marker"),
+        "evidence_retention": {
+            "status": evidence.get("status") or "unavailable",
+            "proof_log_retained": bool(evidence.get("proof_log_retained")),
+            "manifest_sha256_present": bool(evidence.get("manifest_sha256")),
+            "source_commit_sha": _valid_source_commit_sha(
+                evidence.get("source_commit_sha")
+            ),
+        },
+        "marker": source.get("marker"),
+    }
+
+
+def _source_decision_allows_promotion(summary: dict[str, Any]) -> bool:
+    evidence = summary.get("evidence_retention") or {}
+    return (
+        summary.get("status") == "decision_ready"
+        and summary.get("policy_gate") == "pass"
+        and summary.get("promotion_decision") == "open_or_update_pr_dry_run_only"
+        and evidence.get("status") == "complete"
+        and evidence.get("proof_log_retained") is True
+        and bool(evidence.get("manifest_sha256_present"))
+        and bool(_valid_source_commit_sha(evidence.get("source_commit_sha")))
+    )
+
+
+def _recommendation_from_source(summary: dict[str, Any]) -> str:
+    source_recommendation = str(summary.get("recommendation") or "manual_review")
+    if source_recommendation == "open_or_update_pr_dry_run_only":
+        return "open_or_update_pr"
+    if source_recommendation in {"hold_for_durable_evidence", "blocked"}:
+        return source_recommendation
+    return "manual_review"
 
 
 def build_promotion_decision(
@@ -130,13 +189,19 @@ def build_promotion_decision(
     verification_gate = verification.get("verification_gate")
     integration = row_payload.get("integration_classification")
     packet_classification = row_payload.get("packet_classification")
-    recommendation = str(merge_backlog.get("recommended_action") or "manual_review")
+    source_decision = _source_decision_summary(
+        row_payload.get("promotion_decision") or {}
+    )
+    source_allows_promotion = _source_decision_allows_promotion(source_decision)
+    recommendation = _recommendation_from_source(source_decision)
     status = (
         "decision_ready"
-        if verification_gate == "pass" and integration == "pass_ready_for_review"
-        else "manual_review"
+        if source_allows_promotion
+        and verification_gate == "pass"
+        and integration == "pass_ready_for_review"
+        else str(source_decision.get("status") or "manual_review")
     )
-    if packet_classification not in {"packet_valid", "packet_blocked", "packet_failed"}:
+    if not source_allows_promotion and status == "decision_ready":
         status = "manual_review"
     if status != "decision_ready" and recommendation == "open_or_update_pr":
         recommendation = "manual_review"
@@ -190,6 +255,14 @@ def build_promotion_decision(
             "posted"
         ),
         "dry_run_only": pr_dry_run.get("dry_run_only"),
+        "source_decision": source_decision,
+        "source_decision_gate": {
+            "allows_promotion": source_allows_promotion,
+            "required_status": "decision_ready",
+            "required_policy_gate": "pass",
+            "required_promotion_decision": "open_or_update_pr_dry_run_only",
+            "requires_complete_retained_evidence": True,
+        },
     }
 
     return PromotionDecision(
@@ -210,6 +283,7 @@ def build_promotion_decision(
         target_issue=row_payload.get("packet", {}).get("issue_identifier")
         or merge_backlog.get("issue_identifier"),
         evidence=evidence,
+        source_decision=source_decision,
         side_effects=side_effects,
         non_claims=non_claims,
     )
@@ -236,12 +310,97 @@ def record_promotion_decision(
     return record
 
 
+def _fail_closed_revalidation_view(
+    record: dict[str, Any], reason: str
+) -> dict[str, Any]:
+    view = dict(record)
+    view.setdefault("stored_legacy_record", not bool(record.get("source_decision")))
+    view["revalidation_status"] = "held_by_current_evidence"
+    view["revalidation_reason"] = reason
+    view["stored_status"] = record.get("status")
+    view["stored_recommendation"] = record.get("recommendation")
+    view["status"] = "manual_review"
+    view["recommendation"] = "manual_review"
+    view.setdefault("source_decision", {})
+    evidence = dict(view.get("evidence") or {})
+    evidence["current_evidence_revalidation"] = {
+        "status": "failed_closed",
+        "reason": reason,
+        "completed_work_id": record.get("completed_work_id"),
+    }
+    view["evidence"] = evidence
+    return view
+
+
+def _revalidated_record_view(record: dict[str, Any]) -> dict[str, Any]:
+    completed_work_id = str(record.get("completed_work_id") or "")
+    if not completed_work_id:
+        return _fail_closed_revalidation_view(record, "missing_completed_work_id")
+
+    try:
+        current = build_promotion_decision(
+            completed_work_id,
+            requested_by=str(record.get("requested_by") or "ledger-revalidation"),
+            recorded_at=str(record.get("recorded_at") or "") or None,
+        ).as_dict()
+    except (KeyError, TypeError, ValueError, OSError, json.JSONDecodeError) as exc:
+        return _fail_closed_revalidation_view(
+            record, f"completed_work_revalidation_failed:{type(exc).__name__}"
+        )
+
+    source_gate = (current.get("evidence") or {}).get("source_decision_gate") or {}
+    if (
+        current.get("status") != "decision_ready"
+        or current.get("recommendation") != "open_or_update_pr"
+    ):
+        view = _fail_closed_revalidation_view(
+            record, "current_completed_work_evidence_not_decision_ready"
+        )
+        view["status"] = str(current.get("status") or "manual_review")
+        if view["status"] == "decision_ready":
+            view["status"] = "manual_review"
+        current_recommendation = str(current.get("recommendation") or "manual_review")
+        view["recommendation"] = (
+            current_recommendation
+            if current_recommendation != "open_or_update_pr"
+            else "manual_review"
+        )
+        view["source_decision"] = current.get("source_decision") or {}
+        evidence = dict(view.get("evidence") or {})
+        evidence["current_evidence_revalidation"] = {
+            "status": "failed_closed",
+            "reason": "current_completed_work_evidence_not_decision_ready",
+            "completed_work_id": completed_work_id,
+            "source_decision_gate": source_gate,
+        }
+        view["evidence"] = evidence
+        return view
+
+    view = dict(record)
+    view.setdefault("stored_legacy_record", not bool(record.get("source_decision")))
+    view["revalidation_status"] = "passed_current_evidence"
+    view["revalidation_reason"] = "current_completed_work_evidence_decision_ready"
+    view["source_decision"] = (
+        current.get("source_decision") or record.get("source_decision") or {}
+    )
+    evidence = dict(view.get("evidence") or {})
+    evidence["current_evidence_revalidation"] = {
+        "status": "passed",
+        "reason": "current_completed_work_evidence_decision_ready",
+        "completed_work_id": completed_work_id,
+        "source_decision_gate": source_gate,
+    }
+    view["evidence"] = evidence
+    return view
+
+
 def list_promotion_decisions(
     *, limit: int = 50, state_path: str | Path | None = None
 ) -> list[dict[str, Any]]:
     records = _read(state_path)
     records.sort(key=lambda item: str(item.get("recorded_at") or ""), reverse=True)
-    return records[: max(1, min(limit, 200))]
+    bounded = records[: max(1, min(limit, 200))]
+    return [_revalidated_record_view(record) for record in bounded]
 
 
 def get_promotion_decision(
@@ -249,7 +408,7 @@ def get_promotion_decision(
 ) -> dict[str, Any] | None:
     for record in _read(state_path):
         if record.get("promotion_decision_id") == promotion_decision_id:
-            return record
+            return _revalidated_record_view(record)
     return None
 
 

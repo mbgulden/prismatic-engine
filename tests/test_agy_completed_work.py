@@ -9,6 +9,7 @@ from prismatic.agy_completed_work import (
     AGY_COMPLETED_WORK_INGESTION_MARKER,
     AGY_COMPLETED_WORK_INTEGRATION_GATE_MARKER,
     AGY_PACKET_NORMALIZATION_MARKER,
+    GOVERNANCE_PROMOTION_DECISION_READ_MODEL_MARKER,
     AgyCompletedWorkStore,
     completed_work_id,
     ingest_completed_work_file,
@@ -144,6 +145,16 @@ def test_ingest_persists_packet_and_gate_state(tmp_path):
         row.as_dict()["linear_writeback"]["marker"]
         == AGY_COMPLETED_WORK_INTEGRATION_GATE_MARKER
     )
+    promotion = row.as_dict()["promotion_decision"]
+    assert promotion["marker"] == GOVERNANCE_PROMOTION_DECISION_READ_MODEL_MARKER
+    assert promotion["status"] == "hold_needs_durable_evidence"
+    assert promotion["recommendation"] == "hold_for_durable_evidence"
+    assert promotion["policy_gate"] == "blocked"
+    assert promotion["side_effects"]["linear_comment_posted"] is False
+    assert promotion["side_effects"]["github_pr_created"] is False
+    assert promotion["side_effects"]["auto_merge_enabled"] is False
+    assert promotion["side_effects"]["production_deployed"] is False
+    assert promotion["side_effects"]["agent_dispatched"] is False
     assert row.non_claims == ("production_deployed", "auto_merge")
 
     fetched = store.get(row.id)
@@ -561,6 +572,154 @@ def _retention_packet(
 def _manifest(row):
     path = Path(row.as_dict()["evidence_retention"]["manifest_path"])
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _write_retained_inputs(tmp_path):
+    source = tmp_path / "RESULT.md"
+    source.write_text("RESULT=PASS\nMARKER=AGY_DURABLE_OK", encoding="utf-8")
+    proof = tmp_path / "proof.log"
+    proof.write_text("pytest passed", encoding="utf-8")
+    return source, proof
+
+
+def test_promotion_decision_requires_complete_durable_evidence(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    source, proof = _write_retained_inputs(tmp_path)
+    store = AgyCompletedWorkStore(
+        tmp_path / "agy_completed_work.db", evidence_dir=tmp_path / "evidence"
+    )
+
+    row = store.ingest(_retention_packet(tmp_path, source_path=source, proof_log=proof))
+    promotion = row.as_dict()["promotion_decision"]
+
+    assert promotion["status"] == "decision_ready"
+    assert promotion["recommendation"] == "open_or_update_pr_dry_run_only"
+    assert promotion["promotion_decision"] == "open_or_update_pr_dry_run_only"
+    assert promotion["policy_gate"] == "pass"
+    assert promotion["packet_classification"] == "packet_valid"
+    assert promotion["integration_classification"] == "pass_ready_for_review"
+    assert promotion["evidence_retention"]["status"] == "complete"
+    assert promotion["evidence_retention"]["proof_log_retained"] is True
+    assert promotion["evidence_retention"]["manifest_sha256"]
+    assert promotion["evidence_retention"]["source_commit_sha"] == VALID_SOURCE_SHA
+    assert promotion["side_effects"] == {
+        "linear_comment_posted": False,
+        "github_pr_created": False,
+        "git_branch_created": False,
+        "auto_merge_enabled": False,
+        "production_deployed": False,
+        "agent_dispatched": False,
+        "bulk_agent_dispatch": False,
+    }
+
+
+def test_promotion_decision_holds_when_durable_evidence_unavailable(tmp_path):
+    store = AgyCompletedWorkStore(tmp_path / "agy_completed_work.db")
+
+    row = store.ingest(packet())
+    historical_unavailable = row.__class__(**{**row.__dict__, "evidence_retention": {}})
+    promotion = historical_unavailable.as_dict()["promotion_decision"]
+
+    assert row.classification == "merge_ready"
+    assert row.integration_classification == "pass_ready_for_review"
+    assert promotion["status"] == "hold_needs_durable_evidence"
+    assert promotion["recommendation"] == "hold_for_durable_evidence"
+    assert promotion["policy_gate"] == "blocked"
+    assert "durable evidence retention status is unavailable" in promotion["reasons"]
+
+
+def test_promotion_decision_holds_for_missing_manifest_source_commit_and_log(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    source, proof = _write_retained_inputs(tmp_path)
+    store = AgyCompletedWorkStore(
+        tmp_path / "agy_completed_work.db", evidence_dir=tmp_path / "evidence"
+    )
+
+    missing_source_commit = store.ingest(
+        _retention_packet(
+            tmp_path,
+            source_path=source,
+            proof_log=proof,
+            source_commit_sha=None,
+            source_branch="feature/missing-source-commit",
+        )
+    )
+    missing_manifest_sha = dict(missing_source_commit.evidence_retention)
+    missing_manifest_sha["manifest_sha256"] = None
+    no_proof_log = dict(missing_source_commit.evidence_retention)
+    no_proof_log["status"] = "complete"
+    no_proof_log["proof_log_retained"] = False
+    no_proof_log["manifest_sha256"] = "a" * 64
+    no_proof_log["source_commit_sha"] = VALID_SOURCE_SHA
+
+    for evidence in (
+        missing_source_commit.evidence_retention,
+        missing_manifest_sha,
+        no_proof_log,
+    ):
+        decision = missing_source_commit.__class__(
+            **{**missing_source_commit.__dict__, "evidence_retention": evidence}
+        ).promotion_decision_read_model()
+        assert decision["status"] == "hold_needs_durable_evidence"
+        assert decision["policy_gate"] == "blocked"
+
+
+def test_promotion_decision_holds_for_partial_and_rejected_unsafe_evidence(
+    monkeypatch,
+    tmp_path,
+):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    proof = tmp_path / "proof.log"
+    proof.write_text("proof", encoding="utf-8")
+    store = AgyCompletedWorkStore(
+        tmp_path / "agy_completed_work.db", evidence_dir=tmp_path / "evidence"
+    )
+    partial = store.ingest(
+        _retention_packet(
+            tmp_path,
+            source_path=tmp_path / "missing.md",
+            proof_log=proof,
+            source_branch="feature/partial-evidence",
+        )
+    )
+    unsafe_source = tmp_path / ".env"
+    unsafe_source.write_text("secret", encoding="utf-8")
+    rejected = store.ingest(
+        _retention_packet(
+            tmp_path,
+            source_path=unsafe_source,
+            proof_log=proof,
+            source_branch="feature/rejected-evidence",
+        )
+    )
+
+    for row in (partial, rejected):
+        promotion = row.as_dict()["promotion_decision"]
+        assert promotion["status"] == "hold_needs_durable_evidence"
+        assert promotion["policy_gate"] == "blocked"
+        assert (
+            "unsafe, rejected, or partial durable evidence state"
+            in promotion["reasons"]
+        )
+
+
+def test_promotion_decision_preserves_blocked_and_invalid_packet_state(tmp_path):
+    store = AgyCompletedWorkStore(tmp_path / "agy_completed_work.db")
+    blocked = packet()
+    blocked["proof"]["result"] = "BLOCKED"
+    malformed = packet()
+    malformed["proof"]["result"] = "WHAT"
+
+    blocked_promotion = store.ingest(blocked).as_dict()["promotion_decision"]
+    malformed_promotion = store.ingest(malformed).as_dict()["promotion_decision"]
+
+    assert blocked_promotion["status"] == "blocked"
+    assert blocked_promotion["recommendation"] == "blocked"
+    assert malformed_promotion["status"] == "needs_manual_review"
+    assert malformed_promotion["recommendation"] == "manual_review"
 
 
 def test_durable_evidence_retains_packet_source_and_proof_after_originals_deleted(
