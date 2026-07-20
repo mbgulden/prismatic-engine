@@ -1,5 +1,6 @@
 from copy import deepcopy
 from pathlib import Path
+import sqlite3
 
 from fastapi.testclient import TestClient
 
@@ -50,12 +51,37 @@ def packet():
     return p
 
 
+VALID_SOURCE_SHA = "c" * 40
+VALID_BASE_SHA = "d" * 40
+
+
+def _retained_inputs(tmp_path):
+    source = tmp_path / "RESULT.md"
+    source.write_text(
+        "RESULT=PASS\nMARKER=AGY_PR_VERIFICATION_GATE_OK", encoding="utf-8"
+    )
+    proof = tmp_path / "proof.log"
+    proof.write_text("pytest passed", encoding="utf-8")
+    return source, proof
+
+
+def retained_packet(tmp_path, *, source_commit_sha: str | None = VALID_SOURCE_SHA):
+    source, proof = _retained_inputs(tmp_path)
+    p = packet()
+    p["source_path"] = str(source)
+    p["source_commit_sha"] = source_commit_sha
+    p["base_commit_sha"] = VALID_BASE_SHA
+    p["proof"]["log"] = str(proof)
+    return p
+
+
 def seed(monkeypatch, tmp_path):
     db = tmp_path / "completed_work.db"
     executor_runs = tmp_path / "executor-runs.json"
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(db))
     monkeypatch.setenv("PRISMATIC_AGY_EXECUTOR_RUNS_STATE", str(executor_runs))
-    row = ingest_completed_work(packet(), db_path=db)
+    row = ingest_completed_work(retained_packet(tmp_path), db_path=db)
     return row
 
 
@@ -63,6 +89,7 @@ def test_completed_work_api_ingests_text_and_lists_bridge_payload(
     monkeypatch, tmp_path
 ):
     db = tmp_path / "completed_work.db"
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(db))
     monkeypatch.setenv("PRISMATIC_AGY_EXECUTOR_RUNS_STATE", str(tmp_path / "runs.json"))
     client = TestClient(server.app)
@@ -118,6 +145,7 @@ def test_completed_work_api_ingests_text_and_lists_bridge_payload(
 
 def test_one_agent_dashboard_linear_dry_run_bridge(monkeypatch, tmp_path):
     db = tmp_path / "completed_work.db"
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(db))
     monkeypatch.setenv("PRISMATIC_AGY_EXECUTOR_RUNS_STATE", str(tmp_path / "runs.json"))
     client = TestClient(server.app)
@@ -163,6 +191,7 @@ def test_one_agent_dashboard_linear_dry_run_bridge(monkeypatch, tmp_path):
 
 def test_one_agent_completed_work_verified_pr_dry_run_bridge(monkeypatch, tmp_path):
     db = tmp_path / "completed_work.db"
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(db))
     monkeypatch.setenv("PRISMATIC_AGY_EXECUTOR_RUNS_STATE", str(tmp_path / "runs.json"))
     client = TestClient(server.app)
@@ -508,6 +537,7 @@ def test_prompt55_approved_real_pr_executor_api_and_dashboard_are_safe(
 
 
 def test_prompt6_executor_run_api_and_dashboard_are_safe(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(tmp_path / "cw.db"))
     monkeypatch.setenv("PRISMATIC_AGY_EXECUTOR_RUNS_STATE", str(tmp_path / "runs.json"))
     monkeypatch.delenv("PRISMATIC_ALLOW_REAL_PR_EXECUTOR", raising=False)
@@ -581,10 +611,11 @@ def test_one_agent_promotion_decision_ledger_api_and_dashboard_are_safe(
 ):
     db = tmp_path / "completed_work.db"
     ledger = tmp_path / "promotion-ledger.json"
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(db))
     monkeypatch.setenv("PRISMATIC_AGY_PROMOTION_LEDGER_STATE", str(ledger))
     monkeypatch.setenv("PRISMATIC_AGY_EXECUTOR_RUNS_STATE", str(tmp_path / "runs.json"))
-    row = ingest_completed_work(packet(), db_path=db)
+    row = ingest_completed_work(retained_packet(tmp_path), db_path=db)
     client = TestClient(server.app)
 
     preview = client.get(
@@ -597,6 +628,16 @@ def test_one_agent_promotion_decision_ledger_api_and_dashboard_are_safe(
     assert preview_body["persisted"] is False
     assert preview_body["promotion_decision"]["recommendation"] == "open_or_update_pr"
     assert preview_body["promotion_decision"]["status"] == "decision_ready"
+    assert (
+        preview_body["promotion_decision"]["source_decision"]["promotion_decision"]
+        == "open_or_update_pr_dry_run_only"
+    )
+    assert (
+        preview_body["promotion_decision"]["evidence"]["source_decision_gate"][
+            "allows_promotion"
+        ]
+        is True
+    )
     assert (
         preview_body["promotion_decision"]["okf"]["promotion_decision"]
         == "open_or_update_pr"
@@ -616,6 +657,15 @@ def test_one_agent_promotion_decision_ledger_api_and_dashboard_are_safe(
     assert decision["packet_classification"] == "packet_valid"
     assert decision["integration_classification"] == "pass_ready_for_review"
     assert decision["verification_gate"] == "pass"
+    assert decision["source_decision"]["evidence_retention"]["status"] == "complete"
+    assert (
+        decision["source_decision"]["evidence_retention"]["proof_log_retained"] is True
+    )
+    assert (
+        decision["source_decision"]["evidence_retention"]["source_commit_sha"]
+        == VALID_SOURCE_SHA
+    )
+    assert decision["evidence"]["source_decision_gate"]["allows_promotion"] is True
     assert decision["side_effects"]["linear_comment_posted"] is False
     assert decision["side_effects"]["github_pr_created"] is False
     assert decision["side_effects"]["auto_merge_enabled"] is False
@@ -655,17 +705,89 @@ def test_one_agent_promotion_decision_ledger_api_and_dashboard_are_safe(
     assert "fetchPromotionDecisionLedger" in text
 
 
+def test_promotion_ledger_blocks_historical_and_incomplete_durable_evidence(
+    monkeypatch, tmp_path
+):
+    db = tmp_path / "completed_work.db"
+    ledger = tmp_path / "promotion-ledger.json"
+    approval_ledger = tmp_path / "operator-approvals.json"
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(db))
+    monkeypatch.setenv("PRISMATIC_AGY_PROMOTION_LEDGER_STATE", str(ledger))
+    monkeypatch.setenv("PRISMATIC_AGY_OPERATOR_APPROVAL_STATE", str(approval_ledger))
+    monkeypatch.setenv("PRISMATIC_AGY_EXECUTOR_RUNS_STATE", str(tmp_path / "runs.json"))
+    client = TestClient(server.app)
+
+    historical = ingest_completed_work(packet(), db_path=db)
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "UPDATE agy_completed_work SET evidence_json = '{}' WHERE id = ?",
+            (historical.id,),
+        )
+        conn.commit()
+    historical_res = client.post(
+        f"/api/gateway/agy/completed-work/{historical.id}/promotion-decision",
+        json={"requested_by": "evidence-hold-test"},
+    )
+    assert historical_res.status_code == 200
+    historical_decision = historical_res.json()["promotion_decision"]
+    assert historical_decision["status"] == "hold_needs_durable_evidence"
+    assert historical_decision["recommendation"] == "hold_for_durable_evidence"
+    assert (
+        historical_decision["evidence"]["source_decision_gate"]["allows_promotion"]
+        is False
+    )
+    assert (
+        historical_decision["source_decision"]["evidence_retention"]["status"]
+        == "unavailable"
+    )
+    assert historical_decision["side_effects"]["github_pr_created"] is False
+
+    approval_res = client.get(
+        f"/api/gateway/agy/promotion-decisions/{historical_decision['promotion_decision_id']}/operator-action/preview",
+        params={"operator_decision": "approve", "requested_by": "evidence-hold-test"},
+    )
+    assert approval_res.status_code == 200
+    approval = approval_res.json()["operator_action_approval"]
+    assert approval["policy_gate"] == "manual_review"
+    assert approval["execution_preview"]["would_execute"] is False
+    assert approval["side_effects"]["github_pr_created"] is False
+
+    missing_commit = ingest_completed_work(
+        retained_packet(tmp_path, source_commit_sha=None), db_path=db
+    )
+    missing_commit_res = client.get(
+        f"/api/gateway/agy/completed-work/{missing_commit.id}/promotion-decision/preview",
+        params={"requested_by": "evidence-hold-test"},
+    )
+    assert missing_commit_res.status_code == 200
+    missing_commit_decision = missing_commit_res.json()["promotion_decision"]
+    assert missing_commit_decision["status"] == "hold_needs_durable_evidence"
+    assert missing_commit_decision["recommendation"] == "hold_for_durable_evidence"
+    assert (
+        missing_commit_decision["evidence"]["source_decision_gate"]["allows_promotion"]
+        is False
+    )
+    assert (
+        missing_commit_decision["source_decision"]["evidence_retention"][
+            "source_commit_sha"
+        ]
+        is None
+    )
+
+
 def test_one_agent_operator_action_approval_api_and_dashboard_are_safe(
     monkeypatch, tmp_path
 ):
     db = tmp_path / "completed_work.db"
     promotion_ledger = tmp_path / "promotion-ledger.json"
     approval_ledger = tmp_path / "operator-approvals.json"
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(db))
     monkeypatch.setenv("PRISMATIC_AGY_PROMOTION_LEDGER_STATE", str(promotion_ledger))
     monkeypatch.setenv("PRISMATIC_AGY_OPERATOR_APPROVAL_STATE", str(approval_ledger))
     monkeypatch.setenv("PRISMATIC_AGY_EXECUTOR_RUNS_STATE", str(tmp_path / "runs.json"))
-    row = ingest_completed_work(packet(), db_path=db)
+    row = ingest_completed_work(retained_packet(tmp_path), db_path=db)
     client = TestClient(server.app)
 
     promotion = client.post(
@@ -786,6 +908,7 @@ def test_one_agent_approved_action_executor_dry_run_api_and_dashboard_are_safe(
     promotion_ledger = tmp_path / "promotion-ledger.json"
     approval_ledger = tmp_path / "operator-approvals.json"
     executor_ledger = tmp_path / "approved-executors.json"
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(db))
     monkeypatch.setenv("PRISMATIC_AGY_PROMOTION_LEDGER_STATE", str(promotion_ledger))
     monkeypatch.setenv("PRISMATIC_AGY_OPERATOR_APPROVAL_STATE", str(approval_ledger))
@@ -793,7 +916,7 @@ def test_one_agent_approved_action_executor_dry_run_api_and_dashboard_are_safe(
         "PRISMATIC_AGY_APPROVED_ACTION_EXECUTOR_STATE", str(executor_ledger)
     )
     monkeypatch.delenv("PRISMATIC_ALLOW_REAL_APPROVED_ACTION_EXECUTOR", raising=False)
-    row = ingest_completed_work(packet(), db_path=db)
+    row = ingest_completed_work(retained_packet(tmp_path), db_path=db)
     client = TestClient(server.app)
 
     promotion_res = client.post(
@@ -908,6 +1031,7 @@ def test_one_agent_final_action_authorization_gate_api_and_dashboard_are_safe(
     approval_ledger = tmp_path / "operator-approvals.json"
     executor_ledger = tmp_path / "approved-executors.json"
     final_auth_ledger = tmp_path / "final-authorizations.json"
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(db))
     monkeypatch.setenv("PRISMATIC_AGY_PROMOTION_LEDGER_STATE", str(promotion_ledger))
     monkeypatch.setenv("PRISMATIC_AGY_OPERATOR_APPROVAL_STATE", str(approval_ledger))
@@ -918,7 +1042,7 @@ def test_one_agent_final_action_authorization_gate_api_and_dashboard_are_safe(
         "PRISMATIC_AGY_FINAL_ACTION_AUTHORIZATION_STATE", str(final_auth_ledger)
     )
     monkeypatch.delenv("PRISMATIC_ALLOW_REAL_APPROVED_ACTION_EXECUTOR", raising=False)
-    row = ingest_completed_work(packet(), db_path=db)
+    row = ingest_completed_work(retained_packet(tmp_path), db_path=db)
     client = TestClient(server.app)
 
     promotion_res = client.post(
@@ -1056,6 +1180,7 @@ def test_one_agent_quarantined_execution_adapter_api_and_dashboard_are_safe(
     executor_ledger = tmp_path / "approved-executors.json"
     final_auth_ledger = tmp_path / "final-authorizations.json"
     adapter_ledger = tmp_path / "quarantined-adapters.json"
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(db))
     monkeypatch.setenv("PRISMATIC_AGY_PROMOTION_LEDGER_STATE", str(promotion_ledger))
     monkeypatch.setenv("PRISMATIC_AGY_OPERATOR_APPROVAL_STATE", str(approval_ledger))
@@ -1069,7 +1194,7 @@ def test_one_agent_quarantined_execution_adapter_api_and_dashboard_are_safe(
         "PRISMATIC_AGY_QUARANTINED_EXECUTION_ADAPTER_STATE", str(adapter_ledger)
     )
     monkeypatch.delenv("PRISMATIC_ALLOW_REAL_APPROVED_ACTION_EXECUTOR", raising=False)
-    row = ingest_completed_work(packet(), db_path=db)
+    row = ingest_completed_work(retained_packet(tmp_path), db_path=db)
     client = TestClient(server.app)
 
     promotion = client.post(
@@ -1214,6 +1339,7 @@ def test_one_agent_sandboxed_execution_canary_api_and_dashboard_are_safe(
     final_auth_ledger = tmp_path / "final-authorizations.json"
     adapter_ledger = tmp_path / "quarantined-adapters.json"
     canary_ledger = tmp_path / "sandbox-canaries.json"
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(db))
     monkeypatch.setenv("PRISMATIC_AGY_PROMOTION_LEDGER_STATE", str(promotion_ledger))
     monkeypatch.setenv("PRISMATIC_AGY_OPERATOR_APPROVAL_STATE", str(approval_ledger))
@@ -1230,7 +1356,7 @@ def test_one_agent_sandboxed_execution_canary_api_and_dashboard_are_safe(
         "PRISMATIC_AGY_SANDBOXED_EXECUTION_CANARY_STATE", str(canary_ledger)
     )
     monkeypatch.delenv("PRISMATIC_ALLOW_REAL_APPROVED_ACTION_EXECUTOR", raising=False)
-    row = ingest_completed_work(packet(), db_path=db)
+    row = ingest_completed_work(retained_packet(tmp_path), db_path=db)
     client = TestClient(server.app)
 
     promotion = client.post(
@@ -1387,6 +1513,7 @@ def test_one_agent_real_executor_arming_gate_api_and_dashboard_are_safe(
     adapter_ledger = tmp_path / "quarantined-adapters.json"
     canary_ledger = tmp_path / "sandbox-canaries.json"
     arming_ledger = tmp_path / "real-executor-arming.json"
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(db))
     monkeypatch.setenv("PRISMATIC_AGY_PROMOTION_LEDGER_STATE", str(promotion_ledger))
     monkeypatch.setenv("PRISMATIC_AGY_OPERATOR_APPROVAL_STATE", str(approval_ledger))
@@ -1407,7 +1534,7 @@ def test_one_agent_real_executor_arming_gate_api_and_dashboard_are_safe(
     )
     monkeypatch.delenv("PRISMATIC_REAL_EXECUTOR_ARMING_TOKEN", raising=False)
     monkeypatch.delenv("PRISMATIC_ALLOW_REAL_EXECUTOR_ARMING", raising=False)
-    row = ingest_completed_work(packet(), db_path=db)
+    row = ingest_completed_work(retained_packet(tmp_path), db_path=db)
     client = TestClient(server.app)
 
     promotion = client.post(
