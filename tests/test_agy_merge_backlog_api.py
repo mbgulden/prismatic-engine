@@ -91,6 +91,18 @@ def test_completed_work_api_ingests_text_and_lists_bridge_payload(
         listed_body["completed_work"][0]["integration_classification"]
         == "pass_ready_for_review"
     )
+    assert (
+        listed_body["completed_work"][0]["promotion_decision"]
+        == completed["promotion_decision"]
+    )
+    detail = client.get(f"/api/gateway/agy/completed-work/{completed['id']}")
+    assert detail.status_code == 200
+    assert (
+        detail.json()["completed_work"]["promotion_decision"]
+        == completed["promotion_decision"]
+    )
+    assert completed["promotion_decision"]["status"] == ("hold_needs_durable_evidence")
+    assert completed["promotion_decision"]["side_effects"]["github_pr_created"] is False
 
     rejected = client.post(
         "/api/gateway/agy/completed-work/ingest",

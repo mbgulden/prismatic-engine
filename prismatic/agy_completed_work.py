@@ -46,6 +46,9 @@ PACKET_FAILED = "packet_failed"
 PACKET_MALFORMED = "packet_malformed"
 PACKET_MISSING = "packet_missing"
 PACKET_NEEDS_MANUAL_REVIEW = "needs_manual_review"
+GOVERNANCE_PROMOTION_DECISION_READ_MODEL_MARKER = (
+    "GOVERNANCE_PROMOTION_DECISION_READ_MODEL_OK"
+)
 PACKET_REQUIRED_FIELDS = (
     "COMMAND",
     "RESULT",
@@ -1042,6 +1045,124 @@ def _proof_value(packet: Mapping[str, Any], key: str) -> str | None:
     return _string(proof.get(key))
 
 
+def _promotion_durable_evidence_reasons(
+    evidence_retention: Mapping[str, Any],
+) -> list[str]:
+    reasons: list[str] = []
+    status = _string(evidence_retention.get("status")) or "unavailable"
+    manifest_sha256 = _string(evidence_retention.get("manifest_sha256"))
+    source_commit_sha = _validated_commit_sha(
+        evidence_retention.get("source_commit_sha")
+    )
+    proof_log_retained = bool(evidence_retention.get("proof_log_retained"))
+
+    if status != "complete":
+        reasons.append(f"durable evidence retention status is {status}")
+    if not proof_log_retained:
+        reasons.append("durable proof log was not retained")
+    if not manifest_sha256:
+        reasons.append("durable evidence manifest checksum missing")
+    if not source_commit_sha:
+        reasons.append("validated source commit SHA missing")
+    if status in {"partial", "rejected_unsafe", "unsafe", "rejected"}:
+        reasons.append("unsafe, rejected, or partial durable evidence state")
+    return reasons
+
+
+def promotion_decision_read_model_for(
+    *,
+    completed_work_id: str,
+    gate_classification: str,
+    integration_classification: str,
+    packet_classification: str,
+    proof_result: str | None,
+    proof_marker: str | None,
+    normalized_record: Mapping[str, Any],
+    non_claims: Sequence[str],
+    evidence_retention: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Return the fail-closed operator promotion-decision read model.
+
+    This is a read-only API/dashboard object. It can recommend a dry-run-only PR
+    promotion only when the packet, proof, non-claims, integration gate, and PR
+    #339 durable evidence bundle are all present and complete. It never posts to
+    Linear, creates a GitHub PR, merges, deploys, or dispatches agents.
+    """
+
+    non_claim_list = [claim for claim in non_claims if claim]
+    evidence_reasons = _promotion_durable_evidence_reasons(evidence_retention)
+    status = "needs_manual_review"
+    recommendation = "manual_review"
+    policy_gate = "manual_review"
+    reasons: list[str] = []
+
+    if not non_claim_list:
+        reasons.append("missing required non-claims")
+
+    if packet_classification == PACKET_BLOCKED:
+        status = "blocked"
+        recommendation = "blocked"
+        policy_gate = "blocked"
+        reasons.append("packet result is BLOCKED")
+    elif packet_classification == PACKET_FAILED:
+        status = "needs_repair"
+        recommendation = "repair_or_rerun"
+        policy_gate = "blocked"
+        reasons.append("packet result is FAIL")
+    elif packet_classification == PACKET_VALID and proof_result == "PASS":
+        if integration_classification != "pass_ready_for_review":
+            reasons.append(
+                f"integration classification is {integration_classification}"
+            )
+        if evidence_reasons:
+            status = "hold_needs_durable_evidence"
+            recommendation = "hold_for_durable_evidence"
+            policy_gate = "blocked"
+            reasons.extend(evidence_reasons)
+        elif integration_classification == "pass_ready_for_review" and non_claim_list:
+            status = "decision_ready"
+            recommendation = "open_or_update_pr_dry_run_only"
+            policy_gate = "pass"
+            reasons.append("valid PASS packet with retained durable evidence")
+    else:
+        reasons.append(f"packet classification is {packet_classification}")
+
+    return {
+        "status": status,
+        "recommendation": recommendation,
+        "promotion_decision": recommendation,
+        "policy_gate": policy_gate,
+        "completed_work_id": completed_work_id,
+        "packet_classification": packet_classification,
+        "completed_work_classification": gate_classification,
+        "integration_classification": integration_classification,
+        "normalized_record_classification": normalized_record.get("classification"),
+        "proof_result": proof_result,
+        "proof_marker": proof_marker,
+        "non_claims": non_claim_list,
+        "evidence_retention": dict(evidence_retention),
+        "reasons": reasons,
+        "side_effects": {
+            "linear_comment_posted": False,
+            "github_pr_created": False,
+            "git_branch_created": False,
+            "auto_merge_enabled": False,
+            "production_deployed": False,
+            "agent_dispatched": False,
+            "bulk_agent_dispatch": False,
+        },
+        "non_claims_asserted": {
+            "real_linear_writeback": False,
+            "real_github_pr_creation": False,
+            "merge": False,
+            "auto_merge": False,
+            "bulk_dispatch": False,
+            "production_deploy": False,
+        },
+        "marker": GOVERNANCE_PROMOTION_DECISION_READ_MODEL_MARKER,
+    }
+
+
 @dataclass(frozen=True)
 class CompletedWorkRow:
     id: str
@@ -1085,6 +1206,21 @@ class CompletedWorkRow:
         record["created_at"] = self.created_at
         record["updated_at"] = self.updated_at
         return record
+
+    def promotion_decision_read_model(self) -> dict[str, Any]:
+        """Return normalized promotion-decision values for this row."""
+
+        return promotion_decision_read_model_for(
+            completed_work_id=self.id,
+            gate_classification=self.classification,
+            integration_classification=self.integration_classification,
+            packet_classification=self.packet_classification,
+            proof_result=self.proof_result,
+            proof_marker=self.proof_marker,
+            normalized_record=self.normalized_record(),
+            non_claims=self.non_claims,
+            evidence_retention=self.evidence_retention,
+        )
 
     def linear_writeback_dry_run(self) -> dict[str, Any]:
         """Return the safe Linear payload shape without posting it."""
@@ -1133,6 +1269,8 @@ class CompletedWorkRow:
             "integration_marker": AGY_COMPLETED_WORK_INTEGRATION_GATE_MARKER,
             "linear_writeback": self.linear_writeback_dry_run(),
             "normalized_record": self.normalized_record(),
+            "promotion_decision": self.promotion_decision_read_model(),
+            "promotion_decision_marker": GOVERNANCE_PROMOTION_DECISION_READ_MODEL_MARKER,
             "evidence_retention": self.evidence_retention,
             "packet": self.packet,
             "gate": self.gate,
