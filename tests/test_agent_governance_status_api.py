@@ -301,3 +301,190 @@ def test_gateway_agent_governance_status_endpoint_serialization_drops_dummy_secr
     assert "https://prismatic.growthwebdev.com/tab/tasks?issue=GRO-4100" in [
         link["href"] for link in kai["proof_links"]
     ]
+
+
+def test_agent_governance_full_payload_redacts_untrusted_display_secret_material():
+    private_key_dummy = (
+        "-----BEGIN "
+        + "PRIVATE KEY-----\nDUMMY_PRIVATE_KEY_VALUE\n-----END "
+        + "PRIVATE KEY-----"
+    )
+    dummy_fragments = [
+        "DUMMY_PASSWORD_VALUE",
+        "DUMMY_PROVIDER_VALUE",
+        "DUMMY_SLACK_VALUE",
+        "DUMMY_AWS_VALUE",
+        "DUMMY_PRIVATE_KEY_VALUE",
+        "DUMMY_CONTROL_VALUE",
+        "DUMMY_AUDIT_VALUE",
+        "DUMMY_MARKER_VALUE",
+    ]
+    payload = build_agent_governance_status(
+        agents=("kai",),
+        registry={
+            "kai": {
+                "name": "Kai password=DUMMY_PASSWORD_VALUE",
+                "task_id": "token=DUMMY_PROVIDER_VALUE",
+                "status": "api_key=DUMMY_AUDIT_VALUE",
+            }
+        },
+        run_records=[
+            FakeRun(
+                run_id="run-kai",
+                issue_id="GRO-4100",
+                agent_name="kai",
+                status="Bearer DUMMY_PROVIDER_VALUE",
+                verification_status="xoxb-DUMMY_SLACK_VALUE1234567890",
+                started_at="2026-07-19T22:00:00+00:00",
+                output_path="/tmp/token/DUMMY_PROVIDER_VALUE.log",
+                error_message="Authorization: Bearer DUMMY_PROVIDER_VALUE",
+            )
+        ],
+        completed_work_rows=[
+            {
+                "agent": "kai",
+                "updated_at": "2026-07-19T22:05:00+00:00",
+                "source_path": "/tmp/password/DUMMY_PASSWORD_VALUE.log",
+                "integration_classification": "client_secret=DUMMY_AUDIT_VALUE",
+                "classification": private_key_dummy,
+                "proof_result": "AKIAAAAAAAAAAAAAAAAA-DUMMY_AWS_VALUE",
+                "proof_marker": "token=DUMMY_MARKER_VALUE",
+                "proof_log": "https://example.com/proof?token=DUMMY_PROVIDER_VALUE",
+                "packet": {
+                    "agent": "kai",
+                    "issue_identifier": "GRO-4100",
+                    "proof": {
+                        "log": "contains\nDUMMY_CONTROL_VALUE",
+                        "marker": "github_pat_DUMMY_MARKER_VALUE1234567890",
+                        "result": "secret=DUMMY_AUDIT_VALUE",
+                    },
+                    "nested": {"marker": "DUMMY_MARKER_VALUE"},
+                },
+            }
+        ],
+    )
+
+    serialized = json.dumps(payload)
+    for fragment in dummy_fragments:
+        assert fragment not in serialized
+    kai = payload["agents"][0]
+    assert kai["name"] == "[redacted unsafe display text]"
+    assert kai["current_task"] == "[redacted unsafe display text]"
+    assert kai["task_detail"]["registry_status"] == "[redacted unsafe display text]"
+    assert kai["audit_result"] == "[redacted unsafe display text]"
+    assert kai["audit_events"][0]["event_type"] == "agent_run_unknown"
+    assert kai["audit_events"][1]["summary"] == "[redacted unsafe display text]"
+    assert kai["proof_result"] == "[redacted unsafe display text]"
+    assert kai["proof_marker"] == "[redacted unsafe display text]"
+    assert "https://prismatic.growthwebdev.com/tab/tasks?issue=GRO-4100" in [
+        link["href"] for link in kai["proof_links"]
+    ]
+
+
+def test_gateway_agent_governance_status_endpoint_full_body_redacts_untrusted_display_secrets(
+    monkeypatch, tmp_path: Path
+):
+    private_key_dummy = (
+        "-----BEGIN "
+        + "PRIVATE KEY-----\nDUMMY_ENDPOINT_PRIVATE\n-----END "
+        + "PRIVATE KEY-----"
+    )
+    registry = tmp_path / "registry.json"
+    registry.write_text(
+        json.dumps(
+            {
+                "kai": {
+                    "name": "Kai api_key=DUMMY_ENDPOINT_NAME",
+                    "task_id": "password=DUMMY_ENDPOINT_TASK",
+                    "status": "Bearer DUMMY_ENDPOINT_STATUS",
+                }
+            }
+        )
+    )
+    monkeypatch.setenv("PRISMATIC_AGENT_REGISTRY", str(registry))
+    fake_store = FakeRunStore(
+        [
+            FakeRun(
+                run_id="run-kai",
+                issue_id="GRO-4100",
+                agent_name="kai",
+                status="Authorization: Bearer DUMMY_ENDPOINT_RUN",
+                verification_status="sk-" + "live-DUMMY_ENDPOINT_VERIFY123456",
+                started_at="2026-07-19T22:00:00+00:00",
+                output_path="/tmp/secret/DUMMY_ENDPOINT_OUTPUT.log",
+                error_message="token=DUMMY_ENDPOINT_ERROR",
+            )
+        ]
+    )
+    monkeypatch.setattr(server, "_run_store", fake_store)
+
+    import prismatic.agent_governance_status as governance_status
+
+    monkeypatch.setattr(
+        governance_status,
+        "_load_completed_work",
+        lambda limit=100: [
+            {
+                "agent": "kai",
+                "source_path": "/tmp/password/DUMMY_ENDPOINT_SOURCE.log",
+                "integration_classification": "api_key=DUMMY_ENDPOINT_AUDIT",
+                "proof_result": "client_secret=DUMMY_ENDPOINT_RESULT",
+                "proof_marker": "token=DUMMY_ENDPOINT_MARKER",
+                "proof_log": "https://example.com/proof?api_key=DUMMY_ENDPOINT_QUERY",
+                "packet": {
+                    "agent": "kai",
+                    "issue_identifier": "GRO-4100",
+                    "proof": {
+                        "log": private_key_dummy,
+                        "marker": "xoxb-DUMMY_ENDPOINT_SLACK1234567890",
+                    },
+                    "nested": {"detail": "DUMMY_ENDPOINT_NESTED"},
+                },
+            }
+        ],
+    )
+
+    response = TestClient(server.app).get("/api/gateway/agents/governance-status")
+
+    assert response.status_code == 200
+    body = response.text
+    for fragment in [
+        "DUMMY_ENDPOINT_NAME",
+        "DUMMY_ENDPOINT_TASK",
+        "DUMMY_ENDPOINT_STATUS",
+        "DUMMY_ENDPOINT_RUN",
+        "DUMMY_ENDPOINT_VERIFY",
+        "DUMMY_ENDPOINT_OUTPUT",
+        "DUMMY_ENDPOINT_ERROR",
+        "DUMMY_ENDPOINT_SOURCE",
+        "DUMMY_ENDPOINT_AUDIT",
+        "DUMMY_ENDPOINT_RESULT",
+        "DUMMY_ENDPOINT_MARKER",
+        "DUMMY_ENDPOINT_QUERY",
+        "DUMMY_ENDPOINT_PRIVATE",
+        "DUMMY_ENDPOINT_SLACK",
+        "DUMMY_ENDPOINT_NESTED",
+    ]:
+        assert fragment not in body
+    kai = next(agent for agent in response.json()["agents"] if agent["agent"] == "kai")
+    assert kai["proof_marker"] == "[redacted unsafe display text]"
+    assert kai["task_detail"]["registry_status"] == "[redacted unsafe display text]"
+    assert "https://prismatic.growthwebdev.com/tab/tasks?issue=GRO-4100" in [
+        link["href"] for link in kai["proof_links"]
+    ]
+
+
+def test_safe_secret_named_proof_marker_is_not_mistaken_for_a_credential() -> None:
+    payload = build_agent_governance_status(
+        agents=("kai",),
+        completed_work_rows=[
+            {
+                "agent": "kai",
+                "proof_result": "PASS",
+                "proof_marker": "SECRET_SAFE_ERRORS_OK",
+                "packet": {"agent": "kai"},
+            }
+        ],
+    )
+
+    assert payload["agents"][0]["proof_marker"] == "SECRET_SAFE_ERRORS_OK"

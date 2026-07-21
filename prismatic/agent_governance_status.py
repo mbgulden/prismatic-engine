@@ -41,11 +41,28 @@ _SENSITIVE_LOCATOR_RE = re.compile(
     r"|\b(?:password|passwd|pwd|token|secret|api[_-]?key|access[_-]?key|client[_-]?secret)\b\s*[:=]"
     r"|(?:^|[/_.?&#=-])(?:password|passwd|pwd|token|secret|api[_-]?key|apikey|access[_-]?key|client[_-]?secret)(?:$|[/_.?&#=-])"
     r"|\b(?:ghp|gho|ghu|ghs|github_pat)_[a-z0-9_]{12,}"
+    r"|\b(?:sk-ant|sk-proj|sk-live|rk_live|pk_live|AIza)[a-z0-9._~+/=-]{8,}"
     r"|\bsk-[a-z0-9_-]{12,}"
     r"|\bxox(?:b|p|a|r)-[a-z0-9-]{12,}"
     r"|\bAKIA[0-9A-Z]{16}\b"
     r")"
 )
+_SENSITIVE_DISPLAY_RE = re.compile(
+    r"(?is)("
+    r"-----BEGIN [A-Z ]*PRIVATE KEY-----"
+    r"|\bauthorization\s*[:=]"
+    r"|\bbearer\s+[a-z0-9._~+/=-]{6,}"
+    r"|\b(?:password|passwd|pwd|token|secret|api[_-]?key|access[_-]?key|client[_-]?secret)\b\s*[:=]"
+    r"|\b(?:ghp|gho|ghu|ghs|github_pat)_[a-z0-9_]{12,}"
+    r"|\b(?:sk-ant|sk-proj|sk-live|rk_live|pk_live|AIza)[a-z0-9._~+/=-]{8,}"
+    r"|\bsk-[a-z0-9_-]{12,}"
+    r"|\bxox(?:b|p|a|r)-[a-z0-9-]{12,}"
+    r"|\bAKIA[0-9A-Z]{16}\b"
+    r")"
+)
+DISPLAY_REDACTION_PLACEHOLDER = "[redacted unsafe display text]"
+_SAFE_DISPLAY_TOKEN_RE = re.compile(r"^[A-Za-z0-9 .:_/+@#=-]{1,160}$")
+_SAFE_STATUS_TOKEN_RE = re.compile(r"^[a-z0-9_+.-]{1,80}$", re.IGNORECASE)
 
 
 def _to_dict(value: Any, fields: Sequence[str]) -> dict[str, Any]:
@@ -144,6 +161,39 @@ def _issue_url(issue_id: Any) -> str | None:
 
 def _has_unsafe_locator_material(text: str) -> bool:
     return bool(_CONTROL_CHARS_RE.search(text) or _SENSITIVE_LOCATOR_RE.search(text))
+
+
+def _has_unsafe_display_material(text: str) -> bool:
+    return bool(_CONTROL_CHARS_RE.search(text) or _SENSITIVE_DISPLAY_RE.search(text))
+
+
+def _sanitize_display_text(
+    value: Any, *, placeholder: str = DISPLAY_REDACTION_PLACEHOLDER
+) -> str:
+    """Fail-closed sanitizer for externally serialized untrusted display text.
+
+    Registry, run-record, completed-work, and packet strings can be controlled by
+    agents or upstream integrations. If the text carries secret-shaped material,
+    control characters, or an unexpected display shape, return one fixed
+    non-sensitive placeholder and never echo the original value.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return placeholder
+    if _has_unsafe_display_material(text):
+        return placeholder
+    if not _SAFE_DISPLAY_TOKEN_RE.fullmatch(text):
+        return placeholder
+    return text
+
+
+def _sanitize_status_token(value: Any, *, fallback: str = "unknown") -> str:
+    text = str(value or "").strip().lower()
+    if not text or _has_unsafe_display_material(text):
+        return fallback
+    if not _SAFE_STATUS_TOKEN_RE.fullmatch(text):
+        return fallback
+    return text
 
 
 def _is_safe_local_absolute_path(text: str) -> bool:
@@ -273,17 +323,18 @@ def _audit_result(
     row: Mapping[str, Any] | None, record: Mapping[str, Any] | None
 ) -> str:
     if row:
-        return str(
+        return _sanitize_display_text(
             row.get("integration_classification")
             or row.get("classification")
             or row.get("proof_result")
             or "packet_seen"
         )
     if record:
-        status = str(record.get("status") or "unknown")
+        status = _sanitize_status_token(record.get("status"))
         verification = record.get("verification_status")
         if verification:
-            return f"run_{status}+verification_{verification}"
+            safe_verification = _sanitize_status_token(verification)
+            return f"run_{status}+verification_{safe_verification}"
         return f"run_{status}"
     return "no_packet_seen"
 
@@ -293,7 +344,7 @@ def _audit_events(
 ) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     if record:
-        status = str(record.get("status") or "unknown")
+        status = _sanitize_status_token(record.get("status"))
         events.append(
             {
                 "event_type": f"agent_run_{status}",
@@ -308,7 +359,7 @@ def _audit_events(
                 "event_type": "completed_work_packet_seen",
                 "source_label": "source:completed_work_store",
                 "timestamp": row.get("updated_at") or row.get("created_at"),
-                "summary": str(
+                "summary": _sanitize_display_text(
                     row.get("integration_classification")
                     or row.get("classification")
                     or "packet_seen"
@@ -410,7 +461,7 @@ def build_agent_governance_status(
 
     statuses: list[dict[str, Any]] = []
     for raw_agent in agents:
-        agent = _agent_key(raw_agent)
+        agent = _sanitize_status_token(_agent_key(raw_agent), fallback="unknown_agent")
         reg = next(
             (
                 dict(value)
@@ -453,25 +504,34 @@ def build_agent_governance_status(
             or _packet_field(packet, "MARKER")
             or _packet_field(packet, "marker")
         )
+        safe_current_task = _sanitize_display_text(
+            current_task or "No current task recorded"
+        )
+        safe_last_task = _sanitize_display_text(last_task or "No last task recorded")
+        safe_registry_status = _sanitize_display_text(
+            reg.get("status") or "not_registered"
+        )
+        safe_proof_result = _sanitize_display_text(proof_result or "not_reported")
+        safe_proof_marker = _sanitize_display_text(proof_marker or "not_reported")
         statuses.append(
             {
                 "agent": agent,
-                "name": str(reg.get("name") or agent.title()),
+                "name": _sanitize_display_text(reg.get("name") or agent.title()),
                 "lane_status": "policy_guarded"
                 if not any(policy.values())
                 else "policy_review_required",
-                "current_task": current_task or "No current task recorded",
-                "last_task": last_task or "No last task recorded",
+                "current_task": safe_current_task,
+                "last_task": safe_last_task,
                 "task_detail": {
-                    "current_task": current_task or "No current task recorded",
-                    "last_task": last_task or "No last task recorded",
-                    "registry_status": reg.get("status") or "not_registered",
+                    "current_task": safe_current_task,
+                    "last_task": safe_last_task,
+                    "registry_status": safe_registry_status,
                     "source_label": "source:agent_registry+run_records+completed_work_packets",
                 },
                 "audit_result": _audit_result(latest_row, latest_record),
                 "audit_events": _audit_events(latest_row, latest_record),
-                "proof_result": proof_result or "not_reported",
-                "proof_marker": proof_marker or "not_reported",
+                "proof_result": safe_proof_result,
+                "proof_marker": safe_proof_marker,
                 "proof_links": _proof_links(latest_row or {}, latest_record),
                 "approval_gates": _approval_gates(policy),
                 "side_effect_policy": policy,
