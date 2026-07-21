@@ -680,6 +680,9 @@
         }
       }
     },
+    "verifier_result": {
+      "type": "object"
+    },
     "marker": {
       "const": "UNIVERSAL_RESULT_MANIFEST_V2_OK"
     }

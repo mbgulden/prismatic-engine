@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://prismatic.growthwebdev.com/schemas/verifier-result.schema.json",
+  "title": "Verifier Result Schema v1",
+  "description": "Strict machine-readable verifier result schema binding task ID, verifier lineage, durable logs, and proof evidence.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "task_id",
+    "verifier_type",
+    "verifier_version",
+    "candidate_digest",
+    "source_lineage",
+    "command",
+    "environment",
+    "log_path",
+    "log_digest",
+    "proof_class",
+    "status",
+    "scope",
+    "non_claims",
+    "timestamp",
+    "type_specific_evidence",
+    "marker"
+  ],
+  "$defs": {
+    "availability_status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["unverified", "unavailable", "held", "not_run", "partial", "failed"]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      }
+    },
+    "evidence_string": {
+      "type": "string",
+      "minLength": 1,
+      "not": {
+        "enum": ["unverified", "unavailable", "held", "not_run", "partial", "failed"]
+      }
+    },
+    "sha256_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "git_commit_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{40}$"
+    }
+  },
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "verifier_type": {
+      "type": "string",
+      "enum": [
+        "code",
+        "web/app",
+        "image/design",
+        "sprite/game asset",
+        "video",
+        "audio",
+        "document/data",
+        "mixed"
+      ]
+    },
+    "verifier_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "candidate_digest": {
+      "$ref": "#/$defs/sha256_hash"
+    },
+    "source_lineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_commit_sha", "branch"],
+      "properties": {
+        "source_commit_sha": { "$ref": "#/$defs/git_commit_sha" },
+        "base_commit_sha": { "$ref": "#/$defs/git_commit_sha" },
+        "branch": { "type": "string", "minLength": 1 },
+        "repo": { "type": "string" }
+      }
+    },
+    "command": {
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+      ]
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "os": { "type": "string" },
+        "arch": { "type": "string" },
+        "python_version": { "type": "string" },
+        "browser": { "type": "string" },
+        "hostname": { "type": "string" },
+        "tool_versions": { "type": "object" }
+      }
+    },
+    "log_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "log_digest": {
+      "type": "string",
+      "pattern": "^(sha256:)?[0-9a-fA-F]{64}$"
+    },
+    "proof_class": {
+      "type": "string",
+      "enum": [
+        "browser",
+        "mobile",
+        "console",
+        "network",
+        "dimensions",
+        "color_alpha",
+        "atlas",
+        "codec_fps",
+        "sample_rate",
+        "install_readback",
+        "accessibility",
+        "licensing",
+        "mixed_child_digest"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pass", "failed", "unavailable", "not_run", "partial"]
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target_paths"],
+      "properties": {
+        "target_paths": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        }
+      }
+    },
+    "non_claims": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "unavailable_reason": {
+      "type": ["string", "null"]
+    },
+    "type_specific_evidence": {
+      "type": "object"
+    },
+    "marker": {
+      "const": "UNIVERSAL_OUTPUT_VERIFIER_REGISTRY_OK"
+    }
+  }
+}
