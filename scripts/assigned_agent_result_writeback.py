@@ -48,6 +48,7 @@ AGY_BLOCKED = "AGY_PACKET_FIXTURES_REPAIR_HINTS_BLOCKED"
 FRED_OK = "RAW_AGENT_OUTPUT_REPAIR_QUEUE_OK"
 FRED_BLOCKED = "RAW_AGENT_OUTPUT_REPAIR_QUEUE_BLOCKED"
 GEORGE_BLOCKED = "GEORGE_ASSIGNED_DISPATCH_BLOCKED"
+RAW_CAPTURE_EVENT = "assigned_agent_result_writeback_log"
 
 
 def emit_visible_result_event(
@@ -212,6 +213,53 @@ def command_log_path(cmd: list[str]) -> Path | None:
     return None
 
 
+def capture_raw_result_output(
+    *,
+    agent: str,
+    identifier: str,
+    run_id: str,
+    text: str,
+    artifact_path: Path | None,
+    source_event: str = RAW_CAPTURE_EVENT,
+) -> dict:
+    """Best-effort pre-normalization raw output capture for result writeback.
+
+    Capture is deliberately fail-safe: result classification/comment writeback keeps
+    using the caller's original text even if this queue write fails.
+    """
+    if not text.strip():
+        return {"ok": False, "skipped": True, "reason": "empty_raw_output"}
+    source_event_id = ":".join(
+        part
+        for part in (
+            source_event,
+            agent,
+            identifier,
+            run_id or str(artifact_path or ""),
+        )
+        if part
+    )
+    try:
+        from prismatic.agent_raw_output_queue import persist_raw_output
+
+        row = persist_raw_output(
+            raw_text=text,
+            agent=agent,
+            task_id=identifier,
+            source_event_id=source_event_id,
+            raw_text_or_artifact_path=str(artifact_path or ""),
+            expected_agent=agent,
+        )
+        return {
+            "ok": True,
+            "raw_output_id": row.raw_output_id,
+            "normalization_status": row.normalization_status,
+            "source_event_id": row.source_event_id,
+        }
+    except Exception as exc:  # fail-safe: never suppress actual result writeback
+        return {"ok": False, "reason": f"raw output capture failed: {exc}"}
+
+
 def compact_packet_from_text(text: str) -> str | None:
     if not re.search(r"(?m)^RESULT=(PASS|BLOCKED|FAIL)\s*$", text):
         return None
@@ -272,6 +320,17 @@ def reconcile_agy() -> list[str]:
             if log_path and log_path.exists()
             else ""
         )
+        capture = capture_raw_result_output(
+            agent="agy",
+            identifier=ident,
+            run_id=run_id,
+            text=text,
+            artifact_path=log_path,
+        )
+        if not capture.get("ok") and not capture.get("skipped"):
+            out.append(
+                f"AGY_RAW_CAPTURE_FAILED {ident} {run_id} {capture.get('reason')}"
+            )
         packet = compact_packet_from_text(text)
         if packet:
             marker = re.search(r"(?m)^MARKER=([A-Z0-9_]+)\s*$", packet).group(1)  # type: ignore[union-attr]
@@ -386,6 +445,17 @@ def reconcile_visible_hermes_launches(
             if log_path and log_path.exists()
             else ""
         )
+        capture = capture_raw_result_output(
+            agent=agent,
+            identifier=ident,
+            run_id=run_id,
+            text=text,
+            artifact_path=log_path,
+        )
+        if not capture.get("ok") and not capture.get("skipped"):
+            out.append(
+                f"{agent.upper()}_RAW_CAPTURE_FAILED {ident} {run_id} {capture.get('reason')}"
+            )
         packet = compact_packet_from_text(text)
         if packet:
             marker_match = re.search(r"(?m)^MARKER=([A-Z0-9_]+)\s*$", packet)

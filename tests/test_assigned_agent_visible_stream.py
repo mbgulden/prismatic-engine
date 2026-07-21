@@ -158,3 +158,61 @@ MARKER=GEORGE_ASSIGNED_DISPATCH_OK
     ).fetchone()[0]
     con.close()
     assert status == "completed"
+
+
+def test_visible_reconcile_captures_raw_text_before_compact_packet(
+    tmp_path: Path, monkeypatch
+):
+    import importlib.util
+    import sqlite3
+
+    spec = importlib.util.spec_from_file_location(
+        "assigned_agent_result_writeback_capture_order_test",
+        Path("scripts/assigned_agent_result_writeback.py"),
+    )
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    log_path = tmp_path / "agy.log"
+    log_path.write_text(
+        "RESULT=PASS\nMARKER=AGY_PACKET_FIXTURES_REPAIR_HINTS_OK\n", encoding="utf-8"
+    )
+    launch_db = tmp_path / "event_router.db"
+    con = sqlite3.connect(launch_db)
+    con.execute(
+        "create table launch_records (run_id text, agent_name text, issue_id text, identifier text, status text, pid integer, created_at text, command_json text)"
+    )
+    con.execute(
+        "insert into launch_records values (?,?,?,?,?,?,?,?)",
+        (
+            "agy-run-1",
+            "agy",
+            "GRO-3954",
+            "GRO-3954",
+            "launched",
+            999999,
+            "2026-07-18T10:00:00Z",
+            '["agy", "--log-file", "{}"]'.format(log_path),
+        ),
+    )
+    con.commit()
+    con.close()
+    calls = []
+    monkeypatch.setattr(mod, "LAUNCH_DB", launch_db)
+    monkeypatch.setattr(mod, "has_marker", lambda ident, marker: True)
+    monkeypatch.setattr(mod, "emit_visible_result_event", lambda *a, **k: None)
+    monkeypatch.setattr(
+        mod,
+        "capture_raw_result_output",
+        lambda **kwargs: calls.append(("capture", kwargs["text"])) or {"ok": True},
+    )
+    original_compact = mod.compact_packet_from_text
+    monkeypatch.setattr(
+        mod,
+        "compact_packet_from_text",
+        lambda text: calls.append(("compact", text)) or original_compact(text),
+    )
+
+    mod.reconcile_agy()
+
+    assert [name for name, _ in calls[:2]] == ["capture", "compact"]

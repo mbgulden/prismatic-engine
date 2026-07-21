@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -12,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from prismatic.agent_packet_normalizer import (
+    NormalizationResult,
     NormalizationStatus,
     normalize_agent_output,
     repair_preview as preview_raw_repair,
@@ -29,6 +31,18 @@ def default_db_path() -> Path:
             default_state_dir() / "agent_raw_output_queue.sqlite3",
         )
     ).expanduser()
+
+
+def max_raw_payload_bytes() -> int:
+    return int(os.environ.get("PRISMATIC_AGENT_RAW_OUTPUT_MAX_BYTES", "131072"))
+
+
+def retention_max_rows() -> int:
+    return int(os.environ.get("PRISMATIC_AGENT_RAW_OUTPUT_RETENTION_ROWS", "500"))
+
+
+_SECRET_LOCATOR_RE = re.compile(r"(?i)(token|key|secret|password)=([^&#]+)")
+_URI_USERINFO_RE = re.compile(r"^([a-z][a-z0-9+.-]*://)[^/@]+@", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -54,7 +68,7 @@ class RawAgentOutputRow:
             "agent": self.agent,
             "task_id": self.task_id,
             "source_event_id": self.source_event_id,
-            "raw_text_or_artifact_path": self.raw_text_or_artifact_path,
+            "artifact_path": self.raw_text_or_artifact_path,
             "received_at": self.received_at,
             "normalization_status": self.normalization_status,
             "canonical_packet_id": self.canonical_packet_id,
@@ -77,7 +91,9 @@ class RawAgentOutputStore:
     def __init__(self, db_path: str | Path | None = None) -> None:
         self.db_path = Path(db_path) if db_path is not None else default_db_path()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        _chmod_private(self.db_path.parent, 0o700)
         self._ensure_schema()
+        _chmod_private(self.db_path, 0o600)
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.db_path), timeout=10)
@@ -128,13 +144,17 @@ class RawAgentOutputStore:
         if not isinstance(raw_text, str) or not raw_text.strip():
             raise ValueError("raw_text is required")
         received_at = datetime.now(timezone.utc).isoformat()
-        result = normalize_agent_output(
+        storage_text, result = _safe_storage_text_and_result(
             raw_text, expected_agent=expected_agent or agent
         )
         raw_output_id = _raw_output_id(
             raw_text, agent=agent, task_id=task_id, source_event_id=source_event_id
         )
-        locator = raw_text_or_artifact_path or f"inline:{raw_output_id}"
+        locator = (
+            _safe_artifact_locator(raw_text_or_artifact_path)
+            if raw_text_or_artifact_path
+            else f"inline:{raw_output_id}"
+        )
         with self._connect() as conn:
             conn.execute(
                 """
@@ -164,7 +184,7 @@ class RawAgentOutputStore:
                     task_id,
                     source_event_id,
                     locator,
-                    raw_text,
+                    storage_text,
                     received_at,
                     result.status.value,
                     result.canonical_packet_id,
@@ -175,6 +195,7 @@ class RawAgentOutputStore:
                 ),
             )
             conn.commit()
+        self._prune_retention()
         return self.get(raw_output_id)
 
     def list(self, *, limit: int = 50) -> list[RawAgentOutputRow]:
@@ -213,6 +234,24 @@ class RawAgentOutputStore:
             )
             conn.commit()
         return self.get(raw_output_id)
+
+    def _prune_retention(self) -> None:
+        limit = retention_max_rows()
+        if limit <= 0:
+            return
+        with self._connect() as conn:
+            conn.execute(
+                """
+                DELETE FROM agent_raw_output_queue
+                WHERE raw_output_id NOT IN (
+                    SELECT raw_output_id FROM agent_raw_output_queue
+                    ORDER BY received_at DESC, raw_output_id DESC
+                    LIMIT ?
+                )
+                """,
+                (limit,),
+            )
+            conn.commit()
 
     def counts(self) -> dict[str, int]:
         rows = self.list(limit=500)
@@ -310,14 +349,77 @@ def _raw_output_id(
     task_id: str | None,
     source_event_id: str | None,
 ) -> str:
-    payload = json.dumps(
-        {
+    if source_event_id:
+        payload_obj = {
+            "agent": agent,
+            "task_id": task_id,
+            "source_event_id": source_event_id,
+        }
+    else:
+        payload_obj = {
             "agent": agent,
             "task_id": task_id,
             "source_event_id": source_event_id,
             "raw_text": raw_text,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
+        }
+    payload = json.dumps(payload_obj, sort_keys=True, separators=(",", ":"))
     return "raw_" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+
+
+def _safe_storage_text_and_result(
+    raw_text: str, *, expected_agent: str | None = None
+) -> tuple[str, NormalizationResult]:
+    raw_bytes = raw_text.encode("utf-8", errors="replace")
+    if len(raw_bytes) > max_raw_payload_bytes():
+        return (
+            json.dumps(
+                {
+                    "raw_output_storage": "rejected",
+                    "reason": "oversized_payload",
+                    "payload_bytes": len(raw_bytes),
+                    "max_bytes": max_raw_payload_bytes(),
+                },
+                sort_keys=True,
+            ),
+            NormalizationResult(
+                status=NormalizationStatus.REJECTED_POLICY_VIOLATION,
+                normalized_packet=None,
+                canonical_packet_id=None,
+                rejection_reason=f"raw output exceeds max bytes ({len(raw_bytes)} > {max_raw_payload_bytes()})",
+                repair_hint="oversized_payload",
+                rerun_allowed=False,
+            ),
+        )
+    result = normalize_agent_output(raw_text, expected_agent=expected_agent)
+    if result.repair_hint == "secret_like_content_detected":
+        return (
+            json.dumps(
+                {
+                    "raw_output_storage": "rejected",
+                    "reason": "secret_like_content_detected",
+                    "payload_sha256": hashlib.sha256(raw_bytes).hexdigest(),
+                    "payload_bytes": len(raw_bytes),
+                },
+                sort_keys=True,
+            ),
+            result,
+        )
+    return raw_text, result
+
+
+def _safe_artifact_locator(locator: str | None) -> str:
+    value = str(locator or "").strip()
+    if not value:
+        return "artifact:missing"
+    value = _URI_USERINFO_RE.sub(r"\1[redacted]@", value)
+    value = _SECRET_LOCATOR_RE.sub(lambda m: f"{m.group(1)}=[redacted]", value)
+    if "://" in value:
+        value = value.split("#", 1)[0]
+    return value[:500]
+
+
+def _chmod_private(path: Path, mode: int) -> None:
+    try:
+        path.chmod(mode)
+    except OSError:
+        pass

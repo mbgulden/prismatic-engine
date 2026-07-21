@@ -159,3 +159,65 @@ def test_queue_counts_uses_explicit_db_path(tmp_path: Path) -> None:
     assert counts["accepted"] == 1
     assert counts["policy_violation"] == 1
     assert counts["rejected"] == 1
+
+
+def test_secret_like_input_is_not_stored_verbatim(tmp_path: Path) -> None:
+    db_path = tmp_path / "private" / "raw.sqlite3"
+    store = RawAgentOutputStore(db_path)
+    secret = "OPENAI_API_KEY=sk-test-secret-like-token"
+
+    row = store.persist(raw_text=secret, agent="agy")
+
+    assert row.normalization_status == "rejected_policy_violation"
+    assert row.repair_hint == "secret_like_content_detected"
+    db_bytes = db_path.read_bytes()
+    assert b"sk-test-secret-like-token" not in db_bytes
+    assert "raw_text" not in row.as_dict()
+
+
+def test_private_permissions_oversized_payload_and_retention(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("PRISMATIC_AGENT_RAW_OUTPUT_MAX_BYTES", "20")
+    monkeypatch.setenv("PRISMATIC_AGENT_RAW_OUTPUT_RETENTION_ROWS", "2")
+    db_path = tmp_path / "private" / "raw.sqlite3"
+    store = RawAgentOutputStore(db_path)
+
+    oversized = store.persist(raw_text="x" * 21, agent="agy", source_event_id="evt-big")
+    store.persist(raw_text="plain one", agent="agy", source_event_id="evt-one")
+    newest = store.persist(raw_text="plain two", agent="agy", source_event_id="evt-two")
+
+    assert oversized.normalization_status == "rejected_policy_violation"
+    assert oversized.repair_hint == "oversized_payload"
+    assert oct(db_path.parent.stat().st_mode & 0o777) == "0o700"
+    assert oct(db_path.stat().st_mode & 0o777) == "0o600"
+    rows = store.list(limit=10)
+    assert len(rows) == 2
+    assert newest.raw_output_id in {row.raw_output_id for row in rows}
+
+
+def test_duplicate_source_event_is_idempotent_and_locator_is_sanitized(
+    tmp_path: Path,
+) -> None:
+    store = RawAgentOutputStore(tmp_path / "raw.sqlite3")
+
+    first = store.persist(
+        raw_text="first prose",
+        agent="agy",
+        task_id="GRO-IDEMPOTENT",
+        source_event_id="launch-123",
+        raw_text_or_artifact_path="https://user:pass@example.test/proof.log?token=abc123#frag",
+    )
+    second = store.persist(
+        raw_text="second prose",
+        agent="agy",
+        task_id="GRO-IDEMPOTENT",
+        source_event_id="launch-123",
+        raw_text_or_artifact_path="https://user:pass@example.test/proof.log?token=abc123#frag",
+    )
+
+    assert first.raw_output_id == second.raw_output_id
+    assert store.counts()["rejected"] == 1
+    reread = store.get(first.raw_output_id)
+    assert "abc123" not in reread.raw_text_or_artifact_path
+    assert "pass@example" not in reread.raw_text_or_artifact_path
