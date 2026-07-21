@@ -1362,6 +1362,57 @@ AGENT_CONFIG: dict[str, dict[str, Any]] = {
 }
 
 
+# Jules host-path pre-screen: Jules sessions cannot safely inspect host-only
+# paths such as the operator home directory or systemd state. Route those bounded ops to Ned
+# before launch so capacity is not consumed by an impossible Jules task.
+HOME_UBUNTU_MARKER = "/home/" + "ubuntu"
+_HOST_LEVEL_PATTERNS = [
+    HOME_UBUNTU_MARKER,
+    "~/.config",
+    "/etc",
+    "systemd",
+    "crontab",
+]
+
+
+def detect_host_level_patterns(issue: dict[str, Any]) -> list[str]:
+    text = f"{issue.get('title') or ''}\n{issue.get('description') or ''}".lower()
+    matches: list[str] = []
+    for pattern in _HOST_LEVEL_PATTERNS:
+        if pattern.lower() in text:
+            matches.append(pattern)
+    return matches
+
+
+def reroute_jules_host_path_issue(issue: dict[str, Any], matches: list[str]) -> bool:
+    issue_id = str(issue.get("id") or "")
+    identifier = str(issue.get("identifier") or issue_id)
+    if not issue_id:
+        return False
+    labels = get_issue_labels(issue_id)
+    existing = [label for label in labels if label.get("name") != "agent:jules"]
+    ned_label = get_label_id("agent:ned")
+    if not ned_label:
+        return False
+    label_ids: list[str] = []
+    for label in existing:
+        label_id = label.get("id")
+        if label_id:
+            label_ids.append(label_id)
+    if ned_label not in label_ids:
+        label_ids.append(ned_label)
+    if not set_labels(issue_id, label_ids):
+        return False
+    safe_matches = ", ".join(str(match)[:80] for match in matches[:8])
+    add_comment(
+        issue_id,
+        "Jules host-path pre-screen: rerouted "
+        f"{identifier} from agent:jules to agent:ned because Jules cannot safely access host-level paths/patterns: "
+        f"{safe_matches}. Added agent:ned; preserved other labels.",
+    )
+    return True
+
+
 # ═══════════════════════════════════════════════════════════════
 # Agent Launchers
 # ═══════════════════════════════════════════════════════════════
@@ -2344,10 +2395,24 @@ def launch_jules(
         if jules_repo:
             cmd = [resolved_jules_path, "new", "--repo", jules_repo, prompt]
 
+        from prismatic.jules_capacity import record_jules_launch
+
+        stable_launch_identity = (
+            request_id or f"jules:{identifier or issue_id}:{cycle_id or 'manual'}"
+        )
+        capacity_launch_key = record_jules_launch(
+            issue_id=identifier or issue_id,
+            repository=os.environ.get("PRISMATIC_JULES_REPO") or worktree_path,
+            source_path=str(log_path),
+            launch_identity=stable_launch_identity,
+            request_id=request_id,
+            lifecycle_status="accepted",
+        )
         out_handle = open(log_path, "a", encoding="utf-8")
         out_handle.write("JULES_SESSION_CAPTURE_STARTED\n")
         out_handle.write(f"context_pack_path={context_files['context_pack']}\n")
         out_handle.write(f"work_packet_path={context_files['work_packet']}\n")
+        out_handle.write(f"capacity_launch_key={capacity_launch_key}\n")
         out_handle.write("skill_pack_state=loaded\n")
         out_handle.write(f"shared_skill_packs={','.join(JULES_SHARED_SKILL_PACKS)}\n")
         out_handle.write(f"agent_skill_packs={','.join(JULES_AGENT_SKILL_PACKS)}\n")
@@ -2377,6 +2442,7 @@ def launch_jules(
                     "identifier": identifier or issue_id,
                     "context_pack_dir": str(context_dir),
                     "context_pack": context_files,
+                    "capacity_launch_key": capacity_launch_key,
                     "session_capture_log": str(log_path),
                     "worktree_path": worktree_path,
                     "expected_marker": expected_marker,
@@ -2394,6 +2460,32 @@ def launch_jules(
         return proc
     except (OSError, subprocess.SubprocessError) as exc:
         print(f"[dispatcher] Failed to launch Jules: {exc}")
+        try:
+            from prismatic.jules_capacity import (
+                record_jules_launch,
+                update_jules_lifecycle,
+            )
+
+            if "capacity_launch_key" in locals():
+                update_jules_lifecycle(
+                    launch_key=locals()["capacity_launch_key"],
+                    lifecycle_status="failed",
+                    error_class="cli_error",
+                )
+            else:
+                record_jules_launch(
+                    issue_id=identifier or issue_id,
+                    repository=os.environ.get("PRISMATIC_JULES_REPO")
+                    or (os.environ.get("PRISMATIC_WORKTREE_PATH") or os.getcwd()),
+                    source_path=str(locals().get("log_path", "")) or None,
+                    launch_identity=request_id
+                    or f"jules:{identifier or issue_id}:{cycle_id or 'manual'}",
+                    request_id=request_id,
+                    lifecycle_status="failed",
+                    error_class="cli_error",
+                )
+        except Exception:
+            pass
         return None
 
 
@@ -4034,6 +4126,7 @@ def dispatch_once(
         "linear_call_budget_exhausted": 0,
         "poll_cache_hits": 0,
         "poll_cache_misses": 0,
+        "host_path_rerouted": 0,
     }
     cycle_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
 
@@ -4253,6 +4346,15 @@ def dispatch_once(
             # Skip if already dispatched this cycle
             if dedup.is_processed(issue_id, label, cycle_id):
                 continue
+
+            if agent_name == "jules":
+                host_matches = detect_host_level_patterns(issue)
+                if host_matches and reroute_jules_host_path_issue(issue, host_matches):
+                    counts["host_path_rerouted"] = (
+                        counts.get("host_path_rerouted", 0) + 1
+                    )
+                    dedup.mark_processed(issue_id, label, cycle_id)
+                    continue
 
             launcher = AGENT_LAUNCHERS.get(agent_name)
             if not launcher:
