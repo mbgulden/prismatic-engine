@@ -198,13 +198,16 @@
 
         function renderRecoverySurface(payload = {}) {
             const serviceName = payload.service_name || "prismatic-consumer.service";
+            const systemdAvailable = payload.systemd_available !== false;
             const systemdActive = Boolean(payload.systemd_active);
             const heartbeat = payload.heartbeat || {};
             const pool = payload.pool_stats || {};
             const taxonomy = Array.isArray(payload.failure_taxonomy) ? payload.failure_taxonomy : [];
-            const serviceState = systemdActive ? "ACTIVE" : "OFFLINE";
-            const heartbeatState = heartbeat.exists ? "present" : "missing";
-            const poolState = pool.error ? "ERROR" : (Number(pool.live_count) >= 0 ? "LIVE" : "SYNCING");
+            const serviceState = !systemdAvailable ? "UNAVAILABLE" : (systemdActive ? "ACTIVE" : "OFFLINE");
+            const heartbeatState = heartbeat.available === false ? "unavailable" : (heartbeat.exists ? heartbeat.status || "present" : "missing");
+            const poolAvailable = pool.available !== false;
+            const liveCount = poolAvailable ? (pool.live_count ?? "—") : "—";
+            const dlqCount = poolAvailable ? (pool.total_skipped_dlq ?? "—") : "—";
 
             const setText = (id, value) => {
                 const el = document.getElementById(id);
@@ -214,10 +217,10 @@
             setText("recovery-service", serviceName);
             setText("recovery-service-state", serviceState);
             setText("recovery-heartbeat", heartbeatState);
-            setText("recovery-heartbeat-path", heartbeat.path || "Awaiting live heartbeat proof");
-            setText("recovery-live-count", pool.live_count ?? 0);
-            setText("recovery-dlq-count", pool.total_skipped_dlq ?? 0);
-            setText("recovery-pool-state", pool.error ? `Pool error: ${pool.error}` : `Systemd ${serviceState.toLowerCase()}, heartbeat ${heartbeatState}`);
+            setText("recovery-heartbeat-path", heartbeat.available === false ? "No durable heartbeat producer configured" : `Heartbeat ${heartbeat.status || "present"}; age ${heartbeat.age_seconds ?? "unknown"}s`);
+            setText("recovery-live-count", liveCount);
+            setText("recovery-dlq-count", dlqCount);
+            setText("recovery-pool-state", poolAvailable ? `Systemd ${serviceState.toLowerCase()}, heartbeat ${heartbeatState}` : `Systemd ${serviceState.toLowerCase()}; durable pool snapshot unavailable`);
             setText("recovery-taxonomy-count", `${taxonomy.length} classes`);
             setText(
                 "recovery-taxonomy-sample",
@@ -1132,15 +1135,20 @@
                     renderRecoverySurface(payload);
 
                     const pool = payload.pool_stats || {};
-                    document.getElementById("stat-pool-live").textContent = pool.live_count ?? 0;
-                    document.getElementById("stat-pool-dlq").textContent = pool.total_skipped_dlq ?? 0;
-                    const recoveryHealthy = payload.systemd_active && payload.heartbeat?.exists && (pool.live_count ?? 0) === 0;
+                    const heartbeat = payload.heartbeat || {};
+                    const poolAvailable = pool.available !== false;
+                    document.getElementById("stat-pool-live").textContent = poolAvailable ? (pool.live_count ?? "—") : "—";
+                    document.getElementById("stat-pool-dlq").textContent = poolAvailable ? (pool.total_skipped_dlq ?? "—") : "—";
+                    const recoveryHealthy = Boolean(payload.systemd_active) && heartbeat.available === true && heartbeat.fresh === true && poolAvailable && (pool.live_count ?? 0) === 0;
+                    const runtimeLabel = payload.systemd_available === false ? "systemd unavailable" : (payload.systemd_active ? "service active" : "service offline");
+                    const heartbeatLabel = heartbeat.available === false ? "heartbeat unavailable" : `heartbeat ${heartbeat.status || "unknown"}`;
+                    const poolLabel = poolAvailable ? `${pool.live_count ?? "—"} live / ${pool.total_skipped_dlq ?? "—"} dlq` : "pool snapshot unavailable";
                     setSummaryBadge(
                         "summary-recovery-badge",
                         "summary-recovery-meta",
                         recoveryHealthy ? "green" : "amber",
                         recoveryHealthy ? "HEALTHY" : "CHECK",
-                        `${payload.service_name || 'prismatic-consumer.service'} · heartbeat ${payload.heartbeat?.exists ? 'present' : 'missing'} · ${pool.live_count ?? 0} live / ${pool.total_skipped_dlq ?? 0} dlq`
+                        `${payload.service_name || 'prismatic-consumer.service'} · ${runtimeLabel} · ${heartbeatLabel} · ${poolLabel}`
                     );
                 }
 

@@ -3400,12 +3400,15 @@ async def dashboard_dispatcher_action(action: str) -> dict[str, Any]:
 @app.get("/api/gateway/recovery/status")
 async def dashboard_recovery_status() -> dict[str, Any]:
     from prismatic.ingestion_status import recovery_status_payload
+    from prismatic.recovery_runtime import consumer_runtime_status
 
-    return recovery_status_payload(
+    payload = recovery_status_payload(
         _read_dashboard_recovery_state(),
         _run_records_for_dashboard(),
         counters=_webhook_counters,
     )
+    payload.update(consumer_runtime_status())
+    return payload
 
 
 @app.get("/api/foundation/peer_review")
