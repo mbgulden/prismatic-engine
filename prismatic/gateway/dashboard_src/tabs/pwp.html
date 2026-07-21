@@ -1,0 +1,48 @@
+        <div id="section-pwp" class="hidden space-y-6">
+            <div class="glass-panel p-5 rounded-xl space-y-5">
+                <div class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 pb-3">
+                    <div>
+                        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider">PWP Additive Plugin Surface</h2>
+                        <p class="text-xs text-slate-500 mt-1">Portable Website Plugin capabilities connected into PE without becoming PE core. Connect/disconnect is explicit, reversible, and dashboard-visible.</p>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        <button onclick="pwpAction('connect')" class="bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-300 border border-emerald-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Connect</button>
+                        <button onclick="pwpAction('lifecycle-demo')" class="bg-cyan-600/10 hover:bg-cyan-600/20 text-cyan-300 border border-cyan-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Run Lifecycle Demo</button>
+                        <button onclick="pwpAction('disconnect')" class="bg-rose-600/10 hover:bg-rose-600/20 text-rose-300 border border-rose-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Disconnect</button>
+                        <button onclick="loadPWPStatus()" class="bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 border border-indigo-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Refresh</button>
+                    </div>
+                </div>
+                <div id="pwp-summary" class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs"></div>
+                <div id="pwp-blockers" class="space-y-2"></div>
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-4" id="pwp-capabilities"></div>
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 text-xs">
+                    <div class="bg-slate-950/70 border border-slate-800 rounded-xl p-4">
+                        <div class="text-slate-400 uppercase tracking-wider font-bold mb-2">Connect Points</div>
+                        <ul id="pwp-connect-points" class="space-y-2 text-slate-300 list-disc list-inside"></ul>
+                    </div>
+                    <div class="bg-slate-950/70 border border-slate-800 rounded-xl p-4">
+                        <div class="text-slate-400 uppercase tracking-wider font-bold mb-2">Disconnect Points</div>
+                        <ul id="pwp-disconnect-points" class="space-y-2 text-slate-300 list-disc list-inside"></ul>
+                    </div>
+                    <div class="bg-slate-950/70 border border-slate-800 rounded-xl p-4">
+                        <div class="text-slate-400 uppercase tracking-wider font-bold mb-2">Tools / Workflows</div>
+                        <div id="pwp-tools" class="flex flex-wrap gap-2"></div>
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-4 text-xs">
+                    <div class="bg-slate-950/70 border border-slate-800 rounded-xl overflow-hidden">
+                        <div class="p-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                                <div class="text-slate-400 uppercase tracking-wider font-bold">PWP Reference Lifecycle History</div>
+                                <p class="mt-1 text-slate-500">Canonical full lifecycle: connect → job → artifact/provenance → approval → publish/export → safe disconnect.</p>
+                            </div>
+                            <button onclick="pwpAction('lifecycle-demo')" class="bg-cyan-600/10 hover:bg-cyan-600/20 text-cyan-300 border border-cyan-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Run Demo</button>
+                        </div>
+                        <div id="pwp-lifecycle-history" class="divide-y divide-slate-800/70"></div>
+                    </div>
+                    <aside id="pwp-lifecycle-detail" class="bg-slate-950/70 border border-slate-800 rounded-xl p-4 min-h-[220px]"></aside>
+                </div>
+            </div>
+        </div>
+
+        <!-- SECTION 8: NATIVE CRONS -->

@@ -1,0 +1,2551 @@
+        const API_PREFIX = "/api/gateway";
+        let activeTab = 'dashboard';
+        let loadedQueueItems = [];
+        let loadedNativeCrons = [];
+        let pendingCronDeleteId = null;
+        let pollingInterval = null;
+
+        let agentStatusCache = { agents: [], status_counts: {}, evidence: {}, source: "not-loaded" };
+
+        function escapeHtml(value) {
+            return String(value ?? "").replace(/[&<>'"]/g, (ch) => ({
+                "&": "&amp;",
+                "<": "&lt;",
+                ">": "&gt;",
+                "'": "&#39;",
+                '"': "&quot;",
+            }[ch]));
+        }
+
+        function agentStatusTone(status) {
+            const key = String(status || "unknown").toLowerCase().replace(/-/g, "_");
+            const tones = {
+                active: { dot: "bg-emerald-500 status-pulse", chip: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" },
+                idle: { dot: "bg-slate-500", chip: "bg-slate-800 text-slate-400 border-slate-700/50" },
+                queue_starved: { dot: "bg-amber-500", chip: "bg-amber-500/10 text-amber-400 border-amber-500/20" },
+                awaiting_user_feedback: { dot: "bg-cyan-500", chip: "bg-cyan-500/10 text-cyan-400 border-cyan-500/20" },
+                completed_recently: { dot: "bg-indigo-500", chip: "bg-indigo-500/10 text-indigo-400 border-indigo-500/20" },
+                errored: { dot: "bg-rose-500", chip: "bg-rose-500/10 text-rose-400 border-rose-500/20" },
+                churning: { dot: "bg-orange-500", chip: "bg-orange-500/10 text-orange-400 border-orange-500/20" },
+                launch_failing: { dot: "bg-rose-500", chip: "bg-rose-500/10 text-rose-400 border-rose-500/20" },
+            };
+            return tones[key] || { dot: "bg-slate-500", chip: "bg-slate-800 text-slate-400 border-slate-700/50" };
+        }
+
+        function agentStatusLabel(status) {
+            return String(status || "unknown").replace(/_/g, " ").toUpperCase();
+        }
+
+        // Theme Management
+        function toggleTheme() {
+            const isLight = document.body.classList.toggle("light-mode");
+            localStorage.setItem("theme", isLight ? "light" : "dark");
+            updateThemeIcon(isLight);
+        }
+        function updateThemeIcon(isLight) {
+            const icon = document.getElementById("theme-icon");
+            if (isLight) {
+                icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>';
+            } else {
+                icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m0-12.728l.707.707m12.728 12.728l.707.707M12 8a4 4 0 100 8 4 4 0 000-8z"></path>';
+            }
+        }
+        function applyTheme() {
+            const saved = localStorage.getItem("theme");
+            if (saved === "light") {
+                document.body.classList.add("light-mode");
+                updateThemeIcon(true);
+            } else {
+                updateThemeIcon(false);
+            }
+        }
+
+        // Tab Switching
+        function switchTab(tab) {
+            activeTab = tab;
+            
+            // Toggle Tab Buttons
+            const tabs = ['dashboard', 'telemetry', 'merge', 'workspaces', 'skills', 'signals', 'pwp', 'plugins', 'crons', 'quota', 'foundation'];
+            tabs.forEach(t => {
+                const btn = document.getElementById(`tab-btn-${t}`);
+                const sec = document.getElementById(`section-${t}`);
+                
+                if (t === tab) {
+                    btn.className = "px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-indigo-600/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-600/20";
+                    sec.classList.remove("hidden");
+                } else {
+                    btn.className = "px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200";
+                    sec.classList.add("hidden");
+                }
+            });
+            
+            fetchData();
+            if (tab === 'crons') {
+                loadNativeCrons();
+            }
+        }
+
+        // Toasts
+        function showToast(text, isError = false) {
+            const toast = document.getElementById("toast");
+            const toastText = document.getElementById("toast-text");
+            toastText.textContent = text;
+            if (isError) {
+                toast.className = "fixed bottom-5 right-5 bg-rose-950 border border-rose-800 text-rose-200 px-4 py-3 rounded-lg shadow-xl text-xs font-semibold duration-300 pointer-events-none flex items-center space-x-2";
+            } else {
+                toast.className = "fixed bottom-5 right-5 bg-slate-900 border border-slate-800 text-slate-200 px-4 py-3 rounded-lg shadow-xl text-xs font-semibold duration-300 pointer-events-none flex items-center space-x-2";
+            }
+            toast.classList.remove("translate-y-20", "opacity-0");
+            setTimeout(() => {
+                toast.classList.add("translate-y-20", "opacity-0");
+            }, 3000);
+        }
+
+        // Date Helpers
+        function formatDate(val) {
+            if (!val) return "N/A";
+            if (typeof val === 'number') {
+                return new Date(val * 1000).toLocaleString();
+            }
+            try {
+                return new Date(val).toLocaleString();
+            } catch (e) {
+                return val;
+            }
+        }
+
+        function formatQuotaPct(value) {
+            const num = Number(value);
+            if (value === null || value === undefined || Number.isNaN(num)) {
+                return "—";
+            }
+            return `${num.toFixed(1)}%`;
+        }
+
+        function quotaStatusLabel(item) {
+            if (item.exhausted) return "EXHAUSTED";
+            const num = Number(item.remaining_pct);
+            if (item.remaining_pct === null || item.remaining_pct === undefined || Number.isNaN(num)) {
+                return "SYNCING";
+            }
+            if (num <= 1) return "BLOCKED";
+            return "ACTIVE";
+        }
+
+        function formatAge(seconds) {
+            const n = Number(seconds);
+            if (!Number.isFinite(n) || n < 0) return "Freshness: unknown";
+            if (n < 60) return `Freshness: ${Math.round(n)}s ago`;
+            const mins = Math.floor(n / 60);
+            if (mins < 60) return `Freshness: ${mins}m ago`;
+            const hours = Math.floor(mins / 60);
+            return `Freshness: ${hours}h ${mins % 60}m ago`;
+        }
+
+        function renderRecoverySurface(payload = {}) {
+            const serviceName = payload.service_name || "prismatic-consumer.service";
+            const systemdActive = Boolean(payload.systemd_active);
+            const heartbeat = payload.heartbeat || {};
+            const pool = payload.pool_stats || {};
+            const taxonomy = Array.isArray(payload.failure_taxonomy) ? payload.failure_taxonomy : [];
+            const serviceState = systemdActive ? "ACTIVE" : "OFFLINE";
+            const heartbeatState = heartbeat.exists ? "present" : "missing";
+            const poolState = pool.error ? "ERROR" : (Number(pool.live_count) >= 0 ? "LIVE" : "SYNCING");
+
+            const setText = (id, value) => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = value;
+            };
+
+            setText("recovery-service", serviceName);
+            setText("recovery-service-state", serviceState);
+            setText("recovery-heartbeat", heartbeatState);
+            setText("recovery-heartbeat-path", heartbeat.path || "Awaiting live heartbeat proof");
+            setText("recovery-live-count", pool.live_count ?? 0);
+            setText("recovery-dlq-count", pool.total_skipped_dlq ?? 0);
+            setText("recovery-pool-state", pool.error ? `Pool error: ${pool.error}` : `Systemd ${serviceState.toLowerCase()}, heartbeat ${heartbeatState}`);
+            setText("recovery-taxonomy-count", `${taxonomy.length} classes`);
+            setText(
+                "recovery-taxonomy-sample",
+                taxonomy.length
+                    ? taxonomy.slice(0, 3).map(item => item.label || item.code || item.name || "unlabeled").join(" · ")
+                    : "No taxonomy labels reported"
+            );
+        }
+
+        async function refreshRecoveryStatus() {
+            const res = await fetch(`${API_PREFIX}/recovery/status`);
+            if (!res.ok) {
+                showToast("Recovery status refresh failed", true);
+                return;
+            }
+            const payload = await res.json();
+            renderRecoverySurface(payload);
+            showToast("Recovery status refreshed");
+        }
+
+        // Node detail helper
+        async function showAgentDetail(id) {
+            let agent = (agentStatusCache.agents || []).find(a => a.id === id);
+            try {
+                const res = await fetch(`/api/gateway/agents/${encodeURIComponent(id)}`);
+                if (res.ok) {
+                    const detail = await res.json();
+                    agent = detail.agent || detail;
+                }
+            } catch (err) {
+                console.warn("agent detail fetch failed", err);
+            }
+            if (!agent) {
+                showToast(`No live agent evidence for ${id}`, true);
+                return;
+            }
+
+            document.getElementById("agent-detail-placeholder").classList.add("hidden");
+            const card = document.getElementById("agent-detail-card");
+            card.classList.remove("hidden");
+
+            const tone = agentStatusTone(agent.status);
+            const issue = agent.current_issue || "No current issue";
+            const activity = agent.last_activity_at ? formatDate(agent.last_activity_at) : "No activity timestamp";
+            const source = agent.source || agentStatusCache.source || "live agent status";
+
+            document.getElementById("agent-detail-dot").className = `w-3 h-3 rounded-full ${tone.dot}`;
+            document.getElementById("agent-detail-name").textContent = agent.name || id;
+            document.getElementById("agent-detail-role").textContent = agent.role || agent.kind || "Agent";
+            document.getElementById("agent-detail-task").textContent = issue;
+            document.getElementById("agent-detail-seen").textContent = activity;
+            document.getElementById("agent-detail-config").textContent = `${source} · queue ${agent.queue_depth ?? 0} · branch ${agent.current_branch || 'unknown'}`;
+
+            const tag = document.getElementById("agent-detail-status-tag");
+            tag.textContent = agentStatusLabel(agent.status);
+            tag.className = `px-2 py-0.5 rounded text-[9px] uppercase font-bold border ${tone.chip}`;
+        }
+
+        // Webhook simulator POST
+        async function simulateWebhook(e) {
+            e.preventDefault();
+            const ticket = document.getElementById("sim-ticket").value.trim();
+            const agent = document.getElementById("sim-agent").value;
+            const title = document.getElementById("sim-title").value.trim();
+            
+            // Build Linear Issue Payload matching the server format
+            const payload = {
+                action: "update",
+                type: "Issue",
+                data: {
+                    id: `sim-${Date.now()}`,
+                    title: title,
+                    identifier: ticket,
+                    labels: [{ name: `agent:${agent}` }]
+                }
+            };
+            
+            try {
+                const r = await fetch("/webhooks/linear", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+                if (r.ok) {
+                    showToast("Test event successfully queued!");
+                    addLocalSignal("Linear", `Inbound webhook simulated for ticket ${ticket}`);
+                    fetchData();
+                } else {
+                    showToast("Failed to queue simulated event", true);
+                }
+            } catch (err) {
+                showToast("Network error", true);
+            }
+        }
+
+        let activeSignalsAgent = 'all';
+        let latestSignalsPayload = { items: [], by_agent: {}, counts: {} };
+
+        function setSignalsAgent(agent) {
+            activeSignalsAgent = agent || 'all';
+            document.querySelectorAll('.signals-agent-tab').forEach(btn => {
+                const active = btn.dataset.agentTab === activeSignalsAgent;
+                btn.className = `signals-agent-tab px-3 py-1.5 rounded-lg text-xs font-bold uppercase border ${active ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500/30' : 'bg-slate-900 text-slate-400 border-slate-800'}`;
+            });
+            renderSignalPanes(latestSignalsPayload);
+        }
+
+        function addLocalSignal(source, text) {
+            const container = document.getElementById("signals-log-box");
+            if (!container) return;
+            const time = new Date().toLocaleTimeString();
+            const div = document.createElement("div");
+            div.className = "text-slate-300";
+            div.innerHTML = `<span class="text-slate-500 font-bold">[${time}]</span> <span class="text-indigo-400 font-semibold">[${source}]</span> ${escapeHtml(text)}`;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        // Badges
+        function getAgentBadge(name) {
+            if (!name) return '<span class="text-xs text-slate-600">None</span>';
+            const clean = name.toLowerCase();
+            const colors = {
+                agy: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+                jules: "bg-orange-500/10 text-orange-400 border-orange-500/20",
+                fred: "bg-sky-500/10 text-sky-400 border-sky-500/20",
+                ned: "bg-purple-500/10 text-purple-400 border-purple-500/20",
+                kai: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+                codex: "bg-rose-500/10 text-rose-400 border-rose-500/20"
+            };
+            const cls = colors[clean] || "bg-slate-800 text-slate-300 border-slate-700/50";
+            return '<span class="px-2 py-0.5 rounded text-[10px] font-bold border capitalize ' + cls + '">' + clean + '</span>';
+        }
+
+        function getStatusBadge(status) {
+            const clean = (status || "").toLowerCase();
+            if (clean === "completed" || clean === "success") {
+                return '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Success</span>';
+            }
+            if (clean === "failed" || clean === "error") {
+                return '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20">Failed</span>';
+            }
+            if (clean === "processing") {
+                return '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-orange-500/10 text-orange-400 border border-orange-500/20 status-pulse">Processing</span>';
+            }
+            return '<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">Pending</span>';
+        }
+
+        // Webhook queue details modal
+        function openModal(id) {
+            const item = loadedQueueItems.find(x => x.id === id);
+            if (!item) return;
+            
+            document.getElementById("modal-id-badge").textContent = `ID: ${item.id}`;
+            document.getElementById("modal-agent").innerHTML = getAgentBadge(item.agent_name);
+            document.getElementById("modal-action").textContent = item.action || "update";
+            document.getElementById("modal-status").innerHTML = getStatusBadge(item.dispatch_status);
+            document.getElementById("modal-queued").textContent = formatDate(item.queued_at);
+            
+            try {
+                const parsed = JSON.parse(item.payload);
+                document.getElementById("modal-payload").textContent = JSON.stringify(parsed, null, 2);
+            } catch (e) {
+                document.getElementById("modal-payload").textContent = item.payload;
+            }
+            
+            document.getElementById("modal-container").classList.remove("hidden");
+        }
+
+        function closeModal() {
+            document.getElementById("modal-container").classList.add("hidden");
+        }
+
+        function cronBadge(value) {
+            const v = String(value || "unknown");
+            const classes = {
+                active: "bg-emerald-500/10 text-emerald-300 border-emerald-500/20",
+                paused: "bg-amber-500/10 text-amber-300 border-amber-500/20",
+                deactivated: "bg-slate-700/40 text-slate-300 border-slate-600/40",
+                deleted: "bg-rose-500/10 text-rose-300 border-rose-500/20",
+                queued: "bg-indigo-500/10 text-indigo-300 border-indigo-500/20",
+                out_of_queue: "bg-slate-800 text-slate-400 border-slate-700"
+            };
+            return `<span class="px-2 py-0.5 rounded text-[10px] uppercase font-bold border ${classes[v] || classes.out_of_queue}">${v.replace('_', ' ')}</span>`;
+        }
+
+        let loadedPluginGovernance = null;
+        let loadedPluginJobs = null;
+        let loadedPluginArtifacts = null;
+        let loadedPluginAuditEvents = null;
+
+        async function loadPluginGovernance() {
+            try {
+                const [govRes, jobsRes, artifactsRes, auditRes] = await Promise.all([
+                    fetch('/api/plugins/governance'),
+                    fetch('/api/plugins/jobs'),
+                    fetch('/api/plugins/artifacts'),
+                    fetch('/api/plugins/audit-events?limit=50')
+                ]);
+                if (!govRes.ok) throw new Error(`governance HTTP ${govRes.status}`);
+                if (!jobsRes.ok) throw new Error(`jobs HTTP ${jobsRes.status}`);
+                if (!artifactsRes.ok) throw new Error(`artifacts HTTP ${artifactsRes.status}`);
+                if (!auditRes.ok) throw new Error(`audit HTTP ${auditRes.status}`);
+                loadedPluginGovernance = await govRes.json();
+                loadedPluginJobs = await jobsRes.json();
+                loadedPluginArtifacts = await artifactsRes.json();
+                loadedPluginAuditEvents = await auditRes.json();
+                renderPluginDashboardChrome(null);
+                renderPluginGovernance();
+                renderPluginPolicy();
+                renderPluginJobs();
+                renderPluginArtifacts();
+                renderPluginAuditEvents();
+                renderPluginJobTimeline();
+                renderPluginArtifactInventory();
+                renderPluginApprovalControls();
+                renderPluginDetailDrawer();
+            } catch (err) {
+                renderPluginDashboardChrome(err);
+                const summary = document.getElementById('plugin-governance-summary');
+                if (summary) summary.innerHTML = `<div class="col-span-full text-rose-300 bg-rose-950/30 border border-rose-900/60 rounded-xl p-3">Plugin governance refresh failed: ${err.message}</div>`;
+            }
+        }
+
+        function pluginBadge(label, color = 'slate') {
+            const palette = {
+                emerald: 'bg-emerald-950/40 text-emerald-300 border-emerald-800/60',
+                amber: 'bg-amber-950/40 text-amber-300 border-amber-800/60',
+                rose: 'bg-rose-950/40 text-rose-300 border-rose-800/60',
+                indigo: 'bg-indigo-950/40 text-indigo-300 border-indigo-800/60',
+                slate: 'bg-slate-900/80 text-slate-300 border-slate-700/70'
+            };
+            return `<span class="inline-flex items-center px-2 py-0.5 rounded-full border text-[10px] font-semibold ${palette[color] || palette.slate}">${label}</span>`;
+        }
+
+        function pluginDashboardCounts() {
+            const governance = (loadedPluginGovernance && loadedPluginGovernance.plugins) || [];
+            const jobs = (loadedPluginJobs && loadedPluginJobs.jobs) || [];
+            const artifacts = (loadedPluginArtifacts && loadedPluginArtifacts.artifacts) || [];
+            return {
+                plugins: governance.length,
+                jobs: jobs.length,
+                artifacts: artifacts.length,
+                approvals: jobs.filter(job => job.status === 'needs_approval' || job.approval_state === 'pending').length + artifacts.filter(artifact => artifact.approval_state === 'pending').length,
+                blockers: governance.filter(plugin => (plugin.production_blockers || []).length).length + jobs.filter(job => job.status === 'failed').length + artifacts.filter(artifact => artifact.approval_state === 'rejected').length
+            };
+        }
+
+        function copyDashboardCommand(command) {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(command);
+            }
+            renderPluginDetailDrawer({
+                title: 'Copied CLI command',
+                body: `<code class="block mt-2 rounded bg-slate-900 p-2 text-emerald-200 overflow-x-auto">${command}</code>`
+            });
+        }
+
+        function renderPluginDashboardChrome(error) {
+            const counts = pluginDashboardCounts();
+            const health = document.getElementById('plugin-dashboard-health-cards');
+            if (health) {
+                health.innerHTML = [
+                    ['Plugins', counts.plugins, 'Manifest catalog loaded', counts.plugins ? 'emerald' : 'amber'],
+                    ['Jobs', counts.jobs, 'Durable audit trail', counts.jobs ? 'indigo' : 'slate'],
+                    ['Artifacts', counts.artifacts, 'Provenance inventory', counts.artifacts ? 'indigo' : 'slate'],
+                    ['Needs attention', counts.approvals + counts.blockers, 'Approvals and blockers', counts.approvals + counts.blockers ? 'amber' : 'emerald'],
+                ].map(([label, value, help, color]) => `<div class="rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                    <div class="flex items-center justify-between gap-2"><span class="text-slate-500 uppercase tracking-wider font-bold">${label}</span>${pluginBadge(color === 'emerald' ? 'healthy' : color === 'amber' ? 'review' : 'ready', color)}</div>
+                    <div class="mt-2 text-2xl font-black text-slate-100">${value}</div>
+                    <div class="mt-1 text-slate-500">${help}</div>
+                </div>`).join('');
+            }
+            const firstRun = document.getElementById('plugin-first-run-empty-state');
+            if (firstRun) firstRun.classList.toggle('hidden', counts.plugins + counts.jobs + counts.artifacts > 0);
+            const errorEl = document.getElementById('plugin-error-explanation');
+            if (errorEl) {
+                errorEl.classList.toggle('hidden', !error);
+                errorEl.innerHTML = error ? `<div class="font-bold uppercase tracking-wider">Dashboard refresh error</div><p class="mt-1 text-red-200">${error.message || error}. Check that the Gateway is running, then copy the smoke command below.</p><button onclick="copyDashboardCommand('python scripts/release_smoke.py')" class="copy-cli-command mt-2 rounded border border-red-400/30 px-2 py-1 text-red-100">Copy release smoke</button>` : '';
+            }
+            const hints = document.getElementById('plugin-onboarding-hints');
+            if (hints) {
+                const cards = [
+                    ['Start local', 'Run the public smoke before sharing the dashboard.', 'python scripts/public_launch_smoke.py', 'docs/public-onboarding.md'],
+                    ['Prove release path', 'Validate package metadata, plugins, API, and dashboard markers.', 'python scripts/release_smoke.py', 'docs/release-process.md'],
+                    ['Govern plugins', 'Preview policy before starting risky jobs or exporting artifacts.', 'python scripts/plugin_architecture catalog', 'docs/prismatic-plugin-architecture.md'],
+                ];
+                hints.innerHTML = cards.map(([title, body, command, doc]) => `<div class="rounded-xl border border-slate-800 bg-slate-950/50 p-3">
+                    <div class="font-bold text-slate-200">${title}</div><p class="mt-1 text-slate-500">${body}</p>
+                    <div class="mt-3 flex flex-wrap gap-2"><button onclick="copyDashboardCommand('${command}')" class="copy-cli-command rounded border border-indigo-500/30 px-2 py-1 text-indigo-200">Copy CLI</button><a class="dashboard-doc-link rounded border border-slate-700 px-2 py-1 text-slate-300 hover:text-white" href="/${doc}" target="_blank">Docs</a></div>
+                </div>`).join('');
+            }
+            const docs = document.getElementById('plugin-doc-links');
+            if (docs) {
+                docs.innerHTML = ['docs/public-onboarding.md', 'docs/prismatic-plugin-architecture.md', 'docs/release-process.md', 'docs/public-security-readiness.md'].map(doc => `<a class="dashboard-doc-link rounded-full border border-slate-700 px-3 py-1 text-slate-300 hover:border-indigo-500/50 hover:text-indigo-200" href="/${doc}" target="_blank">${doc.replace('docs/', '')}</a>`).join('');
+            }
+        }
+
+        function renderPluginDetailDrawer(selection = null) {
+            const drawer = document.getElementById('plugin-detail-drawer');
+            if (!drawer) return;
+            if (selection && selection.title) {
+                drawer.innerHTML = `<div class="text-slate-500 uppercase tracking-wider font-bold">${selection.title}</div><div class="mt-2 text-slate-300">${selection.body || ''}</div>`;
+                return;
+            }
+            const plugin = ((loadedPluginGovernance && loadedPluginGovernance.plugins) || [])[0];
+            const job = ((loadedPluginJobs && loadedPluginJobs.jobs) || [])[0];
+            const artifact = ((loadedPluginArtifacts && loadedPluginArtifacts.artifacts) || [])[0];
+            drawer.innerHTML = `<div class="flex items-start justify-between gap-3"><div><div class="text-slate-500 uppercase tracking-wider font-bold">Plugin detail drawer</div><div class="mt-1 text-lg font-black text-slate-100">${(plugin && plugin.name) || 'No plugin selected'}</div></div>${plugin ? pluginBadge(plugin.readiness_state || 'unknown', plugin.readiness_state === 'ready' ? 'emerald' : 'amber') : pluginBadge('first run', 'amber')}</div>
+                <div class="mt-4 space-y-3">
+                    <div><div class="text-slate-500 uppercase tracking-wider font-bold">Latest job</div><div class="mt-1 text-slate-300">${job ? `${job.job_id || job.id} · ${job.status}` : 'No job timeline yet.'}</div></div>
+                    <div><div class="text-slate-500 uppercase tracking-wider font-bold">Latest artifact</div><div class="mt-1 text-slate-300">${artifact ? `${artifact.artifact_id || artifact.id} · ${artifact.publish_state || artifact.approval_state}` : 'No artifact inventory yet.'}</div></div>
+                    <button onclick="copyDashboardCommand('python scripts/release_smoke.py')" class="copy-cli-command rounded-lg border border-indigo-500/30 bg-indigo-600/10 px-3 py-2 text-xs font-semibold text-indigo-200 hover:bg-indigo-600/20">Copy release smoke</button>
+                </div>`;
+        }
+
+        function renderPluginJobTimeline() {
+            const el = document.getElementById('plugin-job-timeline');
+            if (!el) return;
+            const jobs = ((loadedPluginJobs && loadedPluginJobs.jobs) || []).slice(0, 5);
+            if (!jobs.length) {
+                el.innerHTML = `<div class="text-slate-500 uppercase tracking-wider font-bold">Job timeline</div><p class="mt-2 text-slate-500">No plugin jobs yet. Create one through the API or run a plugin smoke to populate the durable audit trail.</p>`;
+                return;
+            }
+            el.innerHTML = `<div class="flex items-center justify-between"><div class="text-slate-500 uppercase tracking-wider font-bold">Job timeline</div><button onclick="copyDashboardCommand('curl -s http://127.0.0.1:9000/api/plugins/jobs')" class="copy-cli-command text-indigo-300 hover:text-indigo-200">Copy API</button></div><ol class="mt-3 space-y-2">${jobs.map(job => `<li class="border-l border-indigo-500/30 pl-3"><button onclick="renderPluginDetailDrawer({title: 'Job ${job.job_id || job.id}', body: 'Status: ${job.status || 'unknown'}<br>Approval: ${job.approval_state || 'unknown'}'})" class="text-left text-slate-200 hover:text-indigo-200">${job.action || job.kind || 'plugin job'} · ${pluginBadge(job.status || 'unknown', job.status === 'completed' ? 'emerald' : job.status === 'failed' ? 'rose' : 'amber')}</button><div class="text-slate-500">${formatDate(job.updated_at || job.created_at)}</div></li>`).join('')}</ol>`;
+        }
+
+        function renderPluginArtifactInventory() {
+            const el = document.getElementById('plugin-artifact-inventory');
+            if (!el) return;
+            const artifacts = ((loadedPluginArtifacts && loadedPluginArtifacts.artifacts) || []);
+            if (!artifacts.length) {
+                el.innerHTML = `<div class="p-3"><div class="text-slate-500 uppercase tracking-wider font-bold">Artifact inventory</div><p class="mt-2 text-slate-500">No artifacts registered yet. Approved plugin outputs will appear here with provenance, publish state, and export history.</p></div>`;
+                return;
+            }
+            el.innerHTML = `<div class="p-3 border-b border-slate-800 flex items-center justify-between"><div class="text-slate-500 uppercase tracking-wider font-bold">Artifact inventory</div><button onclick="copyDashboardCommand('curl -s http://127.0.0.1:9000/api/plugins/artifacts')" class="copy-cli-command text-indigo-300 hover:text-indigo-200">Copy API</button></div><div class="divide-y divide-slate-800/60">${artifacts.slice(0, 6).map(artifact => `<button onclick="renderPluginDetailDrawer({title: 'Artifact ${artifact.artifact_id || artifact.id}', body: 'Type: ${artifact.artifact_type || 'unknown'}<br>Publish: ${artifact.publish_state || 'unknown'}<br>Approval: ${artifact.approval_state || 'unknown'}'})" class="block w-full text-left p-3 hover:bg-slate-900/50"><div class="font-semibold text-slate-200">${artifact.artifact_type || 'artifact'} · ${artifact.artifact_id || artifact.id}</div><div class="mt-1 text-slate-500">${artifact.plugin_name || 'unknown plugin'} · ${artifact.publish_state || artifact.approval_state || 'unreviewed'}</div></button>`).join('')}</div>`;
+        }
+
+        function renderPluginApprovalControls() {
+            const el = document.getElementById('plugin-approval-controls');
+            if (!el) return;
+            const jobs = ((loadedPluginJobs && loadedPluginJobs.jobs) || []).filter(job => job.status === 'needs_approval' || job.approval_state === 'pending');
+            const artifacts = ((loadedPluginArtifacts && loadedPluginArtifacts.artifacts) || []).filter(artifact => artifact.approval_state === 'pending');
+            if (!jobs.length && !artifacts.length) {
+                el.innerHTML = `<div class="text-slate-500 uppercase tracking-wider font-bold">Approval controls</div><p class="mt-2 text-slate-500">No pending approvals. Policy-gated jobs and artifacts will show approve/reject actions here.</p>`;
+                return;
+            }
+            const jobButtons = jobs.slice(0, 3).map(job => `<div class="rounded-lg border border-amber-500/20 p-2"><div class="font-semibold text-amber-200">Job ${job.job_id || job.id}</div><div class="mt-2 flex gap-2"><button onclick="fetch('/api/plugins/jobs/${job.job_id || job.id}/approve', {method: 'POST'}).then(loadPluginGovernance)" class="rounded border border-emerald-500/30 px-2 py-1 text-emerald-200">Approve</button><button onclick="fetch('/api/plugins/jobs/${job.job_id || job.id}/reject', {method: 'POST'}).then(loadPluginGovernance)" class="rounded border border-rose-500/30 px-2 py-1 text-rose-200">Reject</button></div></div>`).join('');
+            const artifactButtons = artifacts.slice(0, 3).map(artifact => `<div class="rounded-lg border border-amber-500/20 p-2"><div class="font-semibold text-amber-200">Artifact ${artifact.artifact_id || artifact.id}</div><div class="mt-2 flex gap-2"><button onclick="fetch('/api/plugins/artifacts/${artifact.artifact_id || artifact.id}/approve', {method: 'POST'}).then(loadPluginGovernance)" class="rounded border border-emerald-500/30 px-2 py-1 text-emerald-200">Approve</button><button onclick="fetch('/api/plugins/artifacts/${artifact.artifact_id || artifact.id}/reject', {method: 'POST'}).then(loadPluginGovernance)" class="rounded border border-rose-500/30 px-2 py-1 text-rose-200">Reject</button></div></div>`).join('');
+            el.innerHTML = `<div class="text-slate-500 uppercase tracking-wider font-bold">Approval controls</div><div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">${jobButtons}${artifactButtons}</div>`;
+        }
+
+        function renderPluginPolicy() {
+            const jobs = (loadedPluginJobs && loadedPluginJobs.jobs) || [];
+            const artifacts = (loadedPluginArtifacts && loadedPluginArtifacts.artifacts) || [];
+            const jobPolicyBlocked = jobs.filter(job => (job.policy_result || {}).decision === 'block' || job.status === 'failed').length;
+            const jobApprovalRequired = jobs.filter(job => job.status === 'needs_approval' || job.approval_state === 'pending').length;
+            const artifactBlocked = artifacts.filter(artifact => artifact.approval_state === 'rejected' || artifact.publish_state === 'rejected' || ((artifact.policy_result || {}).decision === 'block')).length;
+            const artifactApprovalRequired = artifacts.filter(artifact => artifact.approval_state === 'pending').length;
+            const lastJob = jobs.find(job => job.policy_result);
+            const lastArtifact = artifacts.find(artifact => artifact.policy_result);
+            const lastPolicy = (lastJob && lastJob.policy_result) || (lastArtifact && lastArtifact.policy_result) || null;
+            const summaryEl = document.getElementById('plugin-policy-summary');
+            const decisionEl = document.getElementById('plugin-policy-decision');
+            if (!summaryEl || !decisionEl) return;
+            summaryEl.innerHTML = [
+                ['Blocked jobs', jobPolicyBlocked, jobPolicyBlocked ? 'rose' : 'emerald'],
+                ['Blocked artifacts', artifactBlocked, artifactBlocked ? 'rose' : 'emerald'],
+                ['Job approvals', jobApprovalRequired, jobApprovalRequired ? 'amber' : 'emerald'],
+                ['Artifact approvals', artifactApprovalRequired, artifactApprovalRequired ? 'amber' : 'emerald'],
+                ['Policy API', '/api/plugins/policy/preview', 'indigo'],
+            ].map(([label, value, color]) => `<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><div class="text-slate-500 uppercase tracking-wider font-bold">${label}</div><div class="mt-1 text-slate-100 font-mono text-lg">${value}</div><div class="mt-2">${pluginBadge('Policy Enforcement', color)}</div></div>`).join('');
+            const blockedReason = lastPolicy ? ((lastPolicy.blockers || [lastPolicy.reason || 'no blockers']).join('; ')) : 'No durable policy decisions yet. Use POST /api/plugins/policy/preview, job start, or artifact export to evaluate policy.';
+            decisionEl.innerHTML = `<div class="flex items-center justify-between gap-3"><div><div class="uppercase tracking-wider text-slate-500 font-bold">Policy Enforcement</div><div class="mt-1 text-slate-300">Last policy decision: <span class="font-mono">${lastPolicy ? lastPolicy.decision : 'none'}</span></div><div class="mt-1 text-slate-500 blocked_reason">blocked_reason: ${blockedReason}</div></div>${pluginBadge(lastPolicy ? `policy: ${lastPolicy.decision}` : 'policy: idle', lastPolicy && lastPolicy.decision === 'block' ? 'rose' : lastPolicy && lastPolicy.decision === 'needs_approval' ? 'amber' : 'emerald')}</div>`;
+        }
+
+        function renderPluginAuditEvents() {
+            const payload = loadedPluginAuditEvents || {};
+            const summary = payload.summary || {};
+            const events = payload.events || [];
+            const el = document.getElementById('plugin-audit-events');
+            if (!el) return;
+            if (!events.length) {
+                el.innerHTML = `<div class="p-3"><div class="flex items-center justify-between"><div class="text-slate-500 uppercase tracking-wider font-bold">Audit events</div><button onclick="copyDashboardCommand('curl -s http://127.0.0.1:9000/api/plugins/audit-events')" class="copy-cli-command text-indigo-300 hover:text-indigo-200">Copy API</button></div><p class="mt-2 text-slate-500">No plugin audit events yet. Create/start a job or register an artifact to populate the audit stream.</p></div>`;
+                return;
+            }
+            const rows = events.slice(0, 8).map(event => `<tr class="border-t border-slate-800/70 hover:bg-slate-900/50"><td class="px-3 py-2 font-mono text-slate-400">${event.created_at || '—'}</td><td class="px-3 py-2 text-slate-200">${event.event_type || 'event'}</td><td class="px-3 py-2 text-slate-300">${event.plugin_name || '—'}</td><td class="px-3 py-2 text-slate-400">${event.audit_source || event.source || '—'}</td><td class="px-3 py-2 text-slate-500">${event.job_id || event.artifact_id || '—'}</td></tr>`).join('');
+            el.innerHTML = `<div class="p-3 border-b border-slate-800 flex items-center justify-between"><div><div class="text-slate-500 uppercase tracking-wider font-bold">Audit events</div><div class="mt-1 text-slate-400">${summary.event_count || events.length} recent events · ${summary.job_event_count || 0} job · ${summary.artifact_event_count || 0} artifact</div></div><button onclick="copyDashboardCommand('curl -s http://127.0.0.1:9000/api/plugins/audit-events')" class="copy-cli-command text-indigo-300 hover:text-indigo-200">Copy API</button></div><table class="w-full text-left text-xs"><thead class="text-slate-500 uppercase"><tr><th class="px-3 py-2">Time</th><th class="px-3 py-2">Event</th><th class="px-3 py-2">Plugin</th><th class="px-3 py-2">Source</th><th class="px-3 py-2">Object</th></tr></thead><tbody>${rows}</tbody></table>`;
+        }
+
+        function renderPluginArtifacts() {
+            const payload = loadedPluginArtifacts || {};
+            const summary = payload.summary || {};
+            const summaryEl = document.getElementById('plugin-artifact-summary');
+            const tableEl = document.getElementById('plugin-artifacts-table');
+            if (!summaryEl || !tableEl) return;
+            const approval = summary.by_approval_state || {};
+            const publish = summary.by_publish_state || {};
+            summaryEl.innerHTML = [
+                ['Artifacts', summary.artifact_count || 0, 'emerald'],
+                ['Approved', approval.approved || 0, 'emerald'],
+                ['Pending', approval.pending || 0, 'amber'],
+                ['Publish ready', publish.publish_ready || 0, 'indigo'],
+                ['Rejected', approval.rejected || 0, 'rose'],
+            ].map(([label, value, color]) => `<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><div class="text-slate-500 uppercase tracking-wider font-bold">${label}</div><div class="mt-1 text-slate-100 font-mono text-lg">${value}</div><div class="mt-2">${pluginBadge(label, color)}</div></div>`).join('');
+            const rows = (payload.artifacts || []).slice(0, 12).map(artifact => `
+                <tr class="border-t border-slate-800/80">
+                    <td class="px-3 py-2 font-mono text-[11px] text-slate-300">${artifact.artifact_id}</td>
+                    <td class="px-3 py-2 text-slate-300">${artifact.plugin_name || ''}</td>
+                    <td class="px-3 py-2 text-slate-400">${artifact.artifact_type || ''}</td>
+                    <td class="px-3 py-2">${pluginBadge(`approval: ${artifact.approval_state || 'unknown'}`, artifact.approval_state === 'approved' ? 'emerald' : artifact.approval_state === 'rejected' ? 'rose' : 'amber')}</td>
+                    <td class="px-3 py-2">${pluginBadge(`publish: ${artifact.publish_state || 'unknown'}`, artifact.publish_state === 'publish_ready' ? 'indigo' : artifact.publish_state === 'rejected' ? 'rose' : 'slate')}</td>
+                    <td class="px-3 py-2 font-mono text-[11px] text-slate-500">${artifact.sha256 ? artifact.sha256.slice(0, 12) : 'external/no-hash'}</td>
+                    <td class="px-3 py-2 text-slate-500">${artifact.job_id || ''}</td>
+                </tr>`).join('');
+            tableEl.innerHTML = `<div class="px-3 py-2 border-b border-slate-800 text-xs font-bold uppercase tracking-wider text-slate-400">Universal Plugin Artifacts / Provenance Registry</div>
+                <table class="min-w-full text-xs"><thead class="text-slate-500"><tr><th class="px-3 py-2 text-left">Artifact</th><th class="px-3 py-2 text-left">Plugin</th><th class="px-3 py-2 text-left">Type</th><th class="px-3 py-2 text-left">Approval</th><th class="px-3 py-2 text-left">Publish</th><th class="px-3 py-2 text-left">SHA256</th><th class="px-3 py-2 text-left">Job</th></tr></thead><tbody>${rows || '<tr><td colspan="7" class="px-3 py-4 text-slate-500">No plugin artifacts registered yet.</td></tr>'}</tbody></table>`;
+        }
+
+        function renderPluginJobs() {
+            const payload = loadedPluginJobs || {};
+            const summary = payload.summary || {};
+            const summaryEl = document.getElementById('plugin-job-summary');
+            const tableEl = document.getElementById('plugin-jobs-table');
+            if (!summaryEl || !tableEl) return;
+            summaryEl.innerHTML = [
+                ['Jobs', summary.job_count || 0, 'indigo'],
+                ['Events', summary.event_count || 0, 'slate'],
+                ['Artifacts', summary.artifact_count || 0, 'emerald'],
+                ['Needs approval', (summary.by_status || {}).needs_approval || 0, 'amber'],
+                ['Failed', (summary.by_status || {}).failed || 0, 'rose'],
+            ].map(([label, value, color]) => `<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><div class="text-slate-500 uppercase tracking-wider font-bold">${label}</div><div class="mt-1 text-slate-100 font-mono text-lg">${value}</div><div class="mt-2">${pluginBadge(label, color)}</div></div>`).join('');
+            const rows = (payload.jobs || []).slice(0, 12).map(job => `
+                <tr class="border-t border-slate-800/80">
+                    <td class="px-3 py-2 font-mono text-[11px] text-slate-300">${job.job_id}</td>
+                    <td class="px-3 py-2 text-slate-300">${job.plugin_name}</td>
+                    <td class="px-3 py-2 text-slate-400">${job.action}</td>
+                    <td class="px-3 py-2">${pluginBadge(job.status || 'unknown', job.status === 'failed' || job.status === 'rejected' ? 'rose' : job.status === 'needs_approval' ? 'amber' : 'emerald')}</td>
+                    <td class="px-3 py-2">${pluginBadge(`approval: ${job.approval_state || 'unknown'}`, job.approval_state === 'pending' ? 'amber' : job.approval_state === 'rejected' ? 'rose' : 'slate')}</td>
+                    <td class="px-3 py-2 text-slate-500">${job.updated_at || ''}</td>
+                </tr>`).join('');
+            tableEl.innerHTML = `<div class="px-3 py-2 border-b border-slate-800 text-xs font-bold uppercase tracking-wider text-slate-400">Durable Plugin Jobs / Audit Trail</div>
+                <table class="min-w-full text-xs"><thead class="text-slate-500"><tr><th class="px-3 py-2 text-left">Job</th><th class="px-3 py-2 text-left">Plugin</th><th class="px-3 py-2 text-left">Action</th><th class="px-3 py-2 text-left">Status</th><th class="px-3 py-2 text-left">Approval</th><th class="px-3 py-2 text-left">Updated</th></tr></thead><tbody>${rows || '<tr><td colspan="6" class="px-3 py-4 text-slate-500">No plugin jobs recorded yet.</td></tr>'}</tbody></table>`;
+        }
+
+        function renderPluginGovernance() {
+            const payload = loadedPluginGovernance || {};
+            const summary = document.getElementById('plugin-governance-summary');
+            const cards = document.getElementById('plugin-governance-cards');
+            if (!summary || !cards) return;
+            const s = payload.summary || {};
+            summary.innerHTML = [
+                ['Ready', s.ready || 0, 'emerald'],
+                ['Warnings', s.warning || 0, 'amber'],
+                ['Blocked', s.blocked || 0, 'rose'],
+                ['High risk', s.high_risk || 0, 'rose'],
+                ['Needs approval', s.requires_approval || 0, 'indigo'],
+            ].map(([label, value, color]) => `<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><div class="text-slate-500 uppercase tracking-wider font-bold">${label}</div><div class="mt-1 text-slate-100 font-mono text-lg">${value}</div><div class="mt-2">${pluginBadge(label, color)}</div></div>`).join('');
+            cards.innerHTML = (payload.plugins || []).map(plugin => {
+                const gov = plugin.governance || {};
+                const blockers = gov.production_blockers || [];
+                const coverage = gov.surface_coverage || {};
+                const stateColor = gov.readiness_state === 'ready' ? 'emerald' : (gov.readiness_state === 'blocked' ? 'rose' : 'amber');
+                const endpointLinks = (plugin.endpoints || []).slice(0, 4).map(ep => pluginBadge(`${ep.method || 'GET'} ${ep.path || ''}`, 'slate')).join('');
+                return `<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-4 text-xs space-y-3">
+                    <div class="flex items-start justify-between gap-3">
+                        <div><div class="text-slate-100 font-bold">${plugin.name}</div><div class="text-slate-500 mt-1">${plugin.plugin_type} · ${(plugin.categories || []).join(', ') || 'uncategorized'}</div></div>
+                        <div class="flex gap-1 flex-wrap justify-end">${pluginBadge(gov.readiness_state || 'unknown', stateColor)}${pluginBadge(`risk: ${gov.risk_level || 'unknown'}`, gov.risk_level === 'high' || gov.risk_level === 'critical' ? 'rose' : 'indigo')}</div>
+                    </div>
+                    <div class="grid grid-cols-3 md:grid-cols-6 gap-2 text-center">
+                        ${[['Tools', coverage.tools], ['MCP', coverage.mcp_servers], ['API', coverage.api_routes], ['Artifacts', coverage.artifact_types], ['Dashboard', coverage.dashboard_surfaces], ['Approvals', (gov.approval_gates || []).length]].map(([label, value]) => `<div class="bg-slate-900/70 border border-slate-800 rounded-lg p-2"><div class="text-slate-500 uppercase text-[9px]">${label}</div><div class="text-slate-200 font-mono">${value || 0}</div></div>`).join('')}
+                    </div>
+                    <div class="flex flex-wrap gap-1">${(gov.approval_gates || []).map(g => pluginBadge(g, 'indigo')).join('') || pluginBadge('no approval gates declared', 'amber')}</div>
+                    <div class="flex flex-wrap gap-1">${endpointLinks || pluginBadge('no endpoints declared', 'amber')}</div>
+                    <div class="space-y-1">${blockers.length ? blockers.map(b => `<div class="rounded-lg border ${b.severity === 'blocking' ? 'border-rose-900/70 bg-rose-950/30 text-rose-200' : 'border-amber-900/70 bg-amber-950/30 text-amber-200'} p-2"><span class="font-bold uppercase">${b.severity}</span>: ${b.message}</div>`).join('') : '<div class="rounded-lg border border-emerald-900/70 bg-emerald-950/30 text-emerald-200 p-2">No production blockers detected.</div>'}</div>
+                </div>`;
+            }).join('') || '<div class="text-slate-500 text-xs">No plugin manifests discovered.</div>';
+        }
+
+        let loadedPWPStatus = null;
+
+        async function loadPWPStatus() {
+            try {
+                const res = await fetch('/api/pwp/status');
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                loadedPWPStatus = await res.json();
+                renderPWPStatus();
+            } catch (err) {
+                const summary = document.getElementById('pwp-summary');
+                if (summary) summary.innerHTML = `<div class="col-span-full text-rose-300 bg-rose-950/30 border border-rose-900/60 rounded-xl p-3">PWP status refresh failed: ${err.message}</div>`;
+            }
+        }
+
+        function pwpBadge(text, color = 'slate') {
+            const classes = {
+                slate: 'bg-slate-900/80 text-slate-300 border-slate-700',
+                emerald: 'bg-emerald-950/40 text-emerald-300 border-emerald-800/70',
+                amber: 'bg-amber-950/40 text-amber-300 border-amber-800/70',
+                rose: 'bg-rose-950/40 text-rose-300 border-rose-800/70',
+                indigo: 'bg-indigo-950/40 text-indigo-300 border-indigo-800/70'
+            };
+            return `<span class="inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold ${classes[color] || classes.slate}">${text}</span>`;
+        }
+
+        function renderPWPStatus() {
+            const payload = loadedPWPStatus || {};
+            const summary = document.getElementById('pwp-summary');
+            const blockers = document.getElementById('pwp-blockers');
+            const caps = document.getElementById('pwp-capabilities');
+            const connects = document.getElementById('pwp-connect-points');
+            const disconnects = document.getElementById('pwp-disconnect-points');
+            const tools = document.getElementById('pwp-tools');
+            const lifecycleHistory = document.getElementById('pwp-lifecycle-history');
+            const lifecycleDetail = document.getElementById('pwp-lifecycle-detail');
+            if (!summary || !blockers || !caps || !connects || !disconnects || !tools || !lifecycleHistory || !lifecycleDetail) return;
+            const hardBlockers = (payload.production_blockers || []).filter(b => b.severity === 'blocking').length;
+            const warnings = (payload.production_blockers || []).filter(b => b.severity !== 'blocking').length;
+            const statusColor = payload.connected ? 'emerald' : (hardBlockers ? 'rose' : 'amber');
+            summary.innerHTML = [
+                ['State', payload.state || 'unknown', statusColor],
+                ['Capabilities', String((payload.capabilities || []).length), 'indigo'],
+                ['Tools', String((payload.tool_names || []).length), 'slate'],
+                ['Blockers', `${hardBlockers} hard / ${warnings} warn`, hardBlockers ? 'rose' : (warnings ? 'amber' : 'emerald')],
+            ].map(([label, value, color]) => `<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-3"><div class="text-slate-500 uppercase tracking-wider font-bold">${label}</div><div class="mt-1 text-slate-100 font-mono">${value}</div><div class="mt-2">${pwpBadge(payload.status || value, color)}</div></div>`).join('');
+            blockers.innerHTML = (payload.production_blockers || []).length
+                ? (payload.production_blockers || []).map(b => `<div class="rounded-xl border ${b.severity === 'blocking' ? 'border-rose-900/70 bg-rose-950/30 text-rose-200' : 'border-amber-900/70 bg-amber-950/30 text-amber-200'} p-3 text-xs"><span class="font-bold uppercase tracking-wider">${b.system || 'governance'}</span>: ${b.message}</div>`).join('')
+                : '<div class="rounded-xl border border-emerald-900/70 bg-emerald-950/30 text-emerald-200 p-3 text-xs">No PWP production blockers detected.</div>';
+            caps.innerHTML = (payload.capabilities || []).map(cap => `<div class="bg-slate-950/70 border border-slate-800 rounded-xl p-4 text-xs space-y-3"><div><div class="text-slate-100 font-bold">${cap.label}</div><div class="text-slate-500 mt-1">${cap.category}</div></div><p class="text-slate-300 leading-relaxed">${cap.description}</p><div class="flex flex-wrap gap-1">${(cap.governance || []).slice(0,4).map(g => pwpBadge(g, 'indigo')).join('')}</div></div>`).join('');
+            connects.innerHTML = (payload.connect_points || []).map(item => `<li>${item}</li>`).join('');
+            disconnects.innerHTML = (payload.disconnect_points || []).map(item => `<li>${item}</li>`).join('');
+            tools.innerHTML = [...(payload.tool_names || []), ...(payload.workflows || [])].slice(0, 32).map(item => pwpBadge(item, 'slate')).join('');
+            renderPWPLifecycleHistory(payload.lifecycle_summary || {}, lifecycleHistory, lifecycleDetail);
+        }
+
+        function renderPWPLifecycleHistory(lifecycle, historyEl, detailEl) {
+            const jobs = ((lifecycle.history || {}).jobs || []);
+            const artifacts = ((lifecycle.history || {}).artifacts || []);
+            const latestArtifact = lifecycle.latest_artifact || artifacts[0] || null;
+            if (!jobs.length && !artifacts.length) {
+                historyEl.innerHTML = '<div class="p-4 text-slate-500">No PWP lifecycle runs yet. Click Run Demo to create a credential-free job, artifact, approval, publish/export history, and safe disconnect proof.</div>';
+                detailEl.innerHTML = '<div class="text-slate-500 uppercase tracking-wider font-bold">Lifecycle detail</div><p class="mt-2 text-slate-400">PWP is the canonical reference plugin. The demo writes to the universal plugin job and artifact registries.</p>';
+                return;
+            }
+            historyEl.innerHTML = jobs.slice(0, 8).map(job => `<button onclick="showPWPLifecycleDetail('${job.job_id}')" class="block w-full text-left p-4 hover:bg-slate-900/60 transition"><div class="flex flex-wrap items-center justify-between gap-2"><div class="font-semibold text-slate-200">${job.action || 'pwp job'} · ${job.job_id}</div>${pwpBadge(job.status || 'unknown', job.status === 'completed' ? 'emerald' : job.status === 'failed' ? 'rose' : 'amber')}</div><div class="mt-1 text-slate-500">Artifacts: ${(job.artifact_ids || []).length} · approval: ${job.approval_state || 'unknown'} · ${formatDate(job.updated_at || job.created_at)}</div></button>`).join('');
+            detailEl.innerHTML = `<div class="text-slate-500 uppercase tracking-wider font-bold">Reference lifecycle proof</div><div class="mt-3 grid grid-cols-2 gap-2 text-xs"><div class="rounded-lg border border-slate-800 p-2"><div class="text-slate-500">Jobs</div><div class="text-lg font-black text-slate-100">${lifecycle.jobs_total || jobs.length}</div></div><div class="rounded-lg border border-slate-800 p-2"><div class="text-slate-500">Artifacts</div><div class="text-lg font-black text-slate-100">${lifecycle.artifacts_total || artifacts.length}</div></div></div><div class="mt-4 space-y-2 text-slate-300"><div>${pwpBadge('connect', 'emerald')} ${pwpBadge('job registry', 'indigo')} ${pwpBadge('provenance', 'indigo')}</div><div>${pwpBadge('approval before publish', 'amber')} ${pwpBadge('safe disconnect', 'emerald')}</div></div><div class="mt-4 text-slate-500">Latest artifact: ${latestArtifact ? `${latestArtifact.artifact_id} · ${latestArtifact.publish_state}` : 'none'}</div>`;
+        }
+
+        function showPWPLifecycleDetail(jobId) {
+            const detailEl = document.getElementById('pwp-lifecycle-detail');
+            const lifecycle = (loadedPWPStatus || {}).lifecycle_summary || {};
+            const jobs = ((lifecycle.history || {}).jobs || []);
+            const artifacts = ((lifecycle.history || {}).artifacts || []);
+            const job = jobs.find(item => item.job_id === jobId);
+            if (!detailEl || !job) return;
+            const linkedArtifacts = artifacts.filter(item => (job.artifact_ids || []).includes(item.artifact_id));
+            detailEl.innerHTML = `<div class="text-slate-500 uppercase tracking-wider font-bold">${job.job_id}</div><div class="mt-2 text-lg font-black text-slate-100">${job.action}</div><div class="mt-3 flex flex-wrap gap-2">${pwpBadge(job.status || 'unknown', job.status === 'completed' ? 'emerald' : 'amber')}${pwpBadge(job.approval_state || 'unknown', 'indigo')}</div><div class="mt-4 text-slate-400">Events: ${(job.events || []).length} · Artifacts: ${(job.artifact_ids || []).length}</div><div class="mt-4 space-y-2">${linkedArtifacts.map(artifact => `<div class="rounded-lg border border-slate-800 p-2"><div class="text-slate-200">${artifact.artifact_id}</div><div class="text-slate-500">${artifact.artifact_type} · ${artifact.approval_state} · ${artifact.publish_state}</div></div>`).join('') || '<div class="text-slate-500">No linked artifacts.</div>'}</div>`;
+        }
+
+        async function pwpAction(action) {
+            const options = { method: 'POST' };
+            if (action === 'lifecycle-demo') {
+                options.headers = { 'Content-Type': 'application/json' };
+                options.body = JSON.stringify({ actor: 'pwp-dashboard', disconnect_after: true });
+            }
+            const res = await fetch(`/api/pwp/${action}`, options);
+            const payload = await res.json();
+            if (action === 'lifecycle-demo') {
+                await loadPWPStatus();
+            } else {
+                loadedPWPStatus = payload;
+                renderPWPStatus();
+            }
+            showToast(`PWP ${action}: ${payload.ok === false ? 'failed' : (payload.status || payload.state || 'ok')}`, !res.ok);
+        }
+
+        async function loadNativeCrons() {
+            const table = document.getElementById("native-crons-table");
+            if (!table) return;
+            table.innerHTML = '<tr><td colspan="6" class="p-4 text-slate-500">Loading native cron registry…</td></tr>';
+            try {
+                const res = await fetch('/native-crons?include_deleted=false');
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                loadedNativeCrons = await res.json();
+                renderNativeCrons();
+            } catch (err) {
+                table.innerHTML = `<tr><td colspan="6" class="p-4 text-rose-300">Failed to load native crons: ${err.message}</td></tr>`;
+            }
+        }
+
+        function renderNativeCrons() {
+            const table = document.getElementById("native-crons-table");
+            const summary = document.getElementById("native-crons-summary");
+            if (!table || !summary) return;
+            const counts = loadedNativeCrons.reduce((acc, cron) => {
+                acc[cron.state] = (acc[cron.state] || 0) + 1;
+                return acc;
+            }, {});
+            summary.innerHTML = ['active', 'paused', 'deactivated', 'deleted'].map(key => `
+                <div class="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+                    <div class="text-slate-500 uppercase tracking-wider font-bold">${key}</div>
+                    <div class="text-xl font-bold text-slate-200 mt-1">${counts[key] || 0}</div>
+                </div>
+            `).join('');
+            if (!loadedNativeCrons.length) {
+                table.innerHTML = '<tr><td colspan="6" class="p-4 text-slate-500">No native crons registered.</td></tr>';
+                return;
+            }
+            table.innerHTML = loadedNativeCrons.map(cron => {
+                const last = cron.last_run_at ? `${formatDate(cron.last_run_at)}<br><span class="text-slate-500">${cron.last_status || 'unknown'}</span>` : '<span class="text-slate-500">Never</span>';
+                const pauseResume = cron.state === 'paused'
+                    ? `<button onclick="nativeCronAction('${cron.id}', 'resume')" class="text-emerald-300 hover:text-emerald-200">Resume</button>`
+                    : `<button onclick="nativeCronAction('${cron.id}', 'pause')" class="text-amber-300 hover:text-amber-200">Pause</button>`;
+                const activateDeactivate = cron.state === 'deactivated'
+                    ? `<button onclick="nativeCronAction('${cron.id}', 'activate')" class="text-indigo-300 hover:text-indigo-200">Activate</button>`
+                    : `<button onclick="nativeCronAction('${cron.id}', 'deactivate')" class="text-slate-300 hover:text-slate-100">Deactivate</button>`;
+                return `
+                    <tr class="hover:bg-slate-900/40">
+                        <td class="p-3 align-top"><div class="font-bold text-slate-200">${cron.name}</div><div class="text-slate-500 mt-1">${cron.description || cron.id}</div><div class="text-slate-600 font-mono mt-1">${cron.id}</div></td>
+                        <td class="p-3 align-top font-mono text-slate-300">${cron.schedule}</td>
+                        <td class="p-3 align-top">${cronBadge(cron.state)}</td>
+                        <td class="p-3 align-top">${cronBadge(cron.queue_state)}</td>
+                        <td class="p-3 align-top text-slate-400">${last}</td>
+                        <td class="p-3 align-top"><div class="flex flex-wrap gap-2 text-xs font-bold">${pauseResume}${activateDeactivate}<button onclick="nativeCronAction('${cron.id}', 'run')" class="text-indigo-300 hover:text-indigo-200">Run</button><button onclick="openCronDeleteModal('${cron.id}')" class="text-rose-300 hover:text-rose-200">Delete</button></div></td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        async function nativeCronAction(cronId, action) {
+            const res = await fetch(`/native-crons/${encodeURIComponent(cronId)}/action`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action })
+            });
+            const payload = await res.json();
+            if (!res.ok || payload.success === false) {
+                showToast(payload.error || `Cron ${action} failed`, true);
+                return;
+            }
+            showToast(`Cron ${action} complete`);
+            await loadNativeCrons();
+        }
+
+        function openCronDeleteModal(cronId) {
+            pendingCronDeleteId = cronId;
+            const cron = loadedNativeCrons.find(item => item.id === cronId);
+            document.getElementById("cron-delete-target").textContent = cron ? `${cron.name} (${cron.id})` : cronId;
+            document.getElementById("cron-delete-modal").classList.remove("hidden");
+        }
+
+        function closeCronDeleteModal() {
+            pendingCronDeleteId = null;
+            document.getElementById("cron-delete-modal").classList.add("hidden");
+        }
+
+        async function confirmCronDeactivateFromModal() {
+            if (!pendingCronDeleteId) return;
+            const cronId = pendingCronDeleteId;
+            closeCronDeleteModal();
+            await nativeCronAction(cronId, 'deactivate');
+        }
+
+        async function confirmCronDeleteFromModal() {
+            if (!pendingCronDeleteId) return;
+            const cronId = pendingCronDeleteId;
+            closeCronDeleteModal();
+            await nativeCronAction(cronId, 'delete');
+        }
+
+        // Control Hooks
+        async function controlDispatcher(action) {
+            const loader = document.getElementById("dispatcher-loader");
+            loader.classList.remove("hidden");
+            try {
+                const r = await fetch(`${API_PREFIX}/dispatcher/${action}`, { method: "POST" });
+                if (r.ok) {
+                    showToast(`Dispatcher command ${action}ed`);
+                    setTimeout(fetchData, 1000);
+                } else {
+                    showToast("Control failed", true);
+                }
+            } catch (e) {
+                showToast("Network error", true);
+            } finally {
+                loader.classList.add("hidden");
+            }
+        }
+
+        async function retryTask(taskId) {
+            try {
+                const r = await fetch(`${API_PREFIX}/webhooks/queue/retry/${taskId}`, { method: "POST" });
+                if (r.ok) {
+                    showToast("Task reset to pending");
+                    fetchData();
+                } else {
+                    showToast("Failed to retry task", true);
+                }
+            } catch (e) {
+                showToast("Network error", true);
+            }
+        }
+
+        async function purgeQueue() {
+            if (!confirm("Are you sure you want to purge completed/failed tasks from the queue?")) return;
+            try {
+                const r = await fetch(`${API_PREFIX}/webhooks/queue/purge`, { method: "POST" });
+                if (r.ok) {
+                    showToast("Queue history purged");
+                    fetchData();
+                } else {
+                    showToast("Failed to purge queue", true);
+                }
+            } catch (e) {
+                showToast("Network error", true);
+            }
+        }
+
+        // Searching / Filtering
+        function filterQueue() {
+            const query = document.getElementById("search-input").value.toLowerCase().trim();
+            const tbody = document.getElementById("queue-tbody");
+            
+            const filtered = loadedQueueItems.filter(item => {
+                const id = (item.identifier || "").toLowerCase();
+                const agent = (item.agent_name || "").toLowerCase();
+                const action = (item.action || "").toLowerCase();
+                const status = (item.dispatch_status || "").toLowerCase();
+                return id.includes(query) || agent.includes(query) || action.includes(query) || status.includes(query);
+            });
+            
+            if (filtered.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="6" class="py-8 text-center text-slate-500 italic">No matching events</td></tr>`;
+            } else {
+                tbody.innerHTML = filtered.map(item => `
+                    <tr onclick="openModal(${item.id})" class="border-b border-slate-800/50 hover:bg-slate-900/20 transition duration-150 cursor-pointer">
+                        <td class="py-3 px-3 font-semibold text-slate-200">${item.identifier || "N/A"}</td>
+                        <td class="py-3 px-3">${getAgentBadge(item.agent_name)}</td>
+                        <td class="py-3 px-3 text-slate-400 capitalize text-xs">${item.action || "update"}</td>
+                        <td class="py-3 px-3">${getStatusBadge(item.dispatch_status)}</td>
+                        <td class="py-3 px-3 text-slate-500 text-xs">${formatDate(item.queued_at)}</td>
+                        <td class="py-3 px-3 text-right">
+                            <button onclick="event.stopPropagation(); retryTask(${item.id})" class="text-xs text-indigo-400 hover:text-indigo-300 font-semibold px-2 py-1 rounded bg-indigo-500/5 hover:bg-indigo-500/10 border border-indigo-500/10 transition">
+                                Retry
+                            </button>
+                        </td>
+                    </tr>
+                `).join("");
+            }
+        }
+
+        // Sparklines drawing helper
+        function drawSparkline(values) {
+            const max = Math.max(...values, 1.0);
+            const height = 24;
+            const width = 48;
+            const step = width / (values.length - 1 || 1);
+            
+            const points = values.map((val, idx) => {
+                const x = idx * step;
+                const y = height - (val / max) * height;
+                return x + "," + y;
+            }).join(" ");
+            
+            return '<svg width="' + width + '" height="' + height + '"><polyline fill="none" stroke="#6366f1" stroke-width="1.5" points="' + points + '" /></svg>';
+        }
+
+        // Quotas poll hook
+        async function pollQuota() {
+            try {
+                const r = await fetch(`${API_PREFIX}/quota/poll`, { method: "POST" });
+                if (r.ok) {
+                    showToast("Quota sync initiated");
+                    setTimeout(fetchData, 2000);
+                } else {
+                    showToast("Sync failed", true);
+                }
+            } catch (err) {
+                showToast("Network error", true);
+            }
+        }
+
+        async function fetchFoundationData() {
+            try {
+                const res = await fetch(`${API_PREFIX}/foundation/peer_review`);
+                if (res.ok) {
+                    const data = await res.json();
+                    document.getElementById("stat-foundation-jules").textContent = data.jules_count;
+                    document.getElementById("stat-foundation-ned").textContent = data.ned_count;
+                    document.getElementById("stat-foundation-agy").textContent = data.agy_count;
+                    document.getElementById("stat-foundation-reviewer").textContent = data.current_agy_reviewer;
+                    
+                    // Update progress bar
+                    const pct = Math.min(100, (data.jules_count / data.jules_limit) * 100);
+                    document.getElementById("progress-foundation-jules").style.width = `${pct}%`;
+                }
+            } catch (err) {
+                console.error("Error fetching foundation peer review data", err);
+            }
+        }
+
+        async function triggerFoundationAction(action) {
+            const consoleEl = document.getElementById("foundation-console");
+            consoleEl.textContent = `Running ${action}... Please wait...\n`;
+            try {
+                const res = await fetch(`${API_PREFIX}/foundation/control/${action}`, { method: "POST" });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.status === "ok") {
+                        showToast(`Action ${action} succeeded`);
+                        consoleEl.textContent += `[SUCCESS] ${data.message}\n\nSTDOUT:\n${data.stdout || ''}\n\nSTDERR:\n${data.stderr || ''}`;
+                        fetchData();
+                    } else {
+                        showToast(data.message || "Action failed", true);
+                        consoleEl.textContent += `[ERROR] ${data.message}\n`;
+                    }
+                } else {
+                    showToast(`Server returned error status`, true);
+                    consoleEl.textContent += `[HTTP ERROR] Status: ${res.status}\n`;
+                }
+            } catch (err) {
+                showToast("Network connection error", true);
+                consoleEl.textContent += `[CONNECTION ERROR] ${err}\n`;
+            }
+        }
+
+        function clearFoundationConsole() {
+            document.getElementById("foundation-console").textContent = "Console cleared.\n";
+        }
+
+        // Fetch API States
+        async function fetchData() {
+            // Global telemetry poll
+            await fetchTelemetryData();
+            
+            if (activeTab === 'dashboard') {
+                renderDashboardSummary();
+                await fetchQuotaSummary();
+                await fetchCompletedWorkGate();
+                await fetchPromotionDecisionLedger();
+                await fetchOperatorActionApproval();
+                await fetchApprovedActionExecutor();
+                await fetchFinalActionAuthorization();
+                await fetchQuarantinedExecutionAdapter();
+                await fetchSandboxedExecutionCanary();
+                await fetchRealExecutorArmingGate();
+                await fetchRawAgentOutputQueue();
+                await fetchMergeBacklog();
+                await fetchOvernightGuard();
+                await fetchMorningBriefing();
+            } else if (activeTab === 'merge') {
+                await fetchMergeData();
+            } else if (activeTab === 'foundation') {
+                await fetchFoundationData();
+            } else if (activeTab === 'workspaces') {
+                await renderWorkspacesView();
+            } else if (activeTab === 'skills') {
+                await renderSkillsView();
+            } else if (activeTab === 'signals') {
+                await renderSignalsView();
+            } else if (activeTab === 'quota') {
+                await fetchBudgetCaps();
+                await fetchQuotaData();
+            }
+        }
+
+        async function fetchTelemetryData() {
+            try {
+                // 1. Stats
+                const statsRes = await fetch(`${API_PREFIX}/webhooks/stats`);
+                if (statsRes.ok) {
+                    const stats = await statsRes.json();
+                    document.getElementById("stat-received").textContent = stats.received || 0;
+                    document.getElementById("stat-auth-failed").textContent = stats.auth_failed || 0;
+                    document.getElementById("stat-latency").textContent = stats.average_dispatch_latency_seconds ? stats.average_dispatch_latency_seconds.toFixed(1) : "0.0";
+                    
+                    const sparklineDiv = document.getElementById("latency-sparkline");
+                    if (stats.recent_latencies && stats.recent_latencies.length >= 2) {
+                        sparklineDiv.innerHTML = drawSparkline(stats.recent_latencies);
+                    } else {
+                        sparklineDiv.innerHTML = `<span class="text-[10px] text-slate-500 italic">No trend</span>`;
+                    }
+                    
+                    document.getElementById("stat-pending").textContent = stats.queue_depths?.pending || 0;
+                    document.getElementById("stat-processing").textContent = stats.queue_depths?.processing || 0;
+                    document.getElementById("stat-completed").textContent = stats.queue_depths?.completed || 0;
+                    document.getElementById("stat-failed").textContent = stats.queue_depths?.failed || 0;
+                }
+
+                // 1b. Failure taxonomy
+                const taxonomyRes = await fetch(`${API_PREFIX}/recovery/status`);
+                if (taxonomyRes.ok) {
+                    const payload = await taxonomyRes.json();
+                    const grid = document.getElementById("failure-taxonomy-grid");
+                    const taxonomy = payload.failure_taxonomy || [];
+                    grid.innerHTML = taxonomy.map(item => `
+                        <article class="glass-panel p-3 rounded-xl border border-slate-800/70">
+                            <div class="flex items-center justify-between gap-3">
+                                <div>
+                                    <div class="text-[10px] uppercase tracking-wider text-slate-500">${item.code}</div>
+                                    <h3 class="text-sm font-semibold text-slate-100 mt-1">${item.name}</h3>
+                                </div>
+                                <span class="px-2 py-0.5 rounded text-[10px] font-bold border border-cyan-500/20 bg-cyan-500/10 text-cyan-400">${item.layer}</span>
+                            </div>
+                            <p class="text-xs text-slate-400 mt-2">${item.example}</p>
+                            <div class="mt-3 flex flex-wrap gap-1">
+                                ${item.signals.map(sig => `<span class="px-2 py-0.5 rounded-full text-[10px] bg-slate-800 text-slate-300 border border-slate-700">${sig}</span>`).join("")}
+                            </div>
+                        </article>
+                    `).join("");
+
+                    renderRecoverySurface(payload);
+
+                    const pool = payload.pool_stats || {};
+                    document.getElementById("stat-pool-live").textContent = pool.live_count ?? 0;
+                    document.getElementById("stat-pool-dlq").textContent = pool.total_skipped_dlq ?? 0;
+                    const recoveryHealthy = payload.systemd_active && payload.heartbeat?.exists && (pool.live_count ?? 0) === 0;
+                    setSummaryBadge(
+                        "summary-recovery-badge",
+                        "summary-recovery-meta",
+                        recoveryHealthy ? "green" : "amber",
+                        recoveryHealthy ? "HEALTHY" : "CHECK",
+                        `${payload.service_name || 'prismatic-consumer.service'} · heartbeat ${payload.heartbeat?.exists ? 'present' : 'missing'} · ${pool.live_count ?? 0} live / ${pool.total_skipped_dlq ?? 0} dlq`
+                    );
+                }
+
+                // 2. Queue
+                const queueStatusRes = await fetch(`${API_PREFIX}/webhooks/queue/status`);
+                if (queueStatusRes.ok) {
+                    const queueStatus = await queueStatusRes.json();
+                    const summary = document.getElementById("queue-contract-summary");
+                    if (summary) {
+                        summary.textContent = `source = ${queueStatus.source || 'linear_webhook_queue.db'} · marker = ${queueStatus.marker || '—'} · latest event: ${queueStatus.latest_event_identifier || '—'} / ${queueStatus.latest_event_status || '—'} · last drain: ${queueStatus.last_drain_result || 'never_run'}`;
+                    }
+                }
+                const queueRes = await fetch(`${API_PREFIX}/webhooks/queue`);
+                if (queueRes.ok) {
+                    const queue = await queueRes.json();
+                    loadedQueueItems = queue.items || [];
+                    document.getElementById("queue-total-badge").textContent = `${queue.total} total`;
+                    filterQueue();
+                }
+
+                // 3. Dispatcher Status
+                const dispRes = await fetch(`${API_PREFIX}/dispatcher/status`);
+                if (dispRes.ok) {
+                    const disp = await dispRes.json();
+                    const badge = document.getElementById("disp-status-badge");
+                    const dot = document.getElementById("disp-status-dot");
+                    const text = document.getElementById("disp-status-text");
+
+                    const linearLimit = disp.linear_rate_limit || {};
+                    const pollingBudget = disp.polling_budget || {};
+                    if (linearLimit.cooldown_active) {
+                        badge.className = "flex items-center space-x-1.5 bg-amber-500/10 px-2.5 py-1 rounded-full text-xs font-bold text-amber-400 border border-amber-500/20";
+                        dot.className = "w-2 h-2 rounded-full bg-amber-500";
+                        text.textContent = "LINEAR COOLDOWN";
+                        setSummaryBadge("summary-dispatcher-badge", "summary-dispatcher-meta", "amber", "LINEAR COOLDOWN", `${linearLimit.reason || 'Rate-limit circuit open'} · reset ${linearLimit.cooldown_until || linearLimit.reset_at || 'unknown'}`);
+                    } else if (disp.status === "active") {
+                        badge.className = "flex items-center space-x-1.5 bg-emerald-500/10 px-2.5 py-1 rounded-full text-xs font-bold text-emerald-400 border border-emerald-500/20";
+                        dot.className = "w-2 h-2 rounded-full bg-emerald-500 status-pulse";
+                        text.textContent = "ACTIVE";
+                        setSummaryBadge("summary-dispatcher-badge", "summary-dispatcher-meta", "green", "ACTIVE", `Cycle #${disp.cycle_number || 0} · ${disp.active_agents?.length || 0} agent(s) live · Linear ${pollingBudget.last_cycle_calls ?? pollingBudget.calls_used_this_cycle ?? 0}/${pollingBudget.max_calls_per_cycle ?? '—'} · cache ${pollingBudget.cache_hits ?? 0}/${pollingBudget.cache_misses ?? 0}`);
+                    } else {
+                        badge.className = "flex items-center space-x-1.5 bg-slate-800 px-2.5 py-1 rounded-full text-xs font-bold text-slate-400 border border-slate-700/30";
+                        dot.className = "w-2 h-2 rounded-full bg-slate-500";
+                        text.textContent = "IDLE";
+                        setSummaryBadge("summary-dispatcher-badge", "summary-dispatcher-meta", "slate", "IDLE", `Cycle #${disp.cycle_number || 0} · last seen ${disp.last_cycle_at ? formatDate(disp.last_cycle_at) : "Never"} · Linear ${pollingBudget.last_cycle_calls ?? pollingBudget.calls_used_this_cycle ?? 0}/${pollingBudget.max_calls_per_cycle ?? '—'} · ${pollingBudget.last_skip_reason || 'poll fallback bounded'}`);
+                    }
+
+                    document.getElementById("disp-cycle").textContent = disp.cycle_number || 0;
+                    document.getElementById("disp-last-active").textContent = disp.last_cycle_at ? formatDate(disp.last_cycle_at) : "Never";
+
+                    const stallAlert = document.getElementById("disp-stall-alert");
+                    if (disp.silent_stall && disp.silent_stall.triggered) {
+                        stallAlert.textContent = disp.silent_stall.message || "Dispatcher stall alert";
+                        stallAlert.classList.remove("hidden");
+                    } else {
+                        stallAlert.classList.add("hidden");
+                    }
+
+                    const agentsDiv = document.getElementById("disp-agents");
+                    if (!disp.active_agents || disp.active_agents.length === 0) {
+                        agentsDiv.innerHTML = `<span class="text-xs text-slate-600 italic">None active</span>`;
+                    } else {
+                        agentsDiv.innerHTML = disp.active_agents.map(a => getAgentBadge(a)).join("");
+                    }
+                }
+            } catch (e) {
+                console.error("Error fetching telemetry:", e);
+            }
+        }
+
+        async function renderDashboardSummary() {
+            // Live agent status cache for topology node drilldowns.
+            try {
+                const agentRes = await fetch("/api/gateway/agents/status");
+                if (agentRes.ok) {
+                    agentStatusCache = await agentRes.json();
+                }
+            } catch (err) {
+                console.error("Error loading live agent status:", err);
+                agentStatusCache = { agents: [], status_counts: {}, evidence: {}, source: "agent-status-error" };
+            }
+
+            // Activity Feed — live operational timeline from EventBus/run/recovery evidence.
+            const actFeed = document.getElementById("dashboard-activity");
+            try {
+                const timelineRes = await fetch("/api/gateway/timeline?limit=12");
+                let items = [];
+                if (timelineRes.ok) {
+                    const payload = await timelineRes.json();
+                    items = payload.items || payload.timeline || [];
+                }
+                if (!items.length) {
+                    const eventsRes = await fetch("/events/recent?limit=12");
+                    if (eventsRes.ok) {
+                        const payload = await eventsRes.json();
+                        items = (payload.events || []).map(event => ({
+                            timestamp: event.ts,
+                            source: event.topic || "EventBus",
+                            title: event.payload?.title || event.payload?.identifier || event.topic || "event",
+                            severity: event.processed ? "info" : "warning",
+                        }));
+                    }
+                }
+                if (!items.length) {
+                    actFeed.innerHTML = `<div class="text-slate-500 italic">No live operational timeline events recorded. No synthetic fallback rendered.</div>`;
+                } else {
+                    actFeed.innerHTML = items.slice(0, 12).map(item => `
+                        <div class="activity-item">
+                            <div class="activity-text-row">
+                                <span class="time">${escapeHtml(item.timestamp ? formatDate(item.timestamp) : '—')}</span>
+                                <span class="source-badge">${escapeHtml(item.source || item.kind || 'Timeline')}</span>
+                                <span class="title text-slate-200">${escapeHtml(item.title || item.message || 'Timeline event')}</span>
+                            </div>
+                            <div class="text-[10px] text-slate-500 uppercase font-bold mt-1">${escapeHtml(item.severity || 'info')}</div>
+                        </div>
+                    `).join("");
+                }
+            } catch (err) {
+                console.error("Error loading operational timeline:", err);
+                actFeed.innerHTML = `<div class="text-rose-400 italic">Timeline API unavailable: ${escapeHtml(err.message || err)}</div>`;
+            }
+
+            // Workspaces List Summary
+            await renderDashboardWorkspacesSummary();
+        }
+
+        function setSummaryBadge(badgeId, metaId, tone, badgeText, metaText) {
+            const palette = {
+                green: {
+                    badge: "px-2 py-0.5 rounded-full text-[10px] font-bold border border-emerald-500/20 text-emerald-400 bg-emerald-500/10",
+                    meta: "mt-2 text-sm text-emerald-100 font-semibold",
+                },
+                amber: {
+                    badge: "px-2 py-0.5 rounded-full text-[10px] font-bold border border-amber-500/20 text-amber-400 bg-amber-500/10",
+                    meta: "mt-2 text-sm text-amber-100 font-semibold",
+                },
+                red: {
+                    badge: "px-2 py-0.5 rounded-full text-[10px] font-bold border border-rose-500/20 text-rose-400 bg-rose-500/10",
+                    meta: "mt-2 text-sm text-rose-100 font-semibold",
+                },
+                cyan: {
+                    badge: "px-2 py-0.5 rounded-full text-[10px] font-bold border border-cyan-500/20 text-cyan-400 bg-cyan-500/10",
+                    meta: "mt-2 text-sm text-cyan-100 font-semibold",
+                },
+                slate: {
+                    badge: "px-2 py-0.5 rounded-full text-[10px] font-bold border border-slate-700 text-slate-400 bg-slate-800/80",
+                    meta: "mt-2 text-sm text-slate-200 font-semibold",
+                },
+            };
+            const badge = document.getElementById(badgeId);
+            const meta = document.getElementById(metaId);
+            const style = palette[tone] || palette.slate;
+            if (badge) {
+                badge.className = style.badge;
+                badge.textContent = badgeText;
+            }
+            if (meta) {
+                meta.className = style.meta;
+                meta.textContent = metaText;
+            }
+        }
+
+        async function fetchMergeData() {
+            try {
+                const mergeRes = await fetch("/api/gateway/merge/status");
+                if (mergeRes.ok) {
+                    const data = await mergeRes.json();
+                    
+                    document.getElementById("stat-merge-pending").textContent = data.pending_count || 0;
+                    document.getElementById("stat-merge-merged").textContent = data.merged_count || 0;
+                    document.getElementById("stat-merge-scan").textContent = data.last_scan ? formatDate(data.last_scan) : "Never";
+                    document.getElementById("stat-merge-apply").textContent = data.last_apply ? formatDate(data.last_apply) : "Never";
+                    
+                    // Render Pending Sandboxes
+                    const pendingTbody = document.getElementById("merge-pending-tbody");
+                    if (!data.pending || data.pending.length === 0) {
+                        pendingTbody.innerHTML = `<tr><td colspan="5" class="py-6 text-center text-slate-500 italic">No pending sandboxes.</td></tr>`;
+                    } else {
+                        pendingTbody.innerHTML = data.pending.map(sb => `
+                            <tr class="border-b border-slate-800/50 hover:bg-slate-900/10">
+                                <td class="py-3 px-3 font-semibold text-slate-200 font-mono">${sb.ticket}</td>
+                                <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold border border-cyan-500/20 bg-cyan-500/10 text-cyan-400">T${sb.tier}</span></td>
+                                <td class="py-3 px-3 font-bold text-amber-400 font-mono">${sb.confidence}%</td>
+                                <td class="py-3 px-3 text-slate-400">${sb.modified} files</td>
+                                <td class="py-3 px-3 text-slate-500 font-mono text-[11px] max-w-[200px] truncate" title="${sb.contention.join(', ')}">${sb.contention.join(', ') || 'None'}</td>
+                            </tr>
+                        `).join("");
+                    }
+                    
+                    // Render History
+                    const historyTbody = document.getElementById("merge-history-tbody");
+                    if (!data.merged || data.merged.length === 0) {
+                        historyTbody.innerHTML = `<tr><td colspan="4" class="py-6 text-center text-slate-500 italic">No merge history.</td></tr>`;
+                    } else {
+                        historyTbody.innerHTML = data.merged.map(m => `
+                            <tr class="border-b border-slate-800/50 hover:bg-slate-900/10">
+                                <td class="py-3 px-3 font-semibold text-slate-200 font-mono">${m.ticket}</td>
+                                <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold border border-cyan-500/20 bg-cyan-500/10 text-cyan-400">T${m.tier}</span></td>
+                                <td class="py-3 px-3 text-emerald-400 font-mono text-xs">${m.commit.substring(0, 7)}</td>
+                                <td class="py-3 px-3 text-slate-500 text-xs">${formatDate(m.timestamp)}</td>
+                            </tr>
+                        `).join("");
+                    }
+                }
+            } catch (e) {
+                console.error("Error fetching merge details:", e);
+            }
+        }
+
+        function escapeHTML(value) {
+            return String(value ?? "").replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch]));
+        }
+
+        let workspaceTreeState = { workspaces: [], selectedFile: null };
+
+        function workspaceNodeIcon(node) {
+            return node.type === "directory" ? "▸" : "•";
+        }
+
+        function workspaceNodePath(node) {
+            return node.path || node.relative_path || node.name || "";
+        }
+
+        function renderWorkspaceNode(node, depth = 0) {
+            const path = workspaceNodePath(node);
+            const label = node.name || node.relative_path || path || "workspace";
+            const isDir = node.type === "directory";
+            const previewable = node.previewable !== false;
+            const children = Array.isArray(node.children) ? node.children : [];
+            const indent = Math.min(depth * 14, 72);
+            const buttonClass = isDir
+                ? "text-cyan-300 hover:text-white hover:bg-cyan-500/10"
+                : previewable
+                    ? "text-slate-300 hover:text-white hover:bg-slate-800/70"
+                    : "text-slate-500 cursor-not-allowed";
+            const action = isDir
+                ? `onclick="toggleWorkspaceDirectory('${encodeURIComponent(path)}', this)"`
+                : previewable
+                    ? `onclick="previewWorkspaceFile('${encodeURIComponent(path)}')"`
+                    : "disabled";
+            const childHtml = children.length
+                ? `<div class="workspace-node-children ml-3 border-l border-slate-800/80 pl-2">${children.map(child => renderWorkspaceNode(child, depth + 1)).join("")}</div>`
+                : `<div class="workspace-node-children ml-3 border-l border-slate-800/80 pl-2 hidden"></div>`;
+            return `<div class="workspace-node" data-path="${escapeHTML(path)}" style="margin-left:${indent}px">
+                <button type="button" class="w-full text-left px-2 py-1.5 rounded ${buttonClass}" ${action}>
+                    <span class="inline-block w-4 text-slate-500">${workspaceNodeIcon(node)}</span><span>${escapeHTML(label)}</span>
+                    ${node.size ? `<span class="float-right text-[10px] text-slate-600">${node.size}b</span>` : ""}
+                </button>
+                ${isDir ? childHtml : ""}
+            </div>`;
+        }
+
+        async function toggleWorkspaceDirectory(encodedPath, button) {
+            const path = decodeURIComponent(encodedPath);
+            const wrapper = button.closest(".workspace-node");
+            const childrenEl = wrapper?.querySelector(":scope > .workspace-node-children");
+            if (!childrenEl) return;
+            if (childrenEl.dataset.loaded === "true") {
+                childrenEl.classList.toggle("hidden");
+                button.querySelector("span").textContent = childrenEl.classList.contains("hidden") ? "▸" : "▾";
+                return;
+            }
+            childrenEl.classList.remove("hidden");
+            childrenEl.innerHTML = `<div class="px-2 py-1 text-slate-500 italic">Loading…</div>`;
+            try {
+                const res = await fetch(`/api/workspace-tree/node?file=${encodeURIComponent(path)}&depth=1`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const node = data.tree || {};
+                const children = Array.isArray(node.children) ? node.children : [];
+                childrenEl.dataset.loaded = "true";
+                childrenEl.innerHTML = children.length
+                    ? children.map(child => renderWorkspaceNode(child, 0)).join("")
+                    : `<div class="px-2 py-1 text-slate-500 italic">Empty folder.</div>`;
+                button.querySelector("span").textContent = "▾";
+            } catch (err) {
+                childrenEl.innerHTML = `<div class="px-2 py-1 text-rose-400">Could not load folder: ${escapeHTML(err.message)}</div>`;
+            }
+        }
+
+        async function previewWorkspaceFile(encodedPath) {
+            const path = decodeURIComponent(encodedPath);
+            const nameEl = document.getElementById("workspace-preview-name");
+            const previewEl = document.getElementById("workspace-file-preview");
+            const legacyLink = document.getElementById("workspace-legacy-link");
+            if (!previewEl || !nameEl) return;
+            workspaceTreeState.selectedFile = path;
+            nameEl.textContent = path;
+            previewEl.textContent = "Loading file preview…";
+            if (legacyLink) legacyLink.href = `/workspace-tree?file=${encodeURIComponent(path)}`;
+            const url = new URL(window.location.href);
+            url.searchParams.set("file", path);
+            window.history.replaceState({}, "", url.toString());
+            try {
+                const res = await fetch(`/api/workspace-tree/preview?file=${encodeURIComponent(path)}`);
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+                previewEl.textContent = data.content || "";
+                nameEl.textContent = `${data.root_label || "workspace"} / ${data.relative_path || path}`;
+            } catch (err) {
+                previewEl.textContent = `Preview unavailable: ${err.message}`;
+            }
+        }
+
+        function copyWorkspaceDeepLink() {
+            const path = workspaceTreeState.selectedFile;
+            const url = new URL(window.location.origin + "/dashboard");
+            if (path) url.searchParams.set("file", path);
+            navigator.clipboard?.writeText(url.toString());
+        }
+
+        async function renderDashboardWorkspacesSummary() {
+            const wsSummary = document.getElementById("dashboard-workspaces");
+            if (!wsSummary) return;
+            try {
+                const res = await fetch("/api/workspaces");
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const workspaces = (data.workspaces || []).slice(0, 6);
+                wsSummary.innerHTML = workspaces.map(ws => {
+                    const tree = ws.tree || {};
+                    const childCount = Array.isArray(tree.children) ? tree.children.length : 0;
+                    const status = ws.exists ? "connected" : "missing";
+                    return `<tr class="border-b border-slate-800/40 hover:bg-slate-900/10 transition">
+                        <td class="py-2.5 px-3 font-semibold text-slate-200">${escapeHTML(ws.name)}</td>
+                        <td class="py-2.5 px-3 text-slate-400 font-mono">${escapeHTML(ws.path)}</td>
+                        <td class="py-2.5 px-3 text-[10px] uppercase font-bold ${ws.exists ? 'text-emerald-400' : 'text-rose-400'}">${status}</td>
+                        <td class="py-2.5 px-3 text-slate-500">${childCount} entries</td>
+                    </tr>`;
+                }).join("") || `<tr><td colspan="4" class="py-4 text-center text-slate-500 italic">No workspace roots returned.</td></tr>`;
+            } catch (err) {
+                wsSummary.innerHTML = `<tr><td colspan="4" class="py-4 text-center text-rose-400">Workspace summary unavailable: ${escapeHTML(err.message)}</td></tr>`;
+            }
+        }
+
+        async function renderWorkspacesView() {
+            const rootsEl = document.getElementById("workspace-tree-roots");
+            const statusEl = document.getElementById("workspace-tree-status");
+            if (!rootsEl) return;
+            rootsEl.innerHTML = `<div class="text-slate-500 italic">Loading workspace tree…</div>`;
+            try {
+                const res = await fetch("/api/workspaces");
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                workspaceTreeState.workspaces = data.workspaces || [];
+                if (statusEl) statusEl.textContent = `${data.workspace_count || workspaceTreeState.workspaces.length} roots · click folders to expand · click files to preview`;
+                rootsEl.innerHTML = workspaceTreeState.workspaces.map(ws => {
+                    const rootNode = ws.tree || { name: ws.name, type: "directory", path: ws.path, children: [] };
+                    rootNode.name = ws.name || rootNode.name;
+                    rootNode.path = ws.path || rootNode.path;
+                    return `<div class="rounded-lg border border-slate-800/70 bg-slate-950/50 p-2">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500 mb-1">${escapeHTML(ws.path || "")}</div>
+                        ${renderWorkspaceNode(rootNode, 0)}
+                    </div>`;
+                }).join("") || `<div class="text-slate-500 italic">No workspace roots configured.</div>`;
+                const requested = new URLSearchParams(window.location.search).get("file");
+                if (requested) await previewWorkspaceFile(encodeURIComponent(requested));
+            } catch (err) {
+                rootsEl.innerHTML = `<div class="text-rose-400">Workspace Tree unavailable: ${escapeHTML(err.message)}</div>`;
+                if (statusEl) statusEl.textContent = "Workspace Tree failed to load.";
+            }
+        }
+
+        async function renderSkillsView() {
+            const grid = document.getElementById("skills-grid");
+            grid.innerHTML = `<div class="col-span-full text-slate-500 italic">Loading live skill registry…</div>`;
+            try {
+                const res = await fetch(`${API_PREFIX}/skills`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const skills = data.skills || [];
+                if (skills.length === 0) {
+                    grid.innerHTML = `<div class="col-span-full text-slate-500 italic">No packaged Prismatic skills found.</div>`;
+                    return;
+                }
+                grid.innerHTML = skills.map(sk => {
+                    const installed = Boolean(sk.installed);
+                    const action = installed ? 'uninstall' : 'install';
+                    const buttonLabel = installed ? 'Uninstall Skill' : 'Install Skill';
+                    return `
+                        <div class="glass-panel p-4 rounded-xl flex flex-col justify-between space-y-3 relative overflow-hidden">
+                            <div class="flex justify-between items-start gap-2">
+                                <span class="text-xs text-slate-500 font-bold uppercase">${escapeHtml(sk.version || '?')}</span>
+                                <span class="px-2 py-0.5 rounded text-[9px] font-bold ${installed ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20' : 'bg-slate-800 text-slate-400'} uppercase">${escapeHtml(sk.status || (installed ? 'Active' : 'Available'))}</span>
+                            </div>
+                            <h3 class="font-bold text-slate-200 leading-tight">${escapeHtml(sk.name || sk.id)}</h3>
+                            <p class="text-xs text-slate-400 leading-relaxed">${escapeHtml(sk.description || 'No description provided.')}</p>
+                            <div class="text-[10px] text-slate-500 uppercase font-bold">${escapeHtml(sk.category || 'uncategorized')}</div>
+                            <button onclick="toggleSkillInstall('${encodeURIComponent(sk.id)}', '${action}')" class="w-full bg-slate-950 hover:bg-slate-900 border border-slate-800/80 text-xs font-semibold py-1.5 rounded transition">
+                                ${buttonLabel}
+                            </button>
+                        </div>
+                    `;
+                }).join("");
+            } catch (err) {
+                console.error("Error loading skills registry:", err);
+                grid.innerHTML = `<div class="col-span-full text-rose-400 italic">Skills API unavailable: ${escapeHtml(err.message || err)}</div>`;
+            }
+        }
+
+        async function toggleSkillInstall(encodedSkillId, action) {
+            const skillId = decodeURIComponent(encodedSkillId);
+            try {
+                const res = await fetch(`${API_PREFIX}/skills/${encodeURIComponent(skillId)}/${action}`, { method: 'POST' });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || data.ok === false) throw new Error(data.error || `HTTP ${res.status}`);
+                showToast(`${action === 'install' ? 'Installed' : 'Uninstalled'} ${skillId}`);
+                await renderSkillsView();
+                if (activeTab === 'signals') await renderSignalsView();
+            } catch (err) {
+                console.error("Error updating skill:", err);
+                showToast(`Skill ${action} failed: ${err.message || err}`, true);
+            }
+        }
+
+        function signalSeverityColor(value) {
+            const severity = String(value || 'info').toLowerCase();
+            if (severity.includes('error') || severity.includes('fail')) return 'text-rose-400 border-rose-500/20 bg-rose-500/10';
+            if (severity.includes('warn') || severity.includes('block')) return 'text-amber-400 border-amber-500/20 bg-amber-500/10';
+            if (severity.includes('success') || severity.includes('complete') || severity.includes('dispatch')) return 'text-emerald-400 border-emerald-500/20 bg-emerald-500/10';
+            return 'text-indigo-400 border-indigo-500/20 bg-indigo-500/10';
+        }
+
+        function signalCard(item) {
+            const ts = item.timestamp || item.created_at || item.started_at;
+            const color = signalSeverityColor(item.severity || item.status);
+            const transcript = item.transcript ? `<pre class="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-lg bg-slate-950/80 border border-slate-900 p-2 text-[10px] leading-relaxed text-slate-400">${escapeHtml(item.transcript)}</pre>` : '';
+            return `
+                <div class="rounded-lg border border-slate-900 bg-slate-950/60 p-3 space-y-2" data-agent-signal-card>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <span class="text-slate-500 font-mono text-[10px]">${escapeHtml(ts ? formatDate(ts) : '—')}</span>
+                        <span class="px-2 py-0.5 rounded border text-[10px] font-bold uppercase ${color}">${escapeHtml(item.event_type || item.status || 'event')}</span>
+                        ${item.issue_id ? `<span class="text-[10px] text-slate-400 font-mono">${escapeHtml(item.issue_id)}</span>` : ''}
+                    </div>
+                    <div class="text-xs text-slate-300 whitespace-pre-wrap">${escapeHtml(item.message || item.status || 'Signal event')}</div>
+                    <div class="flex flex-wrap gap-2 text-[10px] text-slate-500">
+                        ${item.run_id ? `<span>run=${escapeHtml(item.run_id)}</span>` : ''}
+                        ${item.log_path ? `<span>log=${escapeHtml(item.log_path)}</span>` : ''}
+                        <span>source=${escapeHtml(item.source || 'unknown')}</span>
+                    </div>
+                    ${transcript}
+                </div>
+            `;
+        }
+
+        function renderSignalPanes(payload) {
+            latestSignalsPayload = payload || latestSignalsPayload || { items: [], by_agent: {}, counts: {} };
+            const panes = document.getElementById('signals-agent-panes');
+            const summary = document.getElementById('signals-summary');
+            const consoleBox = document.getElementById('signals-log-box');
+            if (!panes || !consoleBox) return;
+            const agents = ['kai', 'fred', 'agy', 'george'];
+            const byAgent = latestSignalsPayload.by_agent || {};
+            const items = latestSignalsPayload.items || [];
+            const visibleAgents = activeSignalsAgent === 'all' ? agents : [activeSignalsAgent];
+            if (summary) {
+                const counts = latestSignalsPayload.counts || {};
+                summary.textContent = `${items.length} signals · Kai ${counts.kai || 0} · Fred ${counts.fred || 0} · AGY ${counts.agy || 0} · George ${counts.george || 0}`;
+            }
+            panes.innerHTML = visibleAgents.map(agent => {
+                const agentItems = byAgent[agent] || [];
+                return `
+                    <section class="rounded-xl border border-slate-900 bg-slate-950/40 overflow-hidden" data-agent-pane="${agent}">
+                        <div class="px-4 py-3 border-b border-slate-900 bg-slate-900/60 flex items-center justify-between">
+                            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300">${escapeHtml(agent)} stream</h3>
+                            <span class="text-[10px] text-slate-500">${agentItems.length} events</span>
+                        </div>
+                        <div class="p-3 space-y-3 max-h-[520px] overflow-y-auto">
+                            ${agentItems.length ? agentItems.slice(0, 25).map(signalCard).join('') : `<div class="text-xs text-slate-500 italic py-6 text-center">No ${escapeHtml(agent)} signals yet.</div>`}
+                        </div>
+                    </section>
+                `;
+            }).join('');
+            consoleBox.innerHTML = items.length ? items.slice(0, 80).map(item => {
+                const ts = item.timestamp || item.created_at || item.started_at;
+                const color = signalSeverityColor(item.severity || item.status).split(' ')[0];
+                return `<div class="text-slate-300 border-b border-slate-900/80 pb-2 mb-2"><span class="text-slate-500 font-bold">[${escapeHtml(ts ? formatDate(ts) : '—')}]</span> <span class="${color} font-semibold">[${escapeHtml(item.agent || item.source || 'signal')}]</span> <span>${escapeHtml(item.event_type || item.status || 'event')}</span> <span class="text-slate-500">${escapeHtml(item.issue_id || '')}</span></div>`;
+            }).join('') : `<div class="text-slate-500 italic">No assigned-agent signals recorded yet.</div>`;
+        }
+
+        async function renderSignalsView() {
+            const container = document.getElementById("signals-log-box");
+            if (container) container.innerHTML = `<div class="text-slate-500 italic">Loading assigned-agent signal streams…</div>`;
+            try {
+                const res = await fetch("/api/gateway/signals?limit=200");
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const payload = await res.json();
+                renderSignalPanes(payload);
+            } catch (err) {
+                console.error("Error loading agent signals:", err);
+                if (container) container.innerHTML = `<div class="text-rose-400 italic">Signals API unavailable: ${escapeHtml(err.message || err)}</div>`;
+            }
+        }
+
+        async function fetchQuotaSummary() {
+            try {
+                const quotaRes = await fetch(`${API_PREFIX}/quota`);
+                if (quotaRes.ok) {
+                    const data = await quotaRes.json();
+                    const activeModels = (data.current || []).length;
+                    const freshness = data.snapshot_age_sec !== null && data.snapshot_age_sec !== undefined ? formatAge(data.snapshot_age_sec) : "Freshness unknown";
+                    const tone = data.snapshot_age_sec !== null && data.snapshot_age_sec !== undefined && data.snapshot_age_sec < 300 ? "green" : data.snapshot_age_sec !== null && data.snapshot_age_sec !== undefined && data.snapshot_age_sec < 900 ? "amber" : "red";
+                    setSummaryBadge(
+                        "summary-quota-badge",
+                        "summary-quota-meta",
+                        tone,
+                        tone === "green" ? "FRESH" : tone === "amber" ? "STALE" : "OLD",
+                        `${freshness} · ${activeModels} active model${activeModels === 1 ? "" : "s"}`
+                    );
+                }
+            } catch (err) {
+                console.error("Error loading quota summary:", err);
+            }
+        }
+
+        async function fetchCompletedWorkGate() {
+            const badge = document.getElementById("completed-work-gate-badge");
+            const classification = document.getElementById("completed-work-classification");
+            const eligible = document.getElementById("completed-work-eligible");
+            const linear = document.getElementById("completed-work-linear");
+            const reason = document.getElementById("completed-work-reason");
+            try {
+                const res = await fetch(`${API_PREFIX}/agy/completed-work/verified-pr-dry-run/latest`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const latest = data.completed_work;
+                const dashboard = data.dashboard || {};
+                const linearWriteback = data.linear_writeback || {};
+                const sideEffects = data.side_effects || {};
+                const hasRow = Boolean(latest);
+                const ready = dashboard.status === "ready";
+                if (badge) {
+                    badge.textContent = hasRow ? (ready ? "Verified PR Dry Run" : "Needs Attention") : "No Rows";
+                    badge.className = `px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${hasRow ? (ready ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300' : 'border-amber-500/20 bg-amber-500/10 text-amber-300') : 'border-slate-700 bg-slate-800 text-slate-300'}`;
+                }
+                if (classification) classification.textContent = dashboard.integration_classification || latest?.integration_classification || "no_rows";
+                if (eligible) eligible.textContent = ready ? "verified PR dry-run" : "no";
+                if (linear) {
+                    const posted = linearWriteback.posted === true || sideEffects.linear_comment_posted === true;
+                    const dryRun = linearWriteback.dry_run !== false;
+                    linear.textContent = posted ? "posted" : (dryRun ? "dry-run only" : "disabled");
+                }
+                if (reason) {
+                    reason.textContent = hasRow
+                        ? `${dashboard.marker || data.marker}: ${dashboard.issue_identifier || latest?.id || "latest"}`
+                        : "No completed AGY rows persisted yet";
+                }
+            } catch (err) {
+                console.error("Error loading completed-work dashboard/Linear dry-run:", err);
+                if (badge) {
+                    badge.textContent = "Unavailable";
+                    badge.className = "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-rose-500/20 bg-rose-500/10 text-rose-300";
+                }
+                if (reason) reason.textContent = String(err.message || err);
+            }
+        }
+
+        async function fetchPromotionDecisionLedger() {
+            const badge = document.getElementById("promotion-ledger-badge");
+            const decisionEl = document.getElementById("promotion-ledger-decision");
+            const verificationEl = document.getElementById("promotion-ledger-verification");
+            const stateEl = document.getElementById("promotion-ledger-state");
+            const sideEffectsEl = document.getElementById("promotion-ledger-side-effects");
+            try {
+                const res = await fetch(`${API_PREFIX}/agy/promotion-decisions/latest`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const record = data.promotion_decision;
+                const sideEffects = data.side_effects || record?.side_effects || {};
+                const hasRecord = Boolean(record);
+                const ready = record?.status === "decision_ready";
+                if (badge) {
+                    badge.textContent = hasRecord ? (ready ? "Decision Ready" : "Manual Review") : "No Decision";
+                    badge.className = `px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${hasRecord ? (ready ? 'border-cyan-500/20 bg-cyan-500/10 text-cyan-300' : 'border-amber-500/20 bg-amber-500/10 text-amber-300') : 'border-slate-700 bg-slate-800 text-slate-300'}`;
+                }
+                if (decisionEl) decisionEl.textContent = record?.recommendation || "no_decision";
+                if (verificationEl) verificationEl.textContent = record ? `${record.verification_gate || "unknown"} · ${record.verification_lane || "unknown"}` : "—";
+                if (stateEl) stateEl.textContent = record ? `${record.marker}: ${record.promotion_decision_id}` : "No promotion ledger rows";
+                if (sideEffectsEl) {
+                    const unsafe = sideEffects.linear_comment_posted || sideEffects.github_pr_created || sideEffects.auto_merge_enabled || sideEffects.bulk_agent_dispatch;
+                    sideEffectsEl.textContent = unsafe ? "unsafe side effect detected" : "no real Linear/GitHub/auto-merge side effects";
+                }
+            } catch (err) {
+                console.error("Error loading promotion decision ledger:", err);
+                if (badge) {
+                    badge.textContent = "Unavailable";
+                    badge.className = "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-rose-500/20 bg-rose-500/10 text-rose-300";
+                }
+                if (stateEl) stateEl.textContent = String(err.message || err);
+            }
+        }
+
+        async function fetchOperatorActionApproval() {
+            const badge = document.getElementById("operator-approval-badge");
+            const decisionEl = document.getElementById("operator-approval-decision");
+            const actionEl = document.getElementById("operator-approval-action");
+            const policyEl = document.getElementById("operator-approval-policy");
+            const previewEl = document.getElementById("operator-approval-preview");
+            const sideEffectsEl = document.getElementById("operator-approval-side-effects");
+            try {
+                const res = await fetch(`${API_PREFIX}/agy/operator-action-approvals/latest`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const approval = data.operator_action_approval;
+                const sideEffects = data.side_effects || approval?.side_effects || {};
+                const hasRecord = Boolean(approval);
+                const approved = approval?.operator_decision === "approve" && approval?.policy_gate === "pass";
+                const rejected = approval?.operator_decision === "reject";
+                const deferred = approval?.operator_decision === "defer";
+                if (badge) {
+                    badge.textContent = hasRecord ? (approved ? "Approval Ready" : (rejected ? "Rejected" : (deferred ? "Deferred" : "Manual Review"))) : "No Approval";
+                    badge.className = `px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${hasRecord ? (approved ? 'border-sky-500/20 bg-sky-500/10 text-sky-300' : 'border-amber-500/20 bg-amber-500/10 text-amber-300') : 'border-slate-700 bg-slate-800 text-slate-300'}`;
+                }
+                if (decisionEl) decisionEl.textContent = approval?.operator_decision || "no_approval";
+                if (actionEl) actionEl.textContent = approval?.requested_action || "—";
+                if (policyEl) policyEl.textContent = approval?.policy_gate || "—";
+                if (previewEl) previewEl.textContent = approval ? `${approval.marker}: ${approval.execution_preview?.summary || "dry-run-only preview"}` : "No approval rows";
+                if (sideEffectsEl) {
+                    const unsafe = sideEffects.linear_comment_posted || sideEffects.github_pr_created || sideEffects.auto_merge_enabled || sideEffects.bulk_agent_dispatch;
+                    sideEffectsEl.textContent = unsafe ? "unsafe side effect detected" : "no real Linear/GitHub/auto-merge side effects";
+                }
+            } catch (err) {
+                console.error("Error loading operator action approval:", err);
+                if (badge) {
+                    badge.textContent = "Unavailable";
+                    badge.className = "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-rose-500/20 bg-rose-500/10 text-rose-300";
+                }
+                if (previewEl) previewEl.textContent = String(err.message || err);
+            }
+        }
+
+        async function fetchApprovedActionExecutor() {
+            const badge = document.getElementById("approved-executor-badge");
+            const actionEl = document.getElementById("approved-executor-action");
+            const modeEl = document.getElementById("approved-executor-mode");
+            const guardEl = document.getElementById("approved-executor-final-guard");
+            const statusEl = document.getElementById("approved-executor-status");
+            const commandEl = document.getElementById("approved-executor-command");
+            const sideEffectsEl = document.getElementById("approved-executor-side-effects");
+            try {
+                const res = await fetch(`${API_PREFIX}/agy/approved-action-executors/latest`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const executor = data.approved_action_executor;
+                const sideEffects = data.side_effects || executor?.side_effects || {};
+                const hasRecord = Boolean(executor);
+                const dryReady = executor?.execution_status === "dry_run_ready";
+                const finalBlocked = executor?.execution_status === "blocked_final_authorization_required";
+                const blocked = executor?.execution_status?.startsWith("blocked");
+                if (badge) {
+                    badge.textContent = hasRecord ? (dryReady ? "Dry Run Ready" : (finalBlocked ? "Final Auth Required" : (blocked ? "Blocked" : "No Request"))) : "No Request";
+                    badge.className = `px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${hasRecord ? (dryReady ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300' : 'border-amber-500/20 bg-amber-500/10 text-amber-300') : 'border-slate-700 bg-slate-800 text-slate-300'}`;
+                }
+                if (actionEl) actionEl.textContent = executor?.requested_action || "—";
+                if (modeEl) modeEl.textContent = executor?.executor_mode || "—";
+                if (guardEl) guardEl.textContent = executor ? (executor.final_authorization_present ? "authorization present" : "authorization required / not present") : "—";
+                if (statusEl) statusEl.textContent = executor?.execution_status || "no_request";
+                if (commandEl) commandEl.textContent = executor ? `${executor.marker}: ${executor.command_preview?.summary || "DRY_RUN_ONLY: command preview"}` : "No executor request rows";
+                if (sideEffectsEl) {
+                    const unsafe = sideEffects.linear_comment_posted || sideEffects.github_pr_created || sideEffects.auto_merge_enabled || sideEffects.production_deployed || sideEffects.real_executor_invoked;
+                    sideEffectsEl.textContent = unsafe ? "unsafe side effect detected" : "no real Linear/GitHub/auto-merge side effects";
+                }
+            } catch (err) {
+                console.error("Error loading approved action executor:", err);
+                if (badge) {
+                    badge.textContent = "Unavailable";
+                    badge.className = "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-rose-500/20 bg-rose-500/10 text-rose-300";
+                }
+                if (commandEl) commandEl.textContent = String(err.message || err);
+            }
+        }
+
+        async function fetchFinalActionAuthorization() {
+            const badge = document.getElementById("final-auth-badge");
+            const decisionEl = document.getElementById("final-auth-decision");
+            const actionEl = document.getElementById("final-auth-action");
+            const tokenEl = document.getElementById("final-auth-token");
+            const envEl = document.getElementById("final-auth-env");
+            const guardEl = document.getElementById("final-auth-guard");
+            const eligibilityEl = document.getElementById("final-auth-eligibility");
+            const sideEffectsEl = document.getElementById("final-auth-side-effects");
+            try {
+                const res = await fetch(`${API_PREFIX}/agy/final-action-authorizations/latest`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const authorization = data.final_action_authorization;
+                const sideEffects = data.side_effects || authorization?.side_effects || {};
+                const hasRecord = Boolean(authorization);
+                const guard = authorization?.final_guard_state;
+                const decision = authorization?.authorization_decision;
+                if (badge) {
+                    const label = hasRecord ? (guard === "eligible_not_executed" ? "Eligible Not Executed" : (decision === "reject" ? "Rejected" : (decision === "defer" ? "Deferred" : "Blocked By Default"))) : "No Authorization";
+                    badge.textContent = label;
+                    badge.className = `px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${guard === 'eligible_not_executed' ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300' : hasRecord ? 'border-amber-500/20 bg-amber-500/10 text-amber-300' : 'border-slate-700 bg-slate-800 text-slate-300'}`;
+                }
+                if (decisionEl) decisionEl.textContent = authorization?.authorization_decision || "—";
+                if (actionEl) actionEl.textContent = authorization?.requested_action || "—";
+                if (tokenEl) tokenEl.textContent = authorization ? (authorization.authorization_token_present ? "present" : "not present") : "—";
+                if (envEl) envEl.textContent = authorization ? (authorization.real_execution_env_present ? "enabled" : "not enabled") : "—";
+                if (guardEl) guardEl.textContent = authorization?.final_guard_state || "—";
+                if (eligibilityEl) {
+                    eligibilityEl.textContent = authorization ? `${authorization.marker}: ${authorization.execution_eligibility?.reason || "final guard blocked by default"}` : "No final authorization rows";
+                }
+                if (sideEffectsEl) {
+                    const unsafe = sideEffects.linear_comment_posted || sideEffects.github_pr_created || sideEffects.auto_merge_enabled || sideEffects.production_deployed || sideEffects.real_executor_invoked;
+                    sideEffectsEl.textContent = unsafe ? "unsafe side effect detected" : "no real Linear/GitHub/auto-merge side effects";
+                }
+            } catch (err) {
+                console.error("Error loading final action authorization:", err);
+                if (badge) {
+                    badge.textContent = "Unavailable";
+                    badge.className = "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-rose-500/20 bg-rose-500/10 text-rose-300";
+                }
+                if (eligibilityEl) eligibilityEl.textContent = String(err.message || err);
+            }
+        }
+
+        async function fetchQuarantinedExecutionAdapter() {
+            const badge = document.getElementById("quarantined-adapter-badge");
+            const modeEl = document.getElementById("quarantined-adapter-mode");
+            const actionEl = document.getElementById("quarantined-adapter-action");
+            const egressEl = document.getElementById("quarantined-adapter-egress");
+            const envelopeEl = document.getElementById("quarantined-adapter-envelope");
+            const auditEl = document.getElementById("quarantined-adapter-audit");
+            const sideEffectsEl = document.getElementById("quarantined-adapter-side-effects");
+            const summaryEl = document.getElementById("quarantined-adapter-summary");
+            try {
+                const res = await fetch(`${API_PREFIX}/agy/quarantined-execution-adapters/latest`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const adapter = data.quarantined_execution_adapter;
+                const sideEffects = data.side_effects || adapter?.side_effects || {};
+                const hasRecord = Boolean(adapter);
+                const state = adapter?.adapter_state;
+                if (badge) {
+                    const label = hasRecord ? (state === "sealed_preview_ready" ? "Sealed Preview Ready" : (state === "manual_review" ? "Manual Review" : "Blocked By Final Guard")) : "No Adapter";
+                    badge.textContent = label;
+                    badge.className = `px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${state === 'sealed_preview_ready' ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300' : hasRecord ? 'border-amber-500/20 bg-amber-500/10 text-amber-300' : 'border-slate-700 bg-slate-800 text-slate-300'}`;
+                }
+                if (modeEl) modeEl.textContent = adapter?.adapter_mode || "—";
+                if (actionEl) actionEl.textContent = adapter?.requested_action || "—";
+                if (egressEl) egressEl.textContent = adapter?.egress_policy?.policy || "—";
+                if (envelopeEl) {
+                    envelopeEl.textContent = adapter ? `${String(adapter.command_envelope_sha256 || "").slice(0, 16)}… ${adapter.command_envelope?.schema || "sealed command envelope"}` : "—";
+                }
+                if (auditEl) {
+                    auditEl.textContent = adapter ? `${adapter.audit_packet?.audit_packet_id || "adapter-audit"} / ${adapter.audit_packet?.marker || adapter.marker}` : "—";
+                }
+                if (sideEffectsEl) {
+                    const unsafe = sideEffects.linear_comment_posted || sideEffects.github_pr_created || sideEffects.auto_merge_enabled || sideEffects.production_deployed || sideEffects.real_executor_invoked || sideEffects.executed;
+                    sideEffectsEl.textContent = unsafe ? "unsafe side effect detected" : "no real Linear/GitHub/auto-merge side effects";
+                }
+                if (summaryEl) {
+                    summaryEl.textContent = adapter ? `${adapter.marker}: ${adapter.adapter_reason || "deny-all adapter preview"}` : "No quarantined execution adapter rows";
+                }
+            } catch (err) {
+                console.error("Error loading quarantined execution adapter:", err);
+                if (badge) {
+                    badge.textContent = "Unavailable";
+                    badge.className = "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-rose-500/20 bg-rose-500/10 text-rose-300";
+                }
+                if (summaryEl) summaryEl.textContent = String(err.message || err);
+            }
+        }
+
+        async function fetchSandboxedExecutionCanary() {
+            const badge = document.getElementById("sandbox-canary-badge");
+            const modeEl = document.getElementById("sandbox-canary-mode");
+            const actionEl = document.getElementById("sandbox-canary-action");
+            const envelopeEl = document.getElementById("sandbox-canary-envelope");
+            const policyEl = document.getElementById("sandbox-canary-policy");
+            const transcriptEl = document.getElementById("sandbox-canary-transcript");
+            const sideEffectsEl = document.getElementById("sandbox-canary-side-effects");
+            const summaryEl = document.getElementById("sandbox-canary-summary");
+            try {
+                const res = await fetch(`${API_PREFIX}/agy/sandboxed-execution-canaries/latest`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const canary = data.sandboxed_execution_canary;
+                const sideEffects = data.side_effects || canary?.side_effects || {};
+                const hasRecord = Boolean(canary);
+                const state = canary?.sandbox_state;
+                if (badge) {
+                    const label = hasRecord ? (state === "noop_canary_ready" ? "No-op Canary Ready" : (state === "manual_review" ? "Manual Review" : "Blocked By Final Guard")) : "No Canary";
+                    badge.textContent = label;
+                    badge.className = `px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${state === 'noop_canary_ready' ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300' : hasRecord ? 'border-amber-500/20 bg-amber-500/10 text-amber-300' : 'border-slate-700 bg-slate-800 text-slate-300'}`;
+                }
+                if (modeEl) modeEl.textContent = canary?.canary_mode || "—";
+                if (actionEl) actionEl.textContent = canary?.requested_action || "—";
+                if (envelopeEl) {
+                    envelopeEl.textContent = canary ? `${canary.command_envelope_verified ? 'hash verified' : 'mismatch blocked'} · ${String(canary.command_envelope_sha256 || "").slice(0, 16)}…` : "—";
+                }
+                if (policyEl) {
+                    policyEl.textContent = canary?.sandbox_policy?.policy || "—";
+                }
+                if (transcriptEl) {
+                    transcriptEl.textContent = canary ? `${canary.sandbox_transcript?.sandbox_transcript_id || "sandbox-transcript"} / ${canary.sandbox_transcript?.summary || "no-op transcript"}` : "—";
+                }
+                if (sideEffectsEl) {
+                    const unsafe = sideEffects.linear_comment_posted || sideEffects.github_pr_created || sideEffects.auto_merge_enabled || sideEffects.production_deployed || sideEffects.real_executor_invoked || sideEffects.executed;
+                    sideEffectsEl.textContent = unsafe ? "unsafe side effect detected" : "no real Linear/GitHub/auto-merge side effects";
+                }
+                if (summaryEl) {
+                    summaryEl.textContent = canary ? `${canary.marker}: ${canary.sandbox_reason || "no-op sandbox canary"}` : "No sandboxed execution canary rows";
+                }
+            } catch (err) {
+                console.error("Error loading sandboxed execution canary:", err);
+                if (badge) {
+                    badge.textContent = "Unavailable";
+                    badge.className = "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-rose-500/20 bg-rose-500/10 text-rose-300";
+                }
+                if (summaryEl) summaryEl.textContent = String(err.message || err);
+            }
+        }
+
+        async function fetchRealExecutorArmingGate() {
+            const badge = document.getElementById("real-executor-arming-badge");
+            const modeEl = document.getElementById("real-executor-arming-mode");
+            const actionEl = document.getElementById("real-executor-arming-action");
+            const tokenEl = document.getElementById("real-executor-arming-token");
+            const envEl = document.getElementById("real-executor-arming-env");
+            const missingEl = document.getElementById("real-executor-arming-missing");
+            const satisfiedEl = document.getElementById("real-executor-arming-satisfied");
+            const summaryEl = document.getElementById("real-executor-arming-summary");
+            if (!badge || !modeEl || !actionEl || !tokenEl || !envEl || !missingEl || !satisfiedEl || !summaryEl) return;
+            try {
+                const response = await fetch("/api/agy/real-executor-arming-gates/latest");
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const data = await response.json();
+                const gate = data.real_executor_arming_gate;
+                if (!gate) {
+                    badge.textContent = "No Arming Gate";
+                    summaryEl.textContent = "No real executor arming gate recorded yet";
+                    return;
+                }
+                const state = gate.arming_state || "unknown";
+                badge.textContent = state === "blocked_missing_real_authorization" ? "Blocked Missing Authorization" : state.replace(/_/g, " ");
+                modeEl.textContent = gate.arming_mode || "—";
+                actionEl.textContent = gate.requested_action || "—";
+                tokenEl.textContent = gate.operator_token_present ? "present" : "not present";
+                envEl.textContent = gate.real_executor_env_present ? "enabled" : "not enabled";
+                const missing = (gate.missing_prerequisites || []).map((item) => item.key).slice(0, 6).join(", ");
+                missingEl.textContent = missing || "none represented";
+                const satisfied = (gate.satisfied_prerequisites || []).map((item) => item.key).slice(0, 6).join(", ");
+                satisfiedEl.textContent = satisfied || "none represented";
+                summaryEl.textContent = `${gate.marker}: ${gate.arming_reason || "readiness-only gate"}; no real Linear/GitHub/auto-merge side effects`;
+            } catch (err) {
+                badge.textContent = "Error";
+                summaryEl.textContent = `Unable to load real executor arming gate: ${err.message}`;
+            }
+        }
+
+        async function fetchRawAgentOutputQueue() {
+            const badge = document.getElementById("raw-output-badge");
+            const latestEl = document.getElementById("raw-output-latest");
+            const setText = (id, value) => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = String(value ?? 0);
+            };
+            try {
+                const res = await fetch(`${API_PREFIX}/agents/raw-output?limit=1`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const counts = data.counts || {};
+                setText("raw-output-accepted", counts.accepted);
+                setText("raw-output-normalized", counts.normalized);
+                setText("raw-output-rejected", counts.rejected);
+                setText("raw-output-repairable", counts.repairable);
+                setText("raw-output-rerun-required", counts.rerun_required);
+                setText("raw-output-policy-violation", counts.policy_violation);
+                const latest = (data.raw_outputs || [])[0];
+                if (latestEl) latestEl.textContent = latest ? `${latest.raw_output_id} · ${latest.normalization_status} · ${latest.repair_hint || "no_hint"}` : "No persisted raw output rows";
+                if (badge) {
+                    const rejected = counts.rejected || 0;
+                    badge.textContent = data.count > 0 ? (rejected ? "Needs Review" : "Clean") : "No Rows";
+                    badge.className = `px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${data.count > 0 ? (rejected ? 'border-amber-500/20 bg-amber-500/10 text-amber-300' : 'border-fuchsia-500/20 bg-fuchsia-500/10 text-fuchsia-300') : 'border-slate-700 bg-slate-800 text-slate-300'}`;
+                }
+            } catch (err) {
+                console.error("Error loading raw agent output queue:", err);
+                if (badge) {
+                    badge.textContent = "Unavailable";
+                    badge.className = "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-rose-500/20 bg-rose-500/10 text-rose-300";
+                }
+                if (latestEl) latestEl.textContent = String(err?.message || err || "Gateway unavailable");
+            }
+        }
+
+        async function fetchMergeBacklog() {
+            const badge = document.getElementById("merge-backlog-badge");
+            const action = document.getElementById("merge-backlog-action");
+            const verification = document.getElementById("merge-backlog-verification");
+            const branch = document.getElementById("merge-backlog-branch");
+            const autoMerge = document.getElementById("merge-backlog-auto-merge");
+            try {
+                const res = await fetch(`${API_PREFIX}/agy/merge-backlog?limit=1`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const item = (data.merge_backlog || [])[0];
+                const count = data.count ?? 0;
+                const pass = item?.verification_gate === "pass";
+                if (badge) {
+                    badge.textContent = count > 0 ? (pass ? "Gate Pass" : "Review") : "No Rows";
+                    badge.className = `px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${count > 0 ? (pass ? 'border-cyan-500/20 bg-cyan-500/10 text-cyan-300' : 'border-amber-500/20 bg-amber-500/10 text-amber-300') : 'border-slate-700 bg-slate-800 text-slate-300'}`;
+                }
+                window.prompt5MergeCandidateId = item?.completed_work_id || null;
+                if (action) action.textContent = item?.recommended_action || "no_rows";
+                if (verification) verification.textContent = item ? `${item.verification_gate} · ${item.verification_lane}` : "no_rows";
+                if (branch) branch.textContent = item?.pr_branch || "No row planned yet";
+                if (autoMerge) autoMerge.textContent = item?.eligible_for_auto_merge ? "ERROR: enabled" : "Disabled";
+            } catch (err) {
+                console.error("Error loading AGY merge backlog:", err);
+                if (badge) {
+                    badge.textContent = "Unavailable";
+                    badge.className = "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-rose-500/20 bg-rose-500/10 text-rose-300";
+                }
+                if (action) action.textContent = "unavailable";
+                if (verification) verification.textContent = "blocked";
+                if (branch) branch.textContent = String(err?.message || err || "Gateway unavailable");
+                if (autoMerge) autoMerge.textContent = "Disabled";
+            }
+        }
+
+
+        async function stagePrCandidate() {
+            const status = document.getElementById("pr-candidate-status");
+            const output = document.getElementById("pr-candidate-output");
+            const button = document.getElementById("pr-candidate-action");
+            const completedWorkId = window.prompt5MergeCandidateId;
+            if (!completedWorkId) {
+                if (status) status.textContent = "No completed-work row is available to stage.";
+                return;
+            }
+            if (button) button.disabled = true;
+            try {
+                const res = await fetch(`${API_PREFIX}/agy/merge-backlog/${encodeURIComponent(completedWorkId)}/pr-candidate`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ requested_by: "dashboard", action: "stage_pr_candidate" })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data?.detail || `HTTP ${res.status}`);
+                if (status) status.textContent = `${data.lifecycle_state || data.status} · ${data.marker || "PROMPT5_PR_CANDIDATE_LIFECYCLE_OK"}`;
+                if (output) {
+                    output.classList.remove("hidden");
+                    output.textContent = JSON.stringify({
+                        candidate: data.candidate,
+                        side_effects: data.side_effects,
+                        non_claims: data.non_claims,
+                    }, null, 2);
+                }
+            } catch (err) {
+                console.error("Error staging PR candidate metadata:", err);
+                if (status) status.textContent = String(err?.message || err || "Gateway unavailable");
+            } finally {
+                if (button) button.disabled = false;
+            }
+        }
+
+        async function stagePrDryRun() {
+            const status = document.getElementById("pr-candidate-status");
+            const output = document.getElementById("pr-candidate-output");
+            const button = document.getElementById("pr-dry-run-action");
+            const completedWorkId = window.prompt5MergeCandidateId;
+            if (!completedWorkId) {
+                if (status) status.textContent = "No completed-work row is available for PR dry-run planning.";
+                return;
+            }
+            if (button) button.disabled = true;
+            try {
+                const res = await fetch(`${API_PREFIX}/agy/merge-backlog/${encodeURIComponent(completedWorkId)}/pr-dry-run`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ requested_by: "dashboard", action: "operator_pr_creation_dry_run", linear_writeback: true })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data?.detail || `HTTP ${res.status}`);
+                if (status) status.textContent = `${data.status} · ${data.marker || "PROMPT5_OPERATOR_PR_DRY_RUN_OK"}`;
+                if (output) {
+                    output.classList.remove("hidden");
+                    output.textContent = JSON.stringify({
+                        branch_plan: data.branch_plan,
+                        github_pr_plan: data.github_pr_plan,
+                        verification_gate_selection: data.verification_gate_selection,
+                        linear_writeback: data.linear_writeback,
+                        side_effects: data.side_effects,
+                        non_claims: data.non_claims,
+                    }, null, 2);
+                }
+            } catch (err) {
+                console.error("Error planning PR dry run:", err);
+                if (status) status.textContent = String(err?.message || err || "Gateway unavailable");
+            } finally {
+                if (button) button.disabled = false;
+            }
+        }
+
+
+        async function stagePrApprovalGate() {
+            const status = document.getElementById("pr-candidate-status");
+            const output = document.getElementById("pr-candidate-output");
+            const button = document.getElementById("pr-approval-action");
+            const completedWorkId = window.prompt5MergeCandidateId;
+            if (!completedWorkId) {
+                if (status) status.textContent = "No completed-work row is available for PR approval gating.";
+                return;
+            }
+            if (button) button.disabled = true;
+            const token = `APPROVE_REAL_PR:${completedWorkId}`;
+            try {
+                const res = await fetch(`${API_PREFIX}/agy/merge-backlog/${encodeURIComponent(completedWorkId)}/pr-approval`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        requested_by: "dashboard",
+                        approved_by: "dashboard-operator",
+                        approval_token: token,
+                        approval_note: "Dashboard Prompt 5.4 explicit approval gate",
+                        action: "record_real_pr_creation_approval",
+                        expose_real_pr_action: true
+                    })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data?.detail || `HTTP ${res.status}`);
+                if (status) status.textContent = `${data.status} · ${data.marker || "PROMPT5_REAL_PR_APPROVAL_GATE_OK"}`;
+                if (output) {
+                    output.classList.remove("hidden");
+                    output.textContent = JSON.stringify({
+                        approval_record: data.approval_record,
+                        policy_gate: data.policy_gate,
+                        real_pr_creation_action: data.real_pr_creation_action,
+                        side_effects: data.side_effects,
+                        non_claims: data.non_claims,
+                    }, null, 2);
+                }
+            } catch (err) {
+                console.error("Error recording PR approval gate:", err);
+                if (status) status.textContent = String(err?.message || err || "Gateway unavailable");
+            } finally {
+                if (button) button.disabled = false;
+            }
+        }
+
+        async function stageApprovedPrExecutor() {
+            const status = document.getElementById("pr-candidate-status");
+            const output = document.getElementById("pr-candidate-output");
+            const button = document.getElementById("pr-executor-action");
+            const completedWorkId = window.prompt5MergeCandidateId;
+            if (!completedWorkId) {
+                if (status) status.textContent = "No completed-work row is available for approved PR executor planning.";
+                return;
+            }
+            if (button) button.disabled = true;
+            const token = `APPROVE_REAL_PR:${completedWorkId}`;
+            try {
+                const approvalRes = await fetch(`${API_PREFIX}/agy/merge-backlog/${encodeURIComponent(completedWorkId)}/pr-approval`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        requested_by: "dashboard",
+                        approved_by: "dashboard-operator",
+                        approval_token: token,
+                        approval_note: "Dashboard Prompt 5.5 executor preflight approval gate",
+                        action: "record_real_pr_creation_approval",
+                        expose_real_pr_action: true
+                    })
+                });
+                const approval = await approvalRes.json();
+                if (!approvalRes.ok) throw new Error(approval?.detail || `HTTP ${approvalRes.status}`);
+                const res = await fetch(`${API_PREFIX}/agy/merge-backlog/${encodeURIComponent(completedWorkId)}/pr-executor`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        requested_by: "dashboard",
+                        approved_by: "dashboard-operator",
+                        approval_token: token,
+                        approval_id: approval?.approval_record?.approval_id,
+                        final_operator_trigger: true,
+                        execute: false,
+                        executor_mode: "dry_run",
+                        allow_real_side_effects: false
+                    })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data?.detail || `HTTP ${res.status}`);
+                if (status) status.textContent = `${data.status} · ${data.marker || "PROMPT5_APPROVED_REAL_PR_EXECUTOR_OK"}`;
+                if (output) {
+                    output.classList.remove("hidden");
+                    output.textContent = JSON.stringify({
+                        executor_mode: data.executor_mode,
+                        commands_rendered: data.commands_rendered,
+                        commands_executed: data.commands_executed,
+                        policy_gate: data.policy_gate,
+                        executor_plan: data.executor_plan,
+                        executor_result: data.executor_result,
+                        audit_writeback: data.audit_writeback,
+                        executor_run_id: data.executor_run_id,
+                        side_effects: data.side_effects,
+                        non_claims: data.non_claims,
+                    }, null, 2);
+                }
+            } catch (err) {
+                console.error("Error planning approved PR executor:", err);
+                if (status) status.textContent = String(err?.message || err || "Gateway unavailable");
+            } finally {
+                if (button) button.disabled = false;
+            }
+        }
+
+        async function runPrompt6ExecutorCanaryDryRun() {
+            const status = document.getElementById("pr-candidate-status");
+            const output = document.getElementById("pr-candidate-output");
+            const button = document.getElementById("prompt6-executor-canary-action");
+            if (button) button.disabled = true;
+            try {
+                const res = await fetch(`${API_PREFIX}/agy/executor-runs/canary-dry-run`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        requested_by: "dashboard",
+                        executor_mode: "dry_run",
+                        execute: false,
+                        allow_real_side_effects: false
+                    })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data?.detail || `HTTP ${res.status}`);
+                const history = await fetch(`${API_PREFIX}/agy/executor-runs?limit=5`);
+                const recent = history.ok ? await history.json() : { runs: data.recent_runs || [] };
+                if (status) status.textContent = `${data.status} · ${data.marker || "PROMPT6_EXECUTOR_AUDIT_CANARY_OK"} · run_id ${data.run_id || "n/a"}`;
+                if (output) {
+                    output.classList.remove("hidden");
+                    output.textContent = JSON.stringify({
+                        prompt6_executor_audit_canary: true,
+                        run_id: data.run_id,
+                        status: data.status,
+                        marker: data.marker,
+                        executor_mode: data.executor_mode,
+                        commands_rendered: data.commands_rendered,
+                        commands_executed: data.commands_executed,
+                        side_effects: {
+                            real_github_pr_created: data.real_github_pr_created,
+                            git_branch_created: data.git_branch_created,
+                            auto_merge_enabled: data.auto_merge_enabled,
+                            production_deployed: data.production_deployed,
+                            AGY_dispatch: data.AGY_dispatch
+                        },
+                        non_claims: data.non_claims,
+                        blocked_reasons: data.blocked_reasons,
+                        recent_executor_run_history: recent.runs || data.recent_runs || []
+                    }, null, 2);
+                }
+            } catch (err) {
+                console.error("Error running Prompt 6 executor canary dry run:", err);
+                if (status) status.textContent = String(err?.message || err || "Gateway unavailable");
+            } finally {
+                if (button) button.disabled = false;
+            }
+        }
+
+        async function fetchOvernightGuard() {
+            const badge = document.getElementById("overnight-guard-badge");
+            const marker = document.getElementById("overnight-guard-marker");
+            const state = document.getElementById("overnight-guard-state");
+            const evidence = document.getElementById("overnight-guard-evidence");
+            const safety = document.getElementById("overnight-guard-safety");
+            const tasks = document.getElementById("overnight-guard-tasks");
+            const blockers = document.getElementById("overnight-guard-blockers");
+            const next = document.getElementById("overnight-guard-next");
+            try {
+                const res = await fetch(`${API_PREFIX}/agy/overnight-guard`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const guard = data.guard || {};
+                const policy = guard.policy || {};
+                const issues = (guard.blockers || []).concat(guard.warnings || []);
+                const isReady = guard.readiness_state === "ready" && issues.length === 0;
+                const isPaused = guard.readiness_state === "paused";
+                if (badge) {
+                    badge.textContent = isReady ? "Ready" : (isPaused ? "Paused" : "Blocked");
+                    badge.className = `px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${isReady ? 'border-violet-500/20 bg-violet-500/10 text-violet-300' : (isPaused ? 'border-amber-500/20 bg-amber-500/10 text-amber-300' : 'border-rose-500/20 bg-rose-500/10 text-rose-300')}`;
+                }
+                if (marker) marker.textContent = data.marker || "AGY_OVERNIGHT_READINESS_GUARD_OK";
+                if (state) state.textContent = guard.readiness_state || "unknown";
+                const issueSummary = issues.join(" · ");
+                if (evidence) evidence.textContent = isReady ? "complete retained proof" : (issueSummary || "not ready");
+                if (safety) safety.textContent = `auto-merge=${policy.auto_merge_enabled === true} · deploy=${policy.production_deploy_enabled === true} · PR=${policy.real_github_pr_create_enabled === true}`;
+                if (tasks) tasks.textContent = String(data.tasks_launched ?? 0);
+                if (blockers) blockers.textContent = issues.length ? `${guard.latest_one_task_success_marker || "no marker"} · ${issueSummary}` : (guard.latest_one_task_success_marker || "AGY one-task proof present");
+                if (next) next.textContent = guard.next_safe_action || "No overnight run active";
+            } catch (err) {
+                console.error("Error loading AGY overnight guard:", err);
+                if (badge) {
+                    badge.textContent = "Unavailable";
+                    badge.className = "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-rose-500/20 bg-rose-500/10 text-rose-300";
+                }
+                if (state) state.textContent = "unavailable";
+                if (evidence) evidence.textContent = "API unavailable";
+                if (safety) safety.textContent = "auto-merge=false · deploy=false · PR=false";
+                if (tasks) tasks.textContent = "0";
+                if (blockers) blockers.textContent = String(err?.message || err || "Gateway unavailable");
+                if (next) next.textContent = "Restore guard API before any overnight run";
+            }
+        }
+
+        async function fetchMorningBriefing() {
+            try {
+                const res = await fetch("/api/gateway/overnight-report/latest");
+                if (res.ok) {
+                    const data = await res.json();
+                    
+                    // Update timestamp & badges
+                    document.getElementById("briefing-timestamp").textContent = `Generated: ${data.generated_at ? data.generated_at.substring(0, 16).replace('T', ' ') : 'N/A'} UTC`;
+                    
+                    const fallbackBadge = document.getElementById("briefing-fallback-badge");
+                    if (data.period && data.period.fallback_used) {
+                        fallbackBadge.classList.remove("hidden");
+                    } else {
+                        fallbackBadge.classList.add("hidden");
+                    }
+                    
+                    // Update KPIs
+                    const s = data.summary || {};
+                    document.getElementById("briefing-total-runs").textContent = s.total_dispatches ?? 0;
+                    document.getElementById("briefing-completed").textContent = s.completed ?? 0;
+                    document.getElementById("briefing-failed").textContent = s.failed ?? 0;
+                    document.getElementById("briefing-success-rate").textContent = `${s.success_rate ?? 100}%`;
+                    document.getElementById("briefing-credits").textContent = s.total_credits_spent ?? 0;
+                    
+                    // Update Escalations
+                    const escContainer = document.getElementById("briefing-escalations");
+                    if (data.escalations && data.escalations.length > 0) {
+                        escContainer.innerHTML = data.escalations.map(esc => `
+                            <div class="p-2 rounded border border-rose-500/20 bg-rose-500/5 text-rose-300">
+                                <div class="flex items-center justify-between font-semibold">
+                                    <span>${esc.issue_id} (${esc.lane})</span>
+                                    <span class="text-[9px] text-slate-500 font-mono">${esc.time ? esc.time.substring(11, 16) : ''}</span>
+                                </div>
+                                <div class="text-[10px] text-slate-400 mt-0.5">${esc.reason}</div>
+                            </div>
+                        `).join("");
+                    } else {
+                        escContainer.innerHTML = `<div class="text-slate-500 italic">No escalations occurred.</div>`;
+                    }
+                    
+                    // Update Commits
+                    const commitsContainer = document.getElementById("briefing-commits");
+                    if (data.git_commits && data.git_commits.length > 0) {
+                        commitsContainer.innerHTML = data.git_commits.map(c => `
+                            <div class="flex items-center space-x-1.5 font-mono text-[10px] text-slate-400 py-0.5">
+                                <span class="text-indigo-400 font-bold">${c.sha}</span>
+                                <span class="text-slate-300 truncate" style="max-width: 250px;">${c.message}</span>
+                            </div>
+                        `).join("");
+                    } else {
+                        commitsContainer.innerHTML = `<div class="text-slate-500 italic">No recent commits.</div>`;
+                    }
+                    
+                    // Update Runs table
+                    const runsTbody = document.getElementById("briefing-runs-tbody");
+                    if (data.runs && data.runs.length > 0) {
+                        runsTbody.innerHTML = data.runs.slice(0, 10).map(r => {
+                            const statusClass = (r.status === 'completed' || r.exit_code === 0) ? 'text-emerald-400' : (r.status === 'failed' || (r.exit_code !== null && r.exit_code !== 0)) ? 'text-rose-400' : 'text-amber-400';
+                            return `
+                                <tr class="border-b border-slate-800/40 hover:bg-slate-900/10">
+                                    <td class="py-1.5 px-2 text-slate-300 font-semibold font-mono">${r.agent}</td>
+                                    <td class="py-1.5 px-2 text-slate-400 font-mono">${r.issue_id}</td>
+                                    <td class="py-1.5 px-2 font-bold ${statusClass}">${r.status}</td>
+                                </tr>
+                            `;
+                        }).join("");
+                    } else {
+                        runsTbody.innerHTML = `<tr><td colspan="3" class="py-4 text-center text-slate-500 italic">No runs recorded.</td></tr>`;
+                    }
+                }
+            } catch (err) {
+                console.error("Error loading morning briefing:", err);
+            }
+        }
+
+        async function fetchBudgetCaps() {
+            const status = document.getElementById("budget-caps-status");
+            try {
+                const res = await fetch(`${API_PREFIX}/quota/caps`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const caps = await res.json();
+                const daily = document.getElementById("budget-daily-limit");
+                const autoPause = document.getElementById("budget-auto-pause");
+                if (daily) daily.value = Number(caps.daily_limit ?? 15).toFixed(2);
+                if (autoPause) autoPause.value = String(caps.auto_pause !== false);
+                if (status) status.textContent = `Loaded · ${caps.auto_pause !== false ? 'auto-pause on' : 'auto-pause off'}`;
+            } catch (err) {
+                console.error("Error loading budget caps:", err);
+                if (status) status.textContent = "Budget caps unavailable";
+            }
+        }
+
+        async function saveBudgetCaps() {
+            const status = document.getElementById("budget-caps-status");
+            const daily = document.getElementById("budget-daily-limit");
+            const autoPause = document.getElementById("budget-auto-pause");
+            const payload = {
+                daily_limit: Number(daily?.value || 0),
+                per_model: {},
+                auto_pause: autoPause?.value !== "false"
+            };
+            try {
+                const res = await fetch(`${API_PREFIX}/quota/caps`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const caps = await res.json();
+                if (status) status.textContent = `Saved · daily ${Number(caps.daily_limit).toFixed(2)}`;
+                showToast("Budget caps saved");
+            } catch (err) {
+                console.error("Error saving budget caps:", err);
+                if (status) status.textContent = "Save failed";
+                showToast("Budget cap save failed", true);
+            }
+        }
+
+        async function fetchQuotaData() {
+            try {
+                const quotaRes = await fetch(`${API_PREFIX}/quota`);
+                if (quotaRes.ok) {
+                    const data = await quotaRes.json();
+                    
+                    const syncStatus = document.getElementById("quota-sync-status");
+                    const syncAge = document.getElementById("quota-sync-age");
+                    if (syncStatus) {
+                        const snapshotAt = data.snapshot_at ? formatDate(data.snapshot_at) : "unknown";
+                        syncStatus.textContent = `Snapshot captured ${snapshotAt}`;
+                    }
+                    if (syncAge) {
+                        syncAge.textContent = data.snapshot_age_sec !== null && data.snapshot_age_sec !== undefined ? formatAge(data.snapshot_age_sec) : "Freshness: unknown";
+                    }
+                    
+                    // Render Cards
+                    const grid = document.getElementById("quota-cards-grid");
+                    const current = data.current || [];
+                    if (current.length === 0) {
+                        grid.innerHTML = `<div class="col-span-3 text-center text-slate-500 italic py-6">No active region quotas snapshot ledger details found.</div>`;
+                    } else {
+                        grid.innerHTML = current.map(item => {
+                            const pct = Number(item.remaining_pct);
+                            const hasPct = !Number.isNaN(pct);
+                            const effectivePct = hasPct ? pct : 0;
+                            const barColor = effectivePct < 20 ? 'bg-red-500' : effectivePct < 50 ? 'bg-amber-500' : 'bg-emerald-500';
+                            const labelColor = effectivePct < 20 ? 'text-red-400' : effectivePct < 50 ? 'text-amber-400' : 'text-emerald-400';
+                            const status = quotaStatusLabel(item);
+                            return `
+                                <div class="glass-panel p-4 rounded-xl space-y-3 flex flex-col justify-between">
+                                    <div class="flex justify-between items-start gap-2">
+                                        <h3 class="font-bold text-xs uppercase text-slate-400">${item.display_name || item.model}</h3>
+                                        <span class="text-xs font-bold font-mono ${hasPct ? labelColor : 'text-slate-400'}">${formatQuotaPct(item.remaining_pct)} remaining</span>
+                                    </div>
+                                    <div class="w-full bg-slate-950 h-2 rounded-full overflow-hidden">
+                                        <div class="h-full ${barColor}" style="width: ${effectivePct}%"></div>
+                                    </div>
+                                    <div class="flex justify-between items-center text-[10px] text-slate-500 gap-2">
+                                        <span>Reset in ${formatDate(item.reset_time)}</span>
+                                        <span class="font-mono">${status}</span>
+                                    </div>
+                                </div>
+                            `;
+                        }).join("");
+                    }
+                    
+                    // Render History Events
+                    const eventsTbody = document.getElementById("quota-events-tbody");
+                    const events = data.recent_events || [];
+                    if (events.length === 0) {
+                        eventsTbody.innerHTML = `<tr><td colspan="3" class="py-4 text-center text-slate-500 italic">No quota breaches reported within the last 24 hours.</td></tr>`;
+                    } else {
+                        eventsTbody.innerHTML = events.map(ev => {
+                            const details = ev.details || ev.event_type || 'No details available';
+                            return `
+                            <tr class="border-b border-slate-800/40 hover:bg-slate-900/10 transition">
+                                <td class="py-2.5 px-3 text-slate-500 font-mono">${formatDate(ev.timestamp)}</td>
+                                <td class="py-2.5 px-3 font-semibold text-slate-200">${ev.model || 'Unknown model'}</td>
+                                <td class="py-2.5 px-3 text-red-400 font-medium">${details}</td>
+                            </tr>
+                        `;
+                        }).join("");
+                    }
+                }
+            } catch (err) {
+                console.error("Error loading quota data:", err);
+            }
+        }
+
+        // WebSockets
+        function connectWS() {
+            let ws;
+            try {
+                const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+                const wsUrl = protocol + "//" + window.location.host + "/ws";
+                ws = new WebSocket(wsUrl);
+            } catch (e) {
+                setTimeout(connectWS, 3000);
+                return;
+            }
+
+            ws.onopen = () => {
+                const dot = document.getElementById("status-dot");
+                const text = document.getElementById("status-text");
+                dot.className = "w-2.5 h-2.5 rounded-full bg-emerald-500 status-pulse";
+                text.className = "text-[10px] sm:text-xs font-semibold text-emerald-400 uppercase tracking-wider";
+                text.textContent = "Connected";
+                fetchData();
+            };
+
+            ws.onmessage = (e) => {
+                try {
+                    const event = JSON.parse(e.data);
+                    if (["webhook_queued", "webhook_processing", "webhook_completed", "webhook_failed", "dispatcher_cycle"].includes(event.type)) {
+                        fetchData();
+                    }
+                    // Append event to signals console log
+                    addLocalSignal(event.type.replace("webhook_", "").toUpperCase(), event.message || JSON.stringify(event));
+                } catch (err) {}
+            };
+
+            ws.onclose = () => {
+                const dot = document.getElementById("status-dot");
+                const text = document.getElementById("status-text");
+                dot.className = "w-2.5 h-2.5 rounded-full bg-red-500 status-pulse";
+                text.className = "text-[10px] sm:text-xs font-semibold text-slate-400 uppercase tracking-wider";
+                text.textContent = "Connecting";
+                setTimeout(connectWS, 3000);
+            };
+        }
+
+        document.addEventListener("DOMContentLoaded", () => {
+            applyTheme();
+            const initialParams = new URLSearchParams(window.location.search);
+            const initialTab = (window.location.hash === "#workspaces" || initialParams.has("file")) ? "workspaces" : "dashboard";
+            if (initialTab === "workspaces") {
+                switchTab("workspaces");
+            } else {
+                fetchData();
+            }
+            loadPluginGovernance();
+            loadPWPStatus();
+            connectWS();
+            pollingInterval = setInterval(fetchData, 4000);
+            
+            // Close modal on click outside
+            window.onclick = function(event) {
+                const modal = document.getElementById("modal-container");
+                const cronModal = document.getElementById("cron-delete-modal");
+                if (event.target === modal) {
+                    closeModal();
+                }
+                if (event.target === cronModal) {
+                    closeCronDeleteModal();
+                }
+            };
+            
+            // Show AGY as default agent details
+            showAgentDetail('agy');
+        });

@@ -1,0 +1,75 @@
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background-color: #080b11;
+            transition: background-color 0.3s, color 0.3s;
+        }
+        h1, h2, h3, h4, .font-heading {
+            font-family: 'Outfit', sans-serif;
+        }
+        .glass-panel {
+            background: rgba(13, 17, 28, 0.7);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.04);
+            transition: background 0.3s, border-color 0.3s, box-shadow 0.3s;
+        }
+        .status-pulse {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: .5; transform: scale(1.1); }
+        }
+        .agent-node {
+            transition: transform 0.2s, filter 0.2s;
+            cursor: pointer;
+        }
+        .agent-node:hover {
+            transform: scale(1.05);
+            filter: brightness(1.2);
+        }
+        
+        /* Light Mode Styles */
+        body.light-mode {
+            background-color: #f8fafc;
+            color: #0f172a;
+        }
+        body.light-mode .glass-panel {
+            background: rgba(255, 255, 255, 0.8);
+            border: 1px solid rgba(0, 0, 0, 0.08);
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05), 0 2px 4px -2px rgb(0 0 0 / 0.05);
+        }
+        body.light-mode .text-slate-200 { color: #1e293b; }
+        body.light-mode .text-slate-300 { color: #334155; }
+        body.light-mode .text-slate-400 { color: #475569; }
+        body.light-mode .text-slate-500 { color: #64748b; }
+        body.light-mode header {
+            background-color: rgba(255, 255, 255, 0.85);
+            border-color: #e2e8f0;
+        }
+        body.light-mode footer {
+            border-color: #e2e8f0;
+            background-color: rgba(241, 245, 249, 0.5);
+        }
+        body.light-mode tr.border-b {
+            border-color: #e2e8f0;
+        }
+        body.light-mode tr:hover {
+            background-color: rgba(0, 0, 0, 0.02);
+        }
+        body.light-mode input, body.light-mode select {
+            background-color: rgba(255, 255, 255, 0.9) !important;
+            border-color: #cbd5e1 !important;
+            color: #0f172a !important;
+        }
+        body.light-mode pre {
+            background-color: #f1f5f9 !important;
+            border-color: #cbd5e1 !important;
+            color: #334155 !important;
+        }
+        body.light-mode .border-slate-800 { border-color: #e2e8f0; }
+        body.light-mode .border-slate-900 { border-color: #f1f5f9; }
+        body.light-mode .bg-slate-950 { background-color: #f1f5f9; }
+        body.light-mode .bg-slate-900\/50 { background-color: rgba(255, 255, 255, 0.8); }
+        body.light-mode .bg-slate-950\/20 { background-color: rgba(241, 245, 249, 0.3); }
+        body.light-mode .bg-indigo-500\/5 { background-color: rgba(99, 102, 241, 0.05); }

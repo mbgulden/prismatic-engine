@@ -1,0 +1,73 @@
+    </style>
+</head>
+<body class="text-slate-200 min-h-screen flex flex-col">
+    <!-- Header -->
+    <header class="border-b border-slate-800 bg-slate-900/50 backdrop-blur-md px-4 sm:px-6 py-4 flex flex-wrap items-center justify-between gap-3 sticky top-0 z-40 min-w-0 max-w-full overflow-hidden" data-proof-marker="dashboard-header-mobile-wrap">
+        <div class="flex items-center space-x-3 min-w-0">
+            <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-cyan-500 to-indigo-600 flex items-center justify-center font-bold text-white shadow-lg shadow-cyan-500/20">
+                ⧉
+            </div>
+            <div>
+                <h1 class="text-lg font-bold bg-gradient-to-r from-cyan-400 to-indigo-400 bg-clip-text text-transparent leading-none">PRISMATIC HUB</h1>
+                <span class="text-xs text-slate-500 font-medium">Observe · Orchestrate · Produce</span>
+            </div>
+        </div>
+        
+        <div class="flex flex-wrap items-center justify-end gap-2 sm:gap-4 min-w-0">
+            <!-- Mode Switcher -->
+            <div class="bg-slate-950 border border-slate-800/80 px-1 py-1 rounded-lg flex space-x-1">
+                <span class="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider bg-indigo-600 text-white rounded">Standalone</span>
+                <span class="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">Native</span>
+            </div>
+            <!-- Theme Toggle -->
+            <button onclick="toggleTheme()" class="bg-slate-800/80 hover:bg-slate-800 border border-slate-700/50 p-2 rounded-full transition flex items-center justify-center min-w-[36px] min-h-[36px]" aria-label="Toggle Theme">
+                <svg id="theme-icon" class="w-4 h-4 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364-6.364l-.707.707M6.343 17.657l-.707.707m0-12.728l.707.707m12.728 12.728l.707.707M12 8a4 4 0 100 8 4 4 0 000-8z"></path>
+                </svg>
+            </button>
+            <!-- WS Status -->
+            <div class="flex items-center space-x-2 bg-slate-800/80 px-3 py-1.5 rounded-full border border-slate-700/50 max-w-full">
+                <span id="status-dot" class="w-2.5 h-2.5 rounded-full bg-red-500 status-pulse"></span>
+                <span id="status-text" class="text-[10px] sm:text-xs font-semibold text-slate-400 uppercase tracking-wider">Connecting</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Navigation Tabs Bar -->
+    <div class="border-b border-slate-800/80 bg-slate-950/20 py-2.5 overflow-x-hidden max-w-full" data-proof-marker="dashboard-tabs-mobile-wrap">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 flex flex-wrap gap-2 min-w-0">
+            <button id="tab-btn-dashboard" onclick="switchTab('dashboard')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-indigo-600/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-600/20">
+                Dashboard
+            </button>
+            <button id="tab-btn-telemetry" data-proof-marker="ingestion" onclick="switchTab('telemetry')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                Ingestion Queue
+            </button>
+            <button id="tab-btn-merge" onclick="switchTab('merge')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                Merge Pipeline
+            </button>
+            <button id="tab-btn-foundation" onclick="switchTab('foundation')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                Foundation
+            </button>
+            <button id="tab-btn-workspaces" onclick="switchTab('workspaces')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                Workspaces
+            </button>
+            <button id="tab-btn-skills" onclick="switchTab('skills')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                Skills
+            </button>
+            <button id="tab-btn-signals" onclick="switchTab('signals')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                Signals
+            </button>
+            <button id="tab-btn-crons" onclick="switchTab('crons')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                Native Crons
+            </button>
+            <button id="tab-btn-pwp" onclick="switchTab('pwp')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                PWP Plugin
+            </button>
+            <button id="tab-btn-plugins" onclick="switchTab('plugins')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                Plugins
+            </button>
+            <button id="tab-btn-quota" onclick="switchTab('quota')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                Resources
+            </button>
+        </div>
+    </div>

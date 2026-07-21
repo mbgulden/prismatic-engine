@@ -1,0 +1,32 @@
+        <div id="section-signals" class="hidden space-y-6" data-proof-marker="assigned-agent-signals-dashboard">
+            <div class="glass-panel p-5 rounded-xl space-y-4">
+                <div class="border-b border-slate-800 pb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Agent Signals Cockpit</h2>
+                        <p class="text-xs text-slate-500 mt-1">Telegram-visible wake/action/result breadcrumbs plus compact transcript tails. Linear remains source of truth.</p>
+                    </div>
+                    <div id="signals-summary" class="text-xs text-slate-500">Loading signals…</div>
+                </div>
+                <div class="flex gap-2 overflow-x-auto pb-1" data-proof-marker="signals-mobile-agent-tabs" id="signals-agent-tabs">
+                    <button onclick="setSignalsAgent('all')" data-agent-tab="all" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs font-bold uppercase border bg-indigo-600/20 text-indigo-300 border-indigo-500/30">All</button>
+                    <button onclick="setSignalsAgent('kai')" data-agent-tab="kai" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs font-bold uppercase border bg-slate-900 text-slate-400 border-slate-800">Kai</button>
+                    <button onclick="setSignalsAgent('fred')" data-agent-tab="fred" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs font-bold uppercase border bg-slate-900 text-slate-400 border-slate-800">Fred</button>
+                    <button onclick="setSignalsAgent('agy')" data-agent-tab="agy" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs font-bold uppercase border bg-slate-900 text-slate-400 border-slate-800">AGY</button>
+                    <button onclick="setSignalsAgent('george')" data-agent-tab="george" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs font-bold uppercase border bg-slate-900 text-slate-400 border-slate-800">George</button>
+                </div>
+                <div id="signals-agent-panes" class="grid grid-cols-1 xl:grid-cols-2 gap-4" data-proof-marker="signals-agent-pane-grid">
+                    <!-- Populated dynamically with one pane per agent; mobile uses the tabs above to show one stream at a time. -->
+                </div>
+                <div class="bg-slate-950 rounded-lg border border-slate-900 overflow-hidden font-mono text-xs">
+                    <div class="bg-slate-900 border-b border-slate-800 px-4 py-2 text-slate-500 font-bold uppercase flex justify-between">
+                        <span>All Signals Console</span>
+                        <span>ws://localhost:9000/ws + /api/gateway/signals</span>
+                    </div>
+                    <div class="p-4 space-y-2 max-h-[360px] overflow-y-auto" id="signals-log-box">
+                        <!-- Populated dynamically -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SECTION 7: PLUGIN GOVERNANCE -->

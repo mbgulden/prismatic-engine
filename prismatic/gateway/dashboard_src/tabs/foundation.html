@@ -1,0 +1,68 @@
+        <div id="section-foundation" class="hidden space-y-6">
+            <!-- Stats Grid -->
+            <section class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <!-- Jules runs -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-indigo-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Jules CLI Sessions</span>
+                    <div class="flex items-end justify-between mt-2">
+                        <span id="stat-foundation-jules" class="text-2xl font-bold text-indigo-400">0</span>
+                        <span class="text-xs text-slate-500">Limit: 300</span>
+                    </div>
+                    <!-- progress bar -->
+                    <div class="w-full bg-slate-800 rounded-full h-1.5 mt-2">
+                        <div id="progress-foundation-jules" class="bg-indigo-500 h-1.5 rounded-full" style="width: 0%"></div>
+                    </div>
+                </div>
+                <!-- Ned runs -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-emerald-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Ned CLI Sessions</span>
+                    <span id="stat-foundation-ned" class="text-2xl font-bold text-emerald-400 mt-2">0</span>
+                </div>
+                <!-- AGY runs -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-cyan-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">AGY CLI Sessions</span>
+                    <span id="stat-foundation-agy" class="text-2xl font-bold text-cyan-400 mt-2">0</span>
+                </div>
+                <!-- Active reviewer route -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-amber-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Active AGY Reviewer Route</span>
+                    <span id="stat-foundation-reviewer" class="text-lg font-bold text-amber-400 mt-2 uppercase">agent:jules</span>
+                </div>
+            </section>
+
+            <!-- Control actions and logs layout -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- Left Column: Swarm Foundation Control -->
+                <div class="space-y-6">
+                    <div class="glass-panel p-5 rounded-xl space-y-4">
+                        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-2">
+                            Swarm Controls
+                        </h2>
+                        <p class="text-xs text-slate-400">
+                            Manually orchestrate the peer review transitions or run git synchronization status checks.
+                        </p>
+                        <div class="space-y-3 pt-2">
+                            <button onclick="triggerFoundationAction('orchestrate')" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-2 rounded-lg text-xs font-bold transition flex items-center justify-center space-x-2">
+                                <span>Run Peer Review Orchestrator</span>
+                            </button>
+                            <button onclick="triggerFoundationAction('sync')" class="w-full bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 py-2 rounded-lg text-xs font-bold transition flex items-center justify-center space-x-2">
+                                <span>Verify Sync / Git Status</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right Column: Orchestration Output Console -->
+                <div class="lg:col-span-2 space-y-6">
+                    <div class="glass-panel p-5 rounded-xl space-y-4">
+                        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-2 flex justify-between items-center">
+                            <span>Orchestration Terminal Console</span>
+                            <button onclick="clearFoundationConsole()" class="text-xs text-slate-500 hover:text-slate-300">Clear</button>
+                        </h2>
+                        <pre id="foundation-console" class="bg-slate-950/80 border border-slate-800/80 rounded-xl p-4 font-mono text-xs text-slate-400 h-64 overflow-y-auto whitespace-pre-wrap">Console ready. Click a control action to run scripts...</pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SECTION 4: WORKSPACES -->

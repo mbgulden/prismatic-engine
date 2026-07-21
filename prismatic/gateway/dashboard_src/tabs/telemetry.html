@@ -1,0 +1,170 @@
+        <div id="section-telemetry" class="hidden space-y-6">
+            <!-- Stats Cards Grid -->
+            <section class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4">
+                <!-- Received -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Received</span>
+                    <span id="stat-received" class="text-2xl font-bold text-cyan-400 mt-2">0</span>
+                </div>
+                <!-- Auth Failed -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Auth Failures</span>
+                    <span id="stat-auth-failed" class="text-2xl font-bold text-red-400 mt-2">0</span>
+                </div>
+                <!-- Latency -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between min-h-[90px]">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Latency</span>
+                        <span class="text-[10px] text-slate-500 font-mono">ms</span>
+                    </div>
+                    <div class="flex items-end justify-between mt-2">
+                        <span id="stat-latency" class="text-2xl font-bold text-indigo-400 leading-none">0.0</span>
+                        <div id="latency-sparkline" class="flex items-end h-8 pb-1">
+                            <span class="text-[10px] text-slate-500 italic">No trend</span>
+                        </div>
+                    </div>
+                </div>
+                <!-- Pending -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-amber-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Pending</span>
+                    <span id="stat-pending" class="text-2xl font-bold text-amber-400 mt-2">0</span>
+                </div>
+                <!-- Processing -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-orange-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Processing</span>
+                    <span id="stat-processing" class="text-2xl font-bold text-orange-400 mt-2">0</span>
+                </div>
+                <!-- Completed -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-emerald-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Completed</span>
+                    <span id="stat-completed" class="text-2xl font-bold text-emerald-400 mt-2">0</span>
+                </div>
+                <!-- Failed -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-rose-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Failed</span>
+                    <span id="stat-failed" class="text-2xl font-bold text-rose-400 mt-2">0</span>
+                </div>
+                <!-- Consumer Recovery -->
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-violet-500 min-h-[90px]">
+                    <div class="flex items-center justify-between gap-2">
+                        <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Consumer Recovery</span>
+                        <span class="text-[10px] text-slate-500 font-mono">live / dlq</span>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 mt-2">
+                        <div>
+                            <div class="text-[10px] text-slate-500 uppercase tracking-wider">Live</div>
+                            <div id="stat-pool-live" class="text-lg font-bold text-violet-400 leading-none">0</div>
+                        </div>
+                        <div>
+                            <div class="text-[10px] text-slate-500 uppercase tracking-wider">DLQ</div>
+                            <div id="stat-pool-dlq" class="text-lg font-bold text-fuchsia-400 leading-none">0</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="glass-panel p-4 rounded-2xl mt-6">
+                <div class="flex items-center justify-between mb-3">
+                    <div>
+                        <h2 class="text-sm font-semibold text-slate-200 uppercase tracking-[0.18em]">Failure taxonomy</h2>
+                        <p class="text-xs text-slate-500 mt-1">Canonical labels for ingest, routing, execution, artifact, state-sync, label debt, and silent stalls.</p>
+                    </div>
+                    <span class="text-[10px] uppercase tracking-wider text-slate-500">Shared across monitor + dashboard</span>
+                </div>
+                <div id="failure-taxonomy-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3"></div>
+            </section>
+
+            <!-- Two Columns Layout -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- Left Column: Dispatcher Control Panel -->
+                <div class="space-y-6">
+                    <!-- Dispatcher Control -->
+                    <div class="glass-panel p-5 rounded-xl space-y-4">
+                        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-2 flex justify-between items-center">
+                            <span>Dispatcher Control</span>
+                            <span id="dispatcher-loader" class="hidden w-4 h-4 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin"></span>
+                        </h2>
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm text-slate-400">Loop Status</span>
+                            <div id="disp-status-badge" class="flex items-center space-x-1.5 bg-slate-800 px-2.5 py-1 rounded-full text-xs font-bold text-slate-400">
+                                <span id="disp-status-dot" class="w-2 h-2 rounded-full bg-slate-500"></span>
+                                <span id="disp-status-text">OFFLINE</span>
+                            </div>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm text-slate-400">Total Cycles</span>
+                            <span id="disp-cycle" class="text-sm font-bold text-slate-200">0</span>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm text-slate-400">Last Active</span>
+                            <span id="disp-last-active" class="text-xs text-slate-500">Never</span>
+                        </div>
+                        <div id="disp-stall-alert" class="hidden rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-300">
+                            Dispatcher stall alert
+                        </div>
+                        <!-- Control Actions -->
+                        <div class="grid grid-cols-3 gap-2 pt-2">
+                            <button onclick="controlDispatcher('start')" class="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 hover:border-emerald-500/50 py-2 rounded-lg text-[10px] sm:text-xs font-bold transition duration-150 uppercase tracking-wider flex items-center justify-center min-h-[36px]">
+                                Start
+                            </button>
+                            <button onclick="controlDispatcher('stop')" class="bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 hover:border-rose-500/50 py-2 rounded-lg text-[10px] sm:text-xs font-bold transition duration-150 uppercase tracking-wider flex items-center justify-center min-h-[36px]">
+                                Stop
+                            </button>
+                            <button onclick="controlDispatcher('restart')" class="bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 hover:border-indigo-500/50 py-2 rounded-lg text-[10px] sm:text-xs font-bold transition duration-150 uppercase tracking-wider flex items-center justify-center min-h-[36px]">
+                                Restart
+                            </button>
+                        </div>
+                        <div class="space-y-1.5 pt-2">
+                            <span class="text-sm text-slate-400 block mb-1">Active Swarm Delegates</span>
+                            <div id="disp-agents" class="flex flex-wrap gap-1.5">
+                                <span class="text-xs text-slate-600 italic">None active</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right Column: Queue History Table -->
+                <div class="lg:col-span-2 glass-panel p-5 rounded-xl space-y-4 flex flex-col justify-between">
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-800 pb-3 gap-3">
+                        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider">
+                            Webhook Ingestion Queue
+                        </h2>
+                        <div class="flex items-center space-x-3 w-full sm:w-auto">
+                            <!-- Search Box -->
+                            <div class="relative flex-grow sm:flex-grow-0">
+                                <input type="text" id="search-input" oninput="filterQueue()" placeholder="Search queue..." class="bg-slate-950/60 text-slate-200 border border-slate-800/80 px-3 py-1.5 pl-8 rounded-lg text-xs font-medium w-full sm:w-48 focus:outline-none focus:border-indigo-500 transition duration-150">
+                                <svg class="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+                            </div>
+                            <span id="queue-total-badge" class="bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2.5 py-1 rounded-lg text-xs font-bold whitespace-nowrap">0 total</span>
+                        </div>
+                    </div>
+                    <div id="queue-contract-summary" data-marker="LINEAR_WEBHOOK_QUEUE_ACTIVE_OK" class="text-[11px] text-slate-500 bg-slate-950/40 border border-slate-800/60 rounded-lg px-3 py-2">
+                        source = linear_webhook_queue.db · latest event: — · last drain: never_run
+                    </div>
+
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left text-sm border-collapse">
+                            <thead>
+                                <tr class="border-b border-slate-800 text-slate-500 text-xs font-bold uppercase tracking-wider">
+                                    <th class="py-2.5 px-3">Ref</th>
+                                    <th class="py-2.5 px-3">Agent</th>
+                                    <th class="py-2.5 px-3">Action</th>
+                                    <th class="py-2.5 px-3">Status</th>
+                                    <th class="py-2.5 px-3">Queued At</th>
+                                    <th class="py-2.5 px-3 text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="queue-tbody" class="divide-y divide-slate-800/30">
+                                <tr>
+                                    <td colspan="6" class="py-8 text-center text-slate-500 italic">
+                                        Loading queue items...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SECTION 3: MERGE PIPELINE -->
