@@ -22,6 +22,7 @@ prismatic_state/
 /tmp/prismatic/
 /tmp/pipeline_metrics.jsonl
 RESULT.md
+reports/credential_scan.log
 
 # Config overrides
 config.local.yaml

@@ -91,6 +91,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     crons.add_argument("args", nargs=argparse.REMAINDER)
 
+    merge_factory = subparsers.add_parser(
+        "merge-factory",
+        help="Merge factory admission, leases, locks, and judge attestation commands",
+    )
+    merge_factory.add_argument("args", nargs=argparse.REMAINDER)
+
     return parser
 
 
@@ -162,6 +168,11 @@ def run(argv: Sequence[str] | None = None) -> int:
         from prismatic.core_crons import cli as crons_cli
 
         return int(crons_cli(args.args) or 0)
+
+    if args.command == "merge-factory":
+        from prismatic.cli.merge_factory import main as merge_factory_cli_main
+
+        return int(merge_factory_cli_main(args.args) or 0)
 
     parser.print_help()
     return 0

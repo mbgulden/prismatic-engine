@@ -580,6 +580,9 @@ def test_agy_print_mode_wrapper_records_skill_packs_and_forces_blocked_packet(
     monkeypatch.setenv("PRISMATIC_AGENT_RUN_LOG_DIR", str(run_dir))
     monkeypatch.setenv("PRISMATIC_AGY_USE_SYSTEMD_SCOPE", "0")
     monkeypatch.setenv("PRISMATIC_AGY_FORCE_PACKET_WRAPPER", "1")
+    from prismatic.providers.github import GitHubProvider
+
+    monkeypatch.setattr(GitHubProvider, "has_credentials", lambda self: True)
     monkeypatch.setattr(dispatcher, "AGY_PATH", str(fake_agy))
 
     proc = dispatcher.launch_agy(
