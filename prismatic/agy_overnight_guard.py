@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -216,20 +217,48 @@ def evaluate_overnight_readiness(
     warnings: list[str] = []
     store = AgyOvernightGuardStore(db_path)
     paused = store.operator_pause() if operator_pause is None else bool(operator_pause)
-    previous_failed = store.has_unresolved_failure() if unresolved_previous_failure is None else bool(unresolved_previous_failure)
+    previous_failed = (
+        store.has_unresolved_failure()
+        if unresolved_previous_failure is None
+        else bool(unresolved_previous_failure)
+    )
 
     latest_cw = _latest_completed_work_row()
     latest_backlog = _latest_merge_backlog_item()
-    verify_payload = _verify_latest_backlog(latest_backlog.completed_work_id if latest_backlog else None)
+    verify_payload = _verify_latest_backlog(
+        latest_backlog.completed_work_id if latest_backlog else None
+    )
 
-    inferred_ingestion = latest_cw is not None and latest_cw.ingestion_marker == "AGY_COMPLETED_WORK_INGESTION_OK"
-    inferred_backlog = latest_backlog is not None and "AGY_CLEAN_PR_CREATE_UPDATE_OK" in set(getattr(latest_backlog, "markers", ()))
-    inferred_verify = bool(verify_payload and verify_payload.get("verification_gate") == "pass")
+    inferred_ingestion = (
+        latest_cw is not None
+        and latest_cw.ingestion_marker == "AGY_COMPLETED_WORK_INGESTION_OK"
+    )
+    inferred_backlog = (
+        latest_backlog is not None
+        and "AGY_CLEAN_PR_CREATE_UPDATE_OK"
+        in set(getattr(latest_backlog, "markers", ()))
+    )
+    inferred_verify = bool(
+        verify_payload and verify_payload.get("verification_gate") == "pass"
+    )
 
-    ingestion_ok = inferred_ingestion if ingestion_healthy is None else bool(ingestion_healthy)
-    backlog_ok = inferred_backlog if merge_backlog_healthy is None else bool(merge_backlog_healthy)
-    verify_ok = inferred_verify if verification_gate_healthy is None else bool(verification_gate_healthy)
-    one_task_marker = _one_task_success_marker(latest_cw, latest_backlog, verify_payload)
+    ingestion_ok = (
+        inferred_ingestion if ingestion_healthy is None else bool(ingestion_healthy)
+    )
+    backlog_ok = (
+        inferred_backlog
+        if merge_backlog_healthy is None
+        else bool(merge_backlog_healthy)
+    )
+    verify_ok = (
+        inferred_verify
+        if verification_gate_healthy is None
+        else bool(verification_gate_healthy)
+    )
+    one_task_marker = _one_task_success_marker(
+        latest_cw, latest_backlog, verify_payload
+    )
+    evidence_blockers = _durable_evidence_blockers(latest_cw)
 
     if paused:
         blockers.append("operator pause is active")
@@ -241,8 +270,12 @@ def evaluate_overnight_readiness(
         blockers.append("merge backlog unavailable or latest row missing")
     if policy.requires_verification_gate_healthy and not verify_ok:
         blockers.append("verification gate unavailable or latest row not passing")
-    if policy.requires_one_task_success and one_task_marker not in {"AGY_AUTOPILOT_ONE_TASK_DRY_RUN_OK", "AGY_LIMITED_OVERNIGHT_DRY_RUN_OK"}:
+    if policy.requires_one_task_success and one_task_marker not in {
+        "AGY_AUTOPILOT_ONE_TASK_DRY_RUN_OK",
+        "AGY_LIMITED_OVERNIGHT_DRY_RUN_OK",
+    }:
         blockers.append("latest one-task AGY proof missing")
+    blockers.extend(evidence_blockers)
     if auto_merge or policy.auto_merge_enabled:
         blockers.append("auto_merge=true is forbidden")
     if production_deploy or policy.production_deploy_enabled:
@@ -254,8 +287,12 @@ def evaluate_overnight_readiness(
     if max_tasks < 1:
         blockers.append("max_tasks must be at least 1")
     if max_tasks > min(policy.max_tasks_per_run, MAX_TASKS_CAP):
-        blockers.append(f"max_tasks exceeds allowed cap {min(policy.max_tasks_per_run, MAX_TASKS_CAP)}")
-    unknown = [agent for agent in requested_agents if agent not in policy.allowed_agents]
+        blockers.append(
+            f"max_tasks exceeds allowed cap {min(policy.max_tasks_per_run, MAX_TASKS_CAP)}"
+        )
+    unknown = [
+        agent for agent in requested_agents if agent not in policy.allowed_agents
+    ]
     if unknown:
         blockers.append(f"unknown or disabled agent requested: {', '.join(unknown)}")
     if previous_failed:
@@ -275,7 +312,13 @@ def evaluate_overnight_readiness(
         state = "ready"
 
     allowed = state == "ready"
-    reason = "limited AGY overnight guard ready; no tasks launched" if allowed else blockers[0] if blockers else warnings[0]
+    reason = (
+        "limited AGY overnight guard ready; no tasks launched"
+        if allowed
+        else blockers[0]
+        if blockers
+        else warnings[0]
+    )
     return OvernightGuardDecision(
         allowed=allowed,
         readiness_state=state,
@@ -288,7 +331,9 @@ def evaluate_overnight_readiness(
         requested_max_tasks=max_tasks,
         latest_one_task_success_marker=one_task_marker,
         latest_completed_work_id=latest_cw.id if latest_cw else None,
-        latest_merge_backlog_id=latest_backlog.completed_work_id if latest_backlog else None,
+        latest_merge_backlog_id=latest_backlog.completed_work_id
+        if latest_backlog
+        else None,
         operator_pause=paused,
     )
 
@@ -358,14 +403,22 @@ class AgyOvernightGuardStore:
                 ("operator_pause", "true" if paused else "false", now),
             )
             conn.commit()
-        return {"operator_pause": paused, "updated_at": now, "marker": AGY_OVERNIGHT_READINESS_GUARD_MARKER}
+        return {
+            "operator_pause": paused,
+            "updated_at": now,
+            "marker": AGY_OVERNIGHT_READINESS_GUARD_MARKER,
+        }
 
     def _get_state(self, key: str, default: str) -> str:
         with self._connect() as conn:
-            row = conn.execute("SELECT value FROM overnight_guard_state WHERE key = ?", (key,)).fetchone()
+            row = conn.execute(
+                "SELECT value FROM overnight_guard_state WHERE key = ?", (key,)
+            ).fetchone()
         return default if row is None else str(row["value"])
 
-    def record_guard_decision(self, decision: OvernightGuardDecision) -> PersistedDecision:
+    def record_guard_decision(
+        self, decision: OvernightGuardDecision
+    ) -> PersistedDecision:
         payload = decision.as_dict()
         decision_id = _stable_id("agy-ogd", payload)
         created_at = _now()
@@ -416,7 +469,10 @@ class AgyOvernightGuardStore:
 
     def get_decision(self, decision_id: str) -> PersistedDecision:
         with self._connect() as conn:
-            row = conn.execute("SELECT * FROM overnight_guard_decisions WHERE guard_decision_id = ?", (decision_id,)).fetchone()
+            row = conn.execute(
+                "SELECT * FROM overnight_guard_decisions WHERE guard_decision_id = ?",
+                (decision_id,),
+            ).fetchone()
         if row is None:
             raise KeyError(decision_id)
         return _decision_from_row(row)
@@ -473,7 +529,10 @@ class AgyOvernightGuardStore:
 
     def get_run_attempt(self, run_attempt_id: str) -> OvernightRunAttempt:
         with self._connect() as conn:
-            row = conn.execute("SELECT * FROM overnight_run_attempts WHERE run_attempt_id = ?", (run_attempt_id,)).fetchone()
+            row = conn.execute(
+                "SELECT * FROM overnight_run_attempts WHERE run_attempt_id = ?",
+                (run_attempt_id,),
+            ).fetchone()
         if row is None:
             raise KeyError(run_attempt_id)
         return _run_from_row(row)
@@ -495,11 +554,15 @@ class AgyOvernightGuardStore:
         return bool(row and str(row["run_status"]) == "failed_unresolved")
 
 
-def record_guard_decision(decision: OvernightGuardDecision, *, db_path: str | Path | None = None) -> PersistedDecision:
+def record_guard_decision(
+    decision: OvernightGuardDecision, *, db_path: str | Path | None = None
+) -> PersistedDecision:
     return AgyOvernightGuardStore(db_path).record_guard_decision(decision)
 
 
-def list_guard_decisions(*, db_path: str | Path | None = None, limit: int = 20) -> list[PersistedDecision]:
+def list_guard_decisions(
+    *, db_path: str | Path | None = None, limit: int = 20
+) -> list[PersistedDecision]:
     return AgyOvernightGuardStore(db_path).list_guard_decisions(limit=limit)
 
 
@@ -523,11 +586,15 @@ def record_overnight_run_attempt(
     )
 
 
-def list_overnight_run_attempts(*, db_path: str | Path | None = None, limit: int = 20) -> list[OvernightRunAttempt]:
+def list_overnight_run_attempts(
+    *, db_path: str | Path | None = None, limit: int = 20
+) -> list[OvernightRunAttempt]:
     return AgyOvernightGuardStore(db_path).list_run_attempts(limit=limit)
 
 
-def set_operator_pause(paused: bool, *, db_path: str | Path | None = None) -> dict[str, Any]:
+def set_operator_pause(
+    paused: bool, *, db_path: str | Path | None = None
+) -> dict[str, Any]:
     return AgyOvernightGuardStore(db_path).set_operator_pause(paused)
 
 
@@ -541,6 +608,88 @@ def _latest_completed_work_row() -> Any | None:
     except Exception:
         return None
     return rows[0] if rows else None
+
+
+_COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+_MANIFEST_SHA_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _as_mapping(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _manifest_digest(manifest: Mapping[str, Any]) -> str:
+    body = dict(manifest)
+    body.pop("manifest_sha256", None)
+    return hashlib.sha256(
+        json.dumps(body, sort_keys=True, indent=2, default=str).encode("utf-8")
+    ).hexdigest()
+
+
+def _durable_evidence_blockers(latest_cw: Any | None) -> list[str]:
+    """Fail closed unless the latest completed-work row has retained proof evidence."""
+
+    if latest_cw is None:
+        return []
+
+    evidence = _as_mapping(getattr(latest_cw, "evidence_retention", None))
+    if not evidence:
+        return ["durable evidence retention status is unavailable"]
+
+    blockers: list[str] = []
+    status = str(evidence.get("status") or "unavailable")
+    manifest_sha = str(evidence.get("manifest_sha256") or "")
+    source_commit_sha = str(evidence.get("source_commit_sha") or "")
+    manifest_path_value = str(evidence.get("manifest_path") or "")
+
+    if status == "unavailable":
+        blockers.append("durable evidence retention status is unavailable")
+    elif status != "complete":
+        blockers.append(f"durable evidence retention status is {status}")
+
+    if not bool(evidence.get("proof_log_retained")):
+        blockers.append("durable proof log was not retained")
+    if not _COMMIT_SHA_RE.fullmatch(source_commit_sha):
+        blockers.append("validated source commit identity missing")
+    if not _MANIFEST_SHA_RE.fullmatch(manifest_sha):
+        blockers.append("durable evidence manifest checksum missing or invalid")
+
+    if not manifest_path_value:
+        blockers.append("durable evidence manifest path missing")
+        return blockers
+
+    manifest_path = Path(manifest_path_value)
+    if not manifest_path.is_file():
+        blockers.append("durable evidence manifest file missing")
+        return blockers
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception:
+        blockers.append("durable evidence manifest is unreadable")
+        return blockers
+    if not isinstance(manifest, Mapping):
+        blockers.append("durable evidence manifest is invalid")
+        return blockers
+
+    manifest_recorded_sha = str(manifest.get("manifest_sha256") or "")
+    if manifest_recorded_sha != manifest_sha:
+        blockers.append("durable evidence manifest checksum mismatches read model")
+    if (
+        _MANIFEST_SHA_RE.fullmatch(manifest_sha)
+        and _manifest_digest(manifest) != manifest_sha
+    ):
+        blockers.append("durable evidence manifest checksum verification failed")
+    if str(manifest.get("retention_status") or "") != status:
+        blockers.append("durable evidence manifest status mismatches read model")
+    if str(manifest.get("source_commit_sha") or "") != source_commit_sha:
+        blockers.append("durable evidence manifest source commit mismatches read model")
+
+    retained_proof = str(manifest.get("retained_proof_log_path") or "")
+    if not retained_proof or not Path(retained_proof).is_file():
+        blockers.append("retained proof log is missing")
+
+    return blockers
 
 
 def _latest_merge_backlog_item() -> Any | None:
@@ -560,12 +709,20 @@ def _verify_latest_backlog(completed_work_id: str | None) -> dict[str, Any] | No
         return None
 
 
-def _one_task_success_marker(latest_cw: Any | None, latest_backlog: Any | None, verify_payload: Mapping[str, Any] | None) -> str | None:
+def _one_task_success_marker(
+    latest_cw: Any | None,
+    latest_backlog: Any | None,
+    verify_payload: Mapping[str, Any] | None,
+) -> str | None:
     if not latest_cw or not latest_backlog or not verify_payload:
         return None
-    packet: Mapping[str, Any] = latest_cw.packet if isinstance(latest_cw.packet, Mapping) else {}
+    packet: Mapping[str, Any] = (
+        latest_cw.packet if isinstance(latest_cw.packet, Mapping) else {}
+    )
     raw_normalization = packet.get("normalization")
-    normalization: Mapping[str, Any] = raw_normalization if isinstance(raw_normalization, Mapping) else {}
+    normalization: Mapping[str, Any] = (
+        raw_normalization if isinstance(raw_normalization, Mapping) else {}
+    )
     if packet.get("marker") == "AGY_LIMITED_OVERNIGHT_DRY_RUN_PACKET_OK" and (
         latest_cw.classification == "merge_ready"
         and latest_cw.agent == "agy"
@@ -580,7 +737,10 @@ def _one_task_success_marker(latest_cw: Any | None, latest_backlog: Any | None, 
         latest_cw.classification == "merge_ready"
         and latest_cw.agent == "agy"
         and latest_cw.proof_result == "PASS"
-        and normalization.get("marker") == "AGY_RESULT_PACKET_NORMALIZED_OK"
+        and (
+            normalization.get("marker") == "AGY_RESULT_PACKET_NORMALIZED_OK"
+            or packet.get("marker") == "AGY_TASK_RESULT_PACKET_OK"
+        )
         and latest_backlog.recommended_action == "open_or_update_pr"
         and latest_backlog.verification_gate == "pass"
         and latest_backlog.eligible_for_auto_merge is False
@@ -619,7 +779,9 @@ def _run_from_row(row: sqlite3.Row) -> OvernightRunAttempt:
 
 
 def _stable_id(prefix: str, payload: Mapping[str, Any]) -> str:
-    digest = hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()[:16]
+    digest = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()[:16]
     return f"{prefix}-{digest}"
 
 

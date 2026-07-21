@@ -565,6 +565,47 @@
                 </div>
             </section>
 
+            <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-violet-500/80 shadow-lg shadow-violet-950/10" data-proof-marker="agy-overnight-guard-card">
+                <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <h2 class="text-sm font-bold text-slate-200 uppercase tracking-[0.18em]">AGY Overnight Evidence Readiness</h2>
+                            <span id="overnight-guard-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-slate-700 bg-slate-800 text-slate-300">Checking</span>
+                        </div>
+                        <p class="text-xs text-slate-500">Evidence-aware guardrail only. It reads retained proof and policy state; it never launches AGY tasks.</p>
+                    </div>
+                    <div class="text-[11px] text-slate-400 font-mono" id="overnight-guard-marker">AGY_OVERNIGHT_READINESS_GUARD_OK</div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mt-4 text-xs">
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Readiness</div>
+                        <div id="overnight-guard-state" class="mt-1 font-semibold text-slate-100">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Evidence</div>
+                        <div id="overnight-guard-evidence" class="mt-1 text-[11px] text-slate-300">Awaiting retained proof</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Safety flags</div>
+                        <div id="overnight-guard-safety" class="mt-1 text-[11px] text-slate-300">auto-merge=false · deploy=false</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Tasks launched</div>
+                        <div id="overnight-guard-tasks" class="mt-1 text-[11px] text-slate-300">0</div>
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3 text-xs">
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Latest proof / blockers</div>
+                        <div id="overnight-guard-blockers" class="mt-1 text-[11px] text-slate-400 break-words">Awaiting guard readback</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Next safe action</div>
+                        <div id="overnight-guard-next" class="mt-1 text-[11px] text-slate-400">No overnight run active</div>
+                    </div>
+                </div>
+            </section>
+
             <!-- Morning Briefing Card (Overnight Report) -->
             <section id="morning-briefing-card" class="glass-panel p-5 rounded-2xl border-l-2 border-l-indigo-500/80 shadow-lg shadow-indigo-950/10 space-y-4">
                 <div class="flex items-center justify-between border-b border-slate-800/80 pb-3">
@@ -2594,6 +2635,7 @@
                 await fetchRealExecutorArmingGate();
                 await fetchRawAgentOutputQueue();
                 await fetchMergeBacklog();
+                await fetchOvernightGuard();
                 await fetchMorningBriefing();
             } else if (activeTab === 'merge') {
                 await fetchMergeData();
@@ -3824,6 +3866,51 @@
                 if (status) status.textContent = String(err?.message || err || "Gateway unavailable");
             } finally {
                 if (button) button.disabled = false;
+            }
+        }
+
+        async function fetchOvernightGuard() {
+            const badge = document.getElementById("overnight-guard-badge");
+            const marker = document.getElementById("overnight-guard-marker");
+            const state = document.getElementById("overnight-guard-state");
+            const evidence = document.getElementById("overnight-guard-evidence");
+            const safety = document.getElementById("overnight-guard-safety");
+            const tasks = document.getElementById("overnight-guard-tasks");
+            const blockers = document.getElementById("overnight-guard-blockers");
+            const next = document.getElementById("overnight-guard-next");
+            try {
+                const res = await fetch(`${API_PREFIX}/agy/overnight-guard`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const guard = data.guard || {};
+                const policy = guard.policy || {};
+                const issues = (guard.blockers || []).concat(guard.warnings || []);
+                const isReady = guard.readiness_state === "ready" && issues.length === 0;
+                const isPaused = guard.readiness_state === "paused";
+                if (badge) {
+                    badge.textContent = isReady ? "Ready" : (isPaused ? "Paused" : "Blocked");
+                    badge.className = `px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${isReady ? 'border-violet-500/20 bg-violet-500/10 text-violet-300' : (isPaused ? 'border-amber-500/20 bg-amber-500/10 text-amber-300' : 'border-rose-500/20 bg-rose-500/10 text-rose-300')}`;
+                }
+                if (marker) marker.textContent = data.marker || "AGY_OVERNIGHT_READINESS_GUARD_OK";
+                if (state) state.textContent = guard.readiness_state || "unknown";
+                const issueSummary = issues.join(" · ");
+                if (evidence) evidence.textContent = isReady ? "complete retained proof" : (issueSummary || "not ready");
+                if (safety) safety.textContent = `auto-merge=${policy.auto_merge_enabled === true} · deploy=${policy.production_deploy_enabled === true} · PR=${policy.real_github_pr_create_enabled === true}`;
+                if (tasks) tasks.textContent = String(data.tasks_launched ?? 0);
+                if (blockers) blockers.textContent = issues.length ? `${guard.latest_one_task_success_marker || "no marker"} · ${issueSummary}` : (guard.latest_one_task_success_marker || "AGY one-task proof present");
+                if (next) next.textContent = guard.next_safe_action || "No overnight run active";
+            } catch (err) {
+                console.error("Error loading AGY overnight guard:", err);
+                if (badge) {
+                    badge.textContent = "Unavailable";
+                    badge.className = "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-rose-500/20 bg-rose-500/10 text-rose-300";
+                }
+                if (state) state.textContent = "unavailable";
+                if (evidence) evidence.textContent = "API unavailable";
+                if (safety) safety.textContent = "auto-merge=false · deploy=false · PR=false";
+                if (tasks) tasks.textContent = "0";
+                if (blockers) blockers.textContent = String(err?.message || err || "Gateway unavailable");
+                if (next) next.textContent = "Restore guard API before any overnight run";
             }
         }
 
