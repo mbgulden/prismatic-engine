@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -16,9 +17,11 @@ BUILT_CSS = ROOT / "prismatic" / "gateway" / "static" / "dashboard.css"
 def test_dashboard_uses_built_css_instead_of_tailwind_runtime():
     source = SOURCE_HEAD.read_text()
     generated = GENERATED_DASHBOARD.read_text()
+    css_hash = hashlib.sha256(BUILT_CSS.read_bytes()).hexdigest()[:12]
 
-    assert 'href="/static/dashboard.css"' in source
-    assert 'href="/static/dashboard.css"' in generated
+    assert 'href="/static/dashboard.css?v=__DASHBOARD_CSS_HASH__"' in source
+    assert f'href="/static/dashboard.css?v={css_hash}"' in generated
+    assert "__DASHBOARD_CSS_HASH__" not in generated
     assert "cdn.tailwindcss.com" not in source
     assert "cdn.tailwindcss.com" not in generated
 
@@ -46,11 +49,12 @@ def test_gateway_serves_cacheable_built_dashboard_css():
 
 def test_dashboard_root_references_local_asset_only():
     client = TestClient(app)
+    css_hash = hashlib.sha256(BUILT_CSS.read_bytes()).hexdigest()[:12]
 
     response = client.get("/")
 
     assert response.status_code == 200
-    assert 'href="/static/dashboard.css"' in response.text
+    assert f'href="/static/dashboard.css?v={css_hash}"' in response.text
     assert "cdn.tailwindcss.com" not in response.text
 
 
