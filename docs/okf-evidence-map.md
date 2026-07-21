@@ -1,5 +1,11 @@
 # OKF evidence map
 
+**Status:** Canonical human view
+**Owner:** Prismatic Engine maintainers
+**Machine-readable registry:** `okf/index.yaml`
+
+The registry is the validation input; this document is the operator-readable explanation. If they conflict, validation fails and the discrepancy must be resolved rather than silently choosing one.
+
 ## Purpose
 
 This document closes the OKF documentation gap for Prismatic Engine public-launch and plugin-governance work where the infrastructure already exists but the objective/key-result/function/evidence framing was scattered across docs, scripts, dashboard markers, and audit reports.
@@ -23,6 +29,15 @@ If a workflow exists in PE Core, it should have:
 5. owner boundary,
 6. risk/policy note,
 7. current surface and target dashboard surface.
+
+## Verification Engine OKF map
+
+| Objective | Key result | Function/workflow | Evidence | System of record | Current surface |
+|---|---|---|---|---|---|
+| Agent output is accepted only with independent evidence | Reviewed SHA equals PR head; required proof classes pass | Merge Factory admission, lease, lock, and judge attestation | exact-SHA review, canonical CI, installed-artifact and post-merge proof | Git/GitHub + Merge Factory attestations | CLI/API/CI |
+| Orchestration remains correct under replay and contention | cap is never exceeded; stale holders cannot mutate | atomic leases, fencing, idempotent cohort, recovery drills | barrier/race/adversarial tests and retained recovery evidence | durable orchestration stores | CLI/API |
+| Verification remains effective | planted faults are detected and stale policies are surfaced | meta-verification maintenance loop | seeded-fault detection and verifier-drift reports | verification evidence ledger | CI/operations |
+| Agent speed remains sustainable | accepted value rises without hidden debt | quality/debt maintenance loop | escaped defects, rollback, rework, evidence latency, 30/90/180-day burden | versioned quality/incident metrics | reports/dashboard target |
 
 ## Public-launch OKF map
 
@@ -66,7 +81,7 @@ If a workflow exists in PE Core, it should have:
 
 | Objective | Key result | Function/workflow | Evidence | Current surface | Target dashboard surface |
 |---|---|---|---|---|---|
-| Dashboard becomes source of truth | Dashboard mirrors jobs/artifacts/audit events from headless runs | dashboard Plugins tab | dashboard markers + visual QA | dashboard/API | Dashboard-first command center |
+| Dashboard becomes the authoritative operator view | Dashboard mirrors durable jobs/artifacts/audit events without inventing live state | dashboard Plugins tab | dashboard markers + visual QA | dashboard/API | Dashboard-first command center |
 | Users need fewer shell commands | Common diagnostics can be launched from UI | future diagnostic job actions | public/security/release smoke outputs | CLI today | Dashboard diagnostic runner |
 | Approvals are contextual | UI shows policy reason, risk, affected job/artifact, and audit trail before approval | approval controls + policy detail | dashboard markers/tests | dashboard basic controls | Rich approval workflow |
 | Telegram remains useful but secondary | Telegram sends urgent alerts that link to dashboard records | Telegram adapter/future notification center | message + dashboard link | Telegram/headless | Dashboard notification center + Telegram fallback |

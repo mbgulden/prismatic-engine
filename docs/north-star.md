@@ -1,5 +1,11 @@
 # Prismatic Engine North Star
 
+**Status:** Canonical
+**Owner:** Prismatic Engine maintainers
+**Governing principle:** **Don’t trust, Verify.**
+
+Prismatic treats generation as a proposal and verified evidence as completion. The engine must guide work with executable constraints, independently verify exact artifacts and state transitions, solve findings without weakening gates, and preserve enough knowledge for future humans and agents to understand why the system exists and how it remains safe.
+
 ## One-sentence North Star
 
 Prismatic Engine lets a user install the engine, get immediate value, attach governed capabilities as needed, operate them visibly from the dashboard, and detach them without losing state, artifacts, provenance, or audit history.
@@ -72,7 +78,7 @@ Dashboard-first does **not** mean removing Telegram. Telegram remains useful for
 - human steering when away from the dashboard
 - compact summaries of completed or blocked runs
 
-But the dashboard should become the durable source of truth for:
+The dashboard should become the authoritative operator view, backed by durable systems of record, for:
 
 - plugin catalog and connection state
 - job creation and lifecycle control

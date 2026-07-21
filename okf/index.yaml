@@ -1,0 +1,109 @@
+{
+  "schema_version": "1.0.0",
+  "status": "canonical",
+  "owner": "Prismatic Engine maintainers",
+  "governing_principle": "Don't trust, Verify",
+  "objectives": [
+    {
+      "id": "verified-agent-output",
+      "objective": "Agent proposals become accepted work only through exact-artifact independent evidence.",
+      "owner": "merge judge",
+      "system_of_record": "Merge Factory attestations + Git/GitHub",
+      "key_results": [
+        "reviewed SHA equals PR head at merge",
+        "all required proof classes report scope and non-claims",
+        "producer completion never self-authorizes merge"
+      ],
+      "functions": [
+        "prismatic/core/merge_factory.py",
+        "prismatic/api/routers/merge_factory.py"
+      ],
+      "evidence": [
+        "tests/test_merge_factory.py",
+        "docs/contracts/verification-contract.md"
+      ],
+      "current_surface": "API/CLI/CI",
+      "review_after": "2026-10-21"
+    },
+    {
+      "id": "systemic-orchestration-correctness",
+      "objective": "Long-running orchestration remains safe under contention, replay, timeout, and recovery.",
+      "owner": "Prismatic Engine maintainers",
+      "system_of_record": "durable state stores and event/lease records",
+      "key_results": [
+        "active leases never exceed cap",
+        "stale holders cannot mutate",
+        "recovery and rollback drills produce retained evidence"
+      ],
+      "functions": [
+        "prismatic/core/merge_factory.py"
+      ],
+      "evidence": [
+        "scripts/run_merge_factory_probes.py",
+        "tests/test_merge_factory.py",
+        "docs/architecture/verification-engine.md"
+      ],
+      "current_surface": "API/CLI",
+      "review_after": "2026-10-21"
+    },
+    {
+      "id": "canonical-knowledge",
+      "objective": "Operators and agents resolve why, what, ownership, and proof from one precedence-controlled documentation plane.",
+      "owner": "Prismatic Engine maintainers",
+      "system_of_record": "docs/index.md + okf/index.yaml + accepted ADRs",
+      "key_results": [
+        "all canonical paths validate",
+        "no canonical hardcoded workstation path",
+        "superseded sources point to a live replacement"
+      ],
+      "functions": [
+        "scripts/validate_okf_docs.py"
+      ],
+      "evidence": [
+        "tests/test_okf_docs.py",
+        "docs/decisions/ADR-0001-documentation-source-of-truth.md"
+      ],
+      "current_surface": "docs/CI",
+      "review_after": "2026-10-21"
+    },
+    {
+      "id": "sustainable-maintainability",
+      "objective": "Agent velocity improves accepted value without compounding hidden maintenance debt.",
+      "owner": "Prismatic Engine maintainers",
+      "system_of_record": "versioned quality, incident, rollback, and evidence metrics",
+      "key_results": [
+        "track verified completion rather than generated LOC",
+        "track escaped defects, rework, rollback, evidence latency, and maintenance burden",
+        "quality regressions create bounded remediation work"
+      ],
+      "functions": [
+        "docs/architecture/verification-engine.md"
+      ],
+      "evidence": [
+        "docs/research/verifiers-are-king-evidence-review.md"
+      ],
+      "current_surface": "documentation; instrumentation pending",
+      "review_after": "2026-10-21"
+    },
+    {
+      "id": "authoritative-operator-view",
+      "objective": "Dashboard and chat show truthful state derived from durable stores.",
+      "owner": "gateway/dashboard maintainers",
+      "system_of_record": "plugin/job/artifact/audit and orchestration stores",
+      "key_results": [
+        "mock/sample states are labeled",
+        "operator views link to exact evidence",
+        "read models never overclaim deployment or live state"
+      ],
+      "functions": [
+        "prismatic/gateway/server.py"
+      ],
+      "evidence": [
+        "docs/okf-evidence-map.md",
+        "docs/governance/source-of-truth-order.md"
+      ],
+      "current_surface": "dashboard/API/Telegram",
+      "review_after": "2026-10-21"
+    }
+  ]
+}

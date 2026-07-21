@@ -1,5 +1,7 @@
 # GRO-3545 — post-publish audit verification
 
+> **Historical evidence — not current authority.** This verification remains useful lineage for its exact timestamp and revision only. Current precedence: `docs/index.md`; machine registry: `okf/index.yaml`.
+
 Issue: [GRO-3545](https://prismatic.growthwebdev.com/tab/tasks?issue=GRO-3545)  
 Repo: `mbgulden/prismatic-engine`  
 Verified by: Ned  

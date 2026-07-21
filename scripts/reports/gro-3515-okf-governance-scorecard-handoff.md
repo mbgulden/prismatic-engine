@@ -1,5 +1,7 @@
 # GRO-3515 — OKF Governance Scorecard Handoff
 
+> **Historical blocked handoff — not current authority.** Branch-only paths below were never established as canonical in this repository. Current precedence: `docs/index.md`; machine registry: `okf/index.yaml`.
+
 ## Status
 
 Ned implemented the requested OKF governance baseline locally, but the Prismatic Engine pre-push lane gate rejected the OKF files because Ned's push lane is limited to `scripts/`, `prismatic/`, and `plugins/`.
