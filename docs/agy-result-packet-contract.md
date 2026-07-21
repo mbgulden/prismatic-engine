@@ -26,7 +26,9 @@ Required:
 - `branch`: must be `feature/*`, matching current completed-work gate policy.
 - `base_branch`: `main` or `origin/main`.
 - `changed_files`: non-empty unique repo-relative paths.
-- `result_artifacts`: non-empty unique safe provenance artifact paths; arbitrary
+- `result_artifacts`: non-empty unique safe provenance artifact paths. Items may
+  be strings or object-shaped `{ "path": "..." }` entries; object-shaped entries
+  accept exactly the `path` key and reject any nested extras. Arbitrary
   `/tmp/...` paths are not accepted as raw source provenance.
 - `verification`: object with non-empty `commands`, `result`, `log_path`, and
   `ad_hoc_or_canonical`.

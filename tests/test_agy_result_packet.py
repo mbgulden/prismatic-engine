@@ -51,6 +51,18 @@ def errors_for(packet):
     return "\n".join(validate_packet(packet).errors)
 
 
+def schema_errors_for(packet):
+    schema = json.loads(
+        (
+            Path(__file__).resolve().parents[1]
+            / "schemas"
+            / "agy-result-packet.schema.json"
+        ).read_text(encoding="utf-8")
+    )
+    validator = Draft202012Validator(schema)
+    return sorted(validator.iter_errors(packet), key=lambda error: list(error.path))
+
+
 def test_valid_raw_result_packet_passes_without_pr_url():
     packet = valid_packet()
     result = validate_packet(packet)
@@ -116,20 +128,56 @@ def test_unknown_property_behavior_matches_json_schema():
     assert not py_result.ok
     assert "unknown field(s): unexpected" in errors_for(packet)
 
-    schema = json.loads(
-        (
-            Path(__file__).resolve().parents[1]
-            / "schemas"
-            / "agy-result-packet.schema.json"
-        ).read_text(encoding="utf-8")
-    )
-    assert schema["additionalProperties"] is False
-    validator = Draft202012Validator(schema)
-    schema_errors = sorted(
-        validator.iter_errors(packet), key=lambda error: list(error.path)
-    )
+    schema_errors = schema_errors_for(packet)
     assert schema_errors
     assert any("Additional properties" in error.message for error in schema_errors)
+
+
+def test_verification_unknown_property_behavior_matches_json_schema():
+    packet = valid_packet(verification={"unexpected": "nope"})
+    py_result = validate_packet(packet)
+    assert not py_result.ok
+    assert "verification contains unknown field(s): unexpected" in errors_for(packet)
+
+    schema_errors = schema_errors_for(packet)
+    assert schema_errors
+    assert any(
+        list(error.path) == ["verification"]
+        and "Additional properties" in error.message
+        for error in schema_errors
+    )
+
+
+def test_result_artifact_object_extra_key_behavior_matches_json_schema():
+    secret_value = "ghp_" + "1234567890abcdef" + "1234567890abcdef" + "1234"
+    packet = valid_packet(
+        result_artifacts=[
+            {
+                "path": str(
+                    Path.home()
+                    / ".prismatic"
+                    / "agy-results"
+                    / "GRO-3837"
+                    / "RESULT.md"
+                ),
+                "unexpected": secret_value,
+            }
+        ]
+    )
+    py_result = validate_packet(packet)
+    assert not py_result.ok
+    py_errors = errors_for(packet)
+    assert "result_artifacts object contains unknown key(s): unexpected" in py_errors
+    assert secret_value not in py_errors
+
+    schema_errors = schema_errors_for(packet)
+    assert schema_errors
+    assert any(
+        list(error.path) == ["result_artifacts", 0]
+        and "Additional properties" in suberror.message
+        for error in schema_errors
+        for suberror in error.context
+    )
 
 
 def test_next_action_blocked_cannot_be_merge_ready():

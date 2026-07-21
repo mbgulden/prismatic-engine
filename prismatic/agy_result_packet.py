@@ -54,6 +54,8 @@ RAW_PACKET_FIELDS = {
     "next_action",
     "marker",
 }
+RESULT_ARTIFACT_OBJECT_FIELDS = {"path"}
+VERIFICATION_FIELDS = {"commands", "result", "log_path", "ad_hoc_or_canonical"}
 REQUIRED_RAW_PACKET_FIELDS = RAW_PACKET_FIELDS - {
     "pr_url",
     "source_commit_sha",
@@ -189,17 +191,10 @@ def validate_packet(packet: Mapping[str, Any]) -> ValidationResult:
     if not isinstance(verification, Mapping):
         errors.append("verification must be an object")
         verification = {}
-    elif sorted(
-        set(verification) - {"commands", "result", "log_path", "ad_hoc_or_canonical"}
-    ):
+    elif sorted(set(verification) - VERIFICATION_FIELDS):
         errors.append(
             "verification contains unknown field(s): "
-            + ", ".join(
-                sorted(
-                    set(verification)
-                    - {"commands", "result", "log_path", "ad_hoc_or_canonical"}
-                )
-            )
+            + ", ".join(sorted(set(verification) - VERIFICATION_FIELDS))
         )
     commands = _string_list(
         verification.get("commands"), "verification.commands", errors, min_items=1
@@ -293,17 +288,20 @@ def _string_list(
     output: list[str] = []
     seen: set[str] = set()
     for item in value:
-        path_item = (
-            item.get("path")
-            if allow_object_paths and isinstance(item, Mapping)
-            else item
-        )
+        path_item = item
+        if allow_object_paths and isinstance(item, Mapping):
+            extra_keys = sorted(set(item) - RESULT_ARTIFACT_OBJECT_FIELDS)
+            if extra_keys:
+                errors.append(
+                    f"{field} object contains unknown key(s): " + ", ".join(extra_keys)
+                )
+            path_item = item.get("path")
         if not _non_empty_string(path_item):
             errors.append(f"{field} items must be non-empty strings")
             continue
         path_value = str(path_item)
         if path_value in seen:
-            errors.append(f"{field} contains duplicate value: {path_value}")
+            errors.append(f"{field} contains duplicate value")
         seen.add(path_value)
         output.append(path_value)
     return output
@@ -311,7 +309,7 @@ def _string_list(
 
 def _validate_repo_path(field: str, value: str, errors: list[str]) -> None:
     if value.startswith("/"):
-        errors.append(f"{field} must not be an absolute path: {value}")
+        errors.append(f"{field} must not be an absolute path")
     _validate_safe_path(field, value, errors)
 
 
@@ -320,9 +318,7 @@ def _validate_artifact_path(value: str, errors: list[str]) -> None:
     if value.startswith("/tmp/") and not value.startswith(home_prefix):
         errors.append("result_artifacts must not use arbitrary /tmp provenance paths")
     if value.startswith("/") and not value.startswith(str(Path.home()) + "/"):
-        errors.append(
-            f"result_artifacts absolute paths must stay under operator home: {value}"
-        )
+        errors.append("result_artifacts absolute paths must stay under operator home")
     _validate_safe_path("result_artifacts", value, errors)
 
 
@@ -331,23 +327,23 @@ def _validate_log_path(value: str, errors: list[str]) -> None:
         value.startswith("/tmp/") or value.startswith(str(Path.home()) + "/")
     ):
         errors.append(
-            f"verification.log_path absolute paths must stay under /tmp or operator home: {value}"
+            "verification.log_path absolute paths must stay under /tmp or operator home"
         )
     _validate_safe_path("verification.log_path", value, errors)
 
 
 def _validate_safe_path(field: str, value: str, errors: list[str]) -> None:
     if CONTROL_RE.search(value):
-        errors.append(f"{field} contains control characters: {value!r}")
+        errors.append(f"{field} contains control characters")
         return
     path = PurePosixPath(value)
     if ".." in path.parts:
-        errors.append(f"{field} must not contain traversal: {value}")
+        errors.append(f"{field} must not contain traversal")
     normalized = str(path).strip("/")
     if SECRET_PATH_RE.search(normalized):
-        errors.append(f"{field} contains secret-like path: {value}")
+        errors.append(f"{field} contains secret-like path")
     if JUNK_PATH_RE.search(normalized):
-        errors.append(f"{field} contains generated/vendor/cache path: {value}")
+        errors.append(f"{field} contains generated/vendor/cache path")
 
 
 def _reject_control_or_secret_values(
