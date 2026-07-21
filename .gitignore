@@ -31,4 +31,13 @@ scratch/
 node_modules/
 # Real env file (mirrors .env.template but with secrets) — never commit
 .env
+# Private credential material — keep outside the repository and inject by path/env.
+*.private-key.pem
+*.private.pem
+*.p12
+*.pfx
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
 # Keep .env.template committed; it is the portable schema reference.
