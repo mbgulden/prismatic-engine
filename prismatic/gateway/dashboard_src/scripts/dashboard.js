@@ -36,6 +36,60 @@
             return String(status || "unknown").replace(/_/g, " ").toUpperCase();
         }
 
+        function renderAgentGovernanceStatus(payload) {
+            const container = document.getElementById("agent-governance-status");
+            if (!container) return;
+            const agents = payload?.agents || [];
+            if (!agents.length) {
+                container.innerHTML = `<div class="text-slate-500 italic">No Kai/Fred governance packets found. No synthetic fallback rendered.</div>`;
+                return;
+            }
+            container.innerHTML = agents.map(agent => {
+                const blockedEffects = Object.entries(agent.side_effect_policy || {})
+                    .filter(([, allowed]) => !allowed)
+                    .map(([name]) => name)
+                    .join(", ") || "none";
+                const links = (agent.proof_links || []).slice(0, 3).map(link => {
+                    const href = String(link.href || "");
+                    const safeHref = href.startsWith("http") || href.startsWith("/") ? href : `file://${href}`;
+                    return `<a class="text-cyan-400 hover:text-cyan-300 underline decoration-cyan-500/30" href="${escapeHtml(safeHref)}" target="_blank" rel="noreferrer">${escapeHtml(link.label || 'proof')}</a>`;
+                }).join(" · ") || `<span class="text-slate-500">No proof link recorded</span>`;
+                const approvalGateCount = (agent.approval_gates || []).length;
+                const auditEventCount = (agent.audit_events || []).length;
+                const durability = agent.durability_status?.state || "unknown";
+                const portability = agent.portability_readiness?.state || "unknown";
+                return `
+                    <div class="rounded-xl border border-slate-800 bg-slate-950/60 p-3 space-y-2" data-agent-governance-row="${escapeHtml(agent.agent)}">
+                        <div class="flex items-center justify-between gap-2">
+                            <div class="font-bold text-slate-200 uppercase">${escapeHtml(agent.name || agent.agent)}</div>
+                            <span class="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border border-cyan-500/20 text-cyan-300 bg-cyan-500/10">${escapeHtml(agent.lane_status)}</span>
+                        </div>
+                        <div class="grid grid-cols-1 gap-1 font-mono text-[10px] text-slate-400">
+                            <div><span class="text-slate-500 uppercase">Current:</span> ${escapeHtml(agent.task_detail?.current_task || agent.current_task)}</div>
+                            <div><span class="text-slate-500 uppercase">Last:</span> ${escapeHtml(agent.task_detail?.last_task || agent.last_task)}</div>
+                            <div><span class="text-slate-500 uppercase">Audit:</span> ${escapeHtml(agent.audit_result)} · events ${escapeHtml(auditEventCount)}</div>
+                            <div><span class="text-slate-500 uppercase">Proof:</span> ${links} · ${escapeHtml(agent.proof_result)} · ${escapeHtml(agent.proof_marker)}</div>
+                            <div><span class="text-slate-500 uppercase">Approval Gates:</span> ${escapeHtml(approvalGateCount)} · blocked real effects: ${escapeHtml(blockedEffects)}</div>
+                            <div><span class="text-slate-500 uppercase">Durability:</span> ${escapeHtml(durability)} · <span class="text-slate-500 uppercase">Portability:</span> ${escapeHtml(portability)}</div>
+                            <div class="text-[9px] text-amber-300/80">${escapeHtml(agent.interim_source_label || payload.source || 'interim-source')}</div>
+                        </div>
+                    </div>
+                `;
+            }).join("");
+        }
+
+        async function loadAgentGovernanceStatus() {
+            const container = document.getElementById("agent-governance-status");
+            if (!container) return;
+            try {
+                const res = await fetch("/api/gateway/agents/governance-status");
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                renderAgentGovernanceStatus(await res.json());
+            } catch (err) {
+                container.innerHTML = `<div class="text-rose-400 italic">Agent governance status unavailable: ${escapeHtml(err.message || err)}</div>`;
+            }
+        }
+
         // Theme Management
         function toggleTheme() {
             const isLight = document.body.classList.toggle("light-mode");
@@ -1167,6 +1221,7 @@
                 console.error("Error loading live agent status:", err);
                 agentStatusCache = { agents: [], status_counts: {}, evidence: {}, source: "agent-status-error" };
             }
+            await loadAgentGovernanceStatus();
 
             // Activity Feed — live operational timeline from EventBus/run/recovery evidence.
             const actFeed = document.getElementById("dashboard-activity");
