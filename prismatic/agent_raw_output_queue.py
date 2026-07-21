@@ -43,6 +43,35 @@ def retention_max_rows() -> int:
 
 _SECRET_LOCATOR_RE = re.compile(r"(?i)(token|key|secret|password)=([^&#]+)")
 _URI_USERINFO_RE = re.compile(r"^([a-z][a-z0-9+.-]*://)[^/@]+@", re.IGNORECASE)
+_QUEUE_SECRET_ASSIGNMENT_RE = re.compile(
+    r"(?ix)"
+    r"(?:^|[\s{,;])"
+    r"[\"']?"
+    r"[A-Za-z0-9_.-]*"
+    r"(?:password|passwd|secret|token|api_key|apikey|access_key|private_key|credential)"
+    r"[A-Za-z0-9_.-]*"
+    r"[\"']?"
+    r"\s*(?:=|:)\s*"
+    r"[\"']?"
+    r"(?:\[REDACTED\]|[^\s,;&\"'}\]]+)"
+)
+_QUEUE_AUTHORIZATION_RE = re.compile(
+    r"(?ix)"
+    r"\bauthorization\b\s*(?:=|:)\s*"
+    r"(?:\[REDACTED\]\s*)?"
+    r"(?:bearer|basic)\s+[^\s,;&\"'}\]]+"
+)
+_QUEUE_URI_USERINFO_ANYWHERE_RE = re.compile(
+    r"(?i)\b[a-z][a-z0-9+.-]*://[^\s/@:]+:[^\s/@]+@"
+)
+_QUEUE_PROVIDER_SECRET_PATTERNS = (
+    re.compile(
+        r"(?i)\b(AWS_SECRET_ACCESS_KEY|GITHUB_TOKEN|LINEAR_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY)\b\s*[:=]"
+    ),
+    re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{20,}\b"),
+    re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
+    re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |)PRIVATE KEY-----"),
+)
 
 
 @dataclass(frozen=True)
@@ -390,6 +419,26 @@ def _safe_storage_text_and_result(
                 rerun_allowed=False,
             ),
         )
+    if _queue_contains_secret_like_content(raw_text):
+        return (
+            json.dumps(
+                {
+                    "raw_output_storage": "rejected",
+                    "reason": "secret_like_content_detected",
+                    "payload_sha256": hashlib.sha256(raw_bytes).hexdigest(),
+                    "payload_bytes": len(raw_bytes),
+                },
+                sort_keys=True,
+            ),
+            NormalizationResult(
+                status=NormalizationStatus.REJECTED_POLICY_VIOLATION,
+                normalized_packet=None,
+                canonical_packet_id=None,
+                rejection_reason="secret-like content detected in raw output",
+                repair_hint="secret_like_content_detected",
+                rerun_allowed=False,
+            ),
+        )
     result = normalize_agent_output(raw_text, expected_agent=expected_agent)
     if result.repair_hint == "secret_like_content_detected":
         return (
@@ -407,6 +456,16 @@ def _safe_storage_text_and_result(
     return raw_text, result
 
 
+def _queue_contains_secret_like_content(value: str) -> bool:
+    text = value or ""
+    return (
+        bool(_QUEUE_SECRET_ASSIGNMENT_RE.search(text))
+        or bool(_QUEUE_AUTHORIZATION_RE.search(text))
+        or bool(_QUEUE_URI_USERINFO_ANYWHERE_RE.search(text))
+        or any(pattern.search(text) for pattern in _QUEUE_PROVIDER_SECRET_PATTERNS)
+    )
+
+
 def _safe_artifact_locator(locator: str | None) -> str:
     value = str(locator or "").strip()
     if not value:
@@ -421,5 +480,12 @@ def _safe_artifact_locator(locator: str | None) -> str:
 def _chmod_private(path: Path, mode: int) -> None:
     try:
         path.chmod(mode)
-    except OSError:
-        pass
+    except OSError as exc:
+        raise PermissionError(
+            f"failed to set private mode {oct(mode)} on {path}"
+        ) from exc
+    actual = path.stat().st_mode & 0o777
+    if actual != mode:
+        raise PermissionError(
+            f"private mode verification failed for {path}: got {oct(actual)}, expected {oct(mode)}"
+        )
