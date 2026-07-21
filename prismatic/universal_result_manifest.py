@@ -19,9 +19,19 @@ from jsonschema import Draft202012Validator, FormatChecker
 UNIVERSAL_RESULT_MANIFEST_V2_MARKER = "UNIVERSAL_RESULT_MANIFEST_V2_OK"
 
 SECRET_VALUE_RE = re.compile(
-    r"(AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN (?:RSA |OPENSSH |EC |)PRIVATE KEY-----|bearer\s+[A-Za-z0-9._-]{20,})",
+    r"(AKIA[0-9A-Z]{16}"
+    r"|gh[pousr]_[A-Za-z0-9_]{20,}"
+    r"|xox[baprs]-[A-Za-z0-9-]{10,}"
+    r"|-----BEGIN (?:RSA |OPENSSH |EC |)PRIVATE KEY-----"
+    r"|bearer\s+[A-Za-z0-9._-]{20,}"
+    r"|sk-(?:proj-|or-v1-)?[A-Za-z0-9_-]{20,}"
+    r"|[a-zA-Z][a-zA-Z0-9+.-]*://[^/\s:@]+:[^/\s@]+@[^/\s]+"
+    r"|[a-zA-Z][a-zA-Z0-9+.-]*://[^/\s@]+@[^/\s]+"
+    r"|[^/\s:@]+:[^/\s@]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
+    r"|\b(?:api[_-]?key|client[_-]?secret|private[_-]?key|secret[_-]?key|access[_-]?token|passwd|password|credential|token)\b\s*[:=]\s*[\"']?[A-Za-z0-9._~+/-]{12,}[\"']?)",
     re.IGNORECASE,
 )
+
 
 RFC3339_REGEX = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$",
@@ -116,6 +126,26 @@ def is_safe_path(path: str) -> tuple[bool, str | None]:
     return True, None
 
 
+def _is_credential_key_name(name: str) -> bool:
+    normalized = name.lower().replace("_", "").replace("-", "")
+    credential_keywords = {
+        "apikey",
+        "password",
+        "passwd",
+        "token",
+        "secret",
+        "clientsecret",
+        "privatekey",
+        "secretkey",
+        "accesskey",
+        "accesstoken",
+        "authtoken",
+        "credential",
+        "credentials",
+    }
+    return any(kw in normalized for kw in credential_keywords)
+
+
 def find_secrets(val: Any, current_path: str = "root") -> list[str]:
     """Recursively search for credentials/secrets without retaining or printing the secret values."""
     found_errors = []
@@ -130,6 +160,15 @@ def find_secrets(val: Any, current_path: str = "root") -> list[str]:
             if SECRET_VALUE_RE.search(str(k)):
                 found_errors.append(
                     f"[{current_path} -> key:{sanitize_error_message(str(k))}] contains secret-like content [REDACTED_SECRET]"
+                )
+            # Check if key is a credential key name, and check if value is a credential-shaped string
+            if (
+                _is_credential_key_name(str(k))
+                and isinstance(v, str)
+                and len(v.strip()) >= 8
+            ):
+                found_errors.append(
+                    f"[{current_path} -> {k}] contains secret-like content [REDACTED_SECRET]"
                 )
             # Check value recursively
             found_errors.extend(find_secrets(v, f"{current_path} -> {k}"))
