@@ -73,8 +73,83 @@ def estimate_cost(issue_id: str, model: str, elapsed_sec: float) -> float:
     return round(max(0.001, estimated), 4)
 
 
-def publish_agent_completed(issue_id: str, payload: dict) -> None:
-    """Publish an agent.completed event to the durable SQLite bus.
+_FAILED_PACKET_VALUES = {"ABANDONED", "BLOCKED", "ERROR", "FAIL", "FAILED"}
+_EMPTY_CHANGED_FILE_VALUES = {"", "[]", "NONE", "NULL"}
+
+
+def assess_result_semantics(result_path: Path, *, minimum_size: int = 1024) -> dict:
+    """Fail closed when RESULT.md explicitly reports failure or missing work.
+
+    Completion markers and peer-review labels are transport signals, not proof
+    that the packet succeeded. This parser intentionally recognizes only
+    explicit failure declarations; richer packet validation remains downstream.
+    """
+    if not result_path.is_file():
+        return {
+            "exists": False,
+            "size": 0,
+            "passed": False,
+            "explicit_failure": False,
+            "reasons": ["result_missing"],
+        }
+
+    text = result_path.read_text(encoding="utf-8", errors="replace")
+    size = result_path.stat().st_size
+    reasons: list[str] = []
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip().replace("**", "").replace("`", "")
+        line = re.sub(r"^[*-]\s+", "", line).strip()
+        upper = line.upper()
+        if upper.startswith("# RESULT") and "ABANDONED" in upper:
+            reasons.append("status_abandoned")
+        if upper.startswith("## ERROR") or re.match(r"^ERROR\s*[:=]", upper):
+            reasons.append("explicit_error")
+        if upper.startswith("## MISSING ARTIFACTS"):
+            reasons.append("missing_artifacts")
+
+        match = re.match(r"^([A-Z][A-Z0-9_]*)\s*=\s*(.*?)\s*$", upper)
+        if not match:
+            continue
+        key, value = match.groups()
+        if key in {"RESULT", "STATUS"} and value in _FAILED_PACKET_VALUES:
+            reasons.append(f"{key.lower()}_{value.lower()}")
+        if key.endswith("_RESULT") and value in _FAILED_PACKET_VALUES:
+            reasons.append(f"verifier_{key.lower()}_{value.lower()}")
+        if key == "CHANGED_FILES" and value in _EMPTY_CHANGED_FILE_VALUES:
+            reasons.append("changed_files_empty")
+
+    reasons = list(dict.fromkeys(reasons))
+    if size < minimum_size:
+        reasons.append("result_too_small")
+    explicit_failure = any(reason != "result_too_small" for reason in reasons)
+    return {
+        "exists": True,
+        "size": size,
+        "passed": not reasons,
+        "explicit_failure": explicit_failure,
+        "reasons": reasons,
+    }
+
+
+def semantic_completion(result_path: Path, *, completion_signal: bool) -> dict:
+    """Bind completion signals to RESULT.md semantics."""
+    assessment = assess_result_semantics(result_path)
+    has_done = bool(completion_signal and assessment["passed"])
+    return {
+        **assessment,
+        "has_done": has_done,
+        "has_error": bool(assessment["explicit_failure"]),
+        "has_partial_result": bool(
+            assessment["exists"] and not has_done and not assessment["explicit_failure"]
+        ),
+    }
+
+
+def publish_agent_completed(
+    issue_id: str, payload: dict, *, topic: str = "agent.completed"
+) -> None:
+    """Publish a semantic result event to the durable SQLite bus.
 
     Bus path resolution (Jul 1 2026 — fixed split with consumer):
       1. PRISMATIC_BUS_DB env var if set (explicit override wins)
@@ -99,7 +174,7 @@ def publish_agent_completed(issue_id: str, payload: dict) -> None:
     max_events = int(os.environ.get("PRISMATIC_BUS_MAX_EVENTS", "10000"))
 
     event_dict = {
-        "type": "agent.completed",
+        "type": topic,
         "source": "supervisor",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "payload": payload
@@ -108,7 +183,7 @@ def publish_agent_completed(issue_id: str, payload: dict) -> None:
     lane = payload.get("lane", "default")
     worker_id = payload.get("worker_id", 0)
     attempt = payload.get("attempt", 1)
-    dedup_key = f"agent.completed:{issue_id}:{lane}:{worker_id}:{attempt}"
+    dedup_key = f"{topic}:{issue_id}:{lane}:{worker_id}:{attempt}"
 
     with _bus_sqlite_lock:
         conn = sqlite3.connect(str(db_path), timeout=5)
@@ -134,7 +209,7 @@ def publish_agent_completed(issue_id: str, payload: dict) -> None:
                 "INSERT OR IGNORE INTO events (dedup_key, topic, payload_json, ts) VALUES (?, ?, ?, ?)",
                 (
                     dedup_key,
-                    "agent.completed",
+                    topic,
                     json.dumps(event_dict, default=str),
                     time.time(),
                 ),
@@ -1205,7 +1280,6 @@ def run_agy_session(issue_id: str, sandbox: Path, task_path: Path, log_path: Pat
         log_content = log_path.read_text() if log_path.exists() else ""
         result_path = sandbox / "RESULT.md"
         has_result = result_path.exists()
-        has_valid_result = has_result and result_path.stat().st_size >= 1024
         lower_log = log_content.lower()
         has_self_review = (
             "self-review passed" in lower_log
@@ -1232,11 +1306,26 @@ def run_agy_session(issue_id: str, sandbox: Path, task_path: Path, log_path: Pat
             print(f"  [{issue_id}] Error fetching issue from Linear: {e}", flush=True)
 
         has_success_confirmed = has_result and has_peer_review_label
-        # RESULT.md alone is progress, not final completion. A zero exit with
-        # RESULT.md but no self-review/DONE is PARTIAL_RESULT.
-        # Self-review script is mandatory for final completion.
-        has_done = ("DONE:" in log_content and has_self_review and has_valid_result) or has_success_confirmed or done_found
-        has_partial_result = has_result and not has_done
+        # RESULT.md alone is progress, not final completion. Completion markers
+        # and peer-review labels remain transport signals until packet semantics
+        # pass fail-closed assessment.
+        completion_signal = (
+            ("DONE:" in log_content and has_self_review)
+            or has_success_confirmed
+            or done_found
+        )
+        result_semantics = semantic_completion(
+            result_path, completion_signal=completion_signal
+        )
+        has_done = result_semantics["has_done"]
+        semantic_error = result_semantics["has_error"]
+        has_partial_result = result_semantics["has_partial_result"]
+        if completion_signal and semantic_error:
+            semantic_reason = ", ".join(result_semantics["reasons"])
+            print(
+                f"  [{issue_id}] 🛑 semantic completion rejected: {semantic_reason}",
+                flush=True,
+            )
         # AGY/Gemini backend transport timeout, NOT our process timeout.
         # The supervisor still launches AGY with --print-timeout 24h0m0s and
         # does not kill active sessions for time. This flag means AGY itself
@@ -1275,8 +1364,13 @@ def run_agy_session(issue_id: str, sandbox: Path, task_path: Path, log_path: Pat
             "elapsed_sec": int(elapsed),
             "exit_code": exit_code,
             "has_done": has_done,
-            "has_error": error_found or has_start_timeout,
-            "error_reason": error_reason if not has_start_timeout else "Task failed to start (STARTED.md not written within 30s)",
+            "has_error": error_found or semantic_error or has_start_timeout,
+            "error_reason": (
+                "Task failed to start (STARTED.md not written within 30s)"
+                if has_start_timeout
+                else error_reason
+                or (", ".join(result_semantics["reasons"]) if semantic_error else "")
+            ),
             "has_result": has_result,
             "has_self_review": has_self_review,
             "has_partial_result": has_partial_result,
@@ -1284,6 +1378,7 @@ def run_agy_session(issue_id: str, sandbox: Path, task_path: Path, log_path: Pat
             "has_inactivity_kill": killed_for_inactivity,
             "has_start_timeout": has_start_timeout,
             "has_clarify": has_clarify,
+            "result_semantics": result_semantics,
             "log_size": len(log_content),
             "log_path": str(log_path),
             "token": token_name,
@@ -1794,6 +1889,9 @@ class BusClient:
     def publish_completed(self, issue_id: str, payload: dict) -> None:
         publish_agent_completed(issue_id, payload)
 
+    def publish_rejected(self, issue_id: str, payload: dict) -> None:
+        publish_agent_completed(issue_id, payload, topic="agent.result.rejected")
+
     def publish_recovered(self, issue_id: str, payload: dict) -> None:
         publish_agent_recovered(issue_id, payload)
 
@@ -2183,7 +2281,21 @@ class EventDrivenSupervisor:
                 # it might not have saved the file. Check the file system.
                 result_path = sandbox / "RESULT.md"
                 result["has_result_file"] = result_path.exists() and result_path.stat().st_size >= 1024
-                if result.get("has_done") and not result["has_result_file"]:
+                result_semantics = semantic_completion(
+                    result_path, completion_signal=bool(result.get("has_done"))
+                )
+                result["result_semantics"] = result_semantics
+                if result.get("has_done") and not result_semantics["has_done"]:
+                    print(
+                        f"  [worker-{worker_id}] {issue_id} completion rejected by RESULT.md semantics: "
+                        f"{', '.join(result_semantics['reasons'])}",
+                        flush=True,
+                    )
+                    result["has_done"] = False
+                    result["has_error"] = result_semantics["has_error"]
+                    result["error_reason"] = ", ".join(result_semantics["reasons"])
+                    result["has_partial_result"] = result_semantics["has_partial_result"]
+                elif result.get("has_done") and not result["has_result_file"]:
                     # AGY said DONE but no file or too small — downgrade to "missing_result"
                     print(f"  [worker-{worker_id}] {issue_id} said DONE but no/small RESULT.md found — marking as 🟡 missing_result", flush=True)
                     result["has_done"] = False
@@ -2243,11 +2355,21 @@ class EventDrivenSupervisor:
                         "result_status": result_status,
                         "result_path": str(result_path),
                         "has_result_file": result.get("has_result_file", False),
+                        "result_semantic_pass": result_semantics["passed"],
+                        "result_semantic_reasons": result_semantics["reasons"],
                         "cost_usd_estimated": cost_usd_estimated,
                         "attempt": attempt
                     }
-                    self.bus_client.publish_completed(issue_id, payload)
-                    print(f"  [{issue_id}] Published agent.completed to event bus WAL with status: {result_status}", flush=True)
+                    if result.get("has_done") and result_semantics["passed"]:
+                        self.bus_client.publish_completed(issue_id, payload)
+                        published_topic = "agent.completed"
+                    else:
+                        self.bus_client.publish_rejected(issue_id, payload)
+                        published_topic = "agent.result.rejected"
+                    print(
+                        f"  [{issue_id}] Published {published_topic} to event bus WAL with status: {result_status}",
+                        flush=True,
+                    )
                 except Exception as p_err:
                     print(f"  [{issue_id}] ⚠️ agent.completed publish failed: {p_err}", flush=True)
 
@@ -2274,18 +2396,16 @@ class EventDrivenSupervisor:
                         # not a Fred/supervisor time limit.
                         self.linear_client.add_comment(issue_id, "AGY_BACKEND_TIMEOUT after " + str(elapsed_sec) + "s — AGY exited after upstream/backend stopped responding; supervisor did not kill the session")
                     elif result.get("has_partial_result"):
-                        # Jun 30 fix: partial_result = RESULT.md exists but no DONE log marker.
-                        # If RESULT.md has substantive content (>=1KB), consider the work
-                        # materially done — transition to Done. Otherwise leave In Progress
-                        # for peer review and post a comment explaining.
+                        # A partial packet is never equivalent to completed work. Size is not
+                        # semantic proof and must not transition Linear to Done.
                         partial_size = result_path.stat().st_size if result_path.exists() else 0
-                        if partial_size >= 1024:
-                            self.linear_client.update_issue(issue_id, state="Done")
-                            self.linear_client.add_comment(issue_id,
-                                f"✅ PARTIAL_DONE: RESULT.md exists ({partial_size}b) but AGY did not emit DONE log marker. "
-                                f"Marking Done since artifact is substantive. Sandbox: {sandbox}")
-                        else:
-                            self.linear_client.add_comment(issue_id, f"⚠️ PARTIAL_RESULT after " + str(elapsed_sec) + f"s — RESULT.md exists ({partial_size}b) but trivial — leaving In Progress for review. Sandbox: " + str(sandbox))
+                        self.linear_client.add_comment(
+                            issue_id,
+                            "⚠️ PARTIAL_RESULT after "
+                            + str(elapsed_sec)
+                            + f"s — RESULT.md exists ({partial_size}b) without a semantically valid completion; leaving In Progress for review. Sandbox: "
+                            + str(sandbox),
+                        )
                     elif result.get("has_missing_result"):
                         # Downgrade state back to Todo
                         self.linear_client.update_issue(issue_id, state="Todo")
@@ -2315,7 +2435,11 @@ class EventDrivenSupervisor:
                 try:
                     sandbox_dir = SANDBOX_ROOT / issue_id
                     result_md = sandbox_dir / "RESULT.md"
-                    if result_md.exists() and result.get("has_result"):
+                    if (
+                        result_md.exists()
+                        and result.get("has_done")
+                        and result_semantics["passed"]
+                    ):
                         import subprocess
                         validator = (
                             os.environ.get("HERMES_PROFILE_ROOT", str(Path.home() / ".hermes" / "profiles" / "orchestrator")) + "/"
