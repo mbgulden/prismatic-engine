@@ -7,10 +7,12 @@ operators do not mistake dry-run or pending artifacts for deployed truth.
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
+from urllib.parse import urlsplit, urlunsplit
 
 MARKER = "AGENT_GOVERNANCE_CORE_STATE_MODEL_OK"
 UI_API_CONTRACT_MARKER = "GOVERNANCE_DASHBOARD_UI_API_CONTRACT_OK"
@@ -29,6 +31,21 @@ DEFAULT_SIDE_EFFECT_POLICY = {
     "bulk_dispatch": False,
     "production_restart": False,
 }
+_SAFE_ISSUE_ID_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
+_SENSITIVE_LOCATOR_RE = re.compile(
+    r"(?is)("
+    r"-----BEGIN [A-Z ]*PRIVATE KEY-----"
+    r"|\bauthorization\s*[:=]"
+    r"|\bbearer\s+[a-z0-9._~+/=-]{6,}"
+    r"|\b(?:password|passwd|pwd|token|secret|api[_-]?key|access[_-]?key|client[_-]?secret)\b\s*[:=]"
+    r"|(?:^|[/_.?&#=-])(?:password|passwd|pwd|token|secret|api[_-]?key|apikey|access[_-]?key|client[_-]?secret)(?:$|[/_.?&#=-])"
+    r"|\b(?:ghp|gho|ghu|ghs|github_pat)_[a-z0-9_]{12,}"
+    r"|\bsk-[a-z0-9_-]{12,}"
+    r"|\bxox(?:b|p|a|r)-[a-z0-9-]{12,}"
+    r"|\bAKIA[0-9A-Z]{16}\b"
+    r")"
+)
 
 
 def _to_dict(value: Any, fields: Sequence[str]) -> dict[str, Any]:
@@ -119,10 +136,57 @@ def _latest_stamp(item: Mapping[str, Any]) -> datetime | None:
 
 
 def _issue_url(issue_id: Any) -> str | None:
-    text = str(issue_id or "").strip()
-    if not text or text.lower() == "unknown":
+    text = str(issue_id or "").strip().upper()
+    if not text or text == "UNKNOWN" or not _SAFE_ISSUE_ID_RE.fullmatch(text):
         return None
     return f"https://prismatic.growthwebdev.com/tab/tasks?issue={text}"
+
+
+def _has_unsafe_locator_material(text: str) -> bool:
+    return bool(_CONTROL_CHARS_RE.search(text) or _SENSITIVE_LOCATOR_RE.search(text))
+
+
+def _is_safe_local_absolute_path(text: str) -> bool:
+    if not text.startswith("/") or text.startswith("//"):
+        return False
+    parts = [part for part in text.split("/") if part]
+    return ".." not in parts
+
+
+def _sanitize_proof_locator(value: Any, *, generated: bool = False) -> str | None:
+    """Return a safe proof href or drop it fail-closed.
+
+    Rejected values are intentionally not surfaced in responses or exceptions.
+    """
+    text = str(value or "").strip()
+    if not text or _has_unsafe_locator_material(text):
+        return None
+
+    parsed = urlsplit(text)
+    if parsed.scheme:
+        if parsed.scheme not in {"http", "https"}:
+            return None
+        if parsed.username or parsed.password:
+            return None
+        if _has_unsafe_locator_material(parsed.netloc) or _has_unsafe_locator_material(
+            parsed.path
+        ):
+            return None
+        if not parsed.netloc:
+            return None
+        query = parsed.query if generated else ""
+        fragment = parsed.fragment if generated else ""
+        if (query and _has_unsafe_locator_material(query)) or (
+            fragment and _has_unsafe_locator_material(fragment)
+        ):
+            return None
+        return urlunsplit(
+            (parsed.scheme, parsed.netloc, parsed.path or "/", query, fragment)
+        )
+
+    if _is_safe_local_absolute_path(text):
+        return text
+    return None
 
 
 def _packet_field(packet: Mapping[str, Any], *names: str) -> Any:
@@ -179,8 +243,8 @@ def _proof_links(
     for label, value in candidates:
         if not value:
             continue
-        href = str(value)
-        if href in seen:
+        href = _sanitize_proof_locator(value, generated=(label == "issue"))
+        if not href or href in seen:
             continue
         seen.add(href)
         links.append({"label": label, "href": href, "source_label": SOURCE})

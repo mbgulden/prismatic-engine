@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from prismatic.agent_governance_status import MARKER, build_agent_governance_status
@@ -165,3 +166,138 @@ def test_gateway_agent_governance_status_endpoint_uses_dashboard_inputs(
     )
     assert "no deploy" in payload["non_claims"]
     assert fake_store.reloaded is True
+
+
+@pytest.mark.parametrize(
+    ("unsafe_value", "dummy_secret"),
+    [
+        ("https://user:dummy-password@example.com/proof.log", "dummy-password"),
+        ("https://example.com/proof.log?token=dummy-token", "dummy-token"),
+        ("Bearer dummy-bearer-token", "dummy-bearer-token"),
+        ("Authorization: Bearer dummy-auth-token", "dummy-auth-token"),
+        ("/tmp/password/dummy-proof.log", "password"),
+        ("/tmp/dummy-secret-proof.log", "dummy-secret"),
+        (
+            "-----BEGIN "
+            + "PRIVATE KEY-----\ndummy-key\n-----END "
+            + "PRIVATE KEY-----",
+            "dummy-key",
+        ),
+        ("/tmp/proof\nlog", "proof\\nlog"),
+        ("javascript:alert('dummy-js-token')", "dummy-js-token"),
+        ("../dummy-traversal-proof.log", "dummy-traversal"),
+    ],
+)
+def test_agent_governance_proof_links_drop_unsafe_locators_without_echoing_secret(
+    unsafe_value, dummy_secret
+):
+    payload = build_agent_governance_status(
+        agents=("kai",),
+        completed_work_rows=[
+            {
+                "agent": "kai",
+                "source_path": unsafe_value,
+                "packet": {
+                    "agent": "kai",
+                    "issue_identifier": "GRO-4100",
+                    "proof": {"log": unsafe_value},
+                },
+            }
+        ],
+    )
+
+    serialized = json.dumps(payload)
+    kai = payload["agents"][0]
+    hrefs = [link["href"] for link in kai["proof_links"]]
+    assert unsafe_value not in hrefs
+    assert dummy_secret not in serialized
+    assert all("source_path" != link["label"] for link in kai["proof_links"])
+    assert all("proof_log" != link["label"] for link in kai["proof_links"])
+
+
+def test_agent_governance_proof_links_preserve_safe_local_path_url_and_issue_link():
+    payload = build_agent_governance_status(
+        agents=("kai",),
+        run_records=[
+            FakeRun(
+                run_id="run-kai",
+                issue_id="GRO-4100",
+                agent_name="kai",
+                status="completed",
+                started_at="2026-07-19T22:00:00+00:00",
+                output_path="/tmp/kai-result.md",
+            )
+        ],
+        completed_work_rows=[
+            {
+                "agent": "kai",
+                "proof_log": "https://proofs.example.com/proof.log?utm_source=noise#fragment",
+                "source_path": "/tmp/kai-artifact/proof.log",
+                "packet": {"agent": "kai", "issue_identifier": "GRO-4100"},
+            }
+        ],
+    )
+
+    hrefs = [link["href"] for link in payload["agents"][0]["proof_links"]]
+    assert "https://proofs.example.com/proof.log" in hrefs
+    assert "https://proofs.example.com/proof.log?utm_source=noise#fragment" not in hrefs
+    assert "/tmp/kai-artifact/proof.log" in hrefs
+    assert "/tmp/kai-result.md" in hrefs
+    assert "https://prismatic.growthwebdev.com/tab/tasks?issue=GRO-4100" in hrefs
+
+
+def test_gateway_agent_governance_status_endpoint_serialization_drops_dummy_secrets(
+    monkeypatch, tmp_path: Path
+):
+    registry = tmp_path / "registry.json"
+    registry.write_text(
+        json.dumps({"kai": {"task_id": "GRO-4100", "status": "completed"}})
+    )
+    monkeypatch.setenv("PRISMATIC_AGENT_REGISTRY", str(registry))
+    fake_store = FakeRunStore(
+        [
+            FakeRun(
+                run_id="run-kai",
+                issue_id="GRO-4100",
+                agent_name="kai",
+                status="completed",
+                started_at="2026-07-19T22:00:00+00:00",
+                output_path="/tmp/kai-result.md",
+            )
+        ]
+    )
+    monkeypatch.setattr(server, "_run_store", fake_store)
+
+    import prismatic.agent_governance_status as governance_status
+
+    monkeypatch.setattr(
+        governance_status,
+        "_load_completed_work",
+        lambda limit=100: [
+            {
+                "agent": "kai",
+                "source_path": "/tmp/password/dummy-secret-source.log",
+                "proof_log": "https://example.com/proof.log?api_key=dummy-api-key",
+                "packet": {
+                    "agent": "kai",
+                    "issue_identifier": "GRO-4100",
+                    "proof": {"log": "Authorization: Bearer dummy-auth-token"},
+                },
+            }
+        ],
+    )
+
+    response = TestClient(server.app).get("/api/gateway/agents/governance-status")
+
+    assert response.status_code == 200
+    body = response.text
+    assert "dummy-secret-source" not in body
+    assert "dummy-api-key" not in body
+    assert "dummy-auth-token" not in body
+    kai = next(agent for agent in response.json()["agents"] if agent["agent"] == "kai")
+    assert all(
+        link["label"] not in {"proof_log", "source_path"} for link in kai["proof_links"]
+    )
+    assert "https://prismatic.growthwebdev.com/tab/tasks?issue=GRO-4100" in [
+        link["href"] for link in kai["proof_links"]
+    ]
