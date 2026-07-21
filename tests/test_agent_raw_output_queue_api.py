@@ -101,6 +101,37 @@ def test_raw_output_list_and_detail_routes_expose_real_queue_rows(
     assert detail.json()["raw_output"]["canonical_packet_id"] is None
 
 
+def test_raw_output_api_responses_do_not_expose_rejected_secret_text(
+    tmp_path: Path, monkeypatch
+) -> None:
+    client, store = client_for_raw_queue(tmp_path, monkeypatch)
+    secret_text = "Authorization: Bearer abc123xyz"
+    row = store.persist(
+        raw_text=secret_text,
+        agent="agy",
+        task_id="GRO-3952",
+        source_event_id="secret-api",
+        expected_agent="agy",
+    )
+
+    listing = client.get("/api/gateway/agents/raw-output?limit=10")
+    detail = client.get(f"/api/agents/raw-output/{row.raw_output_id}")
+    preview = client.post(
+        f"/api/gateway/agents/raw-output/{row.raw_output_id}/repair-preview"
+    )
+
+    assert listing.status_code == 200
+    assert detail.status_code == 200
+    assert preview.status_code == 200
+    combined_payload = json.dumps(
+        [listing.json(), detail.json(), preview.json()], sort_keys=True
+    )
+    assert "raw_text" not in combined_payload
+    assert secret_text not in combined_payload
+    assert "abc123xyz" not in combined_payload
+    assert "secret_like_content_detected" in combined_payload
+
+
 def test_raw_output_repair_preview_route_is_read_only(
     tmp_path: Path, monkeypatch
 ) -> None:

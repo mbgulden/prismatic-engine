@@ -828,3 +828,37 @@ def test_assigned_agent_event_missing_handoff_metadata_still_dispatches(
     assert result["status"] == "dispatched"
     assert result["wakes"] == ["fred"]
     assert row["dispatch_status"] == "dispatched"
+
+
+def test_result_writeback_captures_raw_output_before_preview_normalization(
+    tmp_path: Path, monkeypatch
+):
+    q, dispatcher = setup_runtime(tmp_path, monkeypatch)
+    monkeypatch.setenv("PRISMATIC_AGENT_RAW_OUTPUT_DB", str(tmp_path / "raw.sqlite3"))
+    enqueue(q, payload("GRO-TEST-WB-RAW", "fred"))
+    dispatch = dispatch_identifier(dispatcher, "GRO-TEST-WB-RAW")
+    raw_output = "Fred raw prose before packet normalization"
+
+    result = dispatcher.record_assigned_agent_result_writeback(
+        run_id=dispatch["run_id"],
+        result_status="completed",
+        result_summary="Fixture agent completed acceptance checks.",
+        raw_output_text=raw_output,
+        raw_output_artifact_path="/tmp/fred-proof.log",
+    )
+
+    assert result["raw_output_capture"]["ok"] is True
+    assert result["raw_output_capture"]["source_event_id"].startswith(
+        "assigned_agent_result_writeback:fred:GRO-TEST-WB-RAW:"
+    )
+    from prismatic.agent_raw_output_queue import RawAgentOutputStore
+
+    row = RawAgentOutputStore(tmp_path / "raw.sqlite3").get(
+        result["raw_output_capture"]["raw_output_id"]
+    )
+    assert row.task_id == "GRO-TEST-WB-RAW"
+    assert row.raw_text_or_artifact_path == "/tmp/fred-proof.log"
+    assert row.normalization_status in {
+        "rejected_repairable",
+        "rejected_rerun_required",
+    }

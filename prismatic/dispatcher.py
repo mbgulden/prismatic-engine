@@ -2858,6 +2858,8 @@ def record_assigned_agent_result_writeback(
     result_summary: str = "",
     blocker_summary: str = "",
     dry_run: bool | None = None,
+    raw_output_text: str = "",
+    raw_output_artifact_path: str = "",
 ) -> dict[str, Any]:
     """Persist agent completion/blocker result and safe Linear writeback state.
 
@@ -2908,6 +2910,43 @@ def record_assigned_agent_result_writeback(
         }
     item = normalize_row(row)
     resolved_event_id = str(item.get("event_id") or event_id)
+    raw_output_capture: dict[str, Any] | None = None
+    if raw_output_text.strip():
+        try:
+            from .agent_raw_output_queue import persist_raw_output
+
+            target_agent = str(
+                item.get("target_agent")
+                or item.get("claim_owner")
+                or item.get("agent_name")
+                or "assigned-agent"
+            )
+            source_event_id = ":".join(
+                part
+                for part in (
+                    "assigned_agent_result_writeback",
+                    target_agent,
+                    str(item.get("identifier") or identifier),
+                    str(item.get("run_id") or run_id),
+                )
+                if part
+            )
+            captured = persist_raw_output(
+                raw_text=raw_output_text,
+                agent=target_agent,
+                task_id=str(item.get("identifier") or identifier),
+                source_event_id=source_event_id,
+                raw_text_or_artifact_path=raw_output_artifact_path,
+                expected_agent=target_agent,
+            )
+            raw_output_capture = {
+                "ok": True,
+                "raw_output_id": captured.raw_output_id,
+                "normalization_status": captured.normalization_status,
+                "source_event_id": captured.source_event_id,
+            }
+        except Exception as exc:  # fail-safe: writeback state remains source of truth
+            raw_output_capture = {"ok": False, "reason": str(exc)}
     preview = _assigned_result_preview(
         identifier=str(item.get("identifier") or identifier),
         target_agent=str(
@@ -2943,6 +2982,7 @@ def record_assigned_agent_result_writeback(
             "item": updated,
             "writeback_preview": preview,
             "linear_mutation": False,
+            "raw_output_capture": raw_output_capture,
         }
     # Authorized live mutation remains intentionally unimplemented in this slice;
     # proving dry-run writeback is the safe acceptance target.
@@ -2962,6 +3002,7 @@ def record_assigned_agent_result_writeback(
         "item": updated,
         "writeback_preview": preview,
         "linear_mutation": False,
+        "raw_output_capture": raw_output_capture,
     }
 
 
