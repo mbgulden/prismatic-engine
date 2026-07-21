@@ -689,9 +689,9 @@
                 </div>
             </section>
 
-            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div class="grid min-w-0 grid-cols-1 lg:grid-cols-3 gap-6">
                 <!-- Visualizer Graph (Left Column 2/3 wide) -->
-                <div class="lg:col-span-2 glass-panel p-5 rounded-xl space-y-4 flex flex-col justify-between">
+                <div class="min-w-0 lg:col-span-2 glass-panel p-5 rounded-xl space-y-4 flex flex-col justify-between">
                     <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-2 flex justify-between items-center">
                         <span>Swarm Spectrum Visualizer</span>
                         <span class="text-xs text-slate-500 font-mono">Interactive Topology</span>
@@ -761,7 +761,7 @@
                 </div>
 
                 <!-- Agent Details & Webhook Simulator (Right Column 1/3 wide) -->
-                <div class="space-y-6">
+                <div class="min-w-0 space-y-6">
                     <!-- Agent Card Panel -->
                     <div class="glass-panel p-5 rounded-xl space-y-4">
                         <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-2">
@@ -781,14 +781,14 @@
                                 <div class="text-slate-500 font-bold text-[10px] uppercase">Active Task</div>
                                 <div id="agent-detail-task" class="text-slate-300"></div>
                             </div>
-                            <div class="grid grid-cols-2 gap-2 text-[10px] text-slate-400">
+                            <div class="grid min-w-0 grid-cols-2 gap-2 text-[10px] text-slate-400">
                                 <div>
                                     <span class="text-slate-500 block">LAST SEEN</span>
                                     <span id="agent-detail-seen" class="font-semibold text-slate-300"></span>
                                 </div>
-                                <div>
+                                <div class="min-w-0">
                                     <span class="text-slate-500 block">HARNESS CONFIG</span>
-                                    <span id="agent-detail-config" class="font-semibold text-indigo-400"></span>
+                                    <span id="agent-detail-config" class="block break-all font-semibold text-indigo-400"></span>
                                 </div>
                             </div>
                         </div>
@@ -878,11 +878,11 @@
                     </div>
                 </div>
                 <!-- Workspaces Summary -->
-                <div class="glass-panel p-5 rounded-xl space-y-4">
+                <div class="glass-panel min-w-0 p-5 rounded-xl space-y-4">
                     <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-2">
                         Active Workspace Contexts
                     </h3>
-                    <div class="overflow-x-auto">
+                    <div class="max-w-full overflow-x-auto">
                         <table class="w-full text-left text-xs border-collapse">
                             <thead>
                                 <tr class="border-b border-slate-800 text-slate-500 font-bold uppercase tracking-wider">
