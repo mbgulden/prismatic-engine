@@ -388,11 +388,7 @@ def update_jules_lifecycle(
 def parse_jules_remote_list(text: str, *, returncode: int = 0) -> dict[str, Any]:
     """Parse capped Jules list output without treating unavailable output as zero."""
     body = text or ""
-    if (
-        returncode != 0
-        or _AUTH_ERROR_RE.search(body)
-        or (_ERROR_RE.search(body) and "completed" not in body.lower())
-    ):
+    if returncode != 0 or _AUTH_ERROR_RE.search(body):
         return {
             "available": False,
             "status": "unavailable",
@@ -403,7 +399,10 @@ def parse_jules_remote_list(text: str, *, returncode: int = 0) -> dict[str, Any]
     sessions: list[dict[str, str | None]] = []
     for line in body.splitlines():
         stripped = line.strip()
+        lower = stripped.lower()
         if not stripped or set(stripped) <= {"-", "|", "+", " "}:
+            continue
+        if lower.startswith("id ") and "last active" in lower and "status" in lower:
             continue
         session_id = None
         remainder = stripped
@@ -416,8 +415,21 @@ def parse_jules_remote_list(text: str, *, returncode: int = 0) -> dict[str, Any]
             if session_match:
                 session_id = session_match.group(1)
         status = normalize_status(remainder if numeric_match else stripped)
+        if numeric_match and status == "unknown":
+            # The real Jules table renders an empty Status cell for a live session.
+            status = "active"
         if session_id or status != "unknown":
             sessions.append({"session_id": session_id, "status": status})
+    if not sessions and re.search(
+        r"(?im)^\s*(?:error|exception|traceback|unavailable)\b", body
+    ):
+        return {
+            "available": False,
+            "status": "unavailable",
+            "error_class": _safe_error_class(body) or "cli_unavailable",
+            "sessions": [],
+            "capped_partial": True,
+        }
     return {
         "available": True,
         "status": "ok",
@@ -485,6 +497,7 @@ def reconcile_jules_list_output(
                         ),
                     )
                     updated += cur.rowcount
+        prune_retention(conn)
     _protect_sqlite_artifacts(db_path or _db_path())
     return {**parsed, "updated": updated}
 
@@ -494,6 +507,7 @@ def prune_retention(
 ) -> None:
     cutoff = _iso(_utcnow() - timedelta(days=days))
     conn.execute("DELETE FROM jules_launches WHERE launch_ts_utc < ?", (cutoff,))
+    conn.execute("DELETE FROM jules_reconciliations WHERE attempted_at < ?", (cutoff,))
 
 
 def _latest_reconciliation(conn: sqlite3.Connection) -> sqlite3.Row | None:
@@ -524,20 +538,19 @@ def capacity_payload(
             ).fetchone()[0]
             latest = _latest_reconciliation(conn)
     except Exception:
-        snapshot_at = _iso(now_dt)
         return {
-            "ok": True,
+            "ok": False,
             "limit": DAILY_LIMIT,
             "status": "unavailable",
             "source": "jules-capacity-ledger",
-            "snapshot_at": snapshot_at,
-            "snapshot_age_sec": 0,
-            "observed_launches": 0,
-            "remaining_observed_capacity": DAILY_LIMIT,
-            "active": 0,
-            "awaiting": 0,
-            "completed": 0,
-            "failed": 0,
+            "snapshot_at": None,
+            "snapshot_age_sec": None,
+            "observed_launches": None,
+            "remaining_observed_capacity": None,
+            "active": None,
+            "awaiting": None,
+            "completed": None,
+            "failed": None,
             "coverage_state": "unavailable",
             "errors": [
                 {"source": "jules-capacity-ledger", "error_class": "ledger_unavailable"}

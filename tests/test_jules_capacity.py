@@ -74,14 +74,45 @@ def test_parser_detects_auth_errors_even_with_zero_return_code() -> None:
     assert parsed["sessions"] == []
 
 
+def test_parser_treats_valid_failed_only_table_as_available() -> None:
+    parsed = parse_jules_remote_list(
+        """ID Description Repo Last active Status
+12345678901234567890 Synthetic failure example/repo now Failed
+""",
+        returncode=0,
+    )
+
+    assert parsed["available"] is True
+    assert parsed["sessions"] == [
+        {"session_id": "12345678901234567890", "status": "failed"}
+    ]
+
+
+def test_launches_without_stable_identity_remain_distinct(
+    tmp_path: Path, monkeypatch
+) -> None:
+    db = tmp_path / "private" / "jules.sqlite3"
+    monkeypatch.setenv("PRISMATIC_JULES_CAPACITY_DB_PATH", str(db))
+    first = record_jules_launch(
+        issue_id="GRO-9",
+        launch_ts_utc="2026-07-21T10:00:00Z",
+    )
+    second = record_jules_launch(
+        issue_id="GRO-9",
+        launch_ts_utc="2026-07-21T10:01:00Z",
+    )
+
+    assert first != second
+
+
 def test_parser_handles_real_numeric_first_cli_table_and_labeled_rows() -> None:
     text = """
-SESSION ID             TITLE                       UPDATED        STATUS
-12345678901234567890   Synthetic completed task    now            Completed
-22345678901234567890   Synthetic failed task       now            Failed
-32345678901234567890   Needs human                 now            Awaiting User
-42345678901234567890   Needs plan                  now            Awaiting Plan
-52345678901234567890   Active blank status         now
+           ID                                    Description                                    Repo                Last active                Status
+12345678901234567890   Synthetic completed task                         example/repo        now                       Completed
+22345678901234567890   Synthetic failed task                            example/repo        now                       Failed
+32345678901234567890   Needs human                                      example/repo        now                       Awaiting User
+42345678901234567890   Needs plan                                       example/repo        now                       Awaiting Plan
+52345678901234567890   Active blank status                              example/repo        now
 session: safe-labeled-123 Completed
 """
     parsed = parse_jules_remote_list(text, returncode=0)
@@ -251,3 +282,18 @@ def test_dispatcher_records_jules_capacity_before_launch_and_popen_failure_marks
         ).fetchall()
     assert ("failed", "cli_error") in statuses
     assert "SECRET" not in str(statuses)
+
+
+def test_ledger_failure_never_reports_unavailable_capacity_as_zero(monkeypatch) -> None:
+    def fail_connect(*args, **kwargs):
+        raise sqlite3.OperationalError("synthetic unavailable")
+
+    monkeypatch.setattr("prismatic.jules_capacity._connect", fail_connect)
+    payload = capacity_payload(now=datetime(2026, 7, 21, 12, 0, tzinfo=UTC))
+
+    assert payload["ok"] is False
+    assert payload["status"] == "unavailable"
+    assert payload["snapshot_at"] is None
+    assert payload["observed_launches"] is None
+    assert payload["remaining_observed_capacity"] is None
+    assert payload["active"] is None

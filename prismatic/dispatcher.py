@@ -2397,8 +2397,8 @@ def launch_jules(
 
         from prismatic.jules_capacity import record_jules_launch
 
-        stable_launch_identity = (
-            request_id or f"jules:{identifier or issue_id}:{cycle_id or 'manual'}"
+        stable_launch_identity = request_id or (
+            f"jules:{identifier or issue_id}:{cycle_id}" if cycle_id else None
         )
         capacity_launch_key = record_jules_launch(
             issue_id=identifier or issue_id,
@@ -2479,7 +2479,11 @@ def launch_jules(
                     or (os.environ.get("PRISMATIC_WORKTREE_PATH") or os.getcwd()),
                     source_path=str(locals().get("log_path", "")) or None,
                     launch_identity=request_id
-                    or f"jules:{identifier or issue_id}:{cycle_id or 'manual'}",
+                    or (
+                        f"jules:{identifier or issue_id}:{cycle_id}"
+                        if cycle_id
+                        else None
+                    ),
                     request_id=request_id,
                     lifecycle_status="failed",
                     error_class="cli_error",
