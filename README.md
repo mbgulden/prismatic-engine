@@ -131,6 +131,9 @@ Core files:
 
 Deep dive:
 
+- [Canonical documentation index and precedence](docs/index.md)
+- [Verification Engine architecture](docs/architecture/verification-engine.md)
+- [Verification contract](docs/contracts/verification-contract.md)
 - [North Star](docs/north-star.md)
 - [Dashboard-primary touchpoint](docs/dashboard-primary-touchpoint.md)
 - [OKF evidence map](docs/okf-evidence-map.md)

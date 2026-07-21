@@ -1,8 +1,10 @@
 # GRO-3461 — OKF Drift & Compliance Scans Audit
 
-**Auditor:** Ned  
-**Timestamp (UTC):** 2026-07-05T21:35:18Z  
-**Repository/branch:** `prismatic-engine` / `ned/GRO-3461`  
+> **Historical evidence — not current authority.** As-of 2026-07-05 and dependent on an external workspace snapshot. Current precedence: `docs/index.md`; machine registry: `okf/index.yaml`.
+
+**Auditor:** Ned
+**Timestamp (UTC):** 2026-07-05T21:35:18Z
+**Repository/branch:** `prismatic-engine` / `ned/GRO-3461`
 **Scope:** OKF drift checker availability, OKF markdown/frontmatter compliance, integration registry health, and task-readiness scoring inputs.
 
 ## Executive summary

@@ -5,10 +5,12 @@ resource: scripts/reports/gro-3538-enterprise-gap-linear-map.md
 linear_issue: GRO-3538
 verified_by: ned
 timestamp: 2026-07-06T17:58:26Z
-status: current
+status: historical
 ---
 
 # GRO-3538 — Enterprise Gap Linear Map
+
+> **Historical evidence — not current authority.** This map reflects the 2026-07-06 rubric state. Current precedence: `docs/index.md`; machine registry: `okf/index.yaml`.
 
 Task: every yellow or red gate in the Prismatic Enterprise Governance rubric must map to a concrete Linear issue or child task.
 

@@ -71,6 +71,10 @@ jobs:
         run: |
           python scripts/public_security_readiness_audit.py
 
+      - name: Validate documentation and OKF governance
+        run: |
+          python scripts/validate_okf_docs.py
+
       - name: Run Unit Tests
         run: |
           python -m pytest tests/
