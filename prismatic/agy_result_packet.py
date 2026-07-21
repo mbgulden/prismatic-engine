@@ -73,7 +73,7 @@ ISSUE_RE = re.compile(r"^GRO-[0-9A-Za-z-]+$")
 PR_URL_RE = re.compile(r"^https://github\.com/[^/]+/[^/]+/pull/[0-9]+$")
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 SECRET_VALUE_RE = re.compile(
-    r"(AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN (?:RSA |OPENSSH |EC |)PRIVATE KEY-----|bearer\s+[A-Za-z0-9._-]{20,})",
+    r"(AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|-----BEGIN (?:RSA |OPENSSH |EC |)PRIVATE KEY-----|bearer\s+[A-Za-z0-9._-]{20,}|sk-(?:proj-|or-v1-)?[A-Za-z0-9_-]{20,}|\b(?:api[_-]?key|client[_-]?secret|private[_-]?key|secret[_-]?key|access[_-]?token|passwd|password|credential|token)\b\s*[:=]\s*[\"']?[A-Za-z0-9._~+/-]{12,}[\"']?)",
     re.IGNORECASE,
 )
 SECRET_PATH_RE = re.compile(

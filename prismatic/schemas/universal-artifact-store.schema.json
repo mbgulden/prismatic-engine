@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Universal Artifact Store Receipt Schema",
+  "description": "Schema for immutable content-addressed artifact store receipts (v1).",
+  "type": "object",
+  "required": [
+    "receipt_id",
+    "content_digest",
+    "storage_id",
+    "source_commit",
+    "command_env",
+    "evidence_digest",
+    "byte_size",
+    "media_type",
+    "access_class",
+    "status",
+    "is_quarantined",
+    "created_at",
+    "marker"
+  ],
+  "properties": {
+    "marker": {
+      "type": "string",
+      "const": "UNIVERSAL_ARTIFACT_STORE_OK"
+    },
+    "receipt_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "content_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "storage_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_commit": {
+      "type": "string",
+      "minLength": 1
+    },
+    "command_env": {
+      "type": "object",
+      "required": ["command", "environment"],
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "environment": {
+          "type": ["object", "string"]
+        }
+      },
+      "additionalProperties": true
+    },
+    "evidence_digest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "byte_size": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "media_type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "access_class": {
+      "type": "string",
+      "enum": ["private", "public"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["ingested", "quarantined", "retained", "archived"]
+    },
+    "is_quarantined": {
+      "type": "boolean"
+    },
+    "quarantine_reason": {
+      "type": ["string", "null"]
+    },
+    "parent_artifact_id": {
+      "type": ["string", "null"]
+    },
+    "derivative_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "merge_evidence_refs": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false
+}
