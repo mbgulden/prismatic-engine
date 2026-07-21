@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -12,6 +13,8 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SRC_ROOT = REPO_ROOT / "prismatic/gateway/dashboard_src"
 DEFAULT_MANIFEST = DEFAULT_SRC_ROOT / "manifest.json"
+DEFAULT_CSS = REPO_ROOT / "prismatic/gateway/static/dashboard.css"
+CSS_HASH_TOKEN = b"__DASHBOARD_CSS_HASH__"
 
 
 class DashboardBuildError(RuntimeError):
@@ -99,7 +102,13 @@ def build_bytes(manifest_path: Path = DEFAULT_MANIFEST) -> bytes:
     chunks: list[bytes] = []
     for entry in manifest["fragments"]:
         chunks.append((src_root / entry["path"]).read_bytes())
-    return b"".join(chunks)
+    payload = b"".join(chunks)
+    if CSS_HASH_TOKEN in payload:
+        if not DEFAULT_CSS.is_file():
+            raise DashboardBuildError(f"built dashboard CSS missing: {DEFAULT_CSS}")
+        css_hash = hashlib.sha256(DEFAULT_CSS.read_bytes()).hexdigest()[:12].encode()
+        payload = payload.replace(CSS_HASH_TOKEN, css_hash)
+    return payload
 
 
 def write_dashboard(manifest_path: Path = DEFAULT_MANIFEST) -> Path:
