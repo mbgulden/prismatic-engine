@@ -3264,6 +3264,19 @@ async def gateway_agents_status() -> dict[str, Any]:
     return build_agent_status(**_dashboard_agent_inputs())
 
 
+@app.get("/api/gateway/agents/governance-status")
+async def gateway_agents_governance_status() -> dict[str, Any]:
+    """Return no-side-effect Kai/Fred governance status for the dashboard."""
+    from prismatic.agent_governance_status import build_agent_governance_status
+
+    inputs = _dashboard_agent_inputs()
+    return build_agent_governance_status(
+        agents=("kai", "fred"),
+        run_records=inputs["run_records"],
+        registry=inputs["registry"],
+    )
+
+
 @app.get("/api/gateway/agents/{agent_id}")
 async def gateway_agent_detail(agent_id: str) -> dict[str, Any]:
     """Return normalized live status detail for one dashboard agent."""
