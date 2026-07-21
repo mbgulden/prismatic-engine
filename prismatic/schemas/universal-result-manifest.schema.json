@@ -1,0 +1,687 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://prismatic.growthwebdev.com/schemas/universal-result-manifest.schema.json",
+  "title": "Universal Result Manifest v2",
+  "description": "Strict universal code, media, web, and data bundle manifest schema.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "bundle_type",
+    "deliverables",
+    "content_hashes",
+    "provenance",
+    "source_revision",
+    "path_scope",
+    "privacy_retention",
+    "type_specific_proofs",
+    "preview_handles",
+    "licenses",
+    "non_claims",
+    "candidate_sha_destination",
+    "review_digest",
+    "integration_receipt",
+    "rollback",
+    "post_integration_proof",
+    "marker"
+  ],
+  "$defs": {
+    "availability_status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["unverified", "unavailable", "held"]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      }
+    },
+    "evidence_string": {
+      "type": "string",
+      "minLength": 1,
+      "not": {
+        "enum": ["unverified", "unavailable", "held"]
+      }
+    },
+    "rfc3339_timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "not": {
+        "enum": ["unverified", "unavailable", "held"]
+      }
+    },
+    "sha256_hash": {
+      "type": "string",
+      "pattern": "^(sha256:)?[0-9a-fA-F]{64}$"
+    },
+    "commit_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{40}$"
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "type": ["string", "number"],
+      "enum": ["2.0", 2.0, "v2", 2]
+    },
+    "bundle_type": {
+      "type": "string",
+      "enum": [
+        "code",
+        "web/app",
+        "image/design",
+        "sprite/game asset",
+        "video",
+        "audio",
+        "document/data",
+        "mixed"
+      ]
+    },
+    "deliverables": {
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {"type": "string", "minLength": 1},
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path"],
+            "properties": {
+              "path": {"type": "string", "minLength": 1},
+              "type": {"type": "string"},
+              "description": {"type": "string"}
+            }
+          }
+        ]
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "content_hashes": {
+      "type": "object",
+      "additionalProperties": {
+        "anyOf": [
+          {"$ref": "#/$defs/sha256_hash"},
+          {"$ref": "#/$defs/availability_status"}
+        ]
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["toolchain", "builder"],
+      "properties": {
+        "toolchain": {
+          "anyOf": [
+            {"$ref": "#/$defs/evidence_string"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "anyOf": [
+                    {"$ref": "#/$defs/evidence_string"},
+                    {"$ref": "#/$defs/availability_status"}
+                  ]
+                },
+                "version": {
+                  "anyOf": [
+                    {"$ref": "#/$defs/evidence_string"},
+                    {"type": "number"},
+                    {"$ref": "#/$defs/availability_status"}
+                  ]
+                }
+              }
+            },
+            {"$ref": "#/$defs/availability_status"}
+          ]
+        },
+        "builder": {
+          "anyOf": [
+            {"$ref": "#/$defs/evidence_string"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "anyOf": [
+                    {"$ref": "#/$defs/evidence_string"},
+                    {"$ref": "#/$defs/availability_status"}
+                  ]
+                },
+                "version": {
+                  "anyOf": [
+                    {"$ref": "#/$defs/evidence_string"},
+                    {"type": "number"},
+                    {"$ref": "#/$defs/availability_status"}
+                  ]
+                }
+              }
+            },
+            {"$ref": "#/$defs/availability_status"}
+          ]
+        }
+      }
+    },
+    "source_revision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_commit_sha", "base_commit_sha", "branch"],
+      "properties": {
+        "source_commit_sha": {
+          "anyOf": [
+            {"$ref": "#/$defs/commit_sha"},
+            {"$ref": "#/$defs/availability_status"}
+          ]
+        },
+        "base_commit_sha": {
+          "anyOf": [
+            {"$ref": "#/$defs/commit_sha"},
+            {"$ref": "#/$defs/availability_status"}
+          ]
+        },
+        "branch": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "path_scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed_paths", "touched_paths"],
+      "properties": {
+        "allowed_paths": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        },
+        "touched_paths": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        }
+      }
+    },
+    "privacy_retention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["privacy_level", "retention_status", "retention_reasons", "retention_policy"],
+      "properties": {
+        "privacy_level": {
+          "type": "string",
+          "enum": ["public", "internal", "private", "restricted"]
+        },
+        "retention_status": {
+          "type": "string",
+          "enum": ["retained", "pruned", "expired"]
+        },
+        "retention_reasons": {
+          "type": "array",
+          "items": {"type": "string"},
+          "uniqueItems": true
+        },
+        "retention_policy": {
+          "type": "string"
+        }
+      }
+    },
+    "type_specific_proofs": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tests_passed", "coverage", "lint_status"],
+          "properties": {
+            "tests_passed": {
+              "anyOf": [
+                {"type": "boolean"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            },
+            "coverage": {
+              "anyOf": [
+                {"type": "number"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            },
+            "lint_status": {
+              "anyOf": [
+                {"$ref": "#/$defs/evidence_string"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            }
+          }
+        },
+        "web_app": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["build_status", "lighthouse", "visual_qa"],
+          "properties": {
+            "build_status": {
+              "anyOf": [
+                {"$ref": "#/$defs/evidence_string"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            },
+            "lighthouse": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["performance", "accessibility", "best_practices", "seo"],
+              "properties": {
+                "performance": {
+                  "anyOf": [
+                    {"type": "number"},
+                    {"$ref": "#/$defs/availability_status"}
+                  ]
+                },
+                "accessibility": {
+                  "anyOf": [
+                    {"type": "number"},
+                    {"$ref": "#/$defs/availability_status"}
+                  ]
+                },
+                "best_practices": {
+                  "anyOf": [
+                    {"type": "number"},
+                    {"$ref": "#/$defs/availability_status"}
+                  ]
+                },
+                "seo": {
+                  "anyOf": [
+                    {"type": "number"},
+                    {"$ref": "#/$defs/availability_status"}
+                  ]
+                }
+              }
+            },
+            "visual_qa": {
+              "anyOf": [
+                {"$ref": "#/$defs/evidence_string"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            }
+          }
+        },
+        "image_design": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["dimensions", "color_space", "similarity_score"],
+          "properties": {
+            "dimensions": {
+              "anyOf": [
+                {"$ref": "#/$defs/evidence_string"},
+                {
+                  "type": "array",
+                  "items": {"type": "integer"},
+                  "minItems": 2,
+                  "maxItems": 2
+                },
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            },
+            "color_space": {
+              "anyOf": [
+                {"$ref": "#/$defs/evidence_string"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            },
+            "similarity_score": {
+              "anyOf": [
+                {"type": "number"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            }
+          }
+        },
+        "sprite_game_asset": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["frame_count", "spritesheet", "collision_boxes"],
+          "properties": {
+            "frame_count": {
+              "anyOf": [
+                {"type": "integer"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            },
+            "spritesheet": {
+              "anyOf": [
+                {"$ref": "#/$defs/evidence_string"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            },
+            "collision_boxes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["x", "y", "width", "height"],
+                "properties": {
+                  "x": {
+                    "anyOf": [
+                      {"type": "number"},
+                      {"$ref": "#/$defs/availability_status"}
+                    ]
+                  },
+                  "y": {
+                    "anyOf": [
+                      {"type": "number"},
+                      {"$ref": "#/$defs/availability_status"}
+                    ]
+                  },
+                  "width": {
+                    "anyOf": [
+                      {"type": "number"},
+                      {"$ref": "#/$defs/availability_status"}
+                    ]
+                  },
+                  "height": {
+                    "anyOf": [
+                      {"type": "number"},
+                      {"$ref": "#/$defs/availability_status"}
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "video": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["resolution", "duration_seconds", "bitrate_kbps"],
+          "properties": {
+            "resolution": {
+              "anyOf": [
+                {"$ref": "#/$defs/evidence_string"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            },
+            "duration_seconds": {
+              "anyOf": [
+                {"type": "number"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            },
+            "bitrate_kbps": {
+              "anyOf": [
+                {"type": "integer"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            }
+          }
+        },
+        "audio": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["channels", "sample_rate_hz", "duration_seconds"],
+          "properties": {
+            "channels": {
+              "anyOf": [
+                {"type": "integer"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            },
+            "sample_rate_hz": {
+              "anyOf": [
+                {"type": "integer"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            },
+            "duration_seconds": {
+              "anyOf": [
+                {"type": "number"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            }
+          }
+        },
+        "document_data": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["format", "valid", "schema_compliant"],
+          "properties": {
+            "format": {
+              "anyOf": [
+                {"$ref": "#/$defs/evidence_string"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            },
+            "valid": {
+              "anyOf": [
+                {"type": "boolean"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            },
+            "schema_compliant": {
+              "anyOf": [
+                {"type": "boolean"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            }
+          }
+        },
+        "mixed": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["submanifests_validated"],
+          "properties": {
+            "submanifests_validated": {
+              "anyOf": [
+                {"type": "integer"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            }
+          }
+        }
+      }
+    },
+    "preview_handles": {
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {"type": "string", "minLength": 1},
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["url"],
+            "properties": {
+              "url": {"type": "string"},
+              "name": {"type": "string"},
+              "description": {"type": "string"}
+            }
+          }
+        ]
+      },
+      "uniqueItems": true
+    },
+    "licenses": {
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {"$ref": "#/$defs/evidence_string"},
+          {"$ref": "#/$defs/availability_status"}
+        ]
+      },
+      "uniqueItems": true
+    },
+    "non_claims": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    },
+    "candidate_sha_destination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate_sha", "destination_branch"],
+      "properties": {
+        "candidate_sha": {
+          "anyOf": [
+            {"$ref": "#/$defs/commit_sha"},
+            {"$ref": "#/$defs/availability_status"}
+          ]
+        },
+        "destination_branch": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "review_digest": {
+      "anyOf": [
+        {"$ref": "#/$defs/sha256_hash"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["reviewer", "status", "digest"],
+          "properties": {
+            "reviewer": {
+              "anyOf": [
+                {"$ref": "#/$defs/evidence_string"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            },
+            "status": {
+              "anyOf": [
+                {"$ref": "#/$defs/evidence_string"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            },
+            "digest": {
+              "anyOf": [
+                {"$ref": "#/$defs/sha256_hash"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            },
+            "timestamp": {
+              "anyOf": [
+                {"$ref": "#/$defs/rfc3339_timestamp"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            }
+          }
+        },
+        {"$ref": "#/$defs/availability_status"}
+      ]
+    },
+    "integration_receipt": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["receipt_id", "timestamp", "status"],
+          "properties": {
+            "receipt_id": {
+              "anyOf": [
+                {"$ref": "#/$defs/evidence_string"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            },
+            "timestamp": {
+              "anyOf": [
+                {"$ref": "#/$defs/rfc3339_timestamp"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            },
+            "status": {
+              "anyOf": [
+                {"$ref": "#/$defs/evidence_string"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            }
+          }
+        },
+        {"$ref": "#/$defs/availability_status"}
+      ]
+    },
+    "rollback": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["revert_instructions", "script_path"],
+          "properties": {
+            "revert_instructions": {
+              "anyOf": [
+                {"$ref": "#/$defs/evidence_string"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            },
+            "script_path": {
+              "anyOf": [
+                {"$ref": "#/$defs/evidence_string"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            }
+          }
+        },
+        {"$ref": "#/$defs/availability_status"}
+      ]
+    },
+    "post_integration_proof": {
+      "anyOf": [
+        {"$ref": "#/$defs/evidence_string"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["proof_type", "status"],
+          "properties": {
+            "proof_type": {
+              "anyOf": [
+                {"$ref": "#/$defs/evidence_string"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            },
+            "status": {
+              "anyOf": [
+                {"$ref": "#/$defs/evidence_string"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            },
+            "details": {
+              "anyOf": [
+                {"$ref": "#/$defs/evidence_string"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            },
+            "checksum": {
+              "anyOf": [
+                {"$ref": "#/$defs/sha256_hash"},
+                {"$ref": "#/$defs/availability_status"}
+              ]
+            }
+          }
+        },
+        {"$ref": "#/$defs/availability_status"}
+      ]
+    },
+    "extensions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "metadata": {
+          "type": "object",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^[a-zA-Z_][a-zA-Z0-9_]*$": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "marker": {
+      "const": "UNIVERSAL_RESULT_MANIFEST_V2_OK"
+    }
+  }
+}

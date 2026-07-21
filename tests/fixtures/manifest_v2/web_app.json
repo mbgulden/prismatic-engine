@@ -1,0 +1,73 @@
+{
+  "schema_version": 2.0,
+  "bundle_type": "web/app",
+  "deliverables": [
+    "dist/index.html",
+    "dist/bundle.js"
+  ],
+  "content_hashes": {
+    "dist/index.html": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "dist/bundle.js": "a576c24f2b963b516b3f6f140656667d4fdf8a7351662d515a6b0c242b934b12"
+  },
+  "provenance": {
+    "toolchain": "node-v20-vite-build",
+    "builder": "agy-frontend-builder"
+  },
+  "source_revision": {
+    "source_commit_sha": "a1b2c3d4e5f607182930415263748596a7b8c9d0",
+    "base_commit_sha": "f0e9d8c7b6a50493827160514233221100ffeedd",
+    "branch": "feature/gro-4112-universal-manifest"
+  },
+  "path_scope": {
+    "allowed_paths": [
+      "dist/**/*"
+    ],
+    "touched_paths": [
+      "dist/index.html",
+      "dist/bundle.js"
+    ]
+  },
+  "privacy_retention": {
+    "privacy_level": "public",
+    "retention_status": "retained",
+    "retention_reasons": [
+      "production_web_assets"
+    ],
+    "retention_policy": "default"
+  },
+  "type_specific_proofs": {
+    "web_app": {
+      "build_status": "success",
+      "lighthouse": {
+        "performance": 98,
+        "accessibility": 100,
+        "best_practices": 95,
+        "seo": 100
+      },
+      "visual_qa": "PASS"
+    }
+  },
+  "preview_handles": [
+    "https://preview.growthwebdev.com/gro-4112/index.html"
+  ],
+  "licenses": [
+    "Apache-2.0"
+  ],
+  "non_claims": [],
+  "candidate_sha_destination": {
+    "candidate_sha": "a1b2c3d4e5f607182930415263748596a7b8c9d0",
+    "destination_branch": "main"
+  },
+  "review_digest": "a576c24f2b963b516b3f6f140656667d4fdf8a7351662d515a6b0c242b934b12",
+  "integration_receipt": {
+    "receipt_id": "rec-web-app",
+    "timestamp": "2026-07-21T08:01:00Z",
+    "status": "integrated"
+  },
+  "rollback": {
+    "revert_instructions": "redeploy-previous-release",
+    "script_path": "scripts/rollback_web_app.sh"
+  },
+  "post_integration_proof": "lighthouse-smoke-test-green",
+  "marker": "UNIVERSAL_RESULT_MANIFEST_V2_OK"
+}

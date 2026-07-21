@@ -1,0 +1,69 @@
+{
+  "schema_version": 2.0,
+  "bundle_type": "code",
+  "deliverables": [
+    "src/main.py",
+    "tests/test_main.py"
+  ],
+  "content_hashes": {
+    "src/main.py": "a576c24f2b963b516b3f6f140656667d4fdf8a7351662d515a6b0c242b934b12",
+    "tests/test_main.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "provenance": {
+    "toolchain": "python-3.11-tox",
+    "builder": "agy-coder-subagent"
+  },
+  "source_revision": {
+    "source_commit_sha": "a1b2c3d4e5f607182930415263748596a7b8c9d0",
+    "base_commit_sha": "f0e9d8c7b6a50493827160514233221100ffeedd",
+    "branch": "feature/gro-4112-universal-manifest"
+  },
+  "path_scope": {
+    "allowed_paths": [
+      "src/**/*",
+      "tests/**/*"
+    ],
+    "touched_paths": [
+      "src/main.py",
+      "tests/test_main.py"
+    ]
+  },
+  "privacy_retention": {
+    "privacy_level": "internal",
+    "retention_status": "retained",
+    "retention_reasons": [
+      "prismatic_engine_core"
+    ],
+    "retention_policy": "default"
+  },
+  "type_specific_proofs": {
+    "code": {
+      "tests_passed": true,
+      "coverage": 95.5,
+      "lint_status": "clean"
+    }
+  },
+  "preview_handles": [],
+  "licenses": [
+    "MIT"
+  ],
+  "non_claims": [
+    "production_deployed"
+  ],
+  "candidate_sha_destination": {
+    "candidate_sha": "a1b2c3d4e5f607182930415263748596a7b8c9d0",
+    "destination_branch": "main"
+  },
+  "review_digest": "a576c24f2b963b516b3f6f140656667d4fdf8a7351662d515a6b0c242b934b12",
+  "integration_receipt": {
+    "receipt_id": "rec-991122",
+    "timestamp": "2026-07-21T08:01:00Z",
+    "status": "validated-and-integrated"
+  },
+  "rollback": {
+    "revert_instructions": "git revert a1b2c3d4e5f607182930415263748596a7b8c9d0",
+    "script_path": "scripts/revert_gro_4112.sh"
+  },
+  "post_integration_proof": "integrated-build-green-check",
+  "marker": "UNIVERSAL_RESULT_MANIFEST_V2_OK"
+}
