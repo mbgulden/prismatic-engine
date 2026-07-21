@@ -42,6 +42,7 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
+from prismatic.api.routers.merge_factory import router as merge_factory_router
 from prismatic.gateway.event_bus import get_event_bus
 from prismatic.gateway.ipc_bridge import UnixSocketListener, create_event_ingest_route
 from prismatic.gateway.ws_broadcaster import (
@@ -303,6 +304,7 @@ async def _observability_auth_middleware(request: Request, call_next):
 # Mount the IPC bridge event ingest route (POST /events, GET /events/history)
 # The router's @router.post("/events") defines the full path — no prefix needed
 app.include_router(create_event_ingest_route())
+app.include_router(merge_factory_router, prefix="/api")
 
 # ── Startup timestamp ──────────────────────────────────────────────
 _started_at: float = 0.0
