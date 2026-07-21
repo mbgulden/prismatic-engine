@@ -52,3 +52,15 @@ def test_dashboard_root_references_local_asset_only():
     assert response.status_code == 200
     assert 'href="/static/dashboard.css"' in response.text
     assert "cdn.tailwindcss.com" not in response.text
+
+
+def test_live_dashboard_regions_preserve_narrow_viewport_containment():
+    source = (
+        ROOT / "prismatic" / "gateway" / "dashboard_src" / "tabs" / "dashboard.html"
+    ).read_text()
+
+    assert 'id="agent-detail-config" class="block break-all' in source
+    assert 'class="min-w-0 lg:col-span-2' in source
+    assert 'class="min-w-0 space-y-6"' in source
+    assert 'class="glass-panel min-w-0 p-5' in source
+    assert 'class="max-w-full overflow-x-auto"' in source
