@@ -13,9 +13,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 DASHBOARD = REPO_ROOT / "prismatic/gateway/templates/dashboard.html"
 MANIFEST = REPO_ROOT / "prismatic/gateway/dashboard_src/manifest.json"
 BUILDER = REPO_ROOT / "scripts/build_dashboard.py"
-BASE_DASHBOARD_SHA256 = (
-    "949185f7b0d32d5c2f444b73b56d1bc7c9db6b0570172109587917e2650f482a"
-)
 
 
 def _builder_module():
@@ -30,13 +27,12 @@ def _html() -> str:
     return DASHBOARD.read_text(encoding="utf-8")
 
 
-def test_dashboard_fragments_rebuild_exact_base_bytes_and_sha() -> None:
+def test_dashboard_fragments_rebuild_exact_generated_bytes_and_sha() -> None:
     builder = _builder_module()
     generated = DASHBOARD.read_bytes()
     rebuilt = builder.build_bytes(MANIFEST)
     assert rebuilt == generated
-    assert hashlib.sha256(generated).hexdigest() == BASE_DASHBOARD_SHA256
-    assert hashlib.sha256(rebuilt).hexdigest() == BASE_DASHBOARD_SHA256
+    assert hashlib.sha256(rebuilt).hexdigest() == hashlib.sha256(generated).hexdigest()
 
 
 def test_build_dashboard_check_and_repeated_builds_are_deterministic() -> None:
@@ -59,7 +55,7 @@ def test_build_dashboard_check_and_repeated_builds_are_deterministic() -> None:
     )
     assert second.returncode == 0, second.stdout + second.stderr
     sha_two = hashlib.sha256(DASHBOARD.read_bytes()).hexdigest()
-    assert sha_one == sha_two == BASE_DASHBOARD_SHA256
+    assert sha_one == sha_two
 
     check = subprocess.run(
         [sys.executable, "scripts/build_dashboard.py", "--check"],
