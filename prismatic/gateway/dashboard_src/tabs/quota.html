@@ -6,6 +6,39 @@
                         Trigger Sync
                     </button>
                 </h2>
+                <div class="rounded-xl border border-indigo-500/20 bg-indigo-950/10 p-4 space-y-4" data-proof-marker="jules-daily-capacity-resources">
+                    <div class="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                            <h3 class="text-sm font-bold text-indigo-200 uppercase tracking-wider">Jules Daily Capacity</h3>
+                            <p id="jules-capacity-freshness" class="text-[11px] text-slate-500 mt-1">Loading dedicated Jules capacity ledger</p>
+                        </div>
+                        <span id="jules-capacity-badge" class="px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-slate-800 text-slate-400">Unavailable</span>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                        <div class="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+                            <div class="text-[10px] uppercase tracking-wider text-slate-500">Observed launches</div>
+                            <div class="mt-1 text-2xl font-bold text-indigo-300"><span id="jules-capacity-observed">—</span><span class="text-sm text-slate-500"> / <span id="jules-capacity-limit">300</span></span></div>
+                        </div>
+                        <div class="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+                            <div class="text-[10px] uppercase tracking-wider text-slate-500">Remaining observed</div>
+                            <div id="jules-capacity-remaining" class="mt-1 text-2xl font-bold text-emerald-300">—</div>
+                        </div>
+                        <div class="rounded-lg border border-slate-800 bg-slate-950/50 p-3">
+                            <div class="text-[10px] uppercase tracking-wider text-slate-500">Coverage state</div>
+                            <div id="jules-capacity-coverage" class="mt-1 text-sm font-bold text-amber-300">Unavailable</div>
+                        </div>
+                    </div>
+                    <div class="h-2 rounded-full bg-slate-900 border border-slate-800 overflow-hidden" aria-label="Jules daily capacity progress">
+                        <div id="jules-capacity-progress" class="h-full bg-indigo-500 rounded-full transition-all duration-500" style="width: 0%"></div>
+                    </div>
+                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                        <div class="rounded-lg bg-slate-950/50 border border-slate-800 p-2"><span class="text-slate-500">Active</span><div id="jules-capacity-active" class="font-bold text-cyan-300">—</div></div>
+                        <div class="rounded-lg bg-slate-950/50 border border-slate-800 p-2"><span class="text-slate-500">Awaiting</span><div id="jules-capacity-awaiting" class="font-bold text-amber-300">—</div></div>
+                        <div class="rounded-lg bg-slate-950/50 border border-slate-800 p-2"><span class="text-slate-500">Completed</span><div id="jules-capacity-completed" class="font-bold text-emerald-300">—</div></div>
+                        <div class="rounded-lg bg-slate-950/50 border border-slate-800 p-2"><span class="text-slate-500">Failed</span><div id="jules-capacity-failed" class="font-bold text-rose-300">—</div></div>
+                    </div>
+                    <div id="jules-capacity-nonclaims" class="text-[11px] text-slate-500">Dedicated ledger prevents CLI/auth-unavailable data from rendering as zero. API contract is privacy-minimal: aggregate counts only, no session/current rows.</div>
+                </div>
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs" data-proof-marker="resources-budget-caps-controls">
                     <label class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3 space-y-2">
                         <span class="block text-[10px] uppercase tracking-wider text-slate-500">Daily budget cap</span>

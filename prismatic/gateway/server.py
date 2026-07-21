@@ -3519,6 +3519,14 @@ async def dashboard_quota_summary() -> dict[str, Any]:
         }
 
 
+@app.get("/api/jules/capacity")
+@app.get("/api/gateway/jules/capacity")
+async def dashboard_jules_capacity() -> dict[str, Any]:
+    from prismatic.jules_capacity import capacity_payload
+
+    return capacity_payload()
+
+
 @app.post("/api/quota/poll")
 @app.post("/api/gateway/quota/poll")
 async def dashboard_quota_poll() -> dict[str, Any]:

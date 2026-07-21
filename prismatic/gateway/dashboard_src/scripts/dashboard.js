@@ -1079,6 +1079,7 @@
                 await renderSignalsView();
             } else if (activeTab === 'quota') {
                 await fetchBudgetCaps();
+                await fetchJulesCapacity();
                 await fetchQuotaData();
             }
         }
@@ -2460,6 +2461,50 @@
                 console.error("Error saving budget caps:", err);
                 if (status) status.textContent = "Save failed";
                 showToast("Budget cap save failed", true);
+            }
+        }
+
+        async function fetchJulesCapacity() {
+            const setText = (id, value) => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = value;
+            };
+            const badge = document.getElementById("jules-capacity-badge");
+            const progress = document.getElementById("jules-capacity-progress");
+            try {
+                const res = await fetch(`${API_PREFIX}/jules/capacity`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const limit = Number(data.limit || 300);
+                const observed = Number(data.observed_launches || 0);
+                const pct = data.status === "unavailable" ? 0 : Math.min(100, Math.max(0, (observed / limit) * 100));
+                setText("jules-capacity-observed", data.status === "unavailable" ? "—" : observed);
+                setText("jules-capacity-limit", limit);
+                setText("jules-capacity-remaining", data.status === "unavailable" ? "—" : (data.remaining_observed_capacity ?? "—"));
+                setText("jules-capacity-active", data.active ?? "—");
+                setText("jules-capacity-awaiting", data.awaiting ?? "—");
+                setText("jules-capacity-completed", data.completed ?? "—");
+                setText("jules-capacity-failed", data.failed ?? "—");
+                const coverage = data.status === "unavailable" ? "Unavailable" : String(data.coverage_state || "partial_coverage").replaceAll("_", " ");
+                setText("jules-capacity-coverage", coverage);
+                const snapshot = data.snapshot_at ? formatDate(data.snapshot_at) : "unknown";
+                const label = data.status === "unavailable" ? "Unavailable" : (data.status === "fresh" ? "Fresh" : data.status === "stale" ? "Stale" : "Partial coverage");
+                setText("jules-capacity-freshness", `${label} · snapshot ${snapshot} · source ${data.source || 'jules-capacity-ledger'} · aggregate counts only`);
+                setText("jules-capacity-nonclaims", (data.non_claims || []).length ? `Non-claims: ${(data.non_claims || []).join(', ')}` : "Full-day ledger coverage observed for this UTC window.");
+                if (progress) progress.style.width = `${pct}%`;
+                if (badge) {
+                    badge.textContent = label;
+                    badge.className = "px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider " + (data.status === "unavailable" ? "bg-rose-500/10 text-rose-300 border border-rose-500/20" : data.status === "fresh" ? "bg-emerald-500/10 text-emerald-300 border border-emerald-500/20" : "bg-amber-500/10 text-amber-300 border border-amber-500/20");
+                }
+            } catch (err) {
+                console.error("Error loading Jules capacity:", err);
+                setText("jules-capacity-freshness", "Unavailable · Jules capacity endpoint failed");
+                setText("jules-capacity-coverage", "Unavailable");
+                if (progress) progress.style.width = "0%";
+                if (badge) {
+                    badge.textContent = "Unavailable";
+                    badge.className = "px-2 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-rose-500/10 text-rose-300 border border-rose-500/20";
+                }
             }
         }
 
