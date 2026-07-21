@@ -4304,6 +4304,7 @@ def _workspace_tree_html(file: str) -> str:
 _GOVERNANCE_DASHBOARD_HTML = (
     Path(__file__).resolve().parent / "templates" / "dashboard.html"
 )
+_GOVERNANCE_DASHBOARD_CSS = Path(__file__).resolve().parent / "static" / "dashboard.css"
 
 
 def _serve_governance_dashboard_html() -> HTMLResponse:
@@ -4314,6 +4315,22 @@ def _serve_governance_dashboard_html() -> HTMLResponse:
             status_code=404,
         )
     return HTMLResponse(_GOVERNANCE_DASHBOARD_HTML.read_text(encoding="utf-8"))
+
+
+@app.get("/static/dashboard.css", response_class=Response)
+async def serve_governance_dashboard_css() -> Response:
+    """Serve the built dashboard CSS without a browser-time Tailwind runtime."""
+    if not _GOVERNANCE_DASHBOARD_CSS.exists():
+        return Response(
+            "Prismatic governance dashboard CSS not found",
+            status_code=404,
+            media_type="text/plain",
+        )
+    return Response(
+        _GOVERNANCE_DASHBOARD_CSS.read_bytes(),
+        media_type="text/css",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
 
 
 @app.get("/", response_class=HTMLResponse)
