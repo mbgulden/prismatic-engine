@@ -3833,8 +3833,10 @@ async def github_webhook(request: Request) -> dict[str, Any]:
         if not secrets:
             logger.warning("GitHub webhook skipped: secret not set")
             return {"status": "skipped", "reason": "no-secret"}
-        # GitHub HMAC algorithm: hmac_sha256(secret, "x-hub-signature-256:" + body)
-        signed_payload = b"x-hub-signature-256:" + body
+        # GitHub signs the exact raw request body with HMAC-SHA256. The
+        # ``X-Hub-Signature-256`` header name is not part of the signed bytes.
+        # See GitHub's webhook-validation contract.
+        signed_payload = body
         # GitHub sends "sha256=<hex>"; compare_digest needs raw hex on both sides.
         sig_hex = (
             signature.split("=", 1)[1] if signature.startswith("sha256=") else signature
