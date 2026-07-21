@@ -13,7 +13,7 @@ import os
 import re
 import sqlite3
 import stat
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -61,13 +61,13 @@ _STATUS_WORDS = {
 
 
 def _utcnow() -> datetime:
-    return datetime.now(UTC)
+    return datetime.now(timezone.utc)
 
 
 def _iso(dt: datetime | None = None) -> str:
     return (
         (dt or _utcnow())
-        .astimezone(UTC)
+        .astimezone(timezone.utc)
         .replace(microsecond=0)
         .isoformat()
         .replace("+00:00", "Z")
@@ -78,7 +78,9 @@ def _parse_iso(value: str | None) -> datetime | None:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(
+            timezone.utc
+        )
     except ValueError:
         return None
 
@@ -519,7 +521,7 @@ def _latest_reconciliation(conn: sqlite3.Connection) -> sqlite3.Row | None:
 def capacity_payload(
     *, db_path: Path | None = None, now: datetime | None = None
 ) -> dict[str, Any]:
-    now_dt = (now or _utcnow()).astimezone(UTC)
+    now_dt = (now or _utcnow()).astimezone(timezone.utc)
     window_start = now_dt.replace(hour=0, minute=0, second=0, microsecond=0)
     try:
         with _connect(db_path) as conn:

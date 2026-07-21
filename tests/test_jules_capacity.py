@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import stat
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -55,7 +55,7 @@ def test_stable_identity_replay_is_idempotent_but_distinct_identities_split(
         ).fetchone()
         assert row[0] == "active"
 
-    payload = capacity_payload(now=datetime(2026, 7, 21, 12, 0, tzinfo=UTC))
+    payload = capacity_payload(now=datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc))
     assert payload["limit"] == DAILY_LIMIT == 300
     assert payload["observed_launches"] == 2
     assert payload["remaining_observed_capacity"] == 298
@@ -149,7 +149,7 @@ def test_reconciliation_persists_success_and_unavailable_attempts_and_snapshot_f
         attempted_at=success_at,
     )
     assert result["updated"] == 1
-    payload = capacity_payload(now=datetime(2026, 7, 21, 12, 0, tzinfo=UTC))
+    payload = capacity_payload(now=datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc))
     assert payload["completed"] == 1
     assert payload["snapshot_at"] == success_at
     assert payload["snapshot_age_sec"] == 1800
@@ -161,7 +161,7 @@ def test_reconciliation_persists_success_and_unavailable_attempts_and_snapshot_f
         returncode=0,
         attempted_at=unavailable_at,
     )
-    payload = capacity_payload(now=datetime(2026, 7, 21, 12, 6, tzinfo=UTC))
+    payload = capacity_payload(now=datetime(2026, 7, 21, 12, 6, tzinfo=timezone.utc))
     assert payload["status"] == "unavailable"
     assert payload["snapshot_at"] == unavailable_at
     assert payload["errors"] == [
@@ -188,7 +188,7 @@ def test_stale_and_zero_launch_coverage_matures_after_24_hours(
         )
         conn.commit()
 
-    payload = capacity_payload(now=datetime(2026, 7, 21, 12, 0, tzinfo=UTC))
+    payload = capacity_payload(now=datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc))
     assert payload["observed_launches"] == 0
     assert payload["coverage_state"] == "fresh"
     assert payload["status"] == "stale"
@@ -211,7 +211,7 @@ def test_private_store_hashes_adversarial_identifiers_and_api_payload_has_no_nes
         launch_ts_utc="2026-07-21T10:00:00Z",
         lifecycle_status="failed",
     )
-    payload = capacity_payload(now=datetime(2026, 7, 21, 12, 0, tzinfo=UTC))
+    payload = capacity_payload(now=datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc))
     forbidden = [
         "user:pass",
         "token=SECRET",
@@ -289,7 +289,7 @@ def test_ledger_failure_never_reports_unavailable_capacity_as_zero(monkeypatch) 
         raise sqlite3.OperationalError("synthetic unavailable")
 
     monkeypatch.setattr("prismatic.jules_capacity._connect", fail_connect)
-    payload = capacity_payload(now=datetime(2026, 7, 21, 12, 0, tzinfo=UTC))
+    payload = capacity_payload(now=datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc))
 
     assert payload["ok"] is False
     assert payload["status"] == "unavailable"

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -14,7 +14,12 @@ def test_gateway_jules_capacity_endpoint_uses_privacy_minimal_durable_ledger(
 ) -> None:
     db = tmp_path / "private" / "jules.sqlite3"
     monkeypatch.setenv("PRISMATIC_JULES_CAPACITY_DB_PATH", str(db))
-    today = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    today = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
     record_jules_launch(
         issue_id="GRO-API",
         repository="https://user:pass@example.com/repo.git?token=SECRET",
