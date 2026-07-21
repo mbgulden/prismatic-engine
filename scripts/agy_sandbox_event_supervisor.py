@@ -19,6 +19,7 @@ Usage:
   python3 agy_sandbox_event_supervisor.py --max-concurrent 2 --jitter 5-15 --backoff 8-15
 """
 import os
+import pwd
 import sys
 import json
 import time
@@ -266,7 +267,20 @@ AGY_BIN = os.environ.get("AGY_BIN", str(Path.home() / ".local" / "bin" / "agy"))
 # Solution: wrap AGY with this sentinel — if no RESULT.md, write one + mark
 # the Linear issue as agent:needs-human-review so the supervisor stops
 # re-dispatching it.
-AGY_ABANDONMENT_GUARD = os.environ.get("AGY_ABANDONMENT_GUARD", str(Path.home() / ".hermes" / "profiles" / "orchestrator" / "scripts" / "agy_abandonment_guard.py"))
+# This supervisor can be launched under multiple Hermes profile HOME values. Use
+# the service account's OS home, not the mutable HOME environment variable.
+_SERVICE_ACCOUNT_HOME = Path(pwd.getpwuid(os.getuid()).pw_dir)
+AGY_ABANDONMENT_GUARD = os.environ.get(
+    "AGY_ABANDONMENT_GUARD",
+    str(
+        _SERVICE_ACCOUNT_HOME
+        / ".hermes"
+        / "profiles"
+        / "orchestrator"
+        / "scripts"
+        / "agy_abandonment_guard.py"
+    ),
+)
 AGENT_NEEDS_HUMAN_LABEL = "agent:needs-human-review"
 # FIX 2026-06-24: Path("...li") was a typo. Use the actual token dir.
 AGY_TOKEN_DIR = Path(os.environ.get("AGY_TOKEN_DIR", str(Path.home() / ".gemini" / "antigravity-cli")))
