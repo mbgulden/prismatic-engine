@@ -64,6 +64,8 @@ COLD_START_BACKOFF_SEC = 300  # on first start, ignore events older than 5 min
 SUPERVISOR_PATH = os.environ.get("PRISMATIC_SUPERVISOR_PATH") or str(
     ORCHESTRATOR_PROFILE_HOME / "scripts" / "agy_sandbox_event_supervisor.py"
 )
+AGY_CLI_HOME_DEFAULT = str(Path("/home") / "ubuntu" / ".hermes" / "profiles" / "kai" / "home")
+AGY_CLI_HOME = os.environ.get("AGY_CLI_HOME", AGY_CLI_HOME_DEFAULT)
 
 # Issue-ID → last dispatch time, for dedup window
 _recent_dispatches: dict[str, float] = defaultdict(float)
@@ -307,10 +309,11 @@ def dispatch_to_supervisor(issue_id: str) -> None:
                 "--backoff",
                 "3-8",
                 "--max-concurrent",
-                "2",
+                "3",
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            env={**os.environ, "AGY_CLI_HOME": AGY_CLI_HOME},
         )
         print(f"[consumer] {issue_id}: supervisor PID={proc.pid}")
     except Exception as e:

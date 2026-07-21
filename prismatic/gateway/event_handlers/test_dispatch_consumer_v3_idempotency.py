@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+from pathlib import Path
 
 from prismatic.gateway.event_handlers import dispatch_consumer_v3 as consumer
 
@@ -91,6 +92,29 @@ def test_replaying_same_dedup_key_does_not_spawn_twice(tmp_path, monkeypatch):
         conn.close()
     assert processed == 1
     assert ledger_rows == [("linear:update:GRO-IDEMPOTENT:1", "GRO-IDEMPOTENT")]
+
+
+def test_dispatch_to_supervisor_uses_three_slots_and_profile_scoped_agy_home(monkeypatch):
+    calls = []
+
+    class Proc:
+        pid = 12345
+
+    def fake_popen(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        return Proc()
+
+    monkeypatch.setattr(consumer.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(consumer, "AGY_CLI_HOME", str(Path("/home") / "ubuntu" / ".hermes" / "profiles" / "kai" / "home"))
+
+    consumer.dispatch_to_supervisor("GRO-X3")
+
+    assert len(calls) == 1
+    cmd, kwargs = calls[0]
+    assert cmd[cmd.index("--max-concurrent") + 1] == "3"
+    assert kwargs["env"]["AGY_CLI_HOME"] == str(Path("/home") / "ubuntu" / ".hermes" / "profiles" / "kai" / "home")
+    assert kwargs["stdout"] is consumer.subprocess.DEVNULL
+    assert kwargs["stderr"] is consumer.subprocess.DEVNULL
 
 
 def test_legacy_event_without_dedup_key_gets_stable_content_key(tmp_path):
