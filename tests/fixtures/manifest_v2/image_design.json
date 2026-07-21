@@ -1,0 +1,70 @@
+{
+  "schema_version": 2.0,
+  "bundle_type": "image/design",
+  "deliverables": [
+    "assets/logo.png"
+  ],
+  "content_hashes": {
+    "assets/logo.png": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "provenance": {
+    "toolchain": "imagemagick-v7.1",
+    "builder": "agy-design-agent"
+  },
+  "source_revision": {
+    "source_commit_sha": "a1b2c3d4e5f607182930415263748596a7b8c9d0",
+    "base_commit_sha": "f0e9d8c7b6a50493827160514233221100ffeedd",
+    "branch": "feature/gro-4112-universal-manifest"
+  },
+  "path_scope": {
+    "allowed_paths": [
+      "assets/**/*"
+    ],
+    "touched_paths": [
+      "assets/logo.png"
+    ]
+  },
+  "privacy_retention": {
+    "privacy_level": "public",
+    "retention_status": "retained",
+    "retention_reasons": [
+      "logo_artwork"
+    ],
+    "retention_policy": "infinite"
+  },
+  "type_specific_proofs": {
+    "image_design": {
+      "dimensions": [
+        512,
+        512
+      ],
+      "color_space": "sRGB",
+      "similarity_score": 0.99
+    }
+  },
+  "preview_handles": [
+    "assets/logo.png"
+  ],
+  "licenses": [
+    "CC-BY-4.0"
+  ],
+  "non_claims": [
+    "code_changes"
+  ],
+  "candidate_sha_destination": {
+    "candidate_sha": "a1b2c3d4e5f607182930415263748596a7b8c9d0",
+    "destination_branch": "main"
+  },
+  "review_digest": "a576c24f2b963b516b3f6f140656667d4fdf8a7351662d515a6b0c242b934b12",
+  "integration_receipt": {
+    "receipt_id": "rec-design",
+    "timestamp": "2026-07-21T08:01:00Z",
+    "status": "integrated"
+  },
+  "rollback": {
+    "revert_instructions": "git revert",
+    "script_path": "scripts/revert_design.sh"
+  },
+  "post_integration_proof": "design-similarity-visual-match-ok",
+  "marker": "UNIVERSAL_RESULT_MANIFEST_V2_OK"
+}

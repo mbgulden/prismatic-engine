@@ -1,0 +1,432 @@
+{
+  "code": {
+    "schema_version": 2.0,
+    "bundle_type": "code",
+    "deliverables": ["src/main.py", "tests/test_main.py"],
+    "content_hashes": {
+      "src/main.py": "a576c24f2b963b516b3f6f140656667d4fdf8a7351662d515a6b0c242b934b12",
+      "tests/test_main.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "provenance": {
+      "toolchain": "python-3.11-tox",
+      "builder": "agy-coder-subagent"
+    },
+    "source_revision": {
+      "source_commit_sha": "a1b2c3d4e5f607182930415263748596a7b8c9d0",
+      "base_commit_sha": "f0e9d8c7b6a50493827160514233221100ffeedd",
+      "branch": "feature/gro-4112-universal-manifest"
+    },
+    "path_scope": {
+      "allowed_paths": ["src/**/*", "tests/**/*"],
+      "touched_paths": ["src/main.py", "tests/test_main.py"]
+    },
+    "privacy_retention": {
+      "privacy_level": "internal",
+      "retention_status": "retained",
+      "retention_reasons": ["prismatic_engine_core"],
+      "retention_policy": "default"
+    },
+    "type_specific_proofs": {
+      "code": {
+        "tests_passed": true,
+        "coverage": 95.5,
+        "lint_status": "clean"
+      }
+    },
+    "preview_handles": [],
+    "licenses": ["MIT"],
+    "non_claims": ["production_deployed"],
+    "candidate_sha_destination": {
+      "candidate_sha": "a1b2c3d4e5f607182930415263748596a7b8c9d0",
+      "destination_branch": "main"
+    },
+    "review_digest": "a576c24f2b963b516b3f6f140656667d4fdf8a7351662d515a6b0c242b934b12",
+    "integration_receipt": {
+      "receipt_id": "rec-991122",
+      "timestamp": "2026-07-21T08:01:00Z",
+      "status": "validated-and-integrated"
+    },
+    "rollback": {
+      "revert_instructions": "git revert a1b2c3d4e5f607182930415263748596a7b8c9d0",
+      "script_path": "scripts/revert_gro_4112.sh"
+    },
+    "post_integration_proof": "integrated-build-green-check",
+    "marker": "UNIVERSAL_RESULT_MANIFEST_V2_OK"
+  },
+  "web/app": {
+    "schema_version": 2.0,
+    "bundle_type": "web/app",
+    "deliverables": ["dist/index.html", "dist/bundle.js"],
+    "content_hashes": {
+      "dist/index.html": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "dist/bundle.js": "a576c24f2b963b516b3f6f140656667d4fdf8a7351662d515a6b0c242b934b12"
+    },
+    "provenance": {
+      "toolchain": "node-v20-vite-build",
+      "builder": "agy-frontend-builder"
+    },
+    "source_revision": {
+      "source_commit_sha": "a1b2c3d4e5f607182930415263748596a7b8c9d0",
+      "base_commit_sha": "f0e9d8c7b6a50493827160514233221100ffeedd",
+      "branch": "feature/gro-4112-universal-manifest"
+    },
+    "path_scope": {
+      "allowed_paths": ["dist/**/*"],
+      "touched_paths": ["dist/index.html", "dist/bundle.js"]
+    },
+    "privacy_retention": {
+      "privacy_level": "public",
+      "retention_status": "retained",
+      "retention_reasons": ["production_web_assets"],
+      "retention_policy": "default"
+    },
+    "type_specific_proofs": {
+      "web_app": {
+        "build_status": "success",
+        "lighthouse": {
+          "performance": 98,
+          "accessibility": 100,
+          "best_practices": 95,
+          "seo": 100
+        },
+        "visual_qa": "PASS"
+      }
+    },
+    "preview_handles": ["https://preview.growthwebdev.com/gro-4112/index.html"],
+    "licenses": ["Apache-2.0"],
+    "non_claims": [],
+    "candidate_sha_destination": {
+      "candidate_sha": "a1b2c3d4e5f607182930415263748596a7b8c9d0",
+      "destination_branch": "main"
+    },
+    "review_digest": "a576c24f2b963b516b3f6f140656667d4fdf8a7351662d515a6b0c242b934b12",
+    "integration_receipt": {
+      "receipt_id": "rec-web-app",
+      "timestamp": "2026-07-21T08:01:00Z",
+      "status": "integrated"
+    },
+    "rollback": {
+      "revert_instructions": "redeploy-previous-release",
+      "script_path": "scripts/rollback_web_app.sh"
+    },
+    "post_integration_proof": "lighthouse-smoke-test-green",
+    "marker": "UNIVERSAL_RESULT_MANIFEST_V2_OK"
+  },
+  "image/design": {
+    "schema_version": 2.0,
+    "bundle_type": "image/design",
+    "deliverables": ["assets/logo.png"],
+    "content_hashes": {
+      "assets/logo.png": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "provenance": {
+      "toolchain": "imagemagick-v7.1",
+      "builder": "agy-design-agent"
+    },
+    "source_revision": {
+      "source_commit_sha": "a1b2c3d4e5f607182930415263748596a7b8c9d0",
+      "base_commit_sha": "f0e9d8c7b6a50493827160514233221100ffeedd",
+      "branch": "feature/gro-4112-universal-manifest"
+    },
+    "path_scope": {
+      "allowed_paths": ["assets/**/*"],
+      "touched_paths": ["assets/logo.png"]
+    },
+    "privacy_retention": {
+      "privacy_level": "public",
+      "retention_status": "retained",
+      "retention_reasons": ["logo_artwork"],
+      "retention_policy": "infinite"
+    },
+    "type_specific_proofs": {
+      "image_design": {
+        "dimensions": [512, 512],
+        "color_space": "sRGB",
+        "similarity_score": 0.99
+      }
+    },
+    "preview_handles": ["assets/logo.png"],
+    "licenses": ["CC-BY-4.0"],
+    "non_claims": ["code_changes"],
+    "candidate_sha_destination": {
+      "candidate_sha": "a1b2c3d4e5f607182930415263748596a7b8c9d0",
+      "destination_branch": "main"
+    },
+    "review_digest": "a576c24f2b963b516b3f6f140656667d4fdf8a7351662d515a6b0c242b934b12",
+    "integration_receipt": {
+      "receipt_id": "rec-design",
+      "timestamp": "2026-07-21T08:01:00Z",
+      "status": "integrated"
+    },
+    "rollback": {
+      "revert_instructions": "git revert",
+      "script_path": "scripts/revert_design.sh"
+    },
+    "post_integration_proof": "design-similarity-visual-match-ok",
+    "marker": "UNIVERSAL_RESULT_MANIFEST_V2_OK"
+  },
+  "sprite/game asset": {
+    "schema_version": 2.0,
+    "bundle_type": "sprite/game asset",
+    "deliverables": ["assets/spritesheet.png"],
+    "content_hashes": {
+      "assets/spritesheet.png": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "provenance": {
+      "toolchain": "aseprite-v1.3",
+      "builder": "agy-game-dev-agent"
+    },
+    "source_revision": {
+      "source_commit_sha": "a1b2c3d4e5f607182930415263748596a7b8c9d0",
+      "base_commit_sha": "f0e9d8c7b6a50493827160514233221100ffeedd",
+      "branch": "feature/gro-4112-universal-manifest"
+    },
+    "path_scope": {
+      "allowed_paths": ["assets/**/*"],
+      "touched_paths": ["assets/spritesheet.png"]
+    },
+    "privacy_retention": {
+      "privacy_level": "public",
+      "retention_status": "retained",
+      "retention_reasons": ["game_assets"],
+      "retention_policy": "default"
+    },
+    "type_specific_proofs": {
+      "sprite_game_asset": {
+        "frame_count": 8,
+        "spritesheet": "assets/spritesheet.json",
+        "collision_boxes": [{"x": 0, "y": 0, "width": 32, "height": 32}]
+      }
+    },
+    "preview_handles": ["assets/spritesheet.png"],
+    "licenses": ["Proprietary"],
+    "non_claims": [],
+    "candidate_sha_destination": {
+      "candidate_sha": "a1b2c3d4e5f607182930415263748596a7b8c9d0",
+      "destination_branch": "main"
+    },
+    "review_digest": "a576c24f2b963b516b3f6f140656667d4fdf8a7351662d515a6b0c242b934b12",
+    "integration_receipt": {
+      "receipt_id": "rec-sprite",
+      "timestamp": "2026-07-21T08:01:00Z",
+      "status": "integrated"
+    },
+    "rollback": {
+      "revert_instructions": "git revert",
+      "script_path": "scripts/revert_sprite.sh"
+    },
+    "post_integration_proof": "spritesheet-parsing-validation-ok",
+    "marker": "UNIVERSAL_RESULT_MANIFEST_V2_OK"
+  },
+  "video": {
+    "schema_version": 2.0,
+    "bundle_type": "video",
+    "deliverables": ["media/promo.mp4"],
+    "content_hashes": {
+      "media/promo.mp4": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "provenance": {
+      "toolchain": "ffmpeg-v6.0",
+      "builder": "agy-video-renderer"
+    },
+    "source_revision": {
+      "source_commit_sha": "a1b2c3d4e5f607182930415263748596a7b8c9d0",
+      "base_commit_sha": "f0e9d8c7b6a50493827160514233221100ffeedd",
+      "branch": "feature/gro-4112-universal-manifest"
+    },
+    "path_scope": {
+      "allowed_paths": ["media/**/*"],
+      "touched_paths": ["media/promo.mp4"]
+    },
+    "privacy_retention": {
+      "privacy_level": "public",
+      "retention_status": "retained",
+      "retention_reasons": ["marketing_promo"],
+      "retention_policy": "default"
+    },
+    "type_specific_proofs": {
+      "video": {
+        "resolution": "1920x1080",
+        "duration_seconds": 30.5,
+        "bitrate_kbps": 4500
+      }
+    },
+    "preview_handles": ["media/promo.mp4"],
+    "licenses": ["Proprietary"],
+    "non_claims": [],
+    "candidate_sha_destination": {
+      "candidate_sha": "a1b2c3d4e5f607182930415263748596a7b8c9d0",
+      "destination_branch": "main"
+    },
+    "review_digest": "a576c24f2b963b516b3f6f140656667d4fdf8a7351662d515a6b0c242b934b12",
+    "integration_receipt": {
+      "receipt_id": "rec-video",
+      "timestamp": "2026-07-21T08:01:00Z",
+      "status": "integrated"
+    },
+    "rollback": {
+      "revert_instructions": "git revert",
+      "script_path": "scripts/revert_video.sh"
+    },
+    "post_integration_proof": "video-transcoding-verifications-ok",
+    "marker": "UNIVERSAL_RESULT_MANIFEST_V2_OK"
+  },
+  "audio": {
+    "schema_version": 2.0,
+    "bundle_type": "audio",
+    "deliverables": ["media/sfx.wav"],
+    "content_hashes": {
+      "media/sfx.wav": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "provenance": {
+      "toolchain": "audacity-v3.0",
+      "builder": "agy-audio-synthesizer"
+    },
+    "source_revision": {
+      "source_commit_sha": "a1b2c3d4e5f607182930415263748596a7b8c9d0",
+      "base_commit_sha": "f0e9d8c7b6a50493827160514233221100ffeedd",
+      "branch": "feature/gro-4112-universal-manifest"
+    },
+    "path_scope": {
+      "allowed_paths": ["media/**/*"],
+      "touched_paths": ["media/sfx.wav"]
+    },
+    "privacy_retention": {
+      "privacy_level": "public",
+      "retention_status": "retained",
+      "retention_reasons": ["game_sfx"],
+      "retention_policy": "default"
+    },
+    "type_specific_proofs": {
+      "audio": {
+        "channels": 2,
+        "sample_rate_hz": 44100,
+        "duration_seconds": 1.25
+      }
+    },
+    "preview_handles": ["media/sfx.wav"],
+    "licenses": ["CC0-1.0"],
+    "non_claims": [],
+    "candidate_sha_destination": {
+      "candidate_sha": "a1b2c3d4e5f607182930415263748596a7b8c9d0",
+      "destination_branch": "main"
+    },
+    "review_digest": "a576c24f2b963b516b3f6f140656667d4fdf8a7351662d515a6b0c242b934b12",
+    "integration_receipt": {
+      "receipt_id": "rec-audio",
+      "timestamp": "2026-07-21T08:01:00Z",
+      "status": "integrated"
+    },
+    "rollback": {
+      "revert_instructions": "git revert",
+      "script_path": "scripts/revert_audio.sh"
+    },
+    "post_integration_proof": "audio-playback-checksum-ok",
+    "marker": "UNIVERSAL_RESULT_MANIFEST_V2_OK"
+  },
+  "document/data": {
+    "schema_version": 2.0,
+    "bundle_type": "document/data",
+    "deliverables": ["docs/spec.md"],
+    "content_hashes": {
+      "docs/spec.md": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "provenance": {
+      "toolchain": "markdown-it-v14.0",
+      "builder": "agy-doc-curator"
+    },
+    "source_revision": {
+      "source_commit_sha": "a1b2c3d4e5f607182930415263748596a7b8c9d0",
+      "base_commit_sha": "f0e9d8c7b6a50493827160514233221100ffeedd",
+      "branch": "feature/gro-4112-universal-manifest"
+    },
+    "path_scope": {
+      "allowed_paths": ["docs/**/*"],
+      "touched_paths": ["docs/spec.md"]
+    },
+    "privacy_retention": {
+      "privacy_level": "internal",
+      "retention_status": "retained",
+      "retention_reasons": ["architecture_spec"],
+      "retention_policy": "default"
+    },
+    "type_specific_proofs": {
+      "document_data": {
+        "format": "markdown",
+        "valid": true,
+        "schema_compliant": true
+      }
+    },
+    "preview_handles": ["docs/spec.md"],
+    "licenses": ["MIT"],
+    "non_claims": ["functional_code_changes"],
+    "candidate_sha_destination": {
+      "candidate_sha": "a1b2c3d4e5f607182930415263748596a7b8c9d0",
+      "destination_branch": "main"
+    },
+    "review_digest": "a576c24f2b963b516b3f6f140656667d4fdf8a7351662d515a6b0c242b934b12",
+    "integration_receipt": {
+      "receipt_id": "rec-document",
+      "timestamp": "2026-07-21T08:01:00Z",
+      "status": "integrated"
+    },
+    "rollback": {
+      "revert_instructions": "git revert",
+      "script_path": "scripts/revert_doc.sh"
+    },
+    "post_integration_proof": "doc-lint-passing-check",
+    "marker": "UNIVERSAL_RESULT_MANIFEST_V2_OK"
+  },
+  "mixed": {
+    "schema_version": 2.0,
+    "bundle_type": "mixed",
+    "deliverables": ["docs/spec.md", "src/main.py"],
+    "content_hashes": {
+      "docs/spec.md": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "src/main.py": "a576c24f2b963b516b3f6f140656667d4fdf8a7351662d515a6b0c242b934b12"
+    },
+    "provenance": {
+      "toolchain": "multi-tool-combo",
+      "builder": "agy-generalist-agent"
+    },
+    "source_revision": {
+      "source_commit_sha": "a1b2c3d4e5f607182930415263748596a7b8c9d0",
+      "base_commit_sha": "f0e9d8c7b6a50493827160514233221100ffeedd",
+      "branch": "feature/gro-4112-universal-manifest"
+    },
+    "path_scope": {
+      "allowed_paths": ["**/*"],
+      "touched_paths": ["docs/spec.md", "src/main.py"]
+    },
+    "privacy_retention": {
+      "privacy_level": "internal",
+      "retention_status": "retained",
+      "retention_reasons": ["mixed_bundle_files"],
+      "retention_policy": "default"
+    },
+    "type_specific_proofs": {
+      "mixed": {
+        "submanifests_validated": 2
+      }
+    },
+    "preview_handles": [],
+    "licenses": ["MIT"],
+    "non_claims": [],
+    "candidate_sha_destination": {
+      "candidate_sha": "a1b2c3d4e5f607182930415263748596a7b8c9d0",
+      "destination_branch": "main"
+    },
+    "review_digest": "a576c24f2b963b516b3f6f140656667d4fdf8a7351662d515a6b0c242b934b12",
+    "integration_receipt": {
+      "receipt_id": "rec-mixed",
+      "timestamp": "2026-07-21T08:01:00Z",
+      "status": "integrated"
+    },
+    "rollback": {
+      "revert_instructions": "git revert",
+      "script_path": "scripts/revert_mixed.sh"
+    },
+    "post_integration_proof": "mixed-bundle-verification-check-ok",
+    "marker": "UNIVERSAL_RESULT_MANIFEST_V2_OK"
+  }
+}
