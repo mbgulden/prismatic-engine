@@ -286,7 +286,7 @@ WORKER_STARTUP_STAGGER = (2.0, 8.0)     # Stagger worker threads at boot
 
 # AGY subprocess timeout (24h)
 PRINT_TIMEOUT = "24h0m0s"
-DEFAULT_MODEL = "gemini-3.5-flash"  # medium tier; -high burns daily quota overnight
+DEFAULT_MODEL = "Gemini 3.5 Flash (Medium)"  # AGY CLI display label; -High burns daily quota overnight
 
 # Watchdog: how often to poll Linear for new issues
 # Jul 1 2026: demoted to 600s (10 min) safety net. The bus-subscriber thread
@@ -305,6 +305,17 @@ MIN_ARCHIVE_FREE_GB = float(os.environ.get("AGY_MIN_ARCHIVE_FREE_GB", "50"))
 CRON_JOBS_PATH = Path(os.environ.get("CRON_JOBS_PATH", str(Path.home() / ".hermes" / "profiles" / "orchestrator" / "cron" / "jobs.json")))
 AUTO_RESUME_ALERT_ISSUES = [x.strip() for x in os.environ.get("AGY_ALERT_ISSUES", "GRO-2492,GRO-2551").split(",") if x.strip()]
 CIRCUIT_BREAKER_FAILURE_LIMIT = int(os.environ.get("AGY_CIRCUIT_BREAKER_FAILURE_LIMIT", "2"))
+
+
+def agy_cli_child_env() -> dict[str, str]:
+    """Environment for AGY CLI subprocesses only.
+
+    Supervisor state continues to use this process HOME/Path.home(); AGY child
+    processes may need a profile-scoped HOME where `agy models` and auth work.
+    """
+    env = dict(os.environ)
+    env["HOME"] = os.environ.get("AGY_CLI_HOME") or os.environ.get("HOME", str(Path.home()))
+    return env
 
 
 def _read_linear_api_key() -> str | None:
@@ -416,7 +427,7 @@ def preflight_agy_backend(model: str) -> tuple[bool, str]:
             capture_output=True,
             text=True,
             timeout=45,
-            env={**os.environ, "HOME": os.environ.get("HOME", str(Path.home()))},
+            env=agy_cli_child_env(),
         )
     except subprocess.TimeoutExpired:
         return False, "AGY backend probe timed out"
@@ -860,7 +871,7 @@ def run_agy_session(issue_id: str, sandbox: Path, task_path: Path, log_path: Pat
                 stderr=subprocess.STDOUT,
                 stdin=stdin_pipe,
                 cwd=str(sandbox),
-                env={**os.environ, "HOME": os.environ.get("HOME", str(Path.home()))},
+                env=agy_cli_child_env(),
             )
             if proc.stdin is not None:
                 import hmac
@@ -1137,7 +1148,7 @@ def run_agy_session(issue_id: str, sandbox: Path, task_path: Path, log_path: Pat
                                 stderr=subprocess.STDOUT,
                                 stdin=stdin_pipe,
                                 cwd=str(sandbox),
-                                env={**os.environ, "HOME": os.environ.get("HOME", str(Path.home()))},
+                                env=agy_cli_child_env(),
                             )
                             if proc.stdin is not None:
                                 import hmac
@@ -2691,6 +2702,7 @@ def main():
                     timeout=5
                 ).decode().strip()
                 if model and model in (
+                    "Gemini 3.5 Flash (Medium)", "Gemini 3.5 Flash (High)",
                     "gemini-3.5-flash-high", "gemini-3.5-flash",
                     "gemini-3.1-pro-high", "gemini-3.1-flash-lite",
                     # Anthropic strings (verified working in agent_dispatcher.py
@@ -2723,9 +2735,9 @@ def main():
             if args.max_concurrent != target:
                 args.max_concurrent = target
         else:
-            if args.max_concurrent != 2:
-                print(f"[auto-resume-gate] enforcing cron max-concurrent=2 (was {args.max_concurrent})", flush=True)
-                args.max_concurrent = 2
+            if args.max_concurrent != 3:
+                print(f"[auto-resume-gate] enforcing cron max-concurrent=3 (was {args.max_concurrent})", flush=True)
+                args.max_concurrent = 3
         args.jitter = "15-30"
         global AGY_INACTIVITY_KILL_SEC
         # Real Phase 2/4 build tasks need 10-15min of read-then-write time.
