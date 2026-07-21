@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://prismatic.growthwebdev.com/schemas/agy-result-packet.schema.json",
+  "title": "Canonical Raw AGY Result Packet",
+  "description": "Strict raw AGY-result dialect validated before normalization, completed-work classification, durable evidence retention, or SQLite upsert.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "agent",
+    "issue_identifier",
+    "branch",
+    "base_branch",
+    "changed_files",
+    "result_artifacts",
+    "verification",
+    "non_claims",
+    "merge_lane",
+    "risk_level",
+    "next_action",
+    "marker"
+  ],
+  "properties": {
+    "agent": {"const": "agy"},
+    "issue_identifier": {"type": "string", "pattern": "^GRO-[0-9A-Za-z-]+$"},
+    "branch": {"type": "string", "pattern": "^feature/.+"},
+    "base_branch": {"type": "string", "enum": ["main", "origin/main"]},
+    "source_commit_sha": {"type": "string", "pattern": "^[0-9a-fA-F]{40}$"},
+    "base_commit_sha": {"type": "string", "pattern": "^[0-9a-fA-F]{40}$"},
+    "changed_files": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "pr_url": {
+      "anyOf": [
+        {"type": "null"},
+        {"type": "string", "pattern": "^https://github\\.com/[^/]+/[^/]+/pull/[0-9]+$"}
+      ]
+    },
+    "result_artifacts": {
+      "type": "array",
+      "items": {
+        "anyOf": [
+          {"type": "string", "minLength": 1},
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path"],
+            "properties": {"path": {"type": "string", "minLength": 1}}
+          }
+        ]
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commands", "result", "log_path", "ad_hoc_or_canonical"],
+      "properties": {
+        "commands": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "result": {"type": "string", "enum": ["PASS", "FAIL", "BLOCKED"]},
+        "log_path": {"type": "string", "minLength": 1},
+        "ad_hoc_or_canonical": {"type": "string", "enum": ["ad-hoc targeted", "canonical suite"]}
+      }
+    },
+    "non_claims": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    },
+    "merge_lane": {"type": "string", "enum": ["dashboard-ui", "backend-api", "docs", "research", "mixed", "manual-review"]},
+    "risk_level": {"type": "string", "enum": ["low", "medium", "high"]},
+    "next_action": {"type": "string", "enum": ["merge-ready", "needs-fred-cleanup", "needs-human-review", "blocked", "superseded"]},
+    "marker": {"const": "AGY_TASK_RESULT_PACKET_OK"}
+  }
+}
