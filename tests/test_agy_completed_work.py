@@ -5,6 +5,8 @@ import sqlite3
 import subprocess
 import sys
 
+import pytest
+
 from prismatic.agy_completed_work import (
     AGY_COMPLETED_WORK_INGESTION_MARKER,
     AGY_COMPLETED_WORK_INTEGRATION_GATE_MARKER,
@@ -28,6 +30,7 @@ from prismatic.completed_work_gate import (
     demo_completed_work_packet,
     normalize_non_claims,
 )
+from prismatic.agy_result_packet import ResultPacketValidationError
 
 
 def packet():
@@ -98,6 +101,24 @@ def canonical_agy_packet():
         "non_claims": ["production_deploy", "auto_merge_enabled"],
         "marker": "AGY_TASK_RESULT_PACKET_OK",
     }
+
+
+def raw_agy_packet(**overrides):
+    p = canonical_agy_packet()
+    p.update(
+        {
+            "issue_identifier": "GRO-3837",
+            "branch": "feature/agy-raw-result-contract",
+            "risk_level": "low",
+            "next_action": "merge-ready",
+        }
+    )
+    for key, value in overrides.items():
+        if key == "verification":
+            p["verification"].update(value)
+        else:
+            p[key] = value
+    return p
 
 
 def compact_completed_work_text(
@@ -329,6 +350,110 @@ def test_packet_normalization_preserves_non_claims_without_positive_proof():
         "real_github_pr_created",
     ]
     assert "auto_merge" not in normalized["proof"]
+
+
+def test_raw_agy_packet_validates_normalizes_classifies_and_retains_evidence(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    source = tmp_path / ".prismatic" / "agy-results" / "GRO-3837" / "RESULT.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("RESULT=PASS\nMARKER=AGY_TASK_RESULT_PACKET_OK", encoding="utf-8")
+    log = tmp_path / "proof.log"
+    log.write_text("raw packet verification passed", encoding="utf-8")
+    p = raw_agy_packet(
+        result_artifacts=[str(source)],
+        verification={"log_path": str(log)},
+        source_commit_sha=VALID_SOURCE_SHA,
+        base_commit_sha=VALID_BASE_SHA,
+    )
+    store = AgyCompletedWorkStore(
+        tmp_path / "agy_completed_work.db", evidence_dir=tmp_path / "evidence"
+    )
+
+    row = store.ingest(p)
+
+    assert row.classification == "merge_ready"
+    assert row.source_branch == "feature/agy-raw-result-contract"
+    assert row.packet["normalization"]["marker"] == AGY_PACKET_NORMALIZATION_MARKER
+    assert row.evidence_retention["status"] == "complete"
+    assert row.as_dict()["promotion_decision"]["policy_gate"] == "pass"
+
+
+def test_malformed_raw_agy_packet_creates_no_evidence_or_sqlite_row(tmp_path):
+    store = AgyCompletedWorkStore(
+        tmp_path / "agy_completed_work.db", evidence_dir=tmp_path / "evidence"
+    )
+    bad = raw_agy_packet(branch="agy/not-feature")
+
+    with pytest.raises(ResultPacketValidationError):
+        store.ingest(bad)
+
+    assert store.list() == []
+    assert not (tmp_path / "evidence").exists()
+
+
+def test_secret_bearing_raw_agy_packet_creates_no_evidence_or_sqlite_row(tmp_path):
+    store = AgyCompletedWorkStore(
+        tmp_path / "agy_completed_work.db", evidence_dir=tmp_path / "evidence"
+    )
+    secret_path = str(Path.home() / ".ssh" / "id_rsa")
+    bad = raw_agy_packet(result_artifacts=[secret_path])
+
+    with pytest.raises(ResultPacketValidationError):
+        store.ingest(bad)
+
+    assert store.list() == []
+    assert not (tmp_path / "evidence").exists()
+
+
+def test_raw_next_action_blocked_cannot_normalize_into_merge_ready(tmp_path):
+    store = AgyCompletedWorkStore(tmp_path / "agy_completed_work.db")
+    p = raw_agy_packet(
+        next_action="blocked",
+        verification={"result": "FAIL"},
+    )
+
+    row = store.ingest(p)
+
+    assert row.classification == "blocked_failed_verification"
+    assert row.eligible_for_merge is False
+    assert row.as_dict()["promotion_decision"]["status"] == "needs_repair"
+
+
+def test_raw_high_risk_manual_review_survives_normalization_and_classification(
+    tmp_path,
+):
+    store = AgyCompletedWorkStore(tmp_path / "agy_completed_work.db")
+    p = raw_agy_packet(
+        merge_lane="manual-review",
+        risk_level="high",
+        next_action="needs-human-review",
+    )
+
+    row = store.ingest(p)
+
+    assert row.classification == "manual_review_scope"
+    assert row.eligible_for_merge is False
+    assert "outside lane scope" in row.gate["reasons"][0]
+
+
+def test_normalized_fred_and_jules_packets_do_not_require_agy_raw_schema(tmp_path):
+    store = AgyCompletedWorkStore(tmp_path / "agy_completed_work.db")
+    fred = packet()
+    fred["agent"] = "fred"
+    fred["source_branch"] = "feature/fred-normalized"
+    fred["source_path"] = str(Path.home() / ".prismatic" / "fred" / "RESULT.md")
+    jules = packet()
+    jules["agent"] = "jules"
+    jules["source_branch"] = "feature/jules-normalized"
+    jules["source_path"] = str(Path.home() / ".prismatic" / "jules" / "RESULT.md")
+
+    fred_row = store.ingest(fred)
+    jules_row = store.ingest(jules)
+
+    assert fred_row.classification == "merge_ready"
+    assert jules_row.classification == "merge_ready"
 
 
 def test_ingest_completed_work_text_persists_log_packet(tmp_path):

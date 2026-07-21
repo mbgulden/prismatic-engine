@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from prismatic.agy_result_packet import is_raw_agy_result_packet, require_valid_packet
 from prismatic.completed_work_gate import (
     AGY_COMPLETED_WORK_MARKER,
     classify_completed_work,
@@ -243,6 +244,16 @@ def _normalize_lane_scope(packet: Mapping[str, Any]) -> dict[str, Any]:
         )
         lane = {"name": lane_name}
     changed = _string_list(packet.get("changed_files"))
+    if packet.get("risk_level") == "high" or packet.get("next_action") in {
+        "needs-human-review",
+        "needs-fred-cleanup",
+    }:
+        lane.setdefault("touched_paths", changed)
+        lane.setdefault("allowed_paths", [])
+        lane.setdefault(
+            "manual_review_reason", "raw AGY risk/next_action requires manual review"
+        )
+        return lane
     lane.setdefault("touched_paths", changed)
     lane.setdefault(
         "allowed_paths", _allowed_paths_for_lane(_string(lane.get("name")), changed)
@@ -1420,6 +1431,12 @@ class AgyCompletedWorkStore:
         source_is_stale: bool = False,
         conflicts: Sequence[str] | None = None,
     ) -> CompletedWorkRow:
+        if is_raw_agy_result_packet(packet):
+            # Canonical raw AGY packets must pass the strict contract before any
+            # normalization, gate classification, durable evidence retention, or
+            # SQLite upsert.  Invalid raw packets raise here, leaving no row and
+            # no evidence directory for the rejected packet.
+            require_valid_packet(packet)
         normalized_packet = normalize_agy_result_packet(packet)
         gate = classify_completed_work(
             normalized_packet,
