@@ -612,6 +612,97 @@ class TokenPool:
 
 
 # ── Sandbox creation (kept from original) ──
+def apply_repair_seed_manifest(
+    sandbox: Path,
+    manifest_path: Path,
+    expected_manifest_sha256: str,
+) -> list[str]:
+    """Copy a hash-bound repair snapshot into a newly created sandbox.
+
+    The manifest is explicit recovery input, never implicit dirty-state reuse.
+    All entries are validated before any destination is written.
+    """
+    manifest_path = manifest_path.expanduser()
+    if not manifest_path.is_file() or manifest_path.is_symlink():
+        raise RuntimeError(f"repair seed manifest is not a regular file: {manifest_path}")
+    expected_manifest_sha256 = expected_manifest_sha256.strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_manifest_sha256):
+        raise RuntimeError("repair seed manifest SHA-256 must be 64 lowercase hex characters")
+    manifest_bytes = manifest_path.read_bytes()
+    actual_manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+    if actual_manifest_sha256 != expected_manifest_sha256:
+        raise RuntimeError(
+            "repair seed manifest hash mismatch: "
+            f"expected {expected_manifest_sha256}, got {actual_manifest_sha256}"
+        )
+
+    try:
+        manifest = json.loads(manifest_bytes)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"repair seed manifest is invalid JSON: {exc}") from exc
+    if not isinstance(manifest, dict) or manifest.get("version") != 1:
+        raise RuntimeError("repair seed manifest must be an object with version=1")
+    entries = manifest.get("files")
+    if not isinstance(entries, list) or not entries:
+        raise RuntimeError("repair seed manifest files must be a non-empty list")
+    if len(entries) > 100:
+        raise RuntimeError("repair seed manifest exceeds 100 files")
+
+    sandbox_root = sandbox.resolve(strict=True)
+    staged: list[tuple[Path, bytes, str]] = []
+    destination_targets: set[Path] = set()
+    total_bytes = 0
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            raise RuntimeError(f"repair seed entry {index} must be an object")
+        source_text = entry.get("source")
+        destination_text = entry.get("destination")
+        expected_file_sha256 = str(entry.get("sha256") or "").lower()
+        if not isinstance(source_text, str) or not Path(source_text).is_absolute():
+            raise RuntimeError(f"repair seed entry {index} source must be absolute")
+        source = Path(source_text)
+        if not source.is_file() or source.is_symlink():
+            raise RuntimeError(f"repair seed entry {index} source is not a regular file")
+        if not isinstance(destination_text, str):
+            raise RuntimeError(f"repair seed entry {index} destination must be a string")
+        destination = Path(destination_text)
+        if destination.is_absolute() or not destination.parts or ".." in destination.parts:
+            raise RuntimeError(f"repair seed entry {index} destination is unsafe")
+        if destination.parts[0] == ".git" or destination.name in {
+            "AGY_TASK.md",
+            "STARTED.md",
+            "RESULT.md",
+            "DONE.md",
+        }:
+            raise RuntimeError(f"repair seed entry {index} targets a protected control path")
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_file_sha256):
+            raise RuntimeError(f"repair seed entry {index} SHA-256 is invalid")
+        payload = source.read_bytes()
+        total_bytes += len(payload)
+        if total_bytes > 50 * 1024 * 1024:
+            raise RuntimeError("repair seed manifest exceeds 50 MiB total")
+        actual_file_sha256 = hashlib.sha256(payload).hexdigest()
+        if actual_file_sha256 != expected_file_sha256:
+            raise RuntimeError(
+                f"repair seed entry {index} hash mismatch: "
+                f"expected {expected_file_sha256}, got {actual_file_sha256}"
+            )
+        target = (sandbox_root / destination).resolve(strict=False)
+        if not target.is_relative_to(sandbox_root):
+            raise RuntimeError(f"repair seed entry {index} escapes sandbox")
+        if target in destination_targets:
+            raise RuntimeError(f"repair seed entry {index} destination is duplicated")
+        destination_targets.add(target)
+        staged.append((target, payload, destination_text))
+
+    for target, payload, _ in staged:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(f".{target.name}.repair-seed.tmp")
+        temporary.write_bytes(payload)
+        temporary.replace(target)
+    return [destination for _, _, destination in staged]
+
+
 def create_sandbox(issue_id: str, source: Path) -> Path:
     sandbox = SANDBOX_ROOT / issue_id
     if sandbox.is_symlink():
@@ -920,6 +1011,8 @@ def run_agy_session(issue_id: str, sandbox: Path, task_path: Path, log_path: Pat
     result_event = threading.Event()
     stagnation_warn_event = threading.Event()
     stagnation_kill_event = threading.Event()
+    # Initialized before subprocess/shutdown paths; semantic assessment overwrites it.
+    has_done = False
 
     try:
         # Pre-cleanup: delete prior RESULT.md before launch to prevent stale results
@@ -1810,47 +1903,151 @@ def fetch_linear_issues(strict_opt_in: bool = False) -> list:
         return []
 
 
-def fetch_single_linear_issue(identifier: str) -> dict | None:
-    """Fetch a single Linear issue by identifier (e.g. 'GRO-2503').
+def parse_linear_identifier(identifier: str) -> tuple[str, int]:
+    match = re.fullmatch(r"([A-Z][A-Z0-9]{1,15})-([1-9][0-9]*)", identifier.strip().upper())
+    if not match:
+        raise ValueError(f"invalid Linear identifier: {identifier!r}")
+    return match.group(1), int(match.group(2))
 
-    Returns the issue node dict (id, identifier, title, description, ...)
-    or None on failure / not found. Used by --issues mode when there is
-    no /tmp/issue-batches/<id>.txt cache, so AGY_TASK.md has the full
-    issue description instead of a 16-byte placeholder.
-    """
+
+def fetch_single_linear_issue(
+    identifier: str, *, issue_uuid: str | None = None
+) -> dict | None:
+    """Fetch one exact Linear issue by stable UUID or human identifier."""
     import urllib.request
-    key_path = Path(os.environ.get("HERMES_PROFILE_ENV", str(Path.home() / ".hermes" / "profiles" / "orchestrator" / ".env")))
-    if not key_path.exists():
-        return None
-    key = None
-    for line in key_path.read_text().split("\n"):
-        if "LINEAR" in line and "KEY" in line and "=" in line:
-            key = line.split("=", 1)[1].strip().strip("\"'")
-            break
+
+    key = _read_linear_api_key()
     if not key:
         return None
+    try:
+        team_key, issue_number = parse_linear_identifier(identifier)
+    except ValueError as exc:
+        print(f"  [linear-fetch] {exc}", flush=True)
+        return None
+    normalized = f"{team_key}-{issue_number}"
 
-    query = """
-    query($iid: String!) {
-      issue(id: $iid) {
-        id identifier title description priority
-        state { name }
-        labels { nodes { name } }
-      }
-    }
-    """
+    if issue_uuid is not None:
+        issue_uuid = issue_uuid.strip().lower()
+        if not re.fullmatch(
+            r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+            issue_uuid,
+        ):
+            print(f"  [linear-fetch] invalid issue UUID for {normalized}", flush=True)
+            return None
+        query = """
+        query($issueUuid: String!) {
+          issue(id: $issueUuid) {
+            id identifier title description priority
+            state { name }
+            labels { nodes { name } }
+          }
+        }
+        """
+        variables = {"issueUuid": issue_uuid}
+    else:
+        query = """
+        query($teamKey: String!, $number: Float!) {
+          issues(
+            first: 2
+            filter: { team: { key: { eq: $teamKey } }, number: { eq: $number } }
+          ) {
+            nodes {
+              id identifier title description priority
+              state { name }
+              labels { nodes { name } }
+            }
+          }
+        }
+        """
+        variables = {"teamKey": team_key, "number": float(issue_number)}
+
     req = urllib.request.Request(
         "https://api.linear.app/graphql",
-        data=json.dumps({"query": query, "variables": {"iid": identifier}}).encode(),
+        data=json.dumps({"query": query, "variables": variables}).encode(),
         headers={"Authorization": key, "Content-Type": "application/json"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=15) as r:
-            data = json.loads(r.read())
-        return data.get("data", {}).get("issue")
-    except Exception as e:
-        print(f"  [linear-fetch] {identifier} failed: {e}", flush=True)
+        with urllib.request.urlopen(req, timeout=15) as response:
+            data = json.loads(response.read())
+        if data.get("errors"):
+            raise RuntimeError(data["errors"][0].get("message", "Linear GraphQL error"))
+        if issue_uuid is not None:
+            matches = [data.get("data", {}).get("issue")]
+        else:
+            matches = data.get("data", {}).get("issues", {}).get("nodes", [])
+        matches = [node for node in matches if node and node.get("identifier") == normalized]
+        if len(matches) != 1:
+            print(
+                f"  [linear-fetch] {normalized} expected one exact match, got {len(matches)}",
+                flush=True,
+            )
+            return None
+        return matches[0]
+    except Exception as exc:
+        print(f"  [linear-fetch] {normalized} failed: {exc}", flush=True)
         return None
+
+
+def _task_headers(task_content: str) -> tuple[str | None, set[str]]:
+    workdir = None
+    labels: set[str] = set()
+    for line in task_content.splitlines()[:15]:
+        if line.startswith("WORKDIR:"):
+            workdir = line.split(":", 1)[1].strip() or None
+        elif line.startswith("LABELS:"):
+            labels = {
+                part.strip()
+                for part in line.split(":", 1)[1].split(",")
+                if part.strip()
+            }
+    return workdir, labels
+
+
+def resolve_exact_task(
+    identifier: str,
+    *,
+    task_file: Path | None = None,
+    linear_issue_uuid: str | None = None,
+    workdir_override: str | None = None,
+    fetch_issue=None,
+) -> dict:
+    """Resolve one exact task with explicit provenance and no mutable cache input."""
+    fetch_issue = fetch_issue or fetch_single_linear_issue
+    issue = None
+    source = ""
+    source_path = None
+    if task_file is not None:
+        task_file = task_file.expanduser()
+        if not task_file.is_file() or task_file.is_symlink():
+            raise RuntimeError(f"explicit task file is not a regular file: {task_file}")
+        task_content = task_file.read_text()
+        source = "explicit_task_file"
+        source_path = str(task_file.resolve())
+    else:
+        if linear_issue_uuid is None:
+            issue = fetch_issue(identifier)
+        else:
+            issue = fetch_issue(identifier, issue_uuid=linear_issue_uuid)
+        if issue is None:
+            raise RuntimeError(
+                f"{identifier}: live Linear fetch failed; exact mode refuses mutable cache fallback"
+            )
+        task_content = build_task_content_from_issue(identifier, issue)
+        source = "linear_uuid" if linear_issue_uuid else "linear_identifier"
+    if not task_content.strip():
+        raise RuntimeError(f"{identifier}: resolved task content is empty")
+    header_workdir, header_labels = _task_headers(task_content)
+    labels = issue_labels(issue) if issue is not None else header_labels
+    workdir = workdir_override or header_workdir or "prismatic"
+    return {
+        "issue_id": identifier,
+        "task_content": task_content,
+        "workdir": workdir,
+        "labels": labels,
+        "task_source": source,
+        "task_source_path": source_path,
+        "task_sha256": hashlib.sha256(task_content.encode()).hexdigest(),
+    }
 
 
 # The functions build_task_content_from_issue and issue_to_task are imported from prismatic.curator.issue_to_task above.
@@ -2115,6 +2312,18 @@ class EventDrivenSupervisor:
         issue_id = task["issue_id"]
         src = resolve_workdir(task["workdir"])
         sandbox = create_sandbox(issue_id, src)
+        manifest_path = task.get("repair_seed_manifest")
+        if manifest_path:
+            seeded = apply_repair_seed_manifest(
+                sandbox,
+                Path(manifest_path),
+                task["repair_seed_sha256"],
+            )
+            print(
+                f"  [{issue_id}] repair seed applied ({len(seeded)} files): "
+                + ", ".join(seeded),
+                flush=True,
+            )
         task_path = write_task_file(issue_id, task["task_content"])
         log_path = LOGS_ROOT / f"{issue_id}.log"
         return sandbox, task_path, log_path
@@ -2793,6 +3002,24 @@ def main():
     parser.add_argument("--issues", help="Comma-separated issue IDs")
     parser.add_argument("--from-linear", action="store_true", help="Fetch from Linear at start")
     parser.add_argument("--workdir", help="Source workdir (shorthand or absolute)")
+    parser.add_argument(
+        "--task-file",
+        type=Path,
+        help="Explicit exact-task packet; exact mode never reads mutable cache",
+    )
+    parser.add_argument(
+        "--linear-issue-uuid",
+        help="Stable Linear issue UUID; response identifier must match --issue",
+    )
+    parser.add_argument(
+        "--repair-seed-manifest",
+        type=Path,
+        help="Hash-bound JSON manifest of files to copy after clean sandbox creation",
+    )
+    parser.add_argument(
+        "--repair-seed-sha256",
+        help="Required SHA-256 of --repair-seed-manifest",
+    )
     parser.add_argument("--max-concurrent", type=int, default=MAX_CONCURRENT_DEFAULT,
                         help=f"Max concurrent workers (default {MAX_CONCURRENT_DEFAULT})")
     parser.add_argument("--max-concurrent-research", type=int, default=None,
@@ -2829,6 +3056,20 @@ def main():
                              "supervisor stays alive forever until SIGTERM. "
                              "Replaces the cron-cycle exit pattern (Jun 30 fix).")
     args = parser.parse_args()
+    if args.task_file is not None and (
+        not args.issue or args.issues or args.from_linear
+    ):
+        parser.error("--task-file requires exclusive --issue mode")
+    if args.linear_issue_uuid is not None and (
+        not args.issue or args.issues or args.from_linear or args.task_file is not None
+    ):
+        parser.error("--linear-issue-uuid requires exclusive --issue mode without --task-file")
+    if (args.repair_seed_manifest is None) != (args.repair_seed_sha256 is None):
+        parser.error("--repair-seed-manifest and --repair-seed-sha256 are required together")
+    if args.repair_seed_manifest is not None and (
+        not args.issue or args.issues or args.from_linear
+    ):
+        parser.error("repair seed options require exclusive --issue mode")
 
     # Model selection: pool-aware router when in cron/long-run mode (Jun 30 2026).
     if args.model is None:
@@ -2917,61 +3158,47 @@ def main():
             if task:
                 initial_tasks.append(task)
     elif args.issue:
-        cached = Path(f"/tmp/issue-batches/{args.issue}.txt")
-        wd = "prismatic"
-        labels = set()
-        if cached.exists():
-            task_content = cached.read_text()
-            for line in task_content.split("\n")[:5]:
-                if line.startswith("WORKDIR:"):
-                    wd = line.split(":", 1)[1].strip()
-                    break
-        else:
-            # Fall back to fetching the Linear issue so AGY has the full
-            # description in the sandbox instead of a 16-byte placeholder.
-            issue = fetch_single_linear_issue(args.issue)
-            if issue:
-                task_content = build_task_content_from_issue(args.issue, issue)
-                labels = issue_labels(issue)
-                print(f"  [linear-fetch] {args.issue}: built AGY_TASK.md ({len(task_content)} bytes) from Linear", flush=True)
-            else:
-                task_content = f"Work on {args.issue}"
-                print(f"  [linear-fetch] {args.issue}: FAILED, falling back to 16-byte placeholder", flush=True)
-        if not labels:
-            for line in task_content.split("\n")[:15]:
-                if line.startswith("LABELS:"):
-                    labels = {p.strip() for p in line.split(":", 1)[1].split(",")}
-                    break
-        lane, _ = assign_lane(None, explicit=True, lane_mode=args.lane_mode, active_project=args.active_project, backlog_age_days=args.backlog_age_days)
-        initial_tasks.append({"issue_id": args.issue, "task_content": task_content, "workdir": wd, "lane": lane, "labels": labels})
+        task = resolve_exact_task(
+            args.issue,
+            task_file=args.task_file,
+            linear_issue_uuid=args.linear_issue_uuid,
+            workdir_override=args.workdir,
+        )
+        lane, _ = assign_lane(
+            None,
+            explicit=True,
+            lane_mode=args.lane_mode,
+            active_project=args.active_project,
+            backlog_age_days=args.backlog_age_days,
+        )
+        task["lane"] = lane
+        if args.repair_seed_manifest is not None:
+            task["repair_seed_manifest"] = str(args.repair_seed_manifest.resolve())
+            task["repair_seed_sha256"] = args.repair_seed_sha256.lower()
+        print(
+            f"  [task-source] {args.issue}: {task['task_source']} "
+            f"sha256={task['task_sha256']}",
+            flush=True,
+        )
+        initial_tasks.append(task)
     elif args.issues:
         for iid in args.issues.split(","):
             iid = iid.strip()
-            cached = Path(f"/tmp/issue-batches/{iid}.txt")
-            wd = "prismatic"
-            labels = set()
-            if cached.exists():
-                task_content = cached.read_text()
-                for line in task_content.split("\n")[:5]:
-                    if line.startswith("WORKDIR:"):
-                        wd = line.split(":", 1)[1].strip()
-                        break
-            else:
-                issue = fetch_single_linear_issue(iid)
-                if issue:
-                    task_content = build_task_content_from_issue(iid, issue)
-                    labels = issue_labels(issue)
-                    print(f"  [linear-fetch] {iid}: built AGY_TASK.md ({len(task_content)} bytes) from Linear", flush=True)
-                else:
-                    task_content = f"Work on {iid}"
-                    print(f"  [linear-fetch] {iid}: FAILED, falling back to 16-byte placeholder", flush=True)
-            if not labels:
-                for line in task_content.split("\n")[:15]:
-                    if line.startswith("LABELS:"):
-                        labels = {p.strip() for p in line.split(":", 1)[1].split(",")}
-                        break
-            lane, _ = assign_lane(None, explicit=True, lane_mode=args.lane_mode, active_project=args.active_project, backlog_age_days=args.backlog_age_days)
-            initial_tasks.append({"issue_id": iid, "task_content": task_content, "workdir": wd, "lane": lane, "labels": labels})
+            task = resolve_exact_task(iid, workdir_override=args.workdir)
+            lane, _ = assign_lane(
+                None,
+                explicit=True,
+                lane_mode=args.lane_mode,
+                active_project=args.active_project,
+                backlog_age_days=args.backlog_age_days,
+            )
+            task["lane"] = lane
+            print(
+                f"  [task-source] {iid}: {task['task_source']} "
+                f"sha256={task['task_sha256']}",
+                flush=True,
+            )
+            initial_tasks.append(task)
     else:
         # Default: process all issue-batches/*.txt
         issue_batches = Path("/tmp/issue-batches")
