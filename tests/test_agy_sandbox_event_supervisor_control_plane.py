@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import pwd
 from pathlib import Path
 
 
@@ -89,6 +90,33 @@ def test_agy_launch_and_relaunch_paths_use_child_env_static_guard():
     assert source.count("env=agy_cli_child_env(),") >= 3
     assert "proc = subprocess.Popen(" in source
     assert "Relaunching with cmd" in source
+
+
+def test_abandonment_guard_default_is_absolute_and_profile_independent(monkeypatch):
+    monkeypatch.delenv("AGY_ABANDONMENT_GUARD", raising=False)
+    monkeypatch.setenv("HOME", AGY_PROFILE_HOME)
+
+    supervisor = _load_supervisor()
+
+    expected = (
+        Path(pwd.getpwuid(os.getuid()).pw_dir)
+        / ".hermes"
+        / "profiles"
+        / "orchestrator"
+        / "scripts"
+        / "agy_abandonment_guard.py"
+    )
+    assert supervisor.AGY_ABANDONMENT_GUARD == str(expected)
+    assert not supervisor.AGY_ABANDONMENT_GUARD.startswith(AGY_PROFILE_HOME)
+
+
+def test_abandonment_guard_explicit_override_is_preserved(monkeypatch, tmp_path):
+    override = tmp_path / "controlled-abandonment-guard.py"
+    monkeypatch.setenv("AGY_ABANDONMENT_GUARD", str(override))
+
+    supervisor = _load_supervisor()
+
+    assert supervisor.AGY_ABANDONMENT_GUARD == str(override)
 
 
 def test_cron_wrapper_preserves_supervisor_home_and_sets_child_agy_home():
