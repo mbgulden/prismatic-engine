@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "generated": "prismatic/gateway/templates/dashboard.html",
+  "fragments": [
+    {
+      "path": "shell/00_document_open.html"
+    },
+    {
+      "path": "styles/dashboard.css"
+    },
+    {
+      "path": "shell/01_document_after_style_and_navigation.html"
+    },
+    {
+      "path": "shell/02_main_open.html"
+    },
+    {
+      "path": "tabs/dashboard.html"
+    },
+    {
+      "path": "tabs/telemetry.html"
+    },
+    {
+      "path": "tabs/merge.html"
+    },
+    {
+      "path": "tabs/foundation.html"
+    },
+    {
+      "path": "tabs/workspaces.html"
+    },
+    {
+      "path": "tabs/skills.html"
+    },
+    {
+      "path": "tabs/signals.html"
+    },
+    {
+      "path": "tabs/plugins.html"
+    },
+    {
+      "path": "tabs/pwp.html"
+    },
+    {
+      "path": "tabs/crons.html"
+    },
+    {
+      "path": "tabs/quota.html"
+    },
+    {
+      "path": "shell/03_script_open.html"
+    },
+    {
+      "path": "scripts/dashboard.js"
+    },
+    {
+      "path": "shell/99_script_close_and_document_end.html"
+    }
+  ]
+}

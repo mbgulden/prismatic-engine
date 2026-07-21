@@ -1,0 +1,37 @@
+        <div id="section-workspaces" class="hidden space-y-6">
+            <div class="glass-panel p-5 rounded-xl space-y-4">
+                <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                    <span>Workspace Tree</span>
+                    <span class="text-[10px] text-slate-500 font-mono normal-case tracking-normal">navigable folder structure + file viewer · powered by /api/workspaces</span>
+                </h2>
+                <div class="grid grid-cols-1 xl:grid-cols-[420px_minmax(0,1fr)] gap-4 xl:min-h-[640px] min-w-0 max-w-full overflow-hidden" data-proof-marker="workspace-tree-mobile-responsive">
+                    <section class="rounded-xl border border-slate-800 bg-slate-950/60 overflow-hidden flex flex-col min-h-[360px] max-h-[52vh] xl:min-h-[640px] xl:max-h-none min-w-0 max-w-full">
+                        <div class="p-3 border-b border-slate-800 grid grid-cols-1 sm:flex sm:items-center sm:justify-between gap-3 min-w-0">
+                            <div>
+                                <div class="text-xs font-bold uppercase tracking-wider text-slate-400">Folders</div>
+                                <div id="workspace-tree-status" class="text-[11px] text-slate-500 mt-1">Loading workspace roots…</div>
+                            </div>
+                            <a href="/workspace-tree" class="text-[10px] font-bold uppercase tracking-wider text-cyan-400 hover:text-cyan-300">Open legacy view</a>
+                        </div>
+                        <div id="workspace-tree-roots" class="p-3 space-y-3 overflow-auto overscroll-contain flex-1 font-mono text-[11px] sm:text-xs touch-pan-y min-w-0 max-w-full break-words">
+                            <div class="text-slate-500 italic">Loading workspace tree…</div>
+                        </div>
+                    </section>
+                    <section class="rounded-xl border border-slate-800 bg-slate-950/60 overflow-hidden flex flex-col min-h-[420px] max-h-[72vh] xl:min-h-[640px] xl:max-h-none min-w-0 max-w-full">
+                        <div class="p-3 border-b border-slate-800 grid grid-cols-1 sm:flex sm:flex-wrap sm:items-start sm:justify-between gap-3 min-w-0">
+                            <div class="min-w-0">
+                                <div class="text-xs font-bold uppercase tracking-wider text-slate-400">File Viewer</div>
+                                <div id="workspace-preview-name" class="text-[11px] text-slate-500 mt-1 font-mono break-all">Select a file from the tree.</div>
+                            </div>
+                            <div class="grid grid-cols-1 sm:flex sm:flex-wrap gap-2">
+                                <button id="workspace-copy-link" type="button" onclick="copyWorkspaceDeepLink()" class="w-full sm:w-auto px-2.5 py-1.5 rounded-lg border border-slate-700 text-slate-300 hover:text-white hover:border-cyan-500 text-[10px] font-bold uppercase tracking-wider">Copy Telegram Link</button>
+                                <a id="workspace-legacy-link" href="/workspace-tree" class="w-full sm:w-auto text-center px-2.5 py-1.5 rounded-lg border border-slate-700 text-slate-300 hover:text-white hover:border-cyan-500 text-[10px] font-bold uppercase tracking-wider">Open Standalone</a>
+                            </div>
+                        </div>
+                        <pre id="workspace-file-preview" class="m-0 p-3 sm:p-4 overflow-auto overscroll-contain flex-1 text-[11px] sm:text-xs leading-relaxed text-slate-200 whitespace-pre-wrap break-words min-w-0 max-w-full"><code>Select a file from the Workspace Tree to preview it here.</code></pre>
+                    </section>
+                </div>
+            </div>
+        </div>
+
+        <!-- SECTION 5: SKILLS -->
