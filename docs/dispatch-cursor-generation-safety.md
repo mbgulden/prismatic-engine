@@ -63,7 +63,9 @@ To eliminate race conditions between consumer cursor advancement and repair appl
 - **Shared CursorLock Primitive**: Introduces a restrictive, no-follow shared primitive (`CursorLock`) using a lock file (`<state_file>.lock`) opened with `O_RDWR|O_CREAT|O_NOFOLLOW` and mode `0o600` (`fcntl.flock` exclusive lock).
 - **Repair Lock Window**: Repair apply holds `CursorLock` from plan revalidation through backup creation and final cursor write.
 - **SQLite Exclusion Continuity**: Repair apply holds the SQLite writer-exclusion transaction (`BEGIN EXCLUSIVE`) until the repaired cursor state file is durably written to disk.
-- **Deadlock Avoidance**: Public wrapper `write_cursor_state()` acquires `CursorLock` and calls internal already-locked helper `_write_cursor_state_unlocked()`. Repair apply calls `_write_cursor_state_unlocked()` directly while holding `CursorLock`, avoiding recursive lock deadlocks.
+- **Single Critical Section `set_state()`**: `set_state()` acquires `CursorLock` before reading or validating DB identity and holds it through the cursor write. Under lock, identity validation is bound to a no-symlink canonical DB path and stable opened DB identity using a SQLite transaction and pre/post `lstat` device+inode checks. Identity and generation are revalidated immediately before and after write. If post-write validation detects replacement, prior exact cursor bytes are durably restored (or a newly created cursor is removed) before returning failure.
+- **Pre-Resolution Target & Symlink Rejection**: Retains and inspects caller-supplied state paths before canonicalization in `repair_apply`, `repair_dry_run`, `write_cursor_state`, and `CursorLock`. Rejects symlink final components, non-regular existing targets, unsafe parent traversal/symlink ambiguity, and noncanonical aliases before creating lock, backup, or temp files or modifying any destination. Caller symlinks are never converted into accepted canonical targets.
+- **Deadlock Avoidance**: Public wrapper `write_cursor_state()` acquires `CursorLock` and calls internal already-locked helper `_write_cursor_state_unlocked()`. Repair apply and `set_state()` call `_write_cursor_state_unlocked()` directly while holding `CursorLock`, avoiding recursive lock deadlocks.
 - **Consumer Advancement Exclusion**: Consumer cursor advancement (`set_state`) cannot run while repair is holding `CursorLock`, preventing consumer cursor advancement from being overwritten or racing with repair apply.
 
 ## 5. Mandatory Durability & Cleanup Failure Propagation
@@ -75,7 +77,7 @@ All state updates and backup writes follow strict OS-safe atomic durability and 
 - Executes `flush()`, file descriptor `os.fsync()`, atomic `os.replace()`, and parent directory `os.fsync()`.
 - **Directory Fsync Propagation**: `write_cursor_state()` propagates parent-directory open/fsync/close failures directly; it never reports success after a swallowed durability failure.
 - **Cleanup Error Preservation**: Cleanup failures are never swallowed. If primary and cleanup failures coexist, both are reported using `ExceptionGroup` while preserving the primary exception.
-- **Artifact Cleanup Boundary**: On failure during backup creation, newly created temporary/backup artifacts are safely removed with parent directory fsync. Pre-existing collision files are never deleted or modified.
+- **Artifact Cleanup Boundary**: On failure before cursor replacement starts, newly created temporary/backup artifacts are safely removed with parent directory fsync. Pre-existing collision files are never deleted or modified.
 
 ## 6. Legacy Cursor Migration & Inspection
 
@@ -98,6 +100,7 @@ Performs state repair and migration:
 - **Supplied Plan Authentication & Recomputation**: Always recomputes the deterministic plan from current source state and requested target. If a caller passes `plan`, it requires exact deep equality agreement with the recomputed plan before using any field. Tampered plan IDs, backup paths, target rowids, or extra/missing fields are rejected before creating backups or mutating state. If source files changed since dry-run, source drift is reported.
 - **Fail-Closed Coherent Lock Window**: Acquires `CursorLock` and an exclusive SQLite write lock (`BEGIN EXCLUSIVE`) to exclude concurrent writers for the full source-hash, backup-copy, and cursor-write window.
 - **WAL-Mode Raw Backup Set**: Performs raw byte-for-byte copies of the main DB (`<db_path>`), the WAL file if present and non-empty (`<db_path>-wal`), and the cursor state file (`<state_file>`). Source descriptors are opened securely with `O_RDONLY|O_NOFOLLOW` and verified via `fstat` and inode/device binding against pre-open stat to eliminate TOCTOU risks. Backup files use restrictive `0600` permissions created with `O_CREAT|O_EXCL`, with mandatory fsync on both file and parent directory. Any backup failure safely cleans up newly created member backups with parent directory fsync while preserving original exceptions via `ExceptionGroup`.
+- **Phase Separation & Post-Cursor-Write Failure Recovery**: Refactored into explicit phases with a `cursor_write_started` boundary. Fallible receipt material is pre-computed before cursor replacement. If a failure occurs once cursor replacement may have started (directory fsync, post-write hash, receipt construction, DB transaction release, or lock release), backups are retained. Prefers durable automatic rollback while locks are held by restoring exact original cursor bytes from verified backup (or removing a cursor that did not originally exist), fsyncing parent directory, and verifying restored SHA/size. If rollback cannot be proven exact, all backups are retained and an explicit `RECOVERY_REQUIRED` outcome containing backup paths and hashes is returned. Pre-existing collision files are never deleted.
 - **SHM Regenerability Boundary**: The SQLite shared-memory file (`-shm`) is treated as regenerable index state and is not backed up; SQLite automatically regenerates `-shm` upon reopening restored database files.
 - **Exact Byte Identity**: Proves exact byte-for-byte SHA-256 identity between original source files and backup files (`src_db_sha256 == db_backup_sha256`, `src_wal_sha256 == wal_backup_sha256`, `src_cursor_sha256 == cursor_backup_sha256`).
 - **Atomic Destination Backups**: Uses the exact proposed backup destination paths from the plan. Refuses execution if destination files already exist (backup collisions).
@@ -107,7 +110,7 @@ Performs state repair and migration:
 
 ## 8. Verification
 
-Verification tests in `tests/test_dispatch_consumer_cursor_generation.py` (34 isolated regression tests) validate all safety guarantees:
+Verification tests in `tests/test_dispatch_consumer_cursor_generation.py` (38 isolated regression tests) validate all safety guarantees:
 1. Real OS process-level contention test (`ProcessPoolExecutor`) ensuring concurrent schema initializations produce one identical canonical UUID generation.
 2. WAL-mode raw backup and rollback regression test verifying exact byte-for-byte SHA-256 matches for main DB, WAL file, and cursor state file, followed by SHM deletion, restoration, SQLite reopening, and verification of uncorrupted generation, max-rowid, and event row integrity.
 3. Adversarial regressions proving database replacement after fetch, claim, Linear, or spawn fails closed with zero side effects.
@@ -115,3 +118,7 @@ Verification tests in `tests/test_dispatch_consumer_cursor_generation.py` (34 is
 5. Supplied plan authentication tests proving tampered plans are rejected before backup creation or cursor mutation.
 6. Durability tests verifying directory fsync and cleanup error propagation with `ExceptionGroup`.
 7. Canonical UUID v4 and UTC ISO timestamp validation tests.
+8. Deterministic adversarial tests proving `set_state` critical section generation binding and post-write validation restore exact prior cursor state on same-path DB replacement.
+9. Inspect, dry-run, apply, and write tests proving symlink targets and parent-symlink aliases are rejected before canonicalization without creating lock, backup, or temp artifacts or mutating destinations.
+10. Injected post-cursor-write failure tests proving durable automatic original cursor restoration or retained verified backups with explicit recovery-required outcome.
+

@@ -1301,3 +1301,264 @@ def test_34_strict_canonical_uuid_v4_and_utc_timestamp_envelope() -> None:
     assert not consumer.validate_iso_timestamp(
         "2026-07-22T20:57:38.1234567Z"
     )  # 7 digits fraction
+
+
+# -----------------------------------------------------------------------------
+# Repair Regressions (Repair 5)
+# -----------------------------------------------------------------------------
+
+
+def test_35_set_state_critical_section_adversarial_replacements(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Repair 5 Requirement 1: set_state is one generation-bound critical section.
+    Database replacement between read and write or after write fails closed and durably restores prior state.
+    """
+    db_path_a, gen_a = _setup_db_and_events(tmp_path / "db_a", 5)
+    db_path_b, gen_b = _setup_db_and_events(tmp_path / "db_b", 5)
+    canon_db_a = consumer.get_canonical_path(str(db_path_a))
+    canon_db_b = consumer.get_canonical_path(str(db_path_b))
+
+    state_file = tmp_path / "dispatch_consumer.rowid"
+    _write_valid_state(state_file, db_path_a, gen_a, 2)
+    orig_cursor_content = state_file.read_bytes()
+
+    # Part A: DB replaced after identity read before write
+    def db_swap_before_write(*args, **kwargs):
+        os.replace(canon_db_b, canon_db_a)
+
+    monkeypatch.setattr(consumer, "_write_cursor_state_unlocked", db_swap_before_write)
+
+    with pytest.raises(
+        RuntimeError, match="Database file replaced|Post-write validation|[FAIL_CLOSED]"
+    ):
+        consumer.set_state(
+            3,
+            expected_generation=gen_a,
+            db_path=canon_db_a,
+            state_file_path=str(state_file),
+        )
+
+    # Assert prior cursor state restored exactly
+    assert state_file.read_bytes() == orig_cursor_content
+
+    # Part B: Post-write validation detects DB replacement immediately after write
+    monkeypatch.undo()
+    db_path_a2, gen_a2 = _setup_db_and_events(tmp_path / "db_a_fresh", 5)
+    canon_db_a2 = consumer.get_canonical_path(str(db_path_a2))
+    _write_valid_state(state_file, db_path_a2, gen_a2, 2)
+    orig_cursor_content2 = state_file.read_bytes()
+
+    db_path_b2, gen_b2 = _setup_db_and_events(tmp_path / "db_b2", 5)
+    canon_db_b2 = consumer.get_canonical_path(str(db_path_b2))
+
+    orig_write = consumer._write_cursor_state_unlocked
+
+    def db_swap_after_write(path: str, data: dict):
+        orig_write(path, data)
+        os.replace(canon_db_b2, canon_db_a2)
+
+    monkeypatch.setattr(consumer, "_write_cursor_state_unlocked", db_swap_after_write)
+
+    with pytest.raises(
+        RuntimeError, match="Post-write validation detected replacement"
+    ):
+        consumer.set_state(
+            3,
+            expected_generation=gen_a2,
+            db_path=canon_db_a2,
+            state_file_path=str(state_file),
+        )
+
+    # Assert prior cursor state restored exactly
+    assert state_file.read_bytes() == orig_cursor_content2
+
+    # Part C: Non-existent prior cursor file removed if post-write validation fails
+    monkeypatch.undo()
+    db_path_a3, gen_a3 = _setup_db_and_events(tmp_path / "db_a_fresh3", 5)
+    canon_db_a3 = consumer.get_canonical_path(str(db_path_a3))
+    db_path_b3, gen_b3 = _setup_db_and_events(tmp_path / "db_b3", 5)
+    canon_db_b3 = consumer.get_canonical_path(str(db_path_b3))
+
+    def db_swap_after_write3(path: str, data: dict):
+        orig_write(path, data)
+        os.replace(canon_db_b3, canon_db_a3)
+
+    monkeypatch.setattr(consumer, "_write_cursor_state_unlocked", db_swap_after_write3)
+
+    nonexistent_state = tmp_path / "nonexistent.rowid"
+    assert not nonexistent_state.exists()
+
+    with pytest.raises(
+        RuntimeError, match="Post-write validation detected replacement"
+    ):
+        consumer.set_state(
+            3,
+            expected_generation=gen_a3,
+            db_path=canon_db_a3,
+            state_file_path=str(nonexistent_state),
+        )
+
+    assert not nonexistent_state.exists()
+
+
+def test_36_symlink_target_and_parent_alias_rejected_without_artifacts(
+    tmp_path: Path,
+) -> None:
+    """Repair 5 Requirement 2: Reject caller-supplied symlink final target and parent-symlink alias
+    before creating lock/backup/temp files or modifying destination.
+    """
+    db_path, gen = _setup_db_and_events(tmp_path, 5)
+    canon_db = consumer.get_canonical_path(str(db_path))
+
+    target_cursor = tmp_path / "target_real.rowid"
+    _write_valid_state(target_cursor, db_path, gen, 2)
+    target_content_before = target_cursor.read_bytes()
+
+    # Clean up lock created during setup so we can assert no new locks are created
+    lock_file = Path(str(target_cursor) + ".lock")
+    if lock_file.exists():
+        lock_file.unlink()
+
+    symlink_cursor = tmp_path / "symlink_target.rowid"
+    os.symlink(target_cursor, symlink_cursor)
+
+    # 1. Inspect on symlink target
+    res = consumer.inspect_cursor(str(db_path), str(symlink_cursor))
+    assert res["status_code"] == "INVALID"
+    assert res["cursor_format"] == "invalid"
+    assert res["gate_ready"] is False
+
+    # 2. write_cursor_state on symlink target
+    new_state = {
+        "schema_version": 1,
+        "last_rowid": 4,
+        "db_path": canon_db,
+        "db_generation": gen,
+        "updated_at": consumer.get_canonical_utc_now(),
+    }
+    with pytest.raises(ValueError, match="symlink"):
+        consumer.write_cursor_state(str(symlink_cursor), new_state)
+
+    # 3. repair_dry_run on symlink target
+    with pytest.raises(ValueError, match="symlink"):
+        consumer.repair_dry_run(str(db_path), str(symlink_cursor), target_rowid=3)
+
+    # 4. repair_apply on symlink target
+    with pytest.raises(ValueError, match="symlink"):
+        consumer.repair_apply(
+            str(db_path),
+            str(symlink_cursor),
+            confirmation_token=consumer.CONFIRMATION_TOKEN,
+            target_rowid=3,
+        )
+
+    # Prove destination was NOT mutated
+    assert target_cursor.read_bytes() == target_content_before
+
+    # Prove NO backup files, NO lock files, NO temp files created
+    new_artifacts = (
+        list(tmp_path.glob("*.lock"))
+        + list(tmp_path.glob("*.backup*"))
+        + list(tmp_path.glob(".*tmp*"))
+    )
+    assert len(new_artifacts) == 0
+
+    # 5. Parent symlink alias test
+    real_dir = tmp_path / "real_dir"
+    real_dir.mkdir()
+    sym_dir = tmp_path / "sym_dir"
+    os.symlink(real_dir, sym_dir)
+
+    parent_sym_cursor = sym_dir / "cursor.rowid"
+    with pytest.raises(ValueError, match="symlink"):
+        consumer.repair_apply(
+            str(db_path),
+            str(parent_sym_cursor),
+            confirmation_token=consumer.CONFIRMATION_TOKEN,
+            target_rowid=3,
+        )
+
+    dir_artifacts = list(real_dir.glob("*")) + list(sym_dir.glob("*"))
+    assert len(dir_artifacts) == 0
+
+
+def test_37_post_cursor_write_injected_failures_and_durable_rollback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Repair 5 Requirement 3: Injected failures after cursor replacement boundary perform durable
+    automatic rollback or retain verified backups with explicit recovery required outcome.
+    DB/WAL/events/processed rows remain unchanged.
+    """
+    db_path, gen = _setup_db_and_events(tmp_path, 5)
+    state_file = tmp_path / "dispatch_consumer.rowid"
+    state_file.write_text("2\n")
+    os.chmod(state_file, 0o600)
+    orig_cursor_content = state_file.read_text()
+
+    # Inject failure immediately after os.replace during repair_apply
+    orig_replace = os.replace
+    replace_count = 0
+
+    def failing_replace_after_cursor(src: str, dst: str):
+        nonlocal replace_count
+        replace_count += 1
+        orig_replace(src, dst)
+        if replace_count == 1 and "dispatch_consumer.rowid" in dst:
+            raise OSError("Injected error right after cursor os.replace")
+
+    monkeypatch.setattr(os, "replace", failing_replace_after_cursor)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        consumer.repair_apply(
+            str(db_path),
+            str(state_file),
+            confirmation_token=consumer.CONFIRMATION_TOKEN,
+        )
+
+    err_msg = str(exc_info.value)
+    assert (
+        "Durable rollback succeeded: exact original cursor state restored" in err_msg
+        or "RECOVERY REQUIRED" in err_msg
+    )
+
+    # Prove cursor file restored to original exact content
+    assert state_file.read_text() == orig_cursor_content
+
+    # Prove DB events & generation are completely untouched
+    conn = sqlite3.connect(db_path)
+    try:
+        cnt = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+        assert cnt == 5
+        db_gen = conn.execute(
+            "SELECT value FROM dispatch_consumer_meta WHERE key = 'db_generation'"
+        ).fetchone()[0]
+        assert db_gen == gen
+    finally:
+        conn.close()
+
+
+def test_38_preexisting_collision_files_never_deleted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Repair 5 Requirement 3: Pre-existing collision files are never deleted on failure."""
+    db_path, gen = _setup_db_and_events(tmp_path, 5)
+    state_file = tmp_path / "dispatch_consumer.rowid"
+    state_file.write_text("2\n")
+    os.chmod(state_file, 0o600)
+
+    # Get dry run plan
+    plan = consumer.repair_dry_run(str(db_path), str(state_file))
+    collision_file = Path(plan["proposed_db_backup_path"])
+    collision_file.write_text("pre-existing collision content")
+
+    with pytest.raises(FileExistsError, match="collision"):
+        consumer.repair_apply(
+            str(db_path),
+            str(state_file),
+            confirmation_token=consumer.CONFIRMATION_TOKEN,
+        )
+
+    # Collision file must still exist and be intact!
+    assert collision_file.exists()
+    assert collision_file.read_text() == "pre-existing collision content"

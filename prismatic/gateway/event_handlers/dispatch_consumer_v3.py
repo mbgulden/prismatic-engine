@@ -114,6 +114,95 @@ def get_canonical_path(path_str: str) -> str:
     return str(p.resolve())
 
 
+def _validate_state_path_strict(raw_path: str) -> str:
+    """Validate cursor state path before resolution or lock creation.
+
+    Rejects:
+    - Symlink final component or symlink in parent path hierarchy
+    - Non-regular existing target (directory, socket, FIFO, device)
+    - Noncanonical alias (abspath != realpath)
+    - Unsafe permissions if existing
+    """
+    if not isinstance(raw_path, str) or not raw_path:
+        raise ValueError("Cursor state path must be a non-empty string")
+
+    if os.path.islink(raw_path):
+        raise ValueError(f"Cursor state path is a symlink: {raw_path}")
+
+    p = Path(raw_path).expanduser()
+    abs_p = p.absolute()
+    abs_str = str(abs_p)
+
+    if os.path.islink(abs_str):
+        raise ValueError(f"Cursor state path is a symlink: {raw_path}")
+
+    try:
+        st = os.lstat(raw_path)
+        if stat.S_ISLNK(st.st_mode):
+            raise ValueError(f"Cursor state path is a symlink: {raw_path}")
+        if not stat.S_ISREG(st.st_mode):
+            raise ValueError(f"Cursor state path is not a regular file: {raw_path}")
+        if st.st_mode & 0o077 != 0:
+            raise ValueError(
+                f"Refusing to write cursor state: unsafe file permissions {oct(st.st_mode)} (group/world accessible)"
+            )
+    except FileNotFoundError:
+        pass
+
+    for parent in abs_p.parents:
+        if os.path.islink(str(parent)):
+            raise ValueError(
+                f"Cursor state path parent component is a symlink: {parent}"
+            )
+
+    norm_abs = os.path.normpath(os.path.abspath(raw_path))
+    real_p = os.path.realpath(raw_path)
+    if norm_abs != real_p:
+        raise ValueError(
+            f"Cursor state path is noncanonical or contains symlink aliases: {raw_path!r} vs {real_p!r}"
+        )
+
+    return norm_abs
+
+
+def _validate_db_path_strict(raw_path: str) -> str:
+    """Validate database path before resolution or file operations."""
+    if not isinstance(raw_path, str) or not raw_path:
+        raise ValueError("Database path must be a non-empty string")
+
+    if os.path.islink(raw_path):
+        raise ValueError(f"Database path is a symlink: {raw_path}")
+
+    p = Path(raw_path).expanduser()
+    abs_p = p.absolute()
+    abs_str = str(abs_p)
+
+    if os.path.islink(abs_str):
+        raise ValueError(f"Database path is a symlink: {raw_path}")
+
+    try:
+        st = os.lstat(raw_path)
+        if stat.S_ISLNK(st.st_mode):
+            raise ValueError(f"Database path is a symlink: {raw_path}")
+        if not stat.S_ISREG(st.st_mode):
+            raise ValueError(f"Database path is not a regular file: {raw_path}")
+    except FileNotFoundError:
+        pass
+
+    for parent in abs_p.parents:
+        if os.path.islink(str(parent)):
+            raise ValueError(f"Database path parent component is a symlink: {parent}")
+
+    norm_abs = os.path.normpath(os.path.abspath(raw_path))
+    real_p = os.path.realpath(raw_path)
+    if norm_abs != real_p:
+        raise ValueError(
+            f"Database path is noncanonical or contains symlink aliases: {raw_path!r} vs {real_p!r}"
+        )
+
+    return norm_abs
+
+
 def validate_generation_format(gen: str) -> bool:
     """Validate database generation UUID string strictly as canonical lowercase UUID v4 text."""
     if not isinstance(gen, str) or len(gen) != 36:
@@ -152,6 +241,7 @@ class CursorLock:
     """Restrictive, no-follow canonical cursor lock file shared primitive."""
 
     def __init__(self, state_file_path: str):
+        _validate_state_path_strict(state_file_path)
         self.state_file_path = get_canonical_path(state_file_path)
         self.lock_file_path = self.state_file_path + ".lock"
         self._fd = None
@@ -669,36 +759,173 @@ def get_state() -> int:
     return state["last_rowid"]
 
 
+def _read_db_identity_under_lock(
+    canonical_db_path: str,
+) -> tuple[str | None, int | None, os.stat_result]:
+    if os.path.islink(canonical_db_path):
+        raise ValueError(f"Database path is a symlink: {canonical_db_path}")
+    st_pre = os.lstat(canonical_db_path)
+    if not stat.S_ISREG(st_pre.st_mode):
+        raise ValueError(f"Database path is not a regular file: {canonical_db_path}")
+
+    db_uri = f"file:{canonical_db_path}?mode=ro"
+    conn = sqlite3.connect(db_uri, uri=True, timeout=5)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        db_gen = None
+        try:
+            cur = conn.execute(
+                "SELECT value FROM dispatch_consumer_meta WHERE key = 'db_generation'"
+            )
+            row = cur.fetchone()
+            if row and row[0]:
+                gen_str = str(row[0])
+                if validate_generation_format(gen_str):
+                    db_gen = gen_str
+        except sqlite3.OperationalError:
+            pass
+
+        max_rowid = None
+        try:
+            cur = conn.execute("SELECT COALESCE(MAX(rowid), 0) FROM events")
+            row = cur.fetchone()
+            if row is not None:
+                max_rowid = int(row[0] or 0)
+        except sqlite3.OperationalError:
+            pass
+
+        st_post = os.lstat(canonical_db_path)
+        if st_pre.st_dev != st_post.st_dev or st_pre.st_ino != st_post.st_ino:
+            return None, None, st_post
+
+        return db_gen, max_rowid, st_post
+    finally:
+        conn.close()
+
+
+def _restore_or_remove_cursor(
+    canonical_state_path: str, prior_existed: bool, prior_bytes: bytes | None
+) -> None:
+    target_dir = Path(canonical_state_path).parent
+    if prior_existed and prior_bytes is not None:
+        fd, temp_path = tempfile.mkstemp(
+            dir=str(target_dir), prefix=".dispatch_cursor_restore_tmp_"
+        )
+        try:
+            os.chmod(temp_path, 0o600)
+            with os.fdopen(fd, "wb") as f:
+                f.write(prior_bytes)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, canonical_state_path)
+            dir_fd = os.open(
+                str(target_dir), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            )
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        finally:
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
+    else:
+        if os.path.exists(canonical_state_path) or os.path.islink(canonical_state_path):
+            os.remove(canonical_state_path)
+            dir_fd = os.open(
+                str(target_dir), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            )
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+
+
 def set_state(
     rowid: int,
     expected_generation: str | None = None,
     db_path: str | None = None,
     state_file_path: str | None = None,
 ) -> None:
-    """Atomically write updated versioned state envelope after verifying generation."""
+    """Atomically write updated versioned state envelope after verifying generation within one critical section."""
     effective_db = DB_PATH if db_path is None else db_path
     effective_state = STATE_FILE if state_file_path is None else state_file_path
+
+    _validate_db_path_strict(effective_db)
+    _validate_state_path_strict(effective_state)
+
     canonical_db_path = get_canonical_path(effective_db)
-    max_rowid, db_gen = get_db_max_rowid_and_generation_readonly(effective_db)
-    if db_gen is None:
-        raise RuntimeError(
-            "[FAIL_CLOSED] Database generation unavailable when updating state\n"
-            "MARKER=PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED"
+    canonical_state_path = get_canonical_path(effective_state)
+
+    with CursorLock(canonical_state_path):
+        prior_existed = (
+            os.path.exists(canonical_state_path)
+            and not os.path.islink(canonical_state_path)
+            and os.path.getsize(canonical_state_path) > 0
         )
-    if expected_generation is not None and db_gen != expected_generation:
-        raise RuntimeError(
-            f"[FAIL_CLOSED] Database generation changed before state write: expected {expected_generation!r} vs db {db_gen!r}\n"
-            "MARKER=PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED"
-        )
-    now_str = get_canonical_utc_now()
-    state_data = {
-        "schema_version": SCHEMA_VERSION,
-        "last_rowid": rowid,
-        "db_path": canonical_db_path,
-        "db_generation": db_gen,
-        "updated_at": now_str,
-    }
-    write_cursor_state(effective_state, state_data)
+        prior_bytes = None
+        if prior_existed:
+            with open(canonical_state_path, "rb") as f_prior:
+                prior_bytes = f_prior.read()
+
+        db_gen, max_rowid, pre_stat = _read_db_identity_under_lock(canonical_db_path)
+
+        if db_gen is None:
+            raise RuntimeError(
+                "[FAIL_CLOSED] Database generation unavailable when updating state\n"
+                "MARKER=PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED"
+            )
+        if expected_generation is not None and db_gen != expected_generation:
+            raise RuntimeError(
+                f"[FAIL_CLOSED] Database generation changed before state write: expected {expected_generation!r} vs db {db_gen!r}\n"
+                "MARKER=PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED"
+            )
+
+        post_read_stat = os.lstat(canonical_db_path)
+        if (
+            post_read_stat.st_dev != pre_stat.st_dev
+            or post_read_stat.st_ino != pre_stat.st_ino
+        ):
+            raise RuntimeError(
+                "[FAIL_CLOSED] Database file replaced after identity read\n"
+                "MARKER=PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED"
+            )
+
+        now_str = get_canonical_utc_now()
+        state_data = {
+            "schema_version": SCHEMA_VERSION,
+            "last_rowid": rowid,
+            "db_path": canonical_db_path,
+            "db_generation": db_gen,
+            "updated_at": now_str,
+        }
+
+        _write_cursor_state_unlocked(canonical_state_path, state_data)
+
+        # Revalidate path identity & generation immediately AFTER write
+        try:
+            post_write_stat = os.lstat(canonical_db_path)
+            if (
+                post_write_stat.st_dev != pre_stat.st_dev
+                or post_write_stat.st_ino != pre_stat.st_ino
+            ):
+                raise RuntimeError("Database file replaced immediately after write")
+
+            post_db_gen, _, _ = _read_db_identity_under_lock(canonical_db_path)
+            if post_db_gen != db_gen or (
+                expected_generation is not None and post_db_gen != expected_generation
+            ):
+                raise RuntimeError(
+                    "Database generation changed immediately after write"
+                )
+        except Exception as post_err:
+            _restore_or_remove_cursor(canonical_state_path, prior_existed, prior_bytes)
+            raise RuntimeError(
+                f"[FAIL_CLOSED] Post-write validation detected replacement: {post_err}\n"
+                "MARKER=PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED"
+            ) from post_err
 
 
 def _stable_dedup_key(dedup_key: str | None, topic: str, payload_json: str) -> str:
@@ -1406,6 +1633,44 @@ def _copy_file_raw_atomic(
         os.close(src_fd)
 
 
+def _copy_file_raw_atomic_overwrite(src_path: str, dst_path: str) -> tuple[str, int]:
+    """Copy src_path raw byte-for-byte to dst_path, overwriting atomic target."""
+    canonical_src = get_canonical_path(src_path)
+    canonical_dst = get_canonical_path(dst_path)
+
+    target_dir = Path(canonical_dst).parent
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    with open(canonical_src, "rb") as f_in:
+        raw_bytes = f_in.read()
+
+    fd, temp_path = tempfile.mkstemp(
+        dir=str(target_dir), prefix=".dispatch_cursor_restore_tmp_"
+    )
+    try:
+        os.chmod(temp_path, 0o600)
+        with os.fdopen(fd, "wb") as f_out:
+            f_out.write(raw_bytes)
+            f_out.flush()
+            os.fsync(f_out.fileno())
+
+        os.replace(temp_path, canonical_dst)
+
+        dir_fd = os.open(str(target_dir), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+
+        return _sha256_file(canonical_dst), os.path.getsize(canonical_dst)
+    finally:
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
+
+
 def repair_dry_run(
     db_path: str | None = None,
     state_file_path: str | None = None,
@@ -1414,6 +1679,10 @@ def repair_dry_run(
     """Compute deterministic repair plan and backup destinations. Byte-for-byte mutates nothing."""
     effective_db = DB_PATH if db_path is None else db_path
     effective_state = STATE_FILE if state_file_path is None else state_file_path
+
+    _validate_db_path_strict(effective_db)
+    _validate_state_path_strict(effective_state)
+
     inspection = inspect_cursor(effective_db, effective_state)
     canonical_db_path = inspection["db_path"]
     canonical_state_path = inspection["state_file_path"]
@@ -1570,8 +1839,15 @@ def repair_apply(
 
     effective_db = DB_PATH if db_path is None else db_path
     effective_state = STATE_FILE if state_file_path is None else state_file_path
+
+    _validate_db_path_strict(effective_db)
+    _validate_state_path_strict(effective_state)
+
     canonical_db_path = get_canonical_path(effective_db)
     canonical_state_path = get_canonical_path(effective_state)
+
+    created_artifacts: list[str] = []
+    cursor_write_started = False
 
     with CursorLock(canonical_state_path):
         expected_plan = repair_dry_run(
@@ -1615,7 +1891,6 @@ def repair_apply(
                 f"Cursor backup destination collision: {cursor_backup_path}"
             )
 
-        created_artifacts: list[str] = []
         try:
             lock_conn = sqlite3.connect(canonical_db_path, timeout=10.0)
             try:
@@ -1697,99 +1972,190 @@ def repair_apply(
                 now_str = get_canonical_utc_now()
                 new_state = dict(dry_run_plan["proposed_cursor_state"])
                 new_state["updated_at"] = now_str
-                _write_cursor_state_unlocked(canonical_state_path, new_state)
-                new_cursor_sha256 = _sha256_file(canonical_state_path)
+
+                member_receipts = [
+                    {
+                        "name": "main_db",
+                        "src_path": canonical_db_path,
+                        "src_sha256": curr_db_sha256,
+                        "src_size": curr_db_size,
+                        "backup_path": db_backup_path,
+                        "backup_sha256": db_bak_sha,
+                        "backup_size": db_bak_sz,
+                        "bytes_match": curr_db_sha256 == db_bak_sha
+                        and curr_db_size == db_bak_sz,
+                    }
+                ]
+                if wal_exists:
+                    member_receipts.append(
+                        {
+                            "name": "wal",
+                            "src_path": wal_path,
+                            "src_sha256": curr_wal_sha256,
+                            "src_size": curr_wal_size,
+                            "backup_path": wal_backup_path,
+                            "backup_sha256": wal_bak_sha,
+                            "backup_size": wal_bak_sz,
+                            "bytes_match": curr_wal_sha256 == wal_bak_sha
+                            and curr_wal_size == wal_bak_sz,
+                        }
+                    )
+                if cursor_exists:
+                    member_receipts.append(
+                        {
+                            "name": "cursor",
+                            "src_path": canonical_state_path,
+                            "src_sha256": curr_cursor_sha256,
+                            "src_size": curr_cursor_size,
+                            "backup_path": cursor_backup_path,
+                            "backup_sha256": cursor_bak_sha,
+                            "backup_size": cursor_bak_sz,
+                            "bytes_match": curr_cursor_sha256 == cursor_bak_sha
+                            and curr_cursor_size == cursor_bak_sz,
+                        }
+                    )
+
+                # ATOMIC CURSOR REPLACEMENT STARTS HERE
+                target_dir = Path(canonical_state_path).parent
+                target_dir.mkdir(parents=True, exist_ok=True)
+                content = json.dumps(new_state, indent=2) + "\n"
+
+                fd, temp_path = tempfile.mkstemp(
+                    dir=str(target_dir), prefix=".dispatch_cursor_tmp_"
+                )
+                try:
+                    os.chmod(temp_path, 0o600)
+                    with os.fdopen(fd, "w", encoding="utf-8") as f:
+                        f.write(content)
+                        f.flush()
+                        os.fsync(f.fileno())
+
+                    cursor_write_started = True
+                    os.replace(temp_path, canonical_state_path)
+
+                    dir_fd = os.open(
+                        str(target_dir), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                    )
+                    try:
+                        os.fsync(dir_fd)
+                    finally:
+                        os.close(dir_fd)
+
+                    new_cursor_sha256 = _sha256_file(canonical_state_path)
+                finally:
+                    if os.path.exists(temp_path):
+                        try:
+                            os.remove(temp_path)
+                        except Exception:
+                            pass
+
+                receipt = {
+                    "status": "SUCCESS",
+                    "action": "repair_apply",
+                    "plan_id": dry_run_plan["plan_id"],
+                    "timestamp": now_str,
+                    "db_path": canonical_db_path,
+                    "db_generation": dry_run_plan["db_generation"],
+                    "src_db_sha256": curr_db_sha256,
+                    "src_db_size": curr_db_size,
+                    "db_backup_path": db_backup_path,
+                    "db_backup_sha256": db_bak_sha,
+                    "db_backup_size": db_bak_sz,
+                    "wal_path": wal_path if wal_exists else "NONE",
+                    "src_wal_sha256": curr_wal_sha256,
+                    "src_wal_size": curr_wal_size,
+                    "wal_backup_path": wal_backup_path if wal_exists else "NONE",
+                    "wal_backup_sha256": wal_bak_sha,
+                    "wal_backup_size": wal_bak_sz,
+                    "cursor_path": canonical_state_path if cursor_exists else "NONE",
+                    "src_cursor_sha256": curr_cursor_sha256,
+                    "src_cursor_size": curr_cursor_size,
+                    "cursor_backup_path": cursor_backup_path
+                    if cursor_exists
+                    else "NONE",
+                    "cursor_backup_sha256": cursor_bak_sha,
+                    "cursor_backup_size": cursor_bak_sz,
+                    "members": member_receipts,
+                    "new_cursor_state": new_state,
+                    "new_cursor_sha256": new_cursor_sha256,
+                    "marker": "PRISMATIC_DISPATCH_CURSOR_GENERATION_SOURCE_OK",
+                    "mutated": True,
+                }
 
             finally:
                 lock_conn.rollback()
                 lock_conn.close()
 
-            member_receipts = [
-                {
-                    "name": "main_db",
-                    "src_path": canonical_db_path,
-                    "src_sha256": curr_db_sha256,
-                    "src_size": curr_db_size,
-                    "backup_path": db_backup_path,
-                    "backup_sha256": db_bak_sha,
-                    "backup_size": db_bak_sz,
-                    "bytes_match": curr_db_sha256 == db_bak_sha
-                    and curr_db_size == db_bak_sz,
-                }
-            ]
-            if wal_exists:
-                member_receipts.append(
-                    {
-                        "name": "wal",
-                        "src_path": wal_path,
-                        "src_sha256": curr_wal_sha256,
-                        "src_size": curr_wal_size,
-                        "backup_path": wal_backup_path,
-                        "backup_sha256": wal_bak_sha,
-                        "backup_size": wal_bak_sz,
-                        "bytes_match": curr_wal_sha256 == wal_bak_sha
-                        and curr_wal_size == wal_bak_sz,
-                    }
-                )
-            if cursor_exists:
-                member_receipts.append(
-                    {
-                        "name": "cursor",
-                        "src_path": canonical_state_path,
-                        "src_sha256": curr_cursor_sha256,
-                        "src_size": curr_cursor_size,
-                        "backup_path": cursor_backup_path,
-                        "backup_sha256": cursor_bak_sha,
-                        "backup_size": cursor_bak_sz,
-                        "bytes_match": curr_cursor_sha256 == cursor_bak_sha
-                        and curr_cursor_size == cursor_bak_sz,
-                    }
-                )
-
-            receipt = {
-                "status": "SUCCESS",
-                "action": "repair_apply",
-                "plan_id": dry_run_plan["plan_id"],
-                "timestamp": now_str,
-                "db_path": canonical_db_path,
-                "db_generation": dry_run_plan["db_generation"],
-                "src_db_sha256": curr_db_sha256,
-                "src_db_size": curr_db_size,
-                "db_backup_path": db_backup_path,
-                "db_backup_sha256": db_bak_sha,
-                "db_backup_size": db_bak_sz,
-                "wal_path": wal_path if wal_exists else "NONE",
-                "src_wal_sha256": curr_wal_sha256,
-                "src_wal_size": curr_wal_size,
-                "wal_backup_path": wal_backup_path if wal_exists else "NONE",
-                "wal_backup_sha256": wal_bak_sha,
-                "wal_backup_size": wal_bak_sz,
-                "cursor_path": canonical_state_path if cursor_exists else "NONE",
-                "src_cursor_sha256": curr_cursor_sha256,
-                "src_cursor_size": curr_cursor_size,
-                "cursor_backup_path": cursor_backup_path if cursor_exists else "NONE",
-                "cursor_backup_sha256": cursor_bak_sha,
-                "cursor_backup_size": cursor_bak_sz,
-                "members": member_receipts,
-                "new_cursor_state": new_state,
-                "new_cursor_sha256": new_cursor_sha256,
-                "marker": "PRISMATIC_DISPATCH_CURSOR_GENERATION_SOURCE_OK",
-                "mutated": True,
-            }
             return receipt
+
         except Exception as primary_exc:
-            cleanup_errors = []
-            for path in reversed(created_artifacts):
+            if not cursor_write_started:
+                cleanup_errors = []
+                for path in reversed(created_artifacts):
+                    try:
+                        _cleanup_partial_destination(path, Path(path).parent)
+                    except Exception as ce:
+                        cleanup_errors.append(ce)
+                if cleanup_errors:
+                    raise ExceptionGroup(
+                        "repair_apply failed pre-mutation and artifact cleanup encountered errors",
+                        [primary_exc] + cleanup_errors,
+                    )
+                raise primary_exc
+            else:
+                rollback_success = False
                 try:
-                    _cleanup_partial_destination(path, Path(path).parent)
-                except Exception as ce:
-                    cleanup_errors.append(ce)
-            if cleanup_errors:
-                raise ExceptionGroup(
-                    "repair_apply failed and artifact cleanup encountered errors",
-                    [primary_exc] + cleanup_errors,
-                )
-            raise primary_exc
+                    if cursor_exists and os.path.exists(cursor_backup_path):
+                        _copy_file_raw_atomic_overwrite(
+                            cursor_backup_path, canonical_state_path
+                        )
+                        restored_sha = _sha256_file(canonical_state_path)
+                        restored_sz = os.path.getsize(canonical_state_path)
+                        if (
+                            restored_sha == curr_cursor_sha256
+                            and restored_sz == curr_cursor_size
+                        ):
+                            rollback_success = True
+                    elif not cursor_exists:
+                        if os.path.exists(canonical_state_path) or os.path.islink(
+                            canonical_state_path
+                        ):
+                            os.remove(canonical_state_path)
+                            p_fd = os.open(
+                                str(Path(canonical_state_path).parent),
+                                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+                            )
+                            try:
+                                os.fsync(p_fd)
+                            finally:
+                                os.close(p_fd)
+                        if not os.path.exists(canonical_state_path):
+                            rollback_success = True
+                except Exception:
+                    rollback_success = False
+
+                if rollback_success:
+                    raise RuntimeError(
+                        f"Post-cursor-write failure occurred during repair_apply ({primary_exc}). "
+                        f"Durable rollback succeeded: exact original cursor state restored. "
+                        f"Backups preserved at {created_artifacts}."
+                    ) from primary_exc
+                else:
+                    recovery_info = {
+                        "status": "RECOVERY_REQUIRED",
+                        "error": str(primary_exc),
+                        "created_backups": [
+                            {"path": p, "sha256": _sha256_file(p)}
+                            for p in created_artifacts
+                        ],
+                        "cursor_state_mutated": True,
+                        "marker": "PRISMATIC_DISPATCH_CURSOR_GENERATION_RECOVERY_REQUIRED",
+                    }
+                    raise RuntimeError(
+                        f"Post-cursor-write failure occurred during repair_apply ({primary_exc}) "
+                        f"and durable rollback could not be proven exact. "
+                        f"RECOVERY REQUIRED. Retained backups: {json.dumps(recovery_info)}"
+                    ) from primary_exc
 
 
 def main() -> None:
