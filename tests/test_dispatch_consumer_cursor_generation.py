@@ -273,20 +273,22 @@ def test_9_legacy_ahead_cursor_fails_closed(tmp_path: Path) -> None:
     assert "PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED" in msg
 
 
+def _init_db_worker(db_path_str: str) -> str:
+    conn = sqlite3.connect(db_path_str, timeout=10)
+    try:
+        return consumer.ensure_db_generation(conn)
+    finally:
+        conn.close()
+
+
 def test_10_concurrent_schema_initialization_yields_one_valid_generation(
     tmp_path: Path,
 ) -> None:
     db_path = tmp_path / "concurrent_event_log.sqlite"
+    db_str = str(db_path)
 
-    def _init() -> str:
-        conn = sqlite3.connect(db_path, timeout=10)
-        try:
-            return consumer.ensure_db_generation(conn)
-        finally:
-            conn.close()
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-        futures = [executor.submit(_init) for _ in range(20)]
+    with concurrent.futures.ProcessPoolExecutor(max_workers=8) as executor:
+        futures = [executor.submit(_init_db_worker, db_str) for _ in range(20)]
         results = [f.result() for f in futures]
 
     assert len(results) == 20
@@ -382,6 +384,8 @@ def test_14_apply_creates_backups_preserves_rows_and_emits_receipt(
     assert receipt["db_generation"] == gen
     assert os.path.exists(receipt["db_backup_path"])
     assert os.path.exists(receipt["cursor_backup_path"])
+    assert receipt["db_backup_sha256"] == receipt["src_db_sha256"]
+    assert receipt["cursor_backup_sha256"] == receipt["src_cursor_sha256"]
 
     conn = sqlite3.connect(db_path)
     try:
@@ -396,6 +400,9 @@ def test_15_rollback_from_backups_restores_exact_hashes(tmp_path: Path) -> None:
     state_file = tmp_path / "dispatch_consumer.rowid"
     state_file.write_text("3\n")
     os.chmod(state_file, 0o600)
+
+    orig_db_sha = consumer._sha256_file(str(db_path))
+    orig_cursor_sha = consumer._sha256_file(str(state_file))
 
     receipt = consumer.repair_apply(
         str(db_path), str(state_file), confirmation_token=consumer.CONFIRMATION_TOKEN
@@ -412,8 +419,18 @@ def test_15_rollback_from_backups_restores_exact_hashes(tmp_path: Path) -> None:
     db_hash_restored = consumer._sha256_file(str(db_path))
     cursor_hash_restored = consumer._sha256_file(str(state_file))
 
-    assert db_hash_restored == receipt["db_backup_sha256"]
-    assert cursor_hash_restored == receipt["cursor_backup_sha256"]
+    assert (
+        db_hash_restored
+        == orig_db_sha
+        == receipt["src_db_sha256"]
+        == receipt["db_backup_sha256"]
+    )
+    assert (
+        cursor_hash_restored
+        == orig_cursor_sha
+        == receipt["src_cursor_sha256"]
+        == receipt["cursor_backup_sha256"]
+    )
 
 
 def test_16_inspect_dryrun_apply_no_linear_no_agent_canary(
@@ -502,8 +519,12 @@ def test_19_runtime_replacement_spawn_repro_prevention(
 
     os.replace(db_path_b, db_path_a)
 
-    with pytest.raises(RuntimeError, match="Database generation mismatch during event fetch"):
-        consumer.fetch_new_events(last_rowid=0, expected_generation=gen_a, db_path=str(db_path_a))
+    with pytest.raises(
+        RuntimeError, match="Database generation mismatch during event fetch"
+    ):
+        consumer.fetch_new_events(
+            last_rowid=0, expected_generation=gen_a, db_path=str(db_path_a)
+        )
 
     assert len(linear_calls) == 0
     assert len(spawn_calls) == 0
@@ -615,7 +636,9 @@ def test_21_dry_run_determinism_and_apply_destination_enforcement(
 
     with pytest.raises(FileExistsError, match="collision"):
         consumer.repair_apply(
-            str(db_path_col), str(state_file_col), confirmation_token=consumer.CONFIRMATION_TOKEN
+            str(db_path_col),
+            str(state_file_col),
+            confirmation_token=consumer.CONFIRMATION_TOKEN,
         )
 
     # Source drift check
@@ -670,9 +693,7 @@ def test_22_strict_target_rowid_validation_and_explicit_requirement(
 
 def test_23_strict_uuid_iso_timestamp_and_security_bounds(tmp_path: Path) -> None:
     """Regression for Finding 5: UUID format, ISO timestamp, symlink/permissions, backup fsync, and no sensitive leaks."""
-    assert consumer.validate_generation_format(
-        "06d6bcc0-b0a5-01eb-4f94-349c24ed99f5"
-    )
+    assert consumer.validate_generation_format("06d6bcc0-b0a5-01eb-4f94-349c24ed99f5")
     assert not consumer.validate_generation_format(
         "06D6BCC0-B0A5-01EB-4F94-349C24ED99F5"
     )
@@ -703,3 +724,111 @@ def test_23_strict_uuid_iso_timestamp_and_security_bounds(tmp_path: Path) -> Non
     os.chmod(f_unsafe, 0o644)
     with pytest.raises(ValueError, match="unsafe file permissions"):
         consumer.write_cursor_state(str(f_unsafe), valid_state)
+
+
+def test_24_wal_mode_raw_backup_restore_and_recovery(tmp_path: Path) -> None:
+    """WAL-mode regression test: create committed WAL-resident data without checkpointing,
+    perform repair dry-run/apply backup, verify exact original-to-backup SHA-256 hashes for main,
+    WAL, and cursor, restore the set, delete/regenerate SHM, reopen SQLite, and prove generation,
+    max-rowid, and event rows are unchanged.
+    """
+    db_path = tmp_path / "wal_event_log.sqlite"
+    wal_path = tmp_path / "wal_event_log.sqlite-wal"
+    shm_path = tmp_path / "wal_event_log.sqlite-shm"
+    state_file = tmp_path / "dispatch_consumer.rowid"
+
+    conn_setup = sqlite3.connect(db_path)
+    conn_setup.execute("PRAGMA journal_mode=WAL")
+    gen = consumer.ensure_db_generation(conn_setup)
+    consumer.ensure_schema(conn_setup)
+    for i in range(1, 4):
+        payload = json.dumps({"type": "Issue", "data": {"identifier": f"WAL-{i}"}})
+        conn_setup.execute(
+            "INSERT INTO events (dedup_key, topic, payload_json, ts, processed) VALUES (?, ?, ?, ?, 0)",
+            (f"wal-key-{i}", "update", payload, time.time()),
+        )
+    conn_setup.commit()
+
+    conn_reader = sqlite3.connect(db_path)
+    conn_reader.execute("SELECT COUNT(*) FROM events")
+
+    conn_setup.close()
+
+    assert os.path.exists(wal_path)
+    assert os.path.getsize(wal_path) > 0
+
+    state_file.write_text("2\n")
+    os.chmod(state_file, 0o600)
+
+    orig_db_sha = consumer._sha256_file(str(db_path))
+    orig_wal_sha = consumer._sha256_file(str(wal_path))
+    orig_cursor_sha = consumer._sha256_file(str(state_file))
+    orig_wal_sz = os.path.getsize(wal_path)
+
+    dry_run = consumer.repair_dry_run(str(db_path), str(state_file))
+    assert dry_run["wal_path"] == consumer.get_canonical_path(str(wal_path))
+    assert dry_run["wal_sha256"] == orig_wal_sha
+    assert dry_run["wal_size"] == orig_wal_sz
+
+    receipt = consumer.repair_apply(
+        str(db_path), str(state_file), confirmation_token=consumer.CONFIRMATION_TOKEN
+    )
+
+    assert receipt["status"] == "SUCCESS"
+    assert receipt["src_db_sha256"] == orig_db_sha
+    assert receipt["db_backup_sha256"] == orig_db_sha
+    assert receipt["src_wal_sha256"] == orig_wal_sha
+    assert receipt["wal_backup_sha256"] == orig_wal_sha
+    assert receipt["src_cursor_sha256"] == orig_cursor_sha
+    assert receipt["cursor_backup_sha256"] == orig_cursor_sha
+
+    conn_reader.close()
+
+    conn_mut = sqlite3.connect(db_path)
+    conn_mut.execute("DELETE FROM events")
+    conn_mut.commit()
+    conn_mut.close()
+    state_file.write_text("corrupted")
+
+    if os.path.exists(shm_path):
+        os.remove(shm_path)
+
+    with open(receipt["db_backup_path"], "rb") as f_in, open(db_path, "wb") as f_out:
+        f_out.write(f_in.read())
+    with (
+        open(receipt["wal_backup_path"], "rb") as f_in,
+        open(wal_path, "wb") as f_out,
+    ):
+        f_out.write(f_in.read())
+    with (
+        open(receipt["cursor_backup_path"], "rb") as f_in,
+        open(state_file, "wb") as f_out,
+    ):
+        f_out.write(f_in.read())
+
+    restored_db_sha = consumer._sha256_file(str(db_path))
+    restored_wal_sha = consumer._sha256_file(str(wal_path))
+    restored_cursor_sha = consumer._sha256_file(str(state_file))
+
+    assert restored_db_sha == orig_db_sha
+    assert restored_wal_sha == orig_wal_sha
+    assert restored_cursor_sha == orig_cursor_sha
+
+    conn_reopen = sqlite3.connect(db_path)
+    try:
+        reopened_gen = consumer.ensure_db_generation(conn_reopen)
+        assert reopened_gen == gen
+        max_rid, db_gen_ro = consumer.get_db_max_rowid_and_generation_readonly(
+            str(db_path)
+        )
+        assert max_rid == 3
+        assert db_gen_ro == gen
+        events = conn_reopen.execute(
+            "SELECT rowid, dedup_key FROM events ORDER BY rowid"
+        ).fetchall()
+        assert len(events) == 3
+        assert events[0] == (1, "wal-key-1")
+        assert events[1] == (2, "wal-key-2")
+        assert events[2] == (3, "wal-key-3")
+    finally:
+        conn_reopen.close()

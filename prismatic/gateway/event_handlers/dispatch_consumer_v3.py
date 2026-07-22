@@ -642,7 +642,11 @@ def fetch_new_events(
             except sqlite3.OperationalError:
                 pass
 
-            if not db_gen or db_gen != expected_generation or not validate_generation_format(db_gen):
+            if (
+                not db_gen
+                or db_gen != expected_generation
+                or not validate_generation_format(db_gen)
+            ):
                 print(
                     f"[FAIL_CLOSED] Database generation mismatch during fetch: expected {expected_generation!r} vs db {db_gen!r}\n"
                     "MARKER=PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED"
@@ -874,10 +878,9 @@ def main_loop() -> None:
                 last_vacuum = time.time()
         except Exception as e:
             print(f"[consumer] loop error: {e}")
-            if (
-                "PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED" in str(e)
-                or isinstance(e, RuntimeError)
-            ):
+            if "PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED" in str(
+                e
+            ) or isinstance(e, RuntimeError):
                 raise
         time.sleep(POLL_INTERVAL)
 
@@ -924,7 +927,11 @@ def inspect_cursor(db_path: str = DB_PATH, state_file_path: str = STATE_FILE) ->
     proposed_bound_state = None
     if db_exists and db_gen is not None and max_rowid is not None:
         proposed_rowid = None
-        if status_code == "LEGACY" and cursor_rowid is not None and cursor_rowid <= max_rowid:
+        if (
+            status_code == "LEGACY"
+            and cursor_rowid is not None
+            and cursor_rowid <= max_rowid
+        ):
             proposed_rowid = cursor_rowid
         elif (
             status_code == "VALID"
@@ -983,6 +990,60 @@ def validate_target_rowid(target_rowid: object, max_rowid: int) -> int:
     return target_rowid
 
 
+def _copy_file_raw_atomic(src_path: str, dst_backup_path: str) -> tuple[str, int]:
+    """Copy src_path raw byte-for-byte to dst_backup_path with exclusive creation,
+    0o600 permissions, fsync on file and parent directory.
+
+    Returns (dst_sha256, dst_size).
+    """
+    canonical_src = get_canonical_path(src_path)
+    canonical_dst = get_canonical_path(dst_backup_path)
+
+    if (
+        os.path.islink(src_path)
+        or os.path.islink(dst_backup_path)
+        or os.path.islink(canonical_src)
+    ):
+        raise ValueError(
+            f"Refusing to copy: symlink detected ({src_path} -> {dst_backup_path})"
+        )
+
+    if os.path.exists(canonical_dst):
+        raise FileExistsError(f"Backup destination collision: {dst_backup_path}")
+
+    st = os.lstat(canonical_src)
+    if not stat.S_ISREG(st.st_mode):
+        raise ValueError(
+            f"Refusing to copy: source path is not a regular file ({src_path})"
+        )
+
+    target_dir = Path(canonical_dst).parent
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    fd = os.open(canonical_dst, flags, 0o600)
+    try:
+        with open(canonical_src, "rb") as f_in:
+            while chunk := f_in.read(65536):
+                os.write(fd, chunk)
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+    try:
+        dir_fd = os.open(str(target_dir), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except Exception:
+        pass
+
+    dst_sha = _sha256_file(canonical_dst)
+    dst_sz = os.path.getsize(canonical_dst)
+    return dst_sha, dst_sz
+
+
 def repair_dry_run(
     db_path: str = DB_PATH,
     state_file_path: str = STATE_FILE,
@@ -1032,13 +1093,37 @@ def repair_dry_run(
             )
 
     db_sha256 = _sha256_file(canonical_db_path)
-    cursor_sha256 = _sha256_file(canonical_state_path)
+    db_size = (
+        os.path.getsize(canonical_db_path) if os.path.exists(canonical_db_path) else 0
+    )
 
-    plan_payload = f"{canonical_db_path}:{db_sha256}:{canonical_state_path}:{cursor_sha256}:{db_gen}:{proposed_rowid}"
+    wal_path = canonical_db_path + "-wal"
+    wal_exists = os.path.exists(wal_path) and os.path.getsize(wal_path) > 0
+    wal_sha256 = _sha256_file(wal_path) if wal_exists else "NONE"
+    wal_size = os.path.getsize(wal_path) if wal_exists else 0
+
+    cursor_exists = (
+        os.path.exists(canonical_state_path)
+        and os.path.getsize(canonical_state_path) > 0
+    )
+    cursor_sha256 = _sha256_file(canonical_state_path) if cursor_exists else "NONE"
+    cursor_size = os.path.getsize(canonical_state_path) if cursor_exists else 0
+
+    plan_payload = (
+        f"{canonical_db_path}:{db_sha256}:{db_size}:"
+        f"{wal_path}:{wal_sha256}:{wal_size}:"
+        f"{canonical_state_path}:{cursor_sha256}:{cursor_size}:"
+        f"{db_gen}:{proposed_rowid}"
+    )
     plan_id = hashlib.sha256(plan_payload.encode("utf-8")).hexdigest()[:16]
 
     proposed_db_backup = f"{canonical_db_path}.backup.plan_{plan_id}"
-    proposed_cursor_backup = f"{canonical_state_path}.backup.plan_{plan_id}"
+    proposed_wal_backup = (
+        f"{canonical_db_path}-wal.backup.plan_{plan_id}" if wal_exists else "NONE"
+    )
+    proposed_cursor_backup = (
+        f"{canonical_state_path}.backup.plan_{plan_id}" if cursor_exists else "NONE"
+    )
 
     deterministic_updated_at = "1970-01-01T00:00:00Z"
     proposed_state = {
@@ -1050,6 +1135,36 @@ def repair_dry_run(
     }
     validate_cursor_state_dict(proposed_state)
 
+    members = [
+        {
+            "name": "main_db",
+            "src_path": canonical_db_path,
+            "src_sha256": db_sha256,
+            "src_size": db_size,
+            "proposed_backup_path": proposed_db_backup,
+        }
+    ]
+    if wal_exists:
+        members.append(
+            {
+                "name": "wal",
+                "src_path": wal_path,
+                "src_sha256": wal_sha256,
+                "src_size": wal_size,
+                "proposed_backup_path": proposed_wal_backup,
+            }
+        )
+    if cursor_exists:
+        members.append(
+            {
+                "name": "cursor",
+                "src_path": canonical_state_path,
+                "src_sha256": cursor_sha256,
+                "src_size": cursor_size,
+                "proposed_backup_path": proposed_cursor_backup,
+            }
+        )
+
     return {
         "plan": "repair_dry_run",
         "plan_id": plan_id,
@@ -1057,10 +1172,17 @@ def repair_dry_run(
         "db_generation": db_gen,
         "max_rowid": max_rowid,
         "db_sha256": db_sha256,
-        "cursor_path": canonical_state_path,
+        "db_size": db_size,
+        "wal_path": wal_path if wal_exists else "NONE",
+        "wal_sha256": wal_sha256,
+        "wal_size": wal_size,
+        "cursor_path": canonical_state_path if cursor_exists else "NONE",
         "cursor_sha256": cursor_sha256,
+        "cursor_size": cursor_size,
         "proposed_db_backup_path": proposed_db_backup,
+        "proposed_wal_backup_path": proposed_wal_backup,
         "proposed_cursor_backup_path": proposed_cursor_backup,
+        "members": members,
         "proposed_cursor_state": proposed_state,
         "confirmation_required": CONFIRMATION_TOKEN,
         "mutated": False,
@@ -1074,7 +1196,7 @@ def repair_apply(
     target_rowid: int | None = None,
     plan: dict | None = None,
 ) -> dict:
-    """Apply cursor migration/repair with atomic backups and confirmation token."""
+    """Apply cursor migration/repair with atomic raw backups and confirmation token."""
     if confirmation_token != CONFIRMATION_TOKEN:
         return {
             "status": "REFUSED",
@@ -1085,91 +1207,182 @@ def repair_apply(
     canonical_db_path = get_canonical_path(db_path)
     canonical_state_path = get_canonical_path(state_file_path)
 
-    curr_db_sha256 = _sha256_file(canonical_db_path)
-    curr_cursor_sha256 = _sha256_file(canonical_state_path)
-
     if plan is not None:
         dry_run_plan = plan
     else:
-        dry_run_plan = repair_dry_run(db_path, state_file_path, target_rowid=target_rowid)
-
-    if (
-        curr_db_sha256 != dry_run_plan["db_sha256"]
-        or curr_cursor_sha256 != dry_run_plan["cursor_sha256"]
-    ):
-        raise RuntimeError(
-            "Source drift detected: database or cursor file changed since plan computation"
+        dry_run_plan = repair_dry_run(
+            db_path, state_file_path, target_rowid=target_rowid
         )
 
     db_backup_path = dry_run_plan["proposed_db_backup_path"]
+    wal_backup_path = dry_run_plan["proposed_wal_backup_path"]
     cursor_backup_path = dry_run_plan["proposed_cursor_backup_path"]
 
     if os.path.exists(db_backup_path):
         raise FileExistsError(f"DB backup destination collision: {db_backup_path}")
-    if os.path.exists(cursor_backup_path):
+    if wal_backup_path != "NONE" and os.path.exists(wal_backup_path):
+        raise FileExistsError(f"WAL backup destination collision: {wal_backup_path}")
+    if cursor_backup_path != "NONE" and os.path.exists(cursor_backup_path):
         raise FileExistsError(
             f"Cursor backup destination collision: {cursor_backup_path}"
         )
 
     created_artifacts: list[str] = []
     try:
-        db_uri = f"file:{canonical_db_path}?mode=ro"
-        src_conn = sqlite3.connect(db_uri, uri=True)
+        lock_conn = sqlite3.connect(canonical_db_path, timeout=10.0)
         try:
-            fd = os.open(db_backup_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            os.close(fd)
+            lock_conn.execute("BEGIN EXCLUSIVE")
+
+            curr_db_sha256 = _sha256_file(canonical_db_path)
+            curr_db_size = (
+                os.path.getsize(canonical_db_path)
+                if os.path.exists(canonical_db_path)
+                else 0
+            )
+
+            wal_path = canonical_db_path + "-wal"
+            wal_exists = os.path.exists(wal_path) and os.path.getsize(wal_path) > 0
+            curr_wal_sha256 = _sha256_file(wal_path) if wal_exists else "NONE"
+            curr_wal_size = os.path.getsize(wal_path) if wal_exists else 0
+
+            cursor_exists = (
+                os.path.exists(canonical_state_path)
+                and os.path.getsize(canonical_state_path) > 0
+            )
+            curr_cursor_sha256 = (
+                _sha256_file(canonical_state_path) if cursor_exists else "NONE"
+            )
+            curr_cursor_size = (
+                os.path.getsize(canonical_state_path) if cursor_exists else 0
+            )
+
+            if (
+                curr_db_sha256 != dry_run_plan["db_sha256"]
+                or curr_db_size != dry_run_plan["db_size"]
+                or curr_wal_sha256 != dry_run_plan["wal_sha256"]
+                or curr_wal_size != dry_run_plan["wal_size"]
+                or curr_cursor_sha256 != dry_run_plan["cursor_sha256"]
+                or curr_cursor_size != dry_run_plan["cursor_size"]
+            ):
+                raise RuntimeError(
+                    "Source drift detected: database or cursor file changed since plan computation"
+                )
+
+            # Raw byte copy of main DB
+            db_bak_sha, db_bak_sz = _copy_file_raw_atomic(
+                canonical_db_path, db_backup_path
+            )
             created_artifacts.append(db_backup_path)
 
-            dest_conn = sqlite3.connect(db_backup_path)
-            try:
-                src_conn.backup(dest_conn)
-            finally:
-                dest_conn.close()
+            if db_bak_sha != curr_db_sha256 or db_bak_sz != curr_db_size:
+                raise RuntimeError(
+                    f"Main DB backup copy verification failed: expected sha={curr_db_sha256} size={curr_db_size}, got sha={db_bak_sha} size={db_bak_sz}"
+                )
 
-            fd_b = os.open(db_backup_path, os.O_RDONLY)
-            try:
-                os.fsync(fd_b)
-            finally:
-                os.close(fd_b)
+            # Raw byte copy of WAL if present and non-empty
+            wal_bak_sha, wal_bak_sz = "NONE", 0
+            if wal_exists:
+                wal_bak_sha, wal_bak_sz = _copy_file_raw_atomic(
+                    wal_path, wal_backup_path
+                )
+                created_artifacts.append(wal_backup_path)
+                if wal_bak_sha != curr_wal_sha256 or wal_bak_sz != curr_wal_size:
+                    raise RuntimeError(
+                        f"WAL backup copy verification failed: expected sha={curr_wal_sha256} size={curr_wal_size}, got sha={wal_bak_sha} size={wal_bak_sz}"
+                    )
+
+            # Raw byte copy of cursor state file if present and non-empty
+            cursor_bak_sha, cursor_bak_sz = "NONE", 0
+            if cursor_exists:
+                cursor_bak_sha, cursor_bak_sz = _copy_file_raw_atomic(
+                    canonical_state_path, cursor_backup_path
+                )
+                created_artifacts.append(cursor_backup_path)
+                if (
+                    cursor_bak_sha != curr_cursor_sha256
+                    or cursor_bak_sz != curr_cursor_size
+                ):
+                    raise RuntimeError(
+                        f"Cursor backup copy verification failed: expected sha={curr_cursor_sha256} size={curr_cursor_size}, got sha={cursor_bak_sha} size={cursor_bak_sz}"
+                    )
+
         finally:
-            src_conn.close()
+            lock_conn.rollback()
+            lock_conn.close()
 
-        db_backup_sha256 = _sha256_file(db_backup_path)
-
-        cursor_backup_sha256 = "NONE"
-        if os.path.exists(canonical_state_path):
-            with open(canonical_state_path, "rb") as f_in:
-                cursor_bytes = f_in.read()
-            fd_c = os.open(
-                cursor_backup_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
-            )
-            try:
-                os.write(fd_c, cursor_bytes)
-                os.fsync(fd_c)
-            finally:
-                os.close(fd_c)
-            created_artifacts.append(cursor_backup_path)
-            cursor_backup_sha256 = _sha256_file(cursor_backup_path)
-        else:
-            cursor_backup_path = "NONE"
-
+        now_str = datetime.datetime.now(datetime.timezone.utc).isoformat()
         new_state = dict(dry_run_plan["proposed_cursor_state"])
+        new_state["updated_at"] = now_str
         write_cursor_state(canonical_state_path, new_state)
         new_cursor_sha256 = _sha256_file(canonical_state_path)
+
+        member_receipts = [
+            {
+                "name": "main_db",
+                "src_path": canonical_db_path,
+                "src_sha256": curr_db_sha256,
+                "src_size": curr_db_size,
+                "backup_path": db_backup_path,
+                "backup_sha256": db_bak_sha,
+                "backup_size": db_bak_sz,
+                "bytes_match": curr_db_sha256 == db_bak_sha
+                and curr_db_size == db_bak_sz,
+            }
+        ]
+        if wal_exists:
+            member_receipts.append(
+                {
+                    "name": "wal",
+                    "src_path": wal_path,
+                    "src_sha256": curr_wal_sha256,
+                    "src_size": curr_wal_size,
+                    "backup_path": wal_backup_path,
+                    "backup_sha256": wal_bak_sha,
+                    "backup_size": wal_bak_sz,
+                    "bytes_match": curr_wal_sha256 == wal_bak_sha
+                    and curr_wal_size == wal_bak_sz,
+                }
+            )
+        if cursor_exists:
+            member_receipts.append(
+                {
+                    "name": "cursor",
+                    "src_path": canonical_state_path,
+                    "src_sha256": curr_cursor_sha256,
+                    "src_size": curr_cursor_size,
+                    "backup_path": cursor_backup_path,
+                    "backup_sha256": cursor_bak_sha,
+                    "backup_size": cursor_bak_sz,
+                    "bytes_match": curr_cursor_sha256 == cursor_bak_sha
+                    and curr_cursor_size == cursor_bak_sz,
+                }
+            )
 
         receipt = {
             "status": "SUCCESS",
             "action": "repair_apply",
             "plan_id": dry_run_plan["plan_id"],
-            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "timestamp": now_str,
             "db_path": canonical_db_path,
             "db_generation": dry_run_plan["db_generation"],
             "src_db_sha256": curr_db_sha256,
+            "src_db_size": curr_db_size,
             "db_backup_path": db_backup_path,
-            "db_backup_sha256": db_backup_sha256,
+            "db_backup_sha256": db_bak_sha,
+            "db_backup_size": db_bak_sz,
+            "wal_path": wal_path if wal_exists else "NONE",
+            "src_wal_sha256": curr_wal_sha256,
+            "src_wal_size": curr_wal_size,
+            "wal_backup_path": wal_backup_path if wal_exists else "NONE",
+            "wal_backup_sha256": wal_bak_sha,
+            "wal_backup_size": wal_bak_sz,
+            "cursor_path": canonical_state_path if cursor_exists else "NONE",
             "src_cursor_sha256": curr_cursor_sha256,
-            "cursor_backup_path": cursor_backup_path,
-            "cursor_backup_sha256": cursor_backup_sha256,
+            "src_cursor_size": curr_cursor_size,
+            "cursor_backup_path": cursor_backup_path if cursor_exists else "NONE",
+            "cursor_backup_sha256": cursor_bak_sha,
+            "cursor_backup_size": cursor_bak_sz,
+            "members": member_receipts,
             "new_cursor_state": new_state,
             "new_cursor_sha256": new_cursor_sha256,
             "marker": "PRISMATIC_DISPATCH_CURSOR_GENERATION_SOURCE_OK",

@@ -80,12 +80,19 @@ Computes a deterministic migration/repair plan:
 ### Repair Apply (`--repair-apply`)
 Performs state repair and migration:
 - **Confirmation Token**: Requires `--confirm I_ACCEPT_CURSOR_REPAIR_RISK`. Refuses execution if missing or incorrect.
-- **Source Drift Protection**: Recomputes/validates the dry-run plan and verifies that source database and cursor file hashes have not drifted since plan computation.
-- **Atomic Destination Backups**: Uses the exact proposed backup destination paths from the plan. Creates backups with restricted permissions (`0o600`), using SQLite's Backup API for the database and `fsync()`. Refuses execution if destination files already exist (backup collisions). On failure, partial temporary backup artifacts are cleaned up while preserving completed valid backups.
-- **Data Preservation**: Never deletes, rewrites, or mutates rows in `events` or `processed_event_keys`.
-- **Hash-Bound Receipt**: Emits a JSON receipt containing plan ID, source hashes, generation, exact destination paths, backup hashes, updated state envelope, final file hash, apply timestamp, and machine marker `PRISMATIC_DISPATCH_CURSOR_GENERATION_SOURCE_OK`.
+- **Fail-Closed Coherent Lock Window**: Before computing source hashes or performing backup copies, acquires an exclusive SQLite write lock (`BEGIN EXCLUSIVE`) to exclude concurrent writers for the full source-hash and backup-copy window.
+- **WAL-Mode Raw Backup Set**: Performs raw byte-for-byte copies of the main DB (`<db_path>`), the WAL file if present and non-empty (`<db_path>-wal`), and the cursor state file (`<state_file>`). Backup files use restrictive `0600` permissions and `os.fsync` on each file and parent directory.
+- **SHM Regenerability Boundary**: The SQLite shared-memory file (`-shm`) is treated as regenerable index state and is not backed up; SQLite automatically regenerates `-shm` upon reopening restored database files.
+- **Exact Byte Identity**: Proves exact byte-for-byte SHA-256 identity between original source files and backup files (`src_db_sha256 == db_backup_sha256`, `src_wal_sha256 == wal_backup_sha256`, `src_cursor_sha256 == cursor_backup_sha256`).
+- **Source Drift Protection**: Recomputes/validates the dry-run plan and verifies that source database, WAL, and cursor file hashes and sizes have not drifted since plan computation.
+- **Atomic Destination Backups**: Uses the exact proposed backup destination paths from the plan. Refuses execution if destination files already exist (backup collisions). On failure, partial temporary backup artifacts are cleaned up.
+- **Data Preservation**: Never deletes, rewrites, or mutates rows in `events` or `processed_event_keys`. Apply mutates only the cursor state envelope.
+- **Hash-Bound Receipt**: Emits a JSON receipt containing plan ID, source hashes/sizes, generation, exact destination paths, backup hashes/sizes, updated state envelope, final file hash, apply timestamp, member array with exact byte-match booleans, and machine marker `PRISMATIC_DISPATCH_CURSOR_GENERATION_SOURCE_OK`.
 - **Side-Effect Boundary**: Does NOT call Linear API, spawn AGY agents/supervisors, publish completion events, change concurrency, enable services, or alter production runtime. Credentials and event payloads are excluded from diagnostic output.
 
 ## 7. Verification
 
-Verification tests in `tests/test_dispatch_consumer_cursor_generation.py` validate all 23 core safety guarantees, including runtime database replacement prevention, pure read-only inspection, dry-run determinism, explicit target enforcement, canonical UUID/ISO validation, backup collision prevention, hash restoration on rollback, and side-effect isolation.
+Verification tests in `tests/test_dispatch_consumer_cursor_generation.py` validate all safety guarantees, including:
+1. Real OS process-level contention test (`ProcessPoolExecutor`) ensuring concurrent schema initializations produce one identical canonical UUID generation.
+2. WAL-mode raw backup and rollback regression test verifying exact byte-for-byte SHA-256 matches for main DB, WAL file, and cursor state file, followed by SHM deletion, restoration, SQLite reopening, and verification of uncorrupted generation, max-rowid, and event row integrity.
+3. Runtime database replacement prevention, pure read-only inspection, dry-run determinism, explicit target enforcement, canonical UUID/ISO validation, backup collision prevention, and side-effect isolation.
