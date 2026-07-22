@@ -42,6 +42,7 @@ on startup, advances it after each row is processed.
 from __future__ import annotations
 
 import datetime
+import errno
 import fcntl
 import hashlib
 import json
@@ -245,6 +246,7 @@ class CursorLock:
         self.state_file_path = get_canonical_path(state_file_path)
         self.lock_file_path = self.state_file_path + ".lock"
         self._fd = None
+        self._last_release_closed = False
 
     def acquire(self, *, blocking: bool = True) -> CursorLock:
         if self._fd is not None:
@@ -278,6 +280,7 @@ class CursorLock:
             return
         fd = self._fd
         self._fd = None
+        self._last_release_closed = False
         unlock_exc = None
         close_exc = None
         try:
@@ -287,8 +290,17 @@ class CursorLock:
         finally:
             try:
                 os.close(fd)
+                self._last_release_closed = True
             except Exception as e:
                 close_exc = e
+                # Some close wrappers perform the real close and then raise.
+                # Prove descriptor closure rather than treating that as an
+                # ownership-uncertain close-before-effect failure.
+                try:
+                    os.fstat(fd)
+                except OSError as stat_exc:
+                    if stat_exc.errno == errno.EBADF:
+                        self._last_release_closed = True
 
         if unlock_exc and close_exc:
             raise ExceptionGroup(
@@ -794,7 +806,7 @@ def _safe_rollback_cursor(
         try:
             rollback_lock.release()
         except Exception:
-            release_failed = True
+            release_failed = not rollback_lock._last_release_closed
 
     return rollback_result and not release_failed
 
