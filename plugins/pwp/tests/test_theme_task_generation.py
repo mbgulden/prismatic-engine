@@ -493,6 +493,159 @@ def test_direct_canonical_construction_preserves_fail_closed_invariants():
         with pytest.raises(TaskPlanValidationError):
             replace(valid, route_decision=decision)
 
+    class BadString(str):
+        pass  # type: ignore[empty-body]
+
+    class SpoofAgent(AgentCapability):
+        @property
+        def remaining_capacity(self) -> int:
+            return 1  # Always spoof capacity
+
+    malformed_decisions = [
+        # Reported in final secondary review:
+        RouteDecision(
+            selected=AgentCapability(
+                name=BadString(" "),  # type: ignore[arg-type]
+                label=BadString("agent: "),  # type: ignore[arg-type]
+                capabilities=frozenset({"code"}),
+            ),
+            candidates=(
+                AgentCapability(
+                    name=BadString(" "),  # type: ignore[arg-type]
+                    label=BadString("agent: "),  # type: ignore[arg-type]
+                    capabilities=frozenset({"code"}),
+                ),
+            ),
+            reason="bad string subclass name/label",
+        ),
+        RouteDecision(
+            selected=SpoofAgent(
+                name="spoof",
+                label="agent:spoof",
+                capabilities=frozenset({"code"}),
+                max_concurrent=1,
+                current_load=1,
+            ),
+            candidates=(
+                SpoofAgent(
+                    name="spoof",
+                    label="agent:spoof",
+                    capabilities=frozenset({"code"}),
+                    max_concurrent=1,
+                    current_load=1,
+                ),
+            ),
+            reason="spoofed capacity",
+        ),
+        # Existing Repair 5 regressions:
+        RouteDecision(
+            selected=AgentCapability(
+                name="", label="", capabilities=frozenset({"code"})
+            ),
+            candidates=(
+                AgentCapability(name="", label="", capabilities=frozenset({"code"})),
+            ),
+            reason="empty identity",
+        ),
+        RouteDecision(
+            selected=selected,
+            candidates=[selected],  # type: ignore[arg-type]
+            reason="list candidates",
+        ),
+        RouteDecision(
+            selected=selected,
+            candidates=(selected,),
+            reason=None,  # type: ignore[arg-type]
+        ),
+        RouteDecision(
+            selected=AgentCapability(
+                name="coder",
+                label="agent:other",
+                capabilities=frozenset({"code"}),
+            ),
+            candidates=(
+                AgentCapability(
+                    name="coder",
+                    label="agent:other",
+                    capabilities=frozenset({"code"}),
+                ),
+            ),
+            reason="mismatched label",
+        ),
+        RouteDecision(
+            selected=selected,
+            candidates=(selected, selected),
+            reason="duplicate candidates",
+        ),
+    ]
+    for decision in malformed_decisions:
+        with pytest.raises(TaskPlanValidationError):
+            replace(valid, route_decision=decision)
+
+    # Reject ThemeTaskPlan subclasses before trusting overridden behavior.
+    class BadThemeTaskPlan(ThemeTaskPlan):
+        pass
+
+    with pytest.raises(
+        TaskPlanValidationError, match="ThemeTaskPlan subclasses are not supported"
+    ):
+        BadThemeTaskPlan(
+            plan_id="subclass-test",
+            title="Test",
+            description="Test",
+            verifiers=("v1",),
+            capability_requirements=frozenset(),
+            dispatch_state=DispatchState(),
+            route_decision=RouteDecision(selected=None, candidates=(), reason="test"),
+            priority=1,
+            requires_gpu=False,
+            parent_id=None,
+            dependency_ids=(),
+            contracts=(),
+            files=(),
+            base_labels=(),
+        )
+
+    # Validate direct DispatchState subclassing
+    class BadDispatchState(DispatchState):
+        pass
+
+    with pytest.raises(
+        TaskPlanValidationError, match="dispatch_state must be a DispatchState instance"
+    ):
+        create_theme_task_plan(
+            plan_id="ds-subclass",
+            title="Test DS",
+            description="Test DS",
+            verifiers=["v1"],
+            capability_requirements=frozenset(),
+            dispatch_state=BadDispatchState(),  # type: ignore[arg-type]
+            registry=make_test_registry(),
+        )
+
+    # Validate direct RouteDecision subclassing
+    class BadRouteDecision(RouteDecision):
+        pass
+
+    with pytest.raises(
+        TaskPlanValidationError, match="route_decision must be a RouteDecision"
+    ):
+        replace(
+            valid,
+            route_decision=BadRouteDecision(
+                selected=None, candidates=(), reason="test"
+            ),
+        )
+
+    # Validate direct AgentCapability subclassing via _validate_agent_candidate
+    class BadAgentCapability(AgentCapability):
+        pass
+
+    with pytest.raises(TaskPlanValidationError, match="exact AgentCapability values"):
+        ThemeTaskPlan._validate_agent_candidate(
+            BadAgentCapability(name="a", label="agent:a", capabilities=frozenset())
+        )
+
     busy = AgentCapability(
         name="busy",
         label="agent:busy",

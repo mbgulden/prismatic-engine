@@ -7,7 +7,7 @@ and fail-closed validation semantics for Prismatic Web Plugin theme generation.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Sequence
 
 from prismatic.capability_router import (
     AgentCapability,
@@ -65,13 +65,11 @@ class ThemeTaskPlan:
     base_labels: tuple[str, ...]
 
     def __post_init__(self) -> None:
+        if type(self) is not ThemeTaskPlan:
+            raise TaskPlanValidationError("ThemeTaskPlan subclasses are not supported")
         for field_name in ("plan_id", "title", "description"):
             value = getattr(self, field_name)
-            if (
-                not isinstance(value, str)
-                or not value.strip()
-                or value != value.strip()
-            ):
+            if type(value) is not str or not value.strip() or value != value.strip():
                 raise TaskPlanValidationError(
                     f"{field_name} must be a non-empty string"
                 )
@@ -79,12 +77,12 @@ class ThemeTaskPlan:
             raise TaskPlanValidationError("priority must be an integer between 1 and 5")
         if type(self.requires_gpu) is not bool:
             raise TaskPlanValidationError("requires_gpu must be a boolean")
-        if not isinstance(self.dispatch_state, DispatchState):
+        if type(self.dispatch_state) is not DispatchState:
             raise TaskPlanValidationError("dispatch_state must be a DispatchState")
-        if not isinstance(self.route_decision, RouteDecision):
+        if type(self.route_decision) is not RouteDecision:
             raise TaskPlanValidationError("route_decision must be a RouteDecision")
-        if not isinstance(self.capability_requirements, frozenset) or any(
-            not isinstance(capability, str)
+        if type(self.capability_requirements) is not frozenset or any(
+            type(capability) is not str
             or not capability.strip()
             or capability != capability.strip().lower()
             for capability in self.capability_requirements
@@ -101,7 +99,7 @@ class ThemeTaskPlan:
         ):
             value = getattr(self, field_name)
             if (
-                not isinstance(value, tuple)
+                type(value) is not tuple
                 or _validate_string_sequence(value, field_name, allow_empty=allow_empty)
                 != value
             ):
@@ -113,7 +111,7 @@ class ThemeTaskPlan:
                 "manual agent labels are prohibited; routing must select the agent"
             )
         if self.parent_id is not None and (
-            not isinstance(self.parent_id, str)
+            type(self.parent_id) is not str
             or not self.parent_id.strip()
             or self.parent_id != self.parent_id.strip()
         ):
@@ -124,7 +122,7 @@ class ThemeTaskPlan:
         if type(decision.candidates) is not tuple:
             raise TaskPlanValidationError("route_decision.candidates must be a tuple")
         if (
-            not isinstance(decision.reason, str)
+            type(decision.reason) is not str
             or not decision.reason.strip()
             or decision.reason != decision.reason.strip()
         ):
@@ -150,12 +148,12 @@ class ThemeTaskPlan:
 
     @staticmethod
     def _validate_agent_candidate(candidate: AgentCapability) -> None:
-        if not isinstance(candidate, AgentCapability):
+        if type(candidate) is not AgentCapability:
             raise TaskPlanValidationError(
-                "route_decision candidates must be AgentCapability values"
+                "route_decision candidates must be exact AgentCapability values"
             )
         if (
-            not isinstance(candidate.name, str)
+            type(candidate.name) is not str
             or not candidate.name.strip()
             or candidate.name != candidate.name.strip()
         ):
@@ -163,12 +161,12 @@ class ThemeTaskPlan:
                 "route candidate name must be a normalized non-empty string"
             )
         expected_label = f"agent:{candidate.name}"
-        if candidate.label != expected_label:
+        if type(candidate.label) is not str or candidate.label != expected_label:
             raise TaskPlanValidationError(
                 f"route candidate label must equal {expected_label!r}"
             )
         if type(candidate.capabilities) is not frozenset or any(
-            not isinstance(capability, str)
+            type(capability) is not str
             or not capability
             or capability != capability.strip().lower()
             for capability in candidate.capabilities
@@ -190,8 +188,8 @@ class ThemeTaskPlan:
                 raise TaskPlanValidationError(
                     f"route candidate {field_name} must be a boolean"
                 )
-        if not isinstance(candidate.metadata, Mapping):
-            raise TaskPlanValidationError("route candidate metadata must be a mapping")
+        if type(candidate.metadata) is not dict:
+            raise TaskPlanValidationError("route candidate metadata must be a dict")
 
     def _has_exactly_one_eligible_agent(self) -> bool:
         decision = self.route_decision
@@ -284,7 +282,7 @@ class ThemeTaskPlan:
     def linear_issue_input(
         self,
         *,
-        label_ids_by_name: Mapping[str, str],
+        label_ids_by_name: dict[str, str],
         parent_issue_id: str | None = None,
     ) -> dict[str, Any]:
         """Return a Linear ``IssueCreateInput`` payload derived from this plan.
@@ -293,13 +291,13 @@ class ThemeTaskPlan:
         Missing adapter mappings fail closed instead of leaking task-manager identifiers into
         the canonical representation.
         """
-        if not isinstance(label_ids_by_name, Mapping):
-            raise TaskPlanValidationError("label_ids_by_name must be a mapping")
+        if type(label_ids_by_name) is not dict:
+            raise TaskPlanValidationError("label_ids_by_name must be a dict")
         emitted_labels = self.emitted_labels
         missing_labels = [
             label
             for label in emitted_labels
-            if not isinstance(label_ids_by_name.get(label), str)
+            if type(label_ids_by_name.get(label)) is not str
             or not label_ids_by_name[label].strip()
         ]
         if missing_labels:
@@ -307,7 +305,7 @@ class ThemeTaskPlan:
                 "missing Linear label IDs for: " + ", ".join(missing_labels)
             )
         if self.parent_id and (
-            not isinstance(parent_issue_id, str) or not parent_issue_id.strip()
+            type(parent_issue_id) is not str or not parent_issue_id.strip()
         ):
             raise TaskPlanValidationError(
                 "parent_issue_id is required when the canonical plan has a parent_id"
@@ -336,20 +334,20 @@ def _validate_string_sequence(
         if allow_empty:
             return ()
         raise TaskPlanValidationError(f"{field_name} must not be None")
-    if not isinstance(items, (list, tuple, set, frozenset)):
+    if type(items) not in (list, tuple, set, frozenset):
         raise TaskPlanValidationError(
             f"{field_name} must be a sequence or set of strings"
         )
     result: list[str] = []
     for idx, item in enumerate(items):
-        if not isinstance(item, str):
+        if type(item) is not str:
             raise TaskPlanValidationError(
                 f"{field_name}[{idx}] must be a string, got {type(item).__name__}"
             )
         stripped = item.strip()
         if stripped and stripped not in result:
             result.append(stripped)
-    if isinstance(items, (set, frozenset)):
+    if type(items) in (set, frozenset):
         result.sort()
     if not allow_empty and not result:
         raise TaskPlanValidationError(f"{field_name} must not be empty")
@@ -374,11 +372,11 @@ def create_theme_task_plan(
     registry: CapabilityRegistry | None = None,
 ) -> ThemeTaskPlan:
     """Construct a canonical theme task plan with single-pass immutable routing and fail-closed validation."""
-    if not isinstance(plan_id, str) or not plan_id.strip():
+    if type(plan_id) is not str or not plan_id.strip():
         raise TaskPlanValidationError("plan_id must be a non-empty string")
-    if not isinstance(title, str) or not title.strip():
+    if type(title) is not str or not title.strip():
         raise TaskPlanValidationError("title must be a non-empty string")
-    if not isinstance(description, str):
+    if type(description) is not str:
         raise TaskPlanValidationError("description must be a string")
     if type(priority) is not int or not (1 <= priority <= 5):
         raise TaskPlanValidationError("priority must be an integer between 1 and 5")
@@ -400,12 +398,12 @@ def create_theme_task_plan(
         )
     )
 
-    if parent_id is not None and not isinstance(parent_id, str):
+    if parent_id is not None and type(parent_id) is not str:
         raise TaskPlanValidationError("parent_id must be a string or None")
 
     if dispatch_state is None:
         dispatch_state = DispatchState()
-    elif not isinstance(dispatch_state, DispatchState):
+    elif type(dispatch_state) is not DispatchState:
         raise TaskPlanValidationError("dispatch_state must be a DispatchState instance")
 
     clean_labels = list(_validate_string_sequence(raw_labels, "raw_labels"))
