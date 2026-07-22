@@ -582,31 +582,12 @@ def test_direct_canonical_construction_preserves_fail_closed_invariants():
         with pytest.raises(TaskPlanValidationError):
             replace(valid, route_decision=decision)
 
-    # Reject ThemeTaskPlan subclasses before trusting overridden behavior.
-    class BadThemeTaskPlan(ThemeTaskPlan):
-        pass
+    # Reject ThemeTaskPlan subclasses before they can override __post_init__.
+    with pytest.raises(TypeError, match="ThemeTaskPlan is final"):
 
-    with pytest.raises(
-        TaskPlanValidationError, match="ThemeTaskPlan subclasses are not supported"
-    ):
-        BadThemeTaskPlan(
-            plan_id="subclass-test",
-            title="Test",
-            description="Test",
-            verifiers=("v1",),
-            capability_requirements=frozenset(),
-            dispatch_state=DispatchState(),
-            route_decision=RouteDecision(selected=None, candidates=(), reason="test"),
-            priority=1,
-            requires_gpu=False,
-            parent_id=None,
-            dependency_ids=(),
-            contracts=(),
-            files=(),
-            base_labels=(),
-        )
+        class BadThemeTaskPlan(ThemeTaskPlan):
+            pass
 
-    # Validate direct DispatchState subclassing
     class BadDispatchState(DispatchState):
         pass
 
@@ -663,6 +644,46 @@ def test_direct_canonical_construction_preserves_fail_closed_invariants():
     assert direct.owner is None
     assert direct.is_dispatchable is False
     assert not any(label.startswith("agent:") for label in direct.emitted_labels)
+
+
+def test_generator_rejects_subclassed_identity_and_state_inputs():
+    class BadString(str):
+        pass
+
+    class FalseyDispatchState(DispatchState):
+        def __bool__(self) -> bool:
+            return False
+
+    class BadRegistry(CapabilityRegistry):
+        pass
+
+    with pytest.raises(TaskPlanValidationError, match="theme_name"):
+        generate_pwp_theme_task_plans(
+            BadString("trust-light"), phases=("tokens",), registry=make_test_registry()
+        )
+    with pytest.raises(TaskPlanValidationError, match=r"phases\[0\]"):
+        generate_pwp_theme_task_plans(
+            "trust-light",
+            phases=(BadString("tokens"),),
+            registry=make_test_registry(),
+        )
+    with pytest.raises(TaskPlanValidationError, match="dispatch_state"):
+        generate_pwp_theme_task_plans(
+            "trust-light",
+            phases=("tokens",),
+            dispatch_state=FalseyDispatchState(
+                build_initiated=True,
+                operator_approved=True,
+                dispatch_ready=True,
+            ),
+            registry=make_test_registry(),
+        )
+    with pytest.raises(TaskPlanValidationError, match="registry"):
+        generate_pwp_theme_task_plans(
+            "trust-light",
+            phases=("tokens",),
+            registry=BadRegistry(),
+        )
 
 
 def test_linear_issue_input_adapter():

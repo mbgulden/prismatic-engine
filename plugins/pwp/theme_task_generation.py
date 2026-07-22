@@ -64,6 +64,9 @@ class ThemeTaskPlan:
     route_decision: RouteDecision
     base_labels: tuple[str, ...]
 
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        raise TypeError("ThemeTaskPlan is final and cannot be subclassed")
+
     def __post_init__(self) -> None:
         if type(self) is not ThemeTaskPlan:
             raise TaskPlanValidationError("ThemeTaskPlan subclasses are not supported")
@@ -376,8 +379,8 @@ def create_theme_task_plan(
         raise TaskPlanValidationError("plan_id must be a non-empty string")
     if type(title) is not str or not title.strip():
         raise TaskPlanValidationError("title must be a non-empty string")
-    if type(description) is not str:
-        raise TaskPlanValidationError("description must be a string")
+    if type(description) is not str or not description.strip():
+        raise TaskPlanValidationError("description must be a non-empty string")
     if type(priority) is not int or not (1 <= priority <= 5):
         raise TaskPlanValidationError("priority must be an integer between 1 and 5")
     if type(requires_gpu) is not bool:
@@ -405,6 +408,9 @@ def create_theme_task_plan(
         dispatch_state = DispatchState()
     elif type(dispatch_state) is not DispatchState:
         raise TaskPlanValidationError("dispatch_state must be a DispatchState instance")
+
+    if registry is not None and type(registry) is not CapabilityRegistry:
+        raise TaskPlanValidationError("registry must be a CapabilityRegistry instance")
 
     clean_labels = list(_validate_string_sequence(raw_labels, "raw_labels"))
     for label in clean_labels:
@@ -456,12 +462,20 @@ def generate_pwp_theme_task_plans(
     registry: CapabilityRegistry | None = None,
 ) -> list[ThemeTaskPlan]:
     """Generate canonical task plans for standard PWP theme lifecycle phases."""
-    if not isinstance(theme_name, str) or not theme_name.strip():
+    if type(theme_name) is not str or not theme_name.strip():
         raise TaskPlanValidationError("theme_name must be a non-empty string")
+    clean_phases = _validate_string_sequence(phases, "phases", allow_empty=False)
+    if dispatch_state is None:
+        state = DispatchState()
+    elif type(dispatch_state) is not DispatchState:
+        raise TaskPlanValidationError("dispatch_state must be a DispatchState instance")
+    else:
+        state = dispatch_state
+    if registry is not None and type(registry) is not CapabilityRegistry:
+        raise TaskPlanValidationError("registry must be a CapabilityRegistry instance")
 
     plans: list[ThemeTaskPlan] = []
     clean_name = theme_name.strip()
-    state = dispatch_state or DispatchState()
 
     phase_configs: dict[str, dict[str, Any]] = {
         "tokens": {
@@ -521,7 +535,7 @@ def generate_pwp_theme_task_plans(
         },
     }
 
-    for phase in phases:
+    for phase in clean_phases:
         if phase not in phase_configs:
             raise TaskPlanValidationError(f"unknown theme phase: {phase!r}")
         config = phase_configs[phase]
