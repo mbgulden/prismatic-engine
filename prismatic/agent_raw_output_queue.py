@@ -119,6 +119,7 @@ DELIVERY_ERROR_CODES = frozenset(
         "agent_ineligible",
         "task_identity_invalid",
         "source_provenance_invalid",
+        "source_artifact_invalid",
         "digest_mismatch",
         "raw_json_invalid",
         "raw_dialect_invalid",
@@ -283,18 +284,7 @@ class RawAgentOutputStore:
                     repair_hint, rerun_allowed, rerun_requested,
                     rerun_requested_at, warnings_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL, ?)
-                ON CONFLICT(raw_output_id) DO UPDATE SET
-                    agent = excluded.agent,
-                    task_id = excluded.task_id,
-                    source_event_id = excluded.source_event_id,
-                    raw_text_or_artifact_path = excluded.raw_text_or_artifact_path,
-                    raw_text = excluded.raw_text,
-                    normalization_status = excluded.normalization_status,
-                    canonical_packet_id = excluded.canonical_packet_id,
-                    rejection_reason = excluded.rejection_reason,
-                    repair_hint = excluded.repair_hint,
-                    rerun_allowed = excluded.rerun_allowed,
-                    warnings_json = excluded.warnings_json
+                ON CONFLICT(raw_output_id) DO NOTHING
                 """,
                 (
                     raw_output_id,

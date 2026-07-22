@@ -342,6 +342,10 @@ def _reconcile_agy_claim(
         raw_text, raw_row = store._raw_text_for_delivery_claim(claim)
     except Exception:
         return _retry_reconciliation(store, claim, "completed_work_storage_failed", now)
+    if Path(raw_row.raw_text_or_artifact_path).name != _AGY_PACKET_NAME:
+        return _terminal_reconciliation(
+            store, claim, "source_artifact_invalid", "ineligible", now
+        )
     if raw_row.agent != "agy":
         return _terminal_reconciliation(store, claim, "agent_ineligible", "ineligible", now)
     if type(raw_row.task_id) is not str or not re.fullmatch(
@@ -582,13 +586,28 @@ def capture_and_validate_agy_result(
         "queue_repair_hint": row.repair_hint,
         "completion_eligible": False,
     }
-    reconciliation = reconcile_agy_raw_output(
-        raw_output_id=row.raw_output_id,
-        raw_db_path=raw_output_db,
-        completed_work_db_path=completed_work_db,
-        completed_work_evidence_dir=completed_work_evidence_dir,
-        lease_owner=f"immediate-{os.getpid()}",
-    )
+    try:
+        reconciliation = reconcile_agy_raw_output(
+            raw_output_id=row.raw_output_id,
+            raw_db_path=raw_output_db,
+            completed_work_db_path=completed_work_db,
+            completed_work_evidence_dir=completed_work_evidence_dir,
+            lease_owner=f"immediate-{os.getpid()}",
+        )
+    except Exception:
+        return {
+            **common,
+            "boundary_state": (
+                "completed_work_persist_failed" if canonical else "legacy_unvalidated"
+            ),
+            "boundary_reason": (
+                "completed_work_ledger_persist_failed"
+                if canonical
+                else "legacy_result_held_unvalidated"
+            ),
+            "completed_work_persisted": False,
+            "delivery_status": "storage_failed",
+        }
     if not canonical:
         return {
             **common,
@@ -2051,15 +2070,22 @@ import sys as _sys
 # Strip the editable install hook
 _sys.path = [p for p in _sys.path if "__editable__" not in p and "prismatic_engine" not in p]
 
+# The executing supervisor checkout is authoritative. Fall back only when this
+# source file is detached from a complete repository; never let later mutable
+# profile/live paths override a valid immutable/current checkout.
 for path_candidate in [
+    str(Path(__file__).resolve().parent.parent),
     os.getcwd(),
     os.environ.get("PRISMATIC_HOME", str(Path.home() / "work")) + "/prismatic-engine",
     str(Path.home() / "work" / "prismatic-engine"),
 ]:
-    # Only add if the curator.issue_to_task module is present
-    if path_candidate not in _sys.path and \
-       os.path.isfile(os.path.join(path_candidate, "prismatic", "curator", "issue_to_task.py")):
+    if os.path.isfile(
+        os.path.join(path_candidate, "prismatic", "curator", "issue_to_task.py")
+    ):
+        if path_candidate in _sys.path:
+            _sys.path.remove(path_candidate)
         _sys.path.insert(0, path_candidate)
+        break
 
 from prismatic.curator.issue_to_task import (
     BLOCK_LABELS,

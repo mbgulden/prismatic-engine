@@ -290,6 +290,9 @@ def test_duplicate_source_event_is_idempotent_and_locator_is_sanitized(
     reread = store.get(first.raw_output_id)
     assert "abc123" not in reread.raw_text_or_artifact_path
     assert "pass@example" not in reread.raw_text_or_artifact_path
+    retained_text, retained_row = store._raw_text_and_row(first.raw_output_id)
+    assert retained_text == "first prose"
+    assert retained_row.source_event_id == "launch-123"
 
 
 def _delivery_row(store, event):

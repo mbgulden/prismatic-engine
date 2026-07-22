@@ -6,6 +6,8 @@ import json
 import os
 import pwd
 import sqlite3
+import subprocess
+import sys
 import threading
 import urllib.request
 from dataclasses import replace
@@ -75,6 +77,33 @@ def _capture(supervisor, tmp_path: Path, *, packet=None, legacy=None, attempt=1)
         completed_work_evidence_dir=tmp_path / "completed" / "evidence",
     )
     return boundary, packet_path, result_path
+
+
+def test_fresh_process_supervisor_resolves_its_own_prismatic_package(tmp_path):
+    code = f"""
+import importlib.util
+from pathlib import Path
+path = Path({str(SUPERVISOR_PATH)!r})
+spec = importlib.util.spec_from_file_location('fresh_supervisor', path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+import prismatic.agent_raw_output_queue as queue
+print(Path(queue.__file__).resolve())
+print(hasattr(queue.RawAgentOutputStore, 'get_delivery'))
+"""
+    env = os.environ.copy()
+    env["PRISMATIC_HOME"] = str(tmp_path / "wrong-home")
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    lines = result.stdout.strip().splitlines()
+    assert str(REPO_ROOT / "prismatic" / "agent_raw_output_queue.py") in lines
+    assert lines[-1] == "True"
 
 
 def test_supervisor_default_model_is_agy_accepted_display_label():
@@ -627,6 +656,24 @@ def test_completed_work_constructor_exception_fails_closed(tmp_path, monkeypatch
     assert "private constructor detail" not in json.dumps(boundary)
 
 
+def test_immediate_reconciliation_exception_returns_sanitized_boundary(
+    tmp_path, monkeypatch
+):
+    supervisor = _load_supervisor()
+
+    def broken_reconciliation(**_kwargs):
+        raise OSError("private reconciliation detail")
+
+    monkeypatch.setattr(supervisor, "reconcile_agy_raw_output", broken_reconciliation)
+    boundary, _, _ = _capture(supervisor, tmp_path, packet=_valid_agy_packet())
+    assert boundary["boundary_state"] == "completed_work_persist_failed"
+    assert boundary["boundary_reason"] == "completed_work_ledger_persist_failed"
+    assert boundary["raw_capture_succeeded"] is True
+    assert boundary["completed_work_persisted"] is False
+    assert boundary["delivery_status"] == "storage_failed"
+    assert "private reconciliation detail" not in json.dumps(boundary)
+
+
 def test_preledger_failures_never_invoke_completed_work_store(tmp_path, monkeypatch):
     supervisor = _load_supervisor()
     import prismatic.agy_completed_work as completed_work
@@ -642,12 +689,21 @@ def test_preledger_failures_never_invoke_completed_work_store(tmp_path, monkeypa
     legacy_root = tmp_path / "legacy"
     legacy_root.mkdir()
     legacy_boundary, _, _ = _capture(supervisor, legacy_root, legacy="STATUS: DONE")
+    valid_legacy_root = tmp_path / "valid-legacy"
+    valid_legacy_root.mkdir()
+    valid_legacy_boundary, _, _ = _capture(
+        supervisor, valid_legacy_root, legacy=json.dumps(_valid_agy_packet())
+    )
     missing_root = tmp_path / "missing"
     missing_root.mkdir()
     missing_boundary, _, _ = _capture(supervisor, missing_root)
 
     assert invalid_boundary["boundary_state"] == "canonical_invalid"
     assert legacy_boundary["boundary_state"] == "legacy_unvalidated"
+    assert valid_legacy_boundary["boundary_state"] == "legacy_unvalidated"
+    assert valid_legacy_boundary["completion_eligible"] is False
+    assert valid_legacy_boundary["delivery_status"] == "terminal_failed"
+    assert not (valid_legacy_root / "completed" / "completed.sqlite3").exists()
     assert missing_boundary["boundary_state"] == "result_missing"
 
 
@@ -1424,6 +1480,9 @@ def _persist_recovery_packet(tmp_path, packet=None, **overrides):
         agent=overrides.pop("agent", "agy"),
         task_id=task_id,
         source_event_id=source_event_id,
+        raw_text_or_artifact_path=overrides.pop(
+            "raw_text_or_artifact_path", str(tmp_path / "AGY_RESULT_PACKET.json")
+        ),
         expected_agent="agy",
         **overrides,
     )
