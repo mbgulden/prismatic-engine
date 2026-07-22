@@ -232,6 +232,7 @@ app = FastAPI(
 # One fail-closed boundary covers all current and future HTTP mutation routes.
 # The middleware itself owns the narrow read-only and signed-webhook bypasses.
 app.middleware("http")(control_authorization_middleware)
+app.state.prismatic_control_authorization_installed = True
 
 
 def _configured_cors_origins() -> list[str]:

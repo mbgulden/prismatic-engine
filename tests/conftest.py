@@ -60,9 +60,8 @@ def authenticated_gateway_test_client(request, tmp_path, monkeypatch):
 
     def authenticated_request(client, method, url, *args, **kwargs):
         headers = dict(kwargs.pop("headers", {}) or {})
-        gateway_module = sys.modules.get("prismatic.gateway.server")
-        gateway_app = getattr(gateway_module, "app", None)
-        if gateway_app is not None and getattr(client, "app", None) is gateway_app:
+        app_state = getattr(getattr(client, "app", None), "state", None)
+        if bool(getattr(app_state, "prismatic_control_authorization_installed", False)):
             headers.setdefault("Authorization", f"Bearer {_CONTROL_TEST_TOKEN}")
         return _ORIGINAL_TESTCLIENT_REQUEST(
             client, method, url, *args, headers=headers, **kwargs
