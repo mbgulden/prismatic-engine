@@ -22,9 +22,13 @@ import subprocess
 import sys
 import tempfile
 import textwrap
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10 CI
+    import tomli as tomllib  # type: ignore[import-not-found]
 
 
 REPO = Path(__file__).resolve().parents[1]

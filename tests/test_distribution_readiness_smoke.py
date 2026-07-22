@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import builtins
 import importlib.util
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -23,6 +25,23 @@ def _load_smoke_module():
 
 
 smoke = _load_smoke_module()
+
+
+def test_import_falls_back_to_tomli_when_tomllib_is_unavailable(monkeypatch) -> None:
+    fallback = types.ModuleType("tomli")
+    fallback.loads = lambda value: {"value": value}  # type: ignore[attr-defined]
+    real_import = builtins.__import__
+
+    def guarded_import(name, *args, **kwargs):
+        if name == "tomllib":
+            raise ModuleNotFoundError("forced Python 3.10 path")
+        if name == "tomli":
+            return fallback
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+    loaded = _load_smoke_module()
+    assert loaded.tomllib is fallback
 
 
 def test_normalize_project_license_accepts_string() -> None:
