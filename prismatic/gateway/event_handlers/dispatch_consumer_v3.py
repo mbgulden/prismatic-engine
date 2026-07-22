@@ -717,6 +717,77 @@ def _write_cursor_state_unlocked(state_file_path: str, state_data: dict) -> None
         raise primary_exc
 
 
+def _snapshot_cursor_file(canonical_state_path: str) -> tuple[bool, bytes | None]:
+    """Snapshot prior cursor state strictly.
+
+    Returns (prior_existed, prior_bytes).
+    If file exists (even if 0 bytes), prior_existed is True and prior_bytes contains file content.
+    If file does not exist, prior_existed is False and prior_bytes is None.
+    If stat/open/read fails for any reason other than FileNotFoundError, raises the exception.
+    """
+    if os.path.islink(canonical_state_path):
+        raise ValueError(f"Cursor state path is a symlink: {canonical_state_path}")
+    try:
+        st = os.lstat(canonical_state_path)
+        if not stat.S_ISREG(st.st_mode):
+            raise ValueError(
+                f"Cursor state path is not a regular file: {canonical_state_path}"
+            )
+        with open(canonical_state_path, "rb") as f:
+            prior_bytes = f.read()
+        return True, prior_bytes
+    except FileNotFoundError:
+        return False, None
+
+
+def _safe_rollback_cursor(
+    canonical_state_path: str,
+    prior_existed: bool,
+    prior_bytes: bytes | None,
+    written_bytes: bytes | None,
+) -> bool:
+    """Reacquire CursorLock and attempt safe reserialized rollback.
+
+    Returns True if prior state was safely restored (contender did not overwrite).
+    Returns False if a contender wrote a new state or re-acquisition/comparison failed.
+    """
+    try:
+        rollback_lock = CursorLock(canonical_state_path)
+        rollback_lock.acquire()
+    except Exception:
+        return False
+
+    try:
+        curr_existed = os.path.exists(canonical_state_path) and not os.path.islink(
+            canonical_state_path
+        )
+        curr_bytes = None
+        if curr_existed:
+            try:
+                st = os.lstat(canonical_state_path)
+                if stat.S_ISREG(st.st_mode):
+                    with open(canonical_state_path, "rb") as f:
+                        curr_bytes = f.read()
+            except Exception:
+                return False
+
+        if written_bytes is not None and curr_existed and curr_bytes == written_bytes:
+            try:
+                _restore_or_remove_cursor(
+                    canonical_state_path, prior_existed, prior_bytes
+                )
+                return True
+            except Exception:
+                return False
+        else:
+            return False
+    finally:
+        try:
+            rollback_lock.release()
+        except Exception:
+            pass
+
+
 def write_cursor_state(state_file_path: str, state_data: dict) -> None:
     """Public wrapper acquiring CursorLock before writing cursor state."""
     _validate_state_path_strict(state_file_path)
@@ -725,21 +796,13 @@ def write_cursor_state(state_file_path: str, state_data: dict) -> None:
     lock = CursorLock(canonical_state_path)
     lock.acquire()
 
-    prior_existed = (
-        os.path.exists(canonical_state_path)
-        and not os.path.islink(canonical_state_path)
-        and os.path.getsize(canonical_state_path) > 0
-    )
-    prior_bytes = None
-    if prior_existed:
-        try:
-            with open(canonical_state_path, "rb") as f_prior:
-                prior_bytes = f_prior.read()
-        except Exception:
-            prior_existed = False
-            prior_bytes = None
-
+    written_bytes = None
     try:
+        prior_existed, prior_bytes = _snapshot_cursor_file(canonical_state_path)
+        validate_cursor_state_dict(state_data)
+        content_str = json.dumps(state_data, indent=2) + "\n"
+        written_bytes = content_str.encode("utf-8")
+
         _write_cursor_state_unlocked(canonical_state_path, state_data)
     except Exception as body_exc:
         rel_exc = None
@@ -757,21 +820,19 @@ def write_cursor_state(state_file_path: str, state_data: dict) -> None:
     try:
         lock.release()
     except Exception as rel_exc:
-        rollback_exc = None
-        try:
-            _restore_or_remove_cursor(canonical_state_path, prior_existed, prior_bytes)
-        except Exception as r_err:
-            rollback_exc = r_err
-
-        if rollback_exc is not None:
-            raise ExceptionGroup(
-                "Cursor write succeeded but lock release failed and rollback failed",
-                [rel_exc, rollback_exc],
+        restored = _safe_rollback_cursor(
+            canonical_state_path, prior_existed, prior_bytes, written_bytes
+        )
+        if restored:
+            raise RuntimeError(
+                f"[FAIL_CLOSED] Lock release failed after cursor write: {rel_exc}. Prior exact cursor restored.\n"
+                "MARKER=PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED"
             ) from rel_exc
-        raise RuntimeError(
-            f"[FAIL_CLOSED] Lock release failed after cursor write: {rel_exc}. Prior exact cursor restored.\n"
-            "MARKER=PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED"
-        ) from rel_exc
+        else:
+            raise RuntimeError(
+                f"[FAIL_CLOSED] Lock release failed after cursor write: {rel_exc}. Later contender update preserved on disk.\n"
+                "MARKER=PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED"
+            ) from rel_exc
 
 
 def verify_startup_gate(
@@ -967,21 +1028,10 @@ def set_state(
     lock = CursorLock(canonical_state_path)
     lock.acquire()
 
-    prior_existed = (
-        os.path.exists(canonical_state_path)
-        and not os.path.islink(canonical_state_path)
-        and os.path.getsize(canonical_state_path) > 0
-    )
-    prior_bytes = None
-    if prior_existed:
-        try:
-            with open(canonical_state_path, "rb") as f_prior:
-                prior_bytes = f_prior.read()
-        except Exception:
-            prior_existed = False
-            prior_bytes = None
-
+    written_bytes = None
     try:
+        prior_existed, prior_bytes = _snapshot_cursor_file(canonical_state_path)
+
         db_gen, max_rowid, pre_stat = _read_db_identity_under_lock(canonical_db_path)
 
         if db_gen is None:
@@ -1013,6 +1063,8 @@ def set_state(
             "db_generation": db_gen,
             "updated_at": now_str,
         }
+        content_str = json.dumps(state_data, indent=2) + "\n"
+        written_bytes = content_str.encode("utf-8")
 
         _write_cursor_state_unlocked(canonical_state_path, state_data)
 
@@ -1055,21 +1107,19 @@ def set_state(
     try:
         lock.release()
     except Exception as rel_exc:
-        rollback_exc = None
-        try:
-            _restore_or_remove_cursor(canonical_state_path, prior_existed, prior_bytes)
-        except Exception as r_err:
-            rollback_exc = r_err
-
-        if rollback_exc is not None:
-            raise ExceptionGroup(
-                "set_state write succeeded but lock release failed and rollback failed",
-                [rel_exc, rollback_exc],
+        restored = _safe_rollback_cursor(
+            canonical_state_path, prior_existed, prior_bytes, written_bytes
+        )
+        if restored:
+            raise RuntimeError(
+                f"[FAIL_CLOSED] Lock release failed after set_state: {rel_exc}. Prior exact cursor restored.\n"
+                "MARKER=PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED"
             ) from rel_exc
-        raise RuntimeError(
-            f"[FAIL_CLOSED] Lock release failed after set_state: {rel_exc}. Prior exact cursor restored.\n"
-            "MARKER=PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED"
-        ) from rel_exc
+        else:
+            raise RuntimeError(
+                f"[FAIL_CLOSED] Lock release failed after set_state: {rel_exc}. Later contender update preserved on disk.\n"
+                "MARKER=PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED"
+            ) from rel_exc
 
 
 def _stable_dedup_key(dedup_key: str | None, topic: str, payload_json: str) -> str:
@@ -1879,12 +1929,11 @@ def repair_dry_run(
     wal_sha256 = _sha256_file(wal_path) if wal_exists else "NONE"
     wal_size = os.path.getsize(wal_path) if wal_exists else 0
 
-    cursor_exists = (
-        os.path.exists(canonical_state_path)
-        and os.path.getsize(canonical_state_path) > 0
+    cursor_exists, cursor_bytes = _snapshot_cursor_file(canonical_state_path)
+    cursor_sha256 = (
+        hashlib.sha256(cursor_bytes).hexdigest() if cursor_bytes is not None else "NONE"
     )
-    cursor_sha256 = _sha256_file(canonical_state_path) if cursor_exists else "NONE"
-    cursor_size = os.path.getsize(canonical_state_path) if cursor_exists else 0
+    cursor_size = len(cursor_bytes) if cursor_bytes is not None else 0
 
     plan_payload = (
         f"{canonical_db_path}:{db_sha256}:{db_size}:"
@@ -1993,11 +2042,14 @@ def repair_apply(
     created_artifacts: list[str] = []
     verified_backups: list[dict] = []
     cursor_write_started = False
+    written_bytes: bytes | None = None
 
     lock = CursorLock(canonical_state_path)
     lock.acquire()
 
     try:
+        prior_existed, prior_bytes = _snapshot_cursor_file(canonical_state_path)
+
         expected_plan = repair_dry_run(
             effective_db, effective_state, target_rowid=target_rowid
         )
@@ -2055,16 +2107,13 @@ def repair_apply(
             curr_wal_sha256 = _sha256_file(wal_path) if wal_exists else "NONE"
             curr_wal_size = os.path.getsize(wal_path) if wal_exists else 0
 
-            cursor_exists = (
-                os.path.exists(canonical_state_path)
-                and os.path.getsize(canonical_state_path) > 0
-            )
+            cursor_exists = prior_existed
             curr_cursor_sha256 = (
-                _sha256_file(canonical_state_path) if cursor_exists else "NONE"
+                hashlib.sha256(prior_bytes).hexdigest()
+                if prior_bytes is not None
+                else "NONE"
             )
-            curr_cursor_size = (
-                os.path.getsize(canonical_state_path) if cursor_exists else 0
-            )
+            curr_cursor_size = len(prior_bytes) if prior_bytes is not None else 0
 
             if (
                 curr_db_sha256 != dry_run_plan["db_sha256"]
@@ -2107,7 +2156,7 @@ def repair_apply(
                         f"WAL backup copy verification failed: expected sha={curr_wal_sha256} size={curr_wal_size}, got sha={wal_bak_sha} size={wal_bak_sz}"
                     )
 
-            # Raw byte copy of cursor state file if present and non-empty
+            # Raw byte copy of cursor state file if present
             cursor_bak_sha, cursor_bak_sz = "NONE", 0
             if cursor_exists:
                 cursor_bak_sha, cursor_bak_sz = _copy_file_raw_atomic(
@@ -2179,6 +2228,7 @@ def repair_apply(
             target_dir = Path(canonical_state_path).parent
             target_dir.mkdir(parents=True, exist_ok=True)
             content = json.dumps(new_state, indent=2) + "\n"
+            written_bytes = content.encode("utf-8")
 
             fd, temp_path = tempfile.mkstemp(
                 dir=str(target_dir), prefix=".dispatch_cursor_tmp_"
@@ -2276,38 +2326,11 @@ def repair_apply(
                 )
             raise primary_exc
         else:
-            rollback_success = False
-            try:
-                if cursor_exists and os.path.exists(cursor_backup_path):
-                    _copy_file_raw_atomic_overwrite(
-                        cursor_backup_path, canonical_state_path
-                    )
-                    restored_sha = _sha256_file(canonical_state_path)
-                    restored_sz = os.path.getsize(canonical_state_path)
-                    if (
-                        restored_sha == curr_cursor_sha256
-                        and restored_sz == curr_cursor_size
-                    ):
-                        rollback_success = True
-                elif not cursor_exists:
-                    if os.path.exists(canonical_state_path) or os.path.islink(
-                        canonical_state_path
-                    ):
-                        os.remove(canonical_state_path)
-                        p_fd = os.open(
-                            str(Path(canonical_state_path).parent),
-                            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
-                        )
-                        try:
-                            os.fsync(p_fd)
-                        finally:
-                            os.close(p_fd)
-                    if not os.path.exists(canonical_state_path):
-                        rollback_success = True
-            except Exception:
-                rollback_success = False
+            restored = _safe_rollback_cursor(
+                canonical_state_path, prior_existed, prior_bytes, written_bytes
+            )
 
-            if rollback_success:
+            if restored:
                 msg = (
                     f"Post-cursor-write failure occurred during repair_apply ({primary_exc}). "
                     f"Durable rollback succeeded: exact original cursor state restored. "

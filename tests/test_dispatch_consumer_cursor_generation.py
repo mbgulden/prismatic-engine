@@ -1745,7 +1745,7 @@ def test_41_coexisting_body_and_release_failures_preserve_primary(
 def test_42_recovery_hash_failure_and_temp_cleanup_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Repair 6: Inject recovery hash failure and temp cleanup failure.
+    """Repair 6/7: Inject recovery restoration failure and temp cleanup failure.
     Assert RECOVERY_REQUIRED outcome with marker and precomputed safe backup hashes when rollback fails.
     Assert temp cleanup failure raises exception when temp file removal fails.
     """
@@ -1762,15 +1762,13 @@ def test_42_recovery_hash_failure_and_temp_cleanup_failure(
             raise OSError(errno.EINVAL, "Injected LOCK_UN failure")
         orig_flock(fd, cmd)
 
-    def failing_rollback_overwrite(src: str, dst: str):
-        if "dispatch_consumer.rowid" in dst:
-            raise OSError("Rollback overwrite failed")
-        return consumer._copy_file_raw_atomic_overwrite(src, dst)
+    def failing_restore_cursor(
+        canonical_state_path: str, prior_existed: bool, prior_bytes: bytes | None
+    ) -> None:
+        raise OSError("Rollback restore failed")
 
     monkeypatch.setattr(fcntl, "flock", failing_unlock)
-    monkeypatch.setattr(
-        consumer, "_copy_file_raw_atomic_overwrite", failing_rollback_overwrite
-    )
+    monkeypatch.setattr(consumer, "_restore_or_remove_cursor", failing_restore_cursor)
 
     with pytest.raises(RuntimeError) as exc_info:
         consumer.repair_apply(
@@ -1827,3 +1825,285 @@ def test_42_recovery_hash_failure_and_temp_cleanup_failure(
         "Failed to write cursor state and cleanup encountered an error" in err_str
         or "fsync" in err_str
     )
+
+
+# -----------------------------------------------------------------------------
+# Repair Regressions (Repair 7)
+# -----------------------------------------------------------------------------
+
+
+def test_43_adversarial_contender_reserialization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Repair 7 Regression 1: For each of repair_apply, set_state, and write_cursor_state:
+    injected release performs real unlock/close, then coordinates a contender thread/process
+    that acquires CursorLock and writes a distinct valid cursor before raising.
+    Assert recovery does not overwrite contender output.
+    """
+    db_path, gen = _setup_db_and_events(tmp_path, 5)
+    canon_db = consumer.get_canonical_path(str(db_path))
+
+    def make_contender_state(rid: int) -> dict:
+        return {
+            "schema_version": 1,
+            "last_rowid": rid,
+            "db_path": canon_db,
+            "db_generation": gen,
+            "updated_at": consumer.get_canonical_utc_now(),
+        }
+
+    # --- Part A: write_cursor_state ---
+    state_file_a = tmp_path / "cursor_a.rowid"
+    consumer.write_cursor_state(str(state_file_a), make_contender_state(1))
+
+    orig_release = consumer.CursorLock.release
+
+    def injected_release_with_contender(lock_inst: consumer.CursorLock) -> None:
+        orig_release(lock_inst)
+        contender_state = make_contender_state(999)
+        consumer.write_cursor_state(lock_inst.state_file_path, contender_state)
+        raise OSError(errno.EIO, "Injected release failure")
+
+    monkeypatch.setattr(consumer.CursorLock, "release", injected_release_with_contender)
+
+    with pytest.raises(RuntimeError, match="[FAIL_CLOSED]"):
+        consumer.write_cursor_state(str(state_file_a), make_contender_state(2))
+
+    st_a, code_a, _ = consumer.read_cursor_state(str(state_file_a))
+    assert code_a == "VALID"
+    assert st_a["last_rowid"] == 999
+
+    # --- Part B: set_state ---
+    state_file_b = tmp_path / "cursor_b.rowid"
+    consumer.write_cursor_state(str(state_file_b), make_contender_state(1))
+
+    with pytest.raises(RuntimeError, match="[FAIL_CLOSED]"):
+        consumer.set_state(
+            2,
+            expected_generation=gen,
+            db_path=canon_db,
+            state_file_path=str(state_file_b),
+        )
+
+    st_b, code_b, _ = consumer.read_cursor_state(str(state_file_b))
+    assert code_b == "VALID"
+    assert st_b["last_rowid"] == 999
+
+    # --- Part C: repair_apply ---
+    state_file_c = tmp_path / "cursor_c.rowid"
+    consumer.write_cursor_state(str(state_file_c), make_contender_state(1))
+
+    with pytest.raises(RuntimeError) as exc_info:
+        consumer.repair_apply(
+            str(db_path),
+            str(state_file_c),
+            confirmation_token=consumer.CONFIRMATION_TOKEN,
+            target_rowid=2,
+        )
+
+    err_str = str(exc_info.value)
+    assert (
+        "RECOVERY REQUIRED" in err_str
+        or "RECOVERY_REQUIRED" in err_str
+        or "Later contender" in err_str
+    )
+    st_c, code_c, _ = consumer.read_cursor_state(str(state_file_c))
+    assert code_c == "VALID"
+    assert st_c["last_rowid"] == 999
+
+
+def test_44_zero_byte_cursor_release_failure_restoration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Repair 7 Regression 2: Existing 0600 zero-byte cursor through write_cursor_state,
+    set_state, and repair_apply with post-write release failure restores exact file existence
+    and b"" when no contender wins.
+    """
+    db_path, gen = _setup_db_and_events(tmp_path, 5)
+    canon_db = consumer.get_canonical_path(str(db_path))
+
+    def make_state(rid: int) -> dict:
+        return {
+            "schema_version": 1,
+            "last_rowid": rid,
+            "db_path": canon_db,
+            "db_generation": gen,
+            "updated_at": consumer.get_canonical_utc_now(),
+        }
+
+    orig_flock = fcntl.flock
+
+    def failing_unlock(fd: int, cmd: int) -> None:
+        if cmd == fcntl.LOCK_UN:
+            raise OSError(errno.EINVAL, "Injected LOCK_UN failure")
+        orig_flock(fd, cmd)
+
+    monkeypatch.setattr(fcntl, "flock", failing_unlock)
+
+    # --- Part A: write_cursor_state ---
+    f_zb1 = tmp_path / "zero1.rowid"
+    f_zb1.write_bytes(b"")
+    os.chmod(f_zb1, 0o600)
+
+    with pytest.raises(RuntimeError, match="[FAIL_CLOSED]"):
+        consumer.write_cursor_state(str(f_zb1), make_state(1))
+
+    assert f_zb1.exists()
+    assert f_zb1.read_bytes() == b""
+    assert stat.S_IMODE(os.lstat(f_zb1).st_mode) == 0o600
+
+    # --- Part B: set_state ---
+    f_zb2 = tmp_path / "zero2.rowid"
+    f_zb2.write_bytes(b"")
+    os.chmod(f_zb2, 0o600)
+
+    with pytest.raises(RuntimeError, match="[FAIL_CLOSED]"):
+        consumer.set_state(
+            1, expected_generation=gen, db_path=canon_db, state_file_path=str(f_zb2)
+        )
+
+    assert f_zb2.exists()
+    assert f_zb2.read_bytes() == b""
+    assert stat.S_IMODE(os.lstat(f_zb2).st_mode) == 0o600
+
+    # --- Part C: repair_apply ---
+    f_zb3 = tmp_path / "zero3.rowid"
+    f_zb3.write_bytes(b"")
+    os.chmod(f_zb3, 0o600)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        consumer.repair_apply(
+            str(db_path),
+            str(f_zb3),
+            confirmation_token=consumer.CONFIRMATION_TOKEN,
+            target_rowid=1,
+        )
+
+    assert "Durable rollback succeeded" in str(exc_info.value)
+    assert f_zb3.exists()
+    assert f_zb3.read_bytes() == b""
+    assert stat.S_IMODE(os.lstat(f_zb3).st_mode) == 0o600
+
+
+def test_45_repair_dry_run_and_apply_zero_byte_backup(tmp_path: Path) -> None:
+    """Repair 7 Regression 3: Repair dry-run/apply backs up a zero-byte cursor as an explicit
+    zero-byte member with exact SHA-256/size proof.
+    """
+    db_path, gen = _setup_db_and_events(tmp_path, 5)
+    f_zb = tmp_path / "zero_cursor.rowid"
+    f_zb.write_bytes(b"")
+    os.chmod(f_zb, 0o600)
+
+    dry_run = consumer.repair_dry_run(str(db_path), str(f_zb), target_rowid=2)
+    assert dry_run["cursor_path"] == consumer.get_canonical_path(str(f_zb))
+    assert dry_run["cursor_size"] == 0
+    assert (
+        dry_run["cursor_sha256"]
+        == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    )
+
+    cursor_member = next(m for m in dry_run["members"] if m["name"] == "cursor")
+    assert cursor_member["src_size"] == 0
+    assert (
+        cursor_member["src_sha256"]
+        == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    )
+
+    receipt = consumer.repair_apply(
+        str(db_path),
+        str(f_zb),
+        confirmation_token=consumer.CONFIRMATION_TOKEN,
+        target_rowid=2,
+    )
+
+    assert receipt["status"] == "SUCCESS"
+    assert receipt["src_cursor_size"] == 0
+    assert (
+        receipt["src_cursor_sha256"]
+        == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    )
+    assert receipt["cursor_backup_size"] == 0
+    assert (
+        receipt["cursor_backup_sha256"]
+        == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    )
+    bak_path = Path(receipt["cursor_backup_path"])
+    assert bak_path.exists()
+    assert bak_path.read_bytes() == b""
+
+
+def test_46_post_acquire_snapshot_failure_protection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Repair 7 Regression 4: Inject lstat/stat and open/read failures after lock acquisition.
+    Assert no cursor mutation, lock can immediately be acquired by a separate process,
+    and body+release failures are structured.
+    """
+    db_path, gen = _setup_db_and_events(tmp_path, 5)
+    canon_db = consumer.get_canonical_path(str(db_path))
+    state_file = tmp_path / "cursor.rowid"
+    consumer.write_cursor_state(
+        str(state_file),
+        {
+            "schema_version": 1,
+            "last_rowid": 1,
+            "db_path": canon_db,
+            "db_generation": gen,
+            "updated_at": consumer.get_canonical_utc_now(),
+        },
+    )
+    orig_bytes = state_file.read_bytes()
+
+    # Part A: Inject snapshot lstat failure after lock acquisition
+    def failing_snapshot(path: str):
+        raise OSError(errno.EACCES, "Injected snapshot read error")
+
+    monkeypatch.setattr(consumer, "_snapshot_cursor_file", failing_snapshot)
+
+    with pytest.raises(OSError, match="Injected snapshot read error"):
+        consumer.write_cursor_state(
+            str(state_file),
+            {
+                "schema_version": 1,
+                "last_rowid": 2,
+                "db_path": canon_db,
+                "db_generation": gen,
+                "updated_at": consumer.get_canonical_utc_now(),
+            },
+        )
+
+    # 1. No cursor mutation
+    assert state_file.read_bytes() == orig_bytes
+
+    # 2. Lock can immediately be acquired by a separate process
+    with consumer.CursorLock(str(state_file)):
+        pass
+
+    # Part B: Inject both snapshot failure AND lock release failure -> structured ExceptionGroup
+    orig_flock = fcntl.flock
+
+    def failing_unlock(fd: int, cmd: int) -> None:
+        if cmd == fcntl.LOCK_UN:
+            raise OSError(errno.EINVAL, "Injected LOCK_UN failure")
+        orig_flock(fd, cmd)
+
+    monkeypatch.setattr(fcntl, "flock", failing_unlock)
+
+    with pytest.raises(ExceptionGroup) as exc_info:
+        consumer.write_cursor_state(
+            str(state_file),
+            {
+                "schema_version": 1,
+                "last_rowid": 2,
+                "db_path": canon_db,
+                "db_generation": gen,
+                "updated_at": consumer.get_canonical_utc_now(),
+            },
+        )
+
+    err_str = str(exc_info.value)
+    assert "write_cursor_state failed and lock release encountered errors" in err_str
+    assert any(
+        "Injected snapshot read error" in str(e) for e in exc_info.value.exceptions
+    )
+    assert state_file.read_bytes() == orig_bytes
