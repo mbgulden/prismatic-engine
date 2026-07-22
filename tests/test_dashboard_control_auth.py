@@ -171,6 +171,28 @@ def test_invalid_credential_files_deny(
     assert client.post("/ordinary", json={}).status_code == 401
 
 
+@pytest.mark.parametrize("version", [True, 1.0])
+def test_credential_schema_version_requires_exact_integer(
+    version: object,
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = _write_credentials(tmp_path / "invalid-version.json")
+    document = json.loads(path.read_text())
+    document["version"] = version
+    path.write_text(json.dumps(document))
+    path.chmod(0o600)
+    monkeypatch.setenv("PRISMATIC_CONTROL_AUTH_FILE", str(path))
+
+    response = client.post(
+        "/ordinary", headers=_auth("operator"), json={"must_not_run": True}
+    )
+
+    assert response.status_code == 401
+    assert response.headers["WWW-Authenticate"] == "Bearer"
+
+
 def test_duplicate_digest_and_empty_roles_deny(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

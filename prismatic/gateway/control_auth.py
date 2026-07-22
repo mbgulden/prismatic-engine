@@ -98,7 +98,11 @@ def _load_credentials() -> tuple[Credential, ...]:
 
     if not isinstance(document, dict) or set(document) != {"version", "credentials"}:
         raise CredentialConfigurationError
-    if document["version"] != 1 or not isinstance(document["credentials"], list):
+    if (
+        type(document["version"]) is not int
+        or document["version"] != 1
+        or not isinstance(document["credentials"], list)
+    ):
         raise CredentialConfigurationError
     if not document["credentials"]:
         raise CredentialConfigurationError
