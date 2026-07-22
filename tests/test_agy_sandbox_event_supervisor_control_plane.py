@@ -31,6 +31,47 @@ def _load_supervisor():
     return module
 
 
+def _valid_agy_packet(issue_id: str = "GRO-3837") -> dict:
+    return {
+        "agent": "agy",
+        "issue_identifier": issue_id,
+        "branch": "feature/runtime-result-boundary",
+        "base_branch": "main",
+        "changed_files": ["scripts/example.py"],
+        "result_artifacts": ["RESULT.md"],
+        "verification": {
+            "commands": ["python3 -m pytest -q"],
+            "result": "PASS",
+            "log_path": "/tmp/runtime-result-boundary.log",
+            "ad_hoc_or_canonical": "ad-hoc targeted",
+        },
+        "non_claims": ["production_deploy"],
+        "merge_lane": "manual-review",
+        "risk_level": "medium",
+        "next_action": "needs-human-review",
+        "marker": "AGY_TASK_RESULT_PACKET_OK",
+    }
+
+
+def _capture(supervisor, tmp_path: Path, *, packet=None, legacy=None, attempt=1):
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir(exist_ok=True)
+    result_path = sandbox / "RESULT.md"
+    if legacy is not None:
+        result_path.write_text(legacy, encoding="utf-8")
+    packet_path = sandbox / "AGY_RESULT_PACKET.json"
+    if packet is not None:
+        packet_path.write_text(json.dumps(packet), encoding="utf-8")
+    boundary = supervisor.capture_and_validate_agy_result(
+        issue_id="GRO-3837",
+        attempt=attempt,
+        result_path=result_path,
+        packet_path=packet_path,
+        raw_output_db=tmp_path / "queue" / "raw.sqlite3",
+    )
+    return boundary, packet_path, result_path
+
+
 def test_supervisor_default_model_is_agy_accepted_display_label():
     supervisor = _load_supervisor()
 
@@ -309,11 +350,229 @@ MARKER=PARTIAL_ONLY""",
     assert decision["has_partial_result"] is True
 
 
+def test_stale_result_cleanup_removes_exact_outputs_and_fails_closed(
+    tmp_path, monkeypatch
+):
+    supervisor = _load_supervisor()
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    (sandbox / "RESULT.md").mkdir()
+    target = tmp_path / "old-packet.json"
+    target.write_text("old", encoding="utf-8")
+    (sandbox / "AGY_RESULT_PACKET.json").symlink_to(target)
+    untouched = sandbox / "keep.txt"
+    untouched.write_text("keep", encoding="utf-8")
+
+    removed = supervisor.remove_stale_agy_result_outputs(sandbox)
+
+    assert removed == ("RESULT.md", "AGY_RESULT_PACKET.json")
+    assert not (sandbox / "RESULT.md").exists()
+    assert not (sandbox / "AGY_RESULT_PACKET.json").exists()
+    assert target.read_text(encoding="utf-8") == "old"
+    assert untouched.read_text(encoding="utf-8") == "keep"
+
+    packet = sandbox / "AGY_RESULT_PACKET.json"
+    packet.write_text("stale", encoding="utf-8")
+    original_unlink = type(packet).unlink
+
+    def blocked_unlink(path, *args, **kwargs):
+        if path == packet:
+            raise PermissionError("blocked")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(type(packet), "unlink", blocked_unlink)
+    with pytest.raises(
+        RuntimeError, match="failed to remove stale result control output"
+    ):
+        supervisor.remove_stale_agy_result_outputs(sandbox)
+    assert packet.exists()
+
+
+def test_result_boundary_captures_before_strict_raw_packet_acceptance(tmp_path):
+    supervisor = _load_supervisor()
+    boundary, packet_path, _ = _capture(
+        supervisor, tmp_path, packet=_valid_agy_packet()
+    )
+
+    assert boundary["boundary_state"] == "canonical_valid"
+    assert boundary["completion_eligible"] is True
+    assert boundary["packet_issue_identifier"] == "GRO-3837"
+    assert boundary["raw_output_id"].startswith("raw_")
+    # Raw AGY and normalized completed-work are intentionally distinct dialects.
+    assert boundary["normalization_status"] == "rejected_rerun_required"
+    assert boundary["canonical_packet_id"] is None
+    with sqlite3.connect(tmp_path / "queue" / "raw.sqlite3") as connection:
+        row = connection.execute(
+            "SELECT task_id, source_event_id, raw_text_or_artifact_path FROM agent_raw_output_queue"
+        ).fetchone()
+    assert row is not None
+    assert row[0] == "GRO-3837"
+    assert row[1] == boundary["source_event_id"]
+    assert row[2] == str(packet_path)
+
+
+def test_result_boundary_persists_invalid_packet_before_rejecting(tmp_path):
+    supervisor = _load_supervisor()
+    packet = _valid_agy_packet()
+    packet["unexpected"] = "not-a-secret-value"
+    boundary, _, _ = _capture(supervisor, tmp_path, packet=packet)
+
+    assert boundary["boundary_state"] == "canonical_invalid"
+    assert boundary["boundary_reason"] == "canonical_packet_invalid"
+    assert boundary["raw_capture_succeeded"] is True
+    assert boundary["completion_eligible"] is False
+    with sqlite3.connect(tmp_path / "queue" / "raw.sqlite3") as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM agent_raw_output_queue"
+        ).fetchone() == (1,)
+
+
+def test_result_boundary_holds_legacy_result_and_preserves_idempotent_identity(
+    tmp_path,
+):
+    supervisor = _load_supervisor()
+    legacy = "STATUS: DONE\nRESULT=PASS\nMARKER=LEGACY_RESULT_OK"
+    first, _, _ = _capture(supervisor, tmp_path, legacy=legacy, attempt=2)
+    second, _, result_path = _capture(supervisor, tmp_path, legacy=legacy, attempt=2)
+    result_path.write_text(legacy + "\nchanged", encoding="utf-8")
+    third = supervisor.capture_and_validate_agy_result(
+        issue_id="GRO-3837",
+        attempt=2,
+        result_path=result_path,
+        packet_path=result_path.parent / "AGY_RESULT_PACKET.json",
+        raw_output_db=tmp_path / "queue" / "raw.sqlite3",
+    )
+
+    assert first["boundary_state"] == second["boundary_state"] == "legacy_unvalidated"
+    assert first["completion_eligible"] is second["completion_eligible"] is False
+    assert first["raw_output_id"] == second["raw_output_id"]
+    assert third["raw_output_id"] != first["raw_output_id"]
+    with sqlite3.connect(tmp_path / "queue" / "raw.sqlite3") as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM agent_raw_output_queue"
+        ).fetchone() == (2,)
+
+
+def test_result_boundary_rejects_active_issue_mismatch_after_capture(tmp_path):
+    supervisor = _load_supervisor()
+    boundary, _, _ = _capture(
+        supervisor, tmp_path, packet=_valid_agy_packet("GRO-9999")
+    )
+
+    assert boundary["boundary_state"] == "canonical_invalid"
+    assert boundary["boundary_reason"] == "active_issue_identity_mismatch"
+    assert boundary["raw_capture_succeeded"] is True
+    assert boundary["completion_eligible"] is False
+
+
+def test_result_boundary_fails_closed_on_queue_failure(tmp_path):
+    supervisor = _load_supervisor()
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    packet_path = sandbox / "AGY_RESULT_PACKET.json"
+    packet_path.write_text(json.dumps(_valid_agy_packet()), encoding="utf-8")
+    result_path = sandbox / "RESULT.md"
+    blocked_parent = tmp_path / "not-a-directory"
+    blocked_parent.write_text("file", encoding="utf-8")
+
+    boundary = supervisor.capture_and_validate_agy_result(
+        issue_id="GRO-3837",
+        attempt=1,
+        result_path=result_path,
+        packet_path=packet_path,
+        raw_output_db=blocked_parent / "raw.sqlite3",
+    )
+    assert boundary == {
+        "boundary_state": "raw_capture_failed",
+        "boundary_reason": "raw_queue_persist_failed",
+        "raw_capture_succeeded": False,
+        "completion_eligible": False,
+    }
+
+
+def test_result_boundary_rejects_symlink_directory_and_hooked_inputs(tmp_path):
+    supervisor = _load_supervisor()
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    result_path = sandbox / "RESULT.md"
+    result_path.write_text("legacy", encoding="utf-8")
+    target = tmp_path / "packet.json"
+    target.write_text(json.dumps(_valid_agy_packet()), encoding="utf-8")
+    packet_path = sandbox / "AGY_RESULT_PACKET.json"
+    packet_path.symlink_to(target)
+
+    boundary = supervisor.capture_and_validate_agy_result(
+        issue_id="GRO-3837",
+        attempt=1,
+        result_path=result_path,
+        packet_path=packet_path,
+        raw_output_db=tmp_path / "queue" / "raw.sqlite3",
+    )
+    assert boundary["boundary_state"] == "canonical_invalid"
+    assert boundary["raw_capture_succeeded"] is False
+
+    packet_path.unlink()
+    packet_path.mkdir()
+    boundary = supervisor.capture_and_validate_agy_result(
+        issue_id="GRO-3837",
+        attempt=1,
+        result_path=result_path,
+        packet_path=packet_path,
+        raw_output_db=tmp_path / "queue" / "raw.sqlite3",
+    )
+    assert boundary["boundary_state"] == "canonical_invalid"
+    assert boundary["raw_capture_succeeded"] is False
+
+    class HookedString(str):
+        def __str__(self):
+            raise AssertionError("hook must not run")
+
+    with pytest.raises(TypeError, match="issue_id must be an exact string"):
+        supervisor.capture_and_validate_agy_result(
+            issue_id=HookedString("GRO-3837"),
+            attempt=1,
+            result_path=result_path,
+            packet_path=packet_path,
+            raw_output_db=tmp_path / "queue" / "raw.sqlite3",
+        )
+
+
+def test_result_boundary_oversize_and_secret_payloads_are_sanitized(
+    tmp_path, monkeypatch
+):
+    supervisor = _load_supervisor()
+    monkeypatch.setenv("PRISMATIC_AGENT_RAW_OUTPUT_MAX_BYTES", "64")
+    packet = _valid_agy_packet()
+    packet["unexpected"] = "api_key=abcdefghijklmnop"
+    boundary, _, _ = _capture(supervisor, tmp_path, packet=packet)
+
+    assert boundary["boundary_state"] == "canonical_invalid"
+    assert boundary["boundary_reason"] == "oversized_payload"
+    assert "abcdefghijklmnop" not in json.dumps(boundary)
+    with sqlite3.connect(tmp_path / "queue" / "raw.sqlite3") as connection:
+        stored = connection.execute(
+            "SELECT raw_text FROM agent_raw_output_queue"
+        ).fetchone()[0]
+    assert "abcdefghijklmnop" not in stored
+
+
+def test_result_boundary_import_is_queue_side_effect_free(tmp_path, monkeypatch):
+    queue_db = tmp_path / "state" / "raw.sqlite3"
+    monkeypatch.setenv("PRISMATIC_AGENT_RAW_OUTPUT_DB", str(queue_db))
+
+    supervisor = _load_supervisor()
+
+    assert supervisor.agy_raw_output_db_path() == queue_db
+    assert not queue_db.exists()
+    assert not queue_db.parent.exists()
+
+
 def test_quality_gate_and_partial_linear_done_are_semantically_guarded():
     source = SUPERVISOR_PATH.read_text(encoding="utf-8")
 
-    assert 'and result.get("has_done")' in source
-    assert 'and result_semantics["passed"]' in source
+    assert "if completion_eligible:" in source
+    assert "if result_md.exists() and completion_eligible:" in source
+    assert 'boundary["boundary_state"] == "canonical_valid"' in source
     assert "PARTIAL_DONE" not in source
 
 
@@ -578,6 +837,21 @@ def test_repair_seed_manifest_rejects_protected_and_normalized_duplicate_paths(
     )
     with pytest.raises(RuntimeError, match="protected control path"):
         supervisor.apply_repair_seed_manifest(sandbox, protected, protected_sha)
+
+    protected_packet, protected_packet_sha = _write_seed_manifest(
+        tmp_path,
+        [
+            {
+                "source": str(source),
+                "destination": "AGY_RESULT_PACKET.json",
+                "sha256": source_sha,
+            }
+        ],
+    )
+    with pytest.raises(RuntimeError, match="protected control path"):
+        supervisor.apply_repair_seed_manifest(
+            sandbox, protected_packet, protected_packet_sha
+        )
 
     duplicate, duplicate_sha = _write_seed_manifest(
         tmp_path,

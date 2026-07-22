@@ -34,6 +34,7 @@ import urllib.error
 import urllib.request
 import sqlite3
 import hashlib
+import stat
 from pathlib import Path
 from queue import Queue, Empty
 from datetime import datetime, timezone, timedelta
@@ -143,6 +144,214 @@ def semantic_completion(result_path: Path, *, completion_signal: bool) -> dict:
         "has_partial_result": bool(
             assessment["exists"] and not has_done and not assessment["explicit_failure"]
         ),
+    }
+
+
+_AGY_PACKET_NAME = "AGY_RESULT_PACKET.json"
+
+
+def remove_stale_agy_result_outputs(sandbox: Path) -> tuple[str, ...]:
+    """Remove exact result control outputs or fail before launching AGY."""
+    if type(sandbox) is not type(Path()):
+        raise TypeError("sandbox must be an exact platform Path")
+    removed: list[str] = []
+    for name in ("RESULT.md", _AGY_PACKET_NAME):
+        prior_result = sandbox / name
+        if not (prior_result.exists() or prior_result.is_symlink()):
+            continue
+        try:
+            if prior_result.is_dir() and not prior_result.is_symlink():
+                shutil.rmtree(prior_result)
+            else:
+                prior_result.unlink()
+        except OSError as exc:
+            raise RuntimeError("failed to remove stale result control output") from exc
+        removed.append(name)
+    return tuple(removed)
+
+
+def agy_raw_output_db_path() -> Path:
+    """Return supervisor-owned result queue state, never release-local state."""
+    override = os.environ.get("PRISMATIC_AGENT_RAW_OUTPUT_DB")
+    if override:
+        return Path(override).expanduser()
+    return (
+        _SERVICE_ACCOUNT_HOME
+        / ".prismatic"
+        / "state"
+        / "agy-result-boundary"
+        / "agent_raw_output_queue.sqlite3"
+    )
+
+
+def _bounded_nofollow_read(path: Path, byte_limit: int) -> tuple[bytes, bool]:
+    """Read at most limit+1 bytes from the opened regular-file inode."""
+    fd = os.open(
+        path,
+        os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | os.O_NOFOLLOW,
+    )
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError("selected result is not a regular file")
+        chunks: list[bytes] = []
+        remaining = byte_limit + 1
+        while remaining:
+            chunk = os.read(fd, min(65536, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        raw_bytes = b"".join(chunks)
+        return raw_bytes, len(raw_bytes) > byte_limit
+    finally:
+        os.close(fd)
+
+
+def capture_and_validate_agy_result(
+    *,
+    issue_id: str,
+    attempt: int,
+    result_path: Path,
+    packet_path: Path,
+    raw_output_db: Path,
+) -> dict:
+    """Durably capture selected AGY output before strict packet validation."""
+    path_type = type(Path())
+    if type(issue_id) is not str:
+        raise TypeError("issue_id must be an exact string")
+    if type(attempt) is not int:
+        raise TypeError("attempt must be an exact integer")
+    for name, value in (
+        ("result_path", result_path),
+        ("packet_path", packet_path),
+        ("raw_output_db", raw_output_db),
+    ):
+        if type(value) is not path_type:
+            raise TypeError(f"{name} must be an exact platform Path")
+    if not issue_id or attempt < 1:
+        raise ValueError("issue_id and positive attempt are required")
+    if (
+        not result_path.is_absolute()
+        or not packet_path.is_absolute()
+        or packet_path.name != _AGY_PACKET_NAME
+        or packet_path.parent != result_path.parent
+        or ".." in packet_path.parts
+    ):
+        return {
+            "boundary_state": "canonical_invalid",
+            "boundary_reason": "unsafe_result_path",
+            "raw_capture_succeeded": False,
+            "completion_eligible": False,
+        }
+
+    try:
+        os.lstat(packet_path)
+    except FileNotFoundError:
+        selected = result_path
+        canonical = False
+    except OSError:
+        return {
+            "boundary_state": "canonical_invalid",
+            "boundary_reason": "unsafe_canonical_sidecar",
+            "raw_capture_succeeded": False,
+            "completion_eligible": False,
+        }
+    else:
+        selected = packet_path
+        canonical = True
+
+    # Lazy imports preserve side-effect-free supervisor import.
+    from prismatic.agent_raw_output_queue import (
+        RawAgentOutputStore,
+        max_raw_payload_bytes,
+    )
+
+    try:
+        raw_bytes, oversized = _bounded_nofollow_read(
+            selected, max_raw_payload_bytes()
+        )
+    except FileNotFoundError:
+        return {
+            "boundary_state": "result_missing",
+            "boundary_reason": "selected_result_missing",
+            "raw_capture_succeeded": False,
+            "completion_eligible": False,
+        }
+    except (OSError, ValueError):
+        return {
+            "boundary_state": "canonical_invalid" if canonical else "result_missing",
+            "boundary_reason": "selected_result_unsafe",
+            "raw_capture_succeeded": False,
+            "completion_eligible": False,
+        }
+
+    raw_text = raw_bytes.decode("utf-8", errors="replace")
+    digest = hashlib.sha256(raw_bytes).hexdigest()
+    source_event_id = f"agy:{issue_id}:attempt:{attempt}:sha256:{digest}"
+    try:
+        row = RawAgentOutputStore(raw_output_db).persist(
+            raw_text=raw_text,
+            agent="agy",
+            task_id=issue_id,
+            source_event_id=source_event_id,
+            raw_text_or_artifact_path=str(selected),
+            expected_agent="agy",
+        )
+    except Exception:
+        return {
+            "boundary_state": "raw_capture_failed",
+            "boundary_reason": "raw_queue_persist_failed",
+            "raw_capture_succeeded": False,
+            "completion_eligible": False,
+        }
+
+    common = {
+        "raw_capture_succeeded": True,
+        "raw_output_id": row.raw_output_id,
+        "source_event_id": source_event_id,
+        "selected_source": str(selected),
+        "normalization_status": row.normalization_status,
+        "canonical_packet_id": row.canonical_packet_id,
+        "completion_eligible": False,
+    }
+    if not canonical:
+        return {
+            **common,
+            "boundary_state": "legacy_unvalidated",
+            "boundary_reason": row.repair_hint or "legacy_result_held_unvalidated",
+        }
+    if oversized:
+        return {
+            **common,
+            "boundary_state": "canonical_invalid",
+            "boundary_reason": "oversized_payload",
+        }
+
+    try:
+        packet = json.loads(raw_text)
+        if type(packet) is not dict:
+            raise ValueError("packet is not a plain object")
+        from prismatic.agy_result_packet import require_valid_packet
+
+        require_valid_packet(packet)
+    except Exception:
+        return {
+            **common,
+            "boundary_state": "canonical_invalid",
+            "boundary_reason": "canonical_packet_invalid",
+        }
+    if packet.get("issue_identifier") != issue_id:
+        return {
+            **common,
+            "boundary_state": "canonical_invalid",
+            "boundary_reason": "active_issue_identity_mismatch",
+        }
+    return {
+        **common,
+        "boundary_state": "canonical_valid",
+        "boundary_reason": "canonical_packet_accepted",
+        "packet_issue_identifier": packet["issue_identifier"],
+        "completion_eligible": True,
     }
 
 
@@ -672,6 +881,7 @@ def apply_repair_seed_manifest(
             "AGY_TASK.md",
             "STARTED.md",
             "RESULT.md",
+            "AGY_RESULT_PACKET.json",
             "DONE.md",
         }:
             raise RuntimeError(f"repair seed entry {index} targets a protected control path")
@@ -990,6 +1200,10 @@ def run_agy_session(issue_id: str, sandbox: Path, task_path: Path, log_path: Pat
         f"(use the Write tool — do NOT just print to stdout).\n"
         f"2. The RESULT.md must include: what you did, files changed, test results (if any), "
         f"commit hashes, and any follow-ups.\n"
+        f"   You MUST also write pure JSON to `{sandbox}/AGY_RESULT_PACKET.json` with marker "
+        f"`AGY_TASK_RESULT_PACKET_OK`, agent=`agy`, issue_identifier=`{issue_id}`, relative "
+        f"result artifact paths (prefer `RESULT.md`), no secrets/generated/cache paths, truthful "
+        f"verification command/result/log/type, and no fabricated source/base/PR values.\n"
         f"3. After RESULT.md is saved, you MUST run the self-review protocol:\n"
         f"   `python3 ~/.hermes/profiles/orchestrator/scripts/agy_self_review.py {issue_id}`\n"
         f"   This is NON-OPTIONAL. It posts a Self-Review comment to Linear and "
@@ -1041,17 +1255,13 @@ def run_agy_session(issue_id: str, sandbox: Path, task_path: Path, log_path: Pat
     has_done = False
 
     try:
-        # Pre-cleanup: delete prior RESULT.md before launch to prevent stale results
+        # Pre-cleanup: stale proof must never survive into a new attempt.
         result_path = sandbox / "RESULT.md"
-        if result_path.exists() or result_path.is_symlink():
-            try:
-                if result_path.is_dir() and not result_path.is_symlink():
-                    shutil.rmtree(result_path)
-                else:
-                    result_path.unlink()
-                print(f"  [{issue_id}] deleted prior RESULT.md from sandbox before launch", flush=True)
-            except OSError as e:
-                print(f"  [{issue_id}] failed to delete prior RESULT.md: {e}", flush=True)
+        for removed_name in remove_stale_agy_result_outputs(sandbox):
+            print(
+                f"  [{issue_id}] deleted prior {removed_name} from sandbox before launch",
+                flush=True,
+            )
 
         # Pre-cleanup: delete prior STARTED.md files to prevent stale acknowledgements
         started_md_tmp = Path("/tmp/agy_sandboxes") / issue_id / "STARTED.md"
@@ -2490,8 +2700,52 @@ class EventDrivenSupervisor:
                     result["has_done"] = False
                     result["has_missing_result"] = True
 
+                # Resolve attempt before durable capture/publication, preserving
+                # the existing task/label/bus precedence.
+                attempt_value = (
+                    task.get("attempt")
+                    or task.get("attempt_count")
+                    or task.get("retry_count")
+                )
+                attempt = None
+                if attempt_value:
+                    try:
+                        parsed_attempt = int(attempt_value)
+                        if parsed_attempt > 0:
+                            attempt = parsed_attempt
+                    except (TypeError, ValueError):
+                        pass
+                if not attempt:
+                    for lbl in task.get("labels", ()):
+                        if "attempt" in lbl.lower():
+                            digits = "".join(c for c in lbl if c.isdigit())
+                            if digits:
+                                attempt = int(digits)
+                                break
+                if not attempt:
+                    attempt = self.bus_client.get_completed_attempt_count(issue_id) + 1
+                if not attempt:
+                    attempt = 1
+
+                boundary = capture_and_validate_agy_result(
+                    issue_id=issue_id,
+                    attempt=attempt,
+                    result_path=result_path,
+                    packet_path=sandbox / _AGY_PACKET_NAME,
+                    raw_output_db=agy_raw_output_db_path(),
+                )
+                completion_eligible = bool(
+                    result.get("has_done")
+                    and result_semantics["has_done"]
+                    and boundary["raw_capture_succeeded"]
+                    and boundary["boundary_state"] == "canonical_valid"
+                    and boundary.get("packet_issue_identifier") == issue_id
+                )
+                result["result_boundary"] = boundary
+                result["completion_eligible"] = completion_eligible
+
                 # Log status
-                status = ("✅ DONE" if result.get("has_done") else
+                status = ("✅ DONE" if completion_eligible else
                           "🔴 ERROR" if result.get("has_error") else
                           "🛑 INACTIVITY_KILL" if result.get("has_inactivity_kill") else
                           "⏳ AGY_BACKEND_TIMEOUT" if result.get("has_backend_timeout") else
@@ -2505,7 +2759,8 @@ class EventDrivenSupervisor:
 
                 # Publish agent.completed event (GRO-3094)
                 try:
-                    result_status = ("has_done" if result.get("has_done") else
+                    result_status = ("has_done" if completion_eligible else
+                                     boundary["boundary_state"] if result.get("has_done") else
                                      "has_error" if result.get("has_error") else
                                      "has_inactivity_kill" if result.get("has_inactivity_kill") else
                                      "has_backend_timeout" if result.get("has_backend_timeout") else
@@ -2514,23 +2769,6 @@ class EventDrivenSupervisor:
                                      "has_missing_result" if result.get("has_missing_result") else
                                      "exit_other")
                     
-                    # Determine attempt number
-                    attempt = task.get("attempt") or task.get("attempt_count") or task.get("retry_count")
-                    if not attempt:
-                        for lbl in task.get("labels", ()):
-                            if "attempt" in lbl.lower():
-                                digits = "".join(c for c in lbl if c.isdigit())
-                                if digits:
-                                    try:
-                                        attempt = int(digits)
-                                        break
-                                    except ValueError:
-                                        pass
-                    if not attempt:
-                        attempt = self.bus_client.get_completed_attempt_count(issue_id) + 1
-                    if not attempt:
-                        attempt = 1
-
                     elapsed_sec = result.get("elapsed_sec", 0)
                     cost_usd_estimated = estimate_cost(issue_id, self.model, elapsed_sec)
 
@@ -2546,10 +2784,15 @@ class EventDrivenSupervisor:
                         "has_result_file": result.get("has_result_file", False),
                         "result_semantic_pass": result_semantics["passed"],
                         "result_semantic_reasons": result_semantics["reasons"],
+                        "boundary_state": boundary["boundary_state"],
+                        "boundary_reason": boundary["boundary_reason"],
+                        "raw_output_id": boundary.get("raw_output_id"),
+                        "canonical_packet_id": boundary.get("canonical_packet_id"),
+                        "completion_eligible": completion_eligible,
                         "cost_usd_estimated": cost_usd_estimated,
                         "attempt": attempt
                     }
-                    if result.get("has_done") and result_semantics["passed"]:
+                    if completion_eligible:
                         self.bus_client.publish_completed(issue_id, payload)
                         published_topic = "agent.completed"
                     else:
@@ -2565,7 +2808,7 @@ class EventDrivenSupervisor:
                 # At task completion (after result processing):
                 try:
                     elapsed_sec = result.get("elapsed_sec", 0)
-                    if result.get("has_done"):
+                    if completion_eligible:
                         self.linear_client.update_issue(issue_id, state="Done")
                         self.linear_client.add_comment(issue_id,
                             "Completed: " + str(elapsed_sec) + "s | lane: " + lane + " | exit_code: "
@@ -2624,11 +2867,7 @@ class EventDrivenSupervisor:
                 try:
                     sandbox_dir = SANDBOX_ROOT / issue_id
                     result_md = sandbox_dir / "RESULT.md"
-                    if (
-                        result_md.exists()
-                        and result.get("has_done")
-                        and result_semantics["passed"]
-                    ):
+                    if result_md.exists() and completion_eligible:
                         import subprocess
                         validator = (
                             os.environ.get("HERMES_PROFILE_ROOT", str(Path.home() / ".hermes" / "profiles" / "orchestrator")) + "/"
