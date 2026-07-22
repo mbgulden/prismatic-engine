@@ -343,6 +343,26 @@ def test_duplicate_paths_proofs_checks_and_release_ids_reject():
         clean.record_ci([ci_checks()[0], ci_checks()[0]])
 
 
+@pytest.mark.parametrize("field", ["base_sha", "candidate_sha", "task_file_sha256"])
+def test_rebind_rejects_scalar_subclass_before_comparison_hooks(field: str):
+    class HookString(str):
+        def __eq__(self, other):
+            raise AssertionError("untrusted equality hook executed")
+
+        def __ne__(self, other):
+            raise AssertionError("untrusted inequality hook executed")
+
+    values = {
+        "base_sha": BASE,
+        "candidate_sha": NEW_HEAD,
+        "task_file_sha256": "c" * 64,
+        "changed_paths": ["prismatic/rebound.py"],
+    }
+    values[field] = HookString(values[field])
+    with pytest.raises(ManifestValidationError, match="exact string"):
+        make_manifest().rebind_candidate(**values)  # type: ignore[arg-type]
+
+
 def test_untrusted_subclass_hooks_are_rejected_before_sorting():
     class HookString(str):
         def __lt__(self, other):

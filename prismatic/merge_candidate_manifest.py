@@ -732,11 +732,14 @@ class MergeCandidateManifest:
         new_paths = _normalized_input_tuple(
             changed_paths, "changed_paths", _validate_changed_path
         )
+        validated_base_sha = _sha(base_sha, "base_sha")
+        validated_candidate_sha = _sha(candidate_sha, "candidate_sha")
+        validated_task_file_sha256 = _digest(task_file_sha256, "task_file_sha256")
         changes = []
         for name, old, new in (
-            ("base_sha", self.base_sha, base_sha),
-            ("candidate_sha", self.candidate_sha, candidate_sha),
-            ("task_file_sha256", self.task_file_sha256, task_file_sha256),
+            ("base_sha", self.base_sha, validated_base_sha),
+            ("candidate_sha", self.candidate_sha, validated_candidate_sha),
+            ("task_file_sha256", self.task_file_sha256, validated_task_file_sha256),
             ("changed_paths", self.changed_paths, new_paths),
         ):
             if old != new:
@@ -748,9 +751,9 @@ class MergeCandidateManifest:
         return replace(
             self,
             state=PromotionState.CANDIDATE,
-            base_sha=_sha(base_sha, "base_sha"),
-            candidate_sha=_sha(candidate_sha, "candidate_sha"),
-            task_file_sha256=_digest(task_file_sha256, "task_file_sha256"),
+            base_sha=validated_base_sha,
+            candidate_sha=validated_candidate_sha,
+            task_file_sha256=validated_task_file_sha256,
             changed_paths=new_paths,
             verification_evidence=(),
             independent_review=None,
