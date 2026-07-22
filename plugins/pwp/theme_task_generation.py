@@ -7,7 +7,7 @@ and fail-closed validation semantics for Prismatic Web Plugin theme generation.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 from prismatic.capability_router import CapabilityRegistry, RouteDecision, route_issue
 
@@ -59,11 +59,89 @@ class ThemeTaskPlan:
     route_decision: RouteDecision
     base_labels: tuple[str, ...]
 
+    def __post_init__(self) -> None:
+        for field_name in ("plan_id", "title", "description"):
+            value = getattr(self, field_name)
+            if (
+                not isinstance(value, str)
+                or not value.strip()
+                or value != value.strip()
+            ):
+                raise TaskPlanValidationError(
+                    f"{field_name} must be a non-empty string"
+                )
+        if type(self.priority) is not int or not (1 <= self.priority <= 5):
+            raise TaskPlanValidationError("priority must be an integer between 1 and 5")
+        if type(self.requires_gpu) is not bool:
+            raise TaskPlanValidationError("requires_gpu must be a boolean")
+        if not isinstance(self.dispatch_state, DispatchState):
+            raise TaskPlanValidationError("dispatch_state must be a DispatchState")
+        if not isinstance(self.route_decision, RouteDecision):
+            raise TaskPlanValidationError("route_decision must be a RouteDecision")
+        if not isinstance(self.capability_requirements, frozenset) or any(
+            not isinstance(capability, str)
+            or not capability.strip()
+            or capability != capability.strip().lower()
+            for capability in self.capability_requirements
+        ):
+            raise TaskPlanValidationError(
+                "capability_requirements must be a normalized frozenset of strings"
+            )
+        for field_name, allow_empty in (
+            ("dependency_ids", True),
+            ("contracts", True),
+            ("files", True),
+            ("verifiers", False),
+            ("base_labels", True),
+        ):
+            value = getattr(self, field_name)
+            if (
+                not isinstance(value, tuple)
+                or _validate_string_sequence(value, field_name, allow_empty=allow_empty)
+                != value
+            ):
+                raise TaskPlanValidationError(
+                    f"{field_name} must be a normalized tuple of strings"
+                )
+        if any(label.lower().startswith("agent:") for label in self.base_labels):
+            raise TaskPlanValidationError(
+                "manual agent labels are prohibited; routing must select the agent"
+            )
+        if self.parent_id is not None and (
+            not isinstance(self.parent_id, str)
+            or not self.parent_id.strip()
+            or self.parent_id != self.parent_id.strip()
+        ):
+            raise TaskPlanValidationError(
+                "parent_id must be None or a non-empty string"
+            )
+        selected = self.route_decision.selected
+        if selected is not None and selected not in self.route_decision.candidates:
+            raise TaskPlanValidationError(
+                "route_decision.selected must be present in route_decision.candidates"
+            )
+
+    def _has_exactly_one_eligible_agent(self) -> bool:
+        decision = self.route_decision
+        if decision.selected is None or len(decision.candidates) != 1:
+            return False
+        selected = decision.candidates[0]
+        if decision.selected != selected:
+            return False
+        if not selected.available or selected.remaining_capacity <= 0:
+            return False
+        if not self.capability_requirements.issubset(selected.capabilities):
+            return False
+        if self.requires_gpu and not selected.gpu_capable:
+            return False
+        return True
+
     @property
     def owner(self) -> str | None:
-        """Owner agent derived from the immutable routing decision."""
-        if self.route_decision and self.route_decision.selected:
-            return self.route_decision.selected.name
+        """Owner agent derived from one unambiguous, eligible routing decision."""
+        selected = self.route_decision.selected
+        if self._has_exactly_one_eligible_agent() and selected is not None:
+            return selected.name
         return None
 
     @property
@@ -77,9 +155,7 @@ class ThemeTaskPlan:
             and self.dispatch_state.dispatch_ready
         ):
             return False
-        if self.route_decision is None or self.route_decision.selected is None:
-            return False
-        return True
+        return self._has_exactly_one_eligible_agent()
 
     @property
     def emitted_labels(self) -> tuple[str, ...]:
@@ -133,18 +209,51 @@ class ThemeTaskPlan:
 
         return "\n\n".join(sections)
 
-    def linear_issue_input(self) -> dict[str, Any]:
-        """Linear adapter derived from canonical task plan."""
+    def linear_issue_input(
+        self,
+        *,
+        label_ids_by_name: Mapping[str, str],
+        parent_issue_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Return a Linear ``IssueCreateInput`` payload derived from this plan.
+
+        Linear label and parent UUIDs are deliberately resolved outside the canonical plan.
+        Missing adapter mappings fail closed instead of leaking task-manager identifiers into
+        the canonical representation.
+        """
+        if not isinstance(label_ids_by_name, Mapping):
+            raise TaskPlanValidationError("label_ids_by_name must be a mapping")
+        emitted_labels = self.emitted_labels
+        missing_labels = [
+            label
+            for label in emitted_labels
+            if not isinstance(label_ids_by_name.get(label), str)
+            or not label_ids_by_name[label].strip()
+        ]
+        if missing_labels:
+            raise TaskPlanValidationError(
+                "missing Linear label IDs for: " + ", ".join(missing_labels)
+            )
+        if self.parent_id and (
+            not isinstance(parent_issue_id, str) or not parent_issue_id.strip()
+        ):
+            raise TaskPlanValidationError(
+                "parent_issue_id is required when the canonical plan has a parent_id"
+            )
+        if not self.parent_id and parent_issue_id is not None:
+            raise TaskPlanValidationError(
+                "parent_issue_id must be omitted when the canonical plan has no parent_id"
+            )
+
+        linear_priority = {1: 1, 2: 2, 3: 3, 4: 4, 5: 0}[self.priority]
         input_dict: dict[str, Any] = {
             "title": self.title,
             "description": self.rendered_description,
-            "priority": self.priority,
-            "labels": list(self.emitted_labels),
+            "priority": linear_priority,
+            "labelIds": [label_ids_by_name[label].strip() for label in emitted_labels],
         }
-        if self.plan_id:
-            input_dict["identifier"] = self.plan_id
-        if self.parent_id:
-            input_dict["parentId"] = self.parent_id
+        if parent_issue_id is not None:
+            input_dict["parentId"] = parent_issue_id.strip()
         return input_dict
 
 
@@ -254,7 +363,7 @@ def create_theme_task_plan(
     return ThemeTaskPlan(
         plan_id=plan_id.strip(),
         title=title.strip(),
-        description=description,
+        description=description.strip(),
         priority=priority,
         capability_requirements=frozenset(clean_caps),
         requires_gpu=requires_gpu,
@@ -290,8 +399,8 @@ def generate_pwp_theme_task_plans(
             "description": f"Define and compile W3C-compliant design tokens for theme {clean_name}.",
             "capability_requirements": ["code", "docs"],
             "verifiers": [
-                "npm run check:theme",
-                "pytest plugins/pwp/tests/test_theme_diff.py",
+                "pytest -q plugins/pwp/tests/test_compiler_determinism.py",
+                "pytest -q plugins/pwp/tests/test_theme_diff.py",
             ],
             "contracts": [
                 "W3C design token spec",
@@ -306,7 +415,10 @@ def generate_pwp_theme_task_plans(
             "title": f"[PWP] Astro Component Modules for {clean_name}",
             "description": f"Implement typed Astro components and module schemas for theme {clean_name}.",
             "capability_requirements": ["code"],
-            "verifiers": ["npm run build", "astro check"],
+            "verifiers": [
+                "pytest -q plugins/pwp/tests/test_theme_validator.py",
+                "pytest -q plugins/pwp/tests/test_theme_diff.py",
+            ],
             "contracts": [
                 "Astro component slots interface",
                 "Module JSON schema validation",
@@ -317,18 +429,23 @@ def generate_pwp_theme_task_plans(
             "title": f"[PWP] EmDash Content Schema & Field Map for {clean_name}",
             "description": f"Map human-editable fields and lock compliance fields for theme {clean_name}.",
             "capability_requirements": ["docs", "content"],
-            "verifiers": ["pytest plugins/pwp/tests/test_oauth_credentials.py"],
+            "verifiers": [
+                "pytest -q plugins/pwp/tests/test_theme_task_generation.py",
+            ],
             "contracts": ["EmDash editable field map", "Locked compliance field rules"],
             "files": [f"plugins/pwp/themes/{clean_name}/emdash/fields.json"],
         },
         "qa": {
-            "title": f"[PWP] Visual & Accessibility QA for {clean_name}",
-            "description": f"Execute Playwright visual regression and axe-core accessibility checks for theme {clean_name}.",
+            "title": f"[PWP] Theme Validation QA for {clean_name}",
+            "description": f"Execute repository theme validation and deterministic diff checks for theme {clean_name}.",
             "capability_requirements": ["review", "test"],
-            "verifiers": ["npm run test:a11y", "npm run test:visual"],
+            "verifiers": [
+                "pytest -q plugins/pwp/tests/test_theme_validator.py",
+                "pytest -q plugins/pwp/tests/test_theme_diff.py",
+            ],
             "contracts": [
-                "WCAG 2.2 AA accessibility standard",
-                "Lighthouse performance budget",
+                "PWP theme schema validation",
+                "Deterministic theme diff output",
             ],
             "files": [f"plugins/pwp/themes/{clean_name}/reports/qa.json"],
         },

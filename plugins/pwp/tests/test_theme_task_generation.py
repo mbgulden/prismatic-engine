@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
-import pytest
+from dataclasses import replace
+
 import plugins.pwp.theme_task_generation as theme_tasks
-from prismatic.capability_router import AgentCapability, CapabilityRegistry
+import pytest
 from plugins.pwp.theme_task_generation import (
     DispatchState,
     TaskPlanValidationError,
+    ThemeTaskPlan,
     create_theme_task_plan,
     generate_pwp_theme_task_plans,
+)
+from prismatic.capability_router import (
+    AgentCapability,
+    CapabilityRegistry,
+    RouteDecision,
 )
 
 
@@ -41,6 +48,30 @@ def make_test_registry() -> CapabilityRegistry:
                 current_load=0,
                 priority=30,
             ),
+        ]
+    )
+
+
+def make_batch_registry() -> CapabilityRegistry:
+    """Registry that intentionally makes code-only routing ambiguous."""
+    return CapabilityRegistry(
+        [
+            AgentCapability(
+                name="test-coder",
+                label="agent:test-coder",
+                capabilities=frozenset({"code"}),
+                max_concurrent=2,
+                current_load=0,
+                priority=10,
+            ),
+            AgentCapability(
+                name="test-docser",
+                label="agent:test-docser",
+                capabilities=frozenset({"docs"}),
+                max_concurrent=2,
+                current_load=0,
+                priority=20,
+            ),
             AgentCapability(
                 name="test-theme-builder",
                 label="agent:test-theme-builder",
@@ -58,7 +89,7 @@ def test_canonical_plan_creation_with_explicit_registry():
     plan = create_theme_task_plan(
         plan_id="pwp-task-001",
         title="Implement Theme Layout",
-        description="Build base layout component for trust-light theme.",
+        description="  Build base layout component for trust-light theme.  ",
         verifiers=["npm run build"],
         capability_requirements=["code"],
         registry=registry,
@@ -66,6 +97,7 @@ def test_canonical_plan_creation_with_explicit_registry():
 
     assert plan.plan_id == "pwp-task-001"
     assert plan.title == "Implement Theme Layout"
+    assert plan.description == "Build base layout component for trust-light theme."
     assert plan.owner == "test-coder"
     assert plan.route_decision is not None
     assert plan.route_decision.selected is not None
@@ -103,8 +135,10 @@ def test_route_issue_resolved_exactly_once_and_reused(monkeypatch):
     assert "test-docser" in plan.rendered_description
     assert "agent:test-docser" in plan.emitted_labels
 
-    linear_input = plan.linear_issue_input()
-    assert "agent:test-docser" in linear_input["labels"]
+    linear_input = plan.linear_issue_input(
+        label_ids_by_name={"agent:test-docser": "linear-label-docser"}
+    )
+    assert linear_input["labelIds"] == ["linear-label-docser"]
     assert linear_input["title"] == "Write Documentation"
     assert len(calls) == 1
 
@@ -128,7 +162,8 @@ def test_held_plan_emits_no_agent_label():
     assert plan.owner == "test-coder"  # Owner metadata is preserved for information
     assert not any(label.startswith("agent:") for label in plan.emitted_labels)
     assert not any(
-        label.startswith("agent:") for label in plan.linear_issue_input()["labels"]
+        label.startswith("agent:")
+        for label in plan.linear_issue_input(label_ids_by_name={})["labelIds"]
     )
 
 
@@ -346,6 +381,90 @@ def test_fail_closed_on_no_capacity_or_unresolved_routing():
     assert not any(label.startswith("agent:") for label in plan.emitted_labels)
 
 
+def test_fail_closed_on_multiple_eligible_agents():
+    registry = CapabilityRegistry(
+        [
+            AgentCapability(
+                name="coder-a",
+                label="agent:coder-a",
+                capabilities=frozenset({"code"}),
+                max_concurrent=1,
+                current_load=0,
+            ),
+            AgentCapability(
+                name="coder-b",
+                label="agent:coder-b",
+                capabilities=frozenset({"code"}),
+                max_concurrent=1,
+                current_load=0,
+            ),
+        ]
+    )
+    plan = create_theme_task_plan(
+        plan_id="task-ambiguous",
+        title="Code Task",
+        description="Desc",
+        verifiers=["v1"],
+        capability_requirements=["code"],
+        dispatch_state=DispatchState(
+            build_initiated=True, operator_approved=True, dispatch_ready=True
+        ),
+        registry=registry,
+    )
+
+    assert len(plan.route_decision.candidates) == 2
+    assert plan.route_decision.selected is not None
+    assert plan.owner is None
+    assert plan.is_dispatchable is False
+    assert not any(label.startswith("agent:") for label in plan.emitted_labels)
+
+
+def test_direct_canonical_construction_preserves_fail_closed_invariants():
+    valid = create_theme_task_plan(
+        plan_id="task-direct",
+        title="Code Task",
+        description="Desc",
+        verifiers=["v1"],
+        capability_requirements=["code"],
+        dispatch_state=DispatchState(
+            build_initiated=True, operator_approved=True, dispatch_ready=True
+        ),
+        registry=make_test_registry(),
+    )
+
+    with pytest.raises(TaskPlanValidationError, match="manual agent labels"):
+        replace(valid, base_labels=("agent:manual",))
+    with pytest.raises(TaskPlanValidationError, match="verifiers must not be empty"):
+        replace(valid, verifiers=())
+    with pytest.raises(TaskPlanValidationError, match="must be present"):
+        replace(
+            valid,
+            route_decision=RouteDecision(
+                selected=valid.route_decision.selected,
+                candidates=(),
+                reason="malformed direct decision",
+            ),
+        )
+
+    busy = AgentCapability(
+        name="busy",
+        label="agent:busy",
+        capabilities=frozenset({"code"}),
+        max_concurrent=1,
+        current_load=1,
+    )
+    direct = replace(
+        valid,
+        route_decision=RouteDecision(
+            selected=busy, candidates=(busy,), reason="direct full-capacity decision"
+        ),
+    )
+    assert isinstance(direct, ThemeTaskPlan)
+    assert direct.owner is None
+    assert direct.is_dispatchable is False
+    assert not any(label.startswith("agent:") for label in direct.emitted_labels)
+
+
 def test_linear_issue_input_adapter():
     registry = make_test_registry()
     plan = create_theme_task_plan(
@@ -364,15 +483,34 @@ def test_linear_issue_input_adapter():
         registry=registry,
     )
 
-    linear_adapter = plan.linear_issue_input()
+    linear_adapter = plan.linear_issue_input(
+        label_ids_by_name={
+            "pwp:theme": "linear-label-theme",
+            "agent:test-coder": "linear-label-coder",
+        },
+        parent_issue_id="linear-parent-uuid",
+    )
 
-    assert linear_adapter["identifier"] == "PWP-100"
+    assert "identifier" not in linear_adapter
+    assert "labels" not in linear_adapter
     assert linear_adapter["title"] == "Build Theme System"
-    assert linear_adapter["parentId"] == "PWP-PARENT"
+    assert linear_adapter["parentId"] == "linear-parent-uuid"
     assert linear_adapter["priority"] == 3
-    assert "pwp:theme" in linear_adapter["labels"]
-    assert "agent:test-coder" in linear_adapter["labels"]
+    assert linear_adapter["labelIds"] == [
+        "linear-label-theme",
+        "linear-label-coder",
+    ]
     assert "Contract A" in linear_adapter["description"]
+
+    with pytest.raises(TaskPlanValidationError, match="missing Linear label IDs"):
+        plan.linear_issue_input(label_ids_by_name={})
+    with pytest.raises(TaskPlanValidationError, match="parent_issue_id is required"):
+        plan.linear_issue_input(
+            label_ids_by_name={
+                "pwp:theme": "linear-label-theme",
+                "agent:test-coder": "linear-label-coder",
+            }
+        )
 
 
 def test_generate_pwp_theme_task_plans_rejects_unknown_phase():
@@ -385,7 +523,7 @@ def test_generate_pwp_theme_task_plans_rejects_unknown_phase():
 
 
 def test_generate_pwp_theme_task_plans_batch():
-    registry = make_test_registry()
+    registry = make_batch_registry()
     plans = generate_pwp_theme_task_plans(
         "trust-light",
         phases=["tokens", "modules"],
@@ -399,5 +537,8 @@ def test_generate_pwp_theme_task_plans_batch():
     assert plans[0].plan_id == "pwp-theme-trust-light-tokens"
     assert plans[1].plan_id == "pwp-theme-trust-light-modules"
     assert plans[0].owner == "test-theme-builder"
-    assert plans[1].owner == "test-coder"
     assert plans[0].is_dispatchable is True
+    assert plans[1].owner is None
+    assert plans[1].is_dispatchable is False
+    assert len(plans[1].route_decision.candidates) == 2
+    assert not any(label.startswith("agent:") for label in plans[1].emitted_labels)

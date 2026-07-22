@@ -1,9 +1,9 @@
 # PWP Canonical Theme Task Plan Generation
 
-**Status:** Canonical Implementation  
-**Owner Lane:** Prismatic Web Plugin / Theme Task Pipeline  
-**Module:** `plugins.pwp.theme_task_generation`  
-**Issue:** GRO-3738  
+**Status:** Canonical Implementation
+**Owner Lane:** Prismatic Web Plugin / Theme Task Pipeline
+**Module:** `plugins.pwp.theme_task_generation`
+**Issue:** GRO-3738
 
 ---
 
@@ -32,10 +32,10 @@ It provides a decoupled task planning layer that is independent of Linear or any
 The routing decision is resolved **exactly once** during task plan construction via `prismatic.capability_router.route_issue`. The resulting `RouteDecision` is held immutably on the `ThemeTaskPlan`.
 
 The decision is reused across all consumer outputs:
-- **Canonical Owner Data:** `plan.owner` returns `plan.route_decision.selected.name`.
+- **Canonical Owner Data:** `plan.owner` returns the selected name only when the decision contains exactly one eligible candidate; otherwise it returns `None`.
 - **Rendered Markdown Description:** `plan.rendered_description` incorporates routing metadata (`Assigned Lane`, `Decision Reason`).
-- **Emitted Dispatch Labels:** `plan.emitted_labels` uses `plan.route_decision.selected.label`.
-- **Linear Adapter:** `plan.linear_issue_input()` formats the Linear payload reusing the plan's computed attributes.
+- **Emitted Dispatch Labels:** `plan.emitted_labels` uses that same uniquely eligible selected agent.
+- **Linear Adapter:** `plan.linear_issue_input(...)` derives a real `IssueCreateInput` payload after the caller supplies resolved Linear label and parent UUIDs.
 
 ---
 
@@ -43,9 +43,9 @@ The decision is reused across all consumer outputs:
 
 Automated agent dispatch labels (`agent:<name>`) are dynamically emitted according to strict safety rules:
 
-1. **Held Plans Emit NO Dispatch Labels:**  
+1. **Held Plans Emit NO Dispatch Labels:**
    If `dispatch_state.held == True`, the plan emits no `agent:*` label under any circumstances.
-2. **Readiness Gate:**  
+2. **Readiness Gate:**
    An `agent:<name>` label is emitted **if and only if** all of the following conditions are met:
    - `dispatch_state.build_initiated == True`
    - `dispatch_state.operator_approved == True`
@@ -65,7 +65,9 @@ The plan constructor `create_theme_task_plan` enforces fail-closed validation to
 | **Manually Supplied `agent:*` Labels** | Raises `TaskPlanValidationError`. Manual agent assignment labels in `raw_labels` are prohibited; agent assignment must only occur via the capability router. |
 | **Malformed Nested Values** | Raises `TaskPlanValidationError` if inputs (priority, dispatch booleans, GPU requirement, verifiers, contracts, files, labels) have invalid types or bounds. |
 | **Unordered Inputs** | Valid string sets/frozensets are sorted and duplicate strings are removed so plans remain deterministic. Capability names are normalized to lowercase before routing and storage. |
-| **No Capacity / Unresolved Routing** | `route_decision.selected` is `None`. The plan emits no `agent:*` label and `is_dispatchable` evaluates to `False`. |
+| **No Capacity / Unresolved Routing** | The plan emits no `agent:*` label and `is_dispatchable` evaluates to `False`. |
+| **Multiple Eligible Agents** | Routing remains observable, but owner and dispatch label emission fail closed until exactly one eligible candidate remains. |
+| **Direct Dataclass Construction** | `ThemeTaskPlan.__post_init__` enforces normalized canonical values, non-empty verifiers, no manual agent labels, and a structurally valid routing decision. |
 | **Unknown Lanes** | If requested capabilities cannot be matched to any available agent lane in the `CapabilityRegistry`, routing fails to resolve and no dispatch label is emitted. |
 
 ---
@@ -93,7 +95,7 @@ plan = create_theme_task_plan(
     plan_id="pwp-001",
     title="Build Hero Component",
     description="Implement Hero.astro component",
-    verifiers=["npm run build"],
+    verifiers=["pytest -q plugins/pwp/tests/test_theme_validator.py"],
     capability_requirements=["code"],
     dispatch_state=DispatchState(build_initiated=True, operator_approved=True, dispatch_ready=True),
     registry=test_registry,
@@ -107,18 +109,21 @@ assert "agent:theme-coder" in plan.emitted_labels
 
 ## Linear Adapter Usage
 
-Linear issue inputs are generated via the `linear_issue_input()` method:
+Linear create inputs require workspace UUID resolution at the adapter boundary:
 
 ```python
-linear_payload = plan.linear_issue_input()
-# Returns:
+linear_payload = plan.linear_issue_input(
+    label_ids_by_name={"agent:theme-coder": "linear-label-uuid"},
+)
+# Returns a real IssueCreateInput-compatible mapping:
 # {
-#     "identifier": "pwp-001",
 #     "title": "Build Hero Component",
 #     "description": "...",
 #     "priority": 3,
-#     "labels": ["agent:theme-coder"]
+#     "labelIds": ["linear-label-uuid"],
 # }
 ```
+
+Canonical priorities map as `1→1`, `2→2`, `3→3`, `4→4`, and `5→0` (Linear's no-priority value). If the canonical plan has a `parent_id`, the caller must also supply its resolved Linear UUID as `parent_issue_id`. Missing label or parent UUID mappings raise `TaskPlanValidationError`; generated/read-only identifiers and label names are never passed as `IssueCreateInput` fields.
 
 The canonical `ThemeTaskPlan` does not require or depend on Linear field structures, ensuring portability to other task runners or execution systems.
