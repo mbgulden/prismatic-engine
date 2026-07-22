@@ -43,6 +43,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 from prismatic.api.routers.merge_factory import router as merge_factory_router
+from prismatic.gateway.control_auth import control_authorization_middleware
 from prismatic.gateway.event_bus import get_event_bus
 from prismatic.gateway.ipc_bridge import UnixSocketListener, create_event_ingest_route
 from prismatic.gateway.ws_broadcaster import (
@@ -227,6 +228,10 @@ app = FastAPI(
     version="0.1.0",
     openapi_url=None,  # Disable OpenAPI schema generation — internal gateway
 )
+
+# One fail-closed boundary covers all current and future HTTP mutation routes.
+# The middleware itself owns the narrow read-only and signed-webhook bypasses.
+app.middleware("http")(control_authorization_middleware)
 
 
 def _configured_cors_origins() -> list[str]:
