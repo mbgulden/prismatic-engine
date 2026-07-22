@@ -1857,15 +1857,22 @@ def test_43_adversarial_contender_reserialization(
     consumer.write_cursor_state(str(state_file_a), make_contender_state(1))
 
     orig_release = consumer.CursorLock.release
+    release_injection = {"armed": False}
 
     def injected_release_with_contender(lock_inst: consumer.CursorLock) -> None:
         orig_release(lock_inst)
+        if not release_injection["armed"]:
+            return
+        # Disarm before the contender uses the same public writer; otherwise its
+        # own release recursively launches another contender forever.
+        release_injection["armed"] = False
         contender_state = make_contender_state(999)
         consumer.write_cursor_state(lock_inst.state_file_path, contender_state)
         raise OSError(errno.EIO, "Injected release failure")
 
     monkeypatch.setattr(consumer.CursorLock, "release", injected_release_with_contender)
 
+    release_injection["armed"] = True
     with pytest.raises(RuntimeError, match="[FAIL_CLOSED]"):
         consumer.write_cursor_state(str(state_file_a), make_contender_state(2))
 
@@ -1877,6 +1884,7 @@ def test_43_adversarial_contender_reserialization(
     state_file_b = tmp_path / "cursor_b.rowid"
     consumer.write_cursor_state(str(state_file_b), make_contender_state(1))
 
+    release_injection["armed"] = True
     with pytest.raises(RuntimeError, match="[FAIL_CLOSED]"):
         consumer.set_state(
             2,
@@ -1893,6 +1901,7 @@ def test_43_adversarial_contender_reserialization(
     state_file_c = tmp_path / "cursor_c.rowid"
     consumer.write_cursor_state(str(state_file_c), make_contender_state(1))
 
+    release_injection["armed"] = True
     with pytest.raises(RuntimeError) as exc_info:
         consumer.repair_apply(
             str(db_path),
