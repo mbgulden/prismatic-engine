@@ -2359,3 +2359,149 @@ def test_52_valid_private_lock_coordination_and_nonblocking_recovery(
     lock2.acquire(blocking=False)
     assert lock2._fd is not None
     lock2.release()
+
+
+def test_53_preexisting_public_mode_lock_rejected_without_mutation_or_flock(
+    tmp_path: Path,
+) -> None:
+    """Repair 9 Requirement: Pre-existing same-owner, single-link regular lock file
+    with mode 0644 must be rejected by CursorLock.acquire() without fchmod, content
+    mutation, or flock.
+    """
+    base_cursor = tmp_path / "test_cursor.rowid"
+    base_cursor.write_bytes(b"test")
+    os.chmod(base_cursor, 0o600)
+    lock_path = Path(str(base_cursor) + ".lock")
+    lock_path.write_bytes(b"public_lock")
+    os.chmod(lock_path, 0o644)
+    st_orig = os.lstat(lock_path)
+
+    for blocking in (True, False):
+        lock = consumer.CursorLock(str(base_cursor))
+        with pytest.raises(ValueError, match="permissions are unsafe"):
+            lock.acquire(blocking=blocking)
+        assert lock._fd is None
+
+    st_after = os.lstat(lock_path)
+    assert stat.S_IMODE(st_after.st_mode) == 0o644
+    assert lock_path.read_bytes() == b"public_lock"
+    assert st_after.st_ino == st_orig.st_ino
+
+
+def test_54_raced_public_mode_lock_at_open_rejected_without_mutation_or_flock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Repair 9 Requirement: Apparently absent lock raced to a mode 0644 regular inode
+    at open must be rejected by descriptor validation without fchmod, content mutation,
+    or flock.
+    """
+    base_cursor = tmp_path / "test_cursor.rowid"
+    base_cursor.write_bytes(b"test")
+    os.chmod(base_cursor, 0o600)
+    lock_path = Path(str(base_cursor) + ".lock")
+    lock_path.write_bytes(b"raced_public_lock")
+    os.chmod(lock_path, 0o644)
+
+    orig_lstat = os.lstat
+
+    def lstat_fake_absent(path: str | os.PathLike) -> os.stat_result:
+        if str(path) == str(lock_path):
+            raise FileNotFoundError(f"No such file: {path}")
+        return orig_lstat(path)
+
+    monkeypatch.setattr(os, "lstat", lstat_fake_absent)
+
+    lock = consumer.CursorLock(str(base_cursor))
+    with pytest.raises(ValueError, match="permissions are unsafe"):
+        lock.acquire()
+
+    assert lock._fd is None
+    st_after = orig_lstat(lock_path)
+    assert stat.S_IMODE(st_after.st_mode) == 0o644
+    assert lock_path.read_bytes() == b"raced_public_lock"
+
+
+def test_55_snapshot_existence_transition_present_to_absent_rejects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Repair 9 Requirement: A cursor file present at lstat pre-check but deleted before
+    descriptor open must be rejected as an identity-race failure.
+    """
+    cursor_file = tmp_path / "race_cursor.rowid"
+    cursor_file.write_bytes(b"initial_content")
+    os.chmod(cursor_file, 0o600)
+
+    orig_open = os.open
+
+    def open_fake_deleted(
+        path: str | os.PathLike, flags: int, mode: int = 0o777
+    ) -> int:
+        if str(path) == str(cursor_file):
+            raise FileNotFoundError(f"No such file: {path}")
+        return orig_open(path, flags, mode)
+
+    monkeypatch.setattr(os, "open", open_fake_deleted)
+
+    with pytest.raises(
+        ValueError, match="present at lstat pre-check but deleted before open"
+    ):
+        consumer._snapshot_cursor_file(str(cursor_file))
+
+
+def test_56_snapshot_existence_transition_absent_to_present_rejects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Repair 9 Requirement: A cursor file absent at lstat pre-check but created before
+    descriptor open must be rejected as an identity-race failure.
+    """
+    cursor_file = tmp_path / "absent_cursor.rowid"
+    if cursor_file.exists():
+        os.unlink(cursor_file)
+
+    orig_lstat = os.lstat
+    orig_open = os.open
+
+    def lstat_fake_absent(path: str | os.PathLike) -> os.stat_result:
+        if str(path) == str(cursor_file):
+            raise FileNotFoundError(f"No such file: {path}")
+        return orig_lstat(path)
+
+    def open_fake_created(
+        path: str | os.PathLike, flags: int, mode: int = 0o777
+    ) -> int:
+        if str(path) == str(cursor_file):
+            # Create the file so open succeeds
+            cursor_file.write_bytes(b"late_created_content")
+            os.chmod(cursor_file, 0o600)
+        return orig_open(path, flags, mode)
+
+    monkeypatch.setattr(os, "lstat", lstat_fake_absent)
+    monkeypatch.setattr(os, "open", open_fake_created)
+
+    with pytest.raises(
+        ValueError, match="absent at lstat pre-check but created before open"
+    ):
+        consumer._snapshot_cursor_file(str(cursor_file))
+
+
+def test_57_existence_transitions_four_state_matrix(tmp_path: Path) -> None:
+    """Repair 9 Requirement: Prove four-state existence matrix:
+    - existed -> same: success (PRESENT)
+    - existed -> gone: fail closed
+    - absent -> absent: success (ABSENT)
+    - absent -> created: fail closed
+    """
+    cursor_file = tmp_path / "matrix_cursor.rowid"
+
+    # 1. existed -> same
+    cursor_file.write_bytes(b"matrix_data")
+    os.chmod(cursor_file, 0o600)
+    existed, data = consumer._snapshot_cursor_file(str(cursor_file))
+    assert existed is True
+    assert data == b"matrix_data"
+
+    # 2. absent -> absent
+    os.unlink(cursor_file)
+    existed, data = consumer._snapshot_cursor_file(str(cursor_file))
+    assert existed is False
+    assert data is None

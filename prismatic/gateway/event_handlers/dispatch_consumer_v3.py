@@ -279,6 +279,10 @@ class CursorLock:
                 raise ValueError(
                     f"Cursor lock file owner ({pre_st.st_uid}) does not match effective uid ({os.geteuid()}): {self.lock_file_path}"
                 )
+            if pre_st.st_mode & 0o077 != 0:
+                raise ValueError(
+                    f"Cursor lock file permissions are unsafe ({oct(pre_st.st_mode)}): {self.lock_file_path}"
+                )
 
         target_dir = Path(self.lock_file_path).parent
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -304,14 +308,15 @@ class CursorLock:
                 raise ValueError(
                     f"Opened cursor lock descriptor owner ({st_fd.st_uid}) does not match effective uid ({os.geteuid()}): {self.lock_file_path}"
                 )
+            if st_fd.st_mode & 0o077 != 0:
+                raise ValueError(
+                    f"Opened cursor lock descriptor permissions are unsafe ({oct(st_fd.st_mode)}): {self.lock_file_path}"
+                )
             if pre_st is not None:
                 if st_fd.st_dev != pre_st.st_dev or st_fd.st_ino != pre_st.st_ino:
                     raise ValueError(
                         f"Opened cursor lock descriptor identity mismatch with pre-open object: {self.lock_file_path}"
                     )
-
-            if st_fd.st_mode & 0o077 != 0:
-                os.fchmod(fd, 0o600)
 
             lock_operation = fcntl.LOCK_EX
             if not blocking:
@@ -792,13 +797,15 @@ def _snapshot_cursor_file(canonical_state_path: str) -> tuple[bool, bytes | None
     If file does not exist, prior_existed is False and prior_bytes is None.
     If stat/open/read fails for any reason other than FileNotFoundError, raises the exception.
     """
+    pre_existed = True
     pre_st = None
     try:
         pre_st = os.lstat(canonical_state_path)
     except FileNotFoundError:
+        pre_existed = False
         pre_st = None
 
-    if pre_st is not None:
+    if pre_existed and pre_st is not None:
         if stat.S_ISLNK(pre_st.st_mode):
             raise ValueError(f"Cursor state path is a symlink: {canonical_state_path}")
         if not stat.S_ISREG(pre_st.st_mode):
@@ -818,7 +825,20 @@ def _snapshot_cursor_file(canonical_state_path: str) -> tuple[bool, bytes | None
     try:
         fd = os.open(canonical_state_path, flags)
     except FileNotFoundError:
+        if pre_existed:
+            raise ValueError(
+                f"Cursor state identity race: present at lstat pre-check but deleted before open: {canonical_state_path}"
+            )
         return False, None
+
+    if not pre_existed:
+        try:
+            os.close(fd)
+        except Exception:
+            pass
+        raise ValueError(
+            f"Cursor state identity race: absent at lstat pre-check but created before open: {canonical_state_path}"
+        )
 
     body_exc = None
     close_exc = None
