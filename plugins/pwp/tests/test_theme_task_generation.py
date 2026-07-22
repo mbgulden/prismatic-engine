@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import pytest
+import plugins.pwp.theme_task_generation as theme_tasks
 from prismatic.capability_router import AgentCapability, CapabilityRegistry
 from plugins.pwp.theme_task_generation import (
     DispatchState,
     TaskPlanValidationError,
-    ThemeTaskPlan,
     create_theme_task_plan,
     generate_pwp_theme_task_plans,
 )
@@ -41,6 +41,14 @@ def make_test_registry() -> CapabilityRegistry:
                 current_load=0,
                 priority=30,
             ),
+            AgentCapability(
+                name="test-theme-builder",
+                label="agent:test-theme-builder",
+                capabilities=frozenset({"code", "docs"}),
+                max_concurrent=2,
+                current_load=0,
+                priority=40,
+            ),
         ]
     )
 
@@ -64,8 +72,16 @@ def test_canonical_plan_creation_with_explicit_registry():
     assert plan.route_decision.selected.name == "test-coder"
 
 
-def test_route_issue_resolved_exactly_once_and_reused():
+def test_route_issue_resolved_exactly_once_and_reused(monkeypatch):
     registry = make_test_registry()
+    real_route_issue = theme_tasks.route_issue
+    calls = []
+
+    def counting_route_issue(issue, *, registry=None):
+        calls.append(issue)
+        return real_route_issue(issue, registry=registry)
+
+    monkeypatch.setattr(theme_tasks, "route_issue", counting_route_issue)
     plan = create_theme_task_plan(
         plan_id="pwp-task-002",
         title="Write Documentation",
@@ -78,12 +94,11 @@ def test_route_issue_resolved_exactly_once_and_reused():
         registry=registry,
     )
 
-    # Route decision resolved once during construction
+    assert len(calls) == 1
     decision = plan.route_decision
     assert decision.selected is not None
     assert decision.selected.name == "test-docser"
 
-    # Reuse of decision across owner, rendered description, emitted labels, linear input
     assert plan.owner == "test-docser"
     assert "test-docser" in plan.rendered_description
     assert "agent:test-docser" in plan.emitted_labels
@@ -91,6 +106,7 @@ def test_route_issue_resolved_exactly_once_and_reused():
     linear_input = plan.linear_issue_input()
     assert "agent:test-docser" in linear_input["labels"]
     assert linear_input["title"] == "Write Documentation"
+    assert len(calls) == 1
 
 
 def test_held_plan_emits_no_agent_label():
@@ -111,7 +127,9 @@ def test_held_plan_emits_no_agent_label():
     assert plan.is_dispatchable is False
     assert plan.owner == "test-coder"  # Owner metadata is preserved for information
     assert not any(label.startswith("agent:") for label in plan.emitted_labels)
-    assert not any(label.startswith("agent:") for label in plan.linear_issue_input()["labels"])
+    assert not any(
+        label.startswith("agent:") for label in plan.linear_issue_input()["labels"]
+    )
 
 
 def test_agent_label_emitted_only_when_all_readiness_conditions_met():
@@ -130,7 +148,7 @@ def test_agent_label_emitted_only_when_all_readiness_conditions_met():
         registry=registry,
     )
     assert plan1.is_dispatchable is False
-    assert not any(l.startswith("agent:") for l in plan1.emitted_labels)
+    assert not any(label.startswith("agent:") for label in plan1.emitted_labels)
 
     # Case 2: missing operator_approved
     plan2 = create_theme_task_plan(
@@ -145,7 +163,7 @@ def test_agent_label_emitted_only_when_all_readiness_conditions_met():
         registry=registry,
     )
     assert plan2.is_dispatchable is False
-    assert not any(l.startswith("agent:") for l in plan2.emitted_labels)
+    assert not any(label.startswith("agent:") for label in plan2.emitted_labels)
 
     # Case 3: missing dispatch_ready
     plan3 = create_theme_task_plan(
@@ -160,7 +178,7 @@ def test_agent_label_emitted_only_when_all_readiness_conditions_met():
         registry=registry,
     )
     assert plan3.is_dispatchable is False
-    assert not any(l.startswith("agent:") for l in plan3.emitted_labels)
+    assert not any(label.startswith("agent:") for label in plan3.emitted_labels)
 
     # Case 4: all ready
     plan4 = create_theme_task_plan(
@@ -181,7 +199,7 @@ def test_agent_label_emitted_only_when_all_readiness_conditions_met():
 def test_fail_closed_on_empty_verifiers():
     registry = make_test_registry()
 
-    with pytest.raises(TaskPlanValidationError, match="verifiers list must not be empty"):
+    with pytest.raises(TaskPlanValidationError, match="verifiers must not be empty"):
         create_theme_task_plan(
             plan_id="task-err-1",
             title="Title",
@@ -190,7 +208,7 @@ def test_fail_closed_on_empty_verifiers():
             registry=registry,
         )
 
-    with pytest.raises(TaskPlanValidationError, match="verifiers list must not be empty"):
+    with pytest.raises(TaskPlanValidationError, match="verifiers must not be empty"):
         create_theme_task_plan(
             plan_id="task-err-2",
             title="Title",
@@ -227,7 +245,9 @@ def test_fail_closed_on_manually_supplied_agent_labels():
 def test_fail_closed_on_malformed_nested_values():
     registry = make_test_registry()
 
-    with pytest.raises(TaskPlanValidationError, match="verifiers\\[0\\] must be a string"):
+    with pytest.raises(
+        TaskPlanValidationError, match="verifiers\\[0\\] must be a string"
+    ):
         create_theme_task_plan(
             plan_id="task-err-5",
             title="Title",
@@ -245,6 +265,53 @@ def test_fail_closed_on_malformed_nested_values():
             priority=10,  # Invalid priority out of bounds
             registry=registry,
         )
+
+
+def test_fail_closed_on_non_boolean_dispatch_and_gpu_values():
+    registry = make_test_registry()
+
+    with pytest.raises(
+        TaskPlanValidationError, match="build_initiated must be a boolean"
+    ):
+        DispatchState(build_initiated="yes")  # type: ignore[arg-type]
+
+    with pytest.raises(TaskPlanValidationError, match="priority must be an integer"):
+        create_theme_task_plan(
+            plan_id="task-bool-priority",
+            title="Title",
+            description="Desc",
+            verifiers=["v1"],
+            priority=True,  # type: ignore[arg-type]
+            registry=registry,
+        )
+
+    with pytest.raises(TaskPlanValidationError, match="requires_gpu must be a boolean"):
+        create_theme_task_plan(
+            plan_id="task-bad-gpu",
+            title="Title",
+            description="Desc",
+            verifiers=["v1"],
+            requires_gpu=1,  # type: ignore[arg-type]
+            registry=registry,
+        )
+
+
+def test_unordered_inputs_are_normalized_deterministically():
+    plan = create_theme_task_plan(
+        plan_id="task-deterministic",
+        title="Title",
+        description="Desc",
+        verifiers={"v2", "v1"},
+        capability_requirements={"DOCS", "code"},
+        dependency_ids={"dep-b", "dep-a"},
+        raw_labels={"z-label", "a-label", "z-label"},
+        registry=make_test_registry(),
+    )
+
+    assert plan.verifiers == ("v1", "v2")
+    assert plan.dependency_ids == ("dep-a", "dep-b")
+    assert plan.base_labels == ("a-label", "z-label")
+    assert plan.capability_requirements == frozenset({"code", "docs"})
 
 
 def test_fail_closed_on_no_capacity_or_unresolved_routing():
@@ -276,7 +343,7 @@ def test_fail_closed_on_no_capacity_or_unresolved_routing():
     assert plan.route_decision.selected is None
     assert plan.owner is None
     assert plan.is_dispatchable is False
-    assert not any(l.startswith("agent:") for l in plan.emitted_labels)
+    assert not any(label.startswith("agent:") for label in plan.emitted_labels)
 
 
 def test_linear_issue_input_adapter():
@@ -308,6 +375,15 @@ def test_linear_issue_input_adapter():
     assert "Contract A" in linear_adapter["description"]
 
 
+def test_generate_pwp_theme_task_plans_rejects_unknown_phase():
+    with pytest.raises(TaskPlanValidationError, match="unknown theme phase"):
+        generate_pwp_theme_task_plans(
+            "trust-light",
+            phases=["unknown-lane"],
+            registry=make_test_registry(),
+        )
+
+
 def test_generate_pwp_theme_task_plans_batch():
     registry = make_test_registry()
     plans = generate_pwp_theme_task_plans(
@@ -322,5 +398,6 @@ def test_generate_pwp_theme_task_plans_batch():
     assert len(plans) == 2
     assert plans[0].plan_id == "pwp-theme-trust-light-tokens"
     assert plans[1].plan_id == "pwp-theme-trust-light-modules"
-    assert plans[0].owner == "test-coder"
+    assert plans[0].owner == "test-theme-builder"
+    assert plans[1].owner == "test-coder"
     assert plans[0].is_dispatchable is True

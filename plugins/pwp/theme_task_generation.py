@@ -6,15 +6,10 @@ and fail-closed validation semantics for Prismatic Web Plugin theme generation.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any, Iterable, Sequence
 
-from prismatic.capability_router import (
-    CapabilityRegistry,
-    RouteDecision,
-    default_capability_registry,
-    route_issue,
-)
+from prismatic.capability_router import CapabilityRegistry, RouteDecision, route_issue
 
 
 class TaskPlanValidationError(ValueError):
@@ -29,6 +24,16 @@ class DispatchState:
     operator_approved: bool = False
     dispatch_ready: bool = False
     held: bool = False
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "build_initiated",
+            "operator_approved",
+            "dispatch_ready",
+            "held",
+        ):
+            if type(getattr(self, field_name)) is not bool:
+                raise TaskPlanValidationError(f"{field_name} must be a boolean")
 
 
 @dataclass(frozen=True)
@@ -84,7 +89,11 @@ class ThemeTaskPlan:
         Emits exactly one agent:<name> label if all dispatch criteria are met and routing resolved a single agent.
         """
         labels: list[str] = list(self.base_labels)
-        if self.is_dispatchable and self.route_decision and self.route_decision.selected:
+        if (
+            self.is_dispatchable
+            and self.route_decision
+            and self.route_decision.selected
+        ):
             selected_agent = self.route_decision.selected
             label_name = selected_agent.label
             if not label_name.startswith("agent:"):
@@ -147,16 +156,20 @@ def _validate_string_sequence(
             return ()
         raise TaskPlanValidationError(f"{field_name} must not be None")
     if not isinstance(items, (list, tuple, set, frozenset)):
-        raise TaskPlanValidationError(f"{field_name} must be a sequence or set of strings")
+        raise TaskPlanValidationError(
+            f"{field_name} must be a sequence or set of strings"
+        )
     result: list[str] = []
     for idx, item in enumerate(items):
         if not isinstance(item, str):
             raise TaskPlanValidationError(
                 f"{field_name}[{idx}] must be a string, got {type(item).__name__}"
             )
-        s_item = item.strip()
-        if s_item:
-            result.append(s_item)
+        stripped = item.strip()
+        if stripped and stripped not in result:
+            result.append(stripped)
+    if isinstance(items, (set, frozenset)):
+        result.sort()
     if not allow_empty and not result:
         raise TaskPlanValidationError(f"{field_name} must not be empty")
     return tuple(result)
@@ -166,7 +179,7 @@ def create_theme_task_plan(
     plan_id: str,
     title: str,
     description: str,
-    verifiers: Sequence[str],
+    verifiers: Iterable[str],
     *,
     priority: int = 3,
     capability_requirements: Iterable[str] = (),
@@ -186,14 +199,25 @@ def create_theme_task_plan(
         raise TaskPlanValidationError("title must be a non-empty string")
     if not isinstance(description, str):
         raise TaskPlanValidationError("description must be a string")
-    if not isinstance(priority, int) or not (1 <= priority <= 5):
+    if type(priority) is not int or not (1 <= priority <= 5):
         raise TaskPlanValidationError("priority must be an integer between 1 and 5")
+    if type(requires_gpu) is not bool:
+        raise TaskPlanValidationError("requires_gpu must be a boolean")
 
-    clean_verifiers = _validate_string_sequence(verifiers, "verifiers", allow_empty=False)
+    clean_verifiers = _validate_string_sequence(
+        verifiers, "verifiers", allow_empty=False
+    )
     clean_contracts = _validate_string_sequence(contracts, "contracts")
     clean_files = _validate_string_sequence(files, "files")
     clean_deps = _validate_string_sequence(dependency_ids, "dependency_ids")
-    clean_caps = _validate_string_sequence(capability_requirements, "capability_requirements")
+    clean_caps = tuple(
+        dict.fromkeys(
+            capability.lower()
+            for capability in _validate_string_sequence(
+                capability_requirements, "capability_requirements"
+            )
+        )
+    )
 
     if parent_id is not None and not isinstance(parent_id, str):
         raise TaskPlanValidationError("parent_id must be a string or None")
@@ -203,22 +227,12 @@ def create_theme_task_plan(
     elif not isinstance(dispatch_state, DispatchState):
         raise TaskPlanValidationError("dispatch_state must be a DispatchState instance")
 
-    clean_labels: list[str] = []
-    if raw_labels is not None:
-        if not isinstance(raw_labels, (list, tuple, set, frozenset)):
-            raise TaskPlanValidationError("raw_labels must be a sequence or set of strings")
-        for idx, label in enumerate(raw_labels):
-            if not isinstance(label, str):
-                raise TaskPlanValidationError(
-                    f"raw_labels[{idx}] must be a string, got {type(label).__name__}"
-                )
-            s_label = label.strip()
-            if s_label.lower().startswith("agent:"):
-                raise TaskPlanValidationError(
-                    f"manually supplied agent label {s_label!r} is not allowed"
-                )
-            if s_label:
-                clean_labels.append(s_label)
+    clean_labels = list(_validate_string_sequence(raw_labels, "raw_labels"))
+    for label in clean_labels:
+        if label.lower().startswith("agent:"):
+            raise TaskPlanValidationError(
+                f"manually supplied agent label {label!r} is not allowed"
+            )
 
     # Prepare labels for capability router
     routing_labels = list(clean_labels)
@@ -275,8 +289,14 @@ def generate_pwp_theme_task_plans(
             "title": f"[PWP] Design Tokens Definition for {clean_name}",
             "description": f"Define and compile W3C-compliant design tokens for theme {clean_name}.",
             "capability_requirements": ["code", "docs"],
-            "verifiers": ["npm run check:theme", "pytest plugins/pwp/tests/test_theme_diff.py"],
-            "contracts": ["W3C design token spec", "PWP CSS custom property namespace --pwp-*"],
+            "verifiers": [
+                "npm run check:theme",
+                "pytest plugins/pwp/tests/test_theme_diff.py",
+            ],
+            "contracts": [
+                "W3C design token spec",
+                "PWP CSS custom property namespace --pwp-*",
+            ],
             "files": [
                 f"plugins/pwp/themes/{clean_name}/tokens.json",
                 f"plugins/pwp/themes/{clean_name}/theme.css",
@@ -287,7 +307,10 @@ def generate_pwp_theme_task_plans(
             "description": f"Implement typed Astro components and module schemas for theme {clean_name}.",
             "capability_requirements": ["code"],
             "verifiers": ["npm run build", "astro check"],
-            "contracts": ["Astro component slots interface", "Module JSON schema validation"],
+            "contracts": [
+                "Astro component slots interface",
+                "Module JSON schema validation",
+            ],
             "files": [f"plugins/pwp/themes/{clean_name}/src/components/"],
         },
         "emdash": {
@@ -303,7 +326,10 @@ def generate_pwp_theme_task_plans(
             "description": f"Execute Playwright visual regression and axe-core accessibility checks for theme {clean_name}.",
             "capability_requirements": ["review", "test"],
             "verifiers": ["npm run test:a11y", "npm run test:visual"],
-            "contracts": ["WCAG 2.2 AA accessibility standard", "Lighthouse performance budget"],
+            "contracts": [
+                "WCAG 2.2 AA accessibility standard",
+                "Lighthouse performance budget",
+            ],
             "files": [f"plugins/pwp/themes/{clean_name}/reports/qa.json"],
         },
     }

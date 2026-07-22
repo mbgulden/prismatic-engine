@@ -63,7 +63,8 @@ The plan constructor `create_theme_task_plan` enforces fail-closed validation to
 |---|---|
 | **Empty Verifiers** | Raises `TaskPlanValidationError`. Task plans must specify at least one verification command. |
 | **Manually Supplied `agent:*` Labels** | Raises `TaskPlanValidationError`. Manual agent assignment labels in `raw_labels` are prohibited; agent assignment must only occur via the capability router. |
-| **Malformed Nested Values** | Raises `TaskPlanValidationError` if inputs (priority, verifiers, contracts, files, labels) have invalid types or bounds. |
+| **Malformed Nested Values** | Raises `TaskPlanValidationError` if inputs (priority, dispatch booleans, GPU requirement, verifiers, contracts, files, labels) have invalid types or bounds. |
+| **Unordered Inputs** | Valid string sets/frozensets are sorted and duplicate strings are removed so plans remain deterministic. Capability names are normalized to lowercase before routing and storage. |
 | **No Capacity / Unresolved Routing** | `route_decision.selected` is `None`. The plan emits no `agent:*` label and `is_dispatchable` evaluates to `False`. |
 | **Unknown Lanes** | If requested capabilities cannot be matched to any available agent lane in the `CapabilityRegistry`, routing fails to resolve and no dispatch label is emitted. |
 
