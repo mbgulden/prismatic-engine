@@ -17,6 +17,7 @@ from prismatic.gateway.event_handlers import dispatch_consumer_v3 as consumer
 
 
 def _setup_db_and_events(tmp_path: Path, event_count: int = 5) -> tuple[Path, str]:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     db_path = tmp_path / "event_log.sqlite"
     conn = sqlite3.connect(db_path)
     try:
@@ -296,9 +297,19 @@ def test_10_concurrent_schema_initialization_yields_one_valid_generation(
 def test_11_atomic_cursor_write_failure_cleanup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    db_path, gen = _setup_db_and_events(tmp_path, 5)
+    canon_db = consumer.get_canonical_path(str(db_path))
     state_file = tmp_path / "cursor.rowid"
     state_file.write_text("old_content")
     os.chmod(state_file, 0o600)
+
+    valid_state = {
+        "schema_version": 1,
+        "last_rowid": 1,
+        "db_path": canon_db,
+        "db_generation": gen,
+        "updated_at": "2026-07-22T20:00:00Z",
+    }
 
     def failing_replace(src: str, dst: str) -> None:
         raise OSError("Injected replace error")
@@ -306,7 +317,7 @@ def test_11_atomic_cursor_write_failure_cleanup(
     monkeypatch.setattr(os, "replace", failing_replace)
 
     with pytest.raises(OSError, match="Injected replace error"):
-        consumer.write_cursor_state(str(state_file), {"test": 1})
+        consumer.write_cursor_state(str(state_file), valid_state)
 
     assert state_file.read_text() == "old_content"
     temp_files = list(tmp_path.glob(".dispatch_cursor_tmp_*"))
@@ -441,5 +452,254 @@ def test_17_module_import_creates_no_files_or_state(
 
 
 def test_18_existing_idempotency_semantics_pass() -> None:
-    # Explicitly validated via running test_dispatch_consumer_v3_idempotency.py
     pass
+
+
+# -----------------------------------------------------------------------------
+# Repair Regressions (Repair 1)
+# -----------------------------------------------------------------------------
+
+
+def test_19_runtime_replacement_spawn_repro_prevention(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression for Finding 1: Atomically replacing DB path between polls must fail closed with zero side effects."""
+    db_path_a, gen_a = _setup_db_and_events(tmp_path, 5)
+    state_file = tmp_path / "dispatch_consumer.rowid"
+    _write_valid_state(state_file, db_path_a, gen_a, 3)
+
+    db_path_b = tmp_path / "replacement_event_log.sqlite"
+    conn_b = sqlite3.connect(db_path_b)
+    try:
+        gen_b = consumer.ensure_db_generation(conn_b)
+        assert gen_b != gen_a
+        consumer.ensure_schema(conn_b)
+        payload = json.dumps({"type": "Issue", "data": {"identifier": "TEST-SWAP"}})
+        conn_b.execute(
+            "INSERT INTO events (rowid, dedup_key, topic, payload_json, ts, processed) VALUES (1, ?, ?, ?, ?, 0)",
+            ("key-swap-1", "update", payload, time.time()),
+        )
+        conn_b.commit()
+    finally:
+        conn_b.close()
+
+    monkeypatch.setattr(consumer, "DB_PATH", str(db_path_a))
+    monkeypatch.setattr(consumer, "STATE_FILE", str(state_file))
+
+    linear_calls: list[str] = []
+    spawn_calls: list[str] = []
+    monkeypatch.setattr(
+        consumer, "fetch_issue", lambda issue_id: linear_calls.append(issue_id)
+    )
+    monkeypatch.setattr(
+        consumer,
+        "dispatch_to_supervisor",
+        lambda issue_id: spawn_calls.append(issue_id),
+    )
+
+    is_ok, msg, state = consumer.verify_startup_gate(str(db_path_a), str(state_file))
+    assert is_ok is True
+
+    os.replace(db_path_b, db_path_a)
+
+    with pytest.raises(RuntimeError, match="Database generation mismatch during event fetch"):
+        consumer.fetch_new_events(last_rowid=0, expected_generation=gen_a, db_path=str(db_path_a))
+
+    assert len(linear_calls) == 0
+    assert len(spawn_calls) == 0
+    st, status_code, _ = consumer.read_cursor_state(str(state_file))
+    assert status_code == "VALID"
+    assert st["last_rowid"] == 3
+
+
+def test_20_inspect_and_dry_run_do_not_mutate_metadata_missing_db(
+    tmp_path: Path,
+) -> None:
+    """Regression for Finding 2: inspect_cursor and repair_dry_run must open read-only and mutate nothing on metadata-missing DB."""
+    db_path = tmp_path / "metadata_missing.sqlite"
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            """
+            CREATE TABLE events (
+                rowid INTEGER PRIMARY KEY AUTOINCREMENT,
+                dedup_key TEXT UNIQUE,
+                topic TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                ts REAL NOT NULL,
+                processed INTEGER DEFAULT 0
+            )
+            """
+        )
+        for i in range(1, 4):
+            conn.execute(
+                "INSERT INTO events (dedup_key, topic, payload_json, ts) VALUES (?, 'update', '{}', 1.0)",
+                (f"k{i}",),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    state_file = tmp_path / "cursor.rowid"
+
+    hash_before = consumer._sha256_file(str(db_path))
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    tables_before = [
+        r[0]
+        for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    ]
+    conn.close()
+
+    res = consumer.inspect_cursor(str(db_path), str(state_file))
+    assert res["db_exists"] is True
+    assert res["db_generation"] is None
+    assert res["gate_ready"] is False
+    assert res["marker"] == "PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED"
+
+    hash_after_inspect = consumer._sha256_file(str(db_path))
+    assert hash_after_inspect == hash_before
+
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    tables_after_inspect = [
+        r[0]
+        for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    ]
+    conn.close()
+    assert tables_after_inspect == tables_before
+
+    with pytest.raises(
+        RuntimeError, match="Database missing or generation unavailable"
+    ):
+        consumer.repair_dry_run(str(db_path), str(state_file))
+
+    hash_after_dryrun = consumer._sha256_file(str(db_path))
+    assert hash_after_dryrun == hash_before
+
+
+def test_21_dry_run_determinism_and_apply_destination_enforcement(
+    tmp_path: Path,
+) -> None:
+    """Regression for Finding 3: Dry-run must be deterministic and apply must enforce proposed backup destinations."""
+    db_path, gen = _setup_db_and_events(tmp_path, 5)
+    state_file = tmp_path / "dispatch_consumer.rowid"
+    state_file.write_text("3\n")
+    os.chmod(state_file, 0o600)
+
+    plan1 = consumer.repair_dry_run(str(db_path), str(state_file))
+    plan2 = consumer.repair_dry_run(str(db_path), str(state_file))
+
+    assert plan1 == plan2, "Consecutive dry-run plans must be identical"
+    assert "plan_id" in plan1
+
+    receipt = consumer.repair_apply(
+        str(db_path), str(state_file), confirmation_token=consumer.CONFIRMATION_TOKEN
+    )
+
+    assert receipt["db_backup_path"] == plan1["proposed_db_backup_path"]
+    assert receipt["cursor_backup_path"] == plan1["proposed_cursor_backup_path"]
+    assert receipt["plan_id"] == plan1["plan_id"]
+    assert receipt["marker"] == "PRISMATIC_DISPATCH_CURSOR_GENERATION_SOURCE_OK"
+
+    # Collision check: if proposed backup destination already exists on disk, repair_apply must raise FileExistsError
+    db_path_col, gen_col = _setup_db_and_events(tmp_path / "col", 5)
+    state_file_col = tmp_path / "col" / "dispatch_consumer.rowid"
+    state_file_col.write_text("3\n")
+    os.chmod(state_file_col, 0o600)
+    col_plan = consumer.repair_dry_run(str(db_path_col), str(state_file_col))
+    col_backup = Path(col_plan["proposed_db_backup_path"])
+    col_backup.write_text("pre-existing collision")
+
+    with pytest.raises(FileExistsError, match="collision"):
+        consumer.repair_apply(
+            str(db_path_col), str(state_file_col), confirmation_token=consumer.CONFIRMATION_TOKEN
+        )
+
+    # Source drift check
+    db_path_2, gen_2 = _setup_db_and_events(tmp_path / "sub", 5)
+    state_file_2 = tmp_path / "sub" / "dispatch_consumer.rowid"
+    state_file_2.write_text("3\n")
+    os.chmod(state_file_2, 0o600)
+
+    drift_plan = consumer.repair_dry_run(str(db_path_2), str(state_file_2))
+    # Mutate DB source file after dry-run plan creation
+    conn = sqlite3.connect(db_path_2)
+    conn.execute(
+        "INSERT INTO events (dedup_key, topic, payload_json, ts) VALUES ('drift', 't', '{}', 1)"
+    )
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(RuntimeError, match="Source drift detected"):
+        consumer.repair_apply(
+            str(db_path_2),
+            str(state_file_2),
+            confirmation_token=consumer.CONFIRMATION_TOKEN,
+            plan=drift_plan,
+        )
+
+
+def test_22_strict_target_rowid_validation_and_explicit_requirement(
+    tmp_path: Path,
+) -> None:
+    """Regression for Finding 4: Target rowid must be strict built-in int in range, and explicit target required when invalid/ahead/missing."""
+    db_path, gen = _setup_db_and_events(tmp_path, 5)
+
+    for bad_target in [-1, True, False, 3.14, "3", 10]:
+        with pytest.raises((ValueError, TypeError)):
+            consumer.repair_dry_run(
+                str(db_path), str(tmp_path / "missing.rowid"), target_rowid=bad_target
+            )
+
+    state_ahead = tmp_path / "ahead.rowid"
+    _write_valid_state(state_ahead, db_path, gen, 10)
+    with pytest.raises(ValueError, match="Explicit target_rowid required"):
+        consumer.repair_dry_run(str(db_path), str(state_ahead))
+
+    with pytest.raises(ValueError, match="Explicit target_rowid required"):
+        consumer.repair_dry_run(str(db_path), str(tmp_path / "nonexistent.rowid"))
+
+    plan = consumer.repair_dry_run(
+        str(db_path), str(tmp_path / "nonexistent.rowid"), target_rowid=3
+    )
+    assert plan["proposed_cursor_state"]["last_rowid"] == 3
+
+
+def test_23_strict_uuid_iso_timestamp_and_security_bounds(tmp_path: Path) -> None:
+    """Regression for Finding 5: UUID format, ISO timestamp, symlink/permissions, backup fsync, and no sensitive leaks."""
+    assert consumer.validate_generation_format(
+        "06d6bcc0-b0a5-01eb-4f94-349c24ed99f5"
+    )
+    assert not consumer.validate_generation_format(
+        "06D6BCC0-B0A5-01EB-4F94-349C24ED99F5"
+    )
+    assert not consumer.validate_generation_format("not-a-uuid")
+
+    assert consumer.validate_iso_timestamp("2026-07-22T20:00:00Z")
+    assert consumer.validate_iso_timestamp("2026-07-22T20:00:00+00:00")
+    assert not consumer.validate_iso_timestamp("2026-07-22T20:00:00")
+
+    f_real = tmp_path / "real.rowid"
+    f_real.write_text("content")
+    os.chmod(f_real, 0o600)
+    f_link = tmp_path / "link.rowid"
+    os.symlink(f_real, f_link)
+    db_path, gen = _setup_db_and_events(tmp_path, 5)
+    valid_state = {
+        "schema_version": 1,
+        "last_rowid": 1,
+        "db_path": consumer.get_canonical_path(str(db_path)),
+        "db_generation": gen,
+        "updated_at": "2026-07-22T20:00:00Z",
+    }
+    with pytest.raises(ValueError, match="symlink"):
+        consumer.write_cursor_state(str(f_link), valid_state)
+
+    f_unsafe = tmp_path / "unsafe.rowid"
+    f_unsafe.write_text("content")
+    os.chmod(f_unsafe, 0o644)
+    with pytest.raises(ValueError, match="unsafe file permissions"):
+        consumer.write_cursor_state(str(f_unsafe), valid_state)
