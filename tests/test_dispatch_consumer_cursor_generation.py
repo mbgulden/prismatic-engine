@@ -2116,3 +2116,30 @@ def test_46_post_acquire_snapshot_failure_protection(
         "Injected snapshot read error" in str(e) for e in exc_info.value.exceptions
     )
     assert state_file.read_bytes() == orig_bytes
+
+
+def test_47_safe_rollback_does_not_block_when_original_lock_remains_held(
+    tmp_path: Path,
+) -> None:
+    """Uncertain lock ownership must fail closed without blocking recovery."""
+    state_file = tmp_path / "cursor.rowid"
+    state_file.write_bytes(b"operation-output")
+    os.chmod(state_file, 0o600)
+
+    held_lock = consumer.CursorLock(str(state_file))
+    held_lock.acquire()
+    try:
+        started = time.monotonic()
+        restored = consumer._safe_rollback_cursor(
+            consumer.get_canonical_path(str(state_file)),
+            True,
+            b"prior-state",
+            b"operation-output",
+        )
+        elapsed = time.monotonic() - started
+    finally:
+        held_lock.release()
+
+    assert restored is False
+    assert elapsed < 1.0
+    assert state_file.read_bytes() == b"operation-output"

@@ -246,7 +246,7 @@ class CursorLock:
         self.lock_file_path = self.state_file_path + ".lock"
         self._fd = None
 
-    def acquire(self) -> CursorLock:
+    def acquire(self, *, blocking: bool = True) -> CursorLock:
         if self._fd is not None:
             return self
         if os.path.islink(self.lock_file_path):
@@ -259,7 +259,10 @@ class CursorLock:
             st = os.fstat(self._fd)
             if st.st_mode & 0o077 != 0:
                 os.fchmod(self._fd, 0o600)
-            fcntl.flock(self._fd, fcntl.LOCK_EX)
+            lock_operation = fcntl.LOCK_EX
+            if not blocking:
+                lock_operation |= fcntl.LOCK_NB
+            fcntl.flock(self._fd, lock_operation)
         except Exception:
             if self._fd is not None:
                 try:
@@ -748,15 +751,21 @@ def _safe_rollback_cursor(
 ) -> bool:
     """Reacquire CursorLock and attempt safe reserialized rollback.
 
-    Returns True if prior state was safely restored (contender did not overwrite).
-    Returns False if a contender wrote a new state or re-acquisition/comparison failed.
+    Returns True only if prior state was safely restored and the rollback lock
+    was released cleanly. Returns False if a contender wrote a new state, lock
+    ownership remains uncertain, or comparison/restoration/release failed.
     """
     try:
         rollback_lock = CursorLock(canonical_state_path)
-        rollback_lock.acquire()
+        # Lock ownership is uncertain after a release error. Never block here:
+        # a close-before-effect failure can leave the original lock held, and a
+        # blocking reacquire would deadlock the recovery path indefinitely.
+        rollback_lock.acquire(blocking=False)
     except Exception:
         return False
 
+    rollback_result = False
+    release_failed = False
     try:
         curr_existed = os.path.exists(canonical_state_path) and not os.path.islink(
             canonical_state_path
@@ -776,16 +785,18 @@ def _safe_rollback_cursor(
                 _restore_or_remove_cursor(
                     canonical_state_path, prior_existed, prior_bytes
                 )
-                return True
+                rollback_result = True
             except Exception:
-                return False
+                rollback_result = False
         else:
-            return False
+            rollback_result = False
     finally:
         try:
             rollback_lock.release()
         except Exception:
-            pass
+            release_failed = True
+
+    return rollback_result and not release_failed
 
 
 def write_cursor_state(state_file_path: str, state_data: dict) -> None:
