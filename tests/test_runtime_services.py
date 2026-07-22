@@ -121,6 +121,29 @@ def test_supervisor_declares_dedicated_raw_output_queue_only_as_state() -> None:
     assert all(queue_path not in value for value in supervisor["environment_files"])
 
 
+def test_supervisor_declares_completed_work_paths_only_as_state() -> None:
+    document = manifest()
+    supervisor = component(document, "supervisor")
+    completed_work_paths = (
+        HOME + "/.prismatic/state/agy-completed-work/agy_completed_work.db",
+        HOME + "/.prismatic/state/agy-completed-work/evidence",
+    )
+
+    for state_path in completed_work_paths:
+        assert state_path in supervisor["state_paths"]
+        for field in (
+            "executable_path",
+            "module_path",
+            "source_path",
+            "working_directory",
+            "release_path_template",
+            "virtualenv_path_template",
+        ):
+            assert state_path not in str(supervisor[field])
+        assert all(state_path not in value for value in supervisor["import_paths"])
+        assert all(state_path not in value for value in supervisor["environment_files"])
+
+
 def test_release_template_required_for_engine_code() -> None:
     document = manifest()
     component(document)["release_path_template"] = (

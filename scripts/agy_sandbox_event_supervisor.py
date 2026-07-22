@@ -148,6 +148,11 @@ def semantic_completion(result_path: Path, *, completion_signal: bool) -> dict:
 
 
 _AGY_PACKET_NAME = "AGY_RESULT_PACKET.json"
+_AGY_COMPLETED_WORK_ROOT = (
+    Path(pwd.getpwuid(os.getuid()).pw_dir) / ".prismatic" / "state" / "agy-completed-work"
+)
+_AGY_COMPLETED_WORK_DB = _AGY_COMPLETED_WORK_ROOT / "agy_completed_work.db"
+_AGY_COMPLETED_WORK_EVIDENCE_DIR = _AGY_COMPLETED_WORK_ROOT / "evidence"
 
 
 def remove_stale_agy_result_outputs(sandbox: Path) -> tuple[str, ...]:
@@ -184,6 +189,16 @@ def agy_raw_output_db_path() -> Path:
     )
 
 
+def agy_completed_work_db_path() -> Path:
+    """Return the dedicated supervisor-owned completed-work ledger path."""
+    return _AGY_COMPLETED_WORK_DB
+
+
+def agy_completed_work_evidence_dir() -> Path:
+    """Return the dedicated supervisor-owned completed-work evidence path."""
+    return _AGY_COMPLETED_WORK_EVIDENCE_DIR
+
+
 def _bounded_nofollow_read(path: Path, byte_limit: int) -> tuple[bytes, bool]:
     """Read at most limit+1 bytes from the opened regular-file inode."""
     fd = os.open(
@@ -214,6 +229,8 @@ def capture_and_validate_agy_result(
     result_path: Path,
     packet_path: Path,
     raw_output_db: Path,
+    completed_work_db: Path,
+    completed_work_evidence_dir: Path,
 ) -> dict:
     """Durably capture selected AGY output before strict packet validation."""
     path_type = type(Path())
@@ -225,6 +242,8 @@ def capture_and_validate_agy_result(
         ("result_path", result_path),
         ("packet_path", packet_path),
         ("raw_output_db", raw_output_db),
+        ("completed_work_db", completed_work_db),
+        ("completed_work_evidence_dir", completed_work_evidence_dir),
     ):
         if type(value) is not path_type:
             raise TypeError(f"{name} must be an exact platform Path")
@@ -233,6 +252,9 @@ def capture_and_validate_agy_result(
     if (
         not result_path.is_absolute()
         or not packet_path.is_absolute()
+        or not raw_output_db.is_absolute()
+        or not completed_work_db.is_absolute()
+        or not completed_work_evidence_dir.is_absolute()
         or packet_path.name != _AGY_PACKET_NAME
         or packet_path.parent != result_path.parent
         or ".." in packet_path.parts
@@ -356,11 +378,62 @@ def capture_and_validate_agy_result(
             "boundary_state": "canonical_invalid",
             "boundary_reason": "active_issue_identity_mismatch",
         }
+
+    completed_row = None
+    completed_row_dict = None
+    try:
+        from prismatic.agy_completed_work import (
+            AGY_COMPLETED_WORK_INGESTION_MARKER,
+            AGY_COMPLETED_WORK_INTEGRATION_GATE_MARKER,
+            AgyCompletedWorkStore,
+        )
+
+        completed_row = AgyCompletedWorkStore(
+            completed_work_db,
+            evidence_dir=completed_work_evidence_dir,
+        ).ingest(packet)
+        completed_row_dict = completed_row.as_dict()
+        completed_work_valid = bool(
+            type(completed_row.id) is str
+            and completed_row.id.strip()
+            and completed_row.ingestion_marker
+            == AGY_COMPLETED_WORK_INGESTION_MARKER
+            and type(completed_row_dict) is dict
+            and completed_row_dict.get("integration_marker")
+            == AGY_COMPLETED_WORK_INTEGRATION_GATE_MARKER
+        )
+    except Exception:
+        completed_work_valid = False
+
+    if not completed_work_valid:
+        return {
+            **common,
+            "boundary_state": "completed_work_persist_failed",
+            "boundary_reason": "completed_work_ledger_persist_failed",
+            "packet_issue_identifier": packet["issue_identifier"],
+            "completed_work_persisted": False,
+        }
+    assert completed_row is not None
+    assert type(completed_row_dict) is dict
     return {
         **common,
         "boundary_state": "canonical_valid",
         "boundary_reason": "canonical_packet_accepted",
         "packet_issue_identifier": packet["issue_identifier"],
+        "completed_work_persisted": True,
+        "completed_work_id": completed_row.id,
+        "completed_work_classification": completed_row_dict.get("classification"),
+        "completed_work_integration_classification": completed_row_dict.get(
+            "integration_classification"
+        ),
+        "completed_work_ingestion_marker": completed_row.ingestion_marker,
+        "completed_work_integration_marker": completed_row_dict[
+            "integration_marker"
+        ],
+        "completed_work_eligible_for_merge": completed_row_dict.get(
+            "eligible_for_merge"
+        )
+        is True,
         "completion_eligible": True,
     }
 
@@ -2455,6 +2528,8 @@ class EventDrivenSupervisor:
             or result.get("has_backend_timeout")
             or result.get("has_partial_result")
             or result.get("has_start_timeout")
+            or result.get("result_boundary", {}).get("completed_work_persisted")
+            is False
         )
 
     def record_result_for_circuit(self, issue_id: str, result: dict) -> None:
@@ -2743,6 +2818,8 @@ class EventDrivenSupervisor:
                     result_path=result_path,
                     packet_path=sandbox / _AGY_PACKET_NAME,
                     raw_output_db=agy_raw_output_db_path(),
+                    completed_work_db=agy_completed_work_db_path(),
+                    completed_work_evidence_dir=agy_completed_work_evidence_dir(),
                 )
                 completion_eligible = bool(
                     result.get("has_done")
@@ -2750,6 +2827,7 @@ class EventDrivenSupervisor:
                     and boundary["raw_capture_succeeded"]
                     and boundary["boundary_state"] == "canonical_valid"
                     and boundary.get("packet_issue_identifier") == issue_id
+                    and boundary.get("completed_work_persisted") is True
                 )
                 result["result_boundary"] = boundary
                 result["completion_eligible"] = completion_eligible
@@ -2801,6 +2879,25 @@ class EventDrivenSupervisor:
                         "canonical_packet_id": boundary.get("canonical_packet_id"),
                         "queue_rejection_reason": boundary.get("queue_rejection_reason"),
                         "queue_repair_hint": boundary.get("queue_repair_hint"),
+                        "completed_work_persisted": boundary.get(
+                            "completed_work_persisted", False
+                        ),
+                        "completed_work_id": boundary.get("completed_work_id"),
+                        "completed_work_classification": boundary.get(
+                            "completed_work_classification"
+                        ),
+                        "completed_work_integration_classification": boundary.get(
+                            "completed_work_integration_classification"
+                        ),
+                        "completed_work_ingestion_marker": boundary.get(
+                            "completed_work_ingestion_marker"
+                        ),
+                        "completed_work_integration_marker": boundary.get(
+                            "completed_work_integration_marker"
+                        ),
+                        "completed_work_eligible_for_merge": boundary.get(
+                            "completed_work_eligible_for_merge", False
+                        ),
                         "completion_eligible": completion_eligible,
                         "cost_usd_estimated": cost_usd_estimated,
                         "attempt": attempt
@@ -2903,11 +3000,17 @@ class EventDrivenSupervisor:
                 print(f"  [worker-{worker_id}] backoff: {backoff:.1f}s before next task",
                       flush=True)
                 if self.shutdown_event.wait(timeout=backoff):
-                    self.mark_completed(issue_id)
+                    if completion_eligible:
+                        self.mark_completed(issue_id)
                     break
             finally:
-                allow_requeue = bool('result' in locals() and isinstance(result, dict) and result.get("has_missing_result"))
-                if not allow_requeue:
+                worker_result = locals().get("result")
+                completion_eligible = bool(
+                    isinstance(worker_result, dict)
+                    and worker_result.get("completion_eligible") is True
+                )
+                allow_requeue = not completion_eligible
+                if completion_eligible:
                     self.mark_completed(issue_id)
                 self.scheduler.finish(task, allow_requeue=allow_requeue)
                 with self.active_lock:

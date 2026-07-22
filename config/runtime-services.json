@@ -92,6 +92,8 @@
       "state_paths": [
         "/home/ubuntu/.prismatic/bus/event_log.sqlite",
         "/home/ubuntu/.prismatic/state/agy-result-boundary/agent_raw_output_queue.sqlite3",
+        "/home/ubuntu/.prismatic/state/agy-completed-work/agy_completed_work.db",
+        "/home/ubuntu/.prismatic/state/agy-completed-work/evidence",
         "/archive/agy_sandboxes",
         "/home/ubuntu/mounts/synology-agentic-context/agy_sandboxes"
       ],
