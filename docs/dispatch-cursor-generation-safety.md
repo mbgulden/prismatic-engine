@@ -60,7 +60,8 @@ Before reading events, spawning workers, or interacting with Linear:
 ## 4. Cursor Serialization & Lock Primitive
 
 To eliminate race conditions between consumer cursor advancement and repair apply:
-- **Shared CursorLock Primitive**: Introduces a restrictive, no-follow shared primitive (`CursorLock`) using a lock file (`<state_file>.lock`) opened with `O_RDWR|O_CREAT|O_NOFOLLOW` and mode `0o600` (`fcntl.flock` exclusive lock).
+- **Shared CursorLock Primitive**: Introduces a restrictive, no-follow shared primitive (`CursorLock`) using a lock file (`<state_file>.lock`) opened with `O_RDWR|O_CREAT|O_NOFOLLOW|O_CLOEXEC` and mode `0o600` (`fcntl.flock` exclusive lock). Validates pre-existing lock paths via `lstat` before open to reject symlinks, FIFOs, sockets, directories, devices, or hard links. Performs post-open `fstat` descriptor validation before `fchmod` or `flock` to ensure regular single-link file owned by effective UID matching pre-open identity.
+- **Descriptor-Bound No-Follow Snapshot Flow**: `_snapshot_cursor_file()` opens cursor targets with `O_RDONLY|O_NOFOLLOW|O_CLOEXEC`, performs pre/post `lstat`/`fstat` checks for regular single-link file identity, safe ownership/permissions, reads strictly from the opened descriptor, checks for descriptor drift, and closes cleanly on every exit path while preserving structural exception propagation.
 - **Explicit Observable Lock Phases**: Lock acquisition, body execution, and lock release (`LOCK_UN` and fd close) form explicit observable phases in `repair_apply()`, `set_state()`, and `write_cursor_state()`. Lock-release errors cannot bypass the recovery state machine or escape as generic unhandled lock errors after mutation.
 - **Fail-Closed Lock Release Rollback**: If unlock (`LOCK_UN`) or fd-close fails after a cursor write in `repair_apply()`, `set_state()`, or `write_cursor_state()`, the operation durably restores exact prior cursor bytes (or removes a newly created cursor file), fsyncs parent directory, and reports structured failure with marker (`FAIL_CLOSED` or `RECOVERY_REQUIRED`). No stale, mutated, or ambiguous cursor file is left on disk.
 - **ExceptionGroup Primary Error Preservation**: When primary body exceptions and lock release or cleanup failures coexist, the primary body exception is preserved as primary using structured `ExceptionGroup` chaining without exposing secrets.
@@ -114,7 +115,7 @@ Performs state repair and migration:
 
 ## 8. Verification
 
-Verification tests in `tests/test_dispatch_consumer_cursor_generation.py` (42 isolated regression tests) validate all safety guarantees:
+Verification tests in `tests/test_dispatch_consumer_cursor_generation.py` (52 isolated regression tests) validate all safety guarantees:
 1. Real OS process-level contention test (`ProcessPoolExecutor`) ensuring concurrent schema initializations produce one identical canonical UUID generation.
 2. WAL-mode raw backup and rollback regression test verifying exact byte-for-byte SHA-256 matches for main DB, WAL file, and cursor state file, followed by SHM deletion, restoration, SQLite reopening, and verification of uncorrupted generation, max-rowid, and event row integrity.
 3. Adversarial regressions proving database replacement after fetch, claim, Linear, or spawn fails closed with zero side effects.
@@ -128,3 +129,8 @@ Verification tests in `tests/test_dispatch_consumer_cursor_generation.py` (42 is
 11. Separate `LOCK_UN` and fd-close injection tests for `repair_apply`, `set_state`, and `write_cursor_state`.
 12. Coexisting body failure and lock release failure tests asserting primary body exception preservation via `ExceptionGroup`.
 13. Recovery hash failure and temp cleanup failure tests.
+14. Deterministic symlink exchange during snapshot pre-open check rejection test.
+15. Inode replacement during snapshot lstat/open rejection test.
+16. Pre-created FIFO, Unix socket, directory, symlink, and hard-linked lock rejection tests.
+17. Race lock path to unsafe object at open descriptor validation rejection test.
+18. Valid private regular lock process coordination and nonblocking fail-closed recovery test.

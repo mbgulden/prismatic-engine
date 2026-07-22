@@ -2143,3 +2143,219 @@ def test_47_safe_rollback_does_not_block_when_original_lock_remains_held(
     assert restored is False
     assert elapsed < 1.0
     assert state_file.read_bytes() == b"operation-output"
+
+
+def test_48_snapshot_symlink_exchange_between_lstat_and_open_rejects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Repair 8 Regression 1: Deterministically exchange cursor path for symlink
+    between pre-open checks and open. Assert snapshot rejects and never returns target bytes.
+    """
+    secret_file = tmp_path / "secret.txt"
+    secret_file.write_bytes(b"SECRET-BYTES-DO-NOT-LEAK")
+    os.chmod(secret_file, 0o600)
+
+    cursor_file = tmp_path / "cursor.rowid"
+    cursor_file.write_bytes(b"ORIGINAL-CURSOR-BYTES")
+    os.chmod(cursor_file, 0o600)
+
+    orig_open = os.open
+
+    def open_with_symlink_swap(path: str, flags: int, mode: int = 0o777) -> int:
+        if str(path) == str(cursor_file):
+            if cursor_file.exists() or cursor_file.is_symlink():
+                os.unlink(cursor_file)
+            os.symlink(secret_file, cursor_file)
+        return orig_open(path, flags, mode)
+
+    monkeypatch.setattr(os, "open", open_with_symlink_swap)
+
+    with pytest.raises((ValueError, OSError)) as exc_info:
+        consumer._snapshot_cursor_file(str(cursor_file))
+
+    err_msg = str(exc_info.value)
+    assert "SECRET-BYTES" not in err_msg
+
+
+def test_49_snapshot_inode_replacement_between_lstat_and_open_rejects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Repair 8 Regression 2: Replace cursor path with a different regular inode
+    between lstat/open. Assert descriptor identity mismatch rejects.
+    """
+    cursor_file = tmp_path / "cursor.rowid"
+    cursor_file.write_bytes(b"ORIGINAL-INODE-BYTES")
+    os.chmod(cursor_file, 0o600)
+
+    other_file = tmp_path / "other.rowid"
+    other_file.write_bytes(b"REPLACED-INODE-BYTES")
+    os.chmod(other_file, 0o600)
+
+    orig_open = os.open
+
+    def open_with_inode_swap(path: str, flags: int, mode: int = 0o777) -> int:
+        if str(path) == str(cursor_file):
+            os.replace(other_file, cursor_file)
+        return orig_open(path, flags, mode)
+
+    monkeypatch.setattr(os, "open", open_with_inode_swap)
+
+    with pytest.raises(ValueError, match="mismatches pre-open object|identity"):
+        consumer._snapshot_cursor_file(str(cursor_file))
+
+
+def test_50_precreated_unsafe_lock_objects_reject_acquire(tmp_path: Path) -> None:
+    """Repair 8 Regression 3: Precreate <cursor>.lock as FIFO, Unix socket, directory,
+    symlink, and hard-linked regular file. Assert blocking and nonblocking acquire
+    reject without chmod/flock or target mutation.
+    """
+    import socket
+
+    base_cursor = tmp_path / "test_cursor.rowid"
+    base_cursor.write_bytes(b"test")
+    os.chmod(base_cursor, 0o600)
+    lock_path = Path(str(base_cursor) + ".lock")
+
+    # 1. FIFO
+    if lock_path.exists() or lock_path.is_symlink():
+        os.unlink(lock_path)
+    os.mkfifo(lock_path, 0o644)
+    st_orig_fifo = os.lstat(lock_path)
+
+    for blocking in (True, False):
+        lock = consumer.CursorLock(str(base_cursor))
+        with pytest.raises((ValueError, OSError)):
+            lock.acquire(blocking=blocking)
+        assert lock._fd is None
+    assert stat.S_ISFIFO(os.lstat(lock_path).st_mode)
+    assert os.lstat(lock_path).st_mode == st_orig_fifo.st_mode
+
+    # 2. Unix socket
+    if lock_path.exists() or lock_path.is_symlink():
+        os.unlink(lock_path)
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.bind(str(lock_path))
+    st_orig_sock = os.lstat(lock_path)
+
+    for blocking in (True, False):
+        lock = consumer.CursorLock(str(base_cursor))
+        with pytest.raises((ValueError, OSError)):
+            lock.acquire(blocking=blocking)
+        assert lock._fd is None
+    assert stat.S_ISSOCK(st_orig_sock.st_mode)
+    sock.close()
+
+    # 3. Directory
+    if lock_path.exists() or lock_path.is_symlink():
+        os.unlink(lock_path)
+    lock_path.mkdir(mode=0o755)
+    st_orig_dir = os.lstat(lock_path)
+
+    for blocking in (True, False):
+        lock = consumer.CursorLock(str(base_cursor))
+        with pytest.raises((ValueError, OSError)):
+            lock.acquire(blocking=blocking)
+        assert lock._fd is None
+    assert stat.S_ISDIR(os.lstat(lock_path).st_mode)
+    assert os.lstat(lock_path).st_mode == st_orig_dir.st_mode
+    lock_path.rmdir()
+
+    # 4. Symlink
+    target_file = tmp_path / "sym_target.txt"
+    target_file.write_bytes(b"target")
+    os.chmod(target_file, 0o666)
+    os.symlink(target_file, lock_path)
+
+    for blocking in (True, False):
+        lock = consumer.CursorLock(str(base_cursor))
+        with pytest.raises((ValueError, OSError)):
+            lock.acquire(blocking=blocking)
+        assert lock._fd is None
+    assert stat.S_ISLNK(os.lstat(lock_path).st_mode)
+    assert target_file.read_bytes() == b"target"
+    assert stat.S_IMODE(os.lstat(target_file).st_mode) == 0o666
+    os.unlink(lock_path)
+
+    # 5. Hard-linked regular file
+    ref_file = tmp_path / "hard_ref.txt"
+    ref_file.write_bytes(b"ref_data")
+    os.chmod(ref_file, 0o644)
+    os.link(ref_file, lock_path)
+
+    for blocking in (True, False):
+        lock = consumer.CursorLock(str(base_cursor))
+        with pytest.raises((ValueError, OSError)):
+            lock.acquire(blocking=blocking)
+        assert lock._fd is None
+    assert os.lstat(lock_path).st_nlink == 2
+    assert stat.S_IMODE(os.lstat(lock_path).st_mode) == 0o644
+    assert ref_file.read_bytes() == b"ref_data"
+    os.unlink(lock_path)
+
+
+def test_51_lock_race_to_unsafe_object_at_open_rejects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Repair 8 Regression 4: Race a safe-looking lock path to an unsafe object at open;
+    descriptor validation must reject.
+    """
+    base_cursor = tmp_path / "test_cursor.rowid"
+    base_cursor.write_bytes(b"test")
+    os.chmod(base_cursor, 0o600)
+    lock_path = Path(str(base_cursor) + ".lock")
+
+    ref_file = tmp_path / "ref.txt"
+    ref_file.write_bytes(b"data")
+    os.chmod(ref_file, 0o644)
+    os.link(ref_file, lock_path)
+
+    orig_lstat = os.lstat
+
+    def lstat_fake_absent(path: str | os.PathLike) -> os.stat_result:
+        if str(path) == str(lock_path):
+            raise FileNotFoundError(f"No such file: {path}")
+        return orig_lstat(path)
+
+    monkeypatch.setattr(os, "lstat", lstat_fake_absent)
+
+    lock = consumer.CursorLock(str(base_cursor))
+    with pytest.raises(ValueError, match="st_nlink != 1"):
+        lock.acquire()
+
+    assert lock._fd is None
+    assert stat.S_IMODE(orig_lstat(lock_path).st_mode) == 0o644
+
+
+def test_52_valid_private_lock_coordination_and_nonblocking_recovery(
+    tmp_path: Path,
+) -> None:
+    """Repair 8 Regression 5: Existing valid private regular lock still coordinates
+    processes and supports nonblocking fail-closed recovery.
+    """
+    base_cursor = tmp_path / "test_cursor.rowid"
+    base_cursor.write_bytes(b"test")
+    os.chmod(base_cursor, 0o600)
+
+    lock1 = consumer.CursorLock(str(base_cursor))
+    lock1.acquire(blocking=True)
+    assert lock1._fd is not None
+
+    lock_path = Path(str(base_cursor) + ".lock")
+    assert lock_path.exists()
+    st_lock = os.lstat(lock_path)
+    assert stat.S_ISREG(st_lock.st_mode)
+    assert st_lock.st_nlink == 1
+    assert st_lock.st_uid == os.geteuid()
+    assert stat.S_IMODE(st_lock.st_mode) == 0o600
+
+    lock2 = consumer.CursorLock(str(base_cursor))
+    with pytest.raises((OSError, BlockingIOError)):
+        lock2.acquire(blocking=False)
+    assert lock2._fd is None
+
+    lock1.release()
+    assert lock1._fd is None
+
+    lock2.acquire(blocking=False)
+    assert lock2._fd is not None
+    lock2.release()

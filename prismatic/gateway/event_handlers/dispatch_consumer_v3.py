@@ -147,6 +147,10 @@ def _validate_state_path_strict(raw_path: str) -> str:
             raise ValueError(
                 f"Refusing to write cursor state: unsafe file permissions {oct(st.st_mode)} (group/world accessible)"
             )
+        if st.st_nlink != 1:
+            raise ValueError(
+                f"Cursor state path has hard links (st_nlink={st.st_nlink}): {raw_path}"
+            )
     except FileNotFoundError:
         pass
 
@@ -251,27 +255,75 @@ class CursorLock:
     def acquire(self, *, blocking: bool = True) -> CursorLock:
         if self._fd is not None:
             return self
-        if os.path.islink(self.lock_file_path):
-            raise ValueError("Cursor lock file is a symlink")
+
+        pre_st = None
+        try:
+            pre_st = os.lstat(self.lock_file_path)
+        except FileNotFoundError:
+            pre_st = None
+
+        if pre_st is not None:
+            if stat.S_ISLNK(pre_st.st_mode):
+                raise ValueError(
+                    f"Cursor lock file is a symlink: {self.lock_file_path}"
+                )
+            if not stat.S_ISREG(pre_st.st_mode):
+                raise ValueError(
+                    f"Cursor lock file is not a regular file (e.g. FIFO, socket, directory, device): {self.lock_file_path}"
+                )
+            if pre_st.st_nlink != 1:
+                raise ValueError(
+                    f"Cursor lock file has hard links (st_nlink={pre_st.st_nlink}): {self.lock_file_path}"
+                )
+            if pre_st.st_uid != os.geteuid():
+                raise ValueError(
+                    f"Cursor lock file owner ({pre_st.st_uid}) does not match effective uid ({os.geteuid()}): {self.lock_file_path}"
+                )
+
         target_dir = Path(self.lock_file_path).parent
         target_dir.mkdir(parents=True, exist_ok=True)
-        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
-        self._fd = os.open(self.lock_file_path, flags, 0o600)
+
+        flags = (
+            os.O_RDWR
+            | os.O_CREAT
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+        )
+        fd = os.open(self.lock_file_path, flags, 0o600)
         try:
-            st = os.fstat(self._fd)
-            if st.st_mode & 0o077 != 0:
-                os.fchmod(self._fd, 0o600)
+            st_fd = os.fstat(fd)
+            if not stat.S_ISREG(st_fd.st_mode):
+                raise ValueError(
+                    f"Opened cursor lock descriptor is not a regular file: {self.lock_file_path}"
+                )
+            if st_fd.st_nlink != 1:
+                raise ValueError(
+                    f"Opened cursor lock descriptor st_nlink != 1 ({st_fd.st_nlink}): {self.lock_file_path}"
+                )
+            if st_fd.st_uid != os.geteuid():
+                raise ValueError(
+                    f"Opened cursor lock descriptor owner ({st_fd.st_uid}) does not match effective uid ({os.geteuid()}): {self.lock_file_path}"
+                )
+            if pre_st is not None:
+                if st_fd.st_dev != pre_st.st_dev or st_fd.st_ino != pre_st.st_ino:
+                    raise ValueError(
+                        f"Opened cursor lock descriptor identity mismatch with pre-open object: {self.lock_file_path}"
+                    )
+
+            if st_fd.st_mode & 0o077 != 0:
+                os.fchmod(fd, 0o600)
+
             lock_operation = fcntl.LOCK_EX
             if not blocking:
                 lock_operation |= fcntl.LOCK_NB
-            fcntl.flock(self._fd, lock_operation)
+            fcntl.flock(fd, lock_operation)
+            self._fd = fd
         except Exception:
-            if self._fd is not None:
-                try:
-                    os.close(self._fd)
-                except Exception:
-                    pass
-                self._fd = None
+            try:
+                os.close(fd)
+            except Exception:
+                pass
+            self._fd = None
             raise
         return self
 
@@ -733,26 +785,110 @@ def _write_cursor_state_unlocked(state_file_path: str, state_data: dict) -> None
 
 
 def _snapshot_cursor_file(canonical_state_path: str) -> tuple[bool, bytes | None]:
-    """Snapshot prior cursor state strictly.
+    """Snapshot prior cursor state strictly using a descriptor-bound no-follow flow.
 
     Returns (prior_existed, prior_bytes).
     If file exists (even if 0 bytes), prior_existed is True and prior_bytes contains file content.
     If file does not exist, prior_existed is False and prior_bytes is None.
     If stat/open/read fails for any reason other than FileNotFoundError, raises the exception.
     """
-    if os.path.islink(canonical_state_path):
-        raise ValueError(f"Cursor state path is a symlink: {canonical_state_path}")
+    pre_st = None
     try:
-        st = os.lstat(canonical_state_path)
-        if not stat.S_ISREG(st.st_mode):
+        pre_st = os.lstat(canonical_state_path)
+    except FileNotFoundError:
+        pre_st = None
+
+    if pre_st is not None:
+        if stat.S_ISLNK(pre_st.st_mode):
+            raise ValueError(f"Cursor state path is a symlink: {canonical_state_path}")
+        if not stat.S_ISREG(pre_st.st_mode):
             raise ValueError(
                 f"Cursor state path is not a regular file: {canonical_state_path}"
             )
-        with open(canonical_state_path, "rb") as f:
-            prior_bytes = f.read()
-        return True, prior_bytes
+        if pre_st.st_mode & 0o077 != 0:
+            raise ValueError(
+                f"Refusing to snapshot cursor state: unsafe permissions {oct(pre_st.st_mode)}"
+            )
+        if pre_st.st_nlink != 1:
+            raise ValueError(
+                f"Cursor state path has hard links (st_nlink={pre_st.st_nlink}): {canonical_state_path}"
+            )
+
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open(canonical_state_path, flags)
     except FileNotFoundError:
         return False, None
+
+    body_exc = None
+    close_exc = None
+    prior_bytes = None
+
+    try:
+        st_fd1 = os.fstat(fd)
+        if not stat.S_ISREG(st_fd1.st_mode):
+            raise ValueError(
+                f"Opened cursor descriptor is not a regular file: {canonical_state_path}"
+            )
+        if st_fd1.st_nlink != 1:
+            raise ValueError(
+                f"Opened cursor descriptor st_nlink != 1 ({st_fd1.st_nlink}): {canonical_state_path}"
+            )
+        if st_fd1.st_uid != os.geteuid():
+            raise ValueError(
+                f"Opened cursor descriptor owner ({st_fd1.st_uid}) does not match effective uid ({os.geteuid()}): {canonical_state_path}"
+            )
+        if st_fd1.st_mode & 0o077 != 0:
+            raise ValueError(
+                f"Opened cursor descriptor unsafe permissions {oct(st_fd1.st_mode)}: {canonical_state_path}"
+            )
+        if pre_st is not None:
+            if st_fd1.st_dev != pre_st.st_dev or st_fd1.st_ino != pre_st.st_ino:
+                raise ValueError(
+                    f"Opened cursor descriptor identity (dev={st_fd1.st_dev}, ino={st_fd1.st_ino}) "
+                    f"mismatches pre-open object (dev={pre_st.st_dev}, ino={pre_st.st_ino}): {canonical_state_path}"
+                )
+
+        chunks = []
+        while True:
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        read_data = b"".join(chunks)
+
+        st_fd2 = os.fstat(fd)
+        if st_fd2.st_dev != st_fd1.st_dev or st_fd2.st_ino != st_fd1.st_ino:
+            raise ValueError("Cursor descriptor identity drift during read")
+        if st_fd2.st_size != len(read_data):
+            raise ValueError(
+                f"Cursor descriptor size drift: stat={st_fd2.st_size} vs read={len(read_data)}"
+            )
+        if st_fd2.st_mtime_ns != st_fd1.st_mtime_ns:
+            raise ValueError("Cursor descriptor mtime drift during read")
+        if st_fd2.st_nlink != 1:
+            raise ValueError("Cursor descriptor link count drift during read")
+
+        prior_bytes = read_data
+    except Exception as e:
+        body_exc = e
+
+    try:
+        os.close(fd)
+    except Exception as e:
+        close_exc = e
+
+    if body_exc is not None and close_exc is not None:
+        raise ExceptionGroup(
+            "Cursor snapshot failed and descriptor close encountered an error",
+            [body_exc, close_exc],
+        ) from body_exc
+    elif body_exc is not None:
+        raise body_exc
+    elif close_exc is not None:
+        raise close_exc
+
+    return True, prior_bytes
 
 
 def _safe_rollback_cursor(
@@ -779,18 +915,10 @@ def _safe_rollback_cursor(
     rollback_result = False
     release_failed = False
     try:
-        curr_existed = os.path.exists(canonical_state_path) and not os.path.islink(
-            canonical_state_path
-        )
-        curr_bytes = None
-        if curr_existed:
-            try:
-                st = os.lstat(canonical_state_path)
-                if stat.S_ISREG(st.st_mode):
-                    with open(canonical_state_path, "rb") as f:
-                        curr_bytes = f.read()
-            except Exception:
-                return False
+        try:
+            curr_existed, curr_bytes = _snapshot_cursor_file(canonical_state_path)
+        except Exception:
+            return False
 
         if written_bytes is not None and curr_existed and curr_bytes == written_bytes:
             try:
