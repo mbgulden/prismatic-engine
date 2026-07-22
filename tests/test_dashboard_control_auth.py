@@ -78,6 +78,18 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     async def invoke_executor() -> dict[str, bool]:
         return {"ok": True}
 
+    @app.post("/api/agy/merge-backlog/item/pr-approval")
+    async def approve_pr() -> dict[str, bool]:
+        return {"ok": True}
+
+    @app.post("/api/agy/merge-backlog/item/pr-create-approved")
+    async def create_approved_pr_action() -> dict[str, bool]:
+        return {"ok": True}
+
+    @app.post("/api/agy/promotion-decisions/item/operator-action")
+    async def record_operator_action_approval() -> dict[str, bool]:
+        return {"ok": True}
+
     @app.post("/native-crons/{cron_id}/action")
     async def native_cron(cron_id: str, request: Request) -> dict[str, object]:
         return {"cron": cron_id, "body": await request.json()}
@@ -209,6 +221,12 @@ def test_operator_only_permits_ordinary_mutation(client: TestClient) -> None:
     assert response.headers["X-Prismatic-Control-Authorization"] == "authorized"
     assert response.headers["X-Prismatic-Control-Role"] == "operator"
     assert client.post("/items/1/approve", headers=_auth("operator")).status_code == 403
+    for protected_path in (
+        "/api/agy/merge-backlog/item/pr-approval",
+        "/api/agy/merge-backlog/item/pr-create-approved",
+        "/api/agy/promotion-decisions/item/operator-action",
+    ):
+        assert client.post(protected_path, headers=_auth("operator")).status_code == 403
     assert (
         client.post(
             "/api/agy/things/real-executor-arming", headers=_auth("operator")
@@ -222,6 +240,12 @@ def test_approver_and_executor_roles_do_not_imply_each_other_or_operator(
 ) -> None:
     assert client.post("/items/1/approve", headers=_auth("approver")).status_code == 200
     assert client.post("/items/1/reject", headers=_auth("approver")).status_code == 200
+    for protected_path in (
+        "/api/agy/merge-backlog/item/pr-approval",
+        "/api/agy/merge-backlog/item/pr-create-approved",
+        "/api/agy/promotion-decisions/item/operator-action",
+    ):
+        assert client.post(protected_path, headers=_auth("approver")).status_code == 200
     assert (
         client.post(
             "/api/agy/actions/final-authorization", headers=_auth("approver")

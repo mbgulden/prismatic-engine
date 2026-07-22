@@ -76,7 +76,8 @@ headers.
   signature checks remain authoritative and unchanged.
 - Every other HTTP method, including mutations to unknown routes, is protected
   and defaults to `operator`.
-- Approval, rejection, approval-request, promotion-decision, and final
+- Approval, rejection, approval-request, operator-action approval,
+  `pr-approval`, `pr-create-approved`, promotion-decision, and final
   authorization route families require `approver`.
 - Real-executor arming/invocation and PR-executor routes require `executor`.
 - `/native-crons/{id}/action` requires `executor` when its parsed JSON action is
