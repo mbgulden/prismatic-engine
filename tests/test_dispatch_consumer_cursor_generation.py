@@ -3,16 +3,30 @@
 from __future__ import annotations
 
 import concurrent.futures
+import fcntl
 import importlib
 import json
 import os
 import sqlite3
 import stat
 import subprocess
+import sys
 import time
 import urllib.request
+import uuid
 from pathlib import Path
 import pytest
+
+if sys.version_info < (3, 11):
+    try:
+        from exceptiongroup import ExceptionGroup  # type: ignore[import-not-found]
+    except ImportError:
+
+        class ExceptionGroup(Exception):  # type: ignore[no-redef]
+            def __init__(self, message: str, exceptions: list[BaseException]):
+                super().__init__(message, exceptions)
+                self.exceptions = exceptions
+
 
 from prismatic.gateway.event_handlers import dispatch_consumer_v3 as consumer
 
@@ -100,7 +114,7 @@ def test_3_same_db_path_with_replacement_generation_fails_closed(
     state_file = tmp_path / "dispatch_consumer.rowid"
     _write_valid_state(state_file, db_path, gen_orig, 3)
 
-    new_gen = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+    new_gen = "ffffffff-ffff-4fff-8fff-ffffffffffff"
     conn = sqlite3.connect(db_path)
     try:
         conn.execute(
@@ -694,14 +708,14 @@ def test_22_strict_target_rowid_validation_and_explicit_requirement(
 
 def test_23_strict_uuid_iso_timestamp_and_security_bounds(tmp_path: Path) -> None:
     """Regression for Finding 5: UUID format, ISO timestamp, symlink/permissions, backup fsync, and no sensitive leaks."""
-    assert consumer.validate_generation_format("06d6bcc0-b0a5-01eb-4f94-349c24ed99f5")
+    assert consumer.validate_generation_format("06d6bcc0-b0a5-41eb-8f94-349c24ed99f5")
     assert not consumer.validate_generation_format(
         "06D6BCC0-B0A5-01EB-4F94-349C24ED99F5"
     )
     assert not consumer.validate_generation_format("not-a-uuid")
 
     assert consumer.validate_iso_timestamp("2026-07-22T20:00:00Z")
-    assert consumer.validate_iso_timestamp("2026-07-22T20:00:00+00:00")
+    assert not consumer.validate_iso_timestamp("2026-07-22T20:00:00+00:00")
     assert not consumer.validate_iso_timestamp("2026-07-22T20:00:00")
 
     f_real = tmp_path / "real.rowid"
@@ -895,8 +909,12 @@ def test_26_injected_directory_fsync_failure_propagates_leaves_no_destination(
 
     monkeypatch.setattr(os, "fsync", failing_dir_fsync)
 
-    with pytest.raises(OSError, match="Injected directory fsync error"):
+    with pytest.raises((OSError, ExceptionGroup)) as exc_info:
         consumer._copy_file_raw_atomic(str(src_file), str(dst_file))
+    assert "Injected directory fsync error" in str(exc_info.value) or any(
+        "Injected directory fsync error" in str(e)
+        for e in getattr(exc_info.value, "exceptions", [])
+    )
 
     assert not dst_file.exists()
     assert src_file.read_text() == src_content
@@ -978,3 +996,308 @@ def test_28_later_member_failure_cleans_earlier_members_preserves_state(
         assert cnt == 5
     finally:
         conn.close()
+
+
+# -----------------------------------------------------------------------------
+# Repair Regressions (Repair 4)
+# -----------------------------------------------------------------------------
+
+
+def test_29_generation_bound_through_claim_mark_and_vacuum(tmp_path: Path) -> None:
+    """Adversarial regression: claim, mark_processed, and vacuum_processed must verify expected_generation and fail closed on mismatch."""
+    db_path, gen_orig = _setup_db_and_events(tmp_path, 5)
+    canon_db = consumer.get_canonical_path(str(db_path))
+    bad_gen = "a0a0a0a0-b1b1-4c2c-8d3d-e4e4e4e4e4e4"
+
+    # Claim with bad generation must fail closed and mutate nothing
+    with pytest.raises(RuntimeError, match="Database generation mismatch during claim"):
+        consumer.claim_event_for_processing(
+            rowid=1,
+            dedup_key="key-1",
+            topic="update",
+            issue_id="TEST-1",
+            expected_generation=bad_gen,
+            db_path=canon_db,
+        )
+    conn = sqlite3.connect(canon_db)
+    try:
+        processed_count = conn.execute(
+            "SELECT COUNT(*) FROM processed_event_keys"
+        ).fetchone()[0]
+        assert processed_count == 0
+        e1_processed = conn.execute(
+            "SELECT processed FROM events WHERE rowid = 1"
+        ).fetchone()[0]
+        assert e1_processed == 0
+    finally:
+        conn.close()
+
+    # Mark processed with bad generation must fail closed and mutate nothing
+    with pytest.raises(
+        RuntimeError, match="Database generation mismatch during mark_processed"
+    ):
+        consumer.mark_processed(
+            rowid=1,
+            dedup_key="key-1",
+            topic="update",
+            issue_id="TEST-1",
+            expected_generation=bad_gen,
+            db_path=canon_db,
+        )
+
+    # Vacuum with bad generation must fail closed and delete nothing
+    conn = sqlite3.connect(canon_db)
+    try:
+        conn.execute("UPDATE events SET processed = 1, ts = 0 WHERE rowid = 1")
+        conn.commit()
+    finally:
+        conn.close()
+
+    with pytest.raises(
+        RuntimeError, match="Database generation mismatch during vacuum"
+    ):
+        consumer.vacuum_processed(expected_generation=bad_gen, db_path=canon_db)
+
+    conn = sqlite3.connect(canon_db)
+    try:
+        cnt = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+        assert cnt == 5
+    finally:
+        conn.close()
+
+
+def test_30_side_effects_prevented_on_db_replacement_before_linear_and_supervisor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Adversarial regression: DB replacement after claim / before Linear or before spawn must raise fail-closed with zero side effects."""
+    db_path_a, gen_a = _setup_db_and_events(tmp_path, 5)
+    canon_db_a = consumer.get_canonical_path(str(db_path_a))
+    state_file = tmp_path / "dispatch_consumer.rowid"
+    _write_valid_state(state_file, db_path_a, gen_a, 0)
+
+    linear_calls: list[str] = []
+    spawn_calls: list[str] = []
+    monkeypatch.setattr(
+        consumer, "fetch_issue", lambda issue_id: linear_calls.append(issue_id)
+    )
+    monkeypatch.setattr(
+        consumer,
+        "dispatch_to_supervisor",
+        lambda issue_id: spawn_calls.append(issue_id),
+    )
+
+    # Setup event payload
+    payload = json.dumps({"type": "Issue", "data": {"identifier": "TEST-1"}})
+
+    # Fail before Linear call
+    def fail_before_linear(db_path: str, expected_gen: str):
+        raise RuntimeError("DB replaced right before Linear call")
+
+    monkeypatch.setattr(
+        consumer, "verify_db_generation_and_identity", fail_before_linear
+    )
+
+    with pytest.raises(RuntimeError, match="DB replaced right before Linear call"):
+        consumer.process_event(
+            rowid=1,
+            dedup_key="key-1",
+            topic="update",
+            payload_json=payload,
+            ts=time.time(),
+            expected_generation=gen_a,
+            db_path=canon_db_a,
+        )
+
+    assert len(linear_calls) == 0
+    assert len(spawn_calls) == 0
+
+    # Fail before supervisor spawn
+    def mock_fetch_issue(issue_id: str):
+        linear_calls.append(issue_id)
+        return {
+            "state": {"name": "Todo"},
+            "labels": {"nodes": [{"name": "dispatch:ready"}]},
+        }
+
+    monkeypatch.setattr(consumer, "fetch_issue", mock_fetch_issue)
+
+    def fail_before_spawn(db_path: str, expected_gen: str):
+        if len(linear_calls) > 0:
+            raise RuntimeError("DB replaced right before supervisor spawn")
+
+    monkeypatch.setattr(
+        consumer, "verify_db_generation_and_identity", fail_before_spawn
+    )
+
+    with pytest.raises(RuntimeError, match="DB replaced right before supervisor spawn"):
+        consumer.process_event(
+            rowid=2,
+            dedup_key="key-2",
+            topic="update",
+            payload_json=payload,
+            ts=time.time(),
+            expected_generation=gen_a,
+            db_path=canon_db_a,
+        )
+
+    assert len(linear_calls) == 1
+    assert len(spawn_calls) == 0
+
+
+def test_31_cursor_lock_serializes_repair_and_consumer_writes(
+    tmp_path: Path,
+) -> None:
+    """Process/concurrency regression: CursorLock serializes repair and consumer cursor writes, preventing overwrite."""
+    db_path, gen = _setup_db_and_events(tmp_path, 5)
+    state_file = tmp_path / "dispatch_consumer.rowid"
+    state_file.write_text("3\n")
+    os.chmod(state_file, 0o600)
+    canon_state = consumer.get_canonical_path(str(state_file))
+
+    # Hold CursorLock manually to simulate repair in progress
+    with consumer.CursorLock(canon_state):
+        # Attempting to write cursor state from another process/thread will block or raise if non-blocking
+        lock_file = canon_state + ".lock"
+        fd = os.open(lock_file, os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            os.close(fd)
+
+    # After lock released, repair_apply succeeds
+    receipt = consumer.repair_apply(
+        str(db_path), str(state_file), confirmation_token=consumer.CONFIRMATION_TOKEN
+    )
+    assert receipt["status"] == "SUCCESS"
+
+
+def test_32_recompute_and_authenticate_supplied_plan(tmp_path: Path) -> None:
+    """Regression for supplied plan authentication: tampered, missing, or extra plan fields must be rejected before any mutation."""
+    db_path, gen = _setup_db_and_events(tmp_path, 5)
+    state_file = tmp_path / "dispatch_consumer.rowid"
+    state_file.write_text("3\n")
+    os.chmod(state_file, 0o600)
+
+    valid_plan = consumer.repair_dry_run(str(db_path), str(state_file))
+
+    # Tamper backup path
+    tampered_plan = dict(valid_plan)
+    tampered_plan["proposed_db_backup_path"] = "/tmp/malicious_backup"
+
+    with pytest.raises(ValueError, match="Caller-supplied plan does not match"):
+        consumer.repair_apply(
+            str(db_path),
+            str(state_file),
+            confirmation_token=consumer.CONFIRMATION_TOKEN,
+            plan=tampered_plan,
+        )
+
+    # Tamper plan_id
+    tampered_plan_2 = dict(valid_plan)
+    tampered_plan_2["plan_id"] = "bad_plan_id_123"
+
+    with pytest.raises(ValueError, match="Caller-supplied plan does not match"):
+        consumer.repair_apply(
+            str(db_path),
+            str(state_file),
+            confirmation_token=consumer.CONFIRMATION_TOKEN,
+            plan=tampered_plan_2,
+        )
+
+    assert not os.path.exists("/tmp/malicious_backup")
+
+
+def test_33_durability_and_cleanup_failure_propagation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression for directory fsync and cleanup failures: errors propagate (never swallowed), ExceptionGroup raised when primary & cleanup fail."""
+    db_path, gen = _setup_db_and_events(tmp_path, 5)
+    canon_db = consumer.get_canonical_path(str(db_path))
+    state_file = tmp_path / "cursor.rowid"
+
+    valid_state = {
+        "schema_version": 1,
+        "last_rowid": 1,
+        "db_path": canon_db,
+        "db_generation": gen,
+        "updated_at": consumer.get_canonical_utc_now(),
+    }
+
+    # 1. Injected directory fsync failure during write_cursor_state must propagate
+    orig_fsync = os.fsync
+
+    def failing_dir_fsync(fd: int) -> None:
+        try:
+            is_dir = stat.S_ISDIR(os.fstat(fd).st_mode)
+        except OSError:
+            is_dir = False
+        if is_dir:
+            raise OSError("Injected directory fsync failure")
+        orig_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", failing_dir_fsync)
+
+    with pytest.raises(OSError, match="Injected directory fsync failure"):
+        consumer.write_cursor_state(str(state_file), valid_state)
+
+    # 2. Cleanup error combined with primary error raises ExceptionGroup
+    monkeypatch.undo()
+
+    src_file = tmp_path / "src.txt"
+    src_file.write_text("data")
+    dst_file = tmp_path / "dst.txt"
+
+    def failing_write(fd: int, data: bytes) -> int:
+        raise OSError("Primary write error during copy")
+
+    def failing_remove(path: str | Path) -> None:
+        raise OSError("Secondary cleanup remove error")
+
+    monkeypatch.setattr(os, "write", failing_write)
+    monkeypatch.setattr(os, "remove", failing_remove)
+
+    with pytest.raises(ExceptionGroup) as exc_info:
+        consumer._copy_file_raw_atomic(str(src_file), str(dst_file))
+
+    assert "Backup copy failed and partial artifact cleanup failed" in str(
+        exc_info.value
+    )
+
+
+def test_34_strict_canonical_uuid_v4_and_utc_timestamp_envelope() -> None:
+    """Regression for strict canonical UUID v4 and UTC ISO timestamp validation."""
+    # UUID v4 canonical tests
+    valid_v4 = str(uuid.uuid4())
+    assert consumer.validate_generation_format(valid_v4)
+
+    nil_uuid = "00000000-0000-0000-0000-000000000000"
+    assert not consumer.validate_generation_format(nil_uuid)
+
+    v1_uuid = str(uuid.uuid1())
+    assert not consumer.validate_generation_format(v1_uuid)
+
+    uppercase_v4 = valid_v4.upper()
+    assert not consumer.validate_generation_format(uppercase_v4)
+
+    braced_v4 = "{" + valid_v4 + "}"
+    assert not consumer.validate_generation_format(braced_v4)
+
+    spaced_v4 = " " + valid_v4
+    assert not consumer.validate_generation_format(spaced_v4)
+
+    # UTC ISO timestamp tests
+    valid_now = consumer.get_canonical_utc_now()
+    assert consumer.validate_iso_timestamp(valid_now)
+    assert consumer.validate_iso_timestamp("2026-07-22T20:57:38Z")
+    assert consumer.validate_iso_timestamp("2026-07-22T20:57:38.123456Z")
+
+    assert not consumer.validate_iso_timestamp("2026-07-22 20:57:38Z")  # space
+    assert not consumer.validate_iso_timestamp("2026-07-22T20:57:38")  # no tz
+    assert not consumer.validate_iso_timestamp(
+        "2026-07-22T20:57:38+00:00"
+    )  # +00:00 instead of Z
+    assert not consumer.validate_iso_timestamp("2026-W29-3T20:57:38Z")  # week date
+    assert not consumer.validate_iso_timestamp(
+        "2026-07-22T20:57:38.1234567Z"
+    )  # 7 digits fraction

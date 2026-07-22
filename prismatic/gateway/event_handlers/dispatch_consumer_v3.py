@@ -42,13 +42,16 @@ on startup, advances it after each row is processed.
 from __future__ import annotations
 
 import datetime
+import fcntl
 import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import sqlite3
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.error
@@ -56,9 +59,24 @@ import urllib.request
 import uuid
 from collections import defaultdict
 
+if sys.version_info < (3, 11):
+    try:
+        from exceptiongroup import ExceptionGroup  # type: ignore[import-not-found]
+    except ImportError:
+
+        class ExceptionGroup(Exception):  # type: ignore[no-redef]
+            def __init__(self, message: str, exceptions: list[BaseException]):
+                super().__init__(message, exceptions)
+                self.exceptions = exceptions
+
+
 SCHEMA_VERSION = 1
 MAX_STATE_FILE_SIZE = 16384  # 16 KB
 CONFIRMATION_TOKEN = "I_ACCEPT_CURSOR_REPAIR_RISK"
+
+CANONICAL_UTC_TS_REGEX = re.compile(
+    r"^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,6})?Z$"
+)
 
 LINEAR_KEY_ENV = "LINEAR_" + "API_KEY"
 LINEAR_KEY = os.environ.get(LINEAR_KEY_ENV, "")
@@ -97,39 +115,87 @@ def get_canonical_path(path_str: str) -> str:
 
 
 def validate_generation_format(gen: str) -> bool:
-    """Validate database generation UUID string strictly as canonical lowercase UUID text."""
-    if not isinstance(gen, str):
+    """Validate database generation UUID string strictly as canonical lowercase UUID v4 text."""
+    if not isinstance(gen, str) or len(gen) != 36:
+        return False
+    if gen != gen.lower() or " " in gen or "{" in gen or "}" in gen:
         return False
     try:
         u = uuid.UUID(gen)
-        return str(u) == gen.lower() and len(gen) == 36 and gen == gen.lower()
+        if u.version != 4 or u.int == 0:
+            return False
+        return str(u) == gen
     except Exception:
         return False
 
 
 def validate_iso_timestamp(ts_str: str) -> bool:
-    """Validate updated_at as unambiguous timezone-aware ISO/RFC3339 form."""
+    """Validate updated_at strictly as canonical UTC ISO string YYYY-MM-DDTHH:MM:SS[.ffffff]Z."""
     if not isinstance(ts_str, str) or not ts_str:
         return False
+    if not CANONICAL_UTC_TS_REGEX.match(ts_str):
+        return False
     try:
-        dt = datetime.datetime.fromisoformat(ts_str)
-        return dt.tzinfo is not None and dt.tzinfo.utcoffset(dt) is not None
+        dt = datetime.datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        return dt.tzinfo is not None
     except Exception:
         return False
 
 
+def get_canonical_utc_now() -> str:
+    """Return current UTC time in strict canonical format YYYY-MM-DDTHH:MM:SS.ffffffZ."""
+    dt = datetime.datetime.now(datetime.timezone.utc)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+
+
+class CursorLock:
+    """Restrictive, no-follow canonical cursor lock file shared primitive."""
+
+    def __init__(self, state_file_path: str):
+        self.state_file_path = get_canonical_path(state_file_path)
+        self.lock_file_path = self.state_file_path + ".lock"
+        self._fd = None
+
+    def __enter__(self):
+        if os.path.islink(self.lock_file_path):
+            raise ValueError("Cursor lock file is a symlink")
+        target_dir = Path(self.lock_file_path).parent
+        target_dir.mkdir(parents=True, exist_ok=True)
+        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+        self._fd = os.open(self.lock_file_path, flags, 0o600)
+        try:
+            st = os.fstat(self._fd)
+            if st.st_mode & 0o077 != 0:
+                os.fchmod(self._fd, 0o600)
+            fcntl.flock(self._fd, fcntl.LOCK_EX)
+        except Exception:
+            os.close(self._fd)
+            self._fd = None
+            raise
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._fd is not None:
+            try:
+                fcntl.flock(self._fd, fcntl.LOCK_UN)
+            finally:
+                os.close(self._fd)
+                self._fd = None
+
+
 def get_db_max_rowid_and_generation_readonly(
-    db_path: str,
+    db_path: str | None = None,
 ) -> tuple[int | None, str | None]:
     """Pure read-only query of MAX(rowid) and db_generation. Byte-for-byte mutates nothing.
 
     Returns (max_rowid, db_generation). If DB does not exist, events table is missing,
     or metadata/generation is missing/invalid, returns None for the missing component(s).
     """
-    canonical_db_path = get_canonical_path(db_path)
+    effective_db = DB_PATH if db_path is None else db_path
+    canonical_db_path = get_canonical_path(effective_db)
     if not os.path.exists(canonical_db_path):
         return None, None
-    if os.path.islink(canonical_db_path) or os.path.islink(db_path):
+    if os.path.islink(canonical_db_path) or os.path.islink(effective_db):
         return None, None
 
     db_uri = f"file:{canonical_db_path}?mode=ro"
@@ -182,31 +248,34 @@ def ensure_db_generation(conn: sqlite3.Connection) -> str:
     except sqlite3.OperationalError:
         pass
 
-    with conn:
+    in_tx = conn.in_transaction
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS dispatch_consumer_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """
+    )
+    cur = conn.execute(
+        "SELECT value FROM dispatch_consumer_meta WHERE key = 'db_generation'"
+    )
+    row = cur.fetchone()
+    if row and row[0]:
+        gen = str(row[0])
+    else:
+        gen = str(uuid.uuid4())
         conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS dispatch_consumer_meta (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            )
-            """
+            "INSERT OR IGNORE INTO dispatch_consumer_meta (key, value) VALUES ('db_generation', ?)",
+            (gen,),
         )
         cur = conn.execute(
             "SELECT value FROM dispatch_consumer_meta WHERE key = 'db_generation'"
         )
-        row = cur.fetchone()
-        if row and row[0]:
-            gen = str(row[0])
-        else:
-            gen = str(uuid.uuid4())
-            conn.execute(
-                "INSERT OR IGNORE INTO dispatch_consumer_meta (key, value) VALUES ('db_generation', ?)",
-                (gen,),
-            )
-            cur = conn.execute(
-                "SELECT value FROM dispatch_consumer_meta WHERE key = 'db_generation'"
-            )
-            gen = str(cur.fetchone()[0])
+        gen = str(cur.fetchone()[0])
+
+    if not in_tx:
+        conn.commit()
 
     if not validate_generation_format(gen):
         raise ValueError(f"Database generation format invalid: {gen!r}")
@@ -226,6 +295,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     except sqlite3.OperationalError:
         pass
 
+    in_tx = conn.in_transaction
     ensure_db_generation(conn)
     conn.execute(
         """
@@ -253,7 +323,8 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         )
         """
     )
-    conn.commit()
+    if not in_tx:
+        conn.commit()
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -265,21 +336,24 @@ def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]
     return d
 
 
-def read_cursor_state(state_file_path: str) -> tuple[dict | None, str, str]:
+def read_cursor_state(
+    state_file_path: str | None = None,
+) -> tuple[dict | None, str, str]:
     """Read and strictly validate the cursor state file using no-follow/fstat.
 
     Returns:
         (state_dict_or_none, status_code, diagnostic_message)
         status_code in {'MISSING', 'LEGACY', 'VALID', 'INVALID'}
     """
-    state_path_obj = Path(state_file_path).expanduser()
+    effective_state = STATE_FILE if state_file_path is None else state_file_path
+    state_path_obj = Path(effective_state).expanduser()
     if not state_path_obj.is_absolute():
         state_path_obj = state_path_obj.absolute()
 
     if not state_path_obj.exists():
         return None, "MISSING", f"Cursor state file does not exist at {state_path_obj}"
 
-    if state_path_obj.is_symlink() or os.path.islink(state_file_path):
+    if state_path_obj.is_symlink() or os.path.islink(effective_state):
         return None, "INVALID", "Cursor state file is a symlink"
 
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
@@ -409,7 +483,7 @@ def read_cursor_state(state_file_path: str) -> tuple[dict | None, str, str]:
         return (
             None,
             "INVALID",
-            f"Invalid updated_at in state: {ts!r} (must be timezone-aware ISO/RFC3339 string)",
+            f"Invalid updated_at in state: {ts!r} (must be strict canonical UTC ISO string)",
         )
 
     return data, "VALID", "Cursor state envelope valid"
@@ -447,10 +521,8 @@ def validate_cursor_state_dict(state_data: dict) -> None:
         raise ValueError(f"Invalid updated_at: {ts!r}")
 
 
-def write_cursor_state(state_file_path: str, state_data: dict) -> None:
-    """Atomically write cursor state JSON envelope using temp file, 0o600 permissions,
-    flush/fsync, os.replace, and parent directory fsync.
-    """
+def _write_cursor_state_unlocked(state_file_path: str, state_data: dict) -> None:
+    """Internal atomic write helper assuming cursor lock is held."""
     validate_cursor_state_dict(state_data)
     canonical_state_path = get_canonical_path(state_file_path)
 
@@ -486,37 +558,54 @@ def write_cursor_state(state_file_path: str, state_data: dict) -> None:
 
         os.replace(temp_path, canonical_state_path)
 
+        # Mandatory parent directory fsync - errors must propagate!
+        dir_fd = os.open(str(target_dir), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
         try:
-            dir_fd = os.open(
-                str(target_dir), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-            )
-            try:
-                os.fsync(dir_fd)
-            finally:
-                os.close(dir_fd)
-        except Exception:
-            pass
-    except Exception:
-        if os.path.exists(temp_path):
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except Exception as primary_exc:
+        cleanup_exc = None
+        if os.path.exists(temp_path) or os.path.islink(temp_path):
             try:
                 os.remove(temp_path)
-            except Exception:
-                pass
-        raise
+                dir_fd = os.open(
+                    str(target_dir), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                )
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
+            except Exception as ce:
+                cleanup_exc = ce
+        if cleanup_exc is not None:
+            raise ExceptionGroup(
+                "Failed to write cursor state and cleanup encountered an error",
+                [primary_exc, cleanup_exc],
+            )
+        raise primary_exc
+
+
+def write_cursor_state(state_file_path: str, state_data: dict) -> None:
+    """Public wrapper acquiring CursorLock before writing cursor state."""
+    with CursorLock(state_file_path):
+        _write_cursor_state_unlocked(state_file_path, state_data)
 
 
 def verify_startup_gate(
-    db_path: str = DB_PATH, state_file_path: str = STATE_FILE
+    db_path: str | None = None, state_file_path: str | None = None
 ) -> tuple[bool, str, dict | None]:
     """Verify DB generation and cursor state envelope before polling or spawning."""
-    canonical_db_path = get_canonical_path(db_path)
-    max_rowid, db_gen = get_db_max_rowid_and_generation_readonly(db_path)
+    effective_db = DB_PATH if db_path is None else db_path
+    effective_state = STATE_FILE if state_file_path is None else state_file_path
+    canonical_db_path = get_canonical_path(effective_db)
+    max_rowid, db_gen = get_db_max_rowid_and_generation_readonly(effective_db)
 
     if max_rowid is None or db_gen is None:
         msg = f"[FAIL_CLOSED] Database error or identity unavailable: db_path={canonical_db_path!r}\nMARKER=PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED"
         return False, msg, None
 
-    state, status_code, status_msg = read_cursor_state(state_file_path)
+    state, status_code, status_msg = read_cursor_state(effective_state)
 
     if status_code == "MISSING":
         msg = f"[FAIL_CLOSED] Cursor state file missing: {status_msg}\nMARKER=PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED"
@@ -580,10 +669,17 @@ def get_state() -> int:
     return state["last_rowid"]
 
 
-def set_state(rowid: int, expected_generation: str | None = None) -> None:
+def set_state(
+    rowid: int,
+    expected_generation: str | None = None,
+    db_path: str | None = None,
+    state_file_path: str | None = None,
+) -> None:
     """Atomically write updated versioned state envelope after verifying generation."""
-    canonical_db_path = get_canonical_path(DB_PATH)
-    max_rowid, db_gen = get_db_max_rowid_and_generation_readonly(DB_PATH)
+    effective_db = DB_PATH if db_path is None else db_path
+    effective_state = STATE_FILE if state_file_path is None else state_file_path
+    canonical_db_path = get_canonical_path(effective_db)
+    max_rowid, db_gen = get_db_max_rowid_and_generation_readonly(effective_db)
     if db_gen is None:
         raise RuntimeError(
             "[FAIL_CLOSED] Database generation unavailable when updating state\n"
@@ -594,7 +690,7 @@ def set_state(rowid: int, expected_generation: str | None = None) -> None:
             f"[FAIL_CLOSED] Database generation changed before state write: expected {expected_generation!r} vs db {db_gen!r}\n"
             "MARKER=PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED"
         )
-    now_str = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    now_str = get_canonical_utc_now()
     state_data = {
         "schema_version": SCHEMA_VERSION,
         "last_rowid": rowid,
@@ -602,7 +698,7 @@ def set_state(rowid: int, expected_generation: str | None = None) -> None:
         "db_generation": db_gen,
         "updated_at": now_str,
     }
-    write_cursor_state(STATE_FILE, state_data)
+    write_cursor_state(effective_state, state_data)
 
 
 def _stable_dedup_key(dedup_key: str | None, topic: str, payload_json: str) -> str:
@@ -614,12 +710,53 @@ def _stable_dedup_key(dedup_key: str | None, topic: str, payload_json: str) -> s
     return f"legacy:{topic}:{payload_hash}"
 
 
+def verify_db_generation_and_identity(
+    db_path: str | None = None, expected_generation: str = ""
+) -> None:
+    """Verify that database at db_path exists, is not a symlink, and has exact expected_generation."""
+    effective_db = DB_PATH if db_path is None else db_path
+    canonical_db = get_canonical_path(effective_db)
+    if not os.path.exists(canonical_db) or os.path.islink(canonical_db):
+        raise RuntimeError(
+            f"[FAIL_CLOSED] DB missing or symlink: db_path={canonical_db!r}\n"
+            "MARKER=PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED"
+        )
+    if not validate_generation_format(expected_generation):
+        raise RuntimeError(
+            f"[FAIL_CLOSED] Invalid expected generation format: {expected_generation!r}\n"
+            "MARKER=PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED"
+        )
+    db_uri = f"file:{canonical_db}?mode=ro"
+    try:
+        conn = sqlite3.connect(db_uri, uri=True, timeout=5)
+        try:
+            cur = conn.execute(
+                "SELECT value FROM dispatch_consumer_meta WHERE key = 'db_generation'"
+            )
+            row = cur.fetchone()
+            db_gen = str(row[0]) if row and row[0] else None
+        finally:
+            conn.close()
+    except sqlite3.Error as e:
+        raise RuntimeError(
+            f"[FAIL_CLOSED] DB query error when verifying generation: {e}\n"
+            "MARKER=PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED"
+        )
+
+    if not db_gen or db_gen != expected_generation:
+        raise RuntimeError(
+            f"[FAIL_CLOSED] Database generation mismatch: expected {expected_generation!r} vs db {db_gen!r}\n"
+            "MARKER=PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED"
+        )
+
+
 def fetch_new_events(
     last_rowid: int,
     expected_generation: str | None = None,
-    db_path: str = DB_PATH,
+    db_path: str | None = None,
 ) -> list[tuple]:
-    canonical_db = get_canonical_path(db_path)
+    effective_db = DB_PATH if db_path is None else db_path
+    canonical_db = get_canonical_path(effective_db)
     if not os.path.exists(canonical_db):
         return []
 
@@ -668,10 +805,35 @@ def mark_processed(
     dedup_key: str | None = None,
     topic: str = "",
     issue_id: str | None = None,
+    expected_generation: str | None = None,
+    db_path: str | None = None,
 ) -> None:
-    canonical_db = get_canonical_path(DB_PATH)
+    effective_db = DB_PATH if db_path is None else db_path
+    canonical_db = get_canonical_path(effective_db)
     conn = sqlite3.connect(canonical_db, timeout=5)
     try:
+        conn.execute("BEGIN IMMEDIATE")
+        if expected_generation is not None:
+            db_gen = None
+            try:
+                cur = conn.execute(
+                    "SELECT value FROM dispatch_consumer_meta WHERE key = 'db_generation'"
+                )
+                row = cur.fetchone()
+                if row and row[0]:
+                    db_gen = str(row[0])
+            except sqlite3.OperationalError:
+                pass
+            if (
+                not db_gen
+                or db_gen != expected_generation
+                or not validate_generation_format(db_gen)
+            ):
+                conn.rollback()
+                raise RuntimeError(
+                    f"[FAIL_CLOSED] Database generation mismatch during mark_processed: expected {expected_generation!r} vs db {db_gen!r}\n"
+                    "MARKER=PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED"
+                )
         ensure_schema(conn)
         if dedup_key is None:
             row = conn.execute(
@@ -692,16 +854,50 @@ def mark_processed(
             )
         conn.execute("UPDATE events SET processed = 1 WHERE rowid = ?", (rowid,))
         conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
     finally:
         conn.close()
 
 
 def claim_event_for_processing(
-    rowid: int, dedup_key: str, topic: str, issue_id: str | None
+    rowid: int,
+    dedup_key: str,
+    topic: str,
+    issue_id: str | None,
+    expected_generation: str | None = None,
+    db_path: str | None = None,
 ) -> bool:
-    canonical_db = get_canonical_path(DB_PATH)
+    effective_db = DB_PATH if db_path is None else db_path
+    canonical_db = get_canonical_path(effective_db)
     conn = sqlite3.connect(canonical_db, timeout=5)
     try:
+        conn.execute("BEGIN IMMEDIATE")
+        if expected_generation is not None:
+            db_gen = None
+            try:
+                cur = conn.execute(
+                    "SELECT value FROM dispatch_consumer_meta WHERE key = 'db_generation'"
+                )
+                row = cur.fetchone()
+                if row and row[0]:
+                    db_gen = str(row[0])
+            except sqlite3.OperationalError:
+                pass
+            if (
+                not db_gen
+                or db_gen != expected_generation
+                or not validate_generation_format(db_gen)
+            ):
+                conn.rollback()
+                raise RuntimeError(
+                    f"[FAIL_CLOSED] Database generation mismatch during claim: expected {expected_generation!r} vs db {db_gen!r}\n"
+                    "MARKER=PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED"
+                )
         ensure_schema(conn)
         cur = conn.execute(
             """
@@ -714,6 +910,12 @@ def claim_event_for_processing(
         conn.execute("UPDATE events SET processed = 1 WHERE rowid = ?", (rowid,))
         conn.commit()
         return cur.rowcount == 1
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
     finally:
         conn.close()
 
@@ -789,30 +991,68 @@ def dispatch_to_supervisor(issue_id: str) -> None:
 
 
 def process_event(
-    rowid: int, dedup_key: str, topic: str, payload_json: str, ts: float
+    rowid: int,
+    dedup_key: str,
+    topic: str,
+    payload_json: str,
+    ts: float,
+    expected_generation: str | None = None,
+    db_path: str | None = None,
 ) -> None:
+    effective_db = DB_PATH if db_path is None else db_path
     event_key = _stable_dedup_key(dedup_key, topic, payload_json)
 
     try:
         event = json.loads(payload_json)
     except Exception as e:
         print(f"[consumer] bad payload rowid={rowid}: {e}")
-        mark_processed(rowid, event_key, topic)
+        mark_processed(
+            rowid,
+            event_key,
+            topic,
+            expected_generation=expected_generation,
+            db_path=effective_db,
+        )
         return
 
     if topic != "update":
-        mark_processed(rowid, event_key, topic)
+        mark_processed(
+            rowid,
+            event_key,
+            topic,
+            expected_generation=expected_generation,
+            db_path=effective_db,
+        )
         return
     if event.get("type") != "Issue":
-        mark_processed(rowid, event_key, topic)
+        mark_processed(
+            rowid,
+            event_key,
+            topic,
+            expected_generation=expected_generation,
+            db_path=effective_db,
+        )
         return
 
     issue_id = event.get("data", {}).get("identifier")
     if not issue_id:
-        mark_processed(rowid, event_key, topic)
+        mark_processed(
+            rowid,
+            event_key,
+            topic,
+            expected_generation=expected_generation,
+            db_path=effective_db,
+        )
         return
 
-    if not claim_event_for_processing(rowid, event_key, topic, issue_id):
+    if not claim_event_for_processing(
+        rowid,
+        event_key,
+        topic,
+        issue_id,
+        expected_generation=expected_generation,
+        db_path=effective_db,
+    ):
         print(f"[consumer] {issue_id}: replay skipped (dedup_key={event_key})")
         return
 
@@ -820,6 +1060,10 @@ def process_event(
     if now - _recent_dispatches[issue_id] < DEDUP_WINDOW_SEC:
         print(f"[consumer] {issue_id}: deduped (within {DEDUP_WINDOW_SEC}s window)")
         return
+
+    # Revalidate expected generation and DB identity immediately before Linear access!
+    if expected_generation is not None:
+        verify_db_generation_and_identity(effective_db, expected_generation)
 
     issue = fetch_issue(issue_id)
     if not issue:
@@ -831,25 +1075,56 @@ def process_event(
         return
 
     _recent_dispatches[issue_id] = now
+
+    # Revalidate expected generation and DB identity immediately before supervisor spawn!
+    if expected_generation is not None:
+        verify_db_generation_and_identity(effective_db, expected_generation)
+
     dispatch_to_supervisor(issue_id)
 
 
-def vacuum_processed() -> None:
+def vacuum_processed(
+    expected_generation: str | None = None, db_path: str | None = None
+) -> None:
+    effective_db = DB_PATH if db_path is None else db_path
+    canonical_db = get_canonical_path(effective_db)
+    conn = sqlite3.connect(canonical_db, timeout=5)
     try:
-        canonical_db = get_canonical_path(DB_PATH)
-        conn = sqlite3.connect(canonical_db, timeout=5)
+        conn.execute("BEGIN IMMEDIATE")
+        if expected_generation is not None:
+            db_gen = None
+            try:
+                cur = conn.execute(
+                    "SELECT value FROM dispatch_consumer_meta WHERE key = 'db_generation'"
+                )
+                row = cur.fetchone()
+                if row and row[0]:
+                    db_gen = str(row[0])
+            except sqlite3.OperationalError:
+                pass
+            if (
+                not db_gen
+                or db_gen != expected_generation
+                or not validate_generation_format(db_gen)
+            ):
+                conn.rollback()
+                raise RuntimeError(
+                    f"[FAIL_CLOSED] Database generation mismatch during vacuum: expected {expected_generation!r} vs db {db_gen!r}\n"
+                    "MARKER=PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED"
+                )
+        conn.execute(
+            "DELETE FROM events WHERE processed = 1 AND ts < ?",
+            (time.time() - 86400,),
+        )
+        conn.commit()
+    except Exception:
         try:
-            conn.execute(
-                "DELETE FROM events WHERE processed = 1 AND ts < ?",
-                (time.time() - 86400,),
-            )
-            conn.commit()
-        except Exception as e:
-            print(f"[consumer] vacuum execution error: {e}")
-        finally:
-            conn.close()
-    except Exception as e:
-        print(f"[consumer] vacuum connection error: {e}")
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
 
 
 def main_loop() -> None:
@@ -866,15 +1141,25 @@ def main_loop() -> None:
             last_rowid = state["last_rowid"]
             expected_gen = state["db_generation"]
 
-            rows = fetch_new_events(last_rowid, expected_generation=expected_gen)
+            rows = fetch_new_events(
+                last_rowid, expected_generation=expected_gen, db_path=DB_PATH
+            )
             for row in rows:
                 rid, dedup_key, topic, payload_json, ts = row
-                process_event(rid, dedup_key, topic, payload_json, ts)
+                process_event(
+                    rid,
+                    dedup_key,
+                    topic,
+                    payload_json,
+                    ts,
+                    expected_generation=expected_gen,
+                    db_path=DB_PATH,
+                )
                 last_rowid = max(last_rowid, rid)
             if rows:
                 set_state(last_rowid, expected_generation=expected_gen)
             if time.time() - last_vacuum > 300:
-                vacuum_processed()
+                vacuum_processed(expected_generation=expected_gen, db_path=DB_PATH)
                 last_vacuum = time.time()
         except Exception as e:
             print(f"[consumer] loop error: {e}")
@@ -895,16 +1180,20 @@ def _sha256_file(filepath: str) -> str:
     return h.hexdigest()
 
 
-def inspect_cursor(db_path: str = DB_PATH, state_file_path: str = STATE_FILE) -> dict:
+def inspect_cursor(
+    db_path: str | None = None, state_file_path: str | None = None
+) -> dict:
     """Read-only inspection report. Byte-for-byte mutates nothing."""
-    canonical_db_path = get_canonical_path(db_path)
-    canonical_state_path = get_canonical_path(state_file_path)
+    effective_db = DB_PATH if db_path is None else db_path
+    effective_state = STATE_FILE if state_file_path is None else state_file_path
+    canonical_db_path = get_canonical_path(effective_db)
+    canonical_state_path = get_canonical_path(effective_state)
 
     db_exists = os.path.exists(canonical_db_path)
-    max_rowid, db_gen = get_db_max_rowid_and_generation_readonly(db_path)
+    max_rowid, db_gen = get_db_max_rowid_and_generation_readonly(effective_db)
 
-    state, status_code, status_msg = read_cursor_state(state_file_path)
-    is_ok, gate_msg, _ = verify_startup_gate(db_path, state_file_path)
+    state, status_code, status_msg = read_cursor_state(effective_state)
+    is_ok, gate_msg, _ = verify_startup_gate(effective_db, effective_state)
 
     cursor_format = "unknown"
     cursor_rowid = None
@@ -993,20 +1282,12 @@ def validate_target_rowid(target_rowid: object, max_rowid: int) -> int:
 def _cleanup_partial_destination(dst_path: str, target_dir: Path) -> None:
     """Safely remove partial destination file and fsync parent directory."""
     if os.path.exists(dst_path) or os.path.islink(dst_path):
+        os.remove(dst_path)
+        dir_fd = os.open(str(target_dir), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
         try:
-            os.remove(dst_path)
-        except Exception:
-            pass
-        try:
-            dir_fd = os.open(
-                str(target_dir), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-            )
-            try:
-                os.fsync(dir_fd)
-            finally:
-                os.close(dir_fd)
-        except Exception:
-            pass
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
 
 
 def _copy_file_raw_atomic(
@@ -1077,7 +1358,6 @@ def _copy_file_raw_atomic(
                     offset += written
 
             os.fsync(dst_fd)
-
             os.close(dst_fd)
             dst_fd = None
 
@@ -1109,8 +1389,17 @@ def _copy_file_raw_atomic(
                     os.close(dst_fd)
                 except Exception:
                     pass
+            cleanup_exc = None
             if dst_created:
-                _cleanup_partial_destination(canonical_dst, target_dir)
+                try:
+                    _cleanup_partial_destination(canonical_dst, target_dir)
+                except Exception as ce:
+                    cleanup_exc = ce
+            if cleanup_exc is not None:
+                raise ExceptionGroup(
+                    "Backup copy failed and partial artifact cleanup failed",
+                    [primary_exc, cleanup_exc],
+                )
             raise primary_exc
 
     finally:
@@ -1118,12 +1407,14 @@ def _copy_file_raw_atomic(
 
 
 def repair_dry_run(
-    db_path: str = DB_PATH,
-    state_file_path: str = STATE_FILE,
+    db_path: str | None = None,
+    state_file_path: str | None = None,
     target_rowid: int | None = None,
 ) -> dict:
     """Compute deterministic repair plan and backup destinations. Byte-for-byte mutates nothing."""
-    inspection = inspect_cursor(db_path, state_file_path)
+    effective_db = DB_PATH if db_path is None else db_path
+    effective_state = STATE_FILE if state_file_path is None else state_file_path
+    inspection = inspect_cursor(effective_db, effective_state)
     canonical_db_path = inspection["db_path"]
     canonical_state_path = inspection["state_file_path"]
 
@@ -1263,8 +1554,8 @@ def repair_dry_run(
 
 
 def repair_apply(
-    db_path: str = DB_PATH,
-    state_file_path: str = STATE_FILE,
+    db_path: str | None = None,
+    state_file_path: str | None = None,
     confirmation_token: str = "",
     target_rowid: int | None = None,
     plan: dict | None = None,
@@ -1277,196 +1568,228 @@ def repair_apply(
             "mutated": False,
         }
 
-    canonical_db_path = get_canonical_path(db_path)
-    canonical_state_path = get_canonical_path(state_file_path)
+    effective_db = DB_PATH if db_path is None else db_path
+    effective_state = STATE_FILE if state_file_path is None else state_file_path
+    canonical_db_path = get_canonical_path(effective_db)
+    canonical_state_path = get_canonical_path(effective_state)
 
-    if plan is not None:
-        dry_run_plan = plan
-    else:
-        dry_run_plan = repair_dry_run(
-            db_path, state_file_path, target_rowid=target_rowid
+    with CursorLock(canonical_state_path):
+        expected_plan = repair_dry_run(
+            effective_db, effective_state, target_rowid=target_rowid
         )
 
-    db_backup_path = dry_run_plan["proposed_db_backup_path"]
-    wal_backup_path = dry_run_plan["proposed_wal_backup_path"]
-    cursor_backup_path = dry_run_plan["proposed_cursor_backup_path"]
-
-    if os.path.exists(db_backup_path):
-        raise FileExistsError(f"DB backup destination collision: {db_backup_path}")
-    if wal_backup_path != "NONE" and os.path.exists(wal_backup_path):
-        raise FileExistsError(f"WAL backup destination collision: {wal_backup_path}")
-    if cursor_backup_path != "NONE" and os.path.exists(cursor_backup_path):
-        raise FileExistsError(
-            f"Cursor backup destination collision: {cursor_backup_path}"
-        )
-
-    created_artifacts: list[str] = []
-    try:
-        lock_conn = sqlite3.connect(canonical_db_path, timeout=10.0)
-        try:
-            lock_conn.execute("BEGIN EXCLUSIVE")
-
-            curr_db_sha256 = _sha256_file(canonical_db_path)
-            curr_db_size = (
-                os.path.getsize(canonical_db_path)
-                if os.path.exists(canonical_db_path)
-                else 0
-            )
-
-            wal_path = canonical_db_path + "-wal"
-            wal_exists = os.path.exists(wal_path) and os.path.getsize(wal_path) > 0
-            curr_wal_sha256 = _sha256_file(wal_path) if wal_exists else "NONE"
-            curr_wal_size = os.path.getsize(wal_path) if wal_exists else 0
-
-            cursor_exists = (
-                os.path.exists(canonical_state_path)
-                and os.path.getsize(canonical_state_path) > 0
-            )
-            curr_cursor_sha256 = (
-                _sha256_file(canonical_state_path) if cursor_exists else "NONE"
-            )
-            curr_cursor_size = (
-                os.path.getsize(canonical_state_path) if cursor_exists else 0
-            )
-
-            if (
-                curr_db_sha256 != dry_run_plan["db_sha256"]
-                or curr_db_size != dry_run_plan["db_size"]
-                or curr_wal_sha256 != dry_run_plan["wal_sha256"]
-                or curr_wal_size != dry_run_plan["wal_size"]
-                or curr_cursor_sha256 != dry_run_plan["cursor_sha256"]
-                or curr_cursor_size != dry_run_plan["cursor_size"]
+        if plan is not None:
+            if not isinstance(plan, dict):
+                raise TypeError("Supplied plan must be a dictionary")
+            for source_key in (
+                "db_sha256",
+                "db_size",
+                "wal_sha256",
+                "wal_size",
+                "cursor_sha256",
+                "cursor_size",
             ):
-                raise RuntimeError(
-                    "Source drift detected: database or cursor file changed since plan computation"
-                )
-
-            # Raw byte copy of main DB
-            db_bak_sha, db_bak_sz = _copy_file_raw_atomic(
-                canonical_db_path, db_backup_path
-            )
-            created_artifacts.append(db_backup_path)
-
-            if db_bak_sha != curr_db_sha256 or db_bak_sz != curr_db_size:
-                raise RuntimeError(
-                    f"Main DB backup copy verification failed: expected sha={curr_db_sha256} size={curr_db_size}, got sha={db_bak_sha} size={db_bak_sz}"
-                )
-
-            # Raw byte copy of WAL if present and non-empty
-            wal_bak_sha, wal_bak_sz = "NONE", 0
-            if wal_exists:
-                wal_bak_sha, wal_bak_sz = _copy_file_raw_atomic(
-                    wal_path, wal_backup_path
-                )
-                created_artifacts.append(wal_backup_path)
-                if wal_bak_sha != curr_wal_sha256 or wal_bak_sz != curr_wal_size:
+                if plan.get(source_key) != expected_plan.get(source_key):
                     raise RuntimeError(
-                        f"WAL backup copy verification failed: expected sha={curr_wal_sha256} size={curr_wal_size}, got sha={wal_bak_sha} size={wal_bak_sz}"
+                        "Source drift detected: database or cursor file changed since plan computation"
                     )
-
-            # Raw byte copy of cursor state file if present and non-empty
-            cursor_bak_sha, cursor_bak_sz = "NONE", 0
-            if cursor_exists:
-                cursor_bak_sha, cursor_bak_sz = _copy_file_raw_atomic(
-                    canonical_state_path, cursor_backup_path
+            if plan != expected_plan:
+                raise ValueError(
+                    "Caller-supplied plan does not match recomputed deterministic plan"
                 )
-                created_artifacts.append(cursor_backup_path)
+
+        dry_run_plan = expected_plan
+
+        db_backup_path = dry_run_plan["proposed_db_backup_path"]
+        wal_backup_path = dry_run_plan["proposed_wal_backup_path"]
+        cursor_backup_path = dry_run_plan["proposed_cursor_backup_path"]
+
+        if os.path.exists(db_backup_path):
+            raise FileExistsError(f"DB backup destination collision: {db_backup_path}")
+        if wal_backup_path != "NONE" and os.path.exists(wal_backup_path):
+            raise FileExistsError(
+                f"WAL backup destination collision: {wal_backup_path}"
+            )
+        if cursor_backup_path != "NONE" and os.path.exists(cursor_backup_path):
+            raise FileExistsError(
+                f"Cursor backup destination collision: {cursor_backup_path}"
+            )
+
+        created_artifacts: list[str] = []
+        try:
+            lock_conn = sqlite3.connect(canonical_db_path, timeout=10.0)
+            try:
+                lock_conn.execute("BEGIN EXCLUSIVE")
+
+                curr_db_sha256 = _sha256_file(canonical_db_path)
+                curr_db_size = (
+                    os.path.getsize(canonical_db_path)
+                    if os.path.exists(canonical_db_path)
+                    else 0
+                )
+
+                wal_path = canonical_db_path + "-wal"
+                wal_exists = os.path.exists(wal_path) and os.path.getsize(wal_path) > 0
+                curr_wal_sha256 = _sha256_file(wal_path) if wal_exists else "NONE"
+                curr_wal_size = os.path.getsize(wal_path) if wal_exists else 0
+
+                cursor_exists = (
+                    os.path.exists(canonical_state_path)
+                    and os.path.getsize(canonical_state_path) > 0
+                )
+                curr_cursor_sha256 = (
+                    _sha256_file(canonical_state_path) if cursor_exists else "NONE"
+                )
+                curr_cursor_size = (
+                    os.path.getsize(canonical_state_path) if cursor_exists else 0
+                )
+
                 if (
-                    cursor_bak_sha != curr_cursor_sha256
-                    or cursor_bak_sz != curr_cursor_size
+                    curr_db_sha256 != dry_run_plan["db_sha256"]
+                    or curr_db_size != dry_run_plan["db_size"]
+                    or curr_wal_sha256 != dry_run_plan["wal_sha256"]
+                    or curr_wal_size != dry_run_plan["wal_size"]
+                    or curr_cursor_sha256 != dry_run_plan["cursor_sha256"]
+                    or curr_cursor_size != dry_run_plan["cursor_size"]
                 ):
                     raise RuntimeError(
-                        f"Cursor backup copy verification failed: expected sha={curr_cursor_sha256} size={curr_cursor_size}, got sha={cursor_bak_sha} size={cursor_bak_sz}"
+                        "Source drift detected: database or cursor file changed since plan computation"
                     )
 
-        finally:
-            lock_conn.rollback()
-            lock_conn.close()
+                # Raw byte copy of main DB
+                db_bak_sha, db_bak_sz = _copy_file_raw_atomic(
+                    canonical_db_path, db_backup_path
+                )
+                created_artifacts.append(db_backup_path)
 
-        now_str = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        new_state = dict(dry_run_plan["proposed_cursor_state"])
-        new_state["updated_at"] = now_str
-        write_cursor_state(canonical_state_path, new_state)
-        new_cursor_sha256 = _sha256_file(canonical_state_path)
+                if db_bak_sha != curr_db_sha256 or db_bak_sz != curr_db_size:
+                    raise RuntimeError(
+                        f"Main DB backup copy verification failed: expected sha={curr_db_sha256} size={curr_db_size}, got sha={db_bak_sha} size={db_bak_sz}"
+                    )
 
-        member_receipts = [
-            {
-                "name": "main_db",
-                "src_path": canonical_db_path,
-                "src_sha256": curr_db_sha256,
-                "src_size": curr_db_size,
-                "backup_path": db_backup_path,
-                "backup_sha256": db_bak_sha,
-                "backup_size": db_bak_sz,
-                "bytes_match": curr_db_sha256 == db_bak_sha
-                and curr_db_size == db_bak_sz,
+                # Raw byte copy of WAL if present and non-empty
+                wal_bak_sha, wal_bak_sz = "NONE", 0
+                if wal_exists:
+                    wal_bak_sha, wal_bak_sz = _copy_file_raw_atomic(
+                        wal_path, wal_backup_path
+                    )
+                    created_artifacts.append(wal_backup_path)
+                    if wal_bak_sha != curr_wal_sha256 or wal_bak_sz != curr_wal_size:
+                        raise RuntimeError(
+                            f"WAL backup copy verification failed: expected sha={curr_wal_sha256} size={curr_wal_size}, got sha={wal_bak_sha} size={wal_bak_sz}"
+                        )
+
+                # Raw byte copy of cursor state file if present and non-empty
+                cursor_bak_sha, cursor_bak_sz = "NONE", 0
+                if cursor_exists:
+                    cursor_bak_sha, cursor_bak_sz = _copy_file_raw_atomic(
+                        canonical_state_path, cursor_backup_path
+                    )
+                    created_artifacts.append(cursor_backup_path)
+                    if (
+                        cursor_bak_sha != curr_cursor_sha256
+                        or cursor_bak_sz != curr_cursor_size
+                    ):
+                        raise RuntimeError(
+                            f"Cursor backup copy verification failed: expected sha={curr_cursor_sha256} size={curr_cursor_size}, got sha={cursor_bak_sha} size={cursor_bak_sz}"
+                        )
+
+                now_str = get_canonical_utc_now()
+                new_state = dict(dry_run_plan["proposed_cursor_state"])
+                new_state["updated_at"] = now_str
+                _write_cursor_state_unlocked(canonical_state_path, new_state)
+                new_cursor_sha256 = _sha256_file(canonical_state_path)
+
+            finally:
+                lock_conn.rollback()
+                lock_conn.close()
+
+            member_receipts = [
+                {
+                    "name": "main_db",
+                    "src_path": canonical_db_path,
+                    "src_sha256": curr_db_sha256,
+                    "src_size": curr_db_size,
+                    "backup_path": db_backup_path,
+                    "backup_sha256": db_bak_sha,
+                    "backup_size": db_bak_sz,
+                    "bytes_match": curr_db_sha256 == db_bak_sha
+                    and curr_db_size == db_bak_sz,
+                }
+            ]
+            if wal_exists:
+                member_receipts.append(
+                    {
+                        "name": "wal",
+                        "src_path": wal_path,
+                        "src_sha256": curr_wal_sha256,
+                        "src_size": curr_wal_size,
+                        "backup_path": wal_backup_path,
+                        "backup_sha256": wal_bak_sha,
+                        "backup_size": wal_bak_sz,
+                        "bytes_match": curr_wal_sha256 == wal_bak_sha
+                        and curr_wal_size == wal_bak_sz,
+                    }
+                )
+            if cursor_exists:
+                member_receipts.append(
+                    {
+                        "name": "cursor",
+                        "src_path": canonical_state_path,
+                        "src_sha256": curr_cursor_sha256,
+                        "src_size": curr_cursor_size,
+                        "backup_path": cursor_backup_path,
+                        "backup_sha256": cursor_bak_sha,
+                        "backup_size": cursor_bak_sz,
+                        "bytes_match": curr_cursor_sha256 == cursor_bak_sha
+                        and curr_cursor_size == cursor_bak_sz,
+                    }
+                )
+
+            receipt = {
+                "status": "SUCCESS",
+                "action": "repair_apply",
+                "plan_id": dry_run_plan["plan_id"],
+                "timestamp": now_str,
+                "db_path": canonical_db_path,
+                "db_generation": dry_run_plan["db_generation"],
+                "src_db_sha256": curr_db_sha256,
+                "src_db_size": curr_db_size,
+                "db_backup_path": db_backup_path,
+                "db_backup_sha256": db_bak_sha,
+                "db_backup_size": db_bak_sz,
+                "wal_path": wal_path if wal_exists else "NONE",
+                "src_wal_sha256": curr_wal_sha256,
+                "src_wal_size": curr_wal_size,
+                "wal_backup_path": wal_backup_path if wal_exists else "NONE",
+                "wal_backup_sha256": wal_bak_sha,
+                "wal_backup_size": wal_bak_sz,
+                "cursor_path": canonical_state_path if cursor_exists else "NONE",
+                "src_cursor_sha256": curr_cursor_sha256,
+                "src_cursor_size": curr_cursor_size,
+                "cursor_backup_path": cursor_backup_path if cursor_exists else "NONE",
+                "cursor_backup_sha256": cursor_bak_sha,
+                "cursor_backup_size": cursor_bak_sz,
+                "members": member_receipts,
+                "new_cursor_state": new_state,
+                "new_cursor_sha256": new_cursor_sha256,
+                "marker": "PRISMATIC_DISPATCH_CURSOR_GENERATION_SOURCE_OK",
+                "mutated": True,
             }
-        ]
-        if wal_exists:
-            member_receipts.append(
-                {
-                    "name": "wal",
-                    "src_path": wal_path,
-                    "src_sha256": curr_wal_sha256,
-                    "src_size": curr_wal_size,
-                    "backup_path": wal_backup_path,
-                    "backup_sha256": wal_bak_sha,
-                    "backup_size": wal_bak_sz,
-                    "bytes_match": curr_wal_sha256 == wal_bak_sha
-                    and curr_wal_size == wal_bak_sz,
-                }
-            )
-        if cursor_exists:
-            member_receipts.append(
-                {
-                    "name": "cursor",
-                    "src_path": canonical_state_path,
-                    "src_sha256": curr_cursor_sha256,
-                    "src_size": curr_cursor_size,
-                    "backup_path": cursor_backup_path,
-                    "backup_sha256": cursor_bak_sha,
-                    "backup_size": cursor_bak_sz,
-                    "bytes_match": curr_cursor_sha256 == cursor_bak_sha
-                    and curr_cursor_size == cursor_bak_sz,
-                }
-            )
-
-        receipt = {
-            "status": "SUCCESS",
-            "action": "repair_apply",
-            "plan_id": dry_run_plan["plan_id"],
-            "timestamp": now_str,
-            "db_path": canonical_db_path,
-            "db_generation": dry_run_plan["db_generation"],
-            "src_db_sha256": curr_db_sha256,
-            "src_db_size": curr_db_size,
-            "db_backup_path": db_backup_path,
-            "db_backup_sha256": db_bak_sha,
-            "db_backup_size": db_bak_sz,
-            "wal_path": wal_path if wal_exists else "NONE",
-            "src_wal_sha256": curr_wal_sha256,
-            "src_wal_size": curr_wal_size,
-            "wal_backup_path": wal_backup_path if wal_exists else "NONE",
-            "wal_backup_sha256": wal_bak_sha,
-            "wal_backup_size": wal_bak_sz,
-            "cursor_path": canonical_state_path if cursor_exists else "NONE",
-            "src_cursor_sha256": curr_cursor_sha256,
-            "src_cursor_size": curr_cursor_size,
-            "cursor_backup_path": cursor_backup_path if cursor_exists else "NONE",
-            "cursor_backup_sha256": cursor_bak_sha,
-            "cursor_backup_size": cursor_bak_sz,
-            "members": member_receipts,
-            "new_cursor_state": new_state,
-            "new_cursor_sha256": new_cursor_sha256,
-            "marker": "PRISMATIC_DISPATCH_CURSOR_GENERATION_SOURCE_OK",
-            "mutated": True,
-        }
-        return receipt
-    except Exception:
-        for path in reversed(created_artifacts):
-            if os.path.exists(path) or os.path.islink(path):
-                _cleanup_partial_destination(path, Path(path).parent)
-        raise
+            return receipt
+        except Exception as primary_exc:
+            cleanup_errors = []
+            for path in reversed(created_artifacts):
+                try:
+                    _cleanup_partial_destination(path, Path(path).parent)
+                except Exception as ce:
+                    cleanup_errors.append(ce)
+            if cleanup_errors:
+                raise ExceptionGroup(
+                    "repair_apply failed and artifact cleanup encountered errors",
+                    [primary_exc] + cleanup_errors,
+                )
+            raise primary_exc
 
 
 def main() -> None:
@@ -1492,10 +1815,10 @@ def main() -> None:
         help="Explicit target rowid for repair",
     )
     parser.add_argument(
-        "--db-path", type=str, default=DB_PATH, help="Path to SQLite event bus database"
+        "--db-path", type=str, default=None, help="Path to SQLite event bus database"
     )
     parser.add_argument(
-        "--state-file", type=str, default=STATE_FILE, help="Path to cursor state file"
+        "--state-file", type=str, default=None, help="Path to cursor state file"
     )
 
     args = parser.parse_args()
