@@ -22,9 +22,13 @@ import subprocess
 import sys
 import tempfile
 import textwrap
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised on Python 3.10 CI
+    import tomli as tomllib  # type: ignore[import-not-found]
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -66,9 +70,20 @@ def load_pyproject() -> dict:
     return tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
 
 
+def normalize_project_license(value: object) -> str:
+    """Return a license expression from supported ``project.license`` forms."""
+    if type(value) is str:
+        return value.strip()
+    if type(value) is dict and len(value) == 1:
+        ((key, text),) = value.items()
+        if type(key) is str and key == "text" and type(text) is str:
+            return text.strip()
+    return ""
+
+
 def check_metadata(checks: list[Check], pyproject: dict) -> None:
     project = pyproject.get("project", {})
-    license_text = ((project.get("license") or {}).get("text") or "").strip()
+    license_text = normalize_project_license(project.get("license"))
     readme = project.get("readme")
     add(
         checks,
@@ -204,9 +219,9 @@ def check_docker(checks: list[Check], pyproject: dict) -> None:
     if not dockerfile.exists():
         return
     text = dockerfile.read_text(encoding="utf-8", errors="replace")
-    project_license = (
-        (pyproject.get("project", {}).get("license") or {}).get("text") or ""
-    ).strip()
+    project_license = normalize_project_license(
+        pyproject.get("project", {}).get("license")
+    )
     add(
         checks,
         "Docker license label matches pyproject",
