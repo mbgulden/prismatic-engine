@@ -2523,14 +2523,10 @@ class EventDrivenSupervisor:
         self.quota_client = quota_client or QuotaClient()
 
     def _is_circuit_failure(self, result: dict) -> bool:
-        return bool(
-            result.get("has_inactivity_kill")
-            or result.get("has_backend_timeout")
-            or result.get("has_partial_result")
-            or result.get("has_start_timeout")
-            or result.get("result_boundary", {}).get("completed_work_persisted")
-            is False
-        )
+        # Only the current task's final completed-work-gated success may reset
+        # consecutive failures. Every non-completing outcome remains a circuit
+        # failure, including semantic/identity rejection and ledger failure.
+        return result.get("completion_eligible") is not True
 
     def record_result_for_circuit(self, issue_id: str, result: dict) -> None:
         with self.circuit_lock:
@@ -2672,6 +2668,10 @@ class EventDrivenSupervisor:
 
             issue_id = task["issue_id"]
             lane = task.get("lane", "default")
+            # Per-iteration result state must be reset before any early exit.
+            # Otherwise a prior task's successful result can mark this task
+            # completed/non-requeueable from the finally block.
+            result = None
             with self.active_lock:
                 self.active_count += 1
                 self.idle_event.clear()
@@ -2682,7 +2682,6 @@ class EventDrivenSupervisor:
                     sandbox, task_path, log_path = self.create_sandbox_env(task)
                 except Exception as e:
                     print(f"  [{issue_id}] sandbox failed: {e}", flush=True)
-                    self.mark_completed(issue_id)
                     continue
 
                 # At task pickup (before run_agy_session):
@@ -3004,10 +3003,9 @@ class EventDrivenSupervisor:
                         self.mark_completed(issue_id)
                     break
             finally:
-                worker_result = locals().get("result")
                 completion_eligible = bool(
-                    isinstance(worker_result, dict)
-                    and worker_result.get("completion_eligible") is True
+                    isinstance(result, dict)
+                    and result.get("completion_eligible") is True
                 )
                 allow_requeue = not completion_eligible
                 if completion_eligible:

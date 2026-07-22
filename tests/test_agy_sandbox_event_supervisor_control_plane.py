@@ -6,6 +6,7 @@ import json
 import os
 import pwd
 import sqlite3
+import threading
 import urllib.request
 from pathlib import Path
 
@@ -931,6 +932,145 @@ def test_result_boundary_import_is_queue_side_effect_free(tmp_path, monkeypatch)
     assert supervisor.agy_completed_work_evidence_dir() == completed_evidence
     assert not queue_db.exists()
     assert not queue_db.parent.exists()
+
+
+def _minimal_worker(supervisor, task):
+    worker = supervisor.EventDrivenSupervisor.__new__(supervisor.EventDrivenSupervisor)
+    worker.shutdown_event = threading.Event()
+    worker.active_lock = threading.Lock()
+    worker.active_count = 0
+    worker.idle_event = threading.Event()
+    worker.idle_event.set()
+    worker.token_pool = None
+    worker.completed_issues = set()
+    worker.model = "agy-default"
+    worker.backoff_range = (0.0, 0.0)
+    worker.launch_jitter_range = (0.0, 0.0)
+    worker.marked = []
+    worker.mark_completed = worker.marked.append
+
+    class Scheduler:
+        def __init__(self):
+            self.served = False
+            self.finishes = []
+
+        def get_next(self, _shutdown_event):
+            if self.served:
+                return None
+            self.served = True
+            return task
+
+        def finish(self, finished_task, *, allow_requeue):
+            self.finishes.append((finished_task["issue_id"], allow_requeue))
+            worker.shutdown_event.set()
+
+    worker.scheduler = Scheduler()
+    return worker
+
+
+def test_worker_sandbox_failure_is_requeueable_and_never_marked_completed(
+    monkeypatch,
+):
+    supervisor = _load_supervisor()
+    monkeypatch.setattr(supervisor.random, "uniform", lambda *_args: 0.0)
+    worker = _minimal_worker(
+        supervisor, {"issue_id": "GRO-SANDBOX-FAIL", "lane": "default"}
+    )
+
+    def fail_sandbox(_task):
+        raise OSError("sandbox unavailable")
+
+    worker.create_sandbox_env = fail_sandbox
+    worker.worker_loop(1)
+
+    assert worker.marked == []
+    assert worker.scheduler.finishes == [("GRO-SANDBOX-FAIL", True)]
+    assert worker.active_count == 0
+
+
+def test_worker_quota_early_exit_cannot_reuse_success_or_suppress_requeue(
+    tmp_path, monkeypatch
+):
+    supervisor = _load_supervisor()
+    monkeypatch.setattr(supervisor.random, "uniform", lambda *_args: 0.0)
+    task = {
+        "issue_id": "GRO-QUOTA-BLOCK",
+        "lane": "default",
+        "labels": [],
+    }
+    worker = _minimal_worker(supervisor, task)
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    task_path = tmp_path / "AGY_TASK.md"
+    log_path = tmp_path / "agy.log"
+    worker.create_sandbox_env = lambda _task: (sandbox, task_path, log_path)
+    worker.add_task = lambda _task: False
+
+    class Linear:
+        def update_issue(self, *_args, **_kwargs):
+            return None
+
+    class Quota:
+        def check_quota(self, _model):
+            return False, "quota blocked"
+
+    class Bus:
+        def publish_canonical(self, *_args, **_kwargs):
+            return None
+
+    worker.linear_client = Linear()
+    worker.quota_client = Quota()
+    worker.bus_client = Bus()
+    worker.worker_loop(1)
+
+    assert worker.marked == []
+    assert worker.scheduler.finishes == [("GRO-QUOTA-BLOCK", True)]
+    assert worker.active_count == 0
+
+
+def test_circuit_success_requires_current_final_completion_eligibility():
+    supervisor = _load_supervisor()
+    worker = supervisor.EventDrivenSupervisor.__new__(supervisor.EventDrivenSupervisor)
+
+    assert worker._is_circuit_failure({"completion_eligible": True}) is False
+    assert worker._is_circuit_failure({"completion_eligible": False}) is True
+    assert worker._is_circuit_failure({"has_error": True}) is True
+    assert (
+        worker._is_circuit_failure(
+            {
+                "completion_eligible": False,
+                "result_boundary": {
+                    "completed_work_persisted": True,
+                    "boundary_state": "canonical_valid",
+                },
+            }
+        )
+        is True
+    )
+    assert (
+        worker._is_circuit_failure(
+            {"result_boundary": {"boundary_state": "canonical_invalid"}}
+        )
+        is True
+    )
+
+
+def test_worker_final_disposition_uses_reset_current_result_only():
+    source = SUPERVISOR_PATH.read_text(encoding="utf-8")
+    issue_assignment = 'issue_id = task["issue_id"]'
+    reset = "result = None"
+    active = "with self.active_lock:"
+    issue_index = source.index(issue_assignment)
+    assert (
+        issue_index
+        < source.index(reset, issue_index)
+        < source.index(active, issue_index)
+    )
+    assert 'locals().get("result")' not in source
+    sandbox_failure = source.split("sandbox failed: {e}", 1)[1].split(
+        "# At task pickup", 1
+    )[0]
+    assert "mark_completed" not in sandbox_failure
 
 
 def test_quality_gate_and_partial_linear_done_are_semantically_guarded():
