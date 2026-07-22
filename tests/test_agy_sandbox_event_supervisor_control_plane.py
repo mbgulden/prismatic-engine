@@ -575,6 +575,20 @@ class _HookedCompletedWorkId(str):
         ),
         (
             "agy-cw-id",
+            _HookedCompletedWorkId("AGY_COMPLETED_WORK_INGESTION_OK"),
+            {"integration_marker": "AGY_COMPLETED_WORK_INTEGRATION_GATE_OK"},
+        ),
+        (
+            "agy-cw-id",
+            "AGY_COMPLETED_WORK_INGESTION_OK",
+            {
+                "integration_marker": _HookedCompletedWorkId(
+                    "AGY_COMPLETED_WORK_INTEGRATION_GATE_OK"
+                )
+            },
+        ),
+        (
+            "agy-cw-id",
             "AGY_COMPLETED_WORK_INGESTION_OK",
             {"integration_marker": "wrong"},
         ),

@@ -260,8 +260,10 @@ def _safe_completed_result(raw_output_id, completed_row):
     if (
         type(completed_row.id) is not str
         or not completed_row.id.strip()
+        or type(completed_row.ingestion_marker) is not str
         or completed_row.ingestion_marker != AGY_COMPLETED_WORK_INGESTION_MARKER
         or type(row_dict) is not dict
+        or type(row_dict.get("integration_marker")) is not str
         or row_dict.get("integration_marker") != AGY_COMPLETED_WORK_INTEGRATION_GATE_MARKER
     ):
         raise ValueError("invalid completed-work return")
