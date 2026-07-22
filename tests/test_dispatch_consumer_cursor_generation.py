@@ -7,6 +7,7 @@ import importlib
 import json
 import os
 import sqlite3
+import stat
 import subprocess
 import time
 import urllib.request
@@ -832,3 +833,148 @@ def test_24_wal_mode_raw_backup_restore_and_recovery(tmp_path: Path) -> None:
         assert events[2] == (3, "wal-key-3")
     finally:
         conn_reopen.close()
+
+
+# -----------------------------------------------------------------------------
+# Repair Regressions (Repair 3)
+# -----------------------------------------------------------------------------
+
+
+def test_25_injected_file_fsync_failure_propagates_leaves_no_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression for Repair 3: Injected file fsync failure must propagate, leave no destination, and leave source unchanged."""
+    src_file = tmp_path / "source.txt"
+    src_content = "important source data"
+    src_file.write_text(src_content)
+    os.chmod(src_file, 0o600)
+
+    dst_file = tmp_path / "dst.backup"
+
+    orig_fsync = os.fsync
+
+    def failing_file_fsync(fd: int) -> None:
+        try:
+            is_reg = stat.S_ISREG(os.fstat(fd).st_mode)
+        except OSError:
+            is_reg = False
+        if is_reg:
+            raise OSError("Injected file fsync error")
+        orig_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", failing_file_fsync)
+
+    with pytest.raises(OSError, match="Injected file fsync error"):
+        consumer._copy_file_raw_atomic(str(src_file), str(dst_file))
+
+    assert not dst_file.exists()
+    assert src_file.read_text() == src_content
+
+
+def test_26_injected_directory_fsync_failure_propagates_leaves_no_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression for Repair 3: Injected directory fsync failure must propagate, leave no destination, and leave source unchanged."""
+    src_file = tmp_path / "source.txt"
+    src_content = "important source data for dir test"
+    src_file.write_text(src_content)
+    os.chmod(src_file, 0o600)
+
+    dst_file = tmp_path / "dst.backup"
+
+    orig_fsync = os.fsync
+
+    def failing_dir_fsync(fd: int) -> None:
+        try:
+            is_dir = stat.S_ISDIR(os.fstat(fd).st_mode)
+        except OSError:
+            is_dir = False
+        if is_dir:
+            raise OSError("Injected directory fsync error")
+        orig_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", failing_dir_fsync)
+
+    with pytest.raises(OSError, match="Injected directory fsync error"):
+        consumer._copy_file_raw_atomic(str(src_file), str(dst_file))
+
+    assert not dst_file.exists()
+    assert src_file.read_text() == src_content
+
+
+def test_27_symlink_source_rejected_with_no_destination(tmp_path: Path) -> None:
+    """Regression for Repair 3: Symlink source is rejected with no destination creation."""
+    real_src = tmp_path / "real_source.txt"
+    real_src.write_text("real source data")
+    os.chmod(real_src, 0o600)
+
+    link_src = tmp_path / "link_source.txt"
+    os.symlink(real_src, link_src)
+
+    dst_file = tmp_path / "dst.backup"
+
+    with pytest.raises(ValueError, match="symlink"):
+        consumer._copy_file_raw_atomic(str(link_src), str(dst_file))
+
+    assert not dst_file.exists()
+
+
+def test_28_later_member_failure_cleans_earlier_members_preserves_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression for Repair 3: Failure of later backup member cleans newly created earlier members,
+    preserves pre-existing collision/unrelated files, leaves cursor bytes original, and leaves DB/WAL/event state unchanged.
+    """
+    db_path, gen = _setup_db_and_events(tmp_path, 5)
+    state_file = tmp_path / "dispatch_consumer.rowid"
+    state_content = "3\n"
+    state_file.write_text(state_content)
+    os.chmod(state_file, 0o600)
+
+    # Pre-existing unrelated file in directory
+    unrelated = tmp_path / "unrelated_preexisting.txt"
+    unrelated.write_text("preexisting content")
+
+    orig_copy = consumer._copy_file_raw_atomic
+    copy_call_count = 0
+
+    def failing_second_member_copy(*args, **kwargs):
+        nonlocal copy_call_count
+        copy_call_count += 1
+        if copy_call_count == 2:
+            raise RuntimeError("Injected WAL/cursor member backup failure")
+        return orig_copy(*args, **kwargs)
+
+    monkeypatch.setattr(consumer, "_copy_file_raw_atomic", failing_second_member_copy)
+
+    with pytest.raises(RuntimeError, match="Injected WAL/cursor member backup failure"):
+        consumer.repair_apply(
+            str(db_path),
+            str(state_file),
+            confirmation_token=consumer.CONFIRMATION_TOKEN,
+        )
+
+    # Prove member 1's newly created backup file is cleaned up
+    plan = consumer.repair_dry_run(str(db_path), str(state_file))
+    main_db_backup = Path(plan["proposed_db_backup_path"])
+    assert not main_db_backup.exists()
+
+    # Prove pre-existing unrelated file remains untouched
+    assert unrelated.exists()
+    assert unrelated.read_text() == "preexisting content"
+
+    # Prove cursor file remains original
+    assert state_file.read_text() == state_content
+
+    # Prove DB state & events remain original
+    conn = sqlite3.connect(db_path)
+    try:
+        max_rid, db_gen = consumer.get_db_max_rowid_and_generation_readonly(
+            str(db_path)
+        )
+        assert max_rid == 5
+        assert db_gen == gen
+        cnt = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+        assert cnt == 5
+    finally:
+        conn.close()

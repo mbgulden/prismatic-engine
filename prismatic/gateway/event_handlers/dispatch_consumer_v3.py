@@ -990,7 +990,31 @@ def validate_target_rowid(target_rowid: object, max_rowid: int) -> int:
     return target_rowid
 
 
-def _copy_file_raw_atomic(src_path: str, dst_backup_path: str) -> tuple[str, int]:
+def _cleanup_partial_destination(dst_path: str, target_dir: Path) -> None:
+    """Safely remove partial destination file and fsync parent directory."""
+    if os.path.exists(dst_path) or os.path.islink(dst_path):
+        try:
+            os.remove(dst_path)
+        except Exception:
+            pass
+        try:
+            dir_fd = os.open(
+                str(target_dir), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            )
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except Exception:
+            pass
+
+
+def _copy_file_raw_atomic(
+    src_path: str,
+    dst_backup_path: str,
+    expected_sha256: str | None = None,
+    expected_size: int | None = None,
+) -> tuple[str, int]:
     """Copy src_path raw byte-for-byte to dst_backup_path with exclusive creation,
     0o600 permissions, fsync on file and parent directory.
 
@@ -1003,6 +1027,7 @@ def _copy_file_raw_atomic(src_path: str, dst_backup_path: str) -> tuple[str, int
         os.path.islink(src_path)
         or os.path.islink(dst_backup_path)
         or os.path.islink(canonical_src)
+        or os.path.islink(canonical_dst)
     ):
         raise ValueError(
             f"Refusing to copy: symlink detected ({src_path} -> {dst_backup_path})"
@@ -1011,37 +1036,85 @@ def _copy_file_raw_atomic(src_path: str, dst_backup_path: str) -> tuple[str, int
     if os.path.exists(canonical_dst):
         raise FileExistsError(f"Backup destination collision: {dst_backup_path}")
 
-    st = os.lstat(canonical_src)
-    if not stat.S_ISREG(st.st_mode):
+    st_pre = os.lstat(canonical_src)
+    if not stat.S_ISREG(st_pre.st_mode):
         raise ValueError(
             f"Refusing to copy: source path is not a regular file ({src_path})"
         )
 
-    target_dir = Path(canonical_dst).parent
-    target_dir.mkdir(parents=True, exist_ok=True)
-
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    fd = os.open(canonical_dst, flags, 0o600)
+    src_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    src_fd = os.open(canonical_src, src_flags)
+    dst_fd = None
+    dst_created = False
     try:
-        with open(canonical_src, "rb") as f_in:
-            while chunk := f_in.read(65536):
-                os.write(fd, chunk)
-        os.fsync(fd)
-    finally:
-        os.close(fd)
+        st_src = os.fstat(src_fd)
+        if not stat.S_ISREG(st_src.st_mode):
+            raise ValueError(
+                f"Refusing to copy: source descriptor is not a regular file ({src_path})"
+            )
+        if st_src.st_ino != st_pre.st_ino or st_src.st_dev != st_pre.st_dev:
+            raise ValueError(
+                f"Refusing to copy: source file modified/swapped between stat and open ({src_path})"
+            )
 
-    try:
-        dir_fd = os.open(str(target_dir), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        target_dir = Path(canonical_dst).parent
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        dst_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        dst_fd = os.open(canonical_dst, dst_flags, 0o600)
+        dst_created = True
+
         try:
-            os.fsync(dir_fd)
-        finally:
-            os.close(dir_fd)
-    except Exception:
-        pass
+            while True:
+                chunk = os.read(src_fd, 65536)
+                if not chunk:
+                    break
+                offset = 0
+                while offset < len(chunk):
+                    written = os.write(dst_fd, chunk[offset:])
+                    if written == 0:
+                        raise OSError("os.write returned 0 bytes written")
+                    offset += written
 
-    dst_sha = _sha256_file(canonical_dst)
-    dst_sz = os.path.getsize(canonical_dst)
-    return dst_sha, dst_sz
+            os.fsync(dst_fd)
+
+            os.close(dst_fd)
+            dst_fd = None
+
+            dir_fd = os.open(
+                str(target_dir), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            )
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+
+            dst_sha = _sha256_file(canonical_dst)
+            dst_sz = os.path.getsize(canonical_dst)
+
+            if expected_sha256 is not None and dst_sha != expected_sha256:
+                raise RuntimeError(
+                    f"Backup copy verification failed: sha256 mismatch (expected {expected_sha256}, got {dst_sha})"
+                )
+            if expected_size is not None and dst_sz != expected_size:
+                raise RuntimeError(
+                    f"Backup copy verification failed: size mismatch (expected {expected_size}, got {dst_sz})"
+                )
+
+            return dst_sha, dst_sz
+
+        except Exception as primary_exc:
+            if dst_fd is not None:
+                try:
+                    os.close(dst_fd)
+                except Exception:
+                    pass
+            if dst_created:
+                _cleanup_partial_destination(canonical_dst, target_dir)
+            raise primary_exc
+
+    finally:
+        os.close(src_fd)
 
 
 def repair_dry_run(
@@ -1391,11 +1464,8 @@ def repair_apply(
         return receipt
     except Exception:
         for path in reversed(created_artifacts):
-            if os.path.exists(path):
-                try:
-                    os.remove(path)
-                except Exception:
-                    pass
+            if os.path.exists(path) or os.path.islink(path):
+                _cleanup_partial_destination(path, Path(path).parent)
         raise
 
 
