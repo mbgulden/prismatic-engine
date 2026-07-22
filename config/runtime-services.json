@@ -1,0 +1,172 @@
+{
+  "schema_version": 1,
+  "components": [
+    {
+      "id": "gateway",
+      "owner": "prismatic-engine",
+      "project": "prismatic-engine",
+      "deployment_mode": "immutable-release",
+      "release_binding": "engine",
+      "separately_versioned": false,
+      "release_path_template": "/home/ubuntu/.prismatic/releases/{release_id}",
+      "virtualenv_path_template": "/home/ubuntu/.prismatic/releases/{release_id}/.venv",
+      "executable_path": "/home/ubuntu/.prismatic/releases/{release_id}/.venv/bin/python3",
+      "module_path": "prismatic.gateway.server",
+      "source_path": "/home/ubuntu/.prismatic/releases/{release_id}/prismatic/gateway/server.py",
+      "working_directory": "/home/ubuntu/.prismatic/releases/{release_id}",
+      "import_paths": [
+        "/home/ubuntu/.prismatic/releases/{release_id}"
+      ],
+      "state_paths": [
+        "/home/ubuntu/.prismatic/db",
+        "/home/ubuntu/.prismatic/bus/event_log.sqlite"
+      ],
+      "environment_files": [
+        "/home/ubuntu/.prismatic/env.d/linear_oauth.env",
+        "/home/ubuntu/.prismatic/env.d/gateway_webhooks.env"
+      ]
+    },
+    {
+      "id": "consumer",
+      "owner": "prismatic-engine",
+      "project": "prismatic-engine",
+      "deployment_mode": "immutable-release",
+      "release_binding": "engine",
+      "separately_versioned": false,
+      "release_path_template": "/home/ubuntu/.prismatic/releases/{release_id}",
+      "virtualenv_path_template": "/home/ubuntu/.prismatic/releases/{release_id}/.venv",
+      "executable_path": "/home/ubuntu/.prismatic/releases/{release_id}/.venv/bin/python3",
+      "module_path": "prismatic.gateway.event_handlers.dispatch_consumer_v3",
+      "source_path": "/home/ubuntu/.prismatic/releases/{release_id}/prismatic/gateway/event_handlers/dispatch_consumer_v3.py",
+      "working_directory": "/home/ubuntu/.prismatic/releases/{release_id}",
+      "import_paths": [
+        "/home/ubuntu/.prismatic/releases/{release_id}"
+      ],
+      "state_paths": [
+        "/home/ubuntu/.prismatic/bus/event_log.sqlite",
+        "/home/ubuntu/.prismatic/bus/dispatch_consumer.rowid"
+      ],
+      "environment_files": [
+        "/home/ubuntu/.prismatic/env.d/consumer.env"
+      ]
+    },
+    {
+      "id": "curator",
+      "owner": "prismatic-engine",
+      "project": "prismatic-engine",
+      "deployment_mode": "immutable-release",
+      "release_binding": "engine",
+      "separately_versioned": false,
+      "release_path_template": "/home/ubuntu/.prismatic/releases/{release_id}",
+      "virtualenv_path_template": "/home/ubuntu/.prismatic/releases/{release_id}/.venv",
+      "executable_path": "/home/ubuntu/.prismatic/releases/{release_id}/.venv/bin/python3",
+      "module_path": "prismatic.curator.lane",
+      "source_path": "/home/ubuntu/.prismatic/releases/{release_id}/prismatic/curator/lane.py",
+      "working_directory": "/home/ubuntu/.prismatic/releases/{release_id}",
+      "import_paths": [
+        "/home/ubuntu/.prismatic/releases/{release_id}"
+      ],
+      "state_paths": [
+        "/home/ubuntu/.prismatic/curator.db"
+      ],
+      "environment_files": [
+        "/home/ubuntu/.prismatic/env.d/curator.env"
+      ]
+    },
+    {
+      "id": "supervisor",
+      "owner": "prismatic-engine",
+      "project": "prismatic-engine",
+      "deployment_mode": "immutable-release",
+      "release_binding": "engine",
+      "separately_versioned": false,
+      "release_path_template": "/home/ubuntu/.prismatic/releases/{release_id}",
+      "virtualenv_path_template": "/home/ubuntu/.prismatic/releases/{release_id}/.venv",
+      "executable_path": "/home/ubuntu/.prismatic/releases/{release_id}/.venv/bin/python3",
+      "module_path": "scripts.agy_sandbox_event_supervisor",
+      "source_path": "/home/ubuntu/.prismatic/releases/{release_id}/scripts/agy_sandbox_event_supervisor.py",
+      "working_directory": "/home/ubuntu/.prismatic/releases/{release_id}",
+      "import_paths": [
+        "/home/ubuntu/.prismatic/releases/{release_id}"
+      ],
+      "state_paths": [
+        "/home/ubuntu/.prismatic/bus/event_log.sqlite",
+        "/archive/agy_sandboxes",
+        "/home/ubuntu/mounts/synology-agentic-context/agy_sandboxes"
+      ],
+      "environment_files": [
+        "/home/ubuntu/.prismatic/env.d/supervisor.env"
+      ]
+    },
+    {
+      "id": "watchdog",
+      "owner": "prismatic-engine",
+      "project": "prismatic-engine",
+      "deployment_mode": "immutable-release",
+      "release_binding": "engine",
+      "separately_versioned": false,
+      "release_path_template": "/home/ubuntu/.prismatic/releases/{release_id}",
+      "virtualenv_path_template": "/home/ubuntu/.prismatic/releases/{release_id}/.venv",
+      "executable_path": "/home/ubuntu/.prismatic/releases/{release_id}/scripts/watchdog.sh",
+      "module_path": "/home/ubuntu/.prismatic/releases/{release_id}/scripts/watchdog.sh",
+      "source_path": "/home/ubuntu/.prismatic/releases/{release_id}/scripts/watchdog.sh",
+      "working_directory": "/home/ubuntu/.prismatic/releases/{release_id}",
+      "import_paths": [
+        "/home/ubuntu/.prismatic/releases/{release_id}"
+      ],
+      "state_paths": [
+        "/home/ubuntu/.prismatic/logs"
+      ],
+      "environment_files": [
+        "/home/ubuntu/.prismatic/env.d/watchdog.env"
+      ]
+    },
+    {
+      "id": "webhook-drain",
+      "owner": "prismatic-engine",
+      "project": "prismatic-engine",
+      "deployment_mode": "immutable-release",
+      "release_binding": "engine",
+      "separately_versioned": false,
+      "release_path_template": "/home/ubuntu/.prismatic/releases/{release_id}",
+      "virtualenv_path_template": "/home/ubuntu/.prismatic/releases/{release_id}/.venv",
+      "executable_path": "/home/ubuntu/.prismatic/releases/{release_id}/.venv/bin/python3",
+      "module_path": "scripts.drain_webhook_queue",
+      "source_path": "/home/ubuntu/.prismatic/releases/{release_id}/scripts/drain_webhook_queue.py",
+      "working_directory": "/home/ubuntu/.prismatic/releases/{release_id}",
+      "import_paths": [
+        "/home/ubuntu/.prismatic/releases/{release_id}"
+      ],
+      "state_paths": [
+        "/home/ubuntu/.prismatic/linear_webhook_queue.db",
+        "/home/ubuntu/.prismatic/bus/event_log.sqlite"
+      ],
+      "environment_files": [
+        "/home/ubuntu/.prismatic/env.d/webhook-drain.env"
+      ]
+    },
+    {
+      "id": "merge-daemon",
+      "owner": "prismatic-merge",
+      "project": "prismatic-merge",
+      "deployment_mode": "separate-immutable-release",
+      "release_binding": "separate",
+      "separately_versioned": true,
+      "release_path_template": "/home/ubuntu/.prismatic/components/merge-daemon/releases/{release_id}",
+      "virtualenv_path_template": "/home/ubuntu/.prismatic/components/merge-daemon/releases/{release_id}/.venv",
+      "executable_path": "/home/ubuntu/.prismatic/components/merge-daemon/releases/{release_id}/.venv/bin/python3",
+      "module_path": "prismatic_merge.cli",
+      "source_path": "/home/ubuntu/.prismatic/components/merge-daemon/releases/{release_id}/prismatic_merge/cli.py",
+      "working_directory": "/home/ubuntu/.prismatic/components/merge-daemon/releases/{release_id}",
+      "import_paths": [
+        "/home/ubuntu/.prismatic/components/merge-daemon/releases/{release_id}"
+      ],
+      "state_paths": [
+        "/home/ubuntu/.prismatic/merge-pipeline/state_v6.json"
+      ],
+      "environment_files": [
+        "/home/ubuntu/.prismatic/env.d/merge-daemon.env"
+      ]
+    }
+  ]
+}
