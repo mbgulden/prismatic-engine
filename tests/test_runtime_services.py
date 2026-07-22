@@ -100,6 +100,27 @@ def test_mutable_external_state_is_accepted_only_as_state() -> None:
     assert_invalid(document, "immutable release")
 
 
+def test_supervisor_declares_dedicated_raw_output_queue_only_as_state() -> None:
+    document = manifest()
+    supervisor = component(document, "supervisor")
+    queue_path = (
+        HOME + "/.prismatic/state/agy-result-boundary/agent_raw_output_queue.sqlite3"
+    )
+
+    assert queue_path in supervisor["state_paths"]
+    for field in (
+        "executable_path",
+        "module_path",
+        "source_path",
+        "working_directory",
+        "release_path_template",
+        "virtualenv_path_template",
+    ):
+        assert queue_path not in str(supervisor[field])
+    assert all(queue_path not in value for value in supervisor["import_paths"])
+    assert all(queue_path not in value for value in supervisor["environment_files"])
+
+
 def test_release_template_required_for_engine_code() -> None:
     document = manifest()
     component(document)["release_path_template"] = (
