@@ -832,13 +832,17 @@ def _snapshot_cursor_file(canonical_state_path: str) -> tuple[bool, bytes | None
         return False, None
 
     if not pre_existed:
-        try:
-            os.close(fd)
-        except Exception:
-            pass
-        raise ValueError(
+        identity_race_exc = ValueError(
             f"Cursor state identity race: absent at lstat pre-check but created before open: {canonical_state_path}"
         )
+        try:
+            os.close(fd)
+        except Exception as close_exc:
+            raise ExceptionGroup(
+                "Cursor snapshot identity race and descriptor close encountered an error",
+                [identity_race_exc, close_exc],
+            ) from identity_race_exc
+        raise identity_race_exc
 
     body_exc = None
     close_exc = None

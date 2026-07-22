@@ -2505,3 +2505,50 @@ def test_57_existence_transitions_four_state_matrix(tmp_path: Path) -> None:
     existed, data = consumer._snapshot_cursor_file(str(cursor_file))
     assert existed is False
     assert data is None
+
+
+def test_58_absent_to_present_race_preserves_descriptor_close_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Repair 9 review: preserve both identity-race and descriptor-close errors."""
+    cursor_file = tmp_path / "absent_close_failure.rowid"
+    orig_lstat = os.lstat
+    orig_open = os.open
+    orig_close = os.close
+    leaked_fds: list[int] = []
+
+    def lstat_fake_absent(path: str | os.PathLike) -> os.stat_result:
+        if str(path) == str(cursor_file):
+            raise FileNotFoundError(f"No such file: {path}")
+        return orig_lstat(path)
+
+    def open_fake_created(
+        path: str | os.PathLike, flags: int, mode: int = 0o777
+    ) -> int:
+        if str(path) == str(cursor_file):
+            cursor_file.write_bytes(b"late_created_content")
+            os.chmod(cursor_file, 0o600)
+        return orig_open(path, flags, mode)
+
+    def close_before_effect_failure(fd: int) -> None:
+        leaked_fds.append(fd)
+        raise OSError("injected descriptor close-before-effect failure")
+
+    monkeypatch.setattr(os, "lstat", lstat_fake_absent)
+    monkeypatch.setattr(os, "open", open_fake_created)
+    monkeypatch.setattr(os, "close", close_before_effect_failure)
+
+    try:
+        with pytest.raises(ExceptionGroup) as exc_info:
+            consumer._snapshot_cursor_file(str(cursor_file))
+
+        errors = exc_info.value.exceptions
+        assert len(errors) == 2
+        assert isinstance(errors[0], ValueError)
+        assert "absent at lstat pre-check but created before open" in str(errors[0])
+        assert isinstance(errors[1], OSError)
+        assert "close-before-effect failure" in str(errors[1])
+        assert len(leaked_fds) == 1
+    finally:
+        for fd in leaked_fds:
+            orig_close(fd)
