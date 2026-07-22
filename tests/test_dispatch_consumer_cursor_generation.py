@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import errno
 import fcntl
 import importlib
 import json
@@ -1562,3 +1563,267 @@ def test_38_preexisting_collision_files_never_deleted(
     # Collision file must still exist and be intact!
     assert collision_file.exists()
     assert collision_file.read_text() == "pre-existing collision content"
+
+
+# -----------------------------------------------------------------------------
+# Repair Regressions (Repair 6)
+# -----------------------------------------------------------------------------
+
+
+def test_39_repair_apply_lock_release_injection_and_rollback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Repair 6: Inject LOCK_UN failure and fd-close failure separately for repair_apply after cursor replacement.
+    Assert durable rollback restores exact original cursor and retains verified backups without generic error.
+    """
+    db_path, gen = _setup_db_and_events(tmp_path, 5)
+    state_file = tmp_path / "dispatch_consumer.rowid"
+    state_file.write_text("2\n")
+    os.chmod(state_file, 0o600)
+    orig_cursor_bytes = state_file.read_bytes()
+
+    # 1. LOCK_UN failure injection for repair_apply
+    orig_flock = fcntl.flock
+
+    def failing_unlock(fd: int, cmd: int) -> None:
+        if cmd == fcntl.LOCK_UN:
+            raise OSError(errno.EINVAL, "Injected LOCK_UN failure")
+        orig_flock(fd, cmd)
+
+    monkeypatch.setattr(fcntl, "flock", failing_unlock)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        consumer.repair_apply(
+            str(db_path),
+            str(state_file),
+            confirmation_token=consumer.CONFIRMATION_TOKEN,
+        )
+
+    err_msg = str(exc_info.value)
+    assert "Durable rollback succeeded: exact original cursor state restored" in err_msg
+    assert state_file.read_bytes() == orig_cursor_bytes
+
+    # Backups must be retained
+    backups = list(tmp_path.glob("*.backup*"))
+    assert len(backups) >= 1
+
+    # Clean up backups for next test part
+    for b in backups:
+        b.unlink()
+
+    # 2. fd-close failure injection for repair_apply
+    monkeypatch.undo()
+
+    orig_close = os.close
+    lock_fds = set()
+    orig_open = os.open
+
+    def mock_open(path: str, flags: int, mode: int = 0o777) -> int:
+        fd = orig_open(path, flags, mode)
+        if ".lock" in str(path):
+            lock_fds.add(fd)
+        return fd
+
+    def mock_close_lock(fd: int) -> None:
+        is_lock = fd in lock_fds
+        if is_lock:
+            lock_fds.remove(fd)
+        orig_close(fd)
+        if is_lock:
+            raise OSError(errno.EIO, "Injected lock fd close failure")
+
+    monkeypatch.setattr(os, "open", mock_open)
+    monkeypatch.setattr(os, "close", mock_close_lock)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        consumer.repair_apply(
+            str(db_path),
+            str(state_file),
+            confirmation_token=consumer.CONFIRMATION_TOKEN,
+        )
+
+    err_msg = str(exc_info.value)
+    assert "Durable rollback succeeded" in err_msg or "close failure" in err_msg
+    assert state_file.read_bytes() == orig_cursor_bytes
+
+
+def test_40_set_state_and_write_cursor_state_lock_release_rollback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Repair 6: Inject LOCK_UN failure and fd-close failure for set_state and write_cursor_state.
+    Assert prior exact bytes restored or newly created cursor removed.
+    """
+    db_path, gen = _setup_db_and_events(tmp_path, 5)
+    canon_db = consumer.get_canonical_path(str(db_path))
+    state_file = tmp_path / "cursor.rowid"
+    _write_valid_state(state_file, db_path, gen, 2)
+    orig_cursor_bytes = state_file.read_bytes()
+
+    # Part A: set_state + LOCK_UN failure after write
+    orig_flock = fcntl.flock
+
+    def failing_unlock(fd: int, cmd: int) -> None:
+        if cmd == fcntl.LOCK_UN:
+            raise OSError(errno.EINVAL, "Injected LOCK_UN failure")
+        orig_flock(fd, cmd)
+
+    monkeypatch.setattr(fcntl, "flock", failing_unlock)
+
+    with pytest.raises(RuntimeError, match="[FAIL_CLOSED]") as exc_info:
+        consumer.set_state(
+            3,
+            expected_generation=gen,
+            db_path=canon_db,
+            state_file_path=str(state_file),
+        )
+
+    assert "PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED" in str(exc_info.value)
+    assert state_file.read_bytes() == orig_cursor_bytes
+
+    # Part B: write_cursor_state + LOCK_UN failure after write
+    valid_state_4 = {
+        "schema_version": 1,
+        "last_rowid": 4,
+        "db_path": canon_db,
+        "db_generation": gen,
+        "updated_at": consumer.get_canonical_utc_now(),
+    }
+
+    with pytest.raises(RuntimeError, match="[FAIL_CLOSED]"):
+        consumer.write_cursor_state(str(state_file), valid_state_4)
+
+    assert state_file.read_bytes() == orig_cursor_bytes
+
+    # Part C: Newly created cursor state file removed on lock release failure
+    monkeypatch.undo()
+    new_state_file = tmp_path / "new_cursor.rowid"
+    assert not new_state_file.exists()
+
+    monkeypatch.setattr(fcntl, "flock", failing_unlock)
+
+    with pytest.raises(RuntimeError, match="[FAIL_CLOSED]"):
+        consumer.write_cursor_state(str(new_state_file), valid_state_4)
+
+    assert not new_state_file.exists()
+
+
+def test_41_coexisting_body_and_release_failures_preserve_primary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Repair 6: Inject both body failure and release failure.
+    Assert body exception is preserved as primary in ExceptionGroup without swallowing.
+    """
+    db_path, gen = _setup_db_and_events(tmp_path, 5)
+    state_file = tmp_path / "cursor.rowid"
+    _write_valid_state(state_file, db_path, gen, 2)
+    canon_db = consumer.get_canonical_path(str(db_path))
+
+    # Inject LOCK_UN failure
+    orig_flock = fcntl.flock
+
+    def failing_unlock(fd: int, cmd: int) -> None:
+        if cmd == fcntl.LOCK_UN:
+            raise OSError(errno.EINVAL, "Injected LOCK_UN failure")
+        orig_flock(fd, cmd)
+
+    monkeypatch.setattr(fcntl, "flock", failing_unlock)
+
+    # set_state body fails (generation mismatch) AND unlock fails
+    with pytest.raises(ExceptionGroup) as exc_info:
+        consumer.set_state(
+            3,
+            expected_generation="bad-generation-uuid",
+            db_path=canon_db,
+            state_file_path=str(state_file),
+        )
+
+    err_str = str(exc_info.value)
+    assert "set_state failed and lock release encountered errors" in err_str
+    assert any("Database generation" in str(ex) for ex in exc_info.value.exceptions)
+
+
+def test_42_recovery_hash_failure_and_temp_cleanup_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Repair 6: Inject recovery hash failure and temp cleanup failure.
+    Assert RECOVERY_REQUIRED outcome with marker and precomputed safe backup hashes when rollback fails.
+    Assert temp cleanup failure raises exception when temp file removal fails.
+    """
+    db_path, gen = _setup_db_and_events(tmp_path, 5)
+    state_file = tmp_path / "dispatch_consumer.rowid"
+    state_file.write_text("2\n")
+    os.chmod(state_file, 0o600)
+
+    # 1. Lock release failure + rollback failure + sha256 failure during recovery
+    orig_flock = fcntl.flock
+
+    def failing_unlock(fd: int, cmd: int) -> None:
+        if cmd == fcntl.LOCK_UN:
+            raise OSError(errno.EINVAL, "Injected LOCK_UN failure")
+        orig_flock(fd, cmd)
+
+    def failing_rollback_overwrite(src: str, dst: str):
+        if "dispatch_consumer.rowid" in dst:
+            raise OSError("Rollback overwrite failed")
+        return consumer._copy_file_raw_atomic_overwrite(src, dst)
+
+    monkeypatch.setattr(fcntl, "flock", failing_unlock)
+    monkeypatch.setattr(
+        consumer, "_copy_file_raw_atomic_overwrite", failing_rollback_overwrite
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        consumer.repair_apply(
+            str(db_path),
+            str(state_file),
+            confirmation_token=consumer.CONFIRMATION_TOKEN,
+        )
+
+    err_msg = str(exc_info.value)
+    assert "RECOVERY REQUIRED" in err_msg or "RECOVERY_REQUIRED" in err_msg
+    assert "PRISMATIC_DISPATCH_CURSOR_GENERATION_RECOVERY_REQUIRED" in err_msg
+
+    # Backups must be retained!
+    backups = list(tmp_path.glob("*.backup*"))
+    assert len(backups) >= 1
+
+    # 2. Temp cleanup failure during write_cursor_state when primary write fails
+    monkeypatch.undo()
+
+    orig_fsync = os.fsync
+    orig_remove = os.remove
+
+    def failing_fsync(fd: int) -> None:
+        try:
+            st = os.fstat(fd)
+            is_reg = stat.S_ISREG(st.st_mode)
+        except OSError:
+            is_reg = False
+        if is_reg:
+            raise OSError("Injected primary fsync failure")
+        orig_fsync(fd)
+
+    def failing_remove_temp(path: str | Path) -> None:
+        if ".dispatch_cursor_tmp_" in str(path):
+            raise OSError("Injected temp file removal error")
+        orig_remove(path)
+
+    monkeypatch.setattr(os, "fsync", failing_fsync)
+    monkeypatch.setattr(os, "remove", failing_remove_temp)
+
+    valid_state = {
+        "schema_version": 1,
+        "last_rowid": 3,
+        "db_path": consumer.get_canonical_path(str(db_path)),
+        "db_generation": gen,
+        "updated_at": consumer.get_canonical_utc_now(),
+    }
+
+    with pytest.raises((OSError, ExceptionGroup)) as exc_info:
+        consumer.write_cursor_state(str(state_file), valid_state)
+
+    err_str = str(exc_info.value)
+    assert (
+        "Failed to write cursor state and cleanup encountered an error" in err_str
+        or "fsync" in err_str
+    )

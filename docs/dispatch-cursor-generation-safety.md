@@ -61,9 +61,13 @@ Before reading events, spawning workers, or interacting with Linear:
 
 To eliminate race conditions between consumer cursor advancement and repair apply:
 - **Shared CursorLock Primitive**: Introduces a restrictive, no-follow shared primitive (`CursorLock`) using a lock file (`<state_file>.lock`) opened with `O_RDWR|O_CREAT|O_NOFOLLOW` and mode `0o600` (`fcntl.flock` exclusive lock).
+- **Explicit Observable Lock Phases**: Lock acquisition, body execution, and lock release (`LOCK_UN` and fd close) form explicit observable phases in `repair_apply()`, `set_state()`, and `write_cursor_state()`. Lock-release errors cannot bypass the recovery state machine or escape as generic unhandled lock errors after mutation.
+- **Fail-Closed Lock Release Rollback**: If unlock (`LOCK_UN`) or fd-close fails after a cursor write in `repair_apply()`, `set_state()`, or `write_cursor_state()`, the operation durably restores exact prior cursor bytes (or removes a newly created cursor file), fsyncs parent directory, and reports structured failure with marker (`FAIL_CLOSED` or `RECOVERY_REQUIRED`). No stale, mutated, or ambiguous cursor file is left on disk.
+- **ExceptionGroup Primary Error Preservation**: When primary body exceptions and lock release or cleanup failures coexist, the primary body exception is preserved as primary using structured `ExceptionGroup` chaining without exposing secrets.
+- **Pre-Captured Backup Metadata**: Recovery reporting in `repair_apply()` does not depend on new fallible `_sha256_file()` calls; verified backup metadata (paths, sizes, hashes) is captured before cursor replacement and used directly if recovery reporting occurs.
 - **Repair Lock Window**: Repair apply holds `CursorLock` from plan revalidation through backup creation and final cursor write.
 - **SQLite Exclusion Continuity**: Repair apply holds the SQLite writer-exclusion transaction (`BEGIN EXCLUSIVE`) until the repaired cursor state file is durably written to disk.
-- **Single Critical Section `set_state()`**: `set_state()` acquires `CursorLock` before reading or validating DB identity and holds it through the cursor write. Under lock, identity validation is bound to a no-symlink canonical DB path and stable opened DB identity using a SQLite transaction and pre/post `lstat` device+inode checks. Identity and generation are revalidated immediately before and after write. If post-write validation detects replacement, prior exact cursor bytes are durably restored (or a newly created cursor is removed) before returning failure.
+- **Single Critical Section `set_state()`**: `set_state()` acquires `CursorLock` before reading or validating DB identity and holds it through the cursor write. Under lock, identity validation is bound to a no-symlink canonical DB path and stable opened DB identity using a SQLite transaction and pre/post `lstat` device+inode checks. Identity and generation are revalidated immediately before and after write. If post-write validation or lock release detects failure, prior exact cursor bytes are durably restored (or a newly created cursor is removed) before returning failure.
 - **Pre-Resolution Target & Symlink Rejection**: Retains and inspects caller-supplied state paths before canonicalization in `repair_apply`, `repair_dry_run`, `write_cursor_state`, and `CursorLock`. Rejects symlink final components, non-regular existing targets, unsafe parent traversal/symlink ambiguity, and noncanonical aliases before creating lock, backup, or temp files or modifying any destination. Caller symlinks are never converted into accepted canonical targets.
 - **Deadlock Avoidance**: Public wrapper `write_cursor_state()` acquires `CursorLock` and calls internal already-locked helper `_write_cursor_state_unlocked()`. Repair apply and `set_state()` call `_write_cursor_state_unlocked()` directly while holding `CursorLock`, avoiding recursive lock deadlocks.
 - **Consumer Advancement Exclusion**: Consumer cursor advancement (`set_state`) cannot run while repair is holding `CursorLock`, preventing consumer cursor advancement from being overwritten or racing with repair apply.
@@ -110,7 +114,7 @@ Performs state repair and migration:
 
 ## 8. Verification
 
-Verification tests in `tests/test_dispatch_consumer_cursor_generation.py` (38 isolated regression tests) validate all safety guarantees:
+Verification tests in `tests/test_dispatch_consumer_cursor_generation.py` (42 isolated regression tests) validate all safety guarantees:
 1. Real OS process-level contention test (`ProcessPoolExecutor`) ensuring concurrent schema initializations produce one identical canonical UUID generation.
 2. WAL-mode raw backup and rollback regression test verifying exact byte-for-byte SHA-256 matches for main DB, WAL file, and cursor state file, followed by SHM deletion, restoration, SQLite reopening, and verification of uncorrupted generation, max-rowid, and event row integrity.
 3. Adversarial regressions proving database replacement after fetch, claim, Linear, or spawn fails closed with zero side effects.
@@ -120,4 +124,7 @@ Verification tests in `tests/test_dispatch_consumer_cursor_generation.py` (38 is
 7. Canonical UUID v4 and UTC ISO timestamp validation tests.
 8. Deterministic adversarial tests proving `set_state` critical section generation binding and post-write validation restore exact prior cursor state on same-path DB replacement.
 9. Inspect, dry-run, apply, and write tests proving symlink targets and parent-symlink aliases are rejected before canonicalization without creating lock, backup, or temp artifacts or mutating destinations.
-10. Injected post-cursor-write failure tests proving durable automatic original cursor restoration or retained verified backups with explicit recovery-required outcome.
+10. Injected post-cursor-write and lock-release failure tests proving durable automatic original cursor restoration or retained verified backups with explicit recovery-required outcome.
+11. Separate `LOCK_UN` and fd-close injection tests for `repair_apply`, `set_state`, and `write_cursor_state`.
+12. Coexisting body failure and lock release failure tests asserting primary body exception preservation via `ExceptionGroup`.
+13. Recovery hash failure and temp cleanup failure tests.
