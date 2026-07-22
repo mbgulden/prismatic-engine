@@ -6,6 +6,7 @@ import json
 import os
 import pwd
 import sqlite3
+import threading
 import urllib.request
 from pathlib import Path
 
@@ -68,6 +69,8 @@ def _capture(supervisor, tmp_path: Path, *, packet=None, legacy=None, attempt=1)
         result_path=result_path,
         packet_path=packet_path,
         raw_output_db=tmp_path / "queue" / "raw.sqlite3",
+        completed_work_db=tmp_path / "completed" / "completed.sqlite3",
+        completed_work_evidence_dir=tmp_path / "completed" / "evidence",
     )
     return boundary, packet_path, result_path
 
@@ -403,6 +406,8 @@ def test_result_boundary_captures_before_strict_raw_packet_acceptance(tmp_path):
     assert boundary["canonical_packet_id"] is None
     assert boundary["queue_rejection_reason"] == "missing packet fields: source_path"
     assert boundary["queue_repair_hint"] == "missing_source_path"
+    assert boundary["completed_work_persisted"] is True
+    assert boundary["completed_work_id"].startswith("agy-cw-")
     with sqlite3.connect(tmp_path / "queue" / "raw.sqlite3") as connection:
         row = connection.execute(
             "SELECT task_id, source_event_id, raw_text_or_artifact_path FROM agent_raw_output_queue"
@@ -411,6 +416,254 @@ def test_result_boundary_captures_before_strict_raw_packet_acceptance(tmp_path):
     assert row[0] == "GRO-3837"
     assert row[1] == boundary["source_event_id"]
     assert row[2] == str(packet_path)
+
+
+def test_completed_work_is_durable_idempotent_and_retains_exact_markers(tmp_path):
+    supervisor = _load_supervisor()
+
+    first, _, _ = _capture(supervisor, tmp_path, packet=_valid_agy_packet())
+    second, _, _ = _capture(supervisor, tmp_path, packet=_valid_agy_packet())
+
+    assert first["completion_eligible"] is second["completion_eligible"] is True
+    assert first["completed_work_persisted"] is True
+    assert first["completed_work_id"] == second["completed_work_id"]
+    assert first["completed_work_id"].startswith("agy-cw-")
+    assert first["completed_work_ingestion_marker"] == "AGY_COMPLETED_WORK_INGESTION_OK"
+    assert (
+        first["completed_work_integration_marker"]
+        == "AGY_COMPLETED_WORK_INTEGRATION_GATE_OK"
+    )
+    completed_db = tmp_path / "completed" / "completed.sqlite3"
+    assert completed_db.is_file()
+    with sqlite3.connect(completed_db) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM agy_completed_work"
+        ).fetchone() == (1,)
+    evidence_files = list((tmp_path / "completed" / "evidence").rglob("*"))
+    assert any(path.is_file() for path in evidence_files)
+
+
+def test_completed_work_ingest_observes_raw_row_first(tmp_path, monkeypatch):
+    supervisor = _load_supervisor()
+    import prismatic.agy_completed_work as completed_work
+
+    real_store = completed_work.AgyCompletedWorkStore
+    raw_db = tmp_path / "queue" / "raw.sqlite3"
+
+    class OrderingStore:
+        def __init__(self, db_path, *, evidence_dir):
+            with sqlite3.connect(raw_db) as connection:
+                assert connection.execute(
+                    "SELECT COUNT(*) FROM agent_raw_output_queue"
+                ).fetchone() == (1,)
+            self.store = real_store(db_path, evidence_dir=evidence_dir)
+
+        def ingest(self, packet):
+            return self.store.ingest(packet)
+
+    monkeypatch.setattr(completed_work, "AgyCompletedWorkStore", OrderingStore)
+    boundary, _, _ = _capture(supervisor, tmp_path, packet=_valid_agy_packet())
+
+    assert boundary["completed_work_persisted"] is True
+    assert boundary["completion_eligible"] is True
+
+
+def test_different_authoritative_packet_content_gets_distinct_identity(tmp_path):
+    supervisor = _load_supervisor()
+    first_packet = _valid_agy_packet()
+    second_packet = _valid_agy_packet()
+    second_packet["branch"] = "feature/runtime-result-boundary-second"
+
+    first, _, _ = _capture(supervisor, tmp_path, packet=first_packet, attempt=1)
+    second, _, _ = _capture(supervisor, tmp_path, packet=second_packet, attempt=2)
+
+    assert first["completed_work_id"] != second["completed_work_id"]
+    with sqlite3.connect(tmp_path / "completed" / "completed.sqlite3") as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM agy_completed_work"
+        ).fetchone() == (2,)
+
+
+def test_completed_work_retains_classification_without_promoting_it(tmp_path):
+    supervisor = _load_supervisor()
+    relative, _, _ = _capture(supervisor, tmp_path, packet=_valid_agy_packet())
+    absolute_packet = _valid_agy_packet()
+    absolute_packet["risk_level"] = "low"
+    absolute_packet["merge_lane"] = "docs"
+    absolute_packet["next_action"] = "merge-ready"
+    absolute_packet["changed_files"] = ["docs/agy-result-packet-contract.md"]
+    absolute_packet["non_claims"] = ["production_deploy", "auto_merge_enabled"]
+    absolute_packet["result_artifacts"] = [
+        {
+            "path": str(
+                Path.home() / ".prismatic" / "agy-results" / "GRO-3837" / "RESULT.md"
+            )
+        }
+    ]
+    absolute_root = tmp_path / "absolute"
+    absolute_root.mkdir()
+    absolute, _, _ = _capture(supervisor, absolute_root, packet=absolute_packet)
+
+    assert relative["completed_work_persisted"] is True
+    assert relative["completed_work_classification"] != "merge_ready"
+    assert relative["completed_work_eligible_for_merge"] is False
+    assert absolute["completed_work_persisted"] is True
+    assert absolute["completed_work_classification"] == "merge_ready"
+    assert absolute["completed_work_integration_classification"] == (
+        "pass_ready_for_review"
+    )
+    assert absolute["completed_work_eligible_for_merge"] is True
+
+
+class _HookedCompletedWorkId(str):
+    pass
+
+
+@pytest.mark.parametrize(
+    ("row_id", "ingestion_marker", "row_dict"),
+    [
+        (
+            "",
+            "AGY_COMPLETED_WORK_INGESTION_OK",
+            {"integration_marker": "AGY_COMPLETED_WORK_INTEGRATION_GATE_OK"},
+        ),
+        (
+            "   ",
+            "AGY_COMPLETED_WORK_INGESTION_OK",
+            {"integration_marker": "AGY_COMPLETED_WORK_INTEGRATION_GATE_OK"},
+        ),
+        (
+            _HookedCompletedWorkId("agy-cw-hooked"),
+            "AGY_COMPLETED_WORK_INGESTION_OK",
+            {"integration_marker": "AGY_COMPLETED_WORK_INTEGRATION_GATE_OK"},
+        ),
+        (
+            "agy-cw-id",
+            "wrong",
+            {"integration_marker": "AGY_COMPLETED_WORK_INTEGRATION_GATE_OK"},
+        ),
+        (
+            "agy-cw-id",
+            "AGY_COMPLETED_WORK_INGESTION_OK",
+            {"integration_marker": "wrong"},
+        ),
+        ("agy-cw-id", "AGY_COMPLETED_WORK_INGESTION_OK", []),
+    ],
+)
+def test_completed_work_impossible_return_shapes_fail_closed(
+    tmp_path, monkeypatch, row_id, ingestion_marker, row_dict
+):
+    supervisor = _load_supervisor()
+    import prismatic.agy_completed_work as completed_work
+
+    class FakeRow:
+        def __init__(self):
+            self.id = row_id
+            self.ingestion_marker = ingestion_marker
+
+        def as_dict(self):
+            return row_dict
+
+    class FakeStore:
+        def __init__(self, _db_path, *, evidence_dir):
+            pass
+
+        def ingest(self, _packet):
+            return FakeRow()
+
+    monkeypatch.setattr(completed_work, "AgyCompletedWorkStore", FakeStore)
+    boundary, _, _ = _capture(supervisor, tmp_path, packet=_valid_agy_packet())
+
+    assert boundary["boundary_state"] == "completed_work_persist_failed"
+    assert boundary["boundary_reason"] == "completed_work_ledger_persist_failed"
+    assert boundary["raw_capture_succeeded"] is True
+    assert boundary["completed_work_persisted"] is False
+    assert boundary["completion_eligible"] is False
+
+
+def test_completed_work_exception_and_evidence_only_failure_are_sanitized(
+    tmp_path, monkeypatch
+):
+    supervisor = _load_supervisor()
+    import prismatic.agy_completed_work as completed_work
+
+    evidence = tmp_path / "completed" / "evidence" / "orphan.json"
+
+    class EvidenceOnlyStore:
+        def __init__(self, _db_path, *, evidence_dir):
+            Path(evidence_dir).mkdir(parents=True, exist_ok=True)
+
+        def ingest(self, _packet):
+            evidence.write_text("retained", encoding="utf-8")
+            raise sqlite3.OperationalError("secret-value /secret/path")
+
+    monkeypatch.setattr(completed_work, "AgyCompletedWorkStore", EvidenceOnlyStore)
+    boundary, _, _ = _capture(supervisor, tmp_path, packet=_valid_agy_packet())
+
+    assert evidence.is_file()
+    assert boundary["raw_capture_succeeded"] is True
+    assert boundary["completed_work_persisted"] is False
+    assert boundary["completion_eligible"] is False
+    assert "secret-value" not in json.dumps(boundary)
+    assert not (tmp_path / "completed" / "completed.sqlite3").exists()
+
+
+def test_completed_work_constructor_exception_fails_closed(tmp_path, monkeypatch):
+    supervisor = _load_supervisor()
+    import prismatic.agy_completed_work as completed_work
+
+    class BrokenStore:
+        def __init__(self, _db_path, *, evidence_dir):
+            raise OSError("private constructor detail")
+
+    monkeypatch.setattr(completed_work, "AgyCompletedWorkStore", BrokenStore)
+    boundary, _, _ = _capture(supervisor, tmp_path, packet=_valid_agy_packet())
+
+    assert boundary["boundary_state"] == "completed_work_persist_failed"
+    assert boundary["raw_capture_succeeded"] is True
+    assert boundary["completed_work_persisted"] is False
+    assert "private constructor detail" not in json.dumps(boundary)
+
+
+def test_preledger_failures_never_invoke_completed_work_store(tmp_path, monkeypatch):
+    supervisor = _load_supervisor()
+    import prismatic.agy_completed_work as completed_work
+
+    class ForbiddenStore:
+        def __init__(self, *_args, **_kwargs):
+            raise AssertionError("completed-work store must not run")
+
+    monkeypatch.setattr(completed_work, "AgyCompletedWorkStore", ForbiddenStore)
+    invalid = _valid_agy_packet()
+    invalid["unexpected"] = "invalid"
+    invalid_boundary, _, _ = _capture(supervisor, tmp_path, packet=invalid)
+    legacy_root = tmp_path / "legacy"
+    legacy_root.mkdir()
+    legacy_boundary, _, _ = _capture(supervisor, legacy_root, legacy="STATUS: DONE")
+    missing_root = tmp_path / "missing"
+    missing_root.mkdir()
+    missing_boundary, _, _ = _capture(supervisor, missing_root)
+
+    assert invalid_boundary["boundary_state"] == "canonical_invalid"
+    assert legacy_boundary["boundary_state"] == "legacy_unvalidated"
+    assert missing_boundary["boundary_state"] == "result_missing"
+
+
+def test_issue_mismatch_never_invokes_completed_work_store(tmp_path, monkeypatch):
+    supervisor = _load_supervisor()
+    import prismatic.agy_completed_work as completed_work
+
+    class ForbiddenStore:
+        def __init__(self, *_args, **_kwargs):
+            raise AssertionError("completed-work ingest must not run")
+
+    monkeypatch.setattr(completed_work, "AgyCompletedWorkStore", ForbiddenStore)
+    boundary, _, _ = _capture(
+        supervisor, tmp_path, packet=_valid_agy_packet("GRO-OTHER")
+    )
+
+    assert boundary["boundary_reason"] == "active_issue_identity_mismatch"
+    assert boundary["raw_capture_succeeded"] is True
 
 
 def test_result_boundary_persists_invalid_packet_before_rejecting(tmp_path):
@@ -443,6 +696,8 @@ def test_result_boundary_holds_legacy_result_and_preserves_idempotent_identity(
         result_path=result_path,
         packet_path=result_path.parent / "AGY_RESULT_PACKET.json",
         raw_output_db=tmp_path / "queue" / "raw.sqlite3",
+        completed_work_db=tmp_path / "completed" / "completed.sqlite3",
+        completed_work_evidence_dir=tmp_path / "completed" / "evidence",
     )
 
     assert first["boundary_state"] == second["boundary_state"] == "legacy_unvalidated"
@@ -483,6 +738,8 @@ def test_result_boundary_fails_closed_on_queue_failure(tmp_path):
         result_path=result_path,
         packet_path=packet_path,
         raw_output_db=blocked_parent / "raw.sqlite3",
+        completed_work_db=tmp_path / "completed" / "completed.sqlite3",
+        completed_work_evidence_dir=tmp_path / "completed" / "evidence",
     )
     assert boundary == {
         "boundary_state": "raw_capture_failed",
@@ -522,11 +779,48 @@ def test_result_boundary_rejects_empty_durable_raw_identity(tmp_path, monkeypatc
         result_path=sandbox / "RESULT.md",
         packet_path=packet_path,
         raw_output_db=tmp_path / "queue" / "raw.sqlite3",
+        completed_work_db=tmp_path / "completed" / "completed.sqlite3",
+        completed_work_evidence_dir=tmp_path / "completed" / "evidence",
     )
 
     assert boundary == {
         "boundary_state": "raw_capture_failed",
         "boundary_reason": "raw_queue_identity_missing",
+        "raw_capture_succeeded": False,
+        "completion_eligible": False,
+    }
+
+
+@pytest.mark.parametrize(
+    ("field", "relative_path"),
+    [
+        ("raw_output_db", Path("relative/raw.sqlite3")),
+        ("completed_work_db", Path("relative/completed.sqlite3")),
+        ("completed_work_evidence_dir", Path("relative/evidence")),
+    ],
+)
+def test_result_boundary_rejects_relative_state_paths(tmp_path, field, relative_path):
+    supervisor = _load_supervisor()
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    packet_path = sandbox / "AGY_RESULT_PACKET.json"
+    packet_path.write_text(json.dumps(_valid_agy_packet()), encoding="utf-8")
+    kwargs = {
+        "issue_id": "GRO-3837",
+        "attempt": 1,
+        "result_path": sandbox / "RESULT.md",
+        "packet_path": packet_path,
+        "raw_output_db": tmp_path / "queue" / "raw.sqlite3",
+        "completed_work_db": tmp_path / "completed" / "completed.sqlite3",
+        "completed_work_evidence_dir": tmp_path / "completed" / "evidence",
+    }
+    kwargs[field] = relative_path
+
+    boundary = supervisor.capture_and_validate_agy_result(**kwargs)
+
+    assert boundary == {
+        "boundary_state": "canonical_invalid",
+        "boundary_reason": "unsafe_result_path",
         "raw_capture_succeeded": False,
         "completion_eligible": False,
     }
@@ -549,6 +843,8 @@ def test_result_boundary_rejects_symlink_directory_and_hooked_inputs(tmp_path):
         result_path=result_path,
         packet_path=packet_path,
         raw_output_db=tmp_path / "queue" / "raw.sqlite3",
+        completed_work_db=tmp_path / "completed" / "completed.sqlite3",
+        completed_work_evidence_dir=tmp_path / "completed" / "evidence",
     )
     assert boundary["boundary_state"] == "canonical_invalid"
     assert boundary["raw_capture_succeeded"] is False
@@ -561,6 +857,8 @@ def test_result_boundary_rejects_symlink_directory_and_hooked_inputs(tmp_path):
         result_path=result_path,
         packet_path=packet_path,
         raw_output_db=tmp_path / "queue" / "raw.sqlite3",
+        completed_work_db=tmp_path / "completed" / "completed.sqlite3",
+        completed_work_evidence_dir=tmp_path / "completed" / "evidence",
     )
     assert boundary["boundary_state"] == "canonical_invalid"
     assert boundary["raw_capture_succeeded"] is False
@@ -576,6 +874,8 @@ def test_result_boundary_rejects_symlink_directory_and_hooked_inputs(tmp_path):
             result_path=result_path,
             packet_path=packet_path,
             raw_output_db=tmp_path / "queue" / "raw.sqlite3",
+            completed_work_db=tmp_path / "completed" / "completed.sqlite3",
+            completed_work_evidence_dir=tmp_path / "completed" / "evidence",
         )
 
 
@@ -601,12 +901,176 @@ def test_result_boundary_oversize_and_secret_payloads_are_sanitized(
 def test_result_boundary_import_is_queue_side_effect_free(tmp_path, monkeypatch):
     queue_db = tmp_path / "state" / "raw.sqlite3"
     monkeypatch.setenv("PRISMATIC_AGENT_RAW_OUTPUT_DB", str(queue_db))
+    real_mkdir = Path.mkdir
+    real_connect = sqlite3.connect
+    calls = []
 
+    def tracked_mkdir(path, *args, **kwargs):
+        calls.append(("mkdir", path))
+        return real_mkdir(path, *args, **kwargs)
+
+    def tracked_connect(*args, **kwargs):
+        calls.append(("connect", args[0] if args else None))
+        return real_connect(*args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", tracked_mkdir)
+    monkeypatch.setattr(sqlite3, "connect", tracked_connect)
     supervisor = _load_supervisor()
 
+    completed_root = (
+        supervisor._SERVICE_ACCOUNT_HOME / ".prismatic" / "state" / "agy-completed-work"
+    )
+    completed_db = completed_root / "agy_completed_work.db"
+    completed_evidence = completed_root / "evidence"
+    assert not any(kind == "connect" for kind, _path in calls)
+    assert not any(
+        kind == "mkdir" and path in {completed_db.parent, completed_evidence}
+        for kind, path in calls
+    )
     assert supervisor.agy_raw_output_db_path() == queue_db
+    assert supervisor.agy_completed_work_db_path() == completed_db
+    assert supervisor.agy_completed_work_evidence_dir() == completed_evidence
     assert not queue_db.exists()
     assert not queue_db.parent.exists()
+
+
+def _minimal_worker(supervisor, task):
+    worker = supervisor.EventDrivenSupervisor.__new__(supervisor.EventDrivenSupervisor)
+    worker.shutdown_event = threading.Event()
+    worker.active_lock = threading.Lock()
+    worker.active_count = 0
+    worker.idle_event = threading.Event()
+    worker.idle_event.set()
+    worker.token_pool = None
+    worker.completed_issues = set()
+    worker.model = "agy-default"
+    worker.backoff_range = (0.0, 0.0)
+    worker.launch_jitter_range = (0.0, 0.0)
+    worker.marked = []
+    worker.mark_completed = worker.marked.append
+
+    class Scheduler:
+        def __init__(self):
+            self.served = False
+            self.finishes = []
+
+        def get_next(self, _shutdown_event):
+            if self.served:
+                return None
+            self.served = True
+            return task
+
+        def finish(self, finished_task, *, allow_requeue):
+            self.finishes.append((finished_task["issue_id"], allow_requeue))
+            worker.shutdown_event.set()
+
+    worker.scheduler = Scheduler()
+    return worker
+
+
+def test_worker_sandbox_failure_is_requeueable_and_never_marked_completed(
+    monkeypatch,
+):
+    supervisor = _load_supervisor()
+    monkeypatch.setattr(supervisor.random, "uniform", lambda *_args: 0.0)
+    worker = _minimal_worker(
+        supervisor, {"issue_id": "GRO-SANDBOX-FAIL", "lane": "default"}
+    )
+
+    def fail_sandbox(_task):
+        raise OSError("sandbox unavailable")
+
+    worker.create_sandbox_env = fail_sandbox
+    worker.worker_loop(1)
+
+    assert worker.marked == []
+    assert worker.scheduler.finishes == [("GRO-SANDBOX-FAIL", True)]
+    assert worker.active_count == 0
+
+
+def test_worker_quota_early_exit_cannot_reuse_success_or_suppress_requeue(
+    tmp_path, monkeypatch
+):
+    supervisor = _load_supervisor()
+    monkeypatch.setattr(supervisor.random, "uniform", lambda *_args: 0.0)
+    task = {
+        "issue_id": "GRO-QUOTA-BLOCK",
+        "lane": "default",
+        "labels": [],
+    }
+    worker = _minimal_worker(supervisor, task)
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    task_path = tmp_path / "AGY_TASK.md"
+    log_path = tmp_path / "agy.log"
+    worker.create_sandbox_env = lambda _task: (sandbox, task_path, log_path)
+    worker.add_task = lambda _task: False
+
+    class Linear:
+        def update_issue(self, *_args, **_kwargs):
+            return None
+
+    class Quota:
+        def check_quota(self, _model):
+            return False, "quota blocked"
+
+    class Bus:
+        def publish_canonical(self, *_args, **_kwargs):
+            return None
+
+    worker.linear_client = Linear()
+    worker.quota_client = Quota()
+    worker.bus_client = Bus()
+    worker.worker_loop(1)
+
+    assert worker.marked == []
+    assert worker.scheduler.finishes == [("GRO-QUOTA-BLOCK", True)]
+    assert worker.active_count == 0
+
+
+def test_circuit_success_requires_current_final_completion_eligibility():
+    supervisor = _load_supervisor()
+    worker = supervisor.EventDrivenSupervisor.__new__(supervisor.EventDrivenSupervisor)
+
+    assert worker._is_circuit_failure({"completion_eligible": True}) is False
+    assert worker._is_circuit_failure({"completion_eligible": False}) is True
+    assert worker._is_circuit_failure({"has_error": True}) is True
+    assert (
+        worker._is_circuit_failure(
+            {
+                "completion_eligible": False,
+                "result_boundary": {
+                    "completed_work_persisted": True,
+                    "boundary_state": "canonical_valid",
+                },
+            }
+        )
+        is True
+    )
+    assert (
+        worker._is_circuit_failure(
+            {"result_boundary": {"boundary_state": "canonical_invalid"}}
+        )
+        is True
+    )
+
+
+def test_worker_final_disposition_uses_reset_current_result_only():
+    source = SUPERVISOR_PATH.read_text(encoding="utf-8")
+    issue_assignment = 'issue_id = task["issue_id"]'
+    reset = "result = None"
+    active = "with self.active_lock:"
+    issue_index = source.index(issue_assignment)
+    assert (
+        issue_index
+        < source.index(reset, issue_index)
+        < source.index(active, issue_index)
+    )
+    assert 'locals().get("result")' not in source
+    sandbox_failure = source.split("sandbox failed: {e}", 1)[1].split(
+        "# At task pickup", 1
+    )[0]
+    assert "mark_completed" not in sandbox_failure
 
 
 def test_quality_gate_and_partial_linear_done_are_semantically_guarded():
@@ -615,6 +1079,15 @@ def test_quality_gate_and_partial_linear_done_are_semantically_guarded():
     assert "if completion_eligible:" in source
     assert "if result_md.exists() and completion_eligible:" in source
     assert 'boundary["boundary_state"] == "canonical_valid"' in source
+    assert 'boundary.get("completed_work_persisted") is True' in source
+    assert '"completed_work_id": boundary.get("completed_work_id")' in source
+    assert '"completed_work_ingestion_marker": boundary.get(' in source
+    assert '"completed_work_integration_marker": boundary.get(' in source
+    assert (
+        "if completion_eligible:\n                    self.mark_completed(issue_id)"
+        in source
+    )
+    assert "allow_requeue = not completion_eligible" in source
     assert '"normalization_status": boundary.get("normalization_status")' in source
     assert '"queue_rejection_reason": boundary.get("queue_rejection_reason")' in source
     assert '"queue_repair_hint": boundary.get("queue_repair_hint")' in source
