@@ -74,16 +74,24 @@ def test_normalize_project_license_rejects_malformed_forms(value: object) -> Non
     assert smoke.normalize_project_license(value) == ""
 
 
-def test_normalize_project_license_rejects_subclasses() -> None:
+def test_normalize_project_license_rejects_subclasses_without_key_hooks() -> None:
     class StringSubclass(str):
         pass
 
     class DictSubclass(dict):
         pass
 
+    class HookKey(str):
+        __hash__ = str.__hash__
+
+        def __eq__(self, other):
+            raise AssertionError("custom key equality hook executed")
+
     assert smoke.normalize_project_license(StringSubclass("AGPL-3.0-only")) == ""
     assert smoke.normalize_project_license(DictSubclass(text="AGPL-3.0-only")) == ""
     assert smoke.normalize_project_license({"text": StringSubclass("AGPL")}) == ""
+    assert smoke.normalize_project_license({StringSubclass("text"): "AGPL"}) == ""
+    assert smoke.normalize_project_license({HookKey("text"): "AGPL"}) == ""
 
 
 def test_current_repository_license_metadata_is_supported() -> None:

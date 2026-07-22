@@ -74,9 +74,9 @@ def normalize_project_license(value: object) -> str:
     """Return a license expression from supported ``project.license`` forms."""
     if type(value) is str:
         return value.strip()
-    if type(value) is dict and set(value) == {"text"}:
-        text = value.get("text")
-        if type(text) is str:
+    if type(value) is dict and len(value) == 1:
+        ((key, text),) = value.items()
+        if type(key) is str and key == "text" and type(text) is str:
             return text.strip()
     return ""
 
