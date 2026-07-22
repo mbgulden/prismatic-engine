@@ -7,8 +7,11 @@ webhooks, systemd, or hosted infrastructure.
 
 from __future__ import annotations
 
+import atexit
+import hashlib
 import json
 import os
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -48,6 +51,35 @@ def main() -> int:
     os.environ.setdefault(
         "PRISMATIC_PLUGIN_ARTIFACTS_STATE", str(state / "plugin_artifacts.json")
     )
+    control_token = secrets.token_urlsafe(32)
+    control_auth_file = state / "control-auth.json"
+    control_auth_file.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "credentials": [
+                    {
+                        "actor": "public-launch-smoke",
+                        "token_sha256": hashlib.sha256(
+                            control_token.encode("utf-8")
+                        ).hexdigest(),
+                        "roles": ["operator"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    control_auth_file.chmod(0o600)
+    os.environ["PRISMATIC_CONTROL_AUTH_FILE"] = str(control_auth_file)
+    control_headers = {"Authorization": f"Bearer {control_token}"}
+
+    def cleanup_control_auth() -> None:
+        control_auth_file.unlink(missing_ok=True)
+        if os.environ.get("PRISMATIC_CONTROL_AUTH_FILE") == str(control_auth_file):
+            os.environ.pop("PRISMATIC_CONTROL_AUTH_FILE", None)
+
+    atexit.register(cleanup_control_auth)
 
     def import_core() -> None:
         import prismatic  # noqa: F401
@@ -97,6 +129,7 @@ def main() -> int:
             )
         policy = client.post(
             "/api/plugins/policy/preview",
+            headers=control_headers,
             json={
                 "kind": "job_request",
                 "plugin_name": "example-plugin",
@@ -204,6 +237,7 @@ def main() -> int:
     catalog_payload = step("plugin catalog", catalog)
     step("plugin load gate", plugin_load_gate)
     step("Gateway API smoke", gateway_smoke)
+    cleanup_control_auth()
     step("public docs", public_docs)
     step("dashboard markers", dashboard_markers)
 
