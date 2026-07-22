@@ -6,9 +6,10 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -110,6 +111,68 @@ class RawAgentOutputRow:
         }
 
 
+DELIVERY_STATUSES = frozenset(
+    {"pending", "in_progress", "retry_wait", "succeeded", "terminal_failed"}
+)
+DELIVERY_ERROR_CODES = frozenset(
+    {
+        "agent_ineligible",
+        "task_identity_invalid",
+        "source_provenance_invalid",
+        "digest_mismatch",
+        "raw_json_invalid",
+        "raw_dialect_invalid",
+        "packet_schema_invalid",
+        "issue_identity_mismatch",
+        "completed_work_storage_failed",
+        "completed_work_result_invalid",
+        "completed_work_marker_invalid",
+        "retry_exhausted",
+    }
+)
+TERMINAL_DISPOSITIONS = frozenset(
+    {"ineligible", "malformed", "provenance_invalid", "retry_exhausted"}
+)
+
+
+@dataclass(frozen=True)
+class RawOutputDelivery:
+    raw_output_id: str
+    status: str
+    retry_count: int
+    attempted_at: str | None
+    succeeded_at: str | None
+    failed_at: str | None
+    next_attempt_at: str | None
+    completed_work_id: str | None
+    terminal_disposition: str | None
+    last_error_code: str | None
+    lease_owner: str | None
+    lease_expires_at: str | None
+    created_at: str
+    updated_at: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return dict(self.__dict__)
+
+
+@dataclass(frozen=True)
+class RawOutputDeliveryClaim:
+    raw_output_id: str
+    lease_token: str
+    lease_owner: str
+    lease_expires_at: str
+    retry_count: int
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "raw_output_id": self.raw_output_id,
+            "lease_owner": self.lease_owner,
+            "lease_expires_at": self.lease_expires_at,
+            "retry_count": self.retry_count,
+        }
+
+
 class RawAgentOutputStore:
     """SQLite-backed raw output queue.
 
@@ -127,6 +190,7 @@ class RawAgentOutputStore:
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.db_path), timeout=10)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
         return conn
 
     def _ensure_schema(self) -> None:
@@ -157,6 +221,31 @@ class RawAgentOutputStore:
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_agent_raw_output_status ON agent_raw_output_queue(normalization_status)"
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS agent_raw_output_delivery (
+                    raw_output_id TEXT PRIMARY KEY REFERENCES agent_raw_output_queue(raw_output_id) ON DELETE CASCADE,
+                    status TEXT NOT NULL CHECK(status IN ('pending','in_progress','retry_wait','succeeded','terminal_failed')),
+                    retry_count INTEGER NOT NULL DEFAULT 0 CHECK(retry_count >= 0),
+                    attempted_at TEXT, succeeded_at TEXT, failed_at TEXT,
+                    next_attempt_at TEXT, completed_work_id TEXT,
+                    terminal_disposition TEXT, last_error_code TEXT,
+                    lease_token TEXT, lease_owner TEXT, lease_expires_at TEXT,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """CREATE INDEX IF NOT EXISTS idx_agent_raw_delivery_pending
+                ON agent_raw_output_delivery(status, next_attempt_at, lease_expires_at, raw_output_id)"""
+            )
+            now = _iso(None)
+            conn.execute(
+                """INSERT OR IGNORE INTO agent_raw_output_delivery
+                (raw_output_id, status, retry_count, created_at, updated_at)
+                SELECT raw_output_id, 'pending', 0, received_at, ? FROM agent_raw_output_queue""",
+                (now,),
             )
             conn.commit()
 
@@ -223,6 +312,12 @@ class RawAgentOutputStore:
                     json.dumps(list(result.warnings), sort_keys=True),
                 ),
             )
+            conn.execute(
+                """INSERT OR IGNORE INTO agent_raw_output_delivery
+                (raw_output_id, status, retry_count, created_at, updated_at)
+                VALUES (?, 'pending', 0, ?, ?)""",
+                (raw_output_id, received_at, received_at),
+            )
             conn.commit()
         self._prune_retention()
         return self.get(raw_output_id)
@@ -270,17 +365,246 @@ class RawAgentOutputStore:
             return
         with self._connect() as conn:
             conn.execute(
-                """
-                DELETE FROM agent_raw_output_queue
-                WHERE raw_output_id NOT IN (
-                    SELECT raw_output_id FROM agent_raw_output_queue
-                    ORDER BY received_at DESC, raw_output_id DESC
-                    LIMIT ?
-                )
-                """,
+                """DELETE FROM agent_raw_output_queue WHERE raw_output_id IN (
+                    SELECT q.raw_output_id FROM agent_raw_output_queue q
+                    JOIN agent_raw_output_delivery d USING(raw_output_id)
+                    WHERE d.status IN ('succeeded','terminal_failed')
+                    ORDER BY q.received_at DESC, q.raw_output_id DESC
+                    LIMIT -1 OFFSET ?
+                )""",
                 (limit,),
             )
             conn.commit()
+
+    def get_delivery(self, raw_output_id: str) -> RawOutputDelivery:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM agent_raw_output_delivery WHERE raw_output_id=?",
+                (raw_output_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(raw_output_id)
+        return self._delivery(row)
+
+    def list_pending_deliveries(
+        self, *, limit: int = 50, now: datetime | str | None = None
+    ) -> list[RawOutputDelivery]:
+        limit = _bounded_limit(limit)
+        instant = _iso(now)
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT d.* FROM agent_raw_output_delivery d
+                JOIN agent_raw_output_queue q USING(raw_output_id)
+                WHERE d.status='pending'
+                   OR (d.status='retry_wait' AND d.next_attempt_at<=?)
+                   OR (d.status='in_progress' AND d.lease_expires_at<=?)
+                ORDER BY q.received_at ASC, q.raw_output_id ASC LIMIT ?""",
+                (instant, instant, limit),
+            ).fetchall()
+        return [self._delivery(row) for row in rows]
+
+    def claim_pending_deliveries(
+        self,
+        *,
+        limit: int = 10,
+        lease_owner: str,
+        lease_seconds: int = 60,
+        now: datetime | str | None = None,
+    ) -> list[RawOutputDeliveryClaim]:
+        limit = _bounded_limit(limit)
+        owner, seconds = _validate_lease(lease_owner, lease_seconds)
+        instant = _datetime(now)
+        instant_s = instant.isoformat()
+        expires = (instant + timedelta(seconds=seconds)).isoformat()
+        claims: list[RawOutputDeliveryClaim] = []
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute(
+                """SELECT d.raw_output_id, d.retry_count FROM agent_raw_output_delivery d
+                JOIN agent_raw_output_queue q USING(raw_output_id)
+                WHERE d.status='pending'
+                   OR (d.status='retry_wait' AND d.next_attempt_at<=?)
+                   OR (d.status='in_progress' AND d.lease_expires_at<=?)
+                ORDER BY q.received_at ASC, q.raw_output_id ASC LIMIT ?""",
+                (instant_s, instant_s, limit),
+            ).fetchall()
+            for row in rows:
+                token = secrets.token_urlsafe(32)
+                changed = conn.execute(
+                    """UPDATE agent_raw_output_delivery SET status='in_progress', attempted_at=?,
+                    next_attempt_at=NULL, lease_token=?, lease_owner=?, lease_expires_at=?, updated_at=?
+                    WHERE raw_output_id=? AND (status='pending'
+                    OR (status='retry_wait' AND next_attempt_at<=?)
+                    OR (status='in_progress' AND lease_expires_at<=?))""",
+                    (
+                        instant_s,
+                        token,
+                        owner,
+                        expires,
+                        instant_s,
+                        row["raw_output_id"],
+                        instant_s,
+                        instant_s,
+                    ),
+                ).rowcount
+                if changed == 1:
+                    claims.append(
+                        RawOutputDeliveryClaim(
+                            row["raw_output_id"],
+                            token,
+                            owner,
+                            expires,
+                            row["retry_count"],
+                        )
+                    )
+            conn.commit()
+        return claims
+
+    def claim_delivery(
+        self,
+        raw_output_id: str,
+        *,
+        lease_owner: str,
+        lease_seconds: int = 60,
+        now: datetime | str | None = None,
+    ) -> RawOutputDeliveryClaim | None:
+        owner, seconds = _validate_lease(lease_owner, lease_seconds)
+        instant = _datetime(now)
+        instant_s = instant.isoformat()
+        expires = (instant + timedelta(seconds=seconds)).isoformat()
+        token = secrets.token_urlsafe(32)
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT retry_count FROM agent_raw_output_delivery WHERE raw_output_id=?",
+                (raw_output_id,),
+            ).fetchone()
+            if row is None:
+                conn.rollback()
+                raise KeyError(raw_output_id)
+            changed = conn.execute(
+                """UPDATE agent_raw_output_delivery SET status='in_progress', attempted_at=?,
+                next_attempt_at=NULL, lease_token=?, lease_owner=?, lease_expires_at=?, updated_at=?
+                WHERE raw_output_id=? AND (status='pending'
+                OR (status='retry_wait' AND next_attempt_at<=?)
+                OR (status='in_progress' AND lease_expires_at<=?))""",
+                (
+                    instant_s,
+                    token,
+                    owner,
+                    expires,
+                    instant_s,
+                    raw_output_id,
+                    instant_s,
+                    instant_s,
+                ),
+            ).rowcount
+            conn.commit()
+        if changed != 1:
+            return None
+        return RawOutputDeliveryClaim(
+            raw_output_id, token, owner, expires, row["retry_count"]
+        )
+
+    def mark_delivery_succeeded(
+        self,
+        claim: RawOutputDeliveryClaim,
+        *,
+        completed_work_id: str,
+        now: datetime | str | None = None,
+    ) -> bool:
+        if type(completed_work_id) is not str or not completed_work_id.strip():
+            raise ValueError("completed_work_id is required")
+        instant = _iso(now)
+        with self._connect() as conn:
+            changed = conn.execute(
+                """UPDATE agent_raw_output_delivery SET status='succeeded', succeeded_at=?,
+                completed_work_id=?, terminal_disposition=NULL, last_error_code=NULL,
+                lease_token=NULL, lease_owner=NULL, lease_expires_at=NULL, updated_at=?
+                WHERE raw_output_id=? AND status='in_progress' AND lease_token=?""",
+                (
+                    instant,
+                    completed_work_id,
+                    instant,
+                    claim.raw_output_id,
+                    claim.lease_token,
+                ),
+            ).rowcount
+            conn.commit()
+        self._prune_retention()
+        return changed == 1
+
+    def mark_delivery_failed(
+        self,
+        claim: RawOutputDeliveryClaim,
+        *,
+        error_code: str,
+        terminal_disposition: str | None = None,
+        retry_at: datetime | str | None = None,
+        now: datetime | str | None = None,
+    ) -> bool:
+        if error_code not in DELIVERY_ERROR_CODES:
+            raise ValueError("unsafe delivery error code")
+        if (
+            terminal_disposition is not None
+            and terminal_disposition not in TERMINAL_DISPOSITIONS
+        ):
+            raise ValueError("unsafe terminal disposition")
+        if (terminal_disposition is None) == (retry_at is None):
+            raise ValueError("exactly one terminal_disposition or retry_at is required")
+        instant = _iso(now)
+        retry_count = claim.retry_count + (1 if retry_at is not None else 0)
+        status = (
+            "retry_wait"
+            if retry_at is not None and retry_count < 5
+            else "terminal_failed"
+        )
+        disposition, code = terminal_disposition, error_code
+        next_attempt = _iso(retry_at) if status == "retry_wait" else None
+        if retry_at is not None and retry_count >= 5:
+            disposition, code = "retry_exhausted", "retry_exhausted"
+        with self._connect() as conn:
+            changed = conn.execute(
+                """UPDATE agent_raw_output_delivery SET status=?, retry_count=?, failed_at=?,
+                next_attempt_at=?, terminal_disposition=?, last_error_code=?, lease_token=NULL,
+                lease_owner=NULL, lease_expires_at=NULL, updated_at=?
+                WHERE raw_output_id=? AND status='in_progress' AND lease_token=?""",
+                (
+                    status,
+                    retry_count,
+                    instant,
+                    next_attempt,
+                    disposition,
+                    code,
+                    instant,
+                    claim.raw_output_id,
+                    claim.lease_token,
+                ),
+            ).rowcount
+            conn.commit()
+        if status == "terminal_failed":
+            self._prune_retention()
+        return changed == 1
+
+    def _raw_text_for_delivery_claim(
+        self, claim: RawOutputDeliveryClaim
+    ) -> tuple[str, RawAgentOutputRow]:
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT q.* FROM agent_raw_output_queue q
+                JOIN agent_raw_output_delivery d USING(raw_output_id)
+                WHERE q.raw_output_id=? AND d.status='in_progress' AND d.lease_token=?""",
+                (claim.raw_output_id, claim.lease_token),
+            ).fetchone()
+        if row is None:
+            raise PermissionError("delivery claim is stale")
+        return str(row["raw_text"]), self._row(row)
+
+    @staticmethod
+    def _delivery(row: sqlite3.Row) -> RawOutputDelivery:
+        return RawOutputDelivery(
+            **{name: row[name] for name in RawOutputDelivery.__dataclass_fields__}
+        )
 
     def counts(self) -> dict[str, int]:
         rows = self.list(limit=500)
@@ -371,6 +695,74 @@ def queue_counts(*, db_path: str | Path | None = None) -> dict[str, int]:
     return RawAgentOutputStore(db_path).counts()
 
 
+def list_pending_deliveries(
+    *,
+    limit: int = 50,
+    now: datetime | str | None = None,
+    db_path: str | Path | None = None,
+) -> list[RawOutputDelivery]:
+    return RawAgentOutputStore(db_path).list_pending_deliveries(limit=limit, now=now)
+
+
+def claim_pending_deliveries(
+    *,
+    limit: int = 10,
+    lease_owner: str,
+    lease_seconds: int = 60,
+    now: datetime | str | None = None,
+    db_path: str | Path | None = None,
+) -> list[RawOutputDeliveryClaim]:
+    return RawAgentOutputStore(db_path).claim_pending_deliveries(
+        limit=limit, lease_owner=lease_owner, lease_seconds=lease_seconds, now=now
+    )
+
+
+def claim_delivery(
+    raw_output_id: str,
+    *,
+    lease_owner: str,
+    lease_seconds: int = 60,
+    now: datetime | str | None = None,
+    db_path: str | Path | None = None,
+) -> RawOutputDeliveryClaim | None:
+    return RawAgentOutputStore(db_path).claim_delivery(
+        raw_output_id,
+        lease_owner=lease_owner,
+        lease_seconds=lease_seconds,
+        now=now,
+    )
+
+
+def mark_delivery_succeeded(
+    claim: RawOutputDeliveryClaim,
+    *,
+    completed_work_id: str,
+    now: datetime | str | None = None,
+    db_path: str | Path | None = None,
+) -> bool:
+    return RawAgentOutputStore(db_path).mark_delivery_succeeded(
+        claim, completed_work_id=completed_work_id, now=now
+    )
+
+
+def mark_delivery_failed(
+    claim: RawOutputDeliveryClaim,
+    *,
+    error_code: str,
+    terminal_disposition: str | None = None,
+    retry_at: datetime | str | None = None,
+    now: datetime | str | None = None,
+    db_path: str | Path | None = None,
+) -> bool:
+    return RawAgentOutputStore(db_path).mark_delivery_failed(
+        claim,
+        error_code=error_code,
+        terminal_disposition=terminal_disposition,
+        retry_at=retry_at,
+        now=now,
+    )
+
+
 def _raw_output_id(
     raw_text: str,
     *,
@@ -393,6 +785,39 @@ def _raw_output_id(
         }
     payload = json.dumps(payload_obj, sort_keys=True, separators=(",", ":"))
     return "raw_" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+
+
+def _bounded_limit(limit: int) -> int:
+    if type(limit) is not int:
+        raise TypeError("limit must be an exact integer")
+    return max(1, min(100, limit))
+
+
+def _datetime(value: datetime | str | None) -> datetime:
+    if value is None:
+        return datetime.now(timezone.utc)
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value)
+    if type(value) is not datetime:
+        raise TypeError("time must be a datetime or ISO string")
+    if value.tzinfo is None:
+        raise ValueError("datetime must be timezone-aware")
+    return value.astimezone(timezone.utc)
+
+
+def _iso(value: datetime | str | None) -> str:
+    return _datetime(value).isoformat()
+
+
+def _validate_lease(owner: str, seconds: int) -> tuple[str, int]:
+    if (
+        type(owner) is not str
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", owner.strip()) is None
+    ):
+        raise ValueError("safe lease_owner is required")
+    if type(seconds) is not int or seconds < 1 or seconds > 3600:
+        raise ValueError("lease_seconds must be between 1 and 3600")
+    return owner.strip(), seconds
 
 
 def _safe_storage_text_and_result(

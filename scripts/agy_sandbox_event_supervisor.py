@@ -35,6 +35,7 @@ import urllib.request
 import sqlite3
 import hashlib
 import stat
+from dataclasses import dataclass
 from pathlib import Path
 from queue import Queue, Empty
 from datetime import datetime, timezone, timedelta
@@ -222,6 +223,241 @@ def _bounded_nofollow_read(path: Path, byte_limit: int) -> tuple[bytes, bool]:
         os.close(fd)
 
 
+AGY_RAW_OUTPUT_RECOVERY_MARKER = "AGY_RAW_OUTPUT_RECOVERY_OK"
+AGY_RAW_OUTPUT_RECONCILIATION_GATE_MARKER = "AGY_RAW_OUTPUT_RECONCILIATION_GATE_OK"
+RUNTIME_CONVERGENCE_5_MARKER = "RUNTIME_CONVERGENCE_5_OK"
+_AGY_SOURCE_EVENT_RE = re.compile(
+    r"^agy:(GRO-[A-Za-z0-9][A-Za-z0-9-]*):attempt:([1-9][0-9]*):sha256:([0-9a-f]{64})$"
+)
+_RETRY_DELAYS = (30, 120, 600, 1800, 3600)
+
+
+@dataclass(frozen=True)
+class AgyRawReconciliationResult:
+    raw_output_id: str
+    status: str
+    reason: str
+    completed_work_id: str | None = None
+    classification: str | None = None
+    integration_classification: str | None = None
+    eligible_for_merge: bool = False
+    ingestion_marker: str | None = None
+    integration_marker: str | None = None
+    recovery_marker: str | None = None
+    reconciliation_gate_marker: str | None = None
+    runtime_marker: str | None = None
+
+    def as_dict(self) -> dict:
+        return dict(self.__dict__)
+
+
+def _safe_completed_result(raw_output_id, completed_row):
+    from prismatic.agy_completed_work import (
+        AGY_COMPLETED_WORK_INGESTION_MARKER,
+        AGY_COMPLETED_WORK_INTEGRATION_GATE_MARKER,
+    )
+    row_dict = completed_row.as_dict()
+    if (
+        type(completed_row.id) is not str
+        or not completed_row.id.strip()
+        or completed_row.ingestion_marker != AGY_COMPLETED_WORK_INGESTION_MARKER
+        or type(row_dict) is not dict
+        or row_dict.get("integration_marker") != AGY_COMPLETED_WORK_INTEGRATION_GATE_MARKER
+    ):
+        raise ValueError("invalid completed-work return")
+    return AgyRawReconciliationResult(
+        raw_output_id=raw_output_id,
+        status="succeeded",
+        reason="completed_work_persisted",
+        completed_work_id=completed_row.id,
+        classification=row_dict.get("classification"),
+        integration_classification=row_dict.get("integration_classification"),
+        eligible_for_merge=row_dict.get("eligible_for_merge") is True,
+        ingestion_marker=completed_row.ingestion_marker,
+        integration_marker=row_dict["integration_marker"],
+        recovery_marker=AGY_RAW_OUTPUT_RECOVERY_MARKER,
+        reconciliation_gate_marker=AGY_RAW_OUTPUT_RECONCILIATION_GATE_MARKER,
+        runtime_marker=RUNTIME_CONVERGENCE_5_MARKER,
+    )
+
+
+def _load_succeeded_reconciliation(
+    *, raw_output_id, delivery, completed_work_db_path, completed_work_evidence_dir
+):
+    if delivery.status != "succeeded":
+        return None
+    if type(delivery.completed_work_id) is not str or not delivery.completed_work_id.strip():
+        return AgyRawReconciliationResult(
+            raw_output_id, "succeeded_unavailable", "completed_work_storage_failed"
+        )
+    try:
+        from prismatic.agy_completed_work import AgyCompletedWorkStore
+
+        row = AgyCompletedWorkStore(
+            completed_work_db_path, evidence_dir=completed_work_evidence_dir
+        ).get(delivery.completed_work_id)
+        return _safe_completed_result(raw_output_id, row)
+    except Exception:
+        return AgyRawReconciliationResult(
+            raw_output_id,
+            "succeeded_unavailable",
+            "completed_work_storage_failed",
+            completed_work_id=delivery.completed_work_id,
+        )
+
+
+def _terminal_reconciliation(store, claim, code, disposition, now):
+    if not store.mark_delivery_failed(
+        claim, error_code=code, terminal_disposition=disposition, now=now
+    ):
+        return AgyRawReconciliationResult(
+            claim.raw_output_id, "stale_claim", "stale_claim"
+        )
+    return AgyRawReconciliationResult(
+        claim.raw_output_id, "terminal_failed", code
+    )
+
+
+def _retry_reconciliation(store, claim, code, now):
+    instant = now or datetime.now(timezone.utc)
+    if isinstance(instant, str):
+        instant = datetime.fromisoformat(instant)
+    retry_at = instant + timedelta(seconds=_RETRY_DELAYS[min(claim.retry_count, 4)])
+    if not store.mark_delivery_failed(
+        claim, error_code=code, retry_at=retry_at, now=instant
+    ):
+        return AgyRawReconciliationResult(
+            claim.raw_output_id, "stale_claim", "stale_claim"
+        )
+    delivery = store.get_delivery(claim.raw_output_id)
+    return AgyRawReconciliationResult(
+        claim.raw_output_id, delivery.status, delivery.last_error_code or code
+    )
+
+
+def _reconcile_agy_claim(
+    *, claim, store, completed_work_db_path, completed_work_evidence_dir, now=None
+):
+    try:
+        raw_text, raw_row = store._raw_text_for_delivery_claim(claim)
+    except Exception:
+        return _retry_reconciliation(store, claim, "completed_work_storage_failed", now)
+    if raw_row.agent != "agy":
+        return _terminal_reconciliation(store, claim, "agent_ineligible", "ineligible", now)
+    if type(raw_row.task_id) is not str or not re.fullmatch(
+        r"GRO-[A-Za-z0-9][A-Za-z0-9-]*", raw_row.task_id
+    ):
+        return _terminal_reconciliation(store, claim, "task_identity_invalid", "ineligible", now)
+    match = _AGY_SOURCE_EVENT_RE.fullmatch(raw_row.source_event_id or "")
+    if match is None or match.group(1) != raw_row.task_id:
+        return _terminal_reconciliation(
+            store, claim, "source_provenance_invalid", "provenance_invalid", now
+        )
+    if hashlib.sha256(raw_text.encode("utf-8")).hexdigest() != match.group(3):
+        return _terminal_reconciliation(store, claim, "digest_mismatch", "provenance_invalid", now)
+    try:
+        packet = json.loads(raw_text)
+        if type(packet) is not dict:
+            raise ValueError
+    except Exception:
+        return _terminal_reconciliation(store, claim, "raw_json_invalid", "malformed", now)
+    from prismatic.agy_result_packet import is_raw_agy_result_packet, require_valid_packet
+    if not is_raw_agy_result_packet(packet):
+        return _terminal_reconciliation(store, claim, "raw_dialect_invalid", "malformed", now)
+    try:
+        require_valid_packet(packet)
+    except Exception:
+        return _terminal_reconciliation(store, claim, "packet_schema_invalid", "malformed", now)
+    if packet.get("issue_identifier") != raw_row.task_id:
+        return _terminal_reconciliation(store, claim, "issue_identity_mismatch", "provenance_invalid", now)
+    try:
+        from prismatic.agy_completed_work import AgyCompletedWorkStore
+        completed_row = AgyCompletedWorkStore(
+            completed_work_db_path, evidence_dir=completed_work_evidence_dir
+        ).ingest(packet)
+        result = _safe_completed_result(claim.raw_output_id, completed_row)
+    except Exception:
+        return _retry_reconciliation(store, claim, "completed_work_storage_failed", now)
+    if not store.mark_delivery_succeeded(
+        claim, completed_work_id=result.completed_work_id, now=now
+    ):
+        return AgyRawReconciliationResult(claim.raw_output_id, "stale_claim", "stale_claim")
+    return result
+
+
+def reconcile_agy_raw_output(
+    *, raw_output_id, raw_db_path, completed_work_db_path,
+    completed_work_evidence_dir, lease_owner, now=None
+):
+    from prismatic.agent_raw_output_queue import RawAgentOutputStore
+    store = RawAgentOutputStore(raw_db_path)
+    delivery = store.get_delivery(raw_output_id)
+    existing = _load_succeeded_reconciliation(
+        raw_output_id=raw_output_id,
+        delivery=delivery,
+        completed_work_db_path=completed_work_db_path,
+        completed_work_evidence_dir=completed_work_evidence_dir,
+    )
+    if existing is not None:
+        return existing
+    claim = store.claim_delivery(raw_output_id, lease_owner=lease_owner, now=now)
+    if claim is None:
+        delivery = store.get_delivery(raw_output_id)
+        existing = _load_succeeded_reconciliation(
+            raw_output_id=raw_output_id,
+            delivery=delivery,
+            completed_work_db_path=completed_work_db_path,
+            completed_work_evidence_dir=completed_work_evidence_dir,
+        )
+        if existing is not None:
+            return existing
+        return AgyRawReconciliationResult(
+            raw_output_id, delivery.status, delivery.last_error_code or "not_claimable",
+            completed_work_id=delivery.completed_work_id,
+        )
+    return _reconcile_agy_claim(
+        claim=claim, store=store, completed_work_db_path=completed_work_db_path,
+        completed_work_evidence_dir=completed_work_evidence_dir, now=now,
+    )
+
+
+def reconcile_pending_agy_raw_outputs(
+    *, raw_db_path, completed_work_db_path, completed_work_evidence_dir,
+    lease_owner, limit=10, now=None
+):
+    from prismatic.agent_raw_output_queue import RawAgentOutputStore
+    store = RawAgentOutputStore(raw_db_path)
+    claims = store.claim_pending_deliveries(
+        limit=limit, lease_owner=lease_owner, now=now
+    )
+    return tuple(
+        _reconcile_agy_claim(
+            claim=claim, store=store, completed_work_db_path=completed_work_db_path,
+            completed_work_evidence_dir=completed_work_evidence_dir, now=now,
+        )
+        for claim in claims
+    )
+
+
+def run_agy_raw_recovery_batch(*, lease_owner: str, limit: int = 10):
+    try:
+        results = reconcile_pending_agy_raw_outputs(
+            raw_db_path=agy_raw_output_db_path(),
+            completed_work_db_path=agy_completed_work_db_path(),
+            completed_work_evidence_dir=agy_completed_work_evidence_dir(),
+            lease_owner=lease_owner, limit=limit,
+        )
+    except Exception:
+        print("  [raw-recovery] status=storage_failed count=0", flush=True)
+        return ()
+    counts = {}
+    for result in results:
+        counts[result.status] = counts.get(result.status, 0) + 1
+    safe_counts = ",".join(f"{key}:{counts[key]}" for key in sorted(counts)) or "none:0"
+    print(f"  [raw-recovery] {safe_counts}", flush=True)
+    return results
+
+
 def capture_and_validate_agy_result(
     *,
     issue_id: str,
@@ -346,94 +582,55 @@ def capture_and_validate_agy_result(
         "queue_repair_hint": row.repair_hint,
         "completion_eligible": False,
     }
+    reconciliation = reconcile_agy_raw_output(
+        raw_output_id=row.raw_output_id,
+        raw_db_path=raw_output_db,
+        completed_work_db_path=completed_work_db,
+        completed_work_evidence_dir=completed_work_evidence_dir,
+        lease_owner=f"immediate-{os.getpid()}",
+    )
     if not canonical:
         return {
             **common,
             "boundary_state": "legacy_unvalidated",
             "boundary_reason": row.repair_hint or "legacy_result_held_unvalidated",
+            "delivery_status": reconciliation.status,
         }
-    if oversized:
-        return {
-            **common,
-            "boundary_state": "canonical_invalid",
-            "boundary_reason": "oversized_payload",
-        }
-
-    try:
-        packet = json.loads(raw_text)
-        if type(packet) is not dict:
-            raise ValueError("packet is not a plain object")
-        from prismatic.agy_result_packet import require_valid_packet
-
-        require_valid_packet(packet)
-    except Exception:
-        return {
-            **common,
-            "boundary_state": "canonical_invalid",
-            "boundary_reason": "canonical_packet_invalid",
-        }
-    if packet.get("issue_identifier") != issue_id:
-        return {
-            **common,
-            "boundary_state": "canonical_invalid",
-            "boundary_reason": "active_issue_identity_mismatch",
-        }
-
-    completed_row = None
-    completed_row_dict = None
-    try:
-        from prismatic.agy_completed_work import (
-            AGY_COMPLETED_WORK_INGESTION_MARKER,
-            AGY_COMPLETED_WORK_INTEGRATION_GATE_MARKER,
-            AgyCompletedWorkStore,
+    if reconciliation.status != "succeeded":
+        canonical_reason = {
+            "issue_identity_mismatch": "active_issue_identity_mismatch",
+            "completed_work_storage_failed": "completed_work_ledger_persist_failed",
+        }.get(reconciliation.reason, "canonical_packet_invalid")
+        if oversized:
+            canonical_reason = "oversized_payload"
+        state = (
+            "completed_work_persist_failed"
+            if reconciliation.status in {"retry_wait", "succeeded_unavailable"}
+            else "canonical_invalid"
         )
-
-        completed_row = AgyCompletedWorkStore(
-            completed_work_db,
-            evidence_dir=completed_work_evidence_dir,
-        ).ingest(packet)
-        completed_row_dict = completed_row.as_dict()
-        completed_work_valid = bool(
-            type(completed_row.id) is str
-            and completed_row.id.strip()
-            and completed_row.ingestion_marker
-            == AGY_COMPLETED_WORK_INGESTION_MARKER
-            and type(completed_row_dict) is dict
-            and completed_row_dict.get("integration_marker")
-            == AGY_COMPLETED_WORK_INTEGRATION_GATE_MARKER
-        )
-    except Exception:
-        completed_work_valid = False
-
-    if not completed_work_valid:
         return {
             **common,
-            "boundary_state": "completed_work_persist_failed",
-            "boundary_reason": "completed_work_ledger_persist_failed",
-            "packet_issue_identifier": packet["issue_identifier"],
+            "boundary_state": state,
+            "boundary_reason": canonical_reason,
             "completed_work_persisted": False,
+            "delivery_status": reconciliation.status,
         }
-    assert completed_row is not None
-    assert type(completed_row_dict) is dict
     return {
         **common,
         "boundary_state": "canonical_valid",
         "boundary_reason": "canonical_packet_accepted",
-        "packet_issue_identifier": packet["issue_identifier"],
+        "packet_issue_identifier": issue_id,
         "completed_work_persisted": True,
-        "completed_work_id": completed_row.id,
-        "completed_work_classification": completed_row_dict.get("classification"),
-        "completed_work_integration_classification": completed_row_dict.get(
-            "integration_classification"
-        ),
-        "completed_work_ingestion_marker": completed_row.ingestion_marker,
-        "completed_work_integration_marker": completed_row_dict[
-            "integration_marker"
-        ],
-        "completed_work_eligible_for_merge": completed_row_dict.get(
-            "eligible_for_merge"
-        )
-        is True,
+        "completed_work_id": reconciliation.completed_work_id,
+        "completed_work_classification": reconciliation.classification,
+        "completed_work_integration_classification": reconciliation.integration_classification,
+        "completed_work_ingestion_marker": reconciliation.ingestion_marker,
+        "completed_work_integration_marker": reconciliation.integration_marker,
+        "completed_work_eligible_for_merge": reconciliation.eligible_for_merge,
+        "delivery_status": reconciliation.status,
+        "raw_output_recovery_marker": reconciliation.recovery_marker,
+        "raw_output_reconciliation_gate_marker": reconciliation.reconciliation_gate_marker,
+        "runtime_convergence_marker": reconciliation.runtime_marker,
         "completion_eligible": True,
     }
 
@@ -3297,6 +3494,9 @@ def linear_watchdog_loop(supervisor: EventDrivenSupervisor, stop_event: threadin
     while not stop_event.is_set():
         try:
             poll_count += 1
+            run_agy_raw_recovery_batch(
+                lease_owner=f"watchdog-{os.getpid()}", limit=10
+            )
             t_start = time.time()
             issues = supervisor.linear_client.fetch_issues(strict_opt_in=strict_opt_in)
             elapsed = time.time() - t_start
@@ -3626,6 +3826,9 @@ def main():
     # task can be grabbed before later project/priority tasks are queued.
     for task in initial_tasks:
         supervisor.add_task(task)
+
+    # Reconcile durable raw output before any worker can dispatch or publish.
+    run_agy_raw_recovery_batch(lease_owner=f"startup-{os.getpid()}", limit=10)
 
     # Start workers after initial queue load.
     supervisor.start_workers()

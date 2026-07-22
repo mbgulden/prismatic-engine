@@ -8,6 +8,8 @@ import pwd
 import sqlite3
 import threading
 import urllib.request
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -1404,3 +1406,254 @@ def test_exact_task_cli_has_explicit_packet_and_repair_seed_contract():
     assert "has_done = False" in source
     assert "get_harness_db" not in source
     assert "harness_runs" not in source
+
+
+def _persist_recovery_packet(tmp_path, packet=None, **overrides):
+    from prismatic.agent_raw_output_queue import RawAgentOutputStore
+
+    packet = packet or _valid_agy_packet()
+    raw_text = json.dumps(packet)
+    task_id = overrides.pop("task_id", "GRO-3837")
+    digest = hashlib.sha256(raw_text.encode()).hexdigest()
+    source_event_id = overrides.pop(
+        "source_event_id", f"agy:{task_id}:attempt:1:sha256:{digest}"
+    )
+    db = tmp_path / "raw" / "raw.sqlite3"
+    row = RawAgentOutputStore(db).persist(
+        raw_text=raw_text,
+        agent=overrides.pop("agent", "agy"),
+        task_id=task_id,
+        source_event_id=source_event_id,
+        expected_agent="agy",
+        **overrides,
+    )
+    return db, row
+
+
+def test_reconciliation_recovers_raw_agy_despite_queue_rejection(tmp_path):
+    supervisor = _load_supervisor()
+    raw_db, raw_row = _persist_recovery_packet(tmp_path)
+    assert raw_row.normalization_status == "rejected_rerun_required"
+    result = supervisor.reconcile_agy_raw_output(
+        raw_output_id=raw_row.raw_output_id,
+        raw_db_path=raw_db,
+        completed_work_db_path=tmp_path / "completed" / "work.sqlite3",
+        completed_work_evidence_dir=tmp_path / "completed" / "evidence",
+        lease_owner="test-recovery",
+    )
+    assert result.status == "succeeded"
+    assert result.completed_work_id.startswith("agy-cw-")
+    assert result.recovery_marker == "AGY_RAW_OUTPUT_RECOVERY_OK"
+    assert result.reconciliation_gate_marker == "AGY_RAW_OUTPUT_RECONCILIATION_GATE_OK"
+    from prismatic.agent_raw_output_queue import RawAgentOutputStore
+
+    delivery = RawAgentOutputStore(raw_db).get_delivery(raw_row.raw_output_id)
+    assert delivery.completed_work_id == result.completed_work_id
+
+
+@pytest.mark.parametrize(
+    ("mutator", "reason"),
+    [
+        (lambda packet: "not json", "digest_mismatch"),
+        (lambda packet: json.dumps({"agent": "agy"}), "raw_dialect_invalid"),
+    ],
+)
+def test_reconciliation_terminal_failures_are_safe(tmp_path, mutator, reason):
+    supervisor = _load_supervisor()
+    packet = _valid_agy_packet()
+    raw_db, row = _persist_recovery_packet(tmp_path, packet)
+    if reason == "digest_mismatch":
+        with sqlite3.connect(raw_db) as conn:
+            conn.execute(
+                "UPDATE agent_raw_output_queue SET raw_text=? WHERE raw_output_id=?",
+                (mutator(packet), row.raw_output_id),
+            )
+    else:
+        replacement = mutator(packet)
+        digest = hashlib.sha256(replacement.encode()).hexdigest()
+        with sqlite3.connect(raw_db) as conn:
+            conn.execute(
+                "UPDATE agent_raw_output_queue SET raw_text=?, source_event_id=? WHERE raw_output_id=?",
+                (
+                    replacement,
+                    f"agy:GRO-3837:attempt:1:sha256:{digest}",
+                    row.raw_output_id,
+                ),
+            )
+    result = supervisor.reconcile_agy_raw_output(
+        raw_output_id=row.raw_output_id,
+        raw_db_path=raw_db,
+        completed_work_db_path=tmp_path / "completed.sqlite3",
+        completed_work_evidence_dir=tmp_path / "evidence",
+        lease_owner="test-terminal",
+    )
+    assert result.status == "terminal_failed"
+    assert result.reason == reason
+    assert result.recovery_marker is None
+    assert result.reconciliation_gate_marker is None
+    assert result.runtime_marker is None
+    assert "raw_text" not in result.as_dict()
+
+
+def test_reconciliation_post_claim_race_reloads_safe_succeeded_metadata(
+    tmp_path, monkeypatch
+):
+    supervisor = _load_supervisor()
+    raw_db, row = _persist_recovery_packet(tmp_path)
+    completed_db = tmp_path / "completed" / "work.sqlite3"
+    evidence = tmp_path / "completed" / "evidence"
+    first = supervisor.reconcile_agy_raw_output(
+        raw_output_id=row.raw_output_id,
+        raw_db_path=raw_db,
+        completed_work_db_path=completed_db,
+        completed_work_evidence_dir=evidence,
+        lease_owner="first",
+    )
+    assert first.status == "succeeded"
+
+    from prismatic.agent_raw_output_queue import RawAgentOutputStore
+
+    real_get = RawAgentOutputStore.get_delivery
+    calls = []
+
+    def raced_get(store, raw_output_id):
+        delivery = real_get(store, raw_output_id)
+        calls.append(raw_output_id)
+        if len(calls) == 1:
+            return replace(delivery, status="pending", completed_work_id=None)
+        return delivery
+
+    monkeypatch.setattr(RawAgentOutputStore, "get_delivery", raced_get)
+    monkeypatch.setattr(RawAgentOutputStore, "claim_delivery", lambda *a, **k: None)
+    raced = supervisor.reconcile_agy_raw_output(
+        raw_output_id=row.raw_output_id,
+        raw_db_path=raw_db,
+        completed_work_db_path=completed_db,
+        completed_work_evidence_dir=evidence,
+        lease_owner="raced",
+    )
+    assert raced.status == "succeeded"
+    assert raced.completed_work_id == first.completed_work_id
+    assert raced.ingestion_marker == "AGY_COMPLETED_WORK_INGESTION_OK"
+    assert raced.integration_marker == "AGY_COMPLETED_WORK_INTEGRATION_GATE_OK"
+    assert raced.recovery_marker == "AGY_RAW_OUTPUT_RECOVERY_OK"
+
+
+def test_stale_failure_cas_never_reports_terminal_or_retry_success():
+    supervisor = _load_supervisor()
+
+    class StaleStore:
+        @staticmethod
+        def mark_delivery_failed(*args, **kwargs):
+            return False
+
+    class Claim:
+        raw_output_id = "raw-stale"
+        retry_count = 0
+
+    terminal = supervisor._terminal_reconciliation(
+        StaleStore(), Claim(), "raw_json_invalid", "malformed", None
+    )
+    retry = supervisor._retry_reconciliation(
+        StaleStore(), Claim(), "completed_work_storage_failed", None
+    )
+    assert terminal.status == terminal.reason == "stale_claim"
+    assert retry.status == retry.reason == "stale_claim"
+    assert terminal.recovery_marker is None
+    assert retry.recovery_marker is None
+
+
+def test_cross_database_crash_replays_same_completed_work(tmp_path, monkeypatch):
+    supervisor = _load_supervisor()
+    raw_db, row = _persist_recovery_packet(tmp_path)
+    completed_db = tmp_path / "completed" / "work.sqlite3"
+    evidence = tmp_path / "completed" / "evidence"
+    from prismatic.agent_raw_output_queue import RawAgentOutputStore
+
+    real_mark = RawAgentOutputStore.mark_delivery_succeeded
+    monkeypatch.setattr(
+        RawAgentOutputStore, "mark_delivery_succeeded", lambda *a, **k: False
+    )
+    now = datetime(2026, 7, 22, tzinfo=timezone.utc)
+    first = supervisor.reconcile_agy_raw_output(
+        raw_output_id=row.raw_output_id,
+        raw_db_path=raw_db,
+        completed_work_db_path=completed_db,
+        completed_work_evidence_dir=evidence,
+        lease_owner="crashing",
+        now=now,
+    )
+    assert first.status == "stale_claim"
+    monkeypatch.setattr(RawAgentOutputStore, "mark_delivery_succeeded", real_mark)
+    second = supervisor.reconcile_agy_raw_output(
+        raw_output_id=row.raw_output_id,
+        raw_db_path=raw_db,
+        completed_work_db_path=completed_db,
+        completed_work_evidence_dir=evidence,
+        lease_owner="replay",
+        now=now + timedelta(seconds=61),
+    )
+    assert second.status == "succeeded"
+    with sqlite3.connect(completed_db) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM agy_completed_work").fetchone() == (
+            1,
+        )
+
+
+def test_recovery_batch_has_no_external_completion_or_writeback_side_effects(
+    tmp_path, monkeypatch
+):
+    supervisor = _load_supervisor()
+    raw_db, _row = _persist_recovery_packet(tmp_path)
+    completed_db = tmp_path / "completed" / "work.sqlite3"
+    evidence = tmp_path / "completed" / "evidence"
+    monkeypatch.setattr(supervisor, "agy_raw_output_db_path", lambda: raw_db)
+    monkeypatch.setattr(supervisor, "agy_completed_work_db_path", lambda: completed_db)
+    monkeypatch.setattr(supervisor, "agy_completed_work_evidence_dir", lambda: evidence)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("recovery attempted an external side effect")
+
+    monkeypatch.setattr(supervisor, "publish_agent_completed", forbidden)
+    monkeypatch.setattr(supervisor, "linear_update_issue", forbidden)
+    monkeypatch.setattr(supervisor, "linear_comment", forbidden)
+    monkeypatch.setattr(supervisor.subprocess, "Popen", forbidden)
+    results = supervisor.run_agy_raw_recovery_batch(
+        lease_owner="side-effect-proof", limit=10
+    )
+    assert len(results) == 1
+    assert results[0].status == "succeeded"
+    assert results[0].recovery_marker == "AGY_RAW_OUTPUT_RECOVERY_OK"
+
+
+def test_startup_recovery_precedes_worker_start():
+    source = SUPERVISOR_PATH.read_text(encoding="utf-8")
+    recovery = 'run_agy_raw_recovery_batch(lease_owner=f"startup-{os.getpid()}"'
+    assert source.index(recovery) < source.index("supervisor.start_workers()")
+
+
+def test_watchdog_recovery_precedes_linear_fetch(monkeypatch):
+    supervisor = _load_supervisor()
+    order = []
+    monkeypatch.setattr(
+        supervisor,
+        "run_agy_raw_recovery_batch",
+        lambda **kwargs: order.append("recovery") or (),
+    )
+
+    class Linear:
+        def fetch_issues(self, strict_opt_in=False):
+            order.append("linear")
+            stop.set()
+            return []
+
+    class Stub:
+        linear_client = Linear()
+        completed_issues = set()
+        lane_mode = "off"
+        active_project = None
+        backlog_age_days = 0
+
+    stop = threading.Event()
+    supervisor.linear_watchdog_loop(Stub(), stop)
+    assert order == ["recovery", "linear"]
