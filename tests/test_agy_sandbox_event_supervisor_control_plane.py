@@ -401,6 +401,8 @@ def test_result_boundary_captures_before_strict_raw_packet_acceptance(tmp_path):
     # Raw AGY and normalized completed-work are intentionally distinct dialects.
     assert boundary["normalization_status"] == "rejected_rerun_required"
     assert boundary["canonical_packet_id"] is None
+    assert boundary["queue_rejection_reason"] == "missing packet fields: source_path"
+    assert boundary["queue_repair_hint"] == "missing_source_path"
     with sqlite3.connect(tmp_path / "queue" / "raw.sqlite3") as connection:
         row = connection.execute(
             "SELECT task_id, source_event_id, raw_text_or_artifact_path FROM agent_raw_output_queue"
@@ -490,6 +492,46 @@ def test_result_boundary_fails_closed_on_queue_failure(tmp_path):
     }
 
 
+def test_result_boundary_rejects_empty_durable_raw_identity(tmp_path, monkeypatch):
+    supervisor = _load_supervisor()
+    import prismatic.agent_raw_output_queue as raw_queue
+
+    class EmptyIdentityRow:
+        raw_output_id = ""
+        normalization_status = "accepted"
+        canonical_packet_id = "packet_should_not_matter"
+        rejection_reason = None
+        repair_hint = None
+
+    class EmptyIdentityStore:
+        def __init__(self, _db_path):
+            pass
+
+        def persist(self, **_kwargs):
+            return EmptyIdentityRow()
+
+    monkeypatch.setattr(raw_queue, "RawAgentOutputStore", EmptyIdentityStore)
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    packet_path = sandbox / "AGY_RESULT_PACKET.json"
+    packet_path.write_text(json.dumps(_valid_agy_packet()), encoding="utf-8")
+
+    boundary = supervisor.capture_and_validate_agy_result(
+        issue_id="GRO-3837",
+        attempt=1,
+        result_path=sandbox / "RESULT.md",
+        packet_path=packet_path,
+        raw_output_db=tmp_path / "queue" / "raw.sqlite3",
+    )
+
+    assert boundary == {
+        "boundary_state": "raw_capture_failed",
+        "boundary_reason": "raw_queue_identity_missing",
+        "raw_capture_succeeded": False,
+        "completion_eligible": False,
+    }
+
+
 def test_result_boundary_rejects_symlink_directory_and_hooked_inputs(tmp_path):
     supervisor = _load_supervisor()
     sandbox = tmp_path / "sandbox"
@@ -573,6 +615,9 @@ def test_quality_gate_and_partial_linear_done_are_semantically_guarded():
     assert "if completion_eligible:" in source
     assert "if result_md.exists() and completion_eligible:" in source
     assert 'boundary["boundary_state"] == "canonical_valid"' in source
+    assert '"normalization_status": boundary.get("normalization_status")' in source
+    assert '"queue_rejection_reason": boundary.get("queue_rejection_reason")' in source
+    assert '"queue_repair_hint": boundary.get("queue_repair_hint")' in source
     assert "PARTIAL_DONE" not in source
 
 

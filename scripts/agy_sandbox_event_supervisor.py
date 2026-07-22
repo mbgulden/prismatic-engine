@@ -305,6 +305,14 @@ def capture_and_validate_agy_result(
             "completion_eligible": False,
         }
 
+    if type(row.raw_output_id) is not str or not row.raw_output_id.strip():
+        return {
+            "boundary_state": "raw_capture_failed",
+            "boundary_reason": "raw_queue_identity_missing",
+            "raw_capture_succeeded": False,
+            "completion_eligible": False,
+        }
+
     common = {
         "raw_capture_succeeded": True,
         "raw_output_id": row.raw_output_id,
@@ -312,6 +320,8 @@ def capture_and_validate_agy_result(
         "selected_source": str(selected),
         "normalization_status": row.normalization_status,
         "canonical_packet_id": row.canonical_packet_id,
+        "queue_rejection_reason": row.rejection_reason,
+        "queue_repair_hint": row.repair_hint,
         "completion_eligible": False,
     }
     if not canonical:
@@ -2787,7 +2797,10 @@ class EventDrivenSupervisor:
                         "boundary_state": boundary["boundary_state"],
                         "boundary_reason": boundary["boundary_reason"],
                         "raw_output_id": boundary.get("raw_output_id"),
+                        "normalization_status": boundary.get("normalization_status"),
                         "canonical_packet_id": boundary.get("canonical_packet_id"),
+                        "queue_rejection_reason": boundary.get("queue_rejection_reason"),
+                        "queue_repair_hint": boundary.get("queue_repair_hint"),
                         "completion_eligible": completion_eligible,
                         "cost_usd_estimated": cost_usd_estimated,
                         "attempt": attempt
