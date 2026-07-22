@@ -93,16 +93,113 @@ def test_preflight_uses_agy_cli_home_and_does_not_spawn_real_agy(monkeypatch):
     ]
 
 
-def test_agy_launch_and_relaunch_paths_use_child_env_static_guard():
+def test_agy_command_builder_uses_exact_filesystem_scoped_prompt(tmp_path):
+    supervisor = _load_supervisor()
+    sandbox = tmp_path / "sandbox with spaces"
+    prompt = "Bounded prompt\nwith exact formatting and --option-like text"
+    model = "Gemini 3.5 Flash (Medium)"
+
+    command = supervisor.build_agy_command(sandbox, prompt, model)
+
+    assert command == [
+        supervisor.AGY_BIN,
+        "--dir",
+        str(sandbox),
+        "--print",
+        prompt,
+        "--dangerously-skip-permissions",
+        "--print-timeout",
+        supervisor.PRINT_TIMEOUT,
+        "--sandbox",
+        "--model",
+        model,
+    ]
+    assert command[command.index("--print") + 1] is prompt
+    assert command.count(prompt) == 1
+
+
+def test_agy_command_builder_rejects_subclasses_without_calling_hooks(tmp_path):
+    supervisor = _load_supervisor()
+
+    class HookedString(str):
+        def __str__(self):
+            raise AssertionError("custom string hook must not run")
+
+    class HookedSandbox:
+        def __str__(self):
+            raise AssertionError("custom sandbox hook must not run")
+
+    with pytest.raises(TypeError, match="sandbox must be an exact platform Path"):
+        supervisor.build_agy_command(
+            HookedSandbox(), "bounded prompt", "Gemini 3.5 Flash (Medium)"
+        )
+    with pytest.raises(TypeError, match="prompt must be an exact string"):
+        supervisor.build_agy_command(
+            tmp_path, HookedString("bounded prompt"), "Gemini 3.5 Flash (Medium)"
+        )
+    with pytest.raises(TypeError, match="model must be an exact string"):
+        supervisor.build_agy_command(tmp_path, "bounded prompt", HookedString("model"))
+
+
+def test_agy_initial_and_relaunch_hooks_are_identical_without_stdin(
+    monkeypatch, tmp_path
+):
+    supervisor = _load_supervisor()
+    monkeypatch.setenv("HOME", SUPERVISOR_HOME)
+    monkeypatch.setenv("AGY_CLI_HOME", AGY_PROFILE_HOME)
+    sandbox = tmp_path / "sandbox"
+    prompt = "one exact bounded prompt"
+    command = supervisor.build_agy_command(sandbox, prompt, "Gemini 3.5 Flash (Medium)")
+    calls = []
+
+    class Proc:
+        stdin = None
+
+    def fake_popen(cmd, **kwargs):
+        calls.append((list(cmd), kwargs))
+        return Proc()
+
+    monkeypatch.setattr(supervisor.subprocess, "Popen", fake_popen)
+    log_file = object()
+
+    initial = supervisor._start_agy_process(command, log_file, sandbox)
+    relaunch = supervisor._start_agy_process(command, log_file, sandbox)
+
+    assert initial.stdin is None
+    assert relaunch.stdin is None
+    assert calls[0][0] == calls[1][0] == command
+    assert calls[0][0][calls[0][0].index("--print") + 1] == prompt
+    for _, kwargs in calls:
+        assert kwargs == {
+            "stdout": log_file,
+            "stderr": supervisor.subprocess.STDOUT,
+            "stdin": None,
+            "cwd": str(sandbox),
+            "env": {**os.environ, "HOME": AGY_PROFILE_HOME},
+        }
+
+
+def test_agy_transport_source_has_no_signed_stdin_artifacts():
     source = SUPERVISOR_PATH.read_text()
 
     assert (
         'env={**os.environ, "HOME": os.environ.get("HOME", str(Path.home()))}'
         not in source
     )
-    assert source.count("env=agy_cli_child_env(),") >= 3
-    assert "proc = subprocess.Popen(" in source
+    assert "env=agy_cli_child_env()," in source
+    assert "proc = _start_agy_process(cmd, logf, sandbox)" in source
+    assert source.count("proc = _start_agy_process(cmd, logf, sandbox)") == 2
     assert "Relaunching with cmd" in source
+    for forbidden in (
+        "INJECTED_VIA_STDIN",
+        "AGY_TASK_SIGNING_SECRET",
+        "default_secret",
+        "import hmac",
+        "hmac.new",
+        "subprocess.PIPE",
+        '"--add-dir"',
+    ):
+        assert forbidden not in source
 
 
 def test_abandonment_guard_default_is_absolute_and_profile_independent(monkeypatch):

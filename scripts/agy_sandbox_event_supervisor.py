@@ -937,6 +937,41 @@ def terminate_all_active_procs(timeout: float = 5.0) -> int:
     return killed
 
 # ── AGY session runner (kept from original) ──
+def build_agy_command(sandbox: Path, prompt: str, model: str) -> list[str]:
+    """Build the filesystem-scoped AGY command without side effects."""
+    if type(sandbox) is not type(Path()):
+        raise TypeError("sandbox must be an exact platform Path")
+    if type(prompt) is not str:
+        raise TypeError("prompt must be an exact string")
+    if type(model) is not str:
+        raise TypeError("model must be an exact string")
+    return [
+        AGY_BIN,
+        "--dir",
+        str(sandbox),
+        "--print",
+        prompt,
+        "--dangerously-skip-permissions",
+        "--print-timeout",
+        PRINT_TIMEOUT,
+        "--sandbox",
+        "--model",
+        model,
+    ]
+
+
+def _start_agy_process(cmd: list[str], logf, sandbox: Path):
+    """Start AGY with isolated child HOME and no writable stdin transport."""
+    return subprocess.Popen(
+        cmd,
+        stdout=logf,
+        stderr=subprocess.STDOUT,
+        stdin=None,
+        cwd=str(sandbox),
+        env=agy_cli_child_env(),
+    )
+
+
 def run_agy_session(issue_id: str, sandbox: Path, task_path: Path, log_path: Path,
                     model: str, token_pool: TokenPool = None,
                     jitter_range: tuple = LAUNCH_JITTER_RANGE,
@@ -985,16 +1020,7 @@ def run_agy_session(issue_id: str, sandbox: Path, task_path: Path, log_path: Pat
                 f"- Prefer 1-3 targeted tool calls over 20+ speculative searches.\n"
             )
 
-    cmd = [
-        AGY_BIN,
-        "--print",
-        "INJECTED_VIA_STDIN",
-        "--dangerously-skip-permissions",
-        "--print-timeout", PRINT_TIMEOUT,
-        "--sandbox",
-        "--add-dir", str(sandbox),
-        "--model", model,
-    ]
+    cmd = build_agy_command(sandbox, prompt, model)
 
     token_name = token
     if not token_name and token_pool:
@@ -1046,25 +1072,7 @@ def run_agy_session(issue_id: str, sandbox: Path, task_path: Path, log_path: Pat
         # AGY actively reasons — we'd incorrectly flag as stagnant).
         logf = open(log_path, "w", buffering=1)
         try:
-            stdin_pipe = subprocess.PIPE
-            proc = subprocess.Popen(
-                cmd,
-                stdout=logf,
-                stderr=subprocess.STDOUT,
-                stdin=stdin_pipe,
-                cwd=str(sandbox),
-                env=agy_cli_child_env(),
-            )
-            if proc.stdin is not None:
-                import hmac
-                secret = os.environ.get("AGY_TASK_SIGNING_SECRET", "default_secret")
-                signature = hmac.new(secret.encode(), prompt.encode(), hashlib.sha256).hexdigest()
-                payload_data = json.dumps({
-                    "signature": signature,
-                    "payload": prompt
-                })
-                proc.stdin.write(payload_data.encode() + b"\n")
-                proc.stdin.flush()
+            proc = _start_agy_process(cmd, logf, sandbox)
             _register_proc(issue_id, proc)
         except Exception as e:
             logf.close()
@@ -1295,7 +1303,7 @@ def run_agy_session(issue_id: str, sandbox: Path, task_path: Path, log_path: Pat
                         except Exception as stdin_err:
                             print(f"  [{issue_id}] Failed to pipe to stdin: {stdin_err}", flush=True)
                     else:
-                        # SIGTERM + relaunch with broader --allowedTools flag
+                        # SIGTERM + relaunch with the identical bounded command.
                         print(f"  [{issue_id}] Stdin not available. Sending SIGTERM to relaunch...", flush=True)
                         try:
                             proc.terminate()
@@ -1309,39 +1317,11 @@ def run_agy_session(issue_id: str, sandbox: Path, task_path: Path, log_path: Pat
                         except Exception:
                             pass
 
-                        # relaunch with broader --allowedTools flag
-                        if "--allowedTools" in cmd:
-                            try:
-                                idx = cmd.index("--allowedTools")
-                                cmd[idx + 1] = "*"
-                            except Exception:
-                                cmd.extend(["--allowedTools", "*"])
-                        else:
-                            cmd.extend(["--allowedTools", "*"])
-
                         print(f"  [{issue_id}] Relaunching with cmd: {cmd}", flush=True)
                         logf.close()
                         logf = open(log_path, "a", buffering=1)
                         try:
-                            stdin_pipe = subprocess.PIPE
-                            proc = subprocess.Popen(
-                                cmd,
-                                stdout=logf,
-                                stderr=subprocess.STDOUT,
-                                stdin=stdin_pipe,
-                                cwd=str(sandbox),
-                                env=agy_cli_child_env(),
-                            )
-                            if proc.stdin is not None:
-                                import hmac
-                                secret = os.environ.get("AGY_TASK_SIGNING_SECRET", "default_secret")
-                                signature = hmac.new(secret.encode(), prompt.encode(), hashlib.sha256).hexdigest()
-                                payload_data = json.dumps({
-                                    "signature": signature,
-                                    "payload": prompt
-                                })
-                                proc.stdin.write(payload_data.encode() + b"\n")
-                                proc.stdin.flush()
+                            proc = _start_agy_process(cmd, logf, sandbox)
                             _register_proc(issue_id, proc)
                         except Exception as relaunch_err:
                             print(f"  [{issue_id}] Relaunch failed: {relaunch_err}", flush=True)
