@@ -446,6 +446,53 @@ def test_direct_canonical_construction_preserves_fail_closed_invariants():
             ),
         )
 
+    selected = valid.route_decision.selected
+    assert selected is not None
+    malformed_decisions = [
+        RouteDecision(
+            selected=AgentCapability(
+                name="", label="", capabilities=frozenset({"code"})
+            ),
+            candidates=(
+                AgentCapability(name="", label="", capabilities=frozenset({"code"})),
+            ),
+            reason="empty identity",
+        ),
+        RouteDecision(
+            selected=selected,
+            candidates=[selected],  # type: ignore[arg-type]
+            reason="list candidates",
+        ),
+        RouteDecision(
+            selected=selected,
+            candidates=(selected,),
+            reason=None,  # type: ignore[arg-type]
+        ),
+        RouteDecision(
+            selected=AgentCapability(
+                name="coder",
+                label="agent:other",
+                capabilities=frozenset({"code"}),
+            ),
+            candidates=(
+                AgentCapability(
+                    name="coder",
+                    label="agent:other",
+                    capabilities=frozenset({"code"}),
+                ),
+            ),
+            reason="mismatched label",
+        ),
+        RouteDecision(
+            selected=selected,
+            candidates=(selected, selected),
+            reason="duplicate candidates",
+        ),
+    ]
+    for decision in malformed_decisions:
+        with pytest.raises(TaskPlanValidationError):
+            replace(valid, route_decision=decision)
+
     busy = AgentCapability(
         name="busy",
         label="agent:busy",

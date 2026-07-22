@@ -9,7 +9,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
 
-from prismatic.capability_router import CapabilityRegistry, RouteDecision, route_issue
+from prismatic.capability_router import (
+    AgentCapability,
+    CapabilityRegistry,
+    RouteDecision,
+    route_issue,
+)
 
 
 class TaskPlanValidationError(ValueError):
@@ -115,11 +120,78 @@ class ThemeTaskPlan:
             raise TaskPlanValidationError(
                 "parent_id must be None or a non-empty string"
             )
-        selected = self.route_decision.selected
-        if selected is not None and selected not in self.route_decision.candidates:
+        decision = self.route_decision
+        if type(decision.candidates) is not tuple:
+            raise TaskPlanValidationError("route_decision.candidates must be a tuple")
+        if (
+            not isinstance(decision.reason, str)
+            or not decision.reason.strip()
+            or decision.reason != decision.reason.strip()
+        ):
             raise TaskPlanValidationError(
-                "route_decision.selected must be present in route_decision.candidates"
+                "route_decision.reason must be a normalized non-empty string"
             )
+        seen_names: set[str] = set()
+        seen_labels: set[str] = set()
+        for candidate in decision.candidates:
+            self._validate_agent_candidate(candidate)
+            if candidate.name in seen_names or candidate.label in seen_labels:
+                raise TaskPlanValidationError(
+                    "route_decision candidates must have unique names and labels"
+                )
+            seen_names.add(candidate.name)
+            seen_labels.add(candidate.label)
+        if decision.selected is not None:
+            self._validate_agent_candidate(decision.selected)
+            if decision.selected not in decision.candidates:
+                raise TaskPlanValidationError(
+                    "route_decision.selected must be present in route_decision.candidates"
+                )
+
+    @staticmethod
+    def _validate_agent_candidate(candidate: AgentCapability) -> None:
+        if not isinstance(candidate, AgentCapability):
+            raise TaskPlanValidationError(
+                "route_decision candidates must be AgentCapability values"
+            )
+        if (
+            not isinstance(candidate.name, str)
+            or not candidate.name.strip()
+            or candidate.name != candidate.name.strip()
+        ):
+            raise TaskPlanValidationError(
+                "route candidate name must be a normalized non-empty string"
+            )
+        expected_label = f"agent:{candidate.name}"
+        if candidate.label != expected_label:
+            raise TaskPlanValidationError(
+                f"route candidate label must equal {expected_label!r}"
+            )
+        if type(candidate.capabilities) is not frozenset or any(
+            not isinstance(capability, str)
+            or not capability
+            or capability != capability.strip().lower()
+            for capability in candidate.capabilities
+        ):
+            raise TaskPlanValidationError(
+                "route candidate capabilities must be normalized strings in a frozenset"
+            )
+        for field_name in ("max_concurrent", "current_load", "priority"):
+            if type(getattr(candidate, field_name)) is not int:
+                raise TaskPlanValidationError(
+                    f"route candidate {field_name} must be an integer"
+                )
+        if candidate.max_concurrent < 0 or candidate.current_load < 0:
+            raise TaskPlanValidationError(
+                "route candidate capacity values must be non-negative"
+            )
+        for field_name in ("gpu_capable", "available"):
+            if type(getattr(candidate, field_name)) is not bool:
+                raise TaskPlanValidationError(
+                    f"route candidate {field_name} must be a boolean"
+                )
+        if not isinstance(candidate.metadata, Mapping):
+            raise TaskPlanValidationError("route candidate metadata must be a mapping")
 
     def _has_exactly_one_eligible_agent(self) -> bool:
         decision = self.route_decision
