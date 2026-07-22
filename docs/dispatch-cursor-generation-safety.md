@@ -121,4 +121,3 @@ Verification tests in `tests/test_dispatch_consumer_cursor_generation.py` (38 is
 8. Deterministic adversarial tests proving `set_state` critical section generation binding and post-write validation restore exact prior cursor state on same-path DB replacement.
 9. Inspect, dry-run, apply, and write tests proving symlink targets and parent-symlink aliases are rejected before canonicalization without creating lock, backup, or temp artifacts or mutating destinations.
 10. Injected post-cursor-write failure tests proving durable automatic original cursor restoration or retained verified backups with explicit recovery-required outcome.
-
