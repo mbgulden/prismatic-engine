@@ -197,7 +197,14 @@ def _approval_route(path: str) -> bool:
 def _executor_route(path: str) -> bool:
     segments = PurePosixPath(path).parts
     return any(
-        segment in {"real-executor", "real-executor-arming", "pr-executor", "invoke"}
+        segment
+        in {
+            "real-executor",
+            "real-executor-arming",
+            "pr-executor",
+            "canary-dry-run",
+            "invoke",
+        }
         or segment.startswith("real-executor-")
         for segment in segments
     )

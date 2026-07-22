@@ -79,7 +79,8 @@ headers.
 - Approval, rejection, approval-request, operator-action approval,
   `pr-approval`, `pr-create-approved`, promotion-decision, and final
   authorization route families require `approver`.
-- Real-executor arming/invocation and PR-executor routes require `executor`.
+- Real-executor arming/invocation, PR-executor, and executor-run canary routes
+  (including `executor-runs/canary-dry-run`) require `executor`.
 - `/native-crons/{id}/action` requires `executor` when its parsed JSON action is
   `run`; other lifecycle actions require `operator`. Body inspection preserves
   the bytes for the downstream handler.

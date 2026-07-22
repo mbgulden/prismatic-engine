@@ -78,6 +78,10 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     async def invoke_executor() -> dict[str, bool]:
         return {"ok": True}
 
+    @app.post("/api/agy/executor-runs/canary-dry-run")
+    async def invoke_executor_canary() -> dict[str, bool]:
+        return {"ok": True}
+
     @app.post("/api/agy/merge-backlog/item/pr-approval")
     async def approve_pr() -> dict[str, bool]:
         return {"ok": True}
@@ -255,6 +259,18 @@ def test_operator_only_permits_ordinary_mutation(client: TestClient) -> None:
         ).status_code
         == 403
     )
+    assert (
+        client.post(
+            "/api/agy/executor-runs/canary-dry-run",
+            headers=_auth("operator"),
+            json={
+                "executor_mode": "real",
+                "execute": True,
+                "allow_real_side_effects": True,
+            },
+        ).status_code
+        == 403
+    )
 
 
 def test_approver_and_executor_roles_do_not_imply_each_other_or_operator(
@@ -293,6 +309,18 @@ def test_approver_and_executor_roles_do_not_imply_each_other_or_operator(
     assert (
         client.post(
             "/api/agy/merge-backlog/item/pr-executor", headers=_auth("executor")
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            "/api/agy/executor-runs/canary-dry-run",
+            headers=_auth("executor"),
+            json={
+                "executor_mode": "real",
+                "execute": True,
+                "allow_real_side_effects": True,
+            },
         ).status_code
         == 200
     )
