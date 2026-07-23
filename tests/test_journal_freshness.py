@@ -9,8 +9,18 @@ from prismatic.journal import extract_log_signals, git
 
 
 def test_extract_log_signals_uses_recent_tail_and_excludes_stale_head(
-    tmp_path: Path,
+    monkeypatch, tmp_path: Path
 ) -> None:
+    import prismatic.journal as journal
+
+    frozen_now = datetime(2026, 7, 23, 6, 20, tzinfo=timezone.utc)
+
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return frozen_now
+
+    monkeypatch.setattr(journal.dt, "datetime", FrozenDateTime)
     log = tmp_path / "gateway.log"
     stale = "2026-06-19 13:32:27 ERROR stale gdrive failure\n"
     filler = "x" * 20000 + "\n"
