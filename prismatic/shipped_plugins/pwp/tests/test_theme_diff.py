@@ -6,14 +6,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-_THIS_DIR = Path(__file__).resolve().parent
-_REPO_ROOT = _THIS_DIR.parents[4]
-
 from prismatic.shipped_plugins.pwp.theme_diff import (
     check_theme_compatibility,
     diff_theme_packages,
     engine_version_satisfies,
 )
+
+_THIS_DIR = Path(__file__).resolve().parent
+_REPO_ROOT = _THIS_DIR.parents[4]
 
 VALID_THEME = _THIS_DIR / "fixtures" / "pwp_theme" / "valid_theme"
 

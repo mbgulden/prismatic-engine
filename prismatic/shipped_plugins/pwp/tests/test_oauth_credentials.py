@@ -8,9 +8,6 @@ from pathlib import Path
 from typing import Any, Mapping
 
 import pytest
-
-_REPO_ROOT = Path(__file__).resolve().parents[4]
-
 from prismatic.shipped_plugins.pwp.oauth_credentials import (
     CredentialRefreshError,
     PROVIDERS,
@@ -19,6 +16,8 @@ from prismatic.shipped_plugins.pwp.oauth_credentials import (
     validate_token_shape,
 )
 from prismatic.shipped_plugins.pwp.plugin import PWPDesignTokenPlugin
+
+_REPO_ROOT = Path(__file__).resolve().parents[4]
 
 
 ACCESS = "ubs_oauth2_" + "A" * 42

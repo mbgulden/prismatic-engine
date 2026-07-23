@@ -6,11 +6,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+from prismatic.shipped_plugins.pwp.theme_validator import validate_theme_package
 
 _THIS_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _THIS_DIR.parents[4]
-
-from prismatic.shipped_plugins.pwp.theme_validator import validate_theme_package
 
 VALID_THEME = _THIS_DIR / "fixtures" / "pwp_theme" / "valid_theme"
 
