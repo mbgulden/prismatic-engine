@@ -7,7 +7,18 @@ import sys
 from pathlib import Path
 
 _THIS_DIR = Path(__file__).resolve().parent
-_REPO_ROOT = _THIS_DIR.parents[2]
+
+
+def _repo_root() -> Path:
+    for candidate in _THIS_DIR.parents:
+        if (candidate / "pyproject.toml").exists() and (
+            candidate / "scripts" / "pwp"
+        ).exists():
+            return candidate
+    raise RuntimeError("Could not locate repo root for PWP tests")
+
+
+_REPO_ROOT = _repo_root()
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 

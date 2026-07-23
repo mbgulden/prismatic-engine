@@ -2,7 +2,17 @@ import json
 from pathlib import Path
 import sys
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+def _repo_root() -> Path:
+    for candidate in Path(__file__).resolve().parents:
+        if (candidate / "pyproject.toml").exists() and (
+            candidate / "scripts" / "pwp"
+        ).exists():
+            return candidate
+    raise RuntimeError("Could not locate repo root for PWP tests")
+
+
+_REPO_ROOT = _repo_root()
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
