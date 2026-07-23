@@ -96,7 +96,9 @@ class PWPDomainService:
 
     def credentials_refresh(self, provider: str, verify: bool = True) -> Dict[str, Any]:
         provider_config = PROVIDERS[provider]
-        verifier = verify_ubersuggest_mcp if provider == "ubersuggest" and verify else None
+        verifier = (
+            verify_ubersuggest_mcp if provider == "ubersuggest" and verify else None
+        )
         result = refresh_oauth_token(
             provider_config, default_token_paths(provider), verifier=verifier
         )
