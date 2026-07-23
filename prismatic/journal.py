@@ -602,6 +602,81 @@ def fingerprint(paths: list[Path], config: JournalConfig) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
+def signal_idempotency_key(signal: dict[str, Any]) -> str:
+    """Stable key for one normalized signal, excluding collector observation time."""
+    canonical = {key: value for key, value in signal.items() if key not in {"_timestamp", "idempotency_key"}}
+    return hashlib.sha256(json.dumps(canonical, sort_keys=True, default=str, separators=(",", ":")).encode()).hexdigest()
+
+
+def dedupe_signals(signals: list[dict[str, Any]], existing: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    seen = {str(event.get("idempotency_key") or signal_idempotency_key(event)) for event in existing if isinstance(event, dict)}
+    accepted: list[dict[str, Any]] = []
+    for signal in signals:
+        key = signal_idempotency_key(signal)
+        if key in seen:
+            continue
+        seen.add(key)
+        accepted.append({**signal, "idempotency_key": key})
+    return accepted, len(signals) - len(accepted)
+
+
+def source_identity(path: Path) -> dict[str, int]:
+    stat = path.stat()
+    return {"device": stat.st_dev, "inode": stat.st_ino, "size": stat.st_size}
+
+
+def advance_source_cursor(path: Path, previous: dict[str, Any] | None, observed_at: str) -> tuple[dict[str, Any], bytes]:
+    """Read only bytes after a source cursor; safely reset after log rotation."""
+    identity = source_identity(path)
+    prior_identity = (previous or {}).get("identity", {})
+    prior_offset = int((previous or {}).get("byte_offset", 0))
+    same_file = prior_identity.get("device") == identity["device"] and prior_identity.get("inode") == identity["inode"]
+    offset = prior_offset if same_file and identity["size"] >= prior_offset else 0
+    rotated = bool(previous) and offset == 0 and (not same_file or identity["size"] < prior_offset)
+    with path.open("rb") as handle:
+        handle.seek(offset)
+        payload = handle.read()
+    prior_records = int((previous or {}).get("record_position", 0))
+    record_position = payload.count(b"\n") if offset == 0 else prior_records + payload.count(b"\n")
+    record = {
+        "identity": identity,
+        "byte_offset": identity["size"],
+        "record_position": record_position,
+        "content_sha256": hashlib.sha256(payload).hexdigest(),
+        "collection_window": {"observed_at": observed_at, "start_offset": offset, "end_offset": identity["size"]},
+        "parse_outcome": "pending",
+        "rotated": rotated,
+    }
+    return record, payload
+
+
+def quarantine_operational_lines(path: Path, payload: bytes, observed_at: str) -> list[dict[str, Any]]:
+    """Retain malformed operational lines outside the factual event stream."""
+    quarantined: list[dict[str, Any]] = []
+    for line in payload.decode("utf-8", errors="ignore").splitlines():
+        if not line.strip() or _parse_log_timestamp(line) is not None:
+            continue
+        if not re.search(r"(?i)\b(error|exception|traceback|failed|timeout|conflict|restart|starting)\b", line):
+            continue
+        key = hashlib.sha256(f"{path}:{line}".encode()).hexdigest()
+        quarantined.append({"idempotency_key": key, "source": str(path), "observed_at": observed_at, "reason": "missing_or_malformed_timestamp", "excerpt_redacted": redact(line)[:500]})
+    return quarantined
+
+
+def write_quarantine(records: list[dict[str, Any]], config: JournalConfig, today: str) -> int:
+    if not records:
+        return 0
+    folder = config.journal_root / ".quarantine"
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / f"{today}.json"
+    existing = json.loads(target.read_text()) if target.exists() else []
+    seen = {str(item.get("idempotency_key")) for item in existing if isinstance(item, dict)}
+    accepted = [record for record in records if record["idempotency_key"] not in seen]
+    if accepted:
+        target.write_text(json.dumps(existing + accepted, indent=2), encoding="utf-8")
+    return len(accepted)
+
+
 def run_snapshot(config: JournalConfig | None = None, force: bool = False) -> dict[str, Any]:
     config = config or JournalConfig.from_env()
     today = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
@@ -614,26 +689,51 @@ def run_snapshot(config: JournalConfig | None = None, force: bool = False) -> di
     inbox_dir.mkdir(parents=True, exist_ok=True)
     paths = collect_candidates(config, since)
     current_fp = fingerprint(paths, config)
-    previous_fp = ""
+    state: dict[str, Any] = {}
     try:
-        previous_fp = str(json.loads(state_file.read_text(encoding="utf-8")).get("fingerprint", ""))
+        state = json.loads(state_file.read_text(encoding="utf-8"))
     except Exception:
         pass
+    previous_fp = str(state.get("fingerprint", ""))
     if not force and previous_fp == current_fp and today_file.exists():
-        return {"changed": False, "signals": 0, "today_file": str(today_file)}
+        return {"changed": False, "signals": 0, "today_file": str(today_file), "deduped": 0, "quarantined": 0}
     now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    signals = extract_all_signals(paths, config)
-    if not force and not signals and not any(path.stat().st_mtime >= since for path in paths):
-        return {"changed": False, "signals": 0, "today_file": str(today_file)}
-    md = build_compact_markdown(signals, now, config)
-    existing = today_file.read_text(encoding="utf-8", errors="ignore") if today_file.exists() else ""
-    merged = existing.rstrip() + "\n\n" + md if existing else md
-    today_file.write_text(merged, encoding="utf-8")
-    (config.journal_root / "latest-inbox.md").write_text(merged, encoding="utf-8")
-    update_event_index(signals, now, config)
+    cursors = state.get("cursors", {}) if isinstance(state.get("cursors", {}), dict) else {}
+    changed_paths: list[Path] = []
+    quarantined_records: list[dict[str, Any]] = []
+    for path in paths:
+        try:
+            cursor, payload = advance_source_cursor(path, cursors.get(str(path)), now)
+        except FileNotFoundError:
+            continue
+        quarantined = quarantine_operational_lines(path, payload, now) if path.suffix == ".log" else []
+        cursor["parse_outcome"] = "quarantined" if quarantined else "accepted" if payload else "empty"
+        cursors[str(path)] = cursor
+        quarantined_records.extend(quarantined)
+        if payload:
+            changed_paths.append(path)
+    signals = extract_all_signals(changed_paths, config)
+    index_path = config.journal_root / ".index" / f"events-{today}.json"
+    try:
+        existing_events = json.loads(index_path.read_text()) if index_path.exists() else []
+    except Exception:
+        existing_events = []
+    accepted, deduped = dedupe_signals(signals, existing_events if isinstance(existing_events, list) else [])
+    quarantined_count = write_quarantine(quarantined_records, config, today)
     state_dir.mkdir(parents=True, exist_ok=True)
-    state_file.write_text(json.dumps({"fingerprint": current_fp, "updated_at": now}), encoding="utf-8")
-    return {"changed": True, "signals": len(signals), "today_file": str(today_file), "lines": len([line for line in md.splitlines() if line.strip()])}
+    state_payload = {"fingerprint": current_fp, "updated_at": now, "cursors": cursors}
+    if not force and not accepted and not quarantined_count:
+        state_file.write_text(json.dumps(state_payload, indent=2), encoding="utf-8")
+        return {"changed": False, "signals": 0, "today_file": str(today_file), "deduped": deduped, "quarantined": 0}
+    if accepted:
+        md = build_compact_markdown(accepted, now, config)
+        existing = today_file.read_text(encoding="utf-8", errors="ignore") if today_file.exists() else ""
+        merged = existing.rstrip() + "\n\n" + md if existing else md
+        today_file.write_text(merged, encoding="utf-8")
+        (config.journal_root / "latest-inbox.md").write_text(merged, encoding="utf-8")
+        update_event_index(accepted, now, config)
+    state_file.write_text(json.dumps(state_payload, indent=2), encoding="utf-8")
+    return {"changed": bool(accepted or quarantined_count), "signals": len(accepted), "today_file": str(today_file), "lines": len([line for line in build_compact_markdown(accepted, now, config).splitlines() if line.strip()]) if accepted else 0, "deduped": deduped, "quarantined": quarantined_count, "cursors": len(cursors)}
 
 
 def import_plan_ready(period: str = "initial", config: JournalConfig | None = None, execute: bool = False) -> dict[str, Any]:
