@@ -25,12 +25,16 @@ def _validator() -> Draft202012Validator:
 
 
 def test_current_pwp_pe_contract_fixture_is_valid() -> None:
-    errors = sorted(_validator().iter_errors(_load(FIXTURES / "valid-contract.json")), key=str)
+    errors = sorted(
+        _validator().iter_errors(_load(FIXTURES / "valid-contract.json")), key=str
+    )
     assert errors == []
 
 
 def test_unknown_capability_is_rejected_fail_closed() -> None:
-    errors = list(_validator().iter_errors(_load(FIXTURES / "reject-unknown-capability.json")))
+    errors = list(
+        _validator().iter_errors(_load(FIXTURES / "reject-unknown-capability.json"))
+    )
     assert errors
     assert any(error.path[-1] == "id" for error in errors if error.path)
 
