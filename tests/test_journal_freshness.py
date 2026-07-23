@@ -122,6 +122,24 @@ def test_read_recent_text_skips_unterminated_tail_and_oversized_complete_line(
     assert read_recent_text(log, limit=30) == "small\n" + "x" * 20 + "\n"
 
 
+def test_read_recent_text_excludes_ascii_unterminated_only_content(
+    tmp_path: Path,
+) -> None:
+    log = tmp_path / "unterminated-ascii.log"
+    log.write_bytes(b"unterminated")
+
+    assert read_recent_text(log) == ""
+
+
+def test_read_recent_text_excludes_multibyte_unterminated_only_content(
+    tmp_path: Path,
+) -> None:
+    log = tmp_path / "unterminated-utf8.log"
+    log.write_bytes("漢字🙂".encode())
+
+    assert read_recent_text(log) == ""
+
+
 def test_read_recent_text_preserves_multibyte_complete_boundaries(
     tmp_path: Path,
 ) -> None:
