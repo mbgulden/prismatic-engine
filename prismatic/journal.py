@@ -342,6 +342,8 @@ def read_text(path: Path, limit: int = 8000) -> str:
 
 def read_recent_text(path: Path, limit: int = 8000) -> str:
     """Return the newest complete-line suffix that fits the character budget."""
+    if limit <= 0:
+        return ""
     try:
         with path.open("rb") as handle:
             handle.seek(0, os.SEEK_END)
@@ -349,25 +351,32 @@ def read_recent_text(path: Path, limit: int = 8000) -> str:
             window = max(limit * 4, 1)
             while True:
                 start = max(0, size - window)
-                if not start:
-                    break
-                handle.seek(start - 1)
-                if handle.read(1) == b"\n":
-                    break
+                while start:
+                    handle.seek(start - 1)
+                    if handle.read(1) == b"\n":
+                        break
+                    window = min(size, window * 2)
+                    start = max(0, size - window)
+                handle.seek(start)
+                data = handle.read()
+                if not data.endswith(b"\n"):
+                    data = data.rsplit(b"\n", 1)[0] + b"\n" if b"\n" in data else b""
+                lines = data.decode("utf-8", errors="ignore").splitlines(keepends=True)
+                suffix: list[str] = []
+                length = 0
+                for line in reversed(lines):
+                    if length + len(line) > limit:
+                        break
+                    suffix.append(line)
+                    length += len(line)
+                result = "".join(reversed(suffix))
+                if start == 0 or length == limit:
+                    return result
+                if lines and len(lines[-1]) > limit:
+                    return ""
+                if len(suffix) < len(lines):
+                    return result
                 window = min(size, window * 2)
-            handle.seek(start)
-            data = handle.read()
-        if not data.endswith(b"\n"):
-            data = data.rsplit(b"\n", 1)[0] + b"\n" if b"\n" in data else b""
-        lines = data.decode("utf-8", errors="ignore").splitlines(keepends=True)
-        suffix: list[str] = []
-        length = 0
-        for line in reversed(lines):
-            if length + len(line) > limit:
-                break
-            suffix.append(line)
-            length += len(line)
-        return "".join(reversed(suffix))
     except Exception:
         return ""
 

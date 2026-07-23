@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import random
 
 from prismatic.journal import extract_log_signals, git, read_recent_text
 
@@ -166,6 +167,64 @@ def test_read_recent_text_ignores_malformed_bytes_in_newest_complete_line(
     log.write_bytes(b"valid\nbad\xff\n")
 
     assert read_recent_text(log) == "valid\nbad\n"
+
+
+def test_read_recent_text_expands_past_exact_and_long_partial_tails(tmp_path: Path) -> None:
+    for limit in (3, 4, 6, 10, 20, 41):
+        for tail in (b"x" * (limit * 4), b"\xff" * (limit * 4), b"x" * (limit * 8 + 1)):
+            log = tmp_path / f"exact-window-{limit}-{tail[:1].hex()}-{len(tail)}.log"
+            log.write_bytes(b"ok\n" + tail)
+            assert read_recent_text(log, limit=limit) == "ok\n"
+
+
+def test_read_recent_text_expands_to_newest_suffix_before_partial_tail(tmp_path: Path) -> None:
+    log = tmp_path / "multi-before-tail.log"
+    log.write_bytes(b"old\nnewest\n\n" + b"x" * 80)
+
+    assert read_recent_text(log, limit=1) == "\n"
+    assert read_recent_text(log, limit=8) == "newest\n\n"
+
+
+def test_read_recent_text_expands_multibyte_records_before_malformed_tail(tmp_path: Path) -> None:
+    log = tmp_path / "multibyte-before-tail.log"
+    log.write_bytes("old\n漢字\n🙂\n".encode() + b"\xff" * 80)
+
+    assert read_recent_text(log, limit=3) == "🙂\n"
+    assert read_recent_text(log, limit=6) == "漢字\n🙂\n"
+
+
+def _recent_text_oracle(data: bytes, limit: int) -> str:
+    if limit <= 0 or not data.endswith(b"\n"):
+        data = data.rsplit(b"\n", 1)[0] + b"\n" if b"\n" in data and limit > 0 else b""
+    lines = data.decode("utf-8", errors="ignore").splitlines(keepends=True)
+    suffix: list[str] = []
+    length = 0
+    for line in reversed(lines):
+        if length + len(line) > limit:
+            break
+        suffix.append(line)
+        length += len(line)
+    return "".join(reversed(suffix))
+
+
+def test_read_recent_text_seeded_byte_tail_oracle(tmp_path: Path) -> None:
+    randomizer = random.Random(4186)
+    complete_records = [b"ok\n", b"new\n", b"\n", b"bad\xff\n", "漢字\n".encode(), "🙂\n".encode()]
+    case_count = 600
+    for case in range(case_count):
+        records = b"".join(randomizer.choice(complete_records) for _ in range(randomizer.randrange(1, 7)))
+        tail = bytes(randomizer.choice((ord("x"), 0xFF, 0x80)) for _ in range(randomizer.randrange(0, 180)))
+        data = records + tail
+        limit = randomizer.choice((0, 1, 2, 3, 4, 6, 10, 20, 41, 80))
+        log = tmp_path / f"oracle-{case}.log"
+        log.write_bytes(data)
+
+        actual = read_recent_text(log, limit=limit)
+        expected = _recent_text_oracle(data, limit)
+
+        assert actual == expected
+        assert len(actual) <= max(limit, 0)
+        assert not actual or actual.endswith("\n")
 
 
 def test_git_returns_stdout_only_when_successful(monkeypatch, tmp_path: Path) -> None:
