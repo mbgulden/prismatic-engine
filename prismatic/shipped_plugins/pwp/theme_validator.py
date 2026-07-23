@@ -6,8 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
-PWP_DIR = Path(__file__).resolve().parent
-SCHEMAS_DIR = PWP_DIR / "schemas"
+from .resources import bundled_json, bundled_relpath, bundled_resource
 
 REQUIRED_ENTRYPOINTS = {
     "tokens",
@@ -75,10 +74,13 @@ def _iter_schema_refs(value: Any) -> Iterable[str]:
 
 
 def _validate_with_jsonschema(
-    instance: Any, schema_path: Path, label: str, result: ThemeValidationResult
+    instance: Any, schema_name: str, label: str, result: ThemeValidationResult
 ) -> None:
-    if not schema_path.exists():
-        result.add_error(f"Missing bundled schema: {schema_path.relative_to(PWP_DIR)}")
+    schema_resource = bundled_resource("schemas", schema_name)
+    if not schema_resource.is_file():
+        result.add_error(
+            f"Missing bundled schema: {bundled_relpath('schemas', schema_name)}"
+        )
         return
     try:
         import jsonschema  # type: ignore
@@ -89,7 +91,7 @@ def _validate_with_jsonschema(
         return
 
     try:
-        jsonschema.validate(instance=instance, schema=load_json(schema_path))
+        jsonschema.validate(instance=instance, schema=bundled_json("schemas", schema_name))
     except (
         Exception
     ) as exc:  # jsonschema.ValidationError when installed; keep fallback import-free.
@@ -120,7 +122,7 @@ def validate_theme_package(theme_path: str | Path) -> ThemeValidationResult:
         return result
 
     _validate_with_jsonschema(
-        manifest, SCHEMAS_DIR / "pwp-theme.schema.json", "theme.json", result
+        manifest, "pwp-theme.schema.json", "theme.json", result
     )
 
     schema_decl = manifest.get("$schema")
@@ -190,7 +192,7 @@ def validate_theme_package(theme_path: str | Path) -> ThemeValidationResult:
                 continue
             _validate_with_jsonschema(
                 module_contract,
-                SCHEMAS_DIR / "pwp-module.schema.json",
+                "pwp-module.schema.json",
                 str(module_file.relative_to(root)),
                 result,
             )
@@ -247,7 +249,7 @@ def validate_theme_package(theme_path: str | Path) -> ThemeValidationResult:
             tokens = None
         if isinstance(tokens, dict):
             _validate_with_jsonschema(
-                tokens, SCHEMAS_DIR / "pwp-token.schema.json", token_rel, result
+                tokens, "pwp-token.schema.json", token_rel, result
             )
             missing_groups = sorted(REQUIRED_TOKEN_GROUPS - set(tokens))
             for group in missing_groups:
@@ -271,7 +273,7 @@ def validate_theme_package(theme_path: str | Path) -> ThemeValidationResult:
         if isinstance(emdash_map, dict):
             _validate_with_jsonschema(
                 emdash_map,
-                SCHEMAS_DIR / "pwp-emdash-map.schema.json",
+                "pwp-emdash-map.schema.json",
                 emdash_rel,
                 result,
             )
