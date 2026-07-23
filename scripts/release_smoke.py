@@ -59,7 +59,7 @@ def main() -> int:
     if cli_rc != 0:
         raise RuntimeError(f"prismatic CLI returned {cli_rc}")
 
-    load_result = verify_shipped_plugins_load(plugins_dir=REPO_ROOT / "plugins")
+    load_result = verify_shipped_plugins_load()
     if not load_result.passed:
         raise RuntimeError("plugin load gate failed: " + load_result.reason)
 

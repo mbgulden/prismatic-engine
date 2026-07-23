@@ -116,8 +116,10 @@ def _check(
     return {"name": name, "status": status, "details": redact_secrets(details or {})}
 
 
-def _catalog_item(plugin_name: str) -> dict[str, Any] | None:
-    catalog = plugin_catalog(repo_root() / "plugins")
+def _catalog_item(
+    plugin_name: str, plugins_dir: Path | None = None
+) -> dict[str, Any] | None:
+    catalog = plugin_catalog(plugins_dir)
     return next(
         (
             item
@@ -130,6 +132,7 @@ def _catalog_item(plugin_name: str) -> dict[str, Any] | None:
 
 def _plugin_context(
     plugin_name: str,
+    plugins_dir: Path | None = None,
 ) -> tuple[
     dict[str, Any] | None,
     dict[str, Any],
@@ -138,7 +141,7 @@ def _plugin_context(
     list[str],
     list[dict[str, Any]],
 ]:
-    item = _catalog_item(plugin_name)
+    item = _catalog_item(plugin_name, plugins_dir)
     blockers: list[str] = []
     warnings: list[str] = []
     checks: list[dict[str, Any]] = []

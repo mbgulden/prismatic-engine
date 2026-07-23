@@ -37,6 +37,17 @@ A plugin can disconnect safely without deleting artifacts or breaking unrelated 
 | 10 | Governance rules | Production safety | Validation + plugin docs + tests |
 | 11 | Tests | Regression proof | focused pytest + plugin load gate |
 
+## Plugin Discovery & Packaging Contract
+
+Prismatic Engine distinguishes between **package-shipped plugin resources** and **external operator-installed plugins**:
+
+1. **Shipped Plugin Resource Boundary**: Reference and core plugins shipped with Prismatic Engine (`example-plugin`, `pwp-design-token-plugin`, etc.) live inside the `prismatic.shipped_plugins` package boundary (`prismatic/shipped_plugins/`). They are packaged via setuptools `package-data` into wheels and sdists, ensuring default discovery, load-gate verification, catalog generation, and policy preview work in clean-room non-editable environments independent of repository CWD or mutable source checkouts.
+2. **External / Operator Plugin Overrides**: Operator or custom user-installed plugins are discovered from `PRISMATIC_PLUGINS_DIR` when set in the environment.
+3. **Unified Discovery Order**:
+   - `prismatic.plugin_architecture.get_shipped_plugins_dir()` locates package-shipped plugin manifests.
+   - If `PRISMATIC_PLUGINS_DIR` is set in the environment, external plugins from that directory are also discovered.
+   - Passing an explicit `plugins_dir` targets that specific directory for isolated test or operator scenarios.
+
 ## Core files
 
 | File | Purpose |

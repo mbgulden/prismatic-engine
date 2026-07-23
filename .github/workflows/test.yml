@@ -59,6 +59,10 @@ jobs:
             tests/test_dashboard_ux_hardening.py \
             prismatic/quality/test_smoke.py
 
+      - name: Run distribution readiness smoke (clean-room fresh-install)
+        run: |
+          python scripts/distribution_readiness_smoke.py --fresh-install
+
       - name: Run release readiness checks
         run: |
           python scripts/release_check.py

@@ -4,6 +4,7 @@ Workspace Tree Navigator — Backend API
 Serves real directory trees from configured workspace roots.
 Supports text preview, PDF download, and mobile-responsive layout.
 """
+
 from __future__ import annotations
 
 import mimetypes
@@ -15,7 +16,7 @@ import tempfile
 import zipfile
 
 from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 
 router = APIRouter()
 
@@ -62,9 +63,7 @@ def get_workspace_roots() -> dict[str, str]:
             if item.is_dir() and not item.name.startswith("."):
                 label = " ".join(
                     word.capitalize()
-                    for word in item.name.replace("-", " ")
-                    .replace("_", " ")
-                    .split()
+                    for word in item.name.replace("-", " ").replace("_", " ").split()
                 )
                 resolved_item = str(item.resolve())
                 if resolved_item not in [
@@ -73,18 +72,37 @@ def get_workspace_roots() -> dict[str, str]:
                     roots[label] = resolved_item
     return roots
 
+
 # File extensions we can preview as text
 PREVIEWABLE_EXTENSIONS = {
-    ".json", ".md", ".txt", ".yaml", ".yml",
-    ".py", ".js", ".ts", ".tsx", ".jsx",
-    ".css", ".html", ".toml", ".cfg", ".ini",
-    ".sh", ".bash", ".env", ".gitignore",
+    ".json",
+    ".md",
+    ".txt",
+    ".yaml",
+    ".yml",
+    ".py",
+    ".js",
+    ".ts",
+    ".tsx",
+    ".jsx",
+    ".css",
+    ".html",
+    ".toml",
+    ".cfg",
+    ".ini",
+    ".sh",
+    ".bash",
+    ".env",
+    ".gitignore",
 }
 
 # Max file size for text preview (bytes)
-MAX_PREVIEW_SIZE = int(os.environ.get("HERMES_WORKSPACE_MAX_PREVIEW", "524288"))  # 512 KiB
+MAX_PREVIEW_SIZE = int(
+    os.environ.get("HERMES_WORKSPACE_MAX_PREVIEW", "524288")
+)  # 512 KiB
 
 # ── Helpers ────────────────────────────────────────────────
+
 
 def _resolve_tree(root_path: str, rel: str = "") -> dict[str, Any]:
     """Build a recursive tree node for a directory or file."""
@@ -116,7 +134,9 @@ def _resolve_tree(root_path: str, rel: str = "") -> dict[str, Any]:
     # Directory
     children = []
     try:
-        for entry in sorted(full.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower())):
+        for entry in sorted(
+            full.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower())
+        ):
             if entry.name.startswith(".") or entry.name in IGNORED_DIRS:
                 continue
             child_rel = f"{rel}/{entry.name}" if rel else entry.name
@@ -144,6 +164,7 @@ def _human_bytes(n: int) -> str:
 
 # ── Routes ─────────────────────────────────────────────────
 
+
 @router.get("/health")
 async def health():
     roots = get_workspace_roots()
@@ -163,14 +184,16 @@ async def get_tree():
     for label, root in roots.items():
         root_path = Path(root).expanduser().resolve()
         if not root_path.exists():
-            workspaces.append({
-                "name": label,
-                "type": "directory",
-                "path": str(root_path),
-                "relative_path": label,
-                "children": [],
-                "error": f"path not found: {root_path}",
-            })
+            workspaces.append(
+                {
+                    "name": label,
+                    "type": "directory",
+                    "path": str(root_path),
+                    "relative_path": label,
+                    "children": [],
+                    "error": f"path not found: {root_path}",
+                }
+            )
             continue
         node = _resolve_tree(str(root_path))
         node["name"] = label  # override with display label
@@ -202,18 +225,26 @@ async def preview_file(path: str = Query(..., description="Absolute file path"))
             continue
 
     if not allowed:
-        raise HTTPException(status_code=403, detail="Access denied — not under a configured workspace root")
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied — not under a configured workspace root",
+        )
 
     if not target.is_file():
         raise HTTPException(status_code=404, detail="File not found")
 
     ext = target.suffix.lower()
     if ext not in PREVIEWABLE_EXTENSIONS:
-        raise HTTPException(status_code=415, detail=f"File type '{ext}' is not previewable as text")
+        raise HTTPException(
+            status_code=415, detail=f"File type '{ext}' is not previewable as text"
+        )
 
     st = target.stat()
     if st.st_size > MAX_PREVIEW_SIZE:
-        raise HTTPException(status_code=413, detail=f"File too large for preview (max {_human_bytes(MAX_PREVIEW_SIZE)})")
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large for preview (max {_human_bytes(MAX_PREVIEW_SIZE)})",
+        )
 
     try:
         content = target.read_text(encoding="utf-8")

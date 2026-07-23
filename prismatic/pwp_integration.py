@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from prismatic.plugin_architecture import plugin_catalog
+from prismatic.plugin_architecture import get_shipped_plugins_dir, plugin_catalog
 from prismatic.plugin_artifacts import (
     PluginArtifactStore,
     store_from_env as artifact_store_from_env,
@@ -49,7 +49,7 @@ def default_state_path() -> Path:
 
 
 def plugin_root() -> Path:
-    return repo_root() / "plugins" / PWP_PACKAGE
+    return get_shipped_plugins_dir() / PWP_PACKAGE
 
 
 def manifest_path() -> Path:
@@ -375,7 +375,7 @@ def integration_status(
     catalog_item = next(
         (
             item
-            for item in plugin_catalog(repo_root() / "plugins").get("plugins", [])
+            for item in plugin_catalog().get("plugins", [])
             if item.get("name") == PWP_PLUGIN_ID
         ),
         {},

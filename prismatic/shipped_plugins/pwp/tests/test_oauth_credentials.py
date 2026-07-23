@@ -37,13 +37,17 @@ def _paths(tmp_path: Path) -> TokenPaths:
     )
 
 
-def test_refresh_oauth_token_rotates_tokens_without_returning_secret_material(tmp_path: Path) -> None:
+def test_refresh_oauth_token_rotates_tokens_without_returning_secret_material(
+    tmp_path: Path,
+) -> None:
     paths = _paths(tmp_path)
     paths.access_token.write_text(ACCESS, encoding="utf-8")
     paths.refresh_token.write_text(REFRESH, encoding="utf-8")
     calls: list[tuple[str, Mapping[str, str], float]] = []
 
-    def fake_post(url: str, data: Mapping[str, str], timeout: float) -> Mapping[str, Any]:
+    def fake_post(
+        url: str, data: Mapping[str, str], timeout: float
+    ) -> Mapping[str, Any]:
         calls.append((url, data, timeout))
         return {
             "token_type": "Bearer",
@@ -75,7 +79,10 @@ def test_refresh_oauth_token_rotates_tokens_without_returning_secret_material(tm
     assert paths.access_token.read_text(encoding="utf-8") == NEW_ACCESS
     assert paths.refresh_token.read_text(encoding="utf-8") == NEW_REFRESH
     assert paths.response_json is not None
-    assert json.loads(paths.response_json.read_text(encoding="utf-8"))["expires_in"] == 172800
+    assert (
+        json.loads(paths.response_json.read_text(encoding="utf-8"))["expires_in"]
+        == 172800
+    )
     public = result.public_dict()
     assert public == {
         "status": "ok",
@@ -90,7 +97,9 @@ def test_refresh_oauth_token_rotates_tokens_without_returning_secret_material(tm
     assert NEW_REFRESH not in json.dumps(public)
 
 
-def test_refresh_rejects_mangled_refresh_token_before_network_call(tmp_path: Path) -> None:
+def test_refresh_rejects_mangled_refresh_token_before_network_call(
+    tmp_path: Path,
+) -> None:
     paths = _paths(tmp_path)
     paths.refresh_token.write_text("ubs_oa...9ytj", encoding="utf-8")
 
@@ -105,7 +114,9 @@ def test_refresh_rejects_mangled_refresh_token_before_network_call(tmp_path: Pat
         )
 
 
-def test_refresh_rejects_endpoint_response_without_new_refresh_token(tmp_path: Path) -> None:
+def test_refresh_rejects_endpoint_response_without_new_refresh_token(
+    tmp_path: Path,
+) -> None:
     paths = _paths(tmp_path)
     paths.refresh_token.write_text(REFRESH, encoding="utf-8")
 
@@ -133,8 +144,12 @@ def test_pwp_plugin_registers_credential_tools() -> None:
 
     assert "pwp_credentials_refresh" in names
     assert "pwp_credentials_status" in names
-    refresh_tool = next(tool for tool in tools if tool["name"] == "pwp_credentials_refresh")
-    assert refresh_tool["parameters"]["properties"]["provider"]["enum"] == ["ubersuggest"]
+    refresh_tool = next(
+        tool for tool in tools if tool["name"] == "pwp_credentials_refresh"
+    )
+    assert refresh_tool["parameters"]["properties"]["provider"]["enum"] == [
+        "ubersuggest"
+    ]
 
 
 def test_pwp_plugin_credentials_status_uses_registered_paths(
@@ -158,7 +173,9 @@ def test_pwp_plugin_credentials_status_uses_registered_paths(
     }
 
 
-def test_repo_local_pwp_credentials_status_command_validates_temp_tokens(tmp_path: Path) -> None:
+def test_repo_local_pwp_credentials_status_command_validates_temp_tokens(
+    tmp_path: Path,
+) -> None:
     access = tmp_path / "access"
     refresh = tmp_path / "refresh"
     access.write_text(ACCESS, encoding="utf-8")
@@ -185,7 +202,9 @@ def test_repo_local_pwp_credentials_status_command_validates_temp_tokens(tmp_pat
     assert REFRESH not in completed.stdout
 
 
-def test_repo_local_pwp_credentials_status_command_fails_for_mangled_token(tmp_path: Path) -> None:
+def test_repo_local_pwp_credentials_status_command_fails_for_mangled_token(
+    tmp_path: Path,
+) -> None:
     access = tmp_path / "access"
     refresh = tmp_path / "refresh"
     access.write_text("ubs_oa...9ytj", encoding="utf-8")

@@ -41,6 +41,8 @@ def run(cmd: list[str], *, cwd: Path) -> str:
 
 def main() -> int:
     repo = Path(__file__).resolve().parents[1]
+    if str(repo) not in sys.path:
+        sys.path.insert(0, str(repo))
     tmp = Path(tempfile.mkdtemp(prefix="prismatic-public-smoke-"))
     state = tmp / "state"
     state.mkdir(parents=True, exist_ok=True)
@@ -103,9 +105,7 @@ def main() -> int:
     def plugin_load_gate() -> None:
         from prismatic.quality.plugin_load import verify_shipped_plugins_load
 
-        result = verify_shipped_plugins_load(
-            plugins_dir=repo / "plugins", core_version="0.2.0"
-        )
+        result = verify_shipped_plugins_load(core_version="0.2.0")
         if not result.passed:
             raise RuntimeError(result.reason)
 
@@ -136,7 +136,9 @@ def main() -> int:
                 "action": "smoke_validate",
             },
         )
-        assert policy.status_code == 200
+        assert policy.status_code == 200, (
+            f"policy preview status {policy.status_code}: {policy.text}"
+        )
         assert policy.json()["decision"] == "allow"
 
     def public_docs() -> None:

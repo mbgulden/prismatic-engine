@@ -71,6 +71,7 @@ prismatic = [
     "gateway/templates/**/*",
     "gateway/dashboard_src/**/*",
     "gateway/static/**/*",
+    "shipped_plugins/**/*",
 ]
 
 # ─────────────────────────────────────────────────────────────────────
