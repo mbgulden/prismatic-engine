@@ -303,7 +303,7 @@ class CursorLock:
                 )
             if pre_st.st_mode & 0o077 != 0:
                 raise ValueError(
-                    f"Refusing to acquire cursor lock: pre-existing lock has unsafe permissions {oct(pre_st.st_mode)}: {self.lock_file_path}"
+                    f"Refusing to acquire cursor lock: pre-existing lock permissions are unsafe {oct(pre_st.st_mode)}: {self.lock_file_path}"
                 )
 
         target_dir = Path(self.lock_file_path).parent
@@ -332,7 +332,7 @@ class CursorLock:
                 )
             if st_fd.st_mode & 0o077 != 0:
                 raise ValueError(
-                    f"Refusing to acquire cursor lock: opened lock descriptor has unsafe permissions {oct(st_fd.st_mode)}: {self.lock_file_path}"
+                    f"Refusing to acquire cursor lock: opened lock descriptor permissions are unsafe {oct(st_fd.st_mode)}: {self.lock_file_path}"
                 )
             if pre_st is not None:
                 if st_fd.st_dev != pre_st.st_dev or st_fd.st_ino != pre_st.st_ino:
