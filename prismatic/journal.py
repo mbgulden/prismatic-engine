@@ -687,6 +687,87 @@ def write_quarantine(records: list[dict[str, Any]], config: JournalConfig, today
     return len(accepted)
 
 
+def recap_window(period: str, now: dt.datetime | None = None) -> tuple[dt.datetime, dt.datetime]:
+    now = now or dt.datetime.now(dt.timezone.utc)
+    now = now.astimezone(dt.timezone.utc)
+    if period == "daily":
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    elif period == "weekly":
+        start = (now - dt.timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+    else:
+        raise ValueError("period must be daily or weekly")
+    return start, now
+
+
+def _recap_events(config: JournalConfig, start: dt.datetime, end: dt.datetime) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    day = start.date()
+    while day <= end.date():
+        source = config.journal_root / ".index" / f"events-{day.isoformat()}.json"
+        if source.exists():
+            try:
+                events.extend(item for item in json.loads(source.read_text()) if isinstance(item, dict))
+            except (json.JSONDecodeError, OSError):
+                pass
+        day += dt.timedelta(days=1)
+    accepted: list[dict[str, Any]] = []
+    for event in events:
+        try:
+            observed = dt.datetime.fromisoformat(str(event.get("_timestamp", "")).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if start <= observed.astimezone(dt.timezone.utc) <= end:
+            accepted.append(event)
+    return accepted
+
+
+def live_cron_health(config: JournalConfig) -> list[dict[str, Any]]:
+    """Read current scheduler state; historical cron events never define current health."""
+    try:
+        payload = json.loads(config.cron_jobs.read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    jobs = payload.get("jobs", []) if isinstance(payload, dict) else payload
+    health = []
+    for job in jobs if isinstance(jobs, list) else []:
+        if not isinstance(job, dict):
+            continue
+        health.append({"name": str(job.get("name") or job.get("id") or "unknown"), "enabled": bool(job.get("enabled", True)), "last_status": str(job.get("last_status") or "unknown")})
+    return sorted(health, key=lambda item: item["name"])
+
+
+def build_evidence_recap(events: list[dict[str, Any]], period: str, start: dt.datetime, end: dt.datetime, cron_health: list[dict[str, Any]]) -> tuple[str, list[str]]:
+    cited_ids: list[str] = []
+    lines = [f"## {period.title()} journal recap · {start.date().isoformat()}", "", f"Window: `{start.isoformat()}` → `{end.isoformat()}`", "", "### Evidence-backed events", ""]
+    if not events:
+        lines.append("- Quiet window: no accepted normalized events.")
+    for event in events:
+        event_id = str(event.get("idempotency_key") or signal_idempotency_key(event))
+        cited_ids.append(event_id)
+        detail = event.get("snippet") or event.get("summary") or event.get("latest") or event.get("source") or event.get("type", "event")
+        lines.append(f"- [E:{event_id[:12]}] **{event.get('type', 'event')}** — {redact(str(detail))[:180]}")
+    lines += ["", "### Live scheduler health", ""]
+    if not cron_health:
+        lines.append("- No current scheduler state available.")
+    for job in cron_health:
+        state = "enabled" if job["enabled"] else "disabled"
+        lines.append(f"- **{job['name']}** — current `{job['last_status']}` ({state})")
+    lines += ["", "---", "*Deterministic draft. Optional synthesis must only use the cited E: IDs above; historical cron events are not current-health claims.*", ""]
+    return "\n".join(lines), cited_ids
+
+
+def generate_recap(period: str, config: JournalConfig | None = None, now: dt.datetime | None = None) -> dict[str, Any]:
+    config = config or JournalConfig.from_env()
+    start, end = recap_window(period, now)
+    events = _recap_events(config, start, end)
+    markdown, cited_ids = build_evidence_recap(events, period, start, end, live_cron_health(config))
+    target_dir = config.journal_root / "recaps"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / f"{period}-{start.date().isoformat()}.md"
+    target.write_text(markdown, encoding="utf-8")
+    return {"period": period, "path": str(target), "events": len(events), "cited_event_ids": cited_ids, "quiet": not events}
+
+
 def run_snapshot(config: JournalConfig | None = None, force: bool = False) -> dict[str, Any]:
     config = config or JournalConfig.from_env()
     today = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
@@ -837,10 +918,15 @@ def cli_journal(argv: list[str] | None = None) -> int:
     monthly = sub.add_parser("monthly", help="Create monthly control/audit Linear issues")
     monthly.add_argument("--period", default=period_default())
     monthly.add_argument("--inventory-only", action="store_true", help="Compatibility mode for old monthly_journal_continuity_audit.py")
+    recap = sub.add_parser("recap", help="Render deterministic evidence-cited daily or weekly recap")
+    recap.add_argument("--period", choices=("daily", "weekly"), default="daily")
     args = parser.parse_args(argv)
     if args.cmd in {None, "inventory"}:
         json_path, md_path = build_inventory(args.period)
         print(f"inventory_json={json_path}\ninventory_md={md_path}")
+        return 0
+    if args.cmd == "recap":
+        print(json.dumps(generate_recap(args.period), indent=2))
         return 0
     if args.cmd == "monthly":
         if args.inventory_only:
