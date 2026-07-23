@@ -27,6 +27,20 @@ def test_domain_layer_has_no_prismatic_runtime_imports() -> None:
     )
 
 
+def test_package_root_defers_adapter_import() -> None:
+    package_path = _REPO_ROOT / "plugins" / "pwp" / "__init__.py"
+    tree = ast.parse(package_path.read_text(encoding="utf-8"))
+    eager_imports = [
+        node.module or "" for node in tree.body if isinstance(node, ast.ImportFrom)
+    ]
+
+    assert "prismatic_adapter" not in eager_imports
+    assert (
+        PWPDomainService().capability_contract()["plugin_id"]
+        == "pwp-design-token-plugin"
+    )
+
+
 def test_adapter_is_the_explicit_pe_boundary() -> None:
     adapter = PWPDesignTokenPlugin(domain=PWPDomainService())
     contract = adapter.connection_contract()
