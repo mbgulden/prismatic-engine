@@ -150,6 +150,24 @@ def test_read_recent_text_preserves_multibyte_complete_boundaries(
     assert read_recent_text(log, limit=5) == "漢字\n🙂\n"
 
 
+def test_read_recent_text_ignores_malformed_bytes_in_older_complete_line(
+    tmp_path: Path,
+) -> None:
+    log = tmp_path / "invalid-older.log"
+    log.write_bytes(b"bad\xff\nvalid\n")
+
+    assert read_recent_text(log) == "bad\nvalid\n"
+
+
+def test_read_recent_text_ignores_malformed_bytes_in_newest_complete_line(
+    tmp_path: Path,
+) -> None:
+    log = tmp_path / "invalid-newest.log"
+    log.write_bytes(b"valid\nbad\xff\n")
+
+    assert read_recent_text(log) == "valid\nbad\n"
+
+
 def test_git_returns_stdout_only_when_successful(monkeypatch, tmp_path: Path) -> None:
     import prismatic.journal as journal
 

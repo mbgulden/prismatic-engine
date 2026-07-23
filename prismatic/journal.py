@@ -359,7 +359,7 @@ def read_recent_text(path: Path, limit: int = 8000) -> str:
             data = handle.read()
         if not data.endswith(b"\n"):
             data = data.rsplit(b"\n", 1)[0] + b"\n" if b"\n" in data else b""
-        lines = data.decode("utf-8", errors="strict").splitlines(keepends=True)
+        lines = data.decode("utf-8", errors="ignore").splitlines(keepends=True)
         suffix: list[str] = []
         length = 0
         for line in reversed(lines):
