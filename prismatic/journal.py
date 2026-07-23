@@ -16,7 +16,6 @@ import json
 import os
 import re
 import subprocess
-import sys
 import urllib.error
 import urllib.request
 from collections import defaultdict
@@ -341,6 +340,22 @@ def read_text(path: Path, limit: int = 8000) -> str:
         return ""
 
 
+def read_recent_text(path: Path, limit: int = 8000) -> str:
+    """Read newest complete log lines without re-indexing stale file heads."""
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            start = max(0, handle.tell() - (limit * 4))
+            handle.seek(start)
+            text = handle.read().decode("utf-8", errors="ignore")
+        if start:
+            newline = text.find("\n")
+            text = text[newline + 1 :] if newline >= 0 else ""
+        return text[-limit:]
+    except Exception:
+        return ""
+
+
 def collect_candidates(config: JournalConfig, since: float | None = None) -> list[Path]:
     since = since or dt.datetime.now(dt.timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
     roots = [config.sessions_dir, config.harness_profile / "cron" / "output", config.harness_profile / "logs", config.research_repo / "docs"]
@@ -360,9 +375,13 @@ def collect_candidates(config: JournalConfig, since: float | None = None) -> lis
 
 
 def git(repo: Path, cmd: list[str]) -> str:
+    """Return Git telemetry only for a real repository; never journal Git stderr."""
     try:
         res = subprocess.run(["git", "-C", str(repo), *cmd], capture_output=True, text=True, check=False)
-        return (res.stdout or res.stderr or "").strip()
+        output = (res.stdout or res.stderr or "").strip()
+        if res.returncode and "not a git repository" in output.lower():
+            return ""
+        return output if res.returncode == 0 else ""
     except Exception:
         return ""
 
@@ -414,14 +433,29 @@ def extract_cron_signals(path: Path) -> list[dict[str, Any]]:
     return [{"type": "cron_run", "source": path.name, "job_name": job_name.group(1).strip() if job_name else path.parent.name, "job_id": job_id.group(1).strip() if job_id else "", "status": status, "summary": summary}]
 
 
+def _parse_log_timestamp(line: str) -> dt.datetime | None:
+    match = re.match(r"(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})", line)
+    if not match:
+        return None
+    try:
+        return dt.datetime.fromisoformat(" ".join(match.groups())).replace(tzinfo=dt.timezone.utc)
+    except ValueError:
+        return None
+
+
 def extract_log_signals(path: Path) -> list[dict[str, Any]]:
     signals: list[dict[str, Any]] = []
-    text = redact(read_text(path, 15000))
-    for line in text.splitlines():
+    cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=24)
+    recent_lines = [
+        line
+        for line in redact(read_recent_text(path, 15000)).splitlines()
+        if (seen := _parse_log_timestamp(line)) is not None and seen >= cutoff
+    ]
+    for line in recent_lines:
         if re.search(r"(?i)\b(gateway.*restart|starting|application started|press ctrl\+c)\b", line):
             signals.append({"type": "restart", "source": path.name, "snippet": line.strip()[:200]})
             break
-    error_lines = [line.strip()[:200] for line in text.splitlines()[-50:] if re.search(r"(?i)\b(error|exception|traceback|failed|timeout|401|403|409|429|500|conflict)\b", line)]
+    error_lines = [line.strip()[:200] for line in recent_lines[-50:] if re.search(r"(?i)\b(error|exception|traceback|failed|timeout|401|403|409|429|500|conflict)\b", line)]
     if error_lines:
         signals.append({"type": "log_error", "source": path.name, "count": len(error_lines), "latest": error_lines[-3:]})
     return signals
