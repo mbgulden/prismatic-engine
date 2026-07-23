@@ -8,7 +8,10 @@ on:
   pull_request:
     paths:
       - "plugins/**"
+      - "prismatic/shipped_plugins/**"
       - "prismatic/core/registry.py"
+      - "prismatic/plugin_architecture.py"
+      - "prismatic/plugin_policy.py"
       - "prismatic/quality/plugin_load.py"
       - "tests/test_plugin_load_gate.py"
   push:
@@ -32,7 +35,7 @@ jobs:
       - name: Install prismatic engine + dev deps
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -e ".[dev,all]"
 
       - name: Run plugin load gate
         run: |

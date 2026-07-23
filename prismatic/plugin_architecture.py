@@ -27,32 +27,73 @@ MEDIA_CAPABILITY_CLASSES: dict[str, dict[str, Any]] = {
     "video": {
         "asset_domains": ["video", "motion", "timeline"],
         "tools": ["generate_video", "edit_video", "transcode_video", "analyze_video"],
-        "artifact_types": ["video/mp4", "video/webm", "application/x-prismatic-timeline+json"],
+        "artifact_types": [
+            "video/mp4",
+            "video/webm",
+            "application/x-prismatic-timeline+json",
+        ],
         "mcp_resources": ["video.jobs", "video.assets", "video.timeline"],
     },
     "images": {
         "asset_domains": ["image", "texture", "reference"],
         "tools": ["generate_image", "edit_image", "upscale_image", "analyze_image"],
-        "artifact_types": ["image/png", "image/jpeg", "image/webp", "application/x-prismatic-layered-image+json"],
+        "artifact_types": [
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "application/x-prismatic-layered-image+json",
+        ],
         "mcp_resources": ["image.jobs", "image.assets", "image.references"],
     },
     "music-sfx": {
         "asset_domains": ["music", "sfx", "audio"],
         "tools": ["generate_music", "generate_sfx", "stem_audio", "analyze_audio"],
-        "artifact_types": ["audio/wav", "audio/mpeg", "audio/ogg", "application/x-prismatic-cue-sheet+json"],
+        "artifact_types": [
+            "audio/wav",
+            "audio/mpeg",
+            "audio/ogg",
+            "application/x-prismatic-cue-sheet+json",
+        ],
         "mcp_resources": ["audio.jobs", "audio.assets", "audio.cues"],
     },
     "game-assets": {
         "asset_domains": ["game-asset", "sprite", "prefab", "material", "level"],
-        "tools": ["generate_game_asset", "validate_game_asset", "pack_asset_bundle", "export_engine_asset"],
-        "artifact_types": ["model/gltf-binary", "application/x-prismatic-prefab+json", "application/x-unitypackage", "application/x-godot-resource"],
+        "tools": [
+            "generate_game_asset",
+            "validate_game_asset",
+            "pack_asset_bundle",
+            "export_engine_asset",
+        ],
+        "artifact_types": [
+            "model/gltf-binary",
+            "application/x-prismatic-prefab+json",
+            "application/x-unitypackage",
+            "application/x-godot-resource",
+        ],
         "mcp_resources": ["game.assets", "game.bundles", "game.engine_exports"],
     },
     "asset-forge-3d": {
         "asset_domains": ["3d-model", "mesh", "rig", "material", "texture", "scene"],
-        "tools": ["forge_3d_asset", "retopologize_mesh", "bake_textures", "rig_model", "export_3d_asset"],
-        "artifact_types": ["model/gltf-binary", "model/gltf+json", "application/x-fbx", "application/x-blender", "application/x-prismatic-asset-forge-job+json"],
-        "mcp_resources": ["asset_forge.jobs", "asset_forge.assets", "asset_forge.scenes", "asset_forge.exports"],
+        "tools": [
+            "forge_3d_asset",
+            "retopologize_mesh",
+            "bake_textures",
+            "rig_model",
+            "export_3d_asset",
+        ],
+        "artifact_types": [
+            "model/gltf-binary",
+            "model/gltf+json",
+            "application/x-fbx",
+            "application/x-blender",
+            "application/x-prismatic-asset-forge-job+json",
+        ],
+        "mcp_resources": [
+            "asset_forge.jobs",
+            "asset_forge.assets",
+            "asset_forge.scenes",
+            "asset_forge.exports",
+        ],
         "external_service": True,
     },
 }
@@ -119,7 +160,9 @@ class PluginArchitectureManifest:
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
-        payload["proven_path_ready"] = not validate_manifest_payload(self.raw, Path(self.path))["errors"]
+        payload["proven_path_ready"] = not validate_manifest_payload(
+            self.raw, Path(self.path)
+        )["errors"]
         return payload
 
 
@@ -127,8 +170,21 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+def get_shipped_plugins_dir() -> Path:
+    """Return the canonical path to package-shipped plugin resources."""
+    return Path(__file__).resolve().parent / "shipped_plugins"
+
+
 def default_plugins_dir() -> Path:
-    return Path(os.environ.get("PRISMATIC_PLUGINS_DIR", repo_root() / "plugins")).expanduser()
+    """Return the primary plugin discovery directory.
+
+    Respects PRISMATIC_PLUGINS_DIR environment variable if set by operator.
+    Otherwise returns the canonical shipped plugins directory.
+    """
+    env_dir = os.environ.get("PRISMATIC_PLUGINS_DIR")
+    if env_dir:
+        return Path(env_dir).expanduser().resolve()
+    return get_shipped_plugins_dir()
 
 
 def _list(value: Any) -> list[Any]:
@@ -204,22 +260,48 @@ def load_manifest(path: Path) -> PluginArchitectureManifest:
         governance=_str_list(raw.get("governance")),
         connect_points=_str_list(raw.get("connect_points")),
         disconnect_points=_str_list(raw.get("disconnect_points")),
-        external_service=raw.get("external_service") if isinstance(raw.get("external_service"), dict) else None,
+        external_service=raw.get("external_service")
+        if isinstance(raw.get("external_service"), dict)
+        else None,
         raw=raw,
     )
 
 
 def discover_plugin_manifests(plugins_dir: Path | None = None) -> list[Path]:
-    root = plugins_dir or default_plugins_dir()
-    if not root.exists():
-        return []
-    return sorted(path for path in root.rglob(PLUGIN_MANIFEST_NAME) if ".git" not in path.parts)
+    # Explicit arguments and PRISMATIC_PLUGINS_DIR are exclusive discovery
+    # boundaries. Shipped resources are only the fallback when no override is
+    # present, preventing silent shadowing by an identically named shipped
+    # plugin.
+    root = (
+        Path(plugins_dir).expanduser().resolve()
+        if plugins_dir is not None
+        else default_plugins_dir()
+    )
+
+    manifests: list[Path] = []
+    seen: set[Path] = set()
+    if root.exists():
+        for path in sorted(root.rglob(PLUGIN_MANIFEST_NAME)):
+            if ".git" not in path.parts:
+                resolved = path.resolve()
+                if resolved not in seen:
+                    seen.add(resolved)
+                    manifests.append(path)
+    return sorted(manifests)
 
 
-def validate_manifest_payload(raw: dict[str, Any], path: Path | None = None) -> dict[str, list[str]]:
+def validate_manifest_payload(
+    raw: dict[str, Any], path: Path | None = None
+) -> dict[str, list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
-    required = ["schema_version", "name", "version", "entry_point", "core_version_constraint"]
+    required = [
+        "schema_version",
+        "name",
+        "version",
+        "entry_point",
+        "core_version_constraint",
+    ]
     for field_name in required:
         if not raw.get(field_name):
             errors.append(f"missing required field: {field_name}")
@@ -229,12 +311,27 @@ def validate_manifest_payload(raw: dict[str, Any], path: Path | None = None) -> 
     if schema and schema not in {"1.0.0", PLUGIN_SCHEMA_VERSION}:
         warnings.append(f"schema_version {schema!r} is newer/unknown to this core")
     plugin_type = raw.get("plugin_type") or raw.get("kind")
-    if plugin_type in {"creative-media", "asset-generation", "asset-library", "external-service"}:
-        for field_name in ["capabilities", "asset_domains", "artifact_types", "integration_points", "automation_surfaces"]:
+    if plugin_type in {
+        "creative-media",
+        "asset-generation",
+        "asset-library",
+        "external-service",
+    }:
+        for field_name in [
+            "capabilities",
+            "asset_domains",
+            "artifact_types",
+            "integration_points",
+            "automation_surfaces",
+        ]:
             if not raw.get(field_name):
-                errors.append(f"media/asset plugin missing required field: {field_name}")
+                errors.append(
+                    f"media/asset plugin missing required field: {field_name}"
+                )
         if not raw.get("mcp_servers"):
-            warnings.append("media/asset plugin has no mcp_servers; PE automation may be limited")
+            warnings.append(
+                "media/asset plugin has no mcp_servers; PE automation may be limited"
+            )
     if raw.get("external_service") and not raw.get("connect_points"):
         errors.append("external_service plugins must declare connect_points")
     if raw.get("mcp_servers"):
@@ -262,37 +359,69 @@ def _contains_secret_value(value: Any) -> bool:
     if not isinstance(value, str):
         return False
     upper = value.upper()
-    if upper.endswith("_ENV") or (upper.isidentifier() and any(token in upper for token in ["API_KEY", "TOKEN", "SECRET", "PASSWORD"])):
+    if upper.endswith("_ENV") or (
+        upper.isidentifier()
+        and any(token in upper for token in ["API_KEY", "TOKEN", "SECRET", "PASSWORD"])
+    ):
         return False
     risky_keys = ["sk-", "ghp_", "xoxb-", "AIza", "-----BEGIN", "Bearer "]
     return any(token in value for token in risky_keys)
 
 
-def plugin_governance_summary(manifest: PluginArchitectureManifest, validation: dict[str, list[str]]) -> dict[str, Any]:
+def plugin_governance_summary(
+    manifest: PluginArchitectureManifest, validation: dict[str, list[str]]
+) -> dict[str, Any]:
     raw = manifest.raw
     blockers = list(validation.get("errors", []))
     warnings = list(validation.get("warnings", []))
     plugin_type = manifest.plugin_type
-    risk_level = str(raw.get("risk_level") or ("high" if plugin_type == "external-service" else "medium" if manifest.mcp_servers else "low"))
+    risk_level = str(
+        raw.get("risk_level")
+        or (
+            "high"
+            if plugin_type == "external-service"
+            else "medium"
+            if manifest.mcp_servers
+            else "low"
+        )
+    )
     approval_gates = _str_list(raw.get("approval_gates"))
     permissions = _str_list(raw.get("permissions") or raw.get("required_capabilities"))
-    provenance_required = bool(raw.get("provenance_required", bool(manifest.artifact_types or manifest.asset_domains)))
+    provenance_required = bool(
+        raw.get(
+            "provenance_required",
+            bool(manifest.artifact_types or manifest.asset_domains),
+        )
+    )
     audit_events = _str_list(raw.get("audit_events"))
     job_lifecycle = _str_list(raw.get("job_lifecycle"))
     policy_checks = _str_list(raw.get("policy_checks"))
 
     if _contains_secret_value(raw):
-        blockers.append("manifest appears to contain raw secret material; use env var names only")
-    if plugin_type in {"external-service", "creative-media", "asset-generation", "asset-library"} and not approval_gates:
+        blockers.append(
+            "manifest appears to contain raw secret material; use env var names only"
+        )
+    if (
+        plugin_type
+        in {"external-service", "creative-media", "asset-generation", "asset-library"}
+        and not approval_gates
+    ):
         warnings.append("media/service plugin should declare approval_gates")
     if provenance_required and not manifest.artifact_types:
         blockers.append("provenance_required is true but artifact_types is empty")
     if manifest.mcp_servers and not manifest.dashboard_surfaces:
         warnings.append("MCP/service plugin should declare dashboard_surfaces")
-    if manifest.external_service and not any(server.auth_env for server in manifest.mcp_servers):
+    if manifest.external_service and not any(
+        server.auth_env for server in manifest.mcp_servers
+    ):
         warnings.append("external service plugin should declare MCP auth_env names")
-    if manifest.endpoints and not any(surface in manifest.automation_surfaces for surface in ["gateway-api", "dashboard"]):
-        warnings.append("endpoints declared without gateway-api/dashboard automation surface")
+    if manifest.endpoints and not any(
+        surface in manifest.automation_surfaces
+        for surface in ["gateway-api", "dashboard"]
+    ):
+        warnings.append(
+            "endpoints declared without gateway-api/dashboard automation surface"
+        )
     if risk_level in {"high", "critical"} and not policy_checks:
         warnings.append("high-risk plugin should declare policy_checks")
 
@@ -306,9 +435,13 @@ def plugin_governance_summary(manifest: PluginArchitectureManifest, validation: 
         "provenance_required": provenance_required,
         "audit_events": audit_events,
         "job_lifecycle": job_lifecycle,
-        "credential_redaction": "blocked" if _contains_secret_value(raw) else "env-names-only",
+        "credential_redaction": "blocked"
+        if _contains_secret_value(raw)
+        else "env-names-only",
         "surface_coverage": {
-            "tools": sum(len(_str_list(cap.get("tools"))) for cap in manifest.capabilities),
+            "tools": sum(
+                len(_str_list(cap.get("tools"))) for cap in manifest.capabilities
+            ),
             "mcp_servers": len(manifest.mcp_servers),
             "api_routes": len(manifest.endpoints),
             "artifact_types": len(manifest.artifact_types),
@@ -316,7 +449,9 @@ def plugin_governance_summary(manifest: PluginArchitectureManifest, validation: 
             "connect_points": len(manifest.connect_points),
             "disconnect_points": len(manifest.disconnect_points),
         },
-        "production_blockers": [{"severity": "blocking", "message": msg} for msg in blockers]
+        "production_blockers": [
+            {"severity": "blocking", "message": msg} for msg in blockers
+        ]
         + [{"severity": "warning", "message": msg} for msg in warnings],
     }
 
@@ -329,21 +464,55 @@ def plugin_catalog(plugins_dir: Path | None = None) -> dict[str, Any]:
         item = manifest.to_dict()
         item["validation"] = validation
         item["governance"] = plugin_governance_summary(manifest, validation)
-        item["status"] = "ready" if item["governance"]["readiness_state"] in {"ready", "warning"} and not validation["errors"] else "invalid"
+        item["status"] = (
+            "ready"
+            if item["governance"]["readiness_state"] in {"ready", "warning"}
+            and not validation["errors"]
+            else "invalid"
+        )
         items.append(item)
+    name_counts: dict[str, int] = {}
+    for item in items:
+        name = str(item.get("name") or "")
+        name_counts[name] = name_counts.get(name, 0) + 1
+    for item in items:
+        name = str(item.get("name") or "")
+        if name_counts.get(name, 0) <= 1:
+            continue
+        error = f"duplicate plugin name {name!r} in discovery boundary"
+        item["validation"]["errors"].append(error)
+        item["governance"]["readiness_state"] = "blocked"
+        item["governance"]["production_blockers"].append(
+            {"severity": "blocking", "message": error}
+        )
+        item["status"] = "invalid"
     capability_index: dict[str, list[str]] = {}
     for item in items:
         for cap in item.get("capabilities", []):
             cap_id = str(cap.get("id") or cap.get("label") or "unknown")
             capability_index.setdefault(cap_id, []).append(item["name"])
         for domain in item.get("asset_domains", []):
-            capability_index.setdefault(f"asset-domain:{domain}", []).append(item["name"])
+            capability_index.setdefault(f"asset-domain:{domain}", []).append(
+                item["name"]
+            )
     governance_summary = {
-        "ready": sum(1 for item in items if item["governance"]["readiness_state"] == "ready"),
-        "warning": sum(1 for item in items if item["governance"]["readiness_state"] == "warning"),
-        "blocked": sum(1 for item in items if item["governance"]["readiness_state"] == "blocked"),
-        "high_risk": sum(1 for item in items if item["governance"]["risk_level"] in {"high", "critical"}),
-        "requires_approval": sum(1 for item in items if item["governance"]["approval_gates"]),
+        "ready": sum(
+            1 for item in items if item["governance"]["readiness_state"] == "ready"
+        ),
+        "warning": sum(
+            1 for item in items if item["governance"]["readiness_state"] == "warning"
+        ),
+        "blocked": sum(
+            1 for item in items if item["governance"]["readiness_state"] == "blocked"
+        ),
+        "high_risk": sum(
+            1
+            for item in items
+            if item["governance"]["risk_level"] in {"high", "critical"}
+        ),
+        "requires_approval": sum(
+            1 for item in items if item["governance"]["approval_gates"]
+        ),
     }
     return {
         "schema_version": PLUGIN_SCHEMA_VERSION,
@@ -364,7 +533,10 @@ def future_plugin_blueprint(slug: str, capability_class: str) -> dict[str, Any]:
         raise ValueError(f"unknown capability_class {capability_class!r}")
     cls = MEDIA_CAPABILITY_CLASSES[capability_class]
     safe_slug = re.sub(r"[^a-z0-9_-]+", "-", slug.lower()).strip("-")
-    class_name = "".join(part.capitalize() for part in safe_slug.replace("_", "-").split("-")) + "Plugin"
+    class_name = (
+        "".join(part.capitalize() for part in safe_slug.replace("_", "-").split("-"))
+        + "Plugin"
+    )
     service_block = None
     if cls.get("external_service"):
         service_block = {
@@ -385,16 +557,55 @@ def future_plugin_blueprint(slug: str, capability_class: str) -> dict[str, Any]:
         "categories": ["creative-media", capability_class],
         "risk_level": "high" if service_block else "medium",
         "permissions": ["network", "filesystem-write"],
-        "approval_gates": ["operator approval for publish/export", "cost review for large batch jobs"] if service_block else ["operator approval for publish/export"],
-        "policy_checks": ["credential redaction", "artifact provenance", "rate/cost limits", "destructive action approval"],
+        "approval_gates": [
+            "operator approval for publish/export",
+            "cost review for large batch jobs",
+        ]
+        if service_block
+        else ["operator approval for publish/export"],
+        "policy_checks": [
+            "credential redaction",
+            "artifact provenance",
+            "rate/cost limits",
+            "destructive action approval",
+        ],
         "provenance_required": True,
-        "audit_events": ["connect", "disconnect", "job_create", "job_complete", "asset_export"],
-        "job_lifecycle": ["queued", "running", "needs_approval", "completed", "failed", "cancelled"],
+        "audit_events": [
+            "connect",
+            "disconnect",
+            "job_create",
+            "job_complete",
+            "asset_export",
+        ],
+        "job_lifecycle": [
+            "queued",
+            "running",
+            "needs_approval",
+            "completed",
+            "failed",
+            "cancelled",
+        ],
         "required_capabilities": ["network", "filesystem-write"],
         "asset_domains": cls["asset_domains"],
         "artifact_types": cls["artifact_types"],
-        "integration_points": ["manifest", "loader", "tools", "api", "dashboard", "mcp", "asset-index", "artifact-store", "governance"],
-        "automation_surfaces": ["agent-tools", "gateway-api", "dashboard", "native-cron", "mcp-server"],
+        "integration_points": [
+            "manifest",
+            "loader",
+            "tools",
+            "api",
+            "dashboard",
+            "mcp",
+            "asset-index",
+            "artifact-store",
+            "governance",
+        ],
+        "automation_surfaces": [
+            "agent-tools",
+            "gateway-api",
+            "dashboard",
+            "native-cron",
+            "mcp-server",
+        ],
         "capabilities": [
             {
                 "id": f"{capability_class}.generation",
@@ -404,23 +615,45 @@ def future_plugin_blueprint(slug: str, capability_class: str) -> dict[str, Any]:
             }
         ],
         "endpoints": [
-            {"method": "GET", "path": f"/api/plugins/{safe_slug}/status", "description": "Read plugin/service readiness."},
-            {"method": "POST", "path": f"/api/plugins/{safe_slug}/jobs", "description": "Create an AI automation job."},
-            {"method": "GET", "path": f"/api/plugins/{safe_slug}/assets", "description": "List generated/imported assets."},
+            {
+                "method": "GET",
+                "path": f"/api/plugins/{safe_slug}/status",
+                "description": "Read plugin/service readiness.",
+            },
+            {
+                "method": "POST",
+                "path": f"/api/plugins/{safe_slug}/jobs",
+                "description": "Create an AI automation job.",
+            },
+            {
+                "method": "GET",
+                "path": f"/api/plugins/{safe_slug}/assets",
+                "description": "List generated/imported assets.",
+            },
         ],
         "mcp_servers": [
             {
                 "name": f"{safe_slug}-mcp",
                 "transport": "stdio" if not service_block else "http",
-                "command": f"python3 -m {safe_slug.replace('-', '_')}.mcp_server" if not service_block else None,
+                "command": f"python3 -m {safe_slug.replace('-', '_')}.mcp_server"
+                if not service_block
+                else None,
                 "url": "${ASSET_FORGE_3D_MCP_URL}" if service_block else None,
                 "resources": cls["mcp_resources"],
                 "tools": cls["tools"],
                 "auth_env": ["ASSET_FORGE_3D_API_KEY"] if service_block else [],
             }
         ],
-        "dashboard_surfaces": [f"{capability_class} jobs", f"{capability_class} asset library", "provider health"],
-        "governance": ["secret-redacted status", "artifact provenance required", "agent jobs must emit durable asset IDs"],
+        "dashboard_surfaces": [
+            f"{capability_class} jobs",
+            f"{capability_class} asset library",
+            "provider health",
+        ],
+        "governance": [
+            "secret-redacted status",
+            "artifact provenance required",
+            "agent jobs must emit durable asset IDs",
+        ],
         "connect_points": [
             "PluginLoader validates and loads this manifest.",
             "Gateway exposes status/job/asset endpoints.",
@@ -435,7 +668,9 @@ def future_plugin_blueprint(slug: str, capability_class: str) -> dict[str, Any]:
     }
 
 
-def write_blueprint(slug: str, capability_class: str, target_dir: Path) -> dict[str, str]:
+def write_blueprint(
+    slug: str, capability_class: str, target_dir: Path
+) -> dict[str, str]:
     manifest = future_plugin_blueprint(slug, capability_class)
     package = str(manifest["entry_point"]).split(":", 1)[0].split(".", 1)[0]
     plugin_dir = target_dir / package
@@ -444,7 +679,9 @@ def write_blueprint(slug: str, capability_class: str, target_dir: Path) -> dict[
     plugin_py = plugin_dir / "plugin.py"
     readme = plugin_dir / "README.md"
     class_name = str(manifest["entry_point"]).split(":", 1)[1]
-    manifest_path.write_text(yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8")
+    manifest_path.write_text(
+        yaml.safe_dump(manifest, sort_keys=False), encoding="utf-8"
+    )
     plugin_py.write_text(
         "from __future__ import annotations\n\n"
         "from typing import Any\n\n"
@@ -465,7 +702,12 @@ def write_blueprint(slug: str, capability_class: str, target_dir: Path) -> dict[
         "Move this directory under `plugins/` only when the plugin implementation is ready to load.\n",
         encoding="utf-8",
     )
-    return {"plugin_dir": str(plugin_dir), "manifest": str(manifest_path), "plugin_py": str(plugin_py), "readme": str(readme)}
+    return {
+        "plugin_dir": str(plugin_dir),
+        "manifest": str(manifest_path),
+        "plugin_py": str(plugin_py),
+        "readme": str(readme),
+    }
 
 
 def atomic_write_json(path: Path, payload: Any) -> None:

@@ -243,12 +243,13 @@ def check_redaction_and_policy() -> list[str]:
 
 def check_artifact_path_safety() -> list[str]:
     failures: list[str] = []
-    from prismatic.plugin_artifacts import safe_local_artifact_path
+    from prismatic.plugin_artifacts import repo_root, safe_local_artifact_path
 
     outside = safe_local_artifact_path("/etc/passwd")
     if outside is not None:
         failures.append("artifact path safety allowed /etc/passwd")
-    traversal = safe_local_artifact_path("../../../../etc/passwd")
+    traversal_value = "../" * (len(repo_root().parts) + 1) + "etc/passwd"
+    traversal = safe_local_artifact_path(traversal_value)
     if traversal is not None:
         failures.append("artifact path safety allowed traversal outside allowed roots")
     tmp_file = Path("/tmp/prismatic-public-security-audit-artifact.txt")

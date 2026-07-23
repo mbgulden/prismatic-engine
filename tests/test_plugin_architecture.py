@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -13,12 +14,15 @@ from prismatic.gateway import server
 from prismatic.interface.plugin import PluginContext, PrismaticPlugin
 from prismatic.plugin_architecture import (
     MEDIA_CAPABILITY_CLASSES,
+    discover_plugin_manifests,
     future_plugin_blueprint,
+    get_shipped_plugins_dir,
     load_manifest,
     plugin_catalog,
     validate_manifest_payload,
     write_blueprint,
 )
+from prismatic.plugin_policy import preview_policy
 from prismatic.pwp_integration import integration_status
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -110,6 +114,43 @@ def test_live_plugin_catalog_exposes_pwp_and_media_capability_classes() -> None:
     assert pwp["governance"]["credential_redaction"] == "env-names-only"
     assert pwp["governance"]["approval_gates"]
     assert pwp["governance"]["surface_coverage"]["api_routes"] >= 4
+
+
+def test_plugins_env_is_exclusive_operator_override(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    external = tmp_path / "external"
+    shutil.copytree(get_shipped_plugins_dir() / "example_plugin", external / "operator")
+    monkeypatch.setenv("PRISMATIC_PLUGINS_DIR", str(external))
+
+    manifests = discover_plugin_manifests()
+    assert len(manifests) == 1
+    assert all(path.is_relative_to(external) for path in manifests)
+    assert [item["name"] for item in plugin_catalog()["plugins"]] == ["example-plugin"]
+
+
+def test_duplicate_plugin_names_fail_closed(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "external"
+    source = get_shipped_plugins_dir() / "example_plugin"
+    shutil.copytree(source, root / "first")
+    shutil.copytree(source, root / "second")
+    monkeypatch.setenv("PRISMATIC_PLUGINS_DIR", str(root))
+
+    catalog = plugin_catalog()
+    matches = [item for item in catalog["plugins"] if item["name"] == "example-plugin"]
+    assert len(matches) == 2
+    assert all(item["status"] == "invalid" for item in matches)
+    assert all(
+        any("duplicate plugin name" in error for error in item["validation"]["errors"])
+        for item in matches
+    )
+    decision = preview_policy(
+        "job_request",
+        plugin_name="example-plugin",
+        action="smoke_validate",
+    )
+    assert decision["decision"] == "block"
 
 
 def test_plugin_governance_blocks_raw_secrets(tmp_path: Path) -> None:
