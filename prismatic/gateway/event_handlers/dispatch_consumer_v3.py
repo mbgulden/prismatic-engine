@@ -453,11 +453,7 @@ class CursorStateStore:
                     f"Cursor state path owner ({pre_st.st_uid}) does not match effective uid ({os.geteuid()}): {self.state_file_path}"
                 )
 
-        flags = (
-            os.O_RDONLY
-            | getattr(os, "O_NOFOLLOW", 0)
-            | getattr(os, "O_CLOEXEC", 0)
-        )
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
         try:
             fd = os.open(self.state_file_path, flags)
         except FileNotFoundError:
@@ -631,14 +627,21 @@ class CursorStateStore:
             except Exception:
                 return CursorOutcome.RECOVERY_REQUIRED_BACKUPS_RETAINED
 
-            if written_bytes is not None and curr_pre.kind == "PRESENT" and curr_pre.bytes == written_bytes:
+            if (
+                written_bytes is not None
+                and curr_pre.kind == "PRESENT"
+                and curr_pre.bytes == written_bytes
+            ):
                 try:
                     if self.prestate is None or self.prestate.kind == "ABSENT":
-                        if os.path.exists(self.state_file_path) or os.path.islink(self.state_file_path):
+                        if os.path.exists(self.state_file_path) or os.path.islink(
+                            self.state_file_path
+                        ):
                             os.remove(self.state_file_path)
                             target_dir = Path(self.state_file_path).parent
                             dir_fd = os.open(
-                                str(target_dir), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+                                str(target_dir),
+                                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
                             )
                             try:
                                 os.fsync(dir_fd)
