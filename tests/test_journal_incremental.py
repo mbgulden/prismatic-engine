@@ -66,6 +66,14 @@ def test_cursor_reads_only_appended_bytes_and_detects_rotation(tmp_path: Path) -
     assert rotated["rotated"] is True
     assert rotated["collection_window"]["start_offset"] == 0
 
+    # A truncate-and-rewrite can retain the same inode and grow past the old
+    # offset before the next collection window. The anchor hash still resets it.
+    source.write_text("replacement\nlonger\n")
+    rewritten, payload = advance_source_cursor(source, rotated, OBSERVED_AT)
+    assert payload == b"replacement\nlonger\n"
+    assert rewritten["rotated"] is True
+    assert rewritten["collection_window"]["start_offset"] == 0
+
 
 def test_dedupe_uses_stable_idempotency_key() -> None:
     signal = {

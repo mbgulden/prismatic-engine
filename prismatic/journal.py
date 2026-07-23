@@ -634,8 +634,17 @@ def advance_source_cursor(path: Path, previous: dict[str, Any] | None, observed_
     offset = prior_offset if same_file and identity["size"] >= prior_offset else 0
     rotated = bool(previous) and offset == 0 and (not same_file or identity["size"] < prior_offset)
     with path.open("rb") as handle:
+        if offset and (anchor := (previous or {}).get("cursor_anchor_sha256")):
+            anchor_start = max(0, offset - 4096)
+            handle.seek(anchor_start)
+            if hashlib.sha256(handle.read(offset - anchor_start)).hexdigest() != anchor:
+                offset = 0
+                rotated = True
         handle.seek(offset)
         payload = handle.read()
+        anchor_start = max(0, identity["size"] - 4096)
+        handle.seek(anchor_start)
+        cursor_anchor_sha256 = hashlib.sha256(handle.read()).hexdigest()
     prior_records = int((previous or {}).get("record_position", 0))
     record_position = payload.count(b"\n") if offset == 0 else prior_records + payload.count(b"\n")
     record = {
@@ -643,6 +652,7 @@ def advance_source_cursor(path: Path, previous: dict[str, Any] | None, observed_
         "byte_offset": identity["size"],
         "record_position": record_position,
         "content_sha256": hashlib.sha256(payload).hexdigest(),
+        "cursor_anchor_sha256": cursor_anchor_sha256,
         "collection_window": {"observed_at": observed_at, "start_offset": offset, "end_offset": identity["size"]},
         "parse_outcome": "pending",
         "rotated": rotated,
