@@ -1,0 +1,137 @@
+# Dispatch Cursor Generation Safety
+
+This document outlines the safety architecture, database generation identity, versioned state envelope, fail-closed gate semantics, cursor serialization, plan authentication, and repair primitives for the source-owned dispatch consumer (`prismatic/gateway/event_handlers/dispatch_consumer_v3.py`).
+
+## Overview
+
+The source-owned dispatch consumer watches the SQLite event bus and dispatches supervisor workflows. To guarantee safety and prevent state corruption or replay storms across bus database replacements, the consumer enforces strict database identity binding, versioned cursor envelopes, fail-closed startup and polling validation, shared cursor locking, deterministic plan recomputation, atomic durability, and explicit repair primitives.
+
+## 1. Database Generation Identity
+
+- **Metadata Storage**: A durable, randomly generated database generation identifier (canonical UUID v4 string) is stored in SQLite metadata owned by the consumer schema in table `dispatch_consumer_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)` under key `'db_generation'`.
+- **Transactional & Idempotent**: Created transactionally on schema setup (`INSERT OR IGNORE`). Concurrent connections resolve to the exact same generation UUID.
+- **Strict Canonical UUID v4 Validation**: Generation strings are strictly validated as canonical lowercase UUID v4 text (36 characters, `8-4-4-4-12` hyphenated hex digits). Rejects nil UUID (`00000000-0000-0000-0000-000000000000`), UUID v1/v3/v5, uppercase hex, braces (`{...}`), whitespace, and non-canonical forms.
+- **Bus Identity**: A SQLite database at the same filesystem path with a different generation UUID is treated as a distinct bus, preventing accidental cursor application across database replacements or recreations.
+
+## 2. Versioned Cursor State Envelope
+
+The cursor state file (`$PRISMATIC_HOME/bus/dispatch_consumer.rowid`) uses a strict versioned JSON envelope format:
+
+```json
+{
+  "schema_version": 1,
+  "last_rowid": 120,
+  "db_path": "/home/ubuntu/.prismatic/bus/event_log.sqlite",
+  "db_generation": "3f2a1b0c-4d5e-4f7a-8b9c-0d1e2f3a4b5c",
+  "updated_at": "2026-07-22T20:00:00.000000Z"
+}
+```
+
+### Strict Validation Rules
+
+State reading and parsing rejects and fails closed on:
+- Missing, unknown, or duplicate JSON keys at any nesting level.
+- Non-object JSON roots or syntax errors.
+- Oversized state files (> 16 KB) or 0-byte empty files.
+- Control characters or invalid UTF-8 bytes.
+- Non-integer, negative, boolean, float, string, or oversized `last_rowid` values.
+- Non-canonical, relative, or symlinked `db_path` values.
+- Non-canonical UUID v4 strings or invalid timestamps.
+- **Strict Canonical UTC Timestamp Envelope**: Timestamps must use the strict UTC format `YYYY-MM-DDTHH:MM:SS[.ffffff]Z`. Rejects space separators, missing timezones, non-UTC offsets (`+00:00`), offset-without-colon, excessive fraction digits (> 6 digits), week dates, and alternate ISO forms. All writer-generated timestamps use this exact canonical envelope format.
+- Symlinks, directories, non-regular files, or group/world-accessible file permissions (`st_mode & 0o077 != 0`).
+- Database generation mismatches or unresolvable DB identity.
+
+## 3. Fail-Closed Startup & Polling Gate & Side-Effect Binding
+
+Before reading events, spawning workers, or interacting with Linear:
+1. The consumer reads the configured database path and cursor state file on startup.
+2. It validates the cursor schema version and canonical generation UUID against the live database using pure read-only queries (`mode=ro`).
+3. It queries current `MAX(rowid)` from the `events` table in read-only mode.
+4. It verifies that `last_rowid <= MAX(rowid)` and that DB path and generation match.
+5. **Generation Bound Across All Side Effects**: `expected_generation` is carried from startup through every poll, event-processing call, claim, mark-processed, and vacuum operation:
+   - `fetch_new_events()` verifies generation in the same read connection that fetches event rows.
+   - `claim_event_for_processing()` and `mark_processed()` verify generation inside their write transactions before mutating any processed ledger or event row.
+   - `vacuum_processed()` accepts expected generation and validates it inside the write transaction before row deletion.
+   - **Pre-Side-Effect Revalidation**: Immediately before calling the Linear API (`fetch_issue`) and immediately before spawning the supervisor subprocess (`dispatch_to_supervisor`), the consumer revalidates DB generation and canonical identity (`verify_db_generation_and_identity`). Any mismatch or database replacement raises fail-closed immediately with zero downstream side effects.
+6. If any validation step fails, the consumer **fails closed immediately**, emits a compact diagnostic log, and logs the failure marker `PRISMATIC_DISPATCH_CURSOR_GENERATION_FAIL_CLOSED`.
+7. No automatic state resets, replays, processed markers, Linear calls, or supervisor spawns occur when failed closed.
+8. Only when all validation checks pass does the consumer emit `MARKER=PRISMATIC_DISPATCH_CURSOR_GENERATION_SOURCE_OK` and proceed to poll events.
+
+## 4. Cursor Serialization & Storage State-Machine Primitive
+
+To eliminate race conditions, existence transitions, and unsafe lock mutations:
+- **Consolidated Cursor Storage Primitive**: All cursor filesystem behavior is consolidated behind a single descriptor/state-machine boundary. Pre-state is represented explicitly as either `ABSENT` or `PRESENT(bytes, dev, ino, mode, uid, nlink, size, mtime_ns)`. Any existence or identity transition across acquisition (present at pre-check → absent at open; absent at pre-check → present at open; present inode → different inode; descriptor drift during read) is treated as an identity-race failure and fails closed. `FileNotFoundError` represents `ABSENT` only when both bounded observations establish absence without intervening creation or deletion.
+- **Shared CursorLock Primitive**: Introduces a restrictive, no-follow shared primitive (`CursorLock`) using a lock file (`<state_file>.lock`) opened with `O_RDWR|O_CREAT|O_NOFOLLOW|O_CLOEXEC` and mode `0o600` (`fcntl.flock` exclusive lock). Validates pre-existing lock paths via `lstat` before open to reject symlinks, FIFOs, sockets, directories, devices, hard links, unsafe owner, or group/world accessible modes (`st_mode & 0o077 != 0`). Performs post-open `fstat` descriptor validation before `flock` to ensure regular single-link file owned by effective UID with private permissions (`st_mode & 0o077 == 0`). Pre-existing or open-time-raced unsafe lock files (such as mode `0644`) are rejected without `fchmod`, content mutation, or acquiring `flock`.
+- **Descriptor-Bound No-Follow Snapshot Flow**: `_snapshot_cursor_file()` opens cursor targets with `O_RDONLY|O_NOFOLLOW|O_CLOEXEC`, performs pre/post `lstat`/`fstat` checks for regular single-link file identity, safe ownership/permissions, reads strictly from the opened descriptor, checks for descriptor drift, and closes cleanly on every exit path while preserving structural exception propagation. Zero-byte cursor files remain authenticated as `PRESENT(b"")` and back up/restore exactly.
+- **Explicit Observable Lock Phases**: Lock acquisition, body execution, and lock release (`LOCK_UN` and fd close) form explicit observable phases in `repair_apply()`, `set_state()`, and `write_cursor_state()`. Lock-release errors cannot bypass the recovery state machine or escape as generic unhandled lock errors after mutation.
+- **Fail-Closed Lock Release Rollback**: If unlock (`LOCK_UN`) or fd-close fails after a cursor write in `repair_apply()`, `set_state()`, or `write_cursor_state()`, the operation durably restores exact prior cursor bytes (or removes a newly created cursor file), fsyncs parent directory, and reports structured failure with marker (`FAIL_CLOSED` or `RECOVERY_REQUIRED`). No stale, mutated, or ambiguous cursor file is left on disk. Nonblocking recovery never hangs or overwrites a later serialized contender.
+- **ExceptionGroup Primary Error Preservation**: When primary body exceptions and lock release or cleanup failures coexist, the primary body exception is preserved as primary using structured `ExceptionGroup` chaining without exposing secrets.
+- **Pre-Captured Backup Metadata**: Recovery reporting in `repair_apply()` does not depend on new fallible `_sha256_file()` calls; verified backup metadata (paths, sizes, hashes) is captured before cursor replacement and used directly if recovery reporting occurs.
+- **Repair Lock Window**: Repair apply holds `CursorLock` from plan revalidation through backup creation and final cursor write.
+- **SQLite Exclusion Continuity**: Repair apply holds the SQLite writer-exclusion transaction (`BEGIN EXCLUSIVE`) until the repaired cursor state file is durably written to disk.
+- **Single Critical Section `set_state()`**: `set_state()` acquires `CursorLock` before reading or validating DB identity and holds it through the cursor write. Under lock, identity validation is bound to a no-symlink canonical DB path and stable opened DB identity using a SQLite transaction and pre/post `lstat` device+inode checks. Identity and generation are revalidated immediately before and after write. If post-write validation or lock release detects failure, prior exact cursor bytes are durably restored (or a newly created cursor is removed) before returning failure.
+- **Pre-Resolution Target & Symlink Rejection**: Retains and inspects caller-supplied state paths before canonicalization in `repair_apply`, `repair_dry_run`, `write_cursor_state`, and `CursorLock`. Rejects symlink final components, non-regular existing targets, unsafe parent traversal/symlink ambiguity, and noncanonical aliases before creating lock, backup, or temp files or modifying any destination. Caller symlinks are never converted into accepted canonical targets.
+- **Deadlock Avoidance**: Public wrapper `write_cursor_state()` acquires `CursorLock` and calls internal already-locked helper `_write_cursor_state_unlocked()`. Repair apply and `set_state()` call `_write_cursor_state_unlocked()` directly while holding `CursorLock`, avoiding recursive lock deadlocks.
+- **Consumer Advancement Exclusion**: Consumer cursor advancement (`set_state`) cannot run while repair is holding `CursorLock`, preventing consumer cursor advancement from being overwritten or racing with repair apply.
+
+## 5. Mandatory Durability & Cleanup Failure Propagation
+
+All state updates and backup writes follow strict OS-safe atomic durability and error propagation rules:
+- Validates all fields of the state envelope in memory before attempting file operations.
+- Rejects writing if the target path is a symlink, directory, non-regular file, or group/world-accessible.
+- Writes to a temporary file (`.dispatch_cursor_tmp_*`) created in the cursor file's directory with permissions restricted to `0o600` (`-rw-------`).
+- Executes `flush()`, file descriptor `os.fsync()`, atomic `os.replace()`, and parent directory `os.fsync()`.
+- **Directory Fsync Propagation**: `write_cursor_state()` propagates parent-directory open/fsync/close failures directly; it never reports success after a swallowed durability failure.
+- **Cleanup Error Preservation**: Cleanup failures are never swallowed. If primary and cleanup failures coexist, both are reported using `ExceptionGroup` while preserving the primary exception.
+- **Artifact Cleanup Boundary**: On failure before cursor replacement starts, newly created temporary/backup artifacts are safely removed with parent directory fsync. Pre-existing collision files are never deleted or modified.
+
+## 6. Legacy Cursor Migration & Inspection
+
+- **Legacy Detection**: Plain decimal integer text files (e.g. `"123\n"`) are explicitly recognized as legacy format.
+- **No Auto-Migration**: Startup will not auto-migrate legacy files to JSON envelopes. Legacy state fails closed during startup until explicitly repaired.
+- **Pure Read-Only Inspection**: `--inspect` provides a read-only report detailing database generation, max rowid, cursor format, readiness status, proposed bound state, and machine marker. On a database missing metadata or schema, inspect opens read-only (`mode=ro`) and byte-for-byte mutates nothing.
+
+## 7. Repair Workflow: Dry-Run & Apply
+
+### Repair Dry-Run (`--repair-dry-run`)
+Computes a deterministic migration/repair plan:
+- **Strict Target Validation**: Requires exact built-in integer `target_rowid` (`0 <= target <= max_rowid`), rejecting boolean, float, string, negative, or oversized targets.
+- **Explicit Target Requirement**: Malformed, missing, generation-mismatch, or ahead cursors require an explicit target; dry-run will not silently infer max or replay. Legacy cursors at or below max may propose preserving their exact rowid.
+- **Deterministic Plan ID & Destinations**: Generates a content-bound plan ID derived from source DB hash, cursor hash, generation, path, and explicit target. Backup paths are bound deterministically (`<db_path>.backup.plan_<plan_id>`), guaranteeing that consecutive dry-run calls with identical inputs return identical output.
+- **Zero Side Effects**: Byte-for-byte mutates nothing, including when metadata or schema is missing.
+
+### Repair Apply (`--repair-apply`)
+Performs state repair and migration:
+- **Confirmation Token**: Requires `--confirm I_ACCEPT_CURSOR_REPAIR_RISK`. Refuses execution if missing or incorrect.
+- **Supplied Plan Authentication & Recomputation**: Always recomputes the deterministic plan from current source state and requested target. If a caller passes `plan`, it requires exact deep equality agreement with the recomputed plan before using any field. Tampered plan IDs, backup paths, target rowids, or extra/missing fields are rejected before creating backups or mutating state. If source files changed since dry-run, source drift is reported.
+- **Fail-Closed Coherent Lock Window**: Acquires `CursorLock` and an exclusive SQLite write lock (`BEGIN EXCLUSIVE`) to exclude concurrent writers for the full source-hash, backup-copy, and cursor-write window.
+- **WAL-Mode Raw Backup Set**: Performs raw byte-for-byte copies of the main DB (`<db_path>`), the WAL file if present and non-empty (`<db_path>-wal`), and the cursor state file (`<state_file>`). Source descriptors are opened securely with `O_RDONLY|O_NOFOLLOW` and verified via `fstat` and inode/device binding against pre-open stat to eliminate TOCTOU risks. Backup files use restrictive `0600` permissions created with `O_CREAT|O_EXCL`, with mandatory fsync on both file and parent directory. Any backup failure safely cleans up newly created member backups with parent directory fsync while preserving original exceptions via `ExceptionGroup`.
+- **Phase Separation & Post-Cursor-Write Failure Recovery**: Refactored into explicit phases with a `cursor_write_started` boundary. Fallible receipt material is pre-computed before cursor replacement. If a failure occurs once cursor replacement may have started (directory fsync, post-write hash, receipt construction, DB transaction release, or lock release), backups are retained. Prefers durable automatic rollback while locks are held by restoring exact original cursor bytes from verified backup (or removing a cursor that did not originally exist), fsyncing parent directory, and verifying restored SHA/size. If rollback cannot be proven exact, all backups are retained and an explicit `RECOVERY_REQUIRED` outcome containing backup paths and hashes is returned. Pre-existing collision files are never deleted.
+- **SHM Regenerability Boundary**: The SQLite shared-memory file (`-shm`) is treated as regenerable index state and is not backed up; SQLite automatically regenerates `-shm` upon reopening restored database files.
+- **Exact Byte Identity**: Proves exact byte-for-byte SHA-256 identity between original source files and backup files (`src_db_sha256 == db_backup_sha256`, `src_wal_sha256 == wal_backup_sha256`, `src_cursor_sha256 == cursor_backup_sha256`).
+- **Atomic Destination Backups**: Uses the exact proposed backup destination paths from the plan. Refuses execution if destination files already exist (backup collisions).
+- **Data Preservation**: Never deletes, rewrites, or mutates rows in `events` or `processed_event_keys`. Apply mutates only the cursor state envelope.
+- **Hash-Bound Receipt**: Emits a JSON receipt containing plan ID, source hashes/sizes, generation, exact destination paths, backup hashes/sizes, updated state envelope, final file hash, apply timestamp, member array with exact byte-match booleans, and machine marker `PRISMATIC_DISPATCH_CURSOR_GENERATION_SOURCE_OK`.
+- **Side-Effect Boundary**: Does NOT call Linear API, spawn AGY agents/supervisors, publish completion events, change concurrency, enable services, or alter production runtime. Credentials and event payloads are excluded from diagnostic output.
+
+## 8. Verification
+
+Verification tests in `tests/test_dispatch_consumer_cursor_generation.py` (52 isolated regression tests) validate all safety guarantees:
+1. Real OS process-level contention test (`ProcessPoolExecutor`) ensuring concurrent schema initializations produce one identical canonical UUID generation.
+2. WAL-mode raw backup and rollback regression test verifying exact byte-for-byte SHA-256 matches for main DB, WAL file, and cursor state file, followed by SHM deletion, restoration, SQLite reopening, and verification of uncorrupted generation, max-rowid, and event row integrity.
+3. Adversarial regressions proving database replacement after fetch, claim, Linear, or spawn fails closed with zero side effects.
+4. Process concurrency tests proving consumer cursor advancement cannot occur while repair holds `CursorLock`.
+5. Supplied plan authentication tests proving tampered plans are rejected before backup creation or cursor mutation.
+6. Durability tests verifying directory fsync and cleanup error propagation with `ExceptionGroup`.
+7. Canonical UUID v4 and UTC ISO timestamp validation tests.
+8. Deterministic adversarial tests proving `set_state` critical section generation binding and post-write validation restore exact prior cursor state on same-path DB replacement.
+9. Inspect, dry-run, apply, and write tests proving symlink targets and parent-symlink aliases are rejected before canonicalization without creating lock, backup, or temp artifacts or mutating destinations.
+10. Injected post-cursor-write and lock-release failure tests proving durable automatic original cursor restoration or retained verified backups with explicit recovery-required outcome.
+11. Separate `LOCK_UN` and fd-close injection tests for `repair_apply`, `set_state`, and `write_cursor_state`.
+12. Coexisting body failure and lock release failure tests asserting primary body exception preservation via `ExceptionGroup`.
+13. Recovery hash failure and temp cleanup failure tests.
+14. Deterministic symlink exchange during snapshot pre-open check rejection test.
+15. Inode replacement during snapshot lstat/open rejection test.
+16. Pre-created FIFO, Unix socket, directory, symlink, and hard-linked lock rejection tests.
+17. Race lock path to unsafe object at open descriptor validation rejection test.
+18. Valid private regular lock process coordination and nonblocking fail-closed recovery test.
