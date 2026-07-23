@@ -1,0 +1,33 @@
+{
+  "compatibility_contract_version": "1.0.0",
+  "plugin": {
+    "id": "pwp-design-token-plugin",
+    "package": "pwp",
+    "version": "1.2.0",
+    "manifest": "plugin-manifest.yaml",
+    "entry_point": "pwp.plugin:PWPDesignTokenPlugin",
+    "direct_imports": ["prismatic.interface.plugin", "prismatic.capability_router"]
+  },
+  "prismatic_engine": {
+    "version_range": ">=0.2.0, <2.0.0",
+    "discovery": {"entry_point_group": "prismatic.plugins", "manifest_required": true, "fail_closed": true},
+    "legacy_adapter": "prismatic.pwp_integration"
+  },
+  "capabilities": [
+    {"id": "pwp.theme-system", "kind": "theme"},
+    {"id": "pwp.credentials", "kind": "credentials"},
+    {"id": "pwp.visual-governance", "kind": "governance"},
+    {"id": "pwp.unreviewed-capability", "kind": "lifecycle"}
+  ],
+  "tools": [
+    {"name": "pwp_credentials_refresh", "input_schema": {"type": "object", "required": ["provider"]}},
+    {"name": "pwp_credentials_status", "input_schema": {"type": "object", "required": ["provider"]}}
+  ],
+  "state_transitions": ["disconnected->connected", "connected->disconnected", "connected->connected:refresh"],
+  "disconnect_semantics": {
+    "preserves_plugin_files": true,
+    "preserves_artifacts": true,
+    "preserves_job_history": true,
+    "core_pe_continues": true
+  }
+}
