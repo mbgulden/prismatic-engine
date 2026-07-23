@@ -1,7 +1,7 @@
 # PR #250 audit against current `main`
 
-**Issue:** GRO-4153  
-**Audited at:** 2026-07-23T05:08Z  
+**Issue:** GRO-4153
+**Audited at:** 2026-07-23T05:08Z
 **Scope:** source-material review only. This audit does not merge, close, or
 cherry-pick PR #250, and it does not claim a Prismatic Engine cutover.
 
