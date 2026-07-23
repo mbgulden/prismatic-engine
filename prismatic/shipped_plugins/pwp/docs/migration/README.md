@@ -18,14 +18,14 @@ This directory records the immutable **source-freeze facts** used by the PWP sep
 
 ## Reproduce the manifest
 
-Use a clean checkout of the exact commit, not a later extraction worktree:
+Use a clean checkout of the exact commit, not a later extraction worktree. Supply the manifest from this migration artifact branch as an absolute path (the source commit predates this record):
 
 ```bash
 git clone https://github.com/mbgulden/prismatic-engine.git /tmp/prismatic-engine-freeze
 cd /tmp/prismatic-engine-freeze
 git checkout --detach 7ba0716ce1027c0e9cd8741dd548cf733508ecf3
 git status --porcelain  # must be empty
-sha256sum -c plugins/pwp/docs/migration/SOURCE_FREEZE_SHA256SUMS.txt
+sha256sum -c /absolute/path/to/SOURCE_FREEZE_SHA256SUMS.txt
 ```
 
 A successful check validates every recorded file byte against the source commit. The manifest is intentionally scoped to the source freeze and is not a claim about files added in later extraction phases.
