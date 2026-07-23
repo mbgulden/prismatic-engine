@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://prismatic.growthwebdev.com/schemas/pwp-pe-compatibility-contract-1.0.0.json",
+  "title": "PWP–Prismatic Engine compatibility contract",
+  "description": "Fail-closed, machine-readable boundary for a separately packaged PWP plugin consumed by Prismatic Engine. This schema describes compatibility only; it does not authorize runtime mutation, installation, connection, or deployment.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "compatibility_contract_version",
+    "plugin",
+    "prismatic_engine",
+    "capabilities",
+    "tools",
+    "state_transitions",
+    "disconnect_semantics"
+  ],
+  "properties": {
+    "compatibility_contract_version": {"const": "1.0.0"},
+    "plugin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "package", "version", "manifest", "entry_point", "direct_imports"],
+      "properties": {
+        "id": {"const": "pwp-design-token-plugin"},
+        "package": {"const": "pwp"},
+        "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"},
+        "manifest": {"const": "plugin-manifest.yaml"},
+        "entry_point": {"const": "pwp.plugin:PWPDesignTokenPlugin"},
+        "direct_imports": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": {"enum": ["prismatic.interface.plugin", "prismatic.capability_router"]}
+        }
+      }
+    },
+    "prismatic_engine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version_range", "discovery", "legacy_adapter"],
+      "properties": {
+        "version_range": {"const": ">=0.2.0, <2.0.0"},
+        "discovery": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["entry_point_group", "manifest_required", "fail_closed"],
+          "properties": {
+            "entry_point_group": {"const": "prismatic.plugins"},
+            "manifest_required": {"const": true},
+            "fail_closed": {"const": true}
+          }
+        },
+        "legacy_adapter": {"const": "prismatic.pwp_integration"}
+      }
+    },
+    "capabilities": {
+      "type": "array",
+      "minItems": 4,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind"],
+        "properties": {
+          "id": {"enum": ["pwp.theme-system", "pwp.credentials", "pwp.visual-governance", "pwp.reference-lifecycle"]},
+          "kind": {"enum": ["theme", "credentials", "governance", "lifecycle"]}
+        }
+      }
+    },
+    "tools": {
+      "type": "array",
+      "minItems": 2,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "input_schema"],
+        "properties": {
+          "name": {"enum": ["pwp_credentials_refresh", "pwp_credentials_status", "pwp lifecycle demo"]},
+          "input_schema": {"type": "object"}
+        }
+      }
+    },
+    "state_transitions": {
+      "type": "array",
+      "minItems": 3,
+      "uniqueItems": true,
+      "items": {"enum": ["disconnected->connected", "connected->disconnected", "connected->connected:refresh"]}
+    },
+    "disconnect_semantics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["preserves_plugin_files", "preserves_artifacts", "preserves_job_history", "core_pe_continues"],
+      "properties": {
+        "preserves_plugin_files": {"const": true},
+        "preserves_artifacts": {"const": true},
+        "preserves_job_history": {"const": true},
+        "core_pe_continues": {"const": true}
+      }
+    }
+  }
+}
