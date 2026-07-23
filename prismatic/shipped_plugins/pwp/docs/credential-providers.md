@@ -8,7 +8,7 @@ This runbook documents the first provider integration: **Ubersuggest MCP**.
 
 Implementation lives in:
 
-- `plugins/pwp/oauth_credentials.py`
+- `prismatic/shipped_plugins/pwp/oauth_credentials.py`
 - `scripts/pwp credentials ...`
 - `PWPDesignTokenPlugin.register_tools()` → `pwp_credentials_refresh`, `pwp_credentials_status`
 
@@ -105,7 +105,7 @@ python3 scripts/pwp credentials refresh ubersuggest --no-verify
 PWP plugin tool definitions:
 
 ```python
-from plugins.pwp.plugin import PWPDesignTokenPlugin
+from prismatic.shipped_plugins.pwp.plugin import PWPDesignTokenPlugin
 
 plugin = PWPDesignTokenPlugin()
 plugin.register_tools()
@@ -173,15 +173,15 @@ When that happens, complete the PKCE flow once, save the fresh access + refresh 
 Focused tests:
 
 ```bash
-python3 -m pytest plugins/pwp/tests/test_oauth_credentials.py -q
+python3 -m pytest prismatic/shipped_plugins/pwp/tests/test_oauth_credentials.py -q
 ```
 
 Broader PWP smoke:
 
 ```bash
 python3 -m pytest \
-  plugins/pwp/tests/test_oauth_credentials.py \
-  plugins/pwp/tests/test_theme_validator.py \
-  plugins/pwp/tests/test_compiler_determinism.py \
+  prismatic/shipped_plugins/pwp/tests/test_oauth_credentials.py \
+  prismatic/shipped_plugins/pwp/tests/test_theme_validator.py \
+  prismatic/shipped_plugins/pwp/tests/test_compiler_determinism.py \
   -q
 ```

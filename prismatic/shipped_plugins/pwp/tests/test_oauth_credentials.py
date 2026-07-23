@@ -9,18 +9,16 @@ from typing import Any, Mapping
 
 import pytest
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
+_REPO_ROOT = Path(__file__).resolve().parents[4]
 
-from plugins.pwp.oauth_credentials import (  # noqa: E402
+from prismatic.shipped_plugins.pwp.oauth_credentials import (
     CredentialRefreshError,
     PROVIDERS,
     TokenPaths,
     refresh_oauth_token,
     validate_token_shape,
 )
-from plugins.pwp.plugin import PWPDesignTokenPlugin  # noqa: E402
+from prismatic.shipped_plugins.pwp.plugin import PWPDesignTokenPlugin
 
 
 ACCESS = "ubs_oauth2_" + "A" * 42

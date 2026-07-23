@@ -7,11 +7,9 @@ import sys
 from pathlib import Path
 
 _THIS_DIR = Path(__file__).resolve().parent
-_REPO_ROOT = _THIS_DIR.parents[2]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
+_REPO_ROOT = _THIS_DIR.parents[4]
 
-from plugins.pwp.theme_diff import (  # noqa: E402
+from prismatic.shipped_plugins.pwp.theme_diff import (
     check_theme_compatibility,
     diff_theme_packages,
     engine_version_satisfies,

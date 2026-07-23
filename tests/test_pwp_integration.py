@@ -119,12 +119,14 @@ def test_pwp_cli_integration_status_uses_repo_local_state(
 
 
 def test_pwp_plugin_manifest_and_plugin_contract() -> None:
-    manifest = (REPO_ROOT / "plugins" / "pwp" / "plugin-manifest.yaml").read_text()
+    manifest = (
+        REPO_ROOT / "prismatic" / "shipped_plugins" / "pwp" / "plugin-manifest.yaml"
+    ).read_text()
     assert "connect_points:" in manifest
     assert "disconnect_points:" in manifest
     assert "pwp.visual-governance" in manifest
 
-    from plugins.pwp.plugin import PWPDesignTokenPlugin
+    from prismatic.shipped_plugins.pwp.plugin import PWPDesignTokenPlugin
 
     plugin = PWPDesignTokenPlugin()
     contract = plugin.capability_contract()

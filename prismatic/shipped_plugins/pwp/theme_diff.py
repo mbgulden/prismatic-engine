@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from plugins.pwp.theme_validator import load_json, validate_theme_package
+from .theme_validator import load_json, validate_theme_package
 
 _VERSION_RE = re.compile(r"^\s*(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[-+].*)?\s*$")
 _RANGE_RE = re.compile(

@@ -2,7 +2,7 @@
 
 **Status:** Canonical Implementation
 **Owner Lane:** Prismatic Web Plugin / Theme Task Pipeline
-**Module:** `plugins.pwp.theme_task_generation`
+**Module:** `prismatic.shipped_plugins.pwp.theme_task_generation`
 **Issue:** GRO-3738
 
 ---
@@ -81,7 +81,7 @@ Per GRO-3738 test rules:
 
 ```python
 from prismatic.capability_router import AgentCapability, CapabilityRegistry
-from plugins.pwp.theme_task_generation import create_theme_task_plan, DispatchState
+from prismatic.shipped_plugins.pwp.theme_task_generation import create_theme_task_plan, DispatchState
 
 test_registry = CapabilityRegistry([
     AgentCapability(
@@ -96,7 +96,7 @@ plan = create_theme_task_plan(
     plan_id="pwp-001",
     title="Build Hero Component",
     description="Implement Hero.astro component",
-    verifiers=["pytest -q plugins/pwp/tests/test_theme_validator.py"],
+    verifiers=["pytest -q prismatic/shipped_plugins/pwp/tests/test_theme_validator.py"],
     capability_requirements=["code"],
     dispatch_state=DispatchState(build_initiated=True, operator_approved=True, dispatch_ready=True),
     registry=test_registry,

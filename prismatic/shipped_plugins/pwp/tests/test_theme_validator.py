@@ -8,11 +8,9 @@ from pathlib import Path
 
 
 _THIS_DIR = Path(__file__).resolve().parent
-_REPO_ROOT = _THIS_DIR.parents[2]
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
+_REPO_ROOT = _THIS_DIR.parents[4]
 
-from plugins.pwp.theme_validator import validate_theme_package  # noqa: E402
+from prismatic.shipped_plugins.pwp.theme_validator import validate_theme_package
 
 VALID_THEME = _THIS_DIR / "fixtures" / "pwp_theme" / "valid_theme"
 
