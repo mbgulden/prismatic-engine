@@ -91,7 +91,9 @@ def _validate_with_jsonschema(
         return
 
     try:
-        jsonschema.validate(instance=instance, schema=bundled_json("schemas", schema_name))
+        jsonschema.validate(
+            instance=instance, schema=bundled_json("schemas", schema_name)
+        )
     except (
         Exception
     ) as exc:  # jsonschema.ValidationError when installed; keep fallback import-free.
@@ -121,9 +123,7 @@ def validate_theme_package(theme_path: str | Path) -> ThemeValidationResult:
         result.add_error(f"theme.json is not valid JSON: {exc}")
         return result
 
-    _validate_with_jsonschema(
-        manifest, "pwp-theme.schema.json", "theme.json", result
-    )
+    _validate_with_jsonschema(manifest, "pwp-theme.schema.json", "theme.json", result)
 
     schema_decl = manifest.get("$schema")
     if not schema_decl:
