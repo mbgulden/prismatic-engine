@@ -41,7 +41,8 @@ def run(cmd: list[str], *, cwd: Path) -> str:
 
 def main() -> int:
     repo = Path(__file__).resolve().parents[1]
-    if str(repo) not in sys.path:
+    expected_prefix = os.environ.get("PRISMATIC_EXPECT_INSTALLED_PREFIX")
+    if not expected_prefix and str(repo) not in sys.path:
         sys.path.insert(0, str(repo))
     tmp = Path(tempfile.mkdtemp(prefix="prismatic-public-smoke-"))
     state = tmp / "state"
@@ -84,9 +85,17 @@ def main() -> int:
     atexit.register(cleanup_control_auth)
 
     def import_core() -> None:
-        import prismatic  # noqa: F401
+        import prismatic
         from prismatic.plugin_policy import decision_payload
 
+        expected_prefix = os.environ.get("PRISMATIC_EXPECT_INSTALLED_PREFIX")
+        if expected_prefix:
+            module_path = Path(prismatic.__file__).resolve()
+            prefix = Path(expected_prefix).resolve()
+            if not module_path.is_relative_to(prefix):
+                raise RuntimeError(
+                    f"prismatic imported outside installed prefix: {module_path} not under {prefix}"
+                )
         policy = decision_payload(decision="allow", reason="public smoke")
         assert policy["decision"] == "allow"
 

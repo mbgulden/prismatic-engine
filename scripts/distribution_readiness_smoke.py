@@ -424,6 +424,37 @@ def check_fresh_install(checks: list[Check], entrypoints: list[str]) -> None:
             (proc.stderr or proc.stdout)[-500:],
         )
 
+        smoke_env = {
+            **os.environ,
+            "HOME": str(tmp / "home"),
+            "PRISMATIC_EXPECT_INSTALLED_PREFIX": str(venv),
+        }
+        proc = run(
+            [str(py), str(checkout / "scripts/public_launch_smoke.py")],
+            cwd=empty_cwd,
+            timeout=120,
+            env=smoke_env,
+        )
+        add(
+            checks,
+            "clean-room installed-wheel public launch smoke",
+            proc.returncode == 0 and "PUBLIC_LAUNCH_SMOKE_OK" in proc.stdout,
+            (proc.stderr or proc.stdout)[-1000:],
+        )
+
+        proc = run(
+            [str(py), str(checkout / "scripts/release_smoke.py")],
+            cwd=empty_cwd,
+            timeout=240,
+            env=smoke_env,
+        )
+        add(
+            checks,
+            "clean-room installed-wheel release smoke",
+            proc.returncode == 0 and "RELEASE_SMOKE_OK" in proc.stdout,
+            (proc.stderr or proc.stdout)[-1000:],
+        )
+
 
 def render(checks: list[Check], fresh_install: bool) -> int:
     failed_p0 = [c for c in checks if c.status == FAIL and c.severity == P0]

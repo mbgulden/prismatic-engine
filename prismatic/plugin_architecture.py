@@ -268,24 +268,19 @@ def load_manifest(path: Path) -> PluginArchitectureManifest:
 
 
 def discover_plugin_manifests(plugins_dir: Path | None = None) -> list[Path]:
-    roots: list[Path] = []
-    if plugins_dir is not None:
-        roots.append(Path(plugins_dir).expanduser().resolve())
-    else:
-        shipped = get_shipped_plugins_dir()
-        if shipped.exists():
-            roots.append(shipped.resolve())
-        env_dir = os.environ.get("PRISMATIC_PLUGINS_DIR")
-        if env_dir:
-            p = Path(env_dir).expanduser().resolve()
-            if p.exists() and p not in roots:
-                roots.append(p)
+    # Explicit arguments and PRISMATIC_PLUGINS_DIR are exclusive discovery
+    # boundaries. Shipped resources are only the fallback when no override is
+    # present, preventing silent shadowing by an identically named shipped
+    # plugin.
+    root = (
+        Path(plugins_dir).expanduser().resolve()
+        if plugins_dir is not None
+        else default_plugins_dir()
+    )
 
     manifests: list[Path] = []
     seen: set[Path] = set()
-    for root in roots:
-        if not root.exists():
-            continue
+    if root.exists():
         for path in sorted(root.rglob(PLUGIN_MANIFEST_NAME)):
             if ".git" not in path.parts:
                 resolved = path.resolve()
@@ -476,6 +471,21 @@ def plugin_catalog(plugins_dir: Path | None = None) -> dict[str, Any]:
             else "invalid"
         )
         items.append(item)
+    name_counts: dict[str, int] = {}
+    for item in items:
+        name = str(item.get("name") or "")
+        name_counts[name] = name_counts.get(name, 0) + 1
+    for item in items:
+        name = str(item.get("name") or "")
+        if name_counts.get(name, 0) <= 1:
+            continue
+        error = f"duplicate plugin name {name!r} in discovery boundary"
+        item["validation"]["errors"].append(error)
+        item["governance"]["readiness_state"] = "blocked"
+        item["governance"]["production_blockers"].append(
+            {"severity": "blocking", "message": error}
+        )
+        item["status"] = "invalid"
     capability_index: dict[str, list[str]] = {}
     for item in items:
         for cap in item.get("capabilities", []):

@@ -42,11 +42,12 @@ A plugin can disconnect safely without deleting artifacts or breaking unrelated 
 Prismatic Engine distinguishes between **package-shipped plugin resources** and **external operator-installed plugins**:
 
 1. **Shipped Plugin Resource Boundary**: Reference and core plugins shipped with Prismatic Engine (`example-plugin`, `pwp-design-token-plugin`, etc.) live inside the `prismatic.shipped_plugins` package boundary (`prismatic/shipped_plugins/`). They are packaged via setuptools `package-data` into wheels and sdists, ensuring default discovery, load-gate verification, catalog generation, and policy preview work in clean-room non-editable environments independent of repository CWD or mutable source checkouts.
-2. **External / Operator Plugin Overrides**: Operator or custom user-installed plugins are discovered from `PRISMATIC_PLUGINS_DIR` when set in the environment.
-3. **Unified Discovery Order**:
-   - `prismatic.plugin_architecture.get_shipped_plugins_dir()` locates package-shipped plugin manifests.
-   - If `PRISMATIC_PLUGINS_DIR` is set in the environment, external plugins from that directory are also discovered.
-   - Passing an explicit `plugins_dir` targets that specific directory for isolated test or operator scenarios.
+2. **External / Operator Plugin Overrides**: `PRISMATIC_PLUGINS_DIR` is an exclusive operator discovery boundary. When set, only that directory is scanned; package-shipped plugins are not silently added or preferred. Passing an explicit `plugins_dir` is likewise exclusive.
+3. **Discovery rules**:
+   - With no override, `prismatic.plugin_architecture.get_shipped_plugins_dir()` locates package-shipped plugin manifests.
+   - `PRISMATIC_PLUGINS_DIR` replaces the shipped default for operator-managed plugins.
+   - Passing an explicit `plugins_dir` targets only that directory for isolated test or operator scenarios.
+   - Duplicate manifest names inside one discovery boundary are invalid and policy-blocked rather than resolved by first-match ordering.
 
 ## Core files
 

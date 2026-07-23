@@ -81,7 +81,7 @@ def test_clean_room_installed_wheel_plugin_contract(tmp_path: Path) -> None:
     venv_py = venv_dir / "bin" / "python"
     venv_pip = venv_dir / "bin" / "pip"
 
-    subprocess.run([str(venv_pip), "install", str(wheel_path)], check=True)
+    subprocess.run([str(venv_pip), "install", f"{wheel_path}[all]"], check=True)
 
     empty_cwd = tmp_path / "empty_cwd"
     empty_cwd.mkdir()
@@ -157,3 +157,36 @@ def test_clean_room_installed_wheel_plugin_contract(tmp_path: Path) -> None:
     assert res_policy_block.returncode == 0, (
         f"Policy block preview failed: {res_policy_block.stderr}\n{res_policy_block.stdout}"
     )
+
+    smoke_env = {
+        **clean_env,
+        "PRISMATIC_EXPECT_INSTALLED_PREFIX": str(venv_dir),
+        "HOME": str(tmp_path / "home"),
+    }
+    public_smoke = subprocess.run(
+        [str(venv_py), str(REPO_ROOT / "scripts/public_launch_smoke.py")],
+        cwd=empty_cwd,
+        env=smoke_env,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert public_smoke.returncode == 0, (
+        f"Installed-wheel public launch smoke failed: "
+        f"{public_smoke.stderr}\n{public_smoke.stdout}"
+    )
+    assert "PUBLIC_LAUNCH_SMOKE_OK" in public_smoke.stdout
+
+    release_smoke = subprocess.run(
+        [str(venv_py), str(REPO_ROOT / "scripts/release_smoke.py")],
+        cwd=empty_cwd,
+        env=smoke_env,
+        capture_output=True,
+        text=True,
+        timeout=240,
+    )
+    assert release_smoke.returncode == 0, (
+        f"Installed-wheel release smoke failed: "
+        f"{release_smoke.stderr}\n{release_smoke.stdout}"
+    )
+    assert "RELEASE_SMOKE_OK" in release_smoke.stdout
