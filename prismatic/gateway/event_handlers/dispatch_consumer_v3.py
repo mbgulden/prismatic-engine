@@ -1055,13 +1055,15 @@ def _snapshot_cursor_file(canonical_state_path: str) -> tuple[bool, bytes | None
     If file does not exist, prior_existed is False and prior_bytes is None.
     If stat/open/read fails for any reason other than FileNotFoundError, raises the exception.
     """
+    pre_existed = True
     pre_st = None
     try:
         pre_st = os.lstat(canonical_state_path)
     except FileNotFoundError:
+        pre_existed = False
         pre_st = None
 
-    if pre_st is not None:
+    if pre_existed and pre_st is not None:
         if stat.S_ISLNK(pre_st.st_mode):
             raise ValueError(f"Cursor state path is a symlink: {canonical_state_path}")
         if not stat.S_ISREG(pre_st.st_mode):
@@ -1081,7 +1083,24 @@ def _snapshot_cursor_file(canonical_state_path: str) -> tuple[bool, bytes | None
     try:
         fd = os.open(canonical_state_path, flags)
     except FileNotFoundError:
+        if pre_existed:
+            raise ValueError(
+                f"Cursor state identity race: present at lstat pre-check but deleted before open: {canonical_state_path}"
+            )
         return False, None
+
+    if not pre_existed:
+        identity_race_exc = ValueError(
+            f"Cursor state identity race: absent at lstat pre-check but created before open: {canonical_state_path}"
+        )
+        try:
+            os.close(fd)
+        except Exception as close_exc:
+            raise ExceptionGroup(
+                "Cursor snapshot identity race and descriptor close encountered an error",
+                [identity_race_exc, close_exc],
+            ) from identity_race_exc
+        raise identity_race_exc
 
     body_exc = None
     close_exc = None
