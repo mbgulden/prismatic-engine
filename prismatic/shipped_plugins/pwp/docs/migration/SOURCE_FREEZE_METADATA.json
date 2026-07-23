@@ -1,0 +1,19 @@
+{
+  "extraction_timestamp_utc": "2026-07-23T06:14:38Z",
+  "manifest_algorithm": "SHA-256",
+  "manifest_file": "SOURCE_FREEZE_SHA256SUMS.txt",
+  "manifest_path_scope": "plugins/pwp/** at source_sha only",
+  "non_claims": [
+    "No standalone repository extraction output",
+    "No Prismatic Engine cutover",
+    "No monorepo removal",
+    "No stale PR merge or closeout"
+  ],
+  "schema_version": 1,
+  "source_file_count": 41,
+  "source_path": "plugins/pwp/",
+  "source_repository": "mbgulden/prismatic-engine",
+  "source_sha": "7ba0716ce1027c0e9cd8741dd548cf733508ecf3",
+  "source_subtree_sha": "b2eba79ae0fed505c2e7e26e835afb6337533ba1",
+  "source_tree_sha": "9ff226bcf74aa03139b1fecf8bb0e81fc5da7371"
+}
