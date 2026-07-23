@@ -760,16 +760,27 @@ def build_evidence_recap(events: list[dict[str, Any]], period: str, start: dt.da
     return "\n".join(lines), cited_ids
 
 
+MAX_RECAP_EVENTS = 50
+MAX_RECAP_BYTES = 32_768
+
+
 def generate_recap(period: str, config: JournalConfig | None = None, now: dt.datetime | None = None) -> dict[str, Any]:
+    """Write a bounded recap plus a bounded citation manifest; keep CLI output compact."""
     config = config or JournalConfig.from_env()
     start, end = recap_window(period, now)
     events = _recap_events(config, start, end)
-    markdown, cited_ids = build_evidence_recap(events, period, start, end, live_cron_health(config))
+    markdown, cited_ids = build_evidence_recap(events, period, start, end, live_cron_health(config), MAX_RECAP_EVENTS)
+    encoded = markdown.encode("utf-8")
+    if len(encoded) > MAX_RECAP_BYTES:
+        raise ValueError(f"recap exceeds {MAX_RECAP_BYTES} byte operational bound")
     target_dir = config.journal_root / "recaps"
     target_dir.mkdir(parents=True, exist_ok=True)
-    target = target_dir / f"{period}-{start.date().isoformat()}.md"
-    target.write_text(markdown, encoding="utf-8")
-    return {"period": period, "path": str(target), "events": len(events), "cited_event_ids": cited_ids, "quiet": not events}
+    stem = f"{period}-{start.date().isoformat()}"
+    target = target_dir / f"{stem}.md"
+    manifest = target_dir / f"{stem}.citations.json"
+    target.write_bytes(encoded)
+    manifest.write_text(json.dumps({"period": period, "source_event_count": len(events), "rendered_claim_count": len(cited_ids), "cited_event_ids": cited_ids}, indent=2), encoding="utf-8")
+    return {"period": period, "path": str(target), "citation_manifest_path": str(manifest), "source_event_count": len(events), "rendered_claim_count": len(cited_ids), "artifact_bytes": len(encoded), "quiet": not events}
 
 
 def run_snapshot(config: JournalConfig | None = None, force: bool = False) -> dict[str, Any]:

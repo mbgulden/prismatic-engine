@@ -65,8 +65,12 @@ def test_daily_recap_cites_events_and_uses_current_cron_state(tmp_path: Path) ->
     )
     rendered = Path(result["path"]).read_text()
 
-    assert result["events"] == 1
-    assert result["cited_event_ids"] == ["a" * 64]
+    assert result["source_event_count"] == 1
+    assert result["rendered_claim_count"] == 1
+    assert result["artifact_bytes"] < 32_768
+    assert "cited_event_ids" not in result
+    manifest = json.loads(Path(result["citation_manifest_path"]).read_text())
+    assert manifest["cited_event_ids"] == ["a" * 64]
     assert "[E:aaaaaaaaaaaa]" in rendered
     assert "current `ok`" in rendered
     assert "secret-value" not in rendered
@@ -106,3 +110,31 @@ def test_recap_claims_are_bounded_but_each_displayed_event_is_cited() -> None:
     assert "event 54" in rendered
     assert "event 0" not in rendered
     assert rendered.count("[E:") == 3
+
+
+def test_generated_recap_uses_compact_result_and_bounded_artifact(
+    tmp_path: Path,
+) -> None:
+    config = config_for(tmp_path)
+    index = config.journal_root / ".index"
+    index.mkdir(parents=True)
+    events = [
+        {
+            "type": "decision",
+            "snippet": f"event {index}",
+            "idempotency_key": f"{index:064x}",
+            "_timestamp": f"2026-07-23T{index % 12:02d}:00:00Z",
+        }
+        for index in range(55)
+    ]
+    index.joinpath("events-2026-07-23.json").write_text(json.dumps(events))
+
+    result = generate_recap(
+        "daily", config, datetime(2026, 7, 23, 12, tzinfo=timezone.utc)
+    )
+    rendered = Path(result["path"]).read_text()
+    assert result["source_event_count"] == 55
+    assert result["rendered_claim_count"] == 50
+    assert result["artifact_bytes"] == len(rendered.encode()) < 32_768
+    assert "cited_event_ids" not in result
+    assert rendered.count("[E:") == 50
