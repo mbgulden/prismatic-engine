@@ -4,7 +4,6 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-
 from typing import Any, Mapping
 
 import pytest
@@ -17,16 +16,38 @@ from plugins.pwp.oauth_credentials import (  # noqa: E402
     CredentialRefreshError,
     PROVIDERS,
     TokenPaths,
+    default_token_paths,
     refresh_oauth_token,
     validate_token_shape,
 )
 from plugins.pwp.plugin import PWPDesignTokenPlugin  # noqa: E402
 
 
-ACCESS = "ubs_oauth2_" + "A" * 42
-REFRESH = "ubs_oauth2_" + "R" * 48
-NEW_ACCESS = "ubs_oauth2_" + "B" * 42
-NEW_REFRESH = "ubs_oauth2_" + "S" * 48
+# Deliberately synthetic shape-valid fixtures. These are not provider-issued values.
+SYNTHETIC_ACCESS = "ubs_oauth2_synthetic_access_" + "A" * 32
+SYNTHETIC_REFRESH = "ubs_oauth2_synthetic_refresh_" + "R" * 30
+SYNTHETIC_NEW_ACCESS = "ubs_oauth2_synthetic_new_access_" + "B" * 28
+SYNTHETIC_NEW_REFRESH = "ubs_oauth2_synthetic_new_refresh_" + "S" * 26
+
+
+@pytest.fixture(autouse=True)
+def _synthetic_provider_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Keep every credential-provider test inside pytest-owned synthetic paths.
+
+    No test may inherit a developer's configured provider paths or HOME directory.
+    Refresh calls receive a fake post function and subprocesses receive an explicit,
+    minimal environment; the test suite never invokes live verification.
+    """
+    for name in (
+        "UBERSUGGEST_ACCESS_TOKEN_FILE",
+        "UBERSUGGEST_REFRESH_TOKEN_FILE",
+        "UBERSUGGEST_REFRESH_RESPONSE_FILE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path / "synthetic-home"))
+    monkeypatch.setenv("UBERSUGGEST_ACCESS_TOKEN_FILE", str(tmp_path / "synthetic-access"))
+    monkeypatch.setenv("UBERSUGGEST_REFRESH_TOKEN_FILE", str(tmp_path / "synthetic-refresh"))
+    monkeypatch.setenv("UBERSUGGEST_REFRESH_RESPONSE_FILE", str(tmp_path / "synthetic-response.json"))
 
 
 def _paths(tmp_path: Path) -> TokenPaths:
@@ -39,16 +60,16 @@ def _paths(tmp_path: Path) -> TokenPaths:
 
 def test_refresh_oauth_token_rotates_tokens_without_returning_secret_material(tmp_path: Path) -> None:
     paths = _paths(tmp_path)
-    paths.access_token.write_text(ACCESS, encoding="utf-8")
-    paths.refresh_token.write_text(REFRESH, encoding="utf-8")
+    paths.access_token.write_text(SYNTHETIC_ACCESS, encoding="utf-8")
+    paths.refresh_token.write_text(SYNTHETIC_REFRESH, encoding="utf-8")
     calls: list[tuple[str, Mapping[str, str], float]] = []
 
     def fake_post(url: str, data: Mapping[str, str], timeout: float) -> Mapping[str, Any]:
         calls.append((url, data, timeout))
         return {
             "token_type": "Bearer",
-            "access_token": NEW_ACCESS,
-            "refresh_token": NEW_REFRESH,
+            "access_token": SYNTHETIC_NEW_ACCESS,
+            "refresh_token": SYNTHETIC_NEW_REFRESH,
             "expires_in": 172800,
             "scope": "profile domain keywords serp backlinks site_audit content",
         }
@@ -67,27 +88,27 @@ def test_refresh_oauth_token_rotates_tokens_without_returning_secret_material(tm
             {
                 "grant_type": "refresh_token",
                 "client_id": "ubersuggest-mcp",
-                "refresh_token": REFRESH,
+                "refresh_token": SYNTHETIC_REFRESH,
             },
             7,
         )
     ]
-    assert paths.access_token.read_text(encoding="utf-8") == NEW_ACCESS
-    assert paths.refresh_token.read_text(encoding="utf-8") == NEW_REFRESH
+    assert paths.access_token.read_text(encoding="utf-8") == SYNTHETIC_NEW_ACCESS
+    assert paths.refresh_token.read_text(encoding="utf-8") == SYNTHETIC_NEW_REFRESH
     assert paths.response_json is not None
     assert json.loads(paths.response_json.read_text(encoding="utf-8"))["expires_in"] == 172800
     public = result.public_dict()
     assert public == {
         "status": "ok",
         "provider": "ubersuggest",
-        "saved_access_len": len(NEW_ACCESS),
-        "saved_refresh_len": len(NEW_REFRESH),
+        "saved_access_len": len(SYNTHETIC_NEW_ACCESS),
+        "saved_refresh_len": len(SYNTHETIC_NEW_REFRESH),
         "expires_in": 172800,
         "scope": "profile domain keywords serp backlinks site_audit content",
-        "verified": {"verified_token_len": len(NEW_ACCESS)},
+        "verified": {"verified_token_len": len(SYNTHETIC_NEW_ACCESS)},
     }
-    assert NEW_ACCESS not in json.dumps(public)
-    assert NEW_REFRESH not in json.dumps(public)
+    assert SYNTHETIC_NEW_ACCESS not in json.dumps(public)
+    assert SYNTHETIC_NEW_REFRESH not in json.dumps(public)
 
 
 def test_refresh_rejects_mangled_refresh_token_before_network_call(tmp_path: Path) -> None:
@@ -107,13 +128,13 @@ def test_refresh_rejects_mangled_refresh_token_before_network_call(tmp_path: Pat
 
 def test_refresh_rejects_endpoint_response_without_new_refresh_token(tmp_path: Path) -> None:
     paths = _paths(tmp_path)
-    paths.refresh_token.write_text(REFRESH, encoding="utf-8")
+    paths.refresh_token.write_text(SYNTHETIC_REFRESH, encoding="utf-8")
 
     with pytest.raises(CredentialRefreshError, match=r"access\+refresh"):
         refresh_oauth_token(
             PROVIDERS["ubersuggest"],
             paths,
-            http_post=lambda *_args: {"access_token": NEW_ACCESS},
+            http_post=lambda *_args: {"access_token": SYNTHETIC_NEW_ACCESS},
         )
 
 
@@ -143,8 +164,8 @@ def test_pwp_plugin_credentials_status_uses_registered_paths(
 ) -> None:
     access = tmp_path / "access"
     refresh = tmp_path / "refresh"
-    access.write_text(ACCESS, encoding="utf-8")
-    refresh.write_text(REFRESH, encoding="utf-8")
+    access.write_text(SYNTHETIC_ACCESS, encoding="utf-8")
+    refresh.write_text(SYNTHETIC_REFRESH, encoding="utf-8")
     monkeypatch.setenv("UBERSUGGEST_ACCESS_TOKEN_FILE", str(access))
     monkeypatch.setenv("UBERSUGGEST_REFRESH_TOKEN_FILE", str(refresh))
 
@@ -153,16 +174,16 @@ def test_pwp_plugin_credentials_status_uses_registered_paths(
     assert payload == {
         "status": "ok",
         "provider": "ubersuggest",
-        "access_token_len": len(ACCESS),
-        "refresh_token_len": len(REFRESH),
+        "access_token_len": len(SYNTHETIC_ACCESS),
+        "refresh_token_len": len(SYNTHETIC_REFRESH),
     }
 
 
 def test_repo_local_pwp_credentials_status_command_validates_temp_tokens(tmp_path: Path) -> None:
     access = tmp_path / "access"
     refresh = tmp_path / "refresh"
-    access.write_text(ACCESS, encoding="utf-8")
-    refresh.write_text(REFRESH, encoding="utf-8")
+    access.write_text(SYNTHETIC_ACCESS, encoding="utf-8")
+    refresh.write_text(SYNTHETIC_REFRESH, encoding="utf-8")
     completed = subprocess.run(
         [sys.executable, "scripts/pwp", "credentials", "status", "ubersuggest"],
         cwd=_REPO_ROOT,
@@ -179,17 +200,17 @@ def test_repo_local_pwp_credentials_status_command_validates_temp_tokens(tmp_pat
     payload = json.loads(completed.stdout)
     assert payload["status"] == "ok"
     assert payload["provider"] == "ubersuggest"
-    assert payload["access_token_len"] == len(ACCESS)
-    assert payload["refresh_token_len"] == len(REFRESH)
-    assert ACCESS not in completed.stdout
-    assert REFRESH not in completed.stdout
+    assert payload["access_token_len"] == len(SYNTHETIC_ACCESS)
+    assert payload["refresh_token_len"] == len(SYNTHETIC_REFRESH)
+    assert SYNTHETIC_ACCESS not in completed.stdout
+    assert SYNTHETIC_REFRESH not in completed.stdout
 
 
 def test_repo_local_pwp_credentials_status_command_fails_for_mangled_token(tmp_path: Path) -> None:
     access = tmp_path / "access"
     refresh = tmp_path / "refresh"
     access.write_text("ubs_oa...9ytj", encoding="utf-8")
-    refresh.write_text(REFRESH, encoding="utf-8")
+    refresh.write_text(SYNTHETIC_REFRESH, encoding="utf-8")
     completed = subprocess.run(
         [sys.executable, "scripts/pwp", "credentials", "status", "ubersuggest"],
         cwd=_REPO_ROOT,
@@ -204,3 +225,12 @@ def test_repo_local_pwp_credentials_status_command_fails_for_mangled_token(tmp_p
 
     assert completed.returncode == 1
     assert "ellipsis" in completed.stderr
+
+
+def test_default_paths_are_confined_to_synthetic_pytest_directory(tmp_path: Path) -> None:
+    paths = default_token_paths("ubersuggest")
+
+    assert paths.access_token.parent == tmp_path
+    assert paths.refresh_token.parent == tmp_path
+    assert paths.response_json is not None
+    assert paths.response_json.parent == tmp_path

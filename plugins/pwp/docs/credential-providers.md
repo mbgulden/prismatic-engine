@@ -185,3 +185,13 @@ python3 -m pytest \
   plugins/pwp/tests/test_compiler_determinism.py \
   -q
 ```
+
+### Test credential-safety boundary
+
+`test_oauth_credentials.py` uses only clearly named synthetic token strings and
+pytest-owned temporary files. Its autouse fixture clears inherited
+`UBERSUGGEST_*_FILE` settings, redirects provider paths to `tmp_path`, and sets
+a synthetic `HOME`. Refresh tests inject a fake HTTP post function and
+subprocess tests receive an explicit minimal environment. Unit tests must not
+read a developer token file, call a live credential endpoint, print token
+material, or copy credential files into repository fixtures.
