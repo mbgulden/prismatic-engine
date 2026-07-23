@@ -736,12 +736,16 @@ def live_cron_health(config: JournalConfig) -> list[dict[str, Any]]:
     return sorted(health, key=lambda item: item["name"])
 
 
-def build_evidence_recap(events: list[dict[str, Any]], period: str, start: dt.datetime, end: dt.datetime, cron_health: list[dict[str, Any]]) -> tuple[str, list[str]]:
+def build_evidence_recap(events: list[dict[str, Any]], period: str, start: dt.datetime, end: dt.datetime, cron_health: list[dict[str, Any]], max_events: int = 50) -> tuple[str, list[str]]:
+    """Render a bounded deterministic draft; every displayed claim has an evidence ID."""
+    selected_events = events[-max_events:]
     cited_ids: list[str] = []
     lines = [f"## {period.title()} journal recap · {start.date().isoformat()}", "", f"Window: `{start.isoformat()}` → `{end.isoformat()}`", "", "### Evidence-backed events", ""]
-    if not events:
+    if not selected_events:
         lines.append("- Quiet window: no accepted normalized events.")
-    for event in events:
+    elif len(events) > len(selected_events):
+        lines.append(f"- Showing the latest {len(selected_events)} cited events of {len(events)} accepted events in this window.")
+    for event in selected_events:
         event_id = str(event.get("idempotency_key") or signal_idempotency_key(event))
         cited_ids.append(event_id)
         detail = event.get("snippet") or event.get("summary") or event.get("latest") or event.get("source") or event.get("type", "event")

@@ -6,7 +6,12 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from prismatic.journal import JournalConfig, generate_recap, recap_window
+from prismatic.journal import (
+    JournalConfig,
+    build_evidence_recap,
+    generate_recap,
+    recap_window,
+)
 
 
 def config_for(tmp_path: Path) -> JournalConfig:
@@ -80,3 +85,24 @@ def test_quiet_daily_and_weekly_boundary_are_deterministic(tmp_path: Path) -> No
     assert result["quiet"] is True
     assert "Quiet window" in rendered
     assert "No current scheduler state available" in rendered
+
+
+def test_recap_claims_are_bounded_but_each_displayed_event_is_cited() -> None:
+    now = datetime(2026, 7, 23, 12, tzinfo=timezone.utc)
+    events = [
+        {
+            "type": "decision",
+            "snippet": f"event {index}",
+            "idempotency_key": f"{index:064x}",
+        }
+        for index in range(55)
+    ]
+    rendered, citations = build_evidence_recap(
+        events, "daily", now.replace(hour=0), now, [], max_events=3
+    )
+
+    assert len(citations) == 3
+    assert "Showing the latest 3 cited events of 55 accepted events" in rendered
+    assert "event 54" in rendered
+    assert "event 0" not in rendered
+    assert rendered.count("[E:") == 3
