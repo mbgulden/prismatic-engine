@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 import socket
 import subprocess
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -264,3 +266,335 @@ def test_bundle_fence_detects_replacement(tmp_path: Path) -> None:
     bundle.write_bytes(b"second")
     with pytest.raises(SourceAcquisitionError, match="bundle_changed"):
         acquisition._assert_bundle_unchanged(bundle, fence)
+
+
+def test_complete_object_guards_reject_every_partial_state(
+    tmp_path: Path, fixture_repo: tuple[Path, str, str, str]
+) -> None:
+    bare, candidate, tree, ref = fixture_repo
+    cases = (
+        (
+            "partial-extension",
+            lambda checkout: git(
+                "config", "extensions.partialClone", "origin", cwd=checkout
+            ),
+        ),
+        (
+            "promisor-remote",
+            lambda checkout: git(
+                "config", "remote.origin.promisor", "true", cwd=checkout
+            ),
+        ),
+        (
+            "partial-filter",
+            lambda checkout: git(
+                "config", "remote.origin.partialCloneFilter", "blob:none", cwd=checkout
+            ),
+        ),
+        (
+            "promisor-marker",
+            lambda checkout: (
+                checkout / ".git" / "objects" / "pack" / "test.promisor"
+            ).write_text("", encoding="utf-8"),
+        ),
+        (
+            "alternates",
+            lambda checkout: (
+                checkout / ".git" / "objects" / "info" / "alternates"
+            ).write_text("/tmp/objects\n", encoding="utf-8"),
+        ),
+        (
+            "shallow",
+            lambda checkout: (checkout / ".git" / "shallow").write_text(
+                candidate + "\n", encoding="utf-8"
+            ),
+        ),
+    )
+    for name, mutate in cases:
+        workspace = tmp_path / name
+        workspace.mkdir()
+        source = acquire_source(
+            request("local_bare_repository", "none", str(bare), candidate, tree, ref),
+            policy(),
+            workspace_root=workspace,
+        )
+        mutate(source.checkout_path)
+        env = acquisition._environment(source.checkout_path.parent / "check-home")
+        (source.checkout_path.parent / "check-home" / "empty-template").mkdir(
+            parents=True
+        )
+        if name == "shallow":
+            with pytest.raises(SourceAcquisitionError) as error:
+                acquisition._check_repository(
+                    source.checkout_path,
+                    None,
+                    policy=policy(),
+                    env=env,
+                    deadline=time.monotonic() + 10,
+                )
+        else:
+            with pytest.raises(SourceAcquisitionError) as error:
+                acquisition._check_complete_objects(
+                    source.checkout_path,
+                    candidate,
+                    policy=policy(),
+                    env=env,
+                    deadline=time.monotonic() + 10,
+                )
+        assert error.value.code == "incomplete_objects"
+
+
+def test_complete_object_reachability_and_valid_baseline(
+    tmp_path: Path, fixture_repo: tuple[Path, str, str, str]
+) -> None:
+    bare, candidate, tree, ref = fixture_repo
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    source = acquire_source(
+        request("local_bare_repository", "none", str(bare), candidate, tree, ref),
+        policy(),
+        workspace_root=workspace,
+    )
+    validate_acquired_source(source)
+    blob = git("rev-parse", "HEAD:file.txt", cwd=source.checkout_path)
+    object_path = source.checkout_path / ".git" / "objects" / blob[:2] / blob[2:]
+    assert object_path.exists()
+    object_path.unlink()
+    with pytest.raises(SourceAcquisitionError) as error:
+        validate_acquired_source(source)
+    assert error.value.code == "missing_reachable_object"
+
+
+def test_offline_bundle_exact_ref_candidate_and_prerequisite_fences(
+    tmp_path: Path, fixture_repo: tuple[Path, str, str, str]
+) -> None:
+    bare, candidate, tree, ref = fixture_repo
+    bundle = tmp_path / "source.bundle"
+    git("bundle", "create", str(bundle), ref, cwd=bare)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    assert (
+        acquire_source(
+            request("offline_git_bundle", "none", str(bundle), candidate, tree, ref),
+            policy(),
+            workspace_root=workspace,
+        ).candidate_sha
+        == candidate
+    )
+    for bad_ref, bad_candidate in (("refs/heads/missing", candidate), (ref, "0" * 40)):
+        with pytest.raises(SourceAcquisitionError) as error:
+            acquire_source(
+                request(
+                    "offline_git_bundle",
+                    "none",
+                    str(bundle),
+                    bad_candidate,
+                    tree,
+                    bad_ref,
+                ),
+                policy(),
+                workspace_root=workspace,
+            )
+        assert error.value.code == "bundle_ref_mismatch"
+    work = tmp_path / "other-work"
+    git("clone", "-q", str(bare), str(work), cwd=tmp_path)
+    git("config", "user.email", "test@example.invalid", cwd=work)
+    git("config", "user.name", "Test", cwd=work)
+    git("switch", "-qc", "other", cwd=work)
+    (work / "other.txt").write_text("other\n", encoding="utf-8")
+    git("add", ".", cwd=work)
+    git("commit", "-qm", "other", cwd=work)
+    git("push", "-q", "origin", "other", cwd=work)
+    multi = tmp_path / "multi.bundle"
+    git("bundle", "create", str(multi), "refs/heads/main", "refs/heads/other", cwd=bare)
+    assert (
+        acquire_source(
+            request("offline_git_bundle", "none", str(multi), candidate, tree, ref),
+            policy(),
+            workspace_root=workspace,
+        ).candidate_sha
+        == candidate
+    )
+    incremental = tmp_path / "incremental.bundle"
+    git(
+        "bundle",
+        "create",
+        str(incremental),
+        f"^{candidate}",
+        "refs/heads/other",
+        cwd=bare,
+    )
+    other, other_tree = (
+        git("rev-parse", "refs/heads/other", cwd=bare),
+        git("rev-parse", "refs/heads/other^{tree}", cwd=bare),
+    )
+    with pytest.raises(SourceAcquisitionError) as error:
+        acquire_source(
+            request(
+                "offline_git_bundle",
+                "none",
+                str(incremental),
+                other,
+                other_tree,
+                "refs/heads/other",
+            ),
+            policy(),
+            workspace_root=workspace,
+        )
+    assert error.value.code == "git_command_failed"
+
+
+def test_auth_handle_matrix_and_scrubbed_provider_environment(tmp_path: Path) -> None:
+    remote = request(
+        "provider_remote",
+        "other",
+        "file:///tmp/source.git",
+        "0" * 40,
+        "1" * 40,
+        "refs/heads/main",
+    )
+    helper = tmp_path / "helper"
+    helper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    helper.chmod(0o700)
+    regular, directory = tmp_path / "regular", tmp_path / "directory"
+    regular.write_text("x", encoding="utf-8")
+    directory.mkdir()
+    link = tmp_path / "helper-link"
+    link.symlink_to(helper)
+    for handle, code in (
+        (Path("relative"), "invalid_path"),
+        (tmp_path / "missing", "invalid_path"),
+        (directory, "invalid_askpass_helper"),
+        (link, "symlink_path"),
+    ):
+        with pytest.raises(SourceAcquisitionError) as error:
+            acquisition._validated_auth_environment(
+                remote, askpass_helper=handle, ssh_auth_socket=None
+            )
+        assert error.value.code == code
+        assert "secret-canary" not in str(error.value) and str(handle) not in str(
+            error.value
+        )
+    with pytest.raises(SourceAcquisitionError, match="invalid_ssh_auth_socket"):
+        acquisition._validated_auth_environment(
+            remote, askpass_helper=None, ssh_auth_socket=regular
+        )
+    socket_parent = tmp_path / "socket-parent"
+    socket_parent.symlink_to(tmp_path, target_is_directory=True)
+    with pytest.raises(SourceAcquisitionError, match="symlink_path"):
+        acquisition._validated_auth_environment(
+            remote, askpass_helper=None, ssh_auth_socket=socket_parent / "none"
+        )
+    for kind, locator in (
+        ("local_bare_repository", str(tmp_path)),
+        ("offline_git_bundle", str(regular)),
+    ):
+        with pytest.raises(SourceAcquisitionError, match="auth_not_allowed"):
+            acquisition._validated_auth_environment(
+                request(kind, "none", locator, "0" * 40, "1" * 40, "refs/heads/main"),
+                askpass_helper=helper,
+                ssh_auth_socket=None,
+            )
+    env = acquisition._environment(tmp_path)
+    env.update(
+        acquisition._validated_auth_environment(
+            remote, askpass_helper=helper, ssh_auth_socket=None
+        )
+    )
+    assert {
+        key for key in env if key in {"GIT_ASKPASS", "SSH_ASKPASS", "SSH_AUTH_SOCK"}
+    } == {"GIT_ASKPASS", "SSH_ASKPASS"}
+
+
+def test_streaming_runner_reaps_overflow_timeout_and_stderr_only(
+    tmp_path: Path,
+) -> None:
+    p = SourceAcquisitionPolicy(
+        "repo",
+        frozenset({"provider_remote"}),
+        frozenset({"other"}),
+        command_timeout_seconds=0.1,
+        total_timeout_seconds=1,
+        max_command_output_bytes=128,
+        max_tree_listing_bytes=64,
+    )
+    env, pid_file = acquisition._environment(tmp_path), tmp_path / "pid"
+    code = "import os,sys;open(sys.argv[1],'w').write(str(os.getpid()));sys.stderr.buffer.write(b'x'*4096)"
+    with pytest.raises(SourceAcquisitionError) as error:
+        acquisition._run(
+            [sys.executable, "-c", code, str(pid_file)],
+            cwd=tmp_path,
+            env=env,
+            policy=p,
+            deadline=time.monotonic() + 1,
+            label="secret-canary",
+        )
+    assert error.value.code == "output_overflow" and "x" * 64 not in str(error.value)
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(pid_file.read_text()), 0)
+    timeout_pid = tmp_path / "timeout-pid"
+    timeout_code = "import os,sys,time;open(sys.argv[1],'w').write(str(os.getpid()));time.sleep(60)"
+    with pytest.raises(SourceAcquisitionError) as error:
+        acquisition._run(
+            [sys.executable, "-c", timeout_code, str(timeout_pid)],
+            cwd=tmp_path,
+            env=env,
+            policy=p,
+            deadline=time.monotonic() + 1,
+            label="timeout",
+        )
+    assert error.value.code == "command_timeout"
+    with pytest.raises(ProcessLookupError):
+        os.kill(int(timeout_pid.read_text()), 0)
+    with pytest.raises(SourceAcquisitionError) as error:
+        acquisition._run(
+            [sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'x'*1000)"],
+            cwd=tmp_path,
+            env=env,
+            policy=p,
+            deadline=time.monotonic() + 1,
+            label="tree",
+            binary=True,
+        )
+    assert error.value.code == "tree_listing_overflow"
+
+
+def test_validation_detects_head_digest_metadata_and_tree_mutation(
+    tmp_path: Path, fixture_repo: tuple[Path, str, str, str]
+) -> None:
+    bare, candidate, tree, ref = fixture_repo
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    source = acquire_source(
+        request("local_bare_repository", "none", str(bare), candidate, tree, ref),
+        policy(),
+        workspace_root=workspace,
+    )
+    git("config", "user.email", "test@example.invalid", cwd=source.checkout_path)
+    git("config", "user.name", "Test", cwd=source.checkout_path)
+    (source.checkout_path / "file.txt").write_text("dirty\n", encoding="utf-8")
+    with pytest.raises(SourceAcquisitionError) as error:
+        validate_acquired_source(source)
+    assert error.value.code == "dirty_checkout"
+    git("checkout", "--", "file.txt", cwd=source.checkout_path)
+    (source.checkout_path / "file.txt").write_text("changed\n", encoding="utf-8")
+    git("add", "file.txt", cwd=source.checkout_path)
+    git("commit", "-qm", "changed", cwd=source.checkout_path)
+    with pytest.raises(SourceAcquisitionError) as error:
+        validate_acquired_source(source)
+    assert error.value.code == "source_changed"
+    clean_workspace = tmp_path / "clean"
+    clean_workspace.mkdir()
+    clean = acquire_source(
+        request("local_bare_repository", "none", str(bare), candidate, tree, ref),
+        policy(),
+        workspace_root=clean_workspace,
+    )
+    for altered in (
+        replace(clean, source_acquisition_digest="sha256:" + "0" * 64),
+        replace(clean, repository_id="other"),
+        replace(clean, tree_sha="0" * 40),
+    ):
+        with pytest.raises(SourceAcquisitionError) as error:
+            validate_acquired_source(altered)
+        assert error.value.code == "source_changed"
