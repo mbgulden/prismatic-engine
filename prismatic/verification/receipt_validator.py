@@ -10,6 +10,7 @@ import copy
 import hashlib
 import json
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -137,42 +138,41 @@ def validate_receipt_freshness(
         if not ts_str or not isinstance(ts_str, str):
             return False, "missing_timestamp"
 
-        completed_dt = _parse_timestamp(ts_str)
-        if completed_dt is None:
+        completed_ns = _parse_utc_timestamp_ns(ts_str)
+        if completed_ns is None:
             return False, "malformed_timestamp"
 
         started_str = receipt.get("started_at")
         if started_str is not None:
             if not isinstance(started_str, str):
                 return False, "malformed_timestamp"
-            started_dt = _parse_timestamp(started_str)
-            if started_dt is None:
+            started_ns = _parse_utc_timestamp_ns(started_str)
+            if started_ns is None:
                 return False, "malformed_timestamp"
-            if completed_dt < started_dt:
+            if completed_ns < started_ns:
                 return False, "timestamp_ordering_invalid"
 
         expires_str = receipt.get("expires_at")
         if not expires_str or not isinstance(expires_str, str):
             return False, "missing_expires_at"
-        expires_dt = _parse_timestamp(expires_str)
-        if expires_dt is None:
+        expires_ns = _parse_utc_timestamp_ns(expires_str)
+        if expires_ns is None:
             return False, "malformed_expires_at"
-        if expires_dt < completed_dt:
+        if expires_ns < completed_ns:
             return False, "expires_at_before_completed_at"
 
-        now_utc = datetime.now(timezone.utc)
-
-        age_seconds = (now_utc - completed_dt).total_seconds()
+        now_ns = time.time_ns()
+        age_ns = now_ns - completed_ns
 
         # Reject future timestamps unless within clock-skew tolerance (<= 60s)
-        if age_seconds < -60:
+        if age_ns < -(60 * 1_000_000_000):
             return False, "timestamp_future"
 
         # Reject stale timestamps (> max_age_seconds)
-        if age_seconds > max_age_seconds:
+        if age_ns > max_age_seconds * 1_000_000_000:
             return False, "receipt_stale"
 
-        if expires_dt <= now_utc:
+        if expires_ns <= now_ns:
             return False, "receipt_expired"
 
         return True, None
