@@ -43,15 +43,24 @@ Checks whether a receipt has been revoked:
 
 Synthesizes policy rules and receipt evidence into an authoritative merge decision:
 - Schema validation against canonical Draft 2020-12 schemas for both receipt and policy.
-- Runtime binding overlay validation: overlay keys in policy `bindings` are restricted to `expected_candidate_sha`, `expected_base_sha`, `expected_tree_sha`, and `allow_empty_changed_paths`. Any unknown overlay keys return `schema_validation_failed`.
+- Runtime binding overlay validation: overlay keys in policy `bindings` must include all three mandatory exact SHA bindings (`expected_candidate_sha`, `expected_base_sha`, and `expected_tree_sha`) and optionally `allow_empty_changed_paths`. Missing any required SHA binding or including unknown overlay keys returns a fail-closed decision. Receipt candidate, base, and tree SHAs must exactly match all three overlay bindings.
 - Verifies policy status (`active` required) and matching `policy_id`, `policy_version`, and `repository_id`.
 - Enforces approved source kind/provider, approved backend ID/class, approved verifier identity, and producer/verifier separation.
 - Verifies receipt decision `status == "pass"` and `merge_eligible is True`.
 - Command verification: unique command IDs, required command presence, exact `argv` and `proof_class` matching, `execution_state == "executed"`, `exit_state == "completed"`, and `exit_code == 0`.
+- Command timeout and duration enforcement: validates coherent `started_at` and `completed_at` timestamps (`started_at` <= `completed_at`), requires and validates `duration_ms` (integer >= 0), binds `duration_ms` to timestamp-derived duration within a 1000 ms rounding tolerance, and rejects measured or timestamp-derived durations exceeding policy `timeout_seconds`.
 - Enforces required and approved `proof_classes` (uses `proof_classes` list; singular `proof_class` fallback is removed).
 - Enforces evidence/environment/attestation requirements, including permitted digest algorithm (`sha256`/`sha512`) and attestation key/algorithm rules.
+- Toolchain proof: when canonical policy `environment.toolchain_digest_required` is `true`, requires schema-supported toolchain evidence in `logs_and_digests` or `artifacts_and_digests` using the documented `"toolchain"` reference convention and matching the policy environment digest algorithm. Missing evidence or algorithm mismatch fails closed.
 - Evidence path safety: when `evidence_base_path` is supplied, every evidence reference must be a safe relative path contained under `evidence_base_path`. Absolute paths, `..` traversal, symlinks, non-regular files, missing files, or content digest mismatches return `eligible=False`.
 - **Returns**: `(eligible, reason_if_blocked)`
+
+## Explicit Boundaries & Scope
+
+- **Revocation Store**: `revocation_store=None` remains allowed by the original GRO-4208 contract. When a store path is explicitly supplied, missing store files, symlinks, or malformed contents fail closed.
+- **Evidence Base Path**: File-content digest comparison against disk is conditional on a supplied `evidence_base_path`, as specified by GRO-4208.
+- **Cryptographic Attestations**: Full cryptographic signature verification and key rotation belong to GRO-4209. The GRO-4208 validator performs envelope-only structural checking and algorithm/key_id whitelist matching.
+- **Unproven Dimensions**: Working-directory constraints and network-isolation proof currently lack receipt schema fields; they are documented as unproven payload dimensions rather than fabricating non-contractual validation.
 
 ## Usage Example
 

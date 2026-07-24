@@ -74,6 +74,9 @@ def valid_policy() -> dict[str, Any]:
             "require_candidate_sha": True,
             "require_tree_sha": True,
             "require_changed_paths": True,
+            "expected_candidate_sha": SHA_B,
+            "expected_base_sha": SHA_A,
+            "expected_tree_sha": SHA_C,
         },
         "commands": [
             {
@@ -144,6 +147,7 @@ def valid_receipt(finished_offset: float = -10) -> dict[str, Any]:
                 "exit_code": 0,
                 "started_at": started_time,
                 "completed_at": completed_time,
+                "duration_ms": 30000,
                 "proof_class": "unit",
                 "log_references": ["logs/focused-tests.log"],
             }
@@ -153,7 +157,8 @@ def valid_receipt(finished_offset: float = -10) -> dict[str, Any]:
             {"reference": "logs/focused-tests.log", "digest": DIGEST_VALID}
         ],
         "artifacts_and_digests": [
-            {"reference": "artifacts/report.json", "digest": DIGEST_VALID}
+            {"reference": "artifacts/report.json", "digest": DIGEST_VALID},
+            {"reference": "artifacts/toolchain.json", "digest": DIGEST_VALID},
         ],
         "verifier_id": "verifier-1",
         "backend_id": "backend-1",
@@ -381,7 +386,11 @@ def test_evidence_digest_mismatch(tmp_path: Path) -> None:
     art_file = art_dir / "report.json"
     art_file.write_text("art content", encoding="utf-8")
 
+    toolchain_file = art_dir / "toolchain.json"
+    toolchain_file.write_text("toolchain info", encoding="utf-8")
+
     correct_art_digest = "sha256:" + hashlib.sha256(b"art content").hexdigest()
+    toolchain_digest = "sha256:" + hashlib.sha256(b"toolchain info").hexdigest()
     wrong_log_digest = "sha256:" + hashlib.sha256(b"wrong content").hexdigest()
 
     receipt = valid_receipt()
@@ -389,7 +398,8 @@ def test_evidence_digest_mismatch(tmp_path: Path) -> None:
         {"reference": "logs/focused-tests.log", "digest": wrong_log_digest}
     ]
     receipt["artifacts_and_digests"] = [
-        {"reference": "artifacts/report.json", "digest": correct_art_digest}
+        {"reference": "artifacts/report.json", "digest": correct_art_digest},
+        {"reference": "artifacts/toolchain.json", "digest": toolchain_digest},
     ]
     policy = valid_policy()
 
@@ -701,6 +711,7 @@ def test_adversarial_optional_command_argv_mismatch() -> None:
             "exit_code": 0,
             "started_at": started_time,
             "completed_at": completed_time,
+            "duration_ms": 30000,
             "proof_class": "lint",
             "log_references": ["logs/optional-lint.log"],
         }
@@ -733,6 +744,7 @@ def test_adversarial_optional_command_proof_class_mismatch() -> None:
             "exit_code": 0,
             "started_at": started_time,
             "completed_at": completed_time,
+            "duration_ms": 30000,
             "proof_class": "unit",  # Mismatched proof class
             "log_references": ["logs/optional-lint.log"],
         }
@@ -756,6 +768,7 @@ def test_adversarial_unapproved_receipt_command() -> None:
             "exit_code": 0,
             "started_at": started_time,
             "completed_at": completed_time,
+            "duration_ms": 30000,
             "proof_class": "unit",
             "log_references": ["logs/rogue.log"],
         }
@@ -808,10 +821,220 @@ def test_adversarial_contradictory_digest_requirements() -> None:
 def test_adversarial_unprovable_toolchain_digest_requirement() -> None:
     receipt = valid_receipt()
     # receipt has no toolchain reference in logs or artifacts
-    policy = valid_policy()
-    policy["evidence"]["digest_requirements"] = [
-        {"kind": "toolchain", "algorithm": "sha256", "required": True}
+    receipt["artifacts_and_digests"] = [
+        {"reference": "artifacts/report.json", "digest": DIGEST_VALID}
     ]
+    policy = valid_policy()
     eligible, reason = determine_merge_eligibility(receipt, policy)
     assert eligible is False
-    assert reason == "unprovable_toolchain_digest_requirement"
+    assert reason in (
+        "missing_toolchain_evidence",
+        "unprovable_toolchain_digest_requirement",
+    )
+
+
+# =====================================================================
+# ADVERSARIAL REGRESSION TESTS (GRO-4208 REPAIR 4 - POSTMERGE)
+# =====================================================================
+
+
+def test_missing_expected_candidate_sha_binding_fails() -> None:
+    receipt = valid_receipt()
+    policy = valid_policy()
+    del policy["bindings"]["expected_candidate_sha"]
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is False
+    assert reason == "missing_expected_candidate_sha"
+
+
+def test_missing_expected_base_sha_binding_fails() -> None:
+    receipt = valid_receipt()
+    policy = valid_policy()
+    del policy["bindings"]["expected_base_sha"]
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is False
+    assert reason == "missing_expected_base_sha"
+
+
+def test_missing_expected_tree_sha_binding_fails() -> None:
+    receipt = valid_receipt()
+    policy = valid_policy()
+    del policy["bindings"]["expected_tree_sha"]
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is False
+    assert reason == "missing_expected_tree_sha"
+
+
+def test_missing_all_expected_sha_bindings_fails() -> None:
+    receipt = valid_receipt()
+    policy = valid_policy()
+    del policy["bindings"]["expected_candidate_sha"]
+    del policy["bindings"]["expected_base_sha"]
+    del policy["bindings"]["expected_tree_sha"]
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is False
+    assert reason is not None
+
+
+def test_unrelated_candidate_sha_fails() -> None:
+    receipt = valid_receipt()
+    receipt["candidate_sha"] = "f" * 40
+    policy = valid_policy()
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is False
+    assert reason == "candidate_sha_mismatch"
+
+
+def test_unrelated_base_sha_fails() -> None:
+    receipt = valid_receipt()
+    receipt["base_sha"] = "e" * 40
+    policy = valid_policy()
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is False
+    assert reason == "base_sha_mismatch"
+
+
+def test_unrelated_tree_sha_fails() -> None:
+    receipt = valid_receipt()
+    receipt["tree_sha"] = "d" * 40
+    policy = valid_policy()
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is False
+    assert reason == "tree_sha_mismatch"
+
+
+def test_exact_sha_bindings_pass() -> None:
+    receipt = valid_receipt()
+    policy = valid_policy()
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is True
+    assert reason is None
+
+
+def test_toolchain_required_without_evidence_fails() -> None:
+    receipt = valid_receipt()
+    receipt["artifacts_and_digests"] = [
+        {"reference": "artifacts/report.json", "digest": DIGEST_VALID}
+    ]
+    receipt["logs_and_digests"] = [
+        {"reference": "logs/focused-tests.log", "digest": DIGEST_VALID}
+    ]
+    policy = valid_policy()
+    policy["environment"]["toolchain_digest_required"] = True
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is False
+    assert reason == "missing_toolchain_evidence"
+
+
+def test_correct_toolchain_evidence_passes() -> None:
+    receipt = valid_receipt()
+    policy = valid_policy()
+    policy["environment"]["toolchain_digest_required"] = True
+    policy["environment"]["digest_algorithm"] = "sha256"
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is True
+    assert reason is None
+
+
+def test_toolchain_evidence_wrong_algorithm_fails() -> None:
+    receipt = valid_receipt()
+    digest_512 = "sha512:" + "a" * 128
+    receipt["artifacts_and_digests"] = [
+        {"reference": "artifacts/report.json", "digest": DIGEST_VALID},
+        {"reference": "artifacts/toolchain.json", "digest": digest_512},
+    ]
+    policy = valid_policy()
+    policy["environment"]["toolchain_digest_required"] = True
+    policy["environment"]["digest_algorithm"] = "sha256"
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is False
+    assert reason == "digest_algorithm_mismatch: toolchain"
+
+
+def test_command_duration_ms_exceeds_timeout_fails() -> None:
+    receipt = valid_receipt()
+    policy = valid_policy()
+    policy["commands"][0]["timeout_seconds"] = 600
+    started_time = _now_str(-641)
+    completed_time = _now_str(-40)
+    receipt["commands_and_exit_states"][0]["started_at"] = started_time
+    receipt["commands_and_exit_states"][0]["completed_at"] = completed_time
+    receipt["commands_and_exit_states"][0]["duration_ms"] = 601000
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is False
+    assert reason == "command_timeout_exceeded: focused-tests"
+
+
+def test_command_timestamp_derived_duration_exceeds_timeout_fails() -> None:
+    receipt = valid_receipt()
+    policy = valid_policy()
+    policy["commands"][0]["timeout_seconds"] = 600
+    started_time = _now_str(-641)
+    completed_time = _now_str(-40)
+    receipt["commands_and_exit_states"][0]["started_at"] = started_time
+    receipt["commands_and_exit_states"][0]["completed_at"] = completed_time
+    receipt["commands_and_exit_states"][0]["duration_ms"] = 30000
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is False
+    assert reason in (
+        "command_duration_incoherent: focused-tests",
+        "command_timeout_exceeded: focused-tests",
+    )
+
+
+def test_lying_duration_ms_fails_without_raising() -> None:
+    receipt = valid_receipt()
+    policy = valid_policy()
+    receipt["commands_and_exit_states"][0]["duration_ms"] = 5000
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is False
+    assert reason == "command_duration_incoherent: focused-tests"
+
+
+def test_missing_duration_ms_fails_without_raising() -> None:
+    receipt = valid_receipt()
+    policy = valid_policy()
+    del receipt["commands_and_exit_states"][0]["duration_ms"]
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is False
+    assert reason == "invalid_command_duration_ms: focused-tests"
+
+
+def test_malformed_command_timestamp_fails_without_raising() -> None:
+    receipt = valid_receipt()
+    policy = valid_policy()
+    receipt["commands_and_exit_states"][0]["started_at"] = "invalid-date"
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is False
+    assert reason is not None
+    assert "malformed" in reason or "schema_validation" in reason
+
+
+def test_command_timestamp_ordering_invalid_fails_without_raising() -> None:
+    receipt = valid_receipt()
+    policy = valid_policy()
+    started_time = receipt["commands_and_exit_states"][0]["started_at"]
+    completed_time = receipt["commands_and_exit_states"][0]["completed_at"]
+    receipt["commands_and_exit_states"][0]["started_at"] = completed_time
+    receipt["commands_and_exit_states"][0]["completed_at"] = started_time
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is False
+    assert reason == "command_timestamp_ordering_invalid: focused-tests"
+
+
+def test_non_numeric_duration_ms_fails_without_raising() -> None:
+    receipt = valid_receipt()
+    policy = valid_policy()
+    receipt["commands_and_exit_states"][0]["duration_ms"] = "30000"
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is False
+    assert reason is not None
+    assert "invalid_command_duration_ms" in reason or "schema_validation" in reason
+
+
+def test_compliant_command_timestamps_and_duration_pass() -> None:
+    receipt = valid_receipt()
+    policy = valid_policy()
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is True
+    assert reason is None

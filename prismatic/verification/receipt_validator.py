@@ -305,22 +305,21 @@ def determine_merge_eligibility(
             if key in ALLOWED_POLICY_BINDINGS_OVERLAY_KEYS:
                 overlay_values[key] = val
 
-        # Check overlay value types/formats
-        if "expected_candidate_sha" in overlay_values:
-            val = overlay_values["expected_candidate_sha"]
+        # Mandatory SHA overlay bindings check
+        for sha_key in (
+            "expected_candidate_sha",
+            "expected_base_sha",
+            "expected_tree_sha",
+        ):
+            if sha_key not in overlay_values:
+                return False, f"missing_{sha_key}"
+            val = overlay_values[sha_key]
             if not isinstance(val, str) or not SHA1_PATTERN.match(val):
                 return (
                     False,
-                    "schema_validation_failed: invalid expected_candidate_sha",
+                    f"schema_validation_failed: invalid {sha_key}",
                 )
-        if "expected_base_sha" in overlay_values:
-            val = overlay_values["expected_base_sha"]
-            if not isinstance(val, str) or not SHA1_PATTERN.match(val):
-                return False, "schema_validation_failed: invalid expected_base_sha"
-        if "expected_tree_sha" in overlay_values:
-            val = overlay_values["expected_tree_sha"]
-            if not isinstance(val, str) or not SHA1_PATTERN.match(val):
-                return False, "schema_validation_failed: invalid expected_tree_sha"
+
         if "allow_empty_changed_paths" in overlay_values:
             val = overlay_values["allow_empty_changed_paths"]
             if not isinstance(val, bool):
@@ -478,9 +477,10 @@ def determine_merge_eligibility(
                 if p not in allowed_set:
                     return False, f"disallowed_changed_path: {p}"
 
-        # 11. Command validation (unique IDs, required presence, argv & proof_class binding, zero exit)
+        # 11. Command validation (unique IDs, required presence, argv & proof_class binding, zero exit, timestamps, duration, timeout)
         policy_cmds = policy.get("commands", [])
         policy_cmd_ids: set[str] = set()
+        policy_cmd_map: dict[str, dict[str, Any]] = {}
         for p_cmd in policy_cmds:
             if isinstance(p_cmd, dict):
                 cid = p_cmd.get("id")
@@ -488,6 +488,7 @@ def determine_merge_eligibility(
                     return False, f"duplicate_policy_command_id: {cid}"
                 if cid:
                     policy_cmd_ids.add(cid)
+                    policy_cmd_map[cid] = p_cmd
 
         r_cmds = receipt.get("commands_and_exit_states")
         if not isinstance(r_cmds, list) or len(r_cmds) == 0:
@@ -510,6 +511,48 @@ def determine_merge_eligibility(
                 return False, f"command_not_completed: {cid}"
             if r_cmd.get("exit_code") != 0:
                 return False, "non_zero_exit_code"
+
+            started_str = r_cmd.get("started_at")
+            completed_str = r_cmd.get("completed_at")
+            if not started_str or not isinstance(started_str, str):
+                return False, f"missing_command_timestamp: {cid}"
+            if not completed_str or not isinstance(completed_str, str):
+                return False, f"missing_command_timestamp: {cid}"
+
+            cmd_started_dt = _parse_timestamp(started_str)
+            cmd_completed_dt = _parse_timestamp(completed_str)
+            if cmd_started_dt is None or cmd_completed_dt is None:
+                return False, f"malformed_command_timestamp: {cid}"
+
+            if cmd_completed_dt < cmd_started_dt:
+                return False, f"command_timestamp_ordering_invalid: {cid}"
+
+            duration_ms = r_cmd.get("duration_ms")
+            if (
+                duration_ms is None
+                or isinstance(duration_ms, bool)
+                or not isinstance(duration_ms, (int, float))
+                or duration_ms < 0
+            ):
+                return False, f"invalid_command_duration_ms: {cid}"
+
+            ts_derived_ms = (cmd_completed_dt - cmd_started_dt).total_seconds() * 1000.0
+
+            # Rounding tolerance for timestamp-derived vs reported duration_ms (1000 ms = 1s)
+            ROUNDING_TOLERANCE_MS = 1000.0
+            if abs(duration_ms - ts_derived_ms) > ROUNDING_TOLERANCE_MS:
+                return False, f"command_duration_incoherent: {cid}"
+
+            p_cmd = policy_cmd_map.get(cid, {})
+            timeout_sec = p_cmd.get("timeout_seconds")
+            if (
+                isinstance(timeout_sec, (int, float))
+                and not isinstance(timeout_sec, bool)
+                and timeout_sec > 0
+            ):
+                timeout_ms = timeout_sec * 1000.0
+                if duration_ms > timeout_ms or ts_derived_ms > timeout_ms:
+                    return False, f"command_timeout_exceeded: {cid}"
 
         for p_cmd in policy_cmds:
             if isinstance(p_cmd, dict):
@@ -580,6 +623,29 @@ def determine_merge_eligibility(
                 return False, "invalid_environment_digest"
             if not e_dig.startswith(f"{permitted_algo}:"):
                 return False, "unpermitted_digest_algorithm"
+
+        if env_policy.get("toolchain_digest_required", False):
+            toolchain_items = []
+            for items in (
+                receipt.get("artifacts_and_digests") or [],
+                receipt.get("logs_and_digests") or [],
+            ):
+                if isinstance(items, list):
+                    for item in items:
+                        if isinstance(item, dict):
+                            ref = item.get("reference")
+                            if isinstance(ref, str) and "toolchain" in ref.lower():
+                                toolchain_items.append(item)
+
+            if len(toolchain_items) == 0:
+                return False, "missing_toolchain_evidence"
+
+            for item in toolchain_items:
+                d_val = item.get("digest")
+                if not isinstance(d_val, str) or not d_val.startswith(
+                    f"{permitted_algo}:"
+                ):
+                    return False, "digest_algorithm_mismatch: toolchain"
 
         # Check evidence.digest_requirements entries
         digest_reqs = evidence_policy.get("digest_requirements")
