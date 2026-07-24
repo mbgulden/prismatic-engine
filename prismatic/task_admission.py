@@ -26,6 +26,7 @@ _POLICY_ENV = "PRISMATIC_TASK_ADMISSION_POLICY_FILE"
 _DB_ENV = "PRISMATIC_BUS_DB"
 _MAX_BODY_BYTES = 32 * 1024
 _lock = threading.Lock()
+_setup_lock = threading.Lock()
 
 
 class TaskAdmissionError(ValueError):
@@ -211,7 +212,9 @@ class TaskAdmissionStore:
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.db_path, timeout=5)
         connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA busy_timeout=5000")
+        with _setup_lock:
+            connection.execute("PRAGMA journal_mode=WAL")
         connection.execute("PRAGMA foreign_keys=ON")
         connection.executescript(
             """
