@@ -12,14 +12,14 @@ import pytest
 from jsonschema import Draft202012Validator
 
 ROOT = Path(__file__).resolve().parents[1]
-POLICY_PATH = (
+POLICY_PATH = ROOT / "schemas" / "provider-neutral-verification-policy.schema.json"
+RECEIPT_PATH = ROOT / "schemas" / "provider-neutral-verification-receipt.schema.json"
+PACKAGE_POLICY_PATH = (
     ROOT / "prismatic" / "schemas" / "provider-neutral-verification-policy.schema.json"
 )
-RECEIPT_PATH = (
+PACKAGE_RECEIPT_PATH = (
     ROOT / "prismatic" / "schemas" / "provider-neutral-verification-receipt.schema.json"
 )
-PACKAGE_POLICY_PATH = POLICY_PATH
-PACKAGE_RECEIPT_PATH = RECEIPT_PATH
 SHA = "a" * 40
 DIGEST = "sha256:" + "b" * 64
 TIME = "2026-07-24T01:00:00Z"
@@ -204,8 +204,20 @@ def receipt(
 def test_schemas_are_draft_2020_12_and_packaged_copies_are_byte_identical() -> None:
     for path in (POLICY_PATH, RECEIPT_PATH, PACKAGE_POLICY_PATH, PACKAGE_RECEIPT_PATH):
         Draft202012Validator.check_schema(schema(path))
+    assert POLICY_PATH != PACKAGE_POLICY_PATH
+    assert RECEIPT_PATH != PACKAGE_RECEIPT_PATH
     assert POLICY_PATH.read_bytes() == PACKAGE_POLICY_PATH.read_bytes()
     assert RECEIPT_PATH.read_bytes() == PACKAGE_RECEIPT_PATH.read_bytes()
+
+
+def test_legacy_string_verifier_identity_is_rejected_by_both_policy_schemas() -> None:
+    candidate = policy()
+    candidate["approved_verifiers"]["identities"] = ["verifier-1"]
+
+    for path in (POLICY_PATH, PACKAGE_POLICY_PATH):
+        schema_errors = errors(candidate, path)
+        assert schema_errors
+        assert any("is not of type 'object'" in message for message in schema_errors)
 
 
 def test_source_acquisition_and_execution_backend_models_validate_independently() -> (
