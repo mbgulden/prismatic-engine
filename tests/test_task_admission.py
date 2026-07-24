@@ -214,10 +214,14 @@ def test_concurrent_identical_requests_create_one_outbox_event(tmp_path: Path) -
     connection.close()
 
 
-def test_audit_rows_are_append_only(tmp_path: Path) -> None:
+def test_admission_and_audit_rows_are_immutable(tmp_path: Path) -> None:
     store, payload, _, _ = _fixture(tmp_path)
     store.admit(payload, header_key=KEY, actor="michael")
     connection = sqlite3.connect(store.db_path)
+    with pytest.raises(sqlite3.DatabaseError, match="admission_immutable"):
+        connection.execute("UPDATE task_admissions SET status = 'changed'")
+    with pytest.raises(sqlite3.DatabaseError, match="admission_immutable"):
+        connection.execute("DELETE FROM task_admissions")
     with pytest.raises(sqlite3.DatabaseError, match="audit_immutable"):
         connection.execute("DELETE FROM task_admission_audit")
     connection.close()

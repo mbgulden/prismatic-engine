@@ -243,6 +243,10 @@ class TaskAdmissionStore:
                 payload_sha256 TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
+            CREATE TRIGGER IF NOT EXISTS task_admissions_no_update
+            BEFORE UPDATE ON task_admissions BEGIN SELECT RAISE(ABORT, 'admission_immutable'); END;
+            CREATE TRIGGER IF NOT EXISTS task_admissions_no_delete
+            BEFORE DELETE ON task_admissions BEGIN SELECT RAISE(ABORT, 'admission_immutable'); END;
             CREATE TRIGGER IF NOT EXISTS task_admission_audit_no_update
             BEFORE UPDATE ON task_admission_audit BEGIN SELECT RAISE(ABORT, 'audit_immutable'); END;
             CREATE TRIGGER IF NOT EXISTS task_admission_audit_no_delete
