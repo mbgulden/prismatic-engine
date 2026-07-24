@@ -426,8 +426,6 @@ def determine_merge_eligibility(
         for item in identities:
             if isinstance(item, dict) and isinstance(item.get("id"), str):
                 valid_verifier_ids.add(item["id"])
-            elif isinstance(item, str):
-                valid_verifier_ids.add(item)
         if r_verifier_id not in valid_verifier_ids:
             return False, "unapproved_verifier_identity"
 

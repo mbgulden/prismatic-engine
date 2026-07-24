@@ -87,7 +87,7 @@ Synthesizes policy rules, receipt evidence, and cryptographic attestations into 
 
 ## Policy Verifier Key Records
 
-Under GRO-4209, `approved_verifiers.identities` is migrated from string identifiers to strict `verifier_key_record` objects:
+Under GRO-4209, `approved_verifiers.identities` is migrated from string identifiers to strict `verifier_key_record` objects. This is an intentional breaking policy-schema migration: legacy string-only identity entries are invalid in both canonical and packaged schemas, and runtime authorization no longer treats them as approved verifier identities.
 
 ```json
 {
