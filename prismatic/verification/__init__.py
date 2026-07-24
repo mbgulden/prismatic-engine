@@ -22,6 +22,10 @@ from .source_acquisition import (
     validate_acquired_source,
 )
 
+from .attestation import (
+    canonicalize_receipt,
+    verify_receipt_attestation,
+)
 from .receipt_validator import (
     check_revocation,
     determine_merge_eligibility,
@@ -49,4 +53,6 @@ __all__ = [
     "check_revocation",
     "determine_merge_eligibility",
     "validate_receipt_freshness",
+    "canonicalize_receipt",
+    "verify_receipt_attestation",
 ]
