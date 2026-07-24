@@ -26,7 +26,8 @@ from jsonschema import Draft202012Validator, FormatChecker
 _SCHEMA_PATH = Path(__file__).with_name("schemas") / "task-admission.schema.json"
 _POLICY_ENV = "PRISMATIC_TASK_ADMISSION_POLICY_FILE"
 _DB_ENV = "PRISMATIC_BUS_DB"
-_MAX_BODY_BYTES = 32 * 1024
+MAX_ADMISSION_BODY_BYTES = 32 * 1024
+_MAX_POLICY_BYTES = 1024 * 1024
 _MAX_TASK_FILE_BYTES = 1024 * 1024
 _lock = threading.Lock()
 _setup_lock = threading.Lock()
@@ -59,7 +60,7 @@ def _reject_duplicate_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 def parse_admission_json(raw: bytes) -> dict[str, Any]:
     """Parse a small JSON object while rejecting duplicate keys."""
 
-    if not raw or len(raw) > _MAX_BODY_BYTES:
+    if not raw or len(raw) > MAX_ADMISSION_BODY_BYTES:
         raise TaskAdmissionError("invalid_body_size", 413 if raw else 422)
     try:
         payload = json.loads(
@@ -93,16 +94,57 @@ def _validate_schema(payload: Mapping[str, Any]) -> None:
         raise TaskAdmissionError("schema_validation_failed", 422)
 
 
+def _read_policy_bytes(path: Path) -> bytes:
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC | os.O_NOFOLLOW,
+        )
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != os.geteuid()
+            or stat.S_IMODE(before.st_mode) & 0o077
+            or before.st_size > _MAX_POLICY_BYTES
+        ):
+            raise ValueError("unsafe policy file")
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(descriptor, min(64 * 1024, _MAX_POLICY_BYTES + 1 - total))
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > _MAX_POLICY_BYTES:
+                raise ValueError("policy file too large")
+            chunks.append(chunk)
+        after = os.fstat(descriptor)
+        identity_before = (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        )
+        identity_after = (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        )
+        if identity_before != identity_after:
+            raise ValueError("policy changed during read")
+        return b"".join(chunks)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
 def _load_policy(path: Path) -> tuple[set[Path], set[str], int]:
     try:
-        raw = path.read_bytes()
-        if len(raw) > 1024 * 1024 or path.is_symlink() or not path.is_file():
-            raise ValueError
-        stat = path.stat()
-        mode = stat.st_mode & 0o777
-        if stat.st_uid != os.geteuid() or mode & 0o077:
-            raise ValueError
-        data = json.loads(raw)
+        data = json.loads(_read_policy_bytes(path))
     except Exception as exc:
         raise TaskAdmissionError("admission_policy_unavailable", 503) from exc
     if set(data) - {"worktrees", "producers", "max_age_seconds"}:

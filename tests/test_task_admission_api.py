@@ -173,6 +173,17 @@ def test_content_type_duplicate_keys_and_header_mismatch_fail(api_fixture) -> No
     assert response.json()["error"] == "idempotency_key_mismatch"
 
 
+def test_streaming_request_body_limit_returns_413(api_fixture) -> None:
+    client, _, _ = api_fixture
+    response = client.post(
+        "/api/dashboard/task-admissions",
+        content=b"x" * (32 * 1024 + 1),
+        headers=_headers(),
+    )
+    assert response.status_code == 413
+    assert response.json()["error"] == "invalid_body_size"
+
+
 def test_storage_and_response_do_not_contain_bearer(api_fixture) -> None:
     client, payload, tmp_path = api_fixture
     response = client.post(

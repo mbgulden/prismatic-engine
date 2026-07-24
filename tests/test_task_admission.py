@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -217,6 +218,35 @@ def test_readback_remains_available_without_admission_policy(tmp_path: Path) -> 
     reader = TaskAdmissionStore(db_path=store.db_path, policy_path=None)
     assert reader.get("GRO-4210") == admitted
     assert reader.list() == [admitted]
+
+
+def test_policy_loader_rejects_fifo_symlink_device_and_oversize(
+    tmp_path: Path,
+) -> None:
+    store, payload, _, policy = _fixture(tmp_path)
+
+    fifo = tmp_path / "policy.fifo"
+    os.mkfifo(fifo, 0o600)
+    store.policy_path = fifo
+    with pytest.raises(TaskAdmissionError, match="admission_policy_unavailable"):
+        store.admit(payload, header_key=KEY, actor="michael")
+
+    alias = tmp_path / "policy-link.json"
+    alias.symlink_to(policy)
+    store.policy_path = alias
+    with pytest.raises(TaskAdmissionError, match="admission_policy_unavailable"):
+        store.admit(payload, header_key=KEY, actor="michael")
+
+    store.policy_path = Path("/dev/null")
+    with pytest.raises(TaskAdmissionError, match="admission_policy_unavailable"):
+        store.admit(payload, header_key=KEY, actor="michael")
+
+    oversized = tmp_path / "oversized-policy.json"
+    oversized.write_bytes(b"x" * (1024 * 1024 + 1))
+    oversized.chmod(0o600)
+    store.policy_path = oversized
+    with pytest.raises(TaskAdmissionError, match="admission_policy_unavailable"):
+        store.admit(payload, header_key=KEY, actor="michael")
 
 
 def test_worktree_alias_and_insecure_policy_rejected(tmp_path: Path) -> None:

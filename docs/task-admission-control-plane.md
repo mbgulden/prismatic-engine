@@ -10,11 +10,11 @@ All three routes require a control credential carrying the `operator` role, incl
 - `GET /api/dashboard/task-admissions?limit=50`
 - `GET /api/dashboard/task-admissions/{task_id}`
 
-The POST requires an operator authorization header, `Content-Type: application/json`, and an `Idempotency-Key` header exactly matching the body field.
+The POST requires an operator authorization header, `Content-Type: application/json`, and an `Idempotency-Key` header exactly matching the body field. The request stream fails with HTTP 413 as soon as it exceeds 32 KiB; it is not fully buffered before the limit is applied.
 
 ## Policy configuration
 
-Set `PRISMATIC_TASK_ADMISSION_POLICY_FILE` to an owner-readable JSON file with mode `0600` (no group/other permissions):
+Set `PRISMATIC_TASK_ADMISSION_POLICY_FILE` to an owner-readable JSON file with mode `0600` (no group/other permissions). The loader opens it with no-follow and nonblocking descriptor semantics, rejects links/devices/FIFOs and files larger than 1 MiB before reading, reads in bounded chunks, and verifies descriptor stability:
 
 ```json
 {

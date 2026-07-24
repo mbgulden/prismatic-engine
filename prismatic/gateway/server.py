@@ -3083,7 +3083,12 @@ async def create_task_admission(request: Request) -> dict[str, Any] | JSONRespon
     This route records durable intent only. It never launches a producer.
     """
 
-    from prismatic.task_admission import TaskAdmissionStore, parse_admission_json
+    from prismatic.task_admission import (
+        MAX_ADMISSION_BODY_BYTES,
+        TaskAdmissionError,
+        TaskAdmissionStore,
+        parse_admission_json,
+    )
 
     if (
         request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
@@ -3093,7 +3098,20 @@ async def create_task_admission(request: Request) -> dict[str, Any] | JSONRespon
             {"ok": False, "error": "content_type_required"}, status_code=415
         )
     try:
-        payload = parse_admission_json(await request.body())
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                declared_size = int(content_length)
+            except ValueError as exc:
+                raise TaskAdmissionError("invalid_body_size", 413) from exc
+            if declared_size < 0 or declared_size > MAX_ADMISSION_BODY_BYTES:
+                raise TaskAdmissionError("invalid_body_size", 413)
+        body = bytearray()
+        async for chunk in request.stream():
+            if len(body) + len(chunk) > MAX_ADMISSION_BODY_BYTES:
+                raise TaskAdmissionError("invalid_body_size", 413)
+            body.extend(chunk)
+        payload = parse_admission_json(bytes(body))
         result = TaskAdmissionStore().admit(
             payload,
             header_key=request.headers.get("Idempotency-Key", ""),
