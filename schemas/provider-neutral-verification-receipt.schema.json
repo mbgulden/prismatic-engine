@@ -1,0 +1,681 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://prismatic.growthwebdev.com/schemas/provider-neutral-verification-receipt.schema.json",
+  "title": "Provider-Neutral Verification Receipt v1",
+  "description": "Strict universal verification receipt. Source acquisition and verifier execution backend are distinct required dimensions. UTC timestamp ordering, freshness, head/tree identity, backend approval, revocation, producer/verifier separation, and merge authorization are runtime validators' responsibilities.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "policy_id",
+    "policy_version",
+    "task_id",
+    "repository_id",
+    "source_kind",
+    "source_provider",
+    "source_locator",
+    "base_sha",
+    "candidate_sha",
+    "tree_sha",
+    "changed_paths",
+    "clean_checkout_id",
+    "source_acquisition_digest",
+    "environment_digest",
+    "commands_and_exit_states",
+    "proof_classes",
+    "logs_and_digests",
+    "artifacts_and_digests",
+    "verifier_id",
+    "backend_id",
+    "backend_class",
+    "producer_id",
+    "started_at",
+    "completed_at",
+    "expires_at",
+    "supersedes",
+    "revocation_status",
+    "decision",
+    "non_claims",
+    "signature_or_attestation"
+  ],
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "bounded_string": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "git_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{40}$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^(sha256:[0-9a-fA-F]{64}|sha512:[0-9a-fA-F]{128})$"
+    },
+    "repo_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "timestamp": {
+      "type": "string",
+      "description": "UTC RFC3339 timestamp. Cross-field ordering is a runtime validator responsibility.",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?Z$"
+    },
+    "proof_class": {
+      "type": "string",
+      "enum": [
+        "unit",
+        "integration",
+        "build",
+        "lint",
+        "security",
+        "reproducibility",
+        "manual",
+        "artifact",
+        "source_lineage",
+        "environment"
+      ]
+    },
+    "source_kind": {
+      "type": "string",
+      "enum": [
+        "provider_remote",
+        "local_bare_repository",
+        "offline_git_bundle"
+      ]
+    },
+    "source_provider": {
+      "type": "string",
+      "enum": [
+        "github",
+        "gitlab",
+        "bitbucket",
+        "forgejo",
+        "gitea",
+        "other",
+        "none"
+      ]
+    },
+    "backend_class": {
+      "type": "string",
+      "enum": [
+        "hosted_provider_runner",
+        "self_hosted_clean_room",
+        "supervised_clean_room"
+      ]
+    },
+    "command_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command_id",
+        "argv",
+        "execution_state",
+        "exit_state",
+        "exit_code",
+        "started_at",
+        "completed_at",
+        "proof_class",
+        "log_references"
+      ],
+      "properties": {
+        "command_id": {
+          "$ref": "#/$defs/id"
+        },
+        "argv": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        },
+        "execution_state": {
+          "type": "string",
+          "enum": [
+            "executed",
+            "backend_not_executed"
+          ]
+        },
+        "exit_state": {
+          "type": "string",
+          "enum": [
+            "completed",
+            "timed_out",
+            "cancelled",
+            "failed",
+            "not_started",
+            "not_executed"
+          ]
+        },
+        "exit_code": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 255
+        },
+        "started_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "completed_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 86400000
+        },
+        "proof_class": {
+          "$ref": "#/$defs/proof_class"
+        },
+        "log_references": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/bounded_string"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "execution_state": {
+                "const": "backend_not_executed"
+              }
+            },
+            "required": [
+              "execution_state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "exit_state": {
+                "const": "not_executed"
+              },
+              "exit_code": {
+                "const": null
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "execution_state": {
+                "const": "executed"
+              }
+            },
+            "required": [
+              "execution_state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "exit_state": {
+                "enum": [
+                  "completed",
+                  "timed_out",
+                  "cancelled",
+                  "failed",
+                  "not_started"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "exit_state": {
+                "const": "completed"
+              }
+            },
+            "required": [
+              "exit_state"
+            ]
+          },
+          "then": {
+            "properties": {
+              "exit_code": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 255
+              }
+            },
+            "required": [
+              "exit_code"
+            ]
+          }
+        }
+      ]
+    },
+    "evidence_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reference",
+        "digest"
+      ],
+      "properties": {
+        "reference": {
+          "$ref": "#/$defs/bounded_string"
+        },
+        "digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "media_type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      }
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "algorithm",
+        "key_id",
+        "value"
+      ],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "signature",
+            "attestation"
+          ]
+        },
+        "algorithm": {
+          "type": "string",
+          "enum": [
+            "ed25519",
+            "ecdsa-p256",
+            "rsa-pss-sha256",
+            "sigstore"
+          ]
+        },
+        "key_id": {
+          "$ref": "#/$defs/id"
+        },
+        "value": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 16384
+        },
+        "issuer": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      }
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "policy_id": {
+      "$ref": "#/$defs/id"
+    },
+    "policy_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+(?:\\.[0-9]+)?$"
+    },
+    "task_id": {
+      "$ref": "#/$defs/id"
+    },
+    "repository_id": {
+      "$ref": "#/$defs/id"
+    },
+    "source_kind": {
+      "$ref": "#/$defs/source_kind"
+    },
+    "source_provider": {
+      "$ref": "#/$defs/source_provider"
+    },
+    "source_locator": {
+      "$ref": "#/$defs/bounded_string"
+    },
+    "base_sha": {
+      "$ref": "#/$defs/git_sha"
+    },
+    "candidate_sha": {
+      "$ref": "#/$defs/git_sha"
+    },
+    "tree_sha": {
+      "$ref": "#/$defs/git_sha"
+    },
+    "changed_paths": {
+      "type": "array",
+      "maxItems": 4096,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/repo_path"
+      },
+      "minItems": 1
+    },
+    "clean_checkout_id": {
+      "$ref": "#/$defs/id"
+    },
+    "source_acquisition_digest": {
+      "$ref": "#/$defs/digest"
+    },
+    "environment_digest": {
+      "$ref": "#/$defs/digest"
+    },
+    "commands_and_exit_states": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": {
+        "$ref": "#/$defs/command_result"
+      }
+    },
+    "proof_classes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/proof_class"
+      }
+    },
+    "logs_and_digests": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {
+        "$ref": "#/$defs/evidence_item"
+      }
+    },
+    "artifacts_and_digests": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {
+        "$ref": "#/$defs/evidence_item"
+      }
+    },
+    "verifier_id": {
+      "$ref": "#/$defs/id"
+    },
+    "backend_id": {
+      "$ref": "#/$defs/id"
+    },
+    "backend_class": {
+      "$ref": "#/$defs/backend_class"
+    },
+    "producer_id": {
+      "$ref": "#/$defs/id"
+    },
+    "started_at": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "completed_at": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "expires_at": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "supersedes": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "revocation_status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "revoked",
+        "unknown"
+      ]
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "merge_eligible"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "pass",
+            "fail",
+            "blocked"
+          ]
+        },
+        "merge_eligible": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "fail",
+                  "blocked"
+                ]
+              }
+            },
+            "required": [
+              "status"
+            ]
+          },
+          "then": {
+            "properties": {
+              "merge_eligible": {
+                "const": false
+              }
+            }
+          }
+        }
+      ]
+    },
+    "non_claims": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/bounded_string"
+      }
+    },
+    "signature_or_attestation": {
+      "$ref": "#/$defs/signature"
+    },
+    "provider_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional hosted-provider projection only; it cannot replace source acquisition or backend identity.",
+      "properties": {
+        "pull_request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "run_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "source_kind": {
+            "const": "provider_remote"
+          }
+        },
+        "required": [
+          "source_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "source_provider": {
+            "not": {
+              "const": "none"
+            }
+          }
+        },
+        "required": [
+          "source_provider"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "source_kind": {
+            "enum": [
+              "local_bare_repository",
+              "offline_git_bundle"
+            ]
+          }
+        },
+        "required": [
+          "source_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "source_provider": {
+            "const": "none"
+          }
+        },
+        "required": [
+          "source_provider"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "revocation_status": {
+            "enum": [
+              "revoked",
+              "unknown"
+            ]
+          }
+        },
+        "required": [
+          "revocation_status"
+        ]
+      },
+      "then": {
+        "properties": {
+          "decision": {
+            "properties": {
+              "status": {
+                "const": "blocked"
+              },
+              "merge_eligible": {
+                "const": false
+              }
+            },
+            "required": [
+              "status",
+              "merge_eligible"
+            ]
+          }
+        },
+        "required": [
+          "decision"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "commands_and_exit_states": {
+            "contains": {
+              "not": {
+                "type": "object",
+                "properties": {
+                  "execution_state": {
+                    "const": "executed"
+                  },
+                  "exit_state": {
+                    "const": "completed"
+                  },
+                  "exit_code": {
+                    "const": 0
+                  }
+                },
+                "required": [
+                  "execution_state",
+                  "exit_state",
+                  "exit_code"
+                ]
+              }
+            }
+          }
+        },
+        "required": [
+          "commands_and_exit_states"
+        ]
+      },
+      "then": {
+        "properties": {
+          "decision": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "fail",
+                  "blocked"
+                ]
+              },
+              "merge_eligible": {
+                "const": false
+              }
+            },
+            "required": [
+              "status",
+              "merge_eligible"
+            ]
+          }
+        },
+        "required": [
+          "decision"
+        ]
+      }
+    }
+  ]
+}

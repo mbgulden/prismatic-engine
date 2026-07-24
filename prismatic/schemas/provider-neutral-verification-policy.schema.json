@@ -1,0 +1,624 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://prismatic.growthwebdev.com/schemas/provider-neutral-verification-policy.schema.json",
+  "title": "Provider-Neutral Verification Policy v1",
+  "description": "Strict, versioned policy contract for clean-room verification. Source acquisition is independent from verifier execution; runtime freshness, authorization, approval decisions, and source/backend membership remain validator responsibilities.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "policy_id",
+    "policy_version",
+    "status",
+    "repository",
+    "approved_backends",
+    "approved_verifiers",
+    "clean_room",
+    "bindings",
+    "commands",
+    "evidence",
+    "environment",
+    "freshness",
+    "attestation",
+    "required_proof_classes",
+    "non_claims",
+    "authorization_boundary"
+  ],
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "bounded_string": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "digest_algorithm": {
+      "type": "string",
+      "enum": [
+        "sha256",
+        "sha512"
+      ]
+    },
+    "repo_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "proof_class": {
+      "type": "string",
+      "enum": [
+        "unit",
+        "integration",
+        "build",
+        "lint",
+        "security",
+        "reproducibility",
+        "manual",
+        "artifact",
+        "source_lineage",
+        "environment"
+      ]
+    },
+    "source_kind": {
+      "type": "string",
+      "enum": [
+        "provider_remote",
+        "local_bare_repository",
+        "offline_git_bundle"
+      ]
+    },
+    "source_provider": {
+      "type": "string",
+      "enum": [
+        "github",
+        "gitlab",
+        "bitbucket",
+        "forgejo",
+        "gitea",
+        "other",
+        "none"
+      ]
+    },
+    "backend_class": {
+      "type": "string",
+      "enum": [
+        "hosted_provider_runner",
+        "self_hosted_clean_room",
+        "supervised_clean_room"
+      ]
+    },
+    "backend": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "class"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "class": {
+          "$ref": "#/$defs/backend_class"
+        },
+        "hosted_provider_metadata": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "provider"
+          ],
+          "properties": {
+            "provider": {
+              "type": "string",
+              "enum": [
+                "github",
+                "gitlab",
+                "bitbucket",
+                "forgejo",
+                "gitea",
+                "other"
+              ]
+            },
+            "adapter_version": {
+              "$ref": "#/$defs/bounded_string"
+            },
+            "display_name": {
+              "$ref": "#/$defs/bounded_string"
+            }
+          }
+        }
+      }
+    },
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "argv",
+        "proof_class",
+        "timeout_seconds",
+        "required"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "argv": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        },
+        "proof_class": {
+          "$ref": "#/$defs/proof_class"
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "working_directory": {
+          "$ref": "#/$defs/repo_path"
+        }
+      }
+    },
+    "digest_requirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "algorithm",
+        "required"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "log",
+            "artifact",
+            "source_acquisition",
+            "environment",
+            "toolchain"
+          ]
+        },
+        "algorithm": {
+          "$ref": "#/$defs/digest_algorithm"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "name": {
+          "$ref": "#/$defs/bounded_string"
+        }
+      }
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "policy_id": {
+      "$ref": "#/$defs/id"
+    },
+    "policy_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+(?:\\.[0-9]+)?$"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "suspended",
+        "revoked"
+      ]
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository_id",
+        "source_requirements"
+      ],
+      "properties": {
+        "repository_id": {
+          "$ref": "#/$defs/id"
+        },
+        "source_requirements": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "require_full_git_objects",
+            "allowed_source_kinds",
+            "allowed_source_providers"
+          ],
+          "properties": {
+            "require_full_git_objects": {
+              "const": true
+            },
+            "allowed_source_kinds": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/source_kind"
+              }
+            },
+            "allowed_source_providers": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "$ref": "#/$defs/source_provider"
+              }
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "allowed_source_kinds": {
+                    "contains": {
+                      "const": "provider_remote"
+                    }
+                  }
+                },
+                "required": [
+                  "allowed_source_kinds"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "allowed_source_providers": {
+                    "contains": {
+                      "not": {
+                        "const": "none"
+                      }
+                    }
+                  }
+                },
+                "required": [
+                  "allowed_source_providers"
+                ]
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "allowed_source_kinds": {
+                    "contains": {
+                      "enum": [
+                        "local_bare_repository",
+                        "offline_git_bundle"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "allowed_source_kinds"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "allowed_source_providers": {
+                    "contains": {
+                      "const": "none"
+                    }
+                  }
+                },
+                "required": [
+                  "allowed_source_providers"
+                ]
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "allowed_source_providers": {
+                    "contains": {
+                      "const": "none"
+                    }
+                  }
+                },
+                "required": [
+                  "allowed_source_providers"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "allowed_source_kinds": {
+                    "contains": {
+                      "enum": [
+                        "local_bare_repository",
+                        "offline_git_bundle"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "allowed_source_kinds"
+                ]
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "allowed_source_providers": {
+                    "contains": {
+                      "not": {
+                        "const": "none"
+                      }
+                    }
+                  }
+                },
+                "required": [
+                  "allowed_source_providers"
+                ]
+              },
+              "then": {
+                "properties": {
+                  "allowed_source_kinds": {
+                    "contains": {
+                      "const": "provider_remote"
+                    }
+                  }
+                },
+                "required": [
+                  "allowed_source_kinds"
+                ]
+              }
+            }
+          ]
+        }
+      }
+    },
+    "approved_backends": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/backend"
+      }
+    },
+    "approved_verifiers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "identities",
+        "require_producer_verifier_separation"
+      ],
+      "properties": {
+        "identities": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        },
+        "require_producer_verifier_separation": {
+          "const": true
+        }
+      }
+    },
+    "clean_room": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required",
+        "source_acquisition_required",
+        "network_isolation_required"
+      ],
+      "properties": {
+        "required": {
+          "const": true
+        },
+        "source_acquisition_required": {
+          "const": true
+        },
+        "network_isolation_required": {
+          "type": "boolean"
+        },
+        "checkout_retention": {
+          "type": "string",
+          "enum": [
+            "ephemeral",
+            "retained"
+          ]
+        }
+      }
+    },
+    "bindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "require_base_sha",
+        "require_candidate_sha",
+        "require_tree_sha",
+        "require_changed_paths"
+      ],
+      "properties": {
+        "require_base_sha": {
+          "const": true
+        },
+        "require_candidate_sha": {
+          "const": true
+        },
+        "require_tree_sha": {
+          "const": true
+        },
+        "require_changed_paths": {
+          "const": true
+        },
+        "allowed_paths": {
+          "type": "array",
+          "maxItems": 4096,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/repo_path"
+          }
+        }
+      }
+    },
+    "commands": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": {
+        "$ref": "#/$defs/command"
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "logs_required",
+        "artifacts_required",
+        "digest_requirements"
+      ],
+      "properties": {
+        "logs_required": {
+          "const": true
+        },
+        "artifacts_required": {
+          "const": true
+        },
+        "digest_requirements": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/$defs/digest_requirement"
+          }
+        }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "environment_digest_required",
+        "toolchain_digest_required",
+        "digest_algorithm"
+      ],
+      "properties": {
+        "environment_digest_required": {
+          "const": true
+        },
+        "toolchain_digest_required": {
+          "const": true
+        },
+        "digest_algorithm": {
+          "$ref": "#/$defs/digest_algorithm"
+        }
+      }
+    },
+    "freshness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_age_seconds",
+        "expiry_required",
+        "supersession_required",
+        "revocation_required"
+      ],
+      "properties": {
+        "max_age_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 31536000
+        },
+        "expiry_required": {
+          "const": true
+        },
+        "supersession_required": {
+          "const": true
+        },
+        "revocation_required": {
+          "const": true
+        }
+      }
+    },
+    "attestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required",
+        "allowed_algorithms",
+        "allowed_key_ids"
+      ],
+      "properties": {
+        "required": {
+          "type": "boolean"
+        },
+        "allowed_algorithms": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "ed25519",
+              "ecdsa-p256",
+              "rsa-pss-sha256",
+              "sigstore"
+            ]
+          }
+        },
+        "allowed_key_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/id"
+          }
+        }
+      }
+    },
+    "required_proof_classes": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/proof_class"
+      }
+    },
+    "non_claims": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/bounded_string"
+      }
+    },
+    "authorization_boundary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "merge_authorization_external"
+      ],
+      "properties": {
+        "merge_authorization_external": {
+          "const": true
+        },
+        "notes": {
+          "$ref": "#/$defs/bounded_string"
+        }
+      }
+    }
+  }
+}
