@@ -221,6 +221,29 @@ def test_missing_timestamp() -> None:
     assert reason == "missing_timestamp"
 
 
+def test_expires_one_nanosecond_before_completed_fails() -> None:
+    receipt = valid_receipt()
+    completed = receipt["completed_at"].removesuffix("Z")
+    receipt["completed_at"] = f"{completed}.000000001Z"
+    receipt["expires_at"] = f"{completed}.000000000Z"
+    is_fresh, reason = validate_receipt_freshness(receipt, max_age_seconds=3600)
+    assert is_fresh is False
+    assert reason == "expires_at_before_completed_at"
+    eligible, eligibility_reason = determine_merge_eligibility(receipt, valid_policy())
+    assert eligible is False
+    assert eligibility_reason == "freshness_failed: expires_at_before_completed_at"
+
+
+def test_started_one_nanosecond_after_completed_fails() -> None:
+    receipt = valid_receipt()
+    completed = receipt["completed_at"].removesuffix("Z")
+    receipt["started_at"] = f"{completed}.000000001Z"
+    receipt["completed_at"] = f"{completed}.000000000Z"
+    is_fresh, reason = validate_receipt_freshness(receipt, max_age_seconds=3600)
+    assert is_fresh is False
+    assert reason == "timestamp_ordering_invalid"
+
+
 # Test 6: Revoked receipt (by ID) -> revoked
 def test_revoked_receipt_by_id(tmp_path: Path) -> None:
     store = tmp_path / "revocation.json"
@@ -1061,6 +1084,38 @@ def test_command_after_receipt_interval_fails() -> None:
     receipt["commands_and_exit_states"][0]["started_at"] = "2099-01-01T00:00:00Z"
     receipt["commands_and_exit_states"][0]["completed_at"] = "2099-01-01T00:00:30Z"
     receipt["commands_and_exit_states"][0]["duration_ms"] = 30000
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is False
+    assert reason == "command_outside_receipt_interval: focused-tests"
+
+
+def test_command_one_nanosecond_before_receipt_interval_fails() -> None:
+    receipt = valid_receipt()
+    policy = valid_policy()
+    started = receipt["started_at"].removesuffix("Z")
+    completed = receipt["completed_at"].removesuffix("Z")
+    receipt["started_at"] = f"{started}.000000001Z"
+    receipt["completed_at"] = f"{completed}.000000001Z"
+    command = receipt["commands_and_exit_states"][0]
+    command["started_at"] = f"{started}.000000000Z"
+    command["completed_at"] = f"{completed}.000000000Z"
+    command["duration_ms"] = 30000
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is False
+    assert reason == "command_outside_receipt_interval: focused-tests"
+
+
+def test_command_one_nanosecond_after_receipt_interval_fails() -> None:
+    receipt = valid_receipt()
+    policy = valid_policy()
+    started = receipt["started_at"].removesuffix("Z")
+    completed = receipt["completed_at"].removesuffix("Z")
+    receipt["started_at"] = f"{started}.000000000Z"
+    receipt["completed_at"] = f"{completed}.000000000Z"
+    command = receipt["commands_and_exit_states"][0]
+    command["started_at"] = f"{started}.000000001Z"
+    command["completed_at"] = f"{completed}.000000001Z"
+    command["duration_ms"] = 30000
     eligible, reason = determine_merge_eligibility(receipt, policy)
     assert eligible is False
     assert reason == "command_outside_receipt_interval: focused-tests"
