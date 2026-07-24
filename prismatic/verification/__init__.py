@@ -22,6 +22,12 @@ from .source_acquisition import (
     validate_acquired_source,
 )
 
+from .receipt_validator import (
+    check_revocation,
+    determine_merge_eligibility,
+    validate_receipt_freshness,
+)
+
 __all__ = [
     "CLEAN_ROOM_RUNNER_V1_OK",
     "ArtifactEvidence",
@@ -40,4 +46,7 @@ __all__ = [
     "SourceAcquisitionRequest",
     "acquire_source",
     "validate_acquired_source",
+    "check_revocation",
+    "determine_merge_eligibility",
+    "validate_receipt_freshness",
 ]
