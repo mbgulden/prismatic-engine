@@ -5,11 +5,11 @@
 The Provider-Neutral Receipt Validation module (`prismatic.verification.receipt_validator`) provides an independent, fail-closed verification layer sitting between clean-room execution outputs and merge decisions.
 
 It enforces five critical dimensions of receipt integrity:
-1. **Freshness Validation**: Ensures receipts were generated within configurable time bounds and rejects future-dated timestamps outside clock-skew tolerance.
-2. **Revocation Checking**: Verifies receipt IDs and evidence SHAs against atomic revocation stores.
-3. **Merge Eligibility**: Combines freshness, revocation status, required evidence fields, and policy constraints into a conclusive merge decision.
-4. **Evidence Binding**: Binds candidate, base, and tree SHAs against policy expectations and verifies SHA256/SHA512 evidence log digests against files on disk.
-5. **Fail-Closed Semantics**: Rejects malformed timestamps, unknown revocation states, missing required fields, non-zero command exit codes, and invalid digest formats.
+1. **Schema Validation**: Strictly validates both receipt and policy documents against their canonical JSON Schema (Draft 2020-12) contracts (`provider-neutral-verification-receipt.schema.json` and `provider-neutral-verification-policy.schema.json`).
+2. **Freshness & Expiry**: Verifies receipt completion timestamps, ordering (`started_at` <= `completed_at` <= `expires_at`), clock-skew limits (<=60s), max age bounds, and non-expired status (`expires_at` > `now_utc`).
+3. **Revocation Checking**: Verifies receipt IDs, commit SHAs, and evidence log/artifact digests against atomic revocation stores. Provided-but-missing revocation stores, symlinks, or non-regular files fail closed.
+4. **Merge Eligibility & Policy Binding**: Validates repository ID, policy ID/version, approved backend ID/class, approved verifier identity, source requirements, command execution states/exit codes/argv/proof-classes, and producer/verifier separation.
+5. **Fail-Closed Semantics**: Rejects malformed timestamps, unknown revocation states, missing required fields, non-zero command exit codes, invalid digest formats, path escapes, symlinks, missing evidence files, or unsupported overlay keys without raising unhandled exceptions.
 
 ## Public API
 
@@ -23,40 +23,35 @@ from prismatic.verification import (
 
 ### `validate_receipt_freshness(receipt: dict, *, max_age_seconds: int = 3600) -> tuple[bool, str | None]`
 
-Evaluates the completion timestamp (`finished_at` or `completed_at`) of a receipt dict:
-- **`max_age_seconds`**: Maximum allowable age in seconds (default: 3600s / 1 hour).
-- **Clock Skew Tolerance**: Future timestamps are rejected unless within ≤60 seconds of current UTC time.
+Evaluates completion timestamp (`completed_at` or `finished_at`), start timestamp (`started_at`), and expiration timestamp (`expires_at`):
+- **`max_age_seconds`**: Maximum allowable age in seconds (default: 3600s / 1 hour). Must be positive integer <= 31536000.
+- **Clock Skew Tolerance**: Future timestamps are rejected unless within <=60 seconds of current UTC time.
+- **Expiration**: `expires_at` must be present, parseable, and not already expired (`expires_at` > `now_utc`).
+- **Timestamp Coherence**: `started_at` <= `completed_at` <= `expires_at`.
 - **Returns**: `(is_fresh, reason_if_stale)`
-  - Reasons include `"missing_timestamp"`, `"malformed_timestamp"`, `"timestamp_future"`, `"receipt_stale"`.
 
-### `check_revocation(receipt: dict, *, revocation_store: Path | None = None) -> tuple[bool, str | None]`
+### `check_revocation(receipt: dict, *, revocation_store: Path | str | None = None) -> tuple[bool, str | None]`
 
 Checks whether a receipt has been revoked:
-- **`revocation_store`**: Optional `Path` to a JSON file containing revoked IDs, candidate SHAs, or digests.
-- If no store path is provided or file is absent, defaults to `"no_revocations"`.
-- Atomic read guarantees full file parsing.
-- Checks top-level `revocation_status` (`"revoked"` → blocked).
+- Top-level `revocation_status` must equal `"active"`. Any other status (`"revoked"`, `"unknown"`) fails closed.
+- **`revocation_store`**: Optional path to a JSON file containing revoked IDs or SHAs/digests.
+  - If explicitly supplied, the path must exist, be a regular file (not a symlink), and contain valid JSON.
+  - Provided-but-missing store files, symlinks, unreadable files, or malformed content return a fail-closed decision (`not_revoked=False`).
 - **Returns**: `(not_revoked, reason_if_revoked)`
-  - Reasons include `"receipt_revoked_by_status"`, `"receipt_revoked_by_id_<id>"`, `"receipt_revoked_by_sha_<sha>"`.
 
-### `determine_merge_eligibility(receipt: dict, policy: dict, *, revocation_store: Path | None = None, evidence_base_path: Path | None = None) -> tuple[bool, str | None]`
+### `determine_merge_eligibility(receipt: dict, policy: dict, *, revocation_store: Path | str | None = None, evidence_base_path: Path | str | None = None) -> tuple[bool, str | None]`
 
 Synthesizes policy rules and receipt evidence into an authoritative merge decision:
-- Checks schema integrity & fail-closed invariants.
-- Validates git commit SHAs (`candidate_sha`, `base_sha`, `tree_sha`) and changed paths.
-- Verifies zero exit code across all executed commands (`commands_and_exit_states`).
-- Enforces freshness and revocation status.
-- Enforces producer/verifier separation (`require_producer_verifier_separation`).
-- Verifies required/approved `proof_class` values.
-- Validates evidence digests and compares file content digests against disk references when `evidence_base_path` is specified.
+- Schema validation against canonical Draft 2020-12 schemas for both receipt and policy.
+- Runtime binding overlay validation: overlay keys in policy `bindings` are restricted to `expected_candidate_sha`, `expected_base_sha`, `expected_tree_sha`, and `allow_empty_changed_paths`. Any unknown overlay keys return `schema_validation_failed`.
+- Verifies policy status (`active` required) and matching `policy_id`, `policy_version`, and `repository_id`.
+- Enforces approved source kind/provider, approved backend ID/class, approved verifier identity, and producer/verifier separation.
+- Verifies receipt decision `status == "pass"` and `merge_eligible is True`.
+- Command verification: unique command IDs, required command presence, exact `argv` and `proof_class` matching, `execution_state == "executed"`, `exit_state == "completed"`, and `exit_code == 0`.
+- Enforces required and approved `proof_classes` (uses `proof_classes` list; singular `proof_class` fallback is removed).
+- Enforces evidence/environment/attestation requirements, including permitted digest algorithm (`sha256`/`sha512`) and attestation key/algorithm rules.
+- Evidence path safety: when `evidence_base_path` is supplied, every evidence reference must be a safe relative path contained under `evidence_base_path`. Absolute paths, `..` traversal, symlinks, non-regular files, missing files, or content digest mismatches return `eligible=False`.
 - **Returns**: `(eligible, reason_if_blocked)`
-
-## Contract & Invariants
-
-- **Fail-Closed**: Any missing, malformed, or ambiguous field results in immediate rejection (`eligible=False`).
-- **Zero Exit Code**: All commands in `commands_and_exit_states` must have `execution_state="executed"`, `exit_state="completed"`, and `exit_code=0`.
-- **Producer / Verifier Separation**: When required by policy, `producer_id` and `verifier_id` must both be present and distinct.
-- **Digest Validity**: All digests must follow standard `sha256:<hex>` or `sha512:<hex>` formats; all-zero digests are rejected.
 
 ## Usage Example
 

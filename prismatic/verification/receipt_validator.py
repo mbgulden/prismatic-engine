@@ -500,6 +500,8 @@ def determine_merge_eligibility(
             cid = r_cmd.get("command_id")
             if not cid or cid in r_cmd_map:
                 return False, f"duplicate_receipt_command_id: {cid}"
+            if cid not in policy_cmd_ids:
+                return False, f"unapproved_receipt_command: {cid}"
             r_cmd_map[cid] = r_cmd
 
             if r_cmd.get("execution_state") != "executed":
@@ -513,9 +515,9 @@ def determine_merge_eligibility(
             if isinstance(p_cmd, dict):
                 cid = p_cmd.get("id")
                 is_req = p_cmd.get("required", True)
-                if is_req:
-                    if cid not in r_cmd_map:
-                        return False, f"missing_required_command: {cid}"
+                if is_req and cid not in r_cmd_map:
+                    return False, f"missing_required_command: {cid}"
+                if cid in r_cmd_map:
                     r_cmd = r_cmd_map[cid]
                     if r_cmd.get("argv") != p_cmd.get("argv"):
                         return False, f"command_argv_mismatch: {cid}"
@@ -578,6 +580,164 @@ def determine_merge_eligibility(
                 return False, "invalid_environment_digest"
             if not e_dig.startswith(f"{permitted_algo}:"):
                 return False, "unpermitted_digest_algorithm"
+
+        # Check evidence.digest_requirements entries
+        digest_reqs = evidence_policy.get("digest_requirements")
+        if digest_reqs is not None:
+            if not isinstance(digest_reqs, list):
+                return (
+                    False,
+                    "schema_validation_failed: digest_requirements must be a list",
+                )
+
+            # Check for contradictory policy requirements first
+            seen_reqs: dict[tuple[str, str | None], str] = {}
+            for req in digest_reqs:
+                if not isinstance(req, dict):
+                    return (
+                        False,
+                        "schema_validation_failed: malformed digest_requirement",
+                    )
+                kind = req.get("kind")
+                algo = req.get("algorithm")
+                name = req.get("name")
+
+                if kind not in (
+                    "log",
+                    "artifact",
+                    "source_acquisition",
+                    "environment",
+                    "toolchain",
+                ):
+                    return False, f"unsupported_digest_requirement_kind: {kind}"
+                if algo not in ("sha256", "sha512"):
+                    return False, f"unsupported_digest_requirement_algorithm: {algo}"
+
+                key = (kind, name)
+                if key in seen_reqs and seen_reqs[key] != algo:
+                    return False, "contradictory_digest_requirements"
+                seen_reqs[key] = algo
+
+                if (
+                    kind in ("environment", "source_acquisition")
+                    and permitted_algo
+                    and algo != permitted_algo
+                ):
+                    return False, "contradictory_digest_requirements"
+
+            r_logs_list = receipt.get("logs_and_digests") or []
+            if not isinstance(r_logs_list, list):
+                r_logs_list = []
+            r_arts_list = receipt.get("artifacts_and_digests") or []
+            if not isinstance(r_arts_list, list):
+                r_arts_list = []
+
+            for req in digest_reqs:
+                kind = req.get("kind")
+                algo = req.get("algorithm")
+                is_req = req.get("required", False)
+                req_name = req.get("name")
+
+                if kind == "log":
+                    if req_name:
+                        matching_items = [
+                            item
+                            for item in r_logs_list
+                            if isinstance(item, dict)
+                            and (
+                                item.get("reference") == req_name
+                                or Path(str(item.get("reference"))).name == req_name
+                            )
+                        ]
+                    else:
+                        matching_items = [
+                            item for item in r_logs_list if isinstance(item, dict)
+                        ]
+
+                    if is_req and len(matching_items) == 0:
+                        return False, "missing_required_digest_evidence: log"
+
+                    for item in matching_items:
+                        d_val = item.get("digest")
+                        if isinstance(d_val, str) and not d_val.startswith(f"{algo}:"):
+                            return False, "digest_algorithm_mismatch: log"
+
+                elif kind == "artifact":
+                    if req_name:
+                        matching_items = [
+                            item
+                            for item in r_arts_list
+                            if isinstance(item, dict)
+                            and (
+                                item.get("reference") == req_name
+                                or Path(str(item.get("reference"))).name == req_name
+                            )
+                        ]
+                    else:
+                        matching_items = [
+                            item for item in r_arts_list if isinstance(item, dict)
+                        ]
+
+                    if is_req and len(matching_items) == 0:
+                        return False, "missing_required_digest_evidence: artifact"
+
+                    for item in matching_items:
+                        d_val = item.get("digest")
+                        if isinstance(d_val, str) and not d_val.startswith(f"{algo}:"):
+                            return False, "digest_algorithm_mismatch: artifact"
+
+                elif kind == "source_acquisition":
+                    s_dig = receipt.get("source_acquisition_digest")
+                    if is_req:
+                        if (
+                            not s_dig
+                            or not isinstance(s_dig, str)
+                            or not DIGEST_PATTERN.match(s_dig)
+                            or s_dig in (ALL_ZERO_SHA256, ALL_ZERO_SHA512)
+                        ):
+                            return False, "invalid_source_acquisition_digest"
+                    if s_dig and isinstance(s_dig, str):
+                        if not s_dig.startswith(f"{algo}:"):
+                            return (
+                                False,
+                                "digest_algorithm_mismatch: source_acquisition",
+                            )
+
+                elif kind == "environment":
+                    e_dig = receipt.get("environment_digest")
+                    if is_req:
+                        if (
+                            not e_dig
+                            or not isinstance(e_dig, str)
+                            or not DIGEST_PATTERN.match(e_dig)
+                            or e_dig in (ALL_ZERO_SHA256, ALL_ZERO_SHA512)
+                        ):
+                            return False, "invalid_environment_digest"
+                    if e_dig and isinstance(e_dig, str):
+                        if not e_dig.startswith(f"{algo}:"):
+                            return False, "digest_algorithm_mismatch: environment"
+
+                elif kind == "toolchain":
+                    toolchain_items = []
+                    for items in (r_arts_list, r_logs_list):
+                        for item in items:
+                            if isinstance(item, dict):
+                                ref = item.get("reference")
+                                if isinstance(ref, str):
+                                    if req_name and (
+                                        ref == req_name or Path(ref).name == req_name
+                                    ):
+                                        toolchain_items.append(item)
+                                    elif not req_name and ("toolchain" in ref.lower()):
+                                        toolchain_items.append(item)
+
+                    if is_req and len(toolchain_items) == 0:
+                        return False, "unprovable_toolchain_digest_requirement"
+
+                    for item in toolchain_items:
+                        d_val = item.get("digest")
+                        if isinstance(d_val, str) and not d_val.startswith(f"{algo}:"):
+                            return False, "digest_algorithm_mismatch: toolchain"
 
         # Collect evidence items
         all_evidence_items: list[dict[str, Any]] = []
