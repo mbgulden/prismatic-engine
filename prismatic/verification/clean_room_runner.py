@@ -160,6 +160,12 @@ def _validate_policy(
         or copied["repository"]["repository_id"] != source.repository_id
     ):
         _fail("policy_binding_invalid")
+    evidence = copied["evidence"]
+    # Schema 1.0 requires artifacts but exposes no authoritative artifact path or
+    # named selection contract. A digest-requirement name is metadata, not a path.
+    # Refuse before executing rather than synthesizing or silently omitting proof.
+    if evidence["artifacts_required"] is True:
+        _fail("BLOCKED_CONTRACT", detail="artifact_names_not_expressible_in_schema_1_0")
     commands = copied["commands"]
     if not isinstance(commands, list) or not commands:
         _fail("invalid_commands")
@@ -184,6 +190,57 @@ def _validate_limits(limits: RunnerLimits) -> None:
         for name in limits.__dataclass_fields__
     ):
         _fail("invalid_limits")
+
+
+class _SecretDetector:
+    """Streaming credential detector which retains syntax only, never values."""
+
+    _prefix = re.compile(
+        rb"(?i)(?:api[_-]?key|token|secret|password|authorization|bearer|credential)\s*[:=]\s*"
+    )
+    _fixed = re.compile(rb"(?i)(?:gh[pousr]_|sk-|AKIA)[A-Za-z0-9_-]{16,}")
+
+    def __init__(self) -> None:
+        self._syntax_tail = b""
+        self._value_bytes = 0
+        self._awaiting_value = False
+
+    def feed(self, chunk: bytes) -> bool:
+        """Return true on a credential without retaining its matched value."""
+        if self._awaiting_value:
+            for byte in chunk:
+                if chr(byte).isspace():
+                    self._awaiting_value = False
+                    self._value_bytes = 0
+                    break
+                self._value_bytes += 1
+                if self._value_bytes >= 8:
+                    return True
+            else:
+                return False
+        data = self._syntax_tail + chunk
+        if self._fixed.search(data):
+            return True
+        match = self._prefix.search(data)
+        if match:
+            # Do not preserve the candidate value: only count non-whitespace bytes.
+            value = data[match.end() :]
+            count = 0
+            for byte in value:
+                if chr(byte).isspace():
+                    break
+                count += 1
+                if count >= 8:
+                    return True
+            # The value may begin in a later read; retain only the parser state.
+            self._awaiting_value = True
+            self._value_bytes = count
+            self._syntax_tail = b""
+            return False
+        # The tail contains only syntax candidates, is deliberately bounded, and is
+        # kept independently for stdout and stderr.
+        self._syntax_tail = data[-128:]
+        return False
 
 
 def _private_dir(path: Path) -> Path:
@@ -296,14 +353,16 @@ def _execute(
     deadline: float,
     limits: RunnerLimits,
 ) -> CommandExecution:
+    """Execute with bounded, private file streaming; never buffer command output."""
     ident, argv = command["id"], command["argv"]
     assert isinstance(ident, str) and isinstance(argv, list)
     cwd = _safe_cwd(checkout, command.get("working_directory"))
     tool = _toolchain(argv[0])
     _toolchain_unchanged(tool)
-    remaining = deadline - time.monotonic()
-    timeout = min(float(command["timeout_seconds"]), remaining)
-    if timeout <= 0:
+    command_deadline = min(
+        deadline, time.monotonic() + float(command["timeout_seconds"])
+    )
+    if command_deadline <= time.monotonic():
         _fail("total_timeout", ident)
     stdout_path, stderr_path = logs / (ident + ".stdout"), logs / (ident + ".stderr")
     started = _now()
@@ -322,54 +381,61 @@ def _execute(
         _fail("spawn_failed", ident)
     assert proc.stdout and proc.stderr
     selector = selectors.DefaultSelector()
-    selector.register(proc.stdout, selectors.EVENT_READ, "out")
-    selector.register(proc.stderr, selectors.EVENT_READ, "err")
-    streams = {"out": bytearray(), "err": bytearray()}
+    output = {"out": stdout_path, "err": stderr_path}
+    fds = {
+        name: os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        for name, path in output.items()
+    }
+    sizes = {"out": 0, "err": 0}
+    hashes = {"out": hashlib.sha256(), "err": hashlib.sha256()}
+    detectors = {"out": _SecretDetector(), "err": _SecretDetector()}
     failed: str | None = None
+    code: int | None = None
     try:
+        selector.register(proc.stdout, selectors.EVENT_READ, "out")
+        selector.register(proc.stderr, selectors.EVENT_READ, "err")
         while selector.get_map():
-            if time.monotonic() >= deadline or time.monotonic() >= (
-                deadline - remaining + timeout
-            ):
+            if time.monotonic() >= command_deadline:
                 failed = "command_timeout"
                 break
             for key, _ in selector.select(
-                timeout=min(0.05, max(0, deadline - time.monotonic()))
+                timeout=min(0.05, command_deadline - time.monotonic())
             ):
                 chunk = os.read(key.fileobj.fileno(), 65536)
                 if not chunk:
                     selector.unregister(key.fileobj)
+                    key.fileobj.close()
                     continue
-                streams[key.data].extend(chunk)
+                name = str(key.data)
                 if (
-                    len(streams["out"]) > limits.max_stdout_bytes
-                    or len(streams["err"]) > limits.max_stderr_bytes
-                    or len(streams["out"]) + len(streams["err"])
+                    sizes[name] + len(chunk) > getattr(limits, f"max_std{name}_bytes")
+                    or sizes["out"] + sizes["err"] + len(chunk)
                     > limits.max_total_output_bytes
                 ):
                     failed = "output_overflow"
                     break
-                if _SECRET.search(chunk.decode("latin1")):
+                if detectors[name].feed(chunk):
                     failed = "secret_output"
                     break
+                os.write(fds[name], chunk)
+                hashes[name].update(chunk)
+                sizes[name] += len(chunk)
             if failed:
                 break
         if failed:
             _terminate(proc, limits.terminate_grace_seconds)
             _fail(failed, ident)
-        code = proc.wait(timeout=max(0.1, deadline - time.monotonic()))
+        code = proc.wait(timeout=max(0.1, command_deadline - time.monotonic()))
     except subprocess.TimeoutExpired:
         _terminate(proc, limits.terminate_grace_seconds)
         _fail("command_timeout", ident)
     finally:
         selector.close()
+        for fd in fds.values():
+            os.close(fd)
     if code != 0:
         _fail("command_failed", ident)
     _toolchain_unchanged(tool)
-    for path, data in ((stdout_path, streams["out"]), (stderr_path, streams["err"])):
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(data)
     return CommandExecution(
         ident,
         tuple(argv),
@@ -380,8 +446,8 @@ def _execute(
         _now(),
         stdout_path,
         stderr_path,
-        _sha(bytes(streams["out"])),
-        _sha(bytes(streams["err"])),
+        EvidenceDigest("sha256", "sha256:" + hashes["out"].hexdigest(), sizes["out"]),
+        EvidenceDigest("sha256", "sha256:" + hashes["err"].hexdigest(), sizes["err"]),
         tool,
     )
 

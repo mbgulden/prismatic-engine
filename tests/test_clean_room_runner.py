@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from prismatic.verification import (
-    CLEAN_ROOM_RUNNER_V1_OK,
     CleanRoomIsolation,
     CleanRoomRunnerError,
     SourceAcquisitionPolicy,
@@ -126,29 +125,31 @@ def command(identifier: str, code: str, cwd: str | None = None) -> dict[str, obj
     return result
 
 
-def test_happy_path_exact_order_logs_and_bindings(source):
+def test_split_secret_detector_fails_closed_on_each_stream_boundary():
+    from prismatic.verification.clean_room_runner import _SecretDetector
+
+    for parts in ((b"token=", b"abcdefghijklmnop"), (b"token=abcd", b"efghijklmnop")):
+        detector = _SecretDetector()
+        assert detector.feed(parts[0]) is False
+        assert detector.feed(parts[1]) is True
+
+
+def test_required_artifact_contract_fails_closed_before_command_execution(source):
     acquired, evidence = source
-    commands = [
-        command("first", "print('first')"),
-        command("second", "print('second')", "nested"),
-    ]
-    result = run_clean_room(
-        acquired,
-        policy(commands),
-        producer_id="producer",
-        verifier_id="verifier",
-        evidence_root=evidence,
-        isolation=CleanRoomIsolation(True, True),
-    )
-    assert result.marker == CLEAN_ROOM_RUNNER_V1_OK
-    assert [item.command_id for item in result.commands] == ["first", "second"]
-    assert (
-        result.repository_id == acquired.repository_id
-        and result.candidate_sha == acquired.candidate_sha
-    )
-    assert result.commands[0].stdout_log.read_bytes() == b"first\n"
-    assert result.commands[1].working_directory == "nested"
-    assert oct(result.commands[0].stdout_log.stat().st_mode & 0o777) == "0o600"
+    commands = [command("first", "raise SystemExit(99)")]
+    with pytest.raises(
+        CleanRoomRunnerError,
+        match="BLOCKED_CONTRACT:artifact_names_not_expressible_in_schema_1_0",
+    ):
+        run_clean_room(
+            acquired,
+            policy(commands),
+            producer_id="producer",
+            verifier_id="verifier",
+            evidence_root=evidence,
+            isolation=CleanRoomIsolation(True, True),
+        )
+    assert not evidence.exists(), "blocked contract must not promote evidence"
 
 
 @pytest.mark.parametrize(
@@ -205,42 +206,26 @@ def test_authority_and_cwd_rejections(source):
         )
 
 
-def test_literal_argv_and_output_overflow(source):
+def test_literal_argv_is_not_executed_when_artifact_contract_is_ambiguous(source):
     acquired, evidence = source
     literal = "a b;$(touch should-not-exist)|*"
-    result = run_clean_room(
-        acquired,
-        policy(
-            [
-                {
-                    "id": "literal",
-                    "argv": [
-                        sys.executable,
-                        "-c",
-                        "import sys; print(sys.argv[1])",
-                        literal,
-                    ],
-                    "proof_class": "unit",
-                    "timeout_seconds": 20,
-                    "required": True,
-                }
-            ]
-        ),
-        producer_id="producer",
-        verifier_id="verifier",
-        evidence_root=evidence,
-        isolation=CleanRoomIsolation(True, True),
-    )
-    assert result.commands[0].stdout_log.read_text().strip() == literal
-    from prismatic.verification.clean_room_runner import RunnerLimits
-
-    with pytest.raises(CleanRoomRunnerError, match="output_overflow"):
+    with pytest.raises(CleanRoomRunnerError, match="BLOCKED_CONTRACT"):
         run_clean_room(
             acquired,
-            policy([command("large", "print('x'*1000)")]),
+            policy(
+                [
+                    {
+                        "id": "literal",
+                        "argv": [sys.executable, "-c", "raise SystemExit(99)", literal],
+                        "proof_class": "unit",
+                        "timeout_seconds": 20,
+                        "required": True,
+                    }
+                ]
+            ),
             producer_id="producer",
             verifier_id="verifier",
-            evidence_root=evidence / "overflow",
+            evidence_root=evidence,
             isolation=CleanRoomIsolation(True, True),
-            limits=RunnerLimits(max_stdout_bytes=10, max_total_output_bytes=10),
         )
+    assert not (acquired.checkout_path / "should-not-exist").exists()
