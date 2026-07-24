@@ -225,6 +225,39 @@ def test_endpoint_reports_idempotency_and_task_conflicts(api_fixture) -> None:
     assert conflict.json()["error"] == "task_already_admitted"
 
 
+def test_dirty_tracked_worktree_fails_closed(api_fixture) -> None:
+    client, payload, tmp_path = api_fixture
+    task = tmp_path / "worktree" / payload["task_file"]
+    task.write_text("mutated tracked task\n")
+    payload["task_file_sha256"] = hashlib.sha256(task.read_bytes()).hexdigest()
+    response = client.post(
+        "/api/dashboard/task-admissions",
+        content=json.dumps(payload),
+        headers=_headers(),
+    )
+    assert response.status_code == 422
+    assert response.json()["error"] == "worktree_dirty"
+
+
+def test_readback_survives_missing_policy_after_admission(
+    api_fixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, payload, _ = api_fixture
+    created = client.post(
+        "/api/dashboard/task-admissions",
+        content=json.dumps(payload),
+        headers=_headers(),
+    )
+    assert created.status_code == 201
+    monkeypatch.delenv("PRISMATIC_TASK_ADMISSION_POLICY_FILE")
+    auth = {"Authorization": f"Bearer {OPERATOR_TOKEN}"}
+    assert client.get("/api/dashboard/task-admissions", headers=auth).status_code == 200
+    assert (
+        client.get("/api/dashboard/task-admissions/GRO-4210", headers=auth).status_code
+        == 200
+    )
+
+
 def test_missing_policy_fails_closed(
     api_fixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:

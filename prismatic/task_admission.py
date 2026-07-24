@@ -7,11 +7,13 @@ the legacy dispatcher.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import hmac
 import json
 import os
 import sqlite3
+import stat
 import subprocess
 import threading
 from dataclasses import dataclass
@@ -25,6 +27,7 @@ _SCHEMA_PATH = Path(__file__).with_name("schemas") / "task-admission.schema.json
 _POLICY_ENV = "PRISMATIC_TASK_ADMISSION_POLICY_FILE"
 _DB_ENV = "PRISMATIC_BUS_DB"
 _MAX_BODY_BYTES = 32 * 1024
+_MAX_TASK_FILE_BYTES = 1024 * 1024
 _lock = threading.Lock()
 _setup_lock = threading.Lock()
 
@@ -135,9 +138,20 @@ def _resolve_db_path() -> Path:
 
 
 def _default_git_runner(worktree: Path, argument: str) -> str:
+    if argument == "STATUS":
+        command = [
+            "git",
+            "-C",
+            str(worktree),
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=no",
+        ]
+    else:
+        command = ["git", "-C", str(worktree), "rev-parse", "--verify", argument]
     try:
         completed = subprocess.run(
-            ["git", "-C", str(worktree), "rev-parse", "--verify", argument],
+            command,
             check=True,
             capture_output=True,
             text=True,
@@ -146,7 +160,10 @@ def _default_git_runner(worktree: Path, argument: str) -> str:
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise TaskAdmissionError("worktree_revision_unavailable", 422) from exc
-    value = completed.stdout.strip().lower()
+    value = completed.stdout.strip()
+    if argument == "STATUS":
+        return value
+    value = value.lower()
     if len(value) != 40 or any(char not in "0123456789abcdef" for char in value):
         raise TaskAdmissionError("worktree_revision_invalid", 422)
     return value
@@ -164,7 +181,9 @@ def _parse_created_at(value: str, *, now: datetime, max_age_seconds: int) -> Non
         raise TaskAdmissionError("created_at_stale", 422)
 
 
-def _validate_relative_task_file(worktree: Path, relative: str) -> Path:
+def _hash_task_file_secure(worktree: Path, relative: str) -> str:
+    """Hash a bounded regular file through descriptor-relative no-follow opens."""
+
     pure = PurePosixPath(relative)
     if (
         pure.is_absolute()
@@ -172,20 +191,118 @@ def _validate_relative_task_file(worktree: Path, relative: str) -> Path:
         or any(part in {"", ".", ".."} for part in pure.parts)
     ):
         raise TaskAdmissionError("task_file_invalid", 422)
-    candidate = worktree.joinpath(*pure.parts)
-    current = worktree
-    for part in pure.parts:
-        current = current / part
-        if current.is_symlink():
-            raise TaskAdmissionError("task_file_symlink", 422)
+
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW
+    file_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+    descriptors: list[int] = []
+    file_descriptor: int | None = None
     try:
-        resolved = candidate.resolve(strict=True)
-        resolved.relative_to(worktree)
-    except (OSError, ValueError) as exc:
-        raise TaskAdmissionError("task_file_outside_worktree", 422) from exc
-    if not resolved.is_file() or resolved.is_symlink():
-        raise TaskAdmissionError("task_file_not_regular", 422)
-    return resolved
+        current = os.open(worktree, directory_flags)
+        descriptors.append(current)
+        for component in pure.parts[:-1]:
+            current = os.open(component, directory_flags, dir_fd=current)
+            descriptors.append(current)
+        file_descriptor = os.open(pure.parts[-1], file_flags, dir_fd=current)
+        before = os.fstat(file_descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise TaskAdmissionError("task_file_not_regular", 422)
+        if before.st_size > _MAX_TASK_FILE_BYTES:
+            raise TaskAdmissionError("task_file_too_large", 422)
+
+        digest = hashlib.sha256()
+        total = 0
+        while True:
+            chunk = os.read(file_descriptor, 64 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > _MAX_TASK_FILE_BYTES:
+                raise TaskAdmissionError("task_file_too_large", 422)
+            digest.update(chunk)
+        after = os.fstat(file_descriptor)
+        identity_before = (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        )
+        identity_after = (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        )
+        if identity_before != identity_after:
+            raise TaskAdmissionError("task_file_changed_during_read", 409)
+        return digest.hexdigest()
+    except TaskAdmissionError:
+        raise
+    except OSError as exc:
+        code = (
+            "task_file_symlink" if exc.errno == errno.ELOOP else "task_file_unavailable"
+        )
+        raise TaskAdmissionError(code, 422) from exc
+    finally:
+        if file_descriptor is not None:
+            os.close(file_descriptor)
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+
+
+def _assert_database_family_private(path: Path) -> None:
+    for candidate in (path, Path(f"{path}-wal"), Path(f"{path}-shm")):
+        try:
+            metadata = candidate.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise TaskAdmissionError("admission_database_unavailable", 503) from exc
+        if (
+            stat.S_ISLNK(metadata.st_mode)
+            or not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.geteuid()
+            or metadata.st_mode & 0o077
+        ):
+            raise TaskAdmissionError("admission_database_unsafe", 503)
+
+
+def _prepare_database_file(path: Path) -> Path:
+    """Create or validate an owner-only, non-symlink SQLite database file."""
+
+    try:
+        parent = path.parent.resolve(strict=True)
+    except OSError as exc:
+        raise TaskAdmissionError("admission_database_unavailable", 503) from exc
+    canonical = parent / path.name
+    if not path.is_absolute() or str(path) != str(canonical):
+        raise TaskAdmissionError("admission_database_unsafe", 503)
+    try:
+        descriptor = os.open(
+            canonical,
+            os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC | os.O_NOFOLLOW,
+            0o600,
+        )
+    except FileExistsError:
+        descriptor = None
+    except OSError as exc:
+        raise TaskAdmissionError("admission_database_unavailable", 503) from exc
+    else:
+        os.close(descriptor)
+
+    try:
+        metadata = canonical.lstat()
+    except OSError as exc:
+        raise TaskAdmissionError("admission_database_unavailable", 503) from exc
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.geteuid()
+        or metadata.st_mode & 0o077
+    ):
+        raise TaskAdmissionError("admission_database_unsafe", 503)
+    return canonical
 
 
 class TaskAdmissionStore:
@@ -199,13 +316,10 @@ class TaskAdmissionStore:
         git_runner: Callable[[Path, str], str] = _default_git_runner,
         now: Callable[[], datetime] | None = None,
     ) -> None:
-        self.db_path = db_path or _resolve_db_path()
-        configured_policy = policy_path or (
+        self.db_path = _prepare_database_file(db_path or _resolve_db_path())
+        self.policy_path = policy_path or (
             Path(os.environ[_POLICY_ENV]) if os.environ.get(_POLICY_ENV) else None
         )
-        if configured_policy is None:
-            raise TaskAdmissionError("admission_policy_unavailable", 503)
-        self.policy_path = configured_policy
         self.git_runner = git_runner
         self.now = now or (lambda: datetime.now(timezone.utc))
 
@@ -256,6 +370,7 @@ class TaskAdmissionStore:
             BEFORE DELETE ON task_admission_audit BEGIN SELECT RAISE(ABORT, 'audit_immutable'); END;
             """
         )
+        _assert_database_family_private(self.db_path)
         return connection
 
     def _validated_payload(
@@ -264,6 +379,8 @@ class TaskAdmissionStore:
         _validate_schema(payload)
         if not hmac.compare_digest(header_key, payload["idempotency_key"]):
             raise TaskAdmissionError("idempotency_key_mismatch", 422)
+        if self.policy_path is None:
+            raise TaskAdmissionError("admission_policy_unavailable", 503)
         worktrees, producers, max_age = _load_policy(self.policy_path)
         if payload["producer_identity"] not in producers:
             raise TaskAdmissionError("producer_not_allowed", 422)
@@ -281,14 +398,27 @@ class TaskAdmissionStore:
         _parse_created_at(
             payload["created_at"], now=self.now(), max_age_seconds=max_age
         )
-        if self.git_runner(worktree, "HEAD") != payload["base_commit"]:
+        before_head = self.git_runner(worktree, "HEAD")
+        before_tree = self.git_runner(worktree, "HEAD^{tree}")
+        before_status = self.git_runner(worktree, "STATUS")
+        if before_head != payload["base_commit"]:
             raise TaskAdmissionError("base_commit_mismatch", 422)
-        if self.git_runner(worktree, "HEAD^{tree}") != payload["base_tree"]:
+        if before_tree != payload["base_tree"]:
             raise TaskAdmissionError("base_tree_mismatch", 422)
-        task_path = _validate_relative_task_file(worktree, payload["task_file"])
-        actual_digest = hashlib.sha256(task_path.read_bytes()).hexdigest()
+        if before_status:
+            raise TaskAdmissionError("worktree_dirty", 422)
+
+        actual_digest = _hash_task_file_secure(worktree, payload["task_file"])
         if not hmac.compare_digest(actual_digest, payload["task_file_sha256"]):
             raise TaskAdmissionError("task_file_hash_mismatch", 422)
+
+        after_snapshot = (
+            self.git_runner(worktree, "HEAD"),
+            self.git_runner(worktree, "HEAD^{tree}"),
+            self.git_runner(worktree, "STATUS"),
+        )
+        if after_snapshot != (before_head, before_tree, before_status):
+            raise TaskAdmissionError("worktree_changed_during_validation", 409)
         normalized = dict(payload)
         normalized["worktree"] = str(worktree)
         normalized["task_file"] = PurePosixPath(payload["task_file"]).as_posix()
@@ -367,6 +497,10 @@ class TaskAdmissionStore:
                         "idempotency_conflict" if same_key else "task_already_admitted"
                     )
                     raise TaskAdmissionError(code, 409)
+                revalidated, _ = self._validated_payload(normalized, header_key)
+                if not hmac.compare_digest(canonical, _canonical_json(revalidated)):
+                    connection.rollback()
+                    raise TaskAdmissionError("admission_snapshot_changed", 409)
                 connection.execute(
                     "INSERT INTO task_admissions VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (
@@ -409,6 +543,7 @@ class TaskAdmissionStore:
                 assert row is not None
                 return AdmissionResult(self._record(row), replayed=False)
             except TaskAdmissionError:
+                connection.rollback()
                 raise
             except sqlite3.Error as exc:
                 connection.rollback()

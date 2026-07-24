@@ -10,7 +10,7 @@ All three routes require a control credential carrying the `operator` role, incl
 - `GET /api/dashboard/task-admissions?limit=50`
 - `GET /api/dashboard/task-admissions/{task_id}`
 
-The POST requires an `Authorization: Bearer …` header, `Content-Type: application/json`, and an `Idempotency-Key` header exactly matching the body field.
+The POST requires an operator authorization header, `Content-Type: application/json`, and an `Idempotency-Key` header exactly matching the body field.
 
 ## Policy configuration
 
@@ -24,7 +24,7 @@ Set `PRISMATIC_TASK_ADMISSION_POLICY_FILE` to an owner-readable JSON file with m
 }
 ```
 
-The admission database uses `PRISMATIC_BUS_DB` so the ledger and outbox live beside the canonical event bus. Admission uses dedicated tables; it does not publish into the legacy generic `events` table because current consumers would mark unknown topics processed.
+The admission database uses `PRISMATIC_BUS_DB` so the ledger and outbox live beside the canonical event bus. The database, WAL, and shared-memory files must be owner-owned regular files with mode `0600`; unsafe permissions, path aliases, and symlinks fail closed. Admission uses dedicated tables; it does not publish into the legacy generic `events` table because current consumers would mark unknown topics processed. Authenticated readback remains available if the admission policy file is temporarily absent; new admissions do not.
 
 ## Durable transaction
 
@@ -44,8 +44,8 @@ Admission fails closed unless:
 - task ID, commit, tree, SHA-256, timestamp, and idempotency formats are valid;
 - writer cap is integer `1` (not boolean);
 - producer and canonical worktree are allowlisted;
-- the worktree currently resolves to the exact commit and tree;
-- the relative task file remains beneath that worktree, has no symlink component, is a regular file, and matches its SHA-256;
+- the worktree resolves to the exact commit and tree, has no tracked-file changes, and remains on the same snapshot before and after task-file hashing;
+- the relative task file is opened descriptor-relatively with no-follow semantics, is a regular file no larger than 1 MiB, remains unchanged while it is hashed in bounded chunks, and matches its SHA-256;
 - the request timestamp is within the configured freshness window;
 - authenticated actor identity comes from middleware, never the body.
 
@@ -68,4 +68,4 @@ This slice does not:
 - poll Telegram or any task manager;
 - deploy or restart the gateway.
 
-A later consumer slice must transactionally claim one outbox row, revalidate every exact binding, enforce one writer lease, and transition admission state before launch.
+A later consumer slice must transactionally claim one outbox row, revalidate every exact binding, enforce one writer lease, and record lifecycle in a separate append-only table before launch. It must not rewrite the immutable admission row.

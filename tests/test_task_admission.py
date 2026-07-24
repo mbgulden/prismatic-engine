@@ -61,6 +61,8 @@ def _fixture(tmp_path: Path):
     }
 
     def git_runner(_: Path, ref: str) -> str:
+        if ref == "STATUS":
+            return ""
         return COMMIT if ref == "HEAD" else TREE
 
     store = TaskAdmissionStore(
@@ -175,6 +177,48 @@ def test_task_file_hash_traversal_and_symlink_rejected(tmp_path: Path) -> None:
         store.admit(payload, header_key=KEY, actor="michael")
 
 
+def test_task_file_size_is_bounded(tmp_path: Path) -> None:
+    store, payload, task, _ = _fixture(tmp_path)
+    task.write_bytes(b"x" * (1024 * 1024 + 1))
+    payload["task_file_sha256"] = "0" * 64
+    with pytest.raises(TaskAdmissionError, match="task_file_too_large"):
+        store.admit(payload, header_key=KEY, actor="michael")
+
+
+def test_database_is_owner_only_and_unsafe_paths_fail_closed(tmp_path: Path) -> None:
+    store, payload, _, policy = _fixture(tmp_path)
+    store.admit(payload, header_key=KEY, actor="michael")
+    for candidate in (
+        store.db_path,
+        Path(f"{store.db_path}-wal"),
+        Path(f"{store.db_path}-shm"),
+    ):
+        if candidate.exists():
+            assert candidate.stat().st_mode & 0o777 == 0o600
+
+    insecure = tmp_path / "insecure.sqlite"
+    insecure.write_bytes(b"")
+    insecure.chmod(0o644)
+    with pytest.raises(TaskAdmissionError, match="admission_database_unsafe"):
+        TaskAdmissionStore(db_path=insecure, policy_path=policy)
+
+    target = tmp_path / "target.sqlite"
+    target.write_bytes(b"")
+    target.chmod(0o600)
+    alias = tmp_path / "alias.sqlite"
+    alias.symlink_to(target)
+    with pytest.raises(TaskAdmissionError, match="admission_database_unsafe"):
+        TaskAdmissionStore(db_path=alias, policy_path=policy)
+
+
+def test_readback_remains_available_without_admission_policy(tmp_path: Path) -> None:
+    store, payload, _, _ = _fixture(tmp_path)
+    admitted = store.admit(payload, header_key=KEY, actor="michael").record
+    reader = TaskAdmissionStore(db_path=store.db_path, policy_path=None)
+    assert reader.get("GRO-4210") == admitted
+    assert reader.list() == [admitted]
+
+
 def test_worktree_alias_and_insecure_policy_rejected(tmp_path: Path) -> None:
     store, payload, _, policy = _fixture(tmp_path)
     payload["worktree"] += "/."
@@ -227,6 +271,35 @@ def test_admission_and_audit_rows_are_immutable(tmp_path: Path) -> None:
     connection.close()
 
 
+def test_snapshot_mutation_before_commit_fails_without_partial_rows(
+    tmp_path: Path,
+) -> None:
+    store, payload, task, _ = _fixture(tmp_path)
+    head_calls = 0
+
+    def mutating_runner(_: Path, ref: str) -> str:
+        nonlocal head_calls
+        if ref == "STATUS":
+            return ""
+        if ref == "HEAD":
+            head_calls += 1
+            if head_calls == 3:
+                task.write_text("mutated before transaction commit\n")
+            return COMMIT
+        return TREE
+
+    store.git_runner = mutating_runner
+    with pytest.raises(TaskAdmissionError, match="task_file_hash_mismatch"):
+        store.admit(payload, header_key=KEY, actor="michael")
+    connection = sqlite3.connect(store.db_path)
+    assert connection.execute("SELECT count(*) FROM task_admissions").fetchone()[0] == 0
+    assert (
+        connection.execute("SELECT count(*) FROM task_admission_outbox").fetchone()[0]
+        == 0
+    )
+    connection.close()
+
+
 def test_transaction_failure_leaves_no_partial_admission(tmp_path: Path) -> None:
     store, payload, _, _ = _fixture(tmp_path)
     connection = store._connect()
@@ -260,11 +333,20 @@ def test_git_validation_runner_is_bounded_to_exact_revision_queries(
 
     def runner(worktree: Path, ref: str) -> str:
         calls.append((worktree, ref))
+        if ref == "STATUS":
+            return ""
         return COMMIT if ref == "HEAD" else TREE
 
     store.git_runner = runner
     store.admit(payload, header_key=KEY, actor="michael")
-    assert [ref for _, ref in calls] == ["HEAD", "HEAD^{tree}"]
+    assert [ref for _, ref in calls] == [
+        "HEAD",
+        "HEAD^{tree}",
+        "STATUS",
+        "HEAD",
+        "HEAD^{tree}",
+        "STATUS",
+    ] * 2
 
 
 def test_readback_contains_no_task_contents_or_credentials(tmp_path: Path) -> None:
