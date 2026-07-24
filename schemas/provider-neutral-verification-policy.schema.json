@@ -21,7 +21,8 @@
     "freshness",
     "attestation",
     "required_proof_classes",
-    "non_claims"
+    "non_claims",
+    "authorization_boundary"
   ],
   "$defs": {
     "id": {
@@ -409,7 +410,7 @@
           }
         },
         "require_producer_verifier_separation": {
-          "type": "boolean"
+          "const": true
         }
       }
     },
@@ -423,10 +424,10 @@
       ],
       "properties": {
         "required": {
-          "type": "boolean"
+          "const": true
         },
         "source_acquisition_required": {
-          "type": "boolean"
+          "const": true
         },
         "network_isolation_required": {
           "type": "boolean"
@@ -490,10 +491,10 @@
       ],
       "properties": {
         "logs_required": {
-          "type": "boolean"
+          "const": true
         },
         "artifacts_required": {
-          "type": "boolean"
+          "const": true
         },
         "digest_requirements": {
           "type": "array",
@@ -515,10 +516,10 @@
       ],
       "properties": {
         "environment_digest_required": {
-          "type": "boolean"
+          "const": true
         },
         "toolchain_digest_required": {
-          "type": "boolean"
+          "const": true
         },
         "digest_algorithm": {
           "$ref": "#/$defs/digest_algorithm"
@@ -541,13 +542,13 @@
           "maximum": 31536000
         },
         "expiry_required": {
-          "type": "boolean"
+          "const": true
         },
         "supersession_required": {
-          "type": "boolean"
+          "const": true
         },
         "revocation_required": {
-          "type": "boolean"
+          "const": true
         }
       }
     },

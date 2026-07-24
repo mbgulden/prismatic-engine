@@ -208,6 +208,52 @@ def test_source_acquisition_and_execution_backend_models_validate_independently(
     assert_valid(policy("hosted_provider_runner", "github"), POLICY_PATH)
 
 
+NORMATIVE_ACTIVE_POLICY_CONTROLS = (
+    ("approved_verifiers", "require_producer_verifier_separation"),
+    ("clean_room", "required"),
+    ("clean_room", "source_acquisition_required"),
+    ("evidence", "logs_required"),
+    ("evidence", "artifacts_required"),
+    ("environment", "environment_digest_required"),
+    ("environment", "toolchain_digest_required"),
+    ("freshness", "expiry_required"),
+    ("freshness", "supersession_required"),
+    ("freshness", "revocation_required"),
+)
+
+
+@pytest.mark.parametrize(("section", "field"), NORMATIVE_ACTIVE_POLICY_CONTROLS)
+def test_active_policy_normative_controls_cannot_be_disabled(
+    section: str, field: str
+) -> None:
+    candidate = policy()
+    candidate[section][field] = False
+    assert errors(candidate, POLICY_PATH)
+
+
+def test_active_policy_authorization_boundary_is_required_and_external() -> None:
+    candidate = policy()
+    del candidate["authorization_boundary"]
+    assert errors(candidate, POLICY_PATH)
+    candidate = policy()
+    candidate["authorization_boundary"]["merge_authorization_external"] = False
+    assert errors(candidate, POLICY_PATH)
+
+
+@pytest.mark.parametrize("status", ("suspended", "revoked", "draft", "deprecated"))
+def test_status_cannot_create_a_normative_control_loophole(status: str) -> None:
+    candidate = policy()
+    candidate["status"] = status
+    candidate["clean_room"]["required"] = False
+    assert "True was expected" in errors(candidate, POLICY_PATH)
+
+
+def test_normative_policy_controls_are_global_const_true_invariants() -> None:
+    document = schema(POLICY_PATH)
+    for section, field in NORMATIVE_ACTIVE_POLICY_CONTROLS:
+        assert document["properties"][section]["properties"][field] == {"const": True}
+
+
 @pytest.mark.parametrize(
     ("source_kind", "source_provider"),
     [
