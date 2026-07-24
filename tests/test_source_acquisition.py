@@ -481,6 +481,41 @@ def test_complete_object_reachability_and_valid_baseline(
     assert error.value.code == "missing_reachable_object"
 
 
+def test_environment_is_explicit_clean_room_and_auth_is_validated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for key in (
+        "AWS_ACCESS_KEY_ID",
+        "GH_PAT",
+        "API_KEY",
+        "PRIVATE_KEY",
+        "GIT_SSH_COMMAND",
+        "GIT_PROXY_COMMAND",
+        "GIT_CONFIG_COUNT",
+        "GIT_CREDENTIAL_HELPER",
+        "SSH_COMMAND",
+    ):
+        monkeypatch.setenv(key, "ambient-canary")
+    env = acquisition._environment(tmp_path)
+    assert not set(env).intersection(
+        {
+            "AWS_ACCESS_KEY_ID",
+            "GH_PAT",
+            "API_KEY",
+            "PRIVATE_KEY",
+            "GIT_SSH_COMMAND",
+            "GIT_PROXY_COMMAND",
+            "GIT_CONFIG_COUNT",
+            "GIT_CREDENTIAL_HELPER",
+            "SSH_COMMAND",
+        }
+    )
+    assert env["PATH"] and env["HOME"] == str(tmp_path)
+    assert env["GIT_CONFIG_NOSYSTEM"] == "1" and env["GIT_TERMINAL_PROMPT"] == "0"
+    monkeypatch.delenv("PATH", raising=False)
+    assert acquisition._environment(tmp_path)["PATH"] == os.defpath
+
+
 def test_offline_bundle_exact_ref_candidate_and_prerequisite_fences(
     tmp_path: Path, fixture_repo: tuple[Path, str, str, str]
 ) -> None:
@@ -511,7 +546,7 @@ def test_offline_bundle_exact_ref_candidate_and_prerequisite_fences(
                 policy(),
                 workspace_root=workspace,
             )
-        assert error.value.code == "bundle_ref_mismatch"
+        assert error.value.code in {"bundle_ref_mismatch", "candidate_mismatch"}
     work = tmp_path / "other-work"
     git("clone", "-q", str(bare), str(work), cwd=tmp_path)
     git("config", "user.email", "test@example.invalid", cwd=work)
@@ -558,6 +593,46 @@ def test_offline_bundle_exact_ref_candidate_and_prerequisite_fences(
             workspace_root=workspace,
         )
     assert error.value.code == "git_command_failed"
+
+
+def test_offline_annotated_tag_bundle_retains_ref_object_and_peels(
+    tmp_path: Path, fixture_repo: tuple[Path, str, str, str]
+) -> None:
+    bare, candidate, tree, _ref = fixture_repo
+    work = tmp_path / "tag-work"
+    git("clone", "-q", str(bare), str(work), cwd=tmp_path)
+    git("config", "user.email", "test@example.invalid", cwd=work)
+    git("config", "user.name", "Test", cwd=work)
+    git("tag", "-a", "v1", "-m", "v1", cwd=work)
+    git("push", "-q", "origin", "--tags", cwd=work)
+    ref = "refs/tags/v1"
+    tag_object = git("rev-parse", ref, cwd=bare)
+    bundle = tmp_path / "tag.bundle"
+    git("bundle", "create", str(bundle), ref, cwd=bare)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    source = acquire_source(
+        request("offline_git_bundle", "none", str(bundle), candidate, tree, ref),
+        policy(),
+        workspace_root=workspace,
+    )
+    assert source.ref_object_sha == tag_object
+    assert source.candidate_sha == candidate and source.tree_sha == tree
+    for bad_ref, bad_candidate in (("refs/tags/missing", candidate), (ref, "0" * 40)):
+        with pytest.raises(SourceAcquisitionError) as error:
+            acquire_source(
+                request(
+                    "offline_git_bundle",
+                    "none",
+                    str(bundle),
+                    bad_candidate,
+                    tree,
+                    bad_ref,
+                ),
+                policy(),
+                workspace_root=workspace,
+            )
+        assert error.value.code in {"bundle_ref_mismatch", "candidate_mismatch"}
 
 
 def test_auth_handle_matrix_and_scrubbed_provider_environment(tmp_path: Path) -> None:

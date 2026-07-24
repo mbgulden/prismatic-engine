@@ -185,28 +185,23 @@ def _validate_inputs(
     return _canonical_locator(request)
 
 
+_SAFE_ENVIRONMENT_KEYS = frozenset({"PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ"})
+
+
 def _environment(home: Path) -> dict[str, str]:
-    forbidden = {
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_INDEX_FILE",
-        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-        "GIT_OBJECT_DIRECTORY",
-        "GIT_CONFIG",
-        "GIT_CONFIG_GLOBAL",
-        "GIT_CONFIG_SYSTEM",
-        "GIT_ASKPASS",
-        "SSH_ASKPASS",
-        "SSH_AUTH_SOCK",
-    }
+    """Build a clean-room Git environment from an explicit safe allowlist.
+
+    Authentication is deliberately absent here.  Callers may add only the validated
+    opaque paths returned by :func:`_validated_auth_environment`.
+    """
     env = {
-        k: v
-        for k, v in os.environ.items()
-        if k not in forbidden
-        and not any(
-            x in k.upper() for x in ("TOKEN", "PASSWORD", "SECRET", "CREDENTIAL")
-        )
+        key: value
+        for key, value in os.environ.items()
+        if key in _SAFE_ENVIRONMENT_KEYS and isinstance(value, str)
     }
+    # A minimal inherited environment may omit PATH; os.defpath keeps Git lookup
+    # portable without importing any caller-controlled credential/config variables.
+    env.setdefault("PATH", os.defpath)
     env.update(
         {
             "HOME": str(home),
@@ -604,6 +599,7 @@ def acquire_source(
     )
     destination: Path | None = None
     bundle_fence: _BundleFence | None = None
+    bundle_ref_object: str | None = None
     deadline = time.monotonic() + policy.total_timeout_seconds
     try:
         destination = Path(tempfile.mkdtemp(prefix="source-", dir=workspace_root))
@@ -675,13 +671,16 @@ def acquire_source(
                 .decode("utf-8", "strict")
                 .splitlines()
             )
-            exact = [
-                line
+            exact_entries = [
+                line.split()
                 for line in heads
-                if line.split(maxsplit=1) == [request.candidate_sha, request.source_ref]
+                if len(line.split()) == 2 and line.split()[1] == request.source_ref
             ]
-            if len(exact) != 1:
+            if len(exact_entries) != 1 or not _SHA.fullmatch(exact_entries[0][0]):
                 _fail("bundle_ref_mismatch")
+            # list-heads reports the exact ref object.  For annotated tags this is
+            # deliberately the tag object, which is checked before later peeling.
+            bundle_ref_object = exact_entries[0][0]
             _assert_bundle_unchanged(bundle, bundle_fence)
             fetch_source = locator
         else:
@@ -720,6 +719,8 @@ def acquire_source(
             .decode()
             .strip()
         )
+        if bundle_ref_object is not None and ref_object != bundle_ref_object:
+            _fail("bundle_ref_mismatch")
         candidate = (
             _git(
                 ["rev-parse", f"{private_ref}^{{commit}}"],
