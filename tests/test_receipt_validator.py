@@ -655,3 +655,163 @@ def test_adversarial_singular_proof_class_fallback_removed() -> None:
     eligible, reason = determine_merge_eligibility(receipt, policy)
     assert eligible is False
     assert reason is not None
+
+
+# =====================================================================
+# ADVERSARIAL REGRESSION TESTS (GRO-4208 REPAIR 2)
+# =====================================================================
+
+
+def test_adversarial_sha512_evidence_policy_with_sha256_evidence() -> None:
+    receipt = valid_receipt()
+    policy = valid_policy()
+    # Policy requires sha512 for log and artifact evidence
+    policy["evidence"]["digest_requirements"] = [
+        {"kind": "log", "algorithm": "sha512", "required": True},
+        {"kind": "artifact", "algorithm": "sha512", "required": True},
+    ]
+    # Receipt has sha256 evidence digests
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is False
+    assert reason == "digest_algorithm_mismatch: log"
+
+
+def test_adversarial_optional_command_argv_mismatch() -> None:
+    receipt = valid_receipt()
+    policy = valid_policy()
+    # Add optional command to policy
+    policy["commands"].append(
+        {
+            "id": "optional-lint",
+            "argv": ["python", "-m", "flake8"],
+            "proof_class": "lint",
+            "timeout_seconds": 300,
+            "required": False,
+        }
+    )
+    # Receipt includes optional-lint command but with mismatched argv
+    started_time = receipt["commands_and_exit_states"][0]["started_at"]
+    completed_time = receipt["commands_and_exit_states"][0]["completed_at"]
+    receipt["commands_and_exit_states"].append(
+        {
+            "command_id": "optional-lint",
+            "argv": ["echo", "bypassed"],
+            "execution_state": "executed",
+            "exit_state": "completed",
+            "exit_code": 0,
+            "started_at": started_time,
+            "completed_at": completed_time,
+            "proof_class": "lint",
+            "log_references": ["logs/optional-lint.log"],
+        }
+    )
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is False
+    assert reason == "command_argv_mismatch: optional-lint"
+
+
+def test_adversarial_optional_command_proof_class_mismatch() -> None:
+    receipt = valid_receipt()
+    policy = valid_policy()
+    policy["commands"].append(
+        {
+            "id": "optional-lint",
+            "argv": ["python", "-m", "flake8"],
+            "proof_class": "lint",
+            "timeout_seconds": 300,
+            "required": False,
+        }
+    )
+    started_time = receipt["commands_and_exit_states"][0]["started_at"]
+    completed_time = receipt["commands_and_exit_states"][0]["completed_at"]
+    receipt["commands_and_exit_states"].append(
+        {
+            "command_id": "optional-lint",
+            "argv": ["python", "-m", "flake8"],
+            "execution_state": "executed",
+            "exit_state": "completed",
+            "exit_code": 0,
+            "started_at": started_time,
+            "completed_at": completed_time,
+            "proof_class": "unit",  # Mismatched proof class
+            "log_references": ["logs/optional-lint.log"],
+        }
+    )
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is False
+    assert reason == "command_proof_class_mismatch: optional-lint"
+
+
+def test_adversarial_unapproved_receipt_command() -> None:
+    receipt = valid_receipt()
+    policy = valid_policy()
+    started_time = receipt["commands_and_exit_states"][0]["started_at"]
+    completed_time = receipt["commands_and_exit_states"][0]["completed_at"]
+    receipt["commands_and_exit_states"].append(
+        {
+            "command_id": "unapproved-cmd",
+            "argv": ["python", "rogue.py"],
+            "execution_state": "executed",
+            "exit_state": "completed",
+            "exit_code": 0,
+            "started_at": started_time,
+            "completed_at": completed_time,
+            "proof_class": "unit",
+            "log_references": ["logs/rogue.log"],
+        }
+    )
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is False
+    assert reason == "unapproved_receipt_command: unapproved-cmd"
+
+
+def test_adversarial_digest_requirement_kinds_sha512() -> None:
+    digest_512 = "sha512:" + "e" * 128
+    receipt = valid_receipt()
+    receipt["source_acquisition_digest"] = digest_512
+    receipt["environment_digest"] = digest_512
+    receipt["logs_and_digests"] = [
+        {"reference": "logs/focused-tests.log", "digest": digest_512}
+    ]
+    receipt["artifacts_and_digests"] = [
+        {"reference": "artifacts/report.json", "digest": digest_512},
+        {"reference": "artifacts/toolchain.json", "digest": digest_512},
+    ]
+
+    policy = valid_policy()
+    policy["environment"]["digest_algorithm"] = "sha512"
+    policy["evidence"]["digest_requirements"] = [
+        {"kind": "log", "algorithm": "sha512", "required": True},
+        {"kind": "artifact", "algorithm": "sha512", "required": True},
+        {"kind": "source_acquisition", "algorithm": "sha512", "required": True},
+        {"kind": "environment", "algorithm": "sha512", "required": True},
+        {"kind": "toolchain", "algorithm": "sha512", "required": True},
+    ]
+
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is True
+    assert reason is None
+
+
+def test_adversarial_contradictory_digest_requirements() -> None:
+    receipt = valid_receipt()
+    policy = valid_policy()
+    policy["evidence"]["digest_requirements"] = [
+        {"kind": "log", "algorithm": "sha256", "required": True},
+        {"kind": "log", "algorithm": "sha512", "required": True},
+    ]
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is False
+    assert reason == "contradictory_digest_requirements"
+
+
+def test_adversarial_unprovable_toolchain_digest_requirement() -> None:
+    receipt = valid_receipt()
+    # receipt has no toolchain reference in logs or artifacts
+    policy = valid_policy()
+    policy["evidence"]["digest_requirements"] = [
+        {"kind": "toolchain", "algorithm": "sha256", "required": True}
+    ]
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is False
+    assert reason == "unprovable_toolchain_digest_requirement"
