@@ -57,9 +57,13 @@ signature_or_attestation
 - Provider checks/statuses are projections and evidence links, not receipt authority.
 - Head/tree changes, expiry, revocation, supersession, incomplete commands, digest mismatch, unapproved backend, or producer/verifier identity collision invalidate merge eligibility.
 
-## Backend and adapter conformance
+## Source adapters, verifier backends, and conformance
 
-All hosted, self-hosted, local, and offline backends emit the same versioned receipt shape and pass the same conformance fixtures. Adapters may add provider metadata but may not omit or reinterpret required core fields. A provider outage is reported as `BLOCKED_BACKEND_NO_EXECUTION`; it is not `PASS` or a product-test `FAIL`.
+Source adapters for GitHub, Bitbucket, GitLab, Forgejo/Gitea, local bare repositories, and offline bundles **must** translate source identity and retrieval into the same core acquisition contract. They are not verifier backends merely because they provide source bytes.
+
+Approved verifier backends—hosted provider runners, self-hosted clean-room workers, or explicitly supervised emergency clean-room verifiers—**must** emit the same versioned receipt shape and pass the same conformance fixtures before policy can trust them. This is a normative implementation requirement, not a claim that every adapter/backend already exists.
+
+Adapters may add provider metadata but may not omit or reinterpret required core fields. A provider outage is reported as `BLOCKED_BACKEND_NO_EXECUTION`; it is not `PASS` or a product-test `FAIL`.
 
 The accepted policy and migration boundary are defined by [ADR-0002](../decisions/ADR-0002-provider-neutral-verification-receipts.md).
 

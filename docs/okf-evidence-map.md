@@ -4,7 +4,7 @@
 **Owner:** Prismatic Engine maintainers
 **Machine-readable registry:** `okf/index.yaml`
 
-The registry is the validation input; this document is the operator-readable explanation. If they conflict, validation fails and the discrepancy must be resolved rather than silently choosing one.
+The registry is the validation input; this document is the operator-readable explanation. The validator fails on objective-ID or system-of-record drift in the canonical parity table; other semantic discrepancies must be resolved through independent review rather than silently choosing one.
 
 ## Purpose
 
@@ -17,6 +17,21 @@ Objective → Key Result → Function → Evidence
 ```
 
 The goal is to make every real workflow visible, auditable, and eventually operable from the dashboard.
+
+## Canonical registry parity
+
+The validator requires this table to contain every machine-readable objective ID exactly once with a byte-exact matching system of record. Other explanatory tables remain human guidance and require semantic review.
+
+<!-- OKF_REGISTRY_PARITY_BEGIN -->
+| Objective ID | System of record |
+|---|---|
+| `verified-agent-output` | Git object identity + versioned verification receipts + Merge Factory attestations |
+| `provider-neutral-verification` | versioned verification receipts + Merge Factory attestations + Git object identity |
+| `systemic-orchestration-correctness` | durable state stores and event/lease records |
+| `canonical-knowledge` | docs/index.md + okf/index.yaml + accepted ADRs |
+| `sustainable-maintainability` | versioned quality, incident, rollback, and evidence metrics |
+| `authoritative-operator-view` | plugin/job/artifact/audit and orchestration stores |
+<!-- OKF_REGISTRY_PARITY_END -->
 
 ## Documentation rule
 

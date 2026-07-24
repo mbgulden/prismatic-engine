@@ -61,13 +61,19 @@ No transition may be inferred from Linear `Done`, producer `DONE`, or file prese
 
 ## Provider-neutral execution architecture
 
-Verification semantics belong to the core policy and receipt validator. GitHub Actions, Bitbucket Pipelines, GitLab CI, Forgejo/Gitea, local bare Git, self-hosted workers, and offline bundles are adapters/backends around that core.
+Verification semantics belong to the core policy and receipt validator. Source adapters and verifier backends are separate roles around that core.
+
+- **Source adapters:** GitHub, Bitbucket, GitLab, Forgejo/Gitea, local bare repositories, and offline Git bundles. They bind provider/source identity, refs, retrieval, and optional status projection.
+- **Verifier backends:** hosted provider runners such as GitHub Actions/Bitbucket Pipelines/GitLab CI, self-hosted clean-room workers, and explicitly supervised emergency clean-room verifiers. They execute policy and may emit receipts only when approved.
+
+A local repository or Git bundle is an acquisition form, not an approved verifier backend by itself.
 
 ```text
-Git provider / local Git / bundle
+Git provider / local bare repository / bundle
              |
              v
-source adapter -> clean-room acquisition -> policy runner
+source adapter -> clean-room acquisition -> approved verifier backend
+                                         -> policy runner
                                          -> durable receipt
                                          -> independent validator
                                          -> merge judge
@@ -76,7 +82,7 @@ source adapter -> clean-room acquisition -> policy runner
 optional provider status/check projection
 ```
 
-The provider-neutral core binds repository, base, candidate commit, tree, changed paths, clean checkout, environment, commands, proof classes, logs, artifacts, verifier/backend identity, freshness, revocation, decision, and attestation. Provider adapters translate triggers, refs, retrieval, and status projection only; they cannot weaken policy.
+The provider-neutral core binds repository, base, candidate commit, tree, changed paths, clean checkout, environment, commands, proof classes, logs, artifacts, verifier/backend identity, freshness, revocation, decision, and attestation. Source adapters translate triggers, refs, retrieval, and status projection only; they cannot execute acceptance by designation or weaken policy.
 
 GitHub Actions is one approved backend when available, not a mandatory backend. A hosted-provider billing or control-plane failure means no verification occurred on that backend. It does not convert local mutable-worktree evidence into a valid receipt and does not prevent another approved clean-room backend from issuing one.
 

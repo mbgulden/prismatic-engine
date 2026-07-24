@@ -8,7 +8,7 @@
       "id": "verified-agent-output",
       "objective": "Agent proposals become accepted work only through exact-artifact independent evidence.",
       "owner": "merge judge",
-      "system_of_record": "Merge Factory attestations + Git/GitHub",
+      "system_of_record": "Git object identity + versioned verification receipts + Merge Factory attestations",
       "key_results": [
         "reviewed SHA equals PR head at merge",
         "all required proof classes report scope and non-claims",
@@ -22,7 +22,7 @@
         "tests/test_merge_factory.py",
         "docs/contracts/verification-contract.md"
       ],
-      "current_surface": "API/CLI/CI",
+      "current_surface": "API/CLI/provider status projections; provider-neutral receipt runtime pending",
       "review_after": "2026-10-21"
     },
     {
