@@ -305,22 +305,21 @@ def determine_merge_eligibility(
             if key in ALLOWED_POLICY_BINDINGS_OVERLAY_KEYS:
                 overlay_values[key] = val
 
-        # Check overlay value types/formats
-        if "expected_candidate_sha" in overlay_values:
-            val = overlay_values["expected_candidate_sha"]
+        # Mandatory SHA overlay bindings check
+        for sha_key in (
+            "expected_candidate_sha",
+            "expected_base_sha",
+            "expected_tree_sha",
+        ):
+            if sha_key not in overlay_values:
+                return False, f"missing_{sha_key}"
+            val = overlay_values[sha_key]
             if not isinstance(val, str) or not SHA1_PATTERN.match(val):
                 return (
                     False,
-                    "schema_validation_failed: invalid expected_candidate_sha",
+                    f"schema_validation_failed: invalid {sha_key}",
                 )
-        if "expected_base_sha" in overlay_values:
-            val = overlay_values["expected_base_sha"]
-            if not isinstance(val, str) or not SHA1_PATTERN.match(val):
-                return False, "schema_validation_failed: invalid expected_base_sha"
-        if "expected_tree_sha" in overlay_values:
-            val = overlay_values["expected_tree_sha"]
-            if not isinstance(val, str) or not SHA1_PATTERN.match(val):
-                return False, "schema_validation_failed: invalid expected_tree_sha"
+
         if "allow_empty_changed_paths" in overlay_values:
             val = overlay_values["allow_empty_changed_paths"]
             if not isinstance(val, bool):
@@ -478,9 +477,10 @@ def determine_merge_eligibility(
                 if p not in allowed_set:
                     return False, f"disallowed_changed_path: {p}"
 
-        # 11. Command validation (unique IDs, required presence, argv & proof_class binding, zero exit)
+        # 11. Command validation (unique IDs, required presence, argv & proof_class binding, zero exit, timestamps, duration, timeout)
         policy_cmds = policy.get("commands", [])
         policy_cmd_ids: set[str] = set()
+        policy_cmd_map: dict[str, dict[str, Any]] = {}
         for p_cmd in policy_cmds:
             if isinstance(p_cmd, dict):
                 cid = p_cmd.get("id")
@@ -488,10 +488,18 @@ def determine_merge_eligibility(
                     return False, f"duplicate_policy_command_id: {cid}"
                 if cid:
                     policy_cmd_ids.add(cid)
+                    policy_cmd_map[cid] = p_cmd
 
         r_cmds = receipt.get("commands_and_exit_states")
         if not isinstance(r_cmds, list) or len(r_cmds) == 0:
             return False, "missing_commands_and_exit_states"
+
+        receipt_started_dt = _parse_timestamp(receipt.get("started_at"))
+        receipt_completed_dt = _parse_timestamp(receipt.get("completed_at"))
+        if receipt_started_dt is None or receipt_completed_dt is None:
+            return False, "malformed_receipt_execution_interval"
+        if receipt_completed_dt < receipt_started_dt:
+            return False, "receipt_execution_interval_invalid"
 
         r_cmd_map: dict[str, dict[str, Any]] = {}
         for r_cmd in r_cmds:
@@ -500,6 +508,8 @@ def determine_merge_eligibility(
             cid = r_cmd.get("command_id")
             if not cid or cid in r_cmd_map:
                 return False, f"duplicate_receipt_command_id: {cid}"
+            if cid not in policy_cmd_ids:
+                return False, f"unapproved_receipt_command: {cid}"
             r_cmd_map[cid] = r_cmd
 
             if r_cmd.get("execution_state") != "executed":
@@ -509,13 +519,61 @@ def determine_merge_eligibility(
             if r_cmd.get("exit_code") != 0:
                 return False, "non_zero_exit_code"
 
+            started_str = r_cmd.get("started_at")
+            completed_str = r_cmd.get("completed_at")
+            if not started_str or not isinstance(started_str, str):
+                return False, f"missing_command_timestamp: {cid}"
+            if not completed_str or not isinstance(completed_str, str):
+                return False, f"missing_command_timestamp: {cid}"
+
+            cmd_started_dt = _parse_timestamp(started_str)
+            cmd_completed_dt = _parse_timestamp(completed_str)
+            if cmd_started_dt is None or cmd_completed_dt is None:
+                return False, f"malformed_command_timestamp: {cid}"
+
+            if cmd_completed_dt < cmd_started_dt:
+                return False, f"command_timestamp_ordering_invalid: {cid}"
+
+            if (
+                cmd_started_dt < receipt_started_dt
+                or cmd_completed_dt > receipt_completed_dt
+            ):
+                return False, f"command_outside_receipt_interval: {cid}"
+
+            duration_ms = r_cmd.get("duration_ms")
+            if (
+                duration_ms is None
+                or isinstance(duration_ms, bool)
+                or not isinstance(duration_ms, (int, float))
+                or duration_ms < 0
+            ):
+                return False, f"invalid_command_duration_ms: {cid}"
+
+            ts_derived_ms = (cmd_completed_dt - cmd_started_dt).total_seconds() * 1000.0
+
+            # Rounding tolerance for timestamp-derived vs reported duration_ms (1000 ms = 1s)
+            ROUNDING_TOLERANCE_MS = 1000.0
+            if abs(duration_ms - ts_derived_ms) > ROUNDING_TOLERANCE_MS:
+                return False, f"command_duration_incoherent: {cid}"
+
+            p_cmd = policy_cmd_map.get(cid, {})
+            timeout_sec = p_cmd.get("timeout_seconds")
+            if (
+                isinstance(timeout_sec, (int, float))
+                and not isinstance(timeout_sec, bool)
+                and timeout_sec > 0
+            ):
+                timeout_ms = timeout_sec * 1000.0
+                if duration_ms > timeout_ms or ts_derived_ms > timeout_ms:
+                    return False, f"command_timeout_exceeded: {cid}"
+
         for p_cmd in policy_cmds:
             if isinstance(p_cmd, dict):
                 cid = p_cmd.get("id")
                 is_req = p_cmd.get("required", True)
-                if is_req:
-                    if cid not in r_cmd_map:
-                        return False, f"missing_required_command: {cid}"
+                if is_req and cid not in r_cmd_map:
+                    return False, f"missing_required_command: {cid}"
+                if cid in r_cmd_map:
                     r_cmd = r_cmd_map[cid]
                     if r_cmd.get("argv") != p_cmd.get("argv"):
                         return False, f"command_argv_mismatch: {cid}"
@@ -578,6 +636,187 @@ def determine_merge_eligibility(
                 return False, "invalid_environment_digest"
             if not e_dig.startswith(f"{permitted_algo}:"):
                 return False, "unpermitted_digest_algorithm"
+
+        if env_policy.get("toolchain_digest_required", False):
+            toolchain_items = []
+            for items in (
+                receipt.get("artifacts_and_digests") or [],
+                receipt.get("logs_and_digests") or [],
+            ):
+                if isinstance(items, list):
+                    for item in items:
+                        if isinstance(item, dict):
+                            ref = item.get("reference")
+                            if isinstance(ref, str) and "toolchain" in ref.lower():
+                                toolchain_items.append(item)
+
+            if len(toolchain_items) == 0:
+                return False, "missing_toolchain_evidence"
+
+            for item in toolchain_items:
+                d_val = item.get("digest")
+                if not isinstance(d_val, str) or not d_val.startswith(
+                    f"{permitted_algo}:"
+                ):
+                    return False, "digest_algorithm_mismatch: toolchain"
+
+        # Check evidence.digest_requirements entries
+        digest_reqs = evidence_policy.get("digest_requirements")
+        if digest_reqs is not None:
+            if not isinstance(digest_reqs, list):
+                return (
+                    False,
+                    "schema_validation_failed: digest_requirements must be a list",
+                )
+
+            # Check for contradictory policy requirements first
+            seen_reqs: dict[tuple[str, str | None], str] = {}
+            for req in digest_reqs:
+                if not isinstance(req, dict):
+                    return (
+                        False,
+                        "schema_validation_failed: malformed digest_requirement",
+                    )
+                kind = req.get("kind")
+                algo = req.get("algorithm")
+                name = req.get("name")
+
+                if kind not in (
+                    "log",
+                    "artifact",
+                    "source_acquisition",
+                    "environment",
+                    "toolchain",
+                ):
+                    return False, f"unsupported_digest_requirement_kind: {kind}"
+                if algo not in ("sha256", "sha512"):
+                    return False, f"unsupported_digest_requirement_algorithm: {algo}"
+
+                key = (kind, name)
+                if key in seen_reqs and seen_reqs[key] != algo:
+                    return False, "contradictory_digest_requirements"
+                seen_reqs[key] = algo
+
+                if (
+                    kind in ("environment", "source_acquisition")
+                    and permitted_algo
+                    and algo != permitted_algo
+                ):
+                    return False, "contradictory_digest_requirements"
+
+            r_logs_list = receipt.get("logs_and_digests") or []
+            if not isinstance(r_logs_list, list):
+                r_logs_list = []
+            r_arts_list = receipt.get("artifacts_and_digests") or []
+            if not isinstance(r_arts_list, list):
+                r_arts_list = []
+
+            for req in digest_reqs:
+                kind = req.get("kind")
+                algo = req.get("algorithm")
+                is_req = req.get("required", False)
+                req_name = req.get("name")
+
+                if kind == "log":
+                    if req_name:
+                        matching_items = [
+                            item
+                            for item in r_logs_list
+                            if isinstance(item, dict)
+                            and (
+                                item.get("reference") == req_name
+                                or Path(str(item.get("reference"))).name == req_name
+                            )
+                        ]
+                    else:
+                        matching_items = [
+                            item for item in r_logs_list if isinstance(item, dict)
+                        ]
+
+                    if is_req and len(matching_items) == 0:
+                        return False, "missing_required_digest_evidence: log"
+
+                    for item in matching_items:
+                        d_val = item.get("digest")
+                        if isinstance(d_val, str) and not d_val.startswith(f"{algo}:"):
+                            return False, "digest_algorithm_mismatch: log"
+
+                elif kind == "artifact":
+                    if req_name:
+                        matching_items = [
+                            item
+                            for item in r_arts_list
+                            if isinstance(item, dict)
+                            and (
+                                item.get("reference") == req_name
+                                or Path(str(item.get("reference"))).name == req_name
+                            )
+                        ]
+                    else:
+                        matching_items = [
+                            item for item in r_arts_list if isinstance(item, dict)
+                        ]
+
+                    if is_req and len(matching_items) == 0:
+                        return False, "missing_required_digest_evidence: artifact"
+
+                    for item in matching_items:
+                        d_val = item.get("digest")
+                        if isinstance(d_val, str) and not d_val.startswith(f"{algo}:"):
+                            return False, "digest_algorithm_mismatch: artifact"
+
+                elif kind == "source_acquisition":
+                    s_dig = receipt.get("source_acquisition_digest")
+                    if is_req:
+                        if (
+                            not s_dig
+                            or not isinstance(s_dig, str)
+                            or not DIGEST_PATTERN.match(s_dig)
+                            or s_dig in (ALL_ZERO_SHA256, ALL_ZERO_SHA512)
+                        ):
+                            return False, "invalid_source_acquisition_digest"
+                    if s_dig and isinstance(s_dig, str):
+                        if not s_dig.startswith(f"{algo}:"):
+                            return (
+                                False,
+                                "digest_algorithm_mismatch: source_acquisition",
+                            )
+
+                elif kind == "environment":
+                    e_dig = receipt.get("environment_digest")
+                    if is_req:
+                        if (
+                            not e_dig
+                            or not isinstance(e_dig, str)
+                            or not DIGEST_PATTERN.match(e_dig)
+                            or e_dig in (ALL_ZERO_SHA256, ALL_ZERO_SHA512)
+                        ):
+                            return False, "invalid_environment_digest"
+                    if e_dig and isinstance(e_dig, str):
+                        if not e_dig.startswith(f"{algo}:"):
+                            return False, "digest_algorithm_mismatch: environment"
+
+                elif kind == "toolchain":
+                    toolchain_items = []
+                    for items in (r_arts_list, r_logs_list):
+                        for item in items:
+                            if isinstance(item, dict):
+                                ref = item.get("reference")
+                                if isinstance(ref, str):
+                                    if req_name and (
+                                        ref == req_name or Path(ref).name == req_name
+                                    ):
+                                        toolchain_items.append(item)
+                                    elif not req_name and ("toolchain" in ref.lower()):
+                                        toolchain_items.append(item)
+
+                    if is_req and len(toolchain_items) == 0:
+                        return False, "unprovable_toolchain_digest_requirement"
+
+                    for item in toolchain_items:
+                        d_val = item.get("digest")
+                        if isinstance(d_val, str) and not d_val.startswith(f"{algo}:"):
+                            return False, "digest_algorithm_mismatch: toolchain"
 
         # Collect evidence items
         all_evidence_items: list[dict[str, Any]] = []
