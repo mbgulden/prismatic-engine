@@ -296,11 +296,127 @@ class _SecretDetector:
 
 
 def _private_dir(path: Path) -> Path:
-    path.mkdir(parents=True, exist_ok=True, mode=0o700)
-    os.chmod(path, 0o700)
-    if stat.S_IMODE(os.lstat(path).st_mode) != 0o700 or path.is_symlink():
+    """Create/bind a private child below an already-authorized directory."""
+    try:
+        path.mkdir(mode=0o700)
+    except FileExistsError:
+        pass
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError:
         _fail("unsafe_evidence_root")
+    try:
+        before = os.fstat(fd)
+        named = os.stat(path, follow_symlinks=False)
+        if (
+            not stat.S_ISDIR(before.st_mode)
+            or before.st_uid != os.geteuid()
+            or (before.st_dev, before.st_ino) != (named.st_dev, named.st_ino)
+        ):
+            _fail("unsafe_evidence_root")
+        os.fchmod(fd, 0o700)
+        after = os.fstat(fd)
+        named_after = os.stat(path, follow_symlinks=False)
+        if (
+            stat.S_IMODE(after.st_mode) != 0o700
+            or (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino)
+            or (named_after.st_dev, named_after.st_ino)
+            != (before.st_dev, before.st_ino)
+        ):
+            _fail("unsafe_evidence_root")
+    except OSError:
+        _fail("unsafe_evidence_root")
+    finally:
+        os.close(fd)
     return path
+
+
+def _bind_evidence_root(evidence_root: Path, checkout: Path) -> Path:
+    """Bind only an absolute, canonical, no-follow external evidence directory.
+
+    The caller's authority boundary is checked before any mkdir/chmod/process spawn.
+    Existing path components must be real directories owned by this effective user;
+    the final leaf may be safely created through its bound parent descriptor.
+    """
+    if not isinstance(evidence_root, Path) or not evidence_root.is_absolute():
+        _fail("unsafe_evidence_root")
+    raw = os.fspath(evidence_root)
+    canonical = os.path.realpath(raw)
+    if raw != canonical or raw != os.path.normpath(raw):
+        _fail("unsafe_evidence_root")
+    checkout_canonical = os.path.realpath(os.fspath(checkout))
+    try:
+        if os.path.commonpath((canonical, checkout_canonical)) == checkout_canonical:
+            _fail("unsafe_evidence_root")
+    except ValueError:
+        _fail("unsafe_evidence_root")
+
+    parts = Path(canonical).parts
+    try:
+        parent_fd = os.open(parts[0], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError:
+        _fail("unsafe_evidence_root")
+    try:
+        for component in parts[1:-1]:
+            try:
+                next_fd = os.open(
+                    component,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                    dir_fd=parent_fd,
+                )
+            except OSError:
+                _fail("unsafe_evidence_root")
+            current = os.fstat(next_fd)
+            try:
+                named = os.stat(component, dir_fd=parent_fd, follow_symlinks=False)
+                if not stat.S_ISDIR(current.st_mode) or (
+                    current.st_dev,
+                    current.st_ino,
+                ) != (named.st_dev, named.st_ino):
+                    _fail("unsafe_evidence_root")
+            except OSError:
+                _fail("unsafe_evidence_root")
+            os.close(parent_fd)
+            parent_fd = next_fd
+        leaf = parts[-1]
+        try:
+            os.mkdir(leaf, mode=0o700, dir_fd=parent_fd)
+        except FileExistsError:
+            pass
+        except OSError:
+            _fail("unsafe_evidence_root")
+        try:
+            root_fd = os.open(
+                leaf, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd
+            )
+        except OSError:
+            _fail("unsafe_evidence_root")
+        try:
+            before = os.fstat(root_fd)
+            named = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+            if (
+                not stat.S_ISDIR(before.st_mode)
+                or before.st_uid != os.geteuid()
+                or (before.st_dev, before.st_ino) != (named.st_dev, named.st_ino)
+            ):
+                _fail("unsafe_evidence_root")
+            os.fchmod(root_fd, 0o700)
+            after = os.fstat(root_fd)
+            named_after = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+            if (
+                stat.S_IMODE(after.st_mode) != 0o700
+                or (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino)
+                or (named_after.st_dev, named_after.st_ino)
+                != (before.st_dev, before.st_ino)
+            ):
+                _fail("unsafe_evidence_root")
+        except OSError:
+            _fail("unsafe_evidence_root")
+        finally:
+            os.close(root_fd)
+    finally:
+        os.close(parent_fd)
+    return Path(canonical)
 
 
 def _safe_cwd(checkout: Path, relative: object) -> Path:
@@ -647,9 +763,7 @@ def run_clean_room(
         validate_acquired_source(source)
     except SourceAcquisitionError as error:
         _fail("source_validation_failed", detail=error.code)
-    root = _private_dir(Path(evidence_root))
-    if root == source.checkout_path or source.checkout_path in root.parents:
-        _fail("unsafe_evidence_root")
+    root = _bind_evidence_root(evidence_root, source.checkout_path)
     with tempfile.TemporaryDirectory(prefix="clean-room-", dir=root) as temp_name:
         temp = Path(temp_name)
         home = _private_dir(temp / "home")
