@@ -231,10 +231,13 @@ def _run(
     binary: bool = False,
     allowed_returncodes: frozenset[int] = frozenset({0}),
 ) -> bytes:
-    """Run without shell expansion, draining pipes under hard aggregate limits."""
-    remaining = min(policy.command_timeout_seconds, deadline - time.monotonic())
-    if remaining <= 0:
+    """Run without shell expansion, enforcing immutable command and total deadlines."""
+    launch_monotonic = time.monotonic()
+    if deadline <= launch_monotonic:
         _fail("total_timeout", "deadline exceeded")
+    command_deadline = launch_monotonic + policy.command_timeout_seconds
+    effective_deadline = min(command_deadline, deadline)
+    timeout_code = "command_timeout" if command_deadline < deadline else "total_timeout"
     limit = min(
         policy.max_command_output_bytes,
         policy.max_tree_listing_bytes if binary else policy.max_command_output_bytes,
@@ -250,21 +253,41 @@ def _run(
     )
     retained = bytearray()
     total = 0
-    overflow = False
     selector = selectors.DefaultSelector()
+
+    def remaining_to_deadline() -> float:
+        return effective_deadline - time.monotonic()
+
+    def terminate_and_reap() -> None:
+        """Kill the isolated session and discard pipes without buffering child output."""
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        for stream in (proc.stdout, proc.stderr):
+            if stream is not None:
+                stream.close()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            # The direct child is the session leader; this fallback still guarantees reap.
+            proc.kill()
+            proc.wait()
+
     assert proc.stdout is not None and proc.stderr is not None
     selector.register(proc.stdout, selectors.EVENT_READ)
     selector.register(proc.stderr, selectors.EVENT_READ)
     try:
         while selector.get_map():
-            remaining = min(policy.command_timeout_seconds, deadline - time.monotonic())
+            remaining = remaining_to_deadline()
             if remaining <= 0:
-                raise TimeoutError
+                terminate_and_reap()
+                _fail(timeout_code, label)
             events = selector.select(remaining)
             if not events:
-                if proc.poll() is not None:
-                    # EOF registration is cleared by the next read pass.
-                    continue
+                if remaining_to_deadline() <= 0:
+                    terminate_and_reap()
+                    _fail(timeout_code, label)
                 continue
             for key, _ in events:
                 chunk = os.read(key.fd, 64 * 1024)
@@ -273,29 +296,21 @@ def _run(
                     continue
                 total += len(chunk)
                 if total > limit:
-                    overflow = True
-                    # Do not retain unbounded/raw output; kill the whole session now.
-                    os.killpg(proc.pid, signal.SIGKILL)
-                    break
+                    terminate_and_reap()
+                    _fail(
+                        "tree_listing_overflow" if binary else "output_overflow", label
+                    )
                 retained.extend(chunk)
-            if overflow:
-                break
-        if overflow:
-            proc.wait(timeout=5)
-            _fail("tree_listing_overflow" if binary else "output_overflow", label)
-        # Drain-on-EOF completed; wait/reap without communicate() buffering anything.
-        proc.wait(
-            timeout=max(
-                0.01, min(policy.command_timeout_seconds, deadline - time.monotonic())
-            )
-        )
-    except (TimeoutError, subprocess.TimeoutExpired):
+        # Drain-on-EOF completed; do not give a completed command a refreshed timeout.
+        remaining = remaining_to_deadline()
+        if remaining <= 0:
+            terminate_and_reap()
+            _fail(timeout_code, label)
         try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        proc.wait()
-        _fail("command_timeout", label)
+            proc.wait(timeout=remaining)
+        except subprocess.TimeoutExpired:
+            terminate_and_reap()
+            _fail(timeout_code, label)
     finally:
         selector.close()
     if proc.returncode not in allowed_returncodes:

@@ -259,6 +259,122 @@ def test_streaming_runner_enforces_binary_and_text_caps(tmp_path: Path) -> None:
         assert error.value.code == code
 
 
+@pytest.mark.parametrize("mode", ("stdout", "stderr", "mixed"))
+def test_streaming_runner_periodic_output_cannot_refresh_command_deadline(
+    tmp_path: Path, mode: str
+) -> None:
+    policy = SourceAcquisitionPolicy(
+        "repo",
+        frozenset({"provider_remote"}),
+        frozenset({"other"}),
+        command_timeout_seconds=0.15,
+        total_timeout_seconds=2,
+    )
+    code = """import sys, time
+mode = sys.argv[1]
+for _ in range(30):
+    if mode in (\"stdout\", \"mixed\"):
+        sys.stdout.write(\"stdout-canary\\n\")
+        sys.stdout.flush()
+    if mode in (\"stderr\", \"mixed\"):
+        sys.stderr.write(\"stderr-canary\\n\")
+        sys.stderr.flush()
+    time.sleep(0.03)
+"""
+    started = time.monotonic()
+    with pytest.raises(SourceAcquisitionError) as error:
+        acquisition._run(
+            [sys.executable, "-c", code, mode],
+            cwd=tmp_path,
+            env=acquisition._environment(tmp_path),
+            policy=policy,
+            deadline=time.monotonic() + 2,
+            label="timeout-canary",
+        )
+    elapsed = time.monotonic() - started
+    assert error.value.code == "command_timeout"
+    assert "stdout-canary" not in str(error.value)
+    assert "stderr-canary" not in str(error.value)
+    # Natural completion is ~0.9s; periodic readable events must not reset 0.15s.
+    assert 0.08 <= elapsed < 0.55
+
+
+def test_streaming_runner_silent_and_total_deadlines_are_stable(tmp_path: Path) -> None:
+    env = acquisition._environment(tmp_path)
+
+    def make_policy(
+        command_timeout: float, total_timeout: float
+    ) -> SourceAcquisitionPolicy:
+        return SourceAcquisitionPolicy(
+            "repo",
+            frozenset({"provider_remote"}),
+            frozenset({"other"}),
+            command_timeout_seconds=command_timeout,
+            total_timeout_seconds=total_timeout,
+        )
+
+    cases = (
+        (make_policy(0.1, 2), 1, "command_timeout"),
+        (make_policy(2, 2), 0.1, "total_timeout"),
+    )
+    for policy, total_remaining, expected in cases:
+        with pytest.raises(SourceAcquisitionError) as error:
+            acquisition._run(
+                [sys.executable, "-c", "import time; time.sleep(60)"],
+                cwd=tmp_path,
+                env=env,
+                policy=policy,
+                deadline=time.monotonic() + total_remaining,
+                label="silent-canary",
+            )
+        assert error.value.code == expected
+    assert (
+        acquisition._run(
+            [sys.executable, "-c", "print('short-success')"],
+            cwd=tmp_path,
+            env=env,
+            policy=make_policy(1, 2),
+            deadline=time.monotonic() + 1,
+            label="short-success",
+        )
+        == b"short-success\n"
+    )
+
+
+def test_streaming_runner_timeout_kills_and_reaps_process_group(tmp_path: Path) -> None:
+    policy = SourceAcquisitionPolicy(
+        "repo",
+        frozenset({"provider_remote"}),
+        frozenset({"other"}),
+        command_timeout_seconds=0.15,
+        total_timeout_seconds=2,
+    )
+    parent_pid, child_pid = tmp_path / "parent.pid", tmp_path / "child.pid"
+    code = """import os, subprocess, sys, time
+open(sys.argv[1], \"w\").write(str(os.getpid()))
+child = subprocess.Popen([sys.executable, \"-c\", \"import time; time.sleep(60)\"])
+open(sys.argv[2], \"w\").write(str(child.pid))
+time.sleep(60)
+"""
+    with pytest.raises(SourceAcquisitionError, match="command_timeout"):
+        acquisition._run(
+            [sys.executable, "-c", code, str(parent_pid), str(child_pid)],
+            cwd=tmp_path,
+            env=acquisition._environment(tmp_path),
+            policy=policy,
+            deadline=time.monotonic() + 2,
+            label="group-canary",
+        )
+    for pid_path in (parent_pid, child_pid):
+        pid = int(pid_path.read_text())
+        until = time.monotonic() + 1
+        while time.monotonic() < until:
+            if not Path(f"/proc/{pid}").exists():
+                break
+            time.sleep(0.02)
+        assert not Path(f"/proc/{pid}").exists(), f"unreaped process {pid}"
+
+
 def test_bundle_fence_detects_replacement(tmp_path: Path) -> None:
     bundle = tmp_path / "bundle"
     bundle.write_bytes(b"first")
