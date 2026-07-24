@@ -2586,6 +2586,128 @@
             }
         }
 
+        function taskAdmissionValue(id) {
+            const element = document.getElementById(id);
+            return element ? element.value.trim() : "";
+        }
+
+        function boundedAdmissionError(payload, status) {
+            const code = payload && typeof payload.error === "string" ? payload.error : `http_${status}`;
+            return /^[a-z0-9_]{1,64}$/.test(code) ? code : "bounded_request_failed";
+        }
+
+        function taskAdmissionHeaders(token, idempotencyKey, includeJson = false) {
+            const headers = { "Authorization": `Bearer ${token}` };
+            if (includeJson) {
+                headers["Content-Type"] = "application/json";
+                headers["Idempotency-Key"] = idempotencyKey;
+            }
+            return headers;
+        }
+
+        function renderTaskAdmissionProof(record, replayed) {
+            const proof = document.getElementById("admission-proof");
+            if (!proof) return;
+            const compact = {
+                task_id: record.task_id,
+                status: record.status,
+                replayed: Boolean(replayed),
+                base_commit: String(record.base_commit || "").slice(0, 12),
+                base_tree: String(record.base_tree || "").slice(0, 12),
+                task_file_sha256: String(record.task_file_sha256 || "").slice(0, 16),
+                producer_identity: record.producer_identity,
+                writer_cap: record.writer_cap,
+                worktree: record.worktree,
+                actor: record.actor,
+                event_id: record.event_id,
+                received_at: record.received_at,
+                launch_performed: false
+            };
+            proof.textContent = JSON.stringify(compact, null, 2);
+            proof.classList.remove("hidden");
+        }
+
+        async function fetchTaskAdmissionHistory(token) {
+            const response = await fetch(`/api/dashboard/task-admissions?limit=10`, {
+                headers: taskAdmissionHeaders(token, "")
+            });
+            let payload = {};
+            try { payload = await response.json(); } catch (_) {}
+            if (!response.ok) throw new Error(boundedAdmissionError(payload, response.status));
+            const history = document.getElementById("admission-history");
+            if (!history) return;
+            const records = Array.isArray(payload.records) ? payload.records : [];
+            history.textContent = records.length
+                ? records.map((record) => `${record.task_id} · ${record.status} · ${record.producer_identity} · ${record.received_at}`).join(" | ")
+                : "No durable task admissions recorded.";
+        }
+
+        async function loadTaskAdmissions() {
+            const tokenInput = document.getElementById("admission-token");
+            const status = document.getElementById("admission-status");
+            const token = tokenInput ? tokenInput.value : "";
+            if (!token) {
+                if (status) status.textContent = "Operator bearer required for protected readback.";
+                return;
+            }
+            try {
+                await fetchTaskAdmissionHistory(token);
+                if (status) status.textContent = "Durable admission readback refreshed.";
+            } catch (error) {
+                if (status) status.textContent = `Readback failed: ${error.message}`;
+            } finally {
+                if (tokenInput) tokenInput.value = "";
+            }
+        }
+
+        async function submitTaskAdmission() {
+            const tokenInput = document.getElementById("admission-token");
+            const status = document.getElementById("admission-status");
+            const button = document.getElementById("admission-submit");
+            const token = tokenInput ? tokenInput.value : "";
+            const idempotencyKey = taskAdmissionValue("admission-idempotency");
+            if (!token) {
+                if (status) status.textContent = "Operator bearer required.";
+                return;
+            }
+            const payload = {
+                version: 1,
+                task_id: taskAdmissionValue("admission-task-id"),
+                base_commit: taskAdmissionValue("admission-base-commit"),
+                base_tree: taskAdmissionValue("admission-base-tree"),
+                task_file: taskAdmissionValue("admission-task-file"),
+                task_file_sha256: taskAdmissionValue("admission-task-sha"),
+                producer_identity: taskAdmissionValue("admission-producer"),
+                worktree: taskAdmissionValue("admission-worktree"),
+                writer_cap: 1,
+                idempotency_key: idempotencyKey,
+                created_at: taskAdmissionValue("admission-created-at"),
+                status: "admitted"
+            };
+            if (button) button.disabled = true;
+            if (status) status.textContent = "Recording durable intent…";
+            try {
+                const response = await fetch(`/api/dashboard/task-admissions`, {
+                    method: "POST",
+                    headers: taskAdmissionHeaders(token, idempotencyKey, true),
+                    body: JSON.stringify(payload)
+                });
+                let result = {};
+                try { result = await response.json(); } catch (_) {}
+                if (!response.ok) throw new Error(boundedAdmissionError(result, response.status));
+                renderTaskAdmissionProof(result.record || {}, result.replayed);
+                await fetchTaskAdmissionHistory(token);
+                if (status) status.textContent = result.replayed
+                    ? "Exact admission replay confirmed; no duplicate event created."
+                    : "Durable admission recorded. Producer was not launched.";
+            } catch (error) {
+                if (status) status.textContent = `Admission failed: ${error.message}`;
+            } finally {
+                if (tokenInput) tokenInput.value = "";
+                if (button) button.disabled = false;
+            }
+        }
+
         // WebSockets
         function connectWS() {
             let ws;

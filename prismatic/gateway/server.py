@@ -3060,6 +3060,108 @@ async def dashboard_recovery_control(
     return {"ok": True, "status": status_text, "entry": entry, "state": state}
 
 
+# ── Authenticated durable task admission ───────────────────────
+
+
+def _task_admission_error(exc: Exception) -> JSONResponse:
+    from prismatic.task_admission import TaskAdmissionError
+
+    if isinstance(exc, TaskAdmissionError):
+        return JSONResponse(
+            {"ok": False, "error": exc.code}, status_code=exc.status_code
+        )
+    logger.error("task admission failed", exc_info=True)
+    return JSONResponse(
+        {"ok": False, "error": "admission_internal_error"}, status_code=500
+    )
+
+
+@app.post("/api/dashboard/task-admissions", response_model=None)
+async def create_task_admission(request: Request) -> dict[str, Any] | JSONResponse:
+    """Atomically record one exact operator admission and pending outbox event.
+
+    This route records durable intent only. It never launches a producer.
+    """
+
+    from prismatic.task_admission import (
+        MAX_ADMISSION_BODY_BYTES,
+        TaskAdmissionError,
+        TaskAdmissionStore,
+        parse_admission_json,
+    )
+
+    if (
+        request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        != "application/json"
+    ):
+        return JSONResponse(
+            {"ok": False, "error": "content_type_required"}, status_code=415
+        )
+    try:
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                declared_size = int(content_length)
+            except ValueError as exc:
+                raise TaskAdmissionError("invalid_body_size", 413) from exc
+            if declared_size < 0 or declared_size > MAX_ADMISSION_BODY_BYTES:
+                raise TaskAdmissionError("invalid_body_size", 413)
+        body = bytearray()
+        async for chunk in request.stream():
+            if len(body) + len(chunk) > MAX_ADMISSION_BODY_BYTES:
+                raise TaskAdmissionError("invalid_body_size", 413)
+            body.extend(chunk)
+        payload = parse_admission_json(bytes(body))
+        result = TaskAdmissionStore().admit(
+            payload,
+            header_key=request.headers.get("Idempotency-Key", ""),
+            actor=str(request.state.control_actor),
+        )
+    except Exception as exc:
+        return _task_admission_error(exc)
+    return JSONResponse(
+        {
+            "ok": True,
+            "replayed": result.replayed,
+            "launch_performed": False,
+            "record": result.record,
+        },
+        status_code=200 if result.replayed else 201,
+    )
+
+
+@app.get("/api/dashboard/task-admissions", response_model=None)
+async def list_task_admissions(
+    limit: int = Query(50, ge=1, le=200),
+) -> dict[str, Any] | JSONResponse:
+    """Return operator-protected durable admission history."""
+
+    from prismatic.task_admission import TaskAdmissionStore
+
+    try:
+        records = TaskAdmissionStore().list(limit=limit)
+    except Exception as exc:
+        return _task_admission_error(exc)
+    return {"ok": True, "count": len(records), "records": records}
+
+
+@app.get("/api/dashboard/task-admissions/{task_id}", response_model=None)
+async def get_task_admission(task_id: str) -> dict[str, Any] | JSONResponse:
+    """Return one operator-protected durable admission row."""
+
+    from prismatic.task_admission import TaskAdmissionStore
+
+    try:
+        record = TaskAdmissionStore().get(task_id)
+    except Exception as exc:
+        return _task_admission_error(exc)
+    if record is None:
+        return JSONResponse(
+            {"ok": False, "error": "task_admission_not_found"}, status_code=404
+        )
+    return {"ok": True, "record": record}
+
+
 # ── D.5: Observability metrics ──────────────────────────────────
 
 
