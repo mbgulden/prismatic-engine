@@ -1,0 +1,246 @@
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from prismatic.verification import (
+    CLEAN_ROOM_RUNNER_V1_OK,
+    CleanRoomIsolation,
+    CleanRoomRunnerError,
+    SourceAcquisitionPolicy,
+    SourceAcquisitionRequest,
+    acquire_source,
+    run_clean_room,
+)
+
+
+def git(*args: str, cwd: Path) -> str:
+    return subprocess.check_output(["git", *args], cwd=cwd, text=True).strip()
+
+
+def policy(
+    commands: list[dict[str, object]], repository_id: str = "runner-test"
+) -> dict[str, object]:
+    return {
+        "schema_version": "1.0",
+        "policy_id": "runner-policy",
+        "policy_version": "1.0.0",
+        "status": "active",
+        "repository": {
+            "repository_id": repository_id,
+            "source_requirements": {
+                "require_full_git_objects": True,
+                "allowed_source_kinds": ["local_bare_repository"],
+                "allowed_source_providers": ["none"],
+            },
+        },
+        "approved_backends": [{"id": "backend", "class": "self_hosted_clean_room"}],
+        "approved_verifiers": {
+            "identities": ["verifier"],
+            "require_producer_verifier_separation": True,
+        },
+        "clean_room": {
+            "required": True,
+            "source_acquisition_required": True,
+            "network_isolation_required": True,
+        },
+        "bindings": {
+            "require_base_sha": True,
+            "require_candidate_sha": True,
+            "require_tree_sha": True,
+            "require_changed_paths": True,
+        },
+        "commands": commands,
+        "evidence": {
+            "logs_required": True,
+            "artifacts_required": True,
+            "digest_requirements": [
+                {"kind": "log", "algorithm": "sha256", "required": True}
+            ],
+        },
+        "environment": {
+            "environment_digest_required": True,
+            "toolchain_digest_required": True,
+            "digest_algorithm": "sha256",
+        },
+        "freshness": {
+            "max_age_seconds": 3600,
+            "expiry_required": True,
+            "supersession_required": True,
+            "revocation_required": True,
+        },
+        "attestation": {
+            "required": True,
+            "allowed_algorithms": ["ed25519"],
+            "allowed_key_ids": ["key"],
+        },
+        "required_proof_classes": ["unit"],
+        "non_claims": ["no merge authority"],
+        "authorization_boundary": {"merge_authorization_external": True},
+    }
+
+
+@pytest.fixture
+def source(tmp_path: Path):
+    work, bare, root = tmp_path / "work", tmp_path / "bare.git", tmp_path / "acquired"
+    work.mkdir()
+    root.mkdir()
+    git("init", cwd=work)
+    git("config", "user.email", "test@example.test", cwd=work)
+    git("config", "user.name", "Test", cwd=work)
+    (work / "nested").mkdir()
+    (work / "nested" / "input.txt").write_text("immutable\n")
+    git("add", ".", cwd=work)
+    git("commit", "-m", "fixture", cwd=work)
+    git("clone", "--bare", str(work), str(bare), cwd=tmp_path)
+    candidate, tree = (
+        git("rev-parse", "HEAD", cwd=work),
+        git("rev-parse", "HEAD^{tree}", cwd=work),
+    )
+    request = SourceAcquisitionRequest(
+        "local_bare_repository", "none", str(bare), "refs/heads/master", candidate, tree
+    )
+    acquired = acquire_source(
+        request,
+        SourceAcquisitionPolicy(
+            "runner-test", frozenset({"local_bare_repository"}), frozenset({"none"})
+        ),
+        workspace_root=root,
+    )
+    return acquired, tmp_path / "evidence"
+
+
+def command(identifier: str, code: str, cwd: str | None = None) -> dict[str, object]:
+    result: dict[str, object] = {
+        "id": identifier,
+        "argv": [sys.executable, "-c", code],
+        "proof_class": "unit",
+        "timeout_seconds": 20,
+        "required": True,
+    }
+    if cwd is not None:
+        result["working_directory"] = cwd
+    return result
+
+
+def test_happy_path_exact_order_logs_and_bindings(source):
+    acquired, evidence = source
+    commands = [
+        command("first", "print('first')"),
+        command("second", "print('second')", "nested"),
+    ]
+    result = run_clean_room(
+        acquired,
+        policy(commands),
+        producer_id="producer",
+        verifier_id="verifier",
+        evidence_root=evidence,
+        isolation=CleanRoomIsolation(True, True),
+    )
+    assert result.marker == CLEAN_ROOM_RUNNER_V1_OK
+    assert [item.command_id for item in result.commands] == ["first", "second"]
+    assert (
+        result.repository_id == acquired.repository_id
+        and result.candidate_sha == acquired.candidate_sha
+    )
+    assert result.commands[0].stdout_log.read_bytes() == b"first\n"
+    assert result.commands[1].working_directory == "nested"
+    assert oct(result.commands[0].stdout_log.stat().st_mode & 0o777) == "0o600"
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda p: p.update({"status": "revoked"}),
+        lambda p: p["commands"].append(dict(p["commands"][0])),
+    ],
+)
+def test_policy_rejections(source, change):
+    acquired, evidence = source
+    value = policy([command("one", "print(1)")])
+    change(value)
+    with pytest.raises(CleanRoomRunnerError):
+        run_clean_room(
+            acquired,
+            value,
+            producer_id="producer",
+            verifier_id="verifier",
+            evidence_root=evidence,
+            isolation=CleanRoomIsolation(True, True),
+        )
+
+
+def test_authority_and_cwd_rejections(source):
+    acquired, evidence = source
+    with pytest.raises(CleanRoomRunnerError, match="invalid_identity"):
+        run_clean_room(
+            acquired,
+            policy([command("one", "print(1)")]),
+            producer_id="same",
+            verifier_id="same",
+            evidence_root=evidence,
+            isolation=CleanRoomIsolation(True, True),
+        )
+    with pytest.raises(CleanRoomRunnerError, match="isolation_not_enforced"):
+        run_clean_room(
+            acquired,
+            policy([command("one", "print(1)")]),
+            producer_id="producer",
+            verifier_id="verifier",
+            evidence_root=evidence,
+            isolation=CleanRoomIsolation(False, True),
+        )
+    # The canonical policy schema rejects traversal before any process is spawned.
+    with pytest.raises(CleanRoomRunnerError, match="invalid_policy"):
+        run_clean_room(
+            acquired,
+            policy([command("one", "print(1)", "../escape")]),
+            producer_id="producer",
+            verifier_id="verifier",
+            evidence_root=evidence,
+            isolation=CleanRoomIsolation(True, True),
+        )
+
+
+def test_literal_argv_and_output_overflow(source):
+    acquired, evidence = source
+    literal = "a b;$(touch should-not-exist)|*"
+    result = run_clean_room(
+        acquired,
+        policy(
+            [
+                {
+                    "id": "literal",
+                    "argv": [
+                        sys.executable,
+                        "-c",
+                        "import sys; print(sys.argv[1])",
+                        literal,
+                    ],
+                    "proof_class": "unit",
+                    "timeout_seconds": 20,
+                    "required": True,
+                }
+            ]
+        ),
+        producer_id="producer",
+        verifier_id="verifier",
+        evidence_root=evidence,
+        isolation=CleanRoomIsolation(True, True),
+    )
+    assert result.commands[0].stdout_log.read_text().strip() == literal
+    from prismatic.verification.clean_room_runner import RunnerLimits
+
+    with pytest.raises(CleanRoomRunnerError, match="output_overflow"):
+        run_clean_room(
+            acquired,
+            policy([command("large", "print('x'*1000)")]),
+            producer_id="producer",
+            verifier_id="verifier",
+            evidence_root=evidence / "overflow",
+            isolation=CleanRoomIsolation(True, True),
+            limits=RunnerLimits(max_stdout_bytes=10, max_total_output_bytes=10),
+        )

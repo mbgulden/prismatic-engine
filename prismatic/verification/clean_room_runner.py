@@ -1,0 +1,484 @@
+"""Provider-neutral bounded clean-room command runner.
+
+This module consumes an already acquired immutable checkout.  It deliberately has no
+provider, approval, receipt, or policy-mutation surface.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import selectors
+import shutil
+import signal
+import stat
+import subprocess
+import tempfile
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Mapping
+
+from jsonschema import Draft202012Validator
+
+from .source_acquisition import (
+    AcquiredSource,
+    SourceAcquisitionError,
+    validate_acquired_source,
+)
+
+CLEAN_ROOM_RUNNER_V1_OK = "CLEAN_ROOM_RUNNER_V1_OK"
+_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_SECRET = re.compile(
+    r"(?i)(?:api[_-]?key|token|secret|password|authorization|bearer|credential)\s*[:=]\s*[^\s]{8,}|(?:gh[pousr]_|sk-|AKIA)[A-Za-z0-9_-]{16,}"
+)
+
+
+class CleanRoomRunnerError(RuntimeError):
+    def __init__(
+        self, code: str, command_id: str | None = None, detail_code: str | None = None
+    ) -> None:
+        self.code, self.command_id, self.detail_code = code, command_id, detail_code
+        super().__init__(":".join(x for x in (code, command_id, detail_code) if x))
+
+
+@dataclass(frozen=True)
+class CleanRoomIsolation:
+    network_isolation_enforced: bool
+    filesystem_isolation_enforced: bool
+
+
+@dataclass(frozen=True)
+class RunnerLimits:
+    total_timeout_seconds: float = 900.0
+    max_stdout_bytes: int = 4 * 1024 * 1024
+    max_stderr_bytes: int = 4 * 1024 * 1024
+    max_total_output_bytes: int = 8 * 1024 * 1024
+    max_artifact_bytes: int = 32 * 1024 * 1024
+    max_total_artifact_bytes: int = 128 * 1024 * 1024
+    terminate_grace_seconds: float = 2.0
+
+
+@dataclass(frozen=True)
+class EvidenceDigest:
+    algorithm: str
+    value: str
+    size_bytes: int
+
+
+@dataclass(frozen=True)
+class ToolchainEntry:
+    argv0: str
+    resolved_path: str
+    digest: EvidenceDigest
+    mode: int
+
+
+@dataclass(frozen=True)
+class CommandExecution:
+    command_id: str
+    argv: tuple[str, ...]
+    proof_class: str
+    working_directory: str
+    exit_code: int
+    started_at: str
+    finished_at: str
+    stdout_log: Path
+    stderr_log: Path
+    stdout_digest: EvidenceDigest
+    stderr_digest: EvidenceDigest
+    toolchain: ToolchainEntry
+
+
+@dataclass(frozen=True)
+class CleanRoomRun:
+    marker: str
+    policy_id: str
+    policy_version: str
+    policy_digest: EvidenceDigest
+    repository_id: str
+    candidate_sha: str
+    tree_sha: str
+    checkout_id: str
+    source_acquisition_digest: str
+    producer_id: str
+    verifier_id: str
+    environment_digest: EvidenceDigest
+    toolchain_digest: EvidenceDigest
+    commands: tuple[CommandExecution, ...]
+    artifacts: tuple[EvidenceDigest, ...]
+    evidence_root: Path
+    started_at: str
+    finished_at: str
+
+
+def _fail(code: str, command_id: str | None = None, detail: str | None = None) -> None:
+    raise CleanRoomRunnerError(code, command_id, detail)
+
+
+def _sha(data: bytes) -> EvidenceDigest:
+    return EvidenceDigest(
+        "sha256", "sha256:" + hashlib.sha256(data).hexdigest(), len(data)
+    )
+
+
+def _canonical(value: object) -> bytes:
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+
+
+def _now() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _schema() -> dict[str, object]:
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "schemas"
+        / "provider-neutral-verification-policy.schema.json"
+    )
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        _fail("policy_schema_unavailable")
+
+
+def _validate_policy(
+    policy: Mapping[str, object], source: AcquiredSource
+) -> tuple[dict[str, object], list[dict[str, object]]]:
+    if type(policy) is not dict:
+        _fail("invalid_policy")
+    errors = list(Draft202012Validator(_schema()).iter_errors(policy))
+    if errors:
+        _fail("invalid_policy")
+    copied = json.loads(_canonical(policy))
+    if (
+        copied["status"] != "active"
+        or copied["repository"]["repository_id"] != source.repository_id
+    ):
+        _fail("policy_binding_invalid")
+    commands = copied["commands"]
+    if not isinstance(commands, list) or not commands:
+        _fail("invalid_commands")
+    seen: set[str] = set()
+    for command in commands:
+        if not isinstance(command, dict) or command.get("required") is not True:
+            _fail("optional_command_rejected")
+        ident = command.get("id")
+        if type(ident) is not str or ident in seen:
+            _fail("duplicate_command")
+        seen.add(ident)
+        if type(command.get("argv")) is not list or not all(
+            type(x) is str for x in command["argv"]
+        ):
+            _fail("invalid_commands", ident)
+    return copied, commands
+
+
+def _validate_limits(limits: RunnerLimits) -> None:
+    if type(limits) is not RunnerLimits or any(
+        type(getattr(limits, name)) not in (int, float) or getattr(limits, name) <= 0
+        for name in limits.__dataclass_fields__
+    ):
+        _fail("invalid_limits")
+
+
+def _private_dir(path: Path) -> Path:
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(path, 0o700)
+    if stat.S_IMODE(os.lstat(path).st_mode) != 0o700 or path.is_symlink():
+        _fail("unsafe_evidence_root")
+    return path
+
+
+def _safe_cwd(checkout: Path, relative: object) -> Path:
+    if relative is None:
+        return checkout
+    if (
+        type(relative) is not str
+        or not relative
+        or relative.startswith("/")
+        or "\\" in relative
+        or any(ord(c) < 32 for c in relative)
+    ):
+        _fail("unsafe_working_directory")
+    parts = relative.split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        _fail("unsafe_working_directory")
+    current = checkout
+    for part in parts:
+        current /= part
+        try:
+            mode = os.lstat(current).st_mode
+        except FileNotFoundError:
+            _fail("unsafe_working_directory")
+        if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+            _fail("unsafe_working_directory")
+    try:
+        current.relative_to(checkout)
+    except ValueError:
+        _fail("unsafe_working_directory")
+    return current
+
+
+def _toolchain(argv0: str) -> ToolchainEntry:
+    if not argv0 or "/" in argv0:
+        path = Path(argv0)
+    else:
+        found = shutil.which(
+            argv0, path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        )
+        if not found:
+            _fail("executable_not_found")
+        path = Path(found)
+    try:
+        # A command name may resolve through a system-managed symlink (for example
+        # /usr/bin/python3).  Bind the final regular executable and re-resolve it
+        # before/after execution, so a replacement is still detected.
+        path = path.resolve(strict=True)
+        st = os.lstat(path)
+        if not stat.S_ISREG(st.st_mode) or not os.access(path, os.X_OK):
+            _fail("unsafe_executable")
+        data = path.read_bytes()
+    except OSError:
+        _fail("executable_not_found")
+    return ToolchainEntry(argv0, str(path), _sha(data), stat.S_IMODE(st.st_mode))
+
+
+def _toolchain_unchanged(entry: ToolchainEntry) -> None:
+    current = _toolchain(entry.argv0)
+    if current != entry:
+        _fail("toolchain_changed")
+
+
+def _environment(home: Path, temp: Path) -> dict[str, str]:
+    return {
+        "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "HOME": str(home),
+        "TMPDIR": str(temp),
+        "TEMP": str(temp),
+        "TMP": str(temp),
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "TZ": "UTC",
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_TERMINAL_PROMPT": "0",
+    }
+
+
+def _terminate(proc: subprocess.Popen[bytes], grace: float) -> None:
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    deadline = time.monotonic() + grace
+    while proc.poll() is None and time.monotonic() < deadline:
+        time.sleep(0.01)
+    if proc.poll() is None:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    try:
+        proc.wait(timeout=max(grace, 0.1))
+    except subprocess.TimeoutExpired:
+        _fail("process_not_reaped")
+
+
+def _execute(
+    command: dict[str, object],
+    checkout: Path,
+    env: dict[str, str],
+    logs: Path,
+    deadline: float,
+    limits: RunnerLimits,
+) -> CommandExecution:
+    ident, argv = command["id"], command["argv"]
+    assert isinstance(ident, str) and isinstance(argv, list)
+    cwd = _safe_cwd(checkout, command.get("working_directory"))
+    tool = _toolchain(argv[0])
+    _toolchain_unchanged(tool)
+    remaining = deadline - time.monotonic()
+    timeout = min(float(command["timeout_seconds"]), remaining)
+    if timeout <= 0:
+        _fail("total_timeout", ident)
+    stdout_path, stderr_path = logs / (ident + ".stdout"), logs / (ident + ".stderr")
+    started = _now()
+    try:
+        proc = subprocess.Popen(
+            tuple(argv),
+            cwd=str(cwd),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=False,
+            start_new_session=True,
+        )
+    except OSError:
+        _fail("spawn_failed", ident)
+    assert proc.stdout and proc.stderr
+    selector = selectors.DefaultSelector()
+    selector.register(proc.stdout, selectors.EVENT_READ, "out")
+    selector.register(proc.stderr, selectors.EVENT_READ, "err")
+    streams = {"out": bytearray(), "err": bytearray()}
+    failed: str | None = None
+    try:
+        while selector.get_map():
+            if time.monotonic() >= deadline or time.monotonic() >= (
+                deadline - remaining + timeout
+            ):
+                failed = "command_timeout"
+                break
+            for key, _ in selector.select(
+                timeout=min(0.05, max(0, deadline - time.monotonic()))
+            ):
+                chunk = os.read(key.fileobj.fileno(), 65536)
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    continue
+                streams[key.data].extend(chunk)
+                if (
+                    len(streams["out"]) > limits.max_stdout_bytes
+                    or len(streams["err"]) > limits.max_stderr_bytes
+                    or len(streams["out"]) + len(streams["err"])
+                    > limits.max_total_output_bytes
+                ):
+                    failed = "output_overflow"
+                    break
+                if _SECRET.search(chunk.decode("latin1")):
+                    failed = "secret_output"
+                    break
+            if failed:
+                break
+        if failed:
+            _terminate(proc, limits.terminate_grace_seconds)
+            _fail(failed, ident)
+        code = proc.wait(timeout=max(0.1, deadline - time.monotonic()))
+    except subprocess.TimeoutExpired:
+        _terminate(proc, limits.terminate_grace_seconds)
+        _fail("command_timeout", ident)
+    finally:
+        selector.close()
+    if code != 0:
+        _fail("command_failed", ident)
+    _toolchain_unchanged(tool)
+    for path, data in ((stdout_path, streams["out"]), (stderr_path, streams["err"])):
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+    return CommandExecution(
+        ident,
+        tuple(argv),
+        str(command["proof_class"]),
+        str(cwd.relative_to(checkout)) if cwd != checkout else ".",
+        code,
+        started,
+        _now(),
+        stdout_path,
+        stderr_path,
+        _sha(bytes(streams["out"])),
+        _sha(bytes(streams["err"])),
+        tool,
+    )
+
+
+def run_clean_room(
+    source: AcquiredSource,
+    policy: Mapping[str, object],
+    *,
+    producer_id: str,
+    verifier_id: str,
+    evidence_root: Path,
+    isolation: CleanRoomIsolation,
+    limits: RunnerLimits = RunnerLimits(),
+) -> CleanRoomRun:
+    if type(source) is not AcquiredSource:
+        _fail("invalid_acquired_source")
+    if (
+        type(producer_id) is not str
+        or type(verifier_id) is not str
+        or not _ID.fullmatch(producer_id)
+        or not _ID.fullmatch(verifier_id)
+        or producer_id == verifier_id
+    ):
+        _fail("invalid_identity")
+    if (
+        type(isolation) is not CleanRoomIsolation
+        or isolation.network_isolation_enforced is not True
+        or isolation.filesystem_isolation_enforced is not True
+    ):
+        _fail("isolation_not_enforced")
+    _validate_limits(limits)
+    checked_policy, commands = _validate_policy(policy, source)
+    # Validation immediately precedes command zero and is repeated after every command.
+    try:
+        validate_acquired_source(source)
+    except SourceAcquisitionError as error:
+        _fail("source_validation_failed", detail=error.code)
+    root = _private_dir(Path(evidence_root))
+    if root == source.checkout_path or source.checkout_path in root.parents:
+        _fail("unsafe_evidence_root")
+    with tempfile.TemporaryDirectory(prefix="clean-room-", dir=root) as temp_name:
+        temp = Path(temp_name)
+        home = _private_dir(temp / "home")
+        scratch = _private_dir(temp / "tmp")
+        logs = _private_dir(temp / "logs")
+        env = _environment(home, scratch)
+        started = _now()
+        deadline = time.monotonic() + limits.total_timeout_seconds
+        executions: list[CommandExecution] = []
+        for command in commands:
+            executions.append(
+                _execute(command, source.checkout_path, env, logs, deadline, limits)
+            )
+            try:
+                validate_acquired_source(source)
+            except SourceAcquisitionError as error:
+                _fail("source_validation_failed", str(command["id"]), error.code)
+        # Promote only complete, non-secret successful logs atomically.
+        final_logs = _private_dir(root / "logs")
+        promoted: list[CommandExecution] = []
+        for execution in executions:
+            out, err = (
+                final_logs / execution.stdout_log.name,
+                final_logs / execution.stderr_log.name,
+            )
+            os.replace(execution.stdout_log, out)
+            os.replace(execution.stderr_log, err)
+            promoted.append(
+                CommandExecution(
+                    **{**execution.__dict__, "stdout_log": out, "stderr_log": err}
+                )
+            )
+        try:
+            validate_acquired_source(source)
+        except SourceAcquisitionError as error:
+            _fail("source_validation_failed", detail=error.code)
+        tools = _sha(_canonical([entry.toolchain.digest.value for entry in promoted]))
+        run = CleanRoomRun(
+            CLEAN_ROOM_RUNNER_V1_OK,
+            str(checked_policy["policy_id"]),
+            str(checked_policy["policy_version"]),
+            _sha(_canonical(checked_policy)),
+            source.repository_id,
+            source.candidate_sha,
+            source.tree_sha,
+            source.checkout_id,
+            source.source_acquisition_digest,
+            producer_id,
+            verifier_id,
+            _sha(_canonical(env)),
+            tools,
+            tuple(promoted),
+            (),
+            root,
+            started,
+            _now(),
+        )
+        if type(run.marker) is not str or run.marker != CLEAN_ROOM_RUNNER_V1_OK:
+            _fail("invalid_result")
+        return run
