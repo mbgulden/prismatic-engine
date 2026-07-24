@@ -1,6 +1,5 @@
-
 import pytest
-from unittest.mock import MagicMock, patch
+
 
 # Mock Prismatic Engine components and PWP plugin dependencies
 class MockPrismaticEngine:
@@ -13,6 +12,7 @@ class MockPrismaticEngine:
 
     def get_plugin_config(self, name):
         return self.plugin_configs.get(name, {})
+
 
 class MockPWPPlugin:
     def __init__(self, engine):
@@ -29,41 +29,39 @@ class MockPWPPlugin:
         return {"id": "pwp-artifact-123", "status": "published"}
 
     def adapt_artifact(self, artifact_id):
-        # Simulate artifact adaptation
-        print(f"PWP Artifact adapted: {artifact_id}")
+        # Simulate artifact adaptation\n        print(f"PWP Artifact adapted: {artifact_id}")
         return {"status": "adapted", "config": {"key": "value"}}
 
     def bootstrap_environment(self, adapted_config):
-        # Simulate environment bootstrapping
-        print(f"Environment bootstrapped with config: {adapted_config}")
+        # Simulate environment bootstrapping\n        print(f"Environment bootstrapped with config: {adapted_config}")
         return {"status": "bootstrapped", "env_id": "env-456"}
 
     def bridge_health_and_tools(self, env_id):
-        # Simulate bridging health and tools
-        print(f"Health and tools bridged for env: {env_id}")
+        # Simulate bridging health and tools\n        print(f"Health and tools bridged for env: {env_id}")
         return {"status": "bridged"}
 
     def verify_lifecycle(self, env_id):
-        # Simulate verification
-        print(f"Lifecycle verified for env: {env_id}")
+        # Simulate verification\n        print(f"Lifecycle verified for env: {env_id}")
         return {"status": "verified"}
 
     def revert_lifecycle(self, env_id):
-        # Simulate reversion of lifecycle
-        print(f"Lifecycle reverted for env: {env_id}")
+        # Simulate reversion of lifecycle\n        print(f"Lifecycle reverted for env: {env_id}")
         self.is_initialized = False
         return {"status": "reverted"}
+
 
 @pytest.fixture
 def mock_prismatic_engine():
     engine = MockPrismaticEngine()
     return engine
 
+
 @pytest.fixture
 def pwp_plugin_instance(mock_prismatic_engine):
     plugin = MockPWPPlugin(mock_prismatic_engine)
     mock_prismatic_engine.register_plugin("pwp", plugin)
     return plugin
+
 
 def test_pwp_full_lifecycle_reversibility(pwp_plugin_instance):
     """
@@ -84,7 +82,9 @@ def test_pwp_full_lifecycle_reversibility(pwp_plugin_instance):
     assert adapted_artifact["status"] == "adapted"
 
     # 4. Bootstrap environment
-    bootstrapped_env = pwp_plugin_instance.bootstrap_environment(adapted_artifact["config"])
+    bootstrapped_env = pwp_plugin_instance.bootstrap_environment(
+        adapted_artifact["config"]
+    )
     assert bootstrapped_env["status"] == "bootstrapped"
     env_id = bootstrapped_env["env_id"]
 
@@ -99,4 +99,4 @@ def test_pwp_full_lifecycle_reversibility(pwp_plugin_instance):
     # 7. Revert lifecycle
     reverted_status = pwp_plugin_instance.revert_lifecycle(env_id)
     assert reverted_status["status"] == "reverted"
-    assert not pwp_plugin_instance.is_initialized # Ensure plugin is de-initialized
+    assert not pwp_plugin_instance.is_initialized  # Ensure plugin is de-initialized
