@@ -28,6 +28,7 @@ When sources disagree, fail closed and open a decision/update rather than choosi
 - [Verification contract](contracts/verification-contract.md)
 - [Evidence retention](contracts/evidence-retention.md)
 - [Decision index](decisions/index.md)
+- [ADR-0002: Provider-neutral verification receipts](decisions/ADR-0002-provider-neutral-verification-receipts.md)
 - [Verifiers Are King evidence review](research/verifiers-are-king-evidence-review.md)
 - Machine-readable OKF registry: `okf/index.yaml`
 
