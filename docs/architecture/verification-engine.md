@@ -2,7 +2,7 @@
 
 **Status:** Canonical
 **Owner:** Prismatic Engine maintainers
-**Last verified:** 2026-07-21
+**Last verified:** 2026-07-23
 
 ## Why
 
@@ -27,7 +27,7 @@ Use a graph of diverse checks:
 3. unit/integration/property/adversarial tests;
 4. build and installed-artifact behavior;
 5. semantic, architectural, visual, media, or business-invariant review;
-6. canonical CI;
+6. canonical policy execution in an approved clean-room backend;
 7. exact-SHA merge-judge attestation;
 8. post-merge and, when authorized, production proof.
 
@@ -38,12 +38,12 @@ Repair findings without weakening the gate. Bind regression evidence to the corr
 ## Nested loops
 
 - **Agent loop:** fast bounded feedback and self-repair.
-- **Promotion loop:** independent review, canonical CI, artifact installation, merge authorization.
+- **Promotion loop:** independent review, provider-neutral clean-room receipt validation, artifact installation, merge authorization.
 - **Maintenance loop:** runtime canaries, drift/debt scans, seeded-fault calibration, rollback and restore drills.
 
 ## Agent-level state flow
 
-`guided → admitted → leased → producing → proposed → independently_verified → CI_green → merge_authorized → merged → post_merge_verified`
+`guided → admitted → leased → producing → proposed → independently_verified → receipt_valid → merge_authorized → merged → post_merge_verified`
 
 No transition may be inferred from Linear `Done`, producer `DONE`, or file presence alone.
 
@@ -58,6 +58,29 @@ No transition may be inferred from Linear `Done`, producer `DONE`, or file prese
 - failure, timeout, replay, and rollback have durable dispositions;
 - dashboard and chat remain read/control surfaces over durable stores;
 - verifier health is calibrated with planted known faults.
+
+## Provider-neutral execution architecture
+
+Verification semantics belong to the core policy and receipt validator. GitHub Actions, Bitbucket Pipelines, GitLab CI, Forgejo/Gitea, local bare Git, self-hosted workers, and offline bundles are adapters/backends around that core.
+
+```text
+Git provider / local Git / bundle
+             |
+             v
+source adapter -> clean-room acquisition -> policy runner
+                                         -> durable receipt
+                                         -> independent validator
+                                         -> merge judge
+             ^
+             |
+optional provider status/check projection
+```
+
+The provider-neutral core binds repository, base, candidate commit, tree, changed paths, clean checkout, environment, commands, proof classes, logs, artifacts, verifier/backend identity, freshness, revocation, decision, and attestation. Provider adapters translate triggers, refs, retrieval, and status projection only; they cannot weaken policy.
+
+GitHub Actions is one approved backend when available, not a mandatory backend. A hosted-provider billing or control-plane failure means no verification occurred on that backend. It does not convert local mutable-worktree evidence into a valid receipt and does not prevent another approved clean-room backend from issuing one.
+
+See [ADR-0002](../decisions/ADR-0002-provider-neutral-verification-receipts.md).
 
 ## Sustainable-throughput measures
 

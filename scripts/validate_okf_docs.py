@@ -22,6 +22,7 @@ CANONICAL = [
     "docs/contracts/evidence-retention.md",
     "docs/decisions/index.md",
     "docs/decisions/ADR-0001-documentation-source-of-truth.md",
+    "docs/decisions/ADR-0002-provider-neutral-verification-receipts.md",
     "docs/research/verifiers-are-king-evidence-review.md",
     "okf/index.yaml",
     "okf/schemas/okf.schema.json",

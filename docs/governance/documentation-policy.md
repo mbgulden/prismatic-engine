@@ -33,7 +33,7 @@ Every material change must identify:
 
 ## Prohibited ambiguity
 
-Do not call a dashboard, chat message, producer result, mutable log, branch name, or unpinned external path the source of truth. They may be operator views or evidence references only.
+Do not call a dashboard, chat message, producer result, mutable log, branch name, provider check/status icon, or unpinned external path the source of truth. They may be operator views or evidence references only. GitHub Actions and other CI providers are approved adapters/backends only when their output is bound into the accepted provider-neutral receipt contract.
 
 ## Supersession
 

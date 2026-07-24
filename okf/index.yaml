@@ -26,6 +26,29 @@
       "review_after": "2026-10-21"
     },
     {
+      "id": "provider-neutral-verification",
+      "objective": "Merge evidence remains exact, independent, and portable across hosted, self-hosted, local, and offline Git workflows.",
+      "owner": "merge judge and verification maintainers",
+      "system_of_record": "versioned verification receipts + Merge Factory attestations + Git object identity",
+      "key_results": [
+        "at least one approved clean-room backend emits a valid exact-head receipt for every merge",
+        "provider status projections never override receipt validation",
+        "GitHub, Bitbucket, GitLab, Forgejo/Gitea, local Git, and bundle inputs pass one conformance contract",
+        "head change, expiry, revocation, digest mismatch, or producer-only evidence fails closed"
+      ],
+      "functions": [
+        "prismatic/core/merge_factory.py",
+        "prismatic/providers/github.py"
+      ],
+      "evidence": [
+        "docs/decisions/ADR-0002-provider-neutral-verification-receipts.md",
+        "docs/contracts/verification-contract.md",
+        "tests/test_okf_docs.py"
+      ],
+      "current_surface": "canonical policy and Linear epic GRO-4203; provider-neutral runner pending",
+      "review_after": "2026-10-23"
+    },
+    {
       "id": "systemic-orchestration-correctness",
       "objective": "Long-running orchestration remains safe under contention, replay, timeout, and recovery.",
       "owner": "Prismatic Engine maintainers",

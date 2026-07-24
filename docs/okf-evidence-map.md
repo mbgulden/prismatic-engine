@@ -34,7 +34,8 @@ If a workflow exists in PE Core, it should have:
 
 | Objective | Key result | Function/workflow | Evidence | System of record | Current surface |
 |---|---|---|---|---|---|
-| Agent output is accepted only with independent evidence | Reviewed SHA equals PR head; required proof classes pass | Merge Factory admission, lease, lock, and judge attestation | exact-SHA review, canonical CI, installed-artifact and post-merge proof | Git/GitHub + Merge Factory attestations | CLI/API/CI |
+| Agent output is accepted only with independent evidence | Reviewed SHA equals candidate head; required proof classes pass | Merge Factory admission, lease, lock, and judge attestation | exact-SHA review, validated clean-room receipt, installed-artifact and post-merge proof | Git object identity + receipt store + Merge Factory attestations | CLI/API/provider adapters |
+| Merge evidence is portable across Git providers | One approved independent clean-room backend emits a valid exact-head receipt; provider status cannot override it | provider-neutral policy runner, receipt validator, merge judge, and thin provider adapters | versioned receipt, clean-checkout identity, command/log/artifact digests, verifier identity, freshness/revocation decision | receipt store + Git object identity + Merge Factory attestation | canonical policy; Linear epic GRO-4203; runner pending |
 | Orchestration remains correct under replay and contention | cap is never exceeded; stale holders cannot mutate | atomic leases, fencing, idempotent cohort, recovery drills | barrier/race/adversarial tests and retained recovery evidence | durable orchestration stores | CLI/API |
 | Verification remains effective | planted faults are detected and stale policies are surfaced | meta-verification maintenance loop | seeded-fault detection and verifier-drift reports | verification evidence ledger | CI/operations |
 | Agent speed remains sustainable | accepted value rises without hidden debt | quality/debt maintenance loop | escaped defects, rollback, rework, evidence latency, 30/90/180-day burden | versioned quality/incident metrics | reports/dashboard target |
@@ -138,3 +139,4 @@ Fallback CLI/API command
 | Media blueprint structured governance | next slice |
 | Business plugin blueprint pack | following slice |
 | Dashboard OKF/evidence board implementation | future implementation |
+| Provider-neutral verification policy | accepted in ADR-0002; implementation tracked by GRO-4203 |
