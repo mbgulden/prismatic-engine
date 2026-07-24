@@ -36,7 +36,10 @@ def assert_valid(instance: dict[str, Any], schema_path: Path) -> None:
     assert errors(instance, schema_path) == []
 
 
-def policy(provider: str = "local", backend_class: str = "local") -> dict[str, Any]:
+def policy(
+    backend_class: str = "self_hosted_clean_room",
+    hosted_provider: str | None = None,
+) -> dict[str, Any]:
     return {
         "schema_version": "1.0",
         "policy_id": "pnv-policy",
@@ -46,16 +49,32 @@ def policy(provider: str = "local", backend_class: str = "local") -> dict[str, A
             "repository_id": "prismatic-engine",
             "source_requirements": {
                 "require_full_git_objects": True,
-                "allowed_source_classes": [
-                    "hosted",
-                    "self_hosted",
-                    "local",
-                    "offline_bundle",
+                "allowed_source_kinds": [
+                    "provider_remote",
+                    "local_bare_repository",
+                    "offline_git_bundle",
+                ],
+                "allowed_source_providers": [
+                    "github",
+                    "gitlab",
+                    "bitbucket",
+                    "forgejo",
+                    "gitea",
+                    "other",
+                    "none",
                 ],
             },
         },
         "approved_backends": [
-            {"id": "backend-1", "class": backend_class, "provider": provider}
+            {
+                "id": "backend-1",
+                "class": backend_class,
+                **(
+                    {"hosted_provider_metadata": {"provider": hosted_provider}}
+                    if hosted_provider
+                    else {}
+                ),
+            }
         ],
         "approved_verifiers": {
             "identities": ["verifier-1"],
@@ -111,14 +130,19 @@ def policy(provider: str = "local", backend_class: str = "local") -> dict[str, A
     }
 
 
-def receipt(provider: str = "local") -> dict[str, Any]:
+def receipt(
+    source_kind: str = "local_bare_repository",
+    source_provider: str = "none",
+    backend_class: str = "self_hosted_clean_room",
+) -> dict[str, Any]:
     return {
         "schema_version": "1.0",
         "policy_id": "pnv-policy",
         "policy_version": "1.0.0",
         "task_id": "GRO-4205",
         "repository_id": "prismatic-engine",
-        "source_provider": provider,
+        "source_kind": source_kind,
+        "source_provider": source_provider,
         "source_locator": "local://clean-checkout",
         "base_sha": SHA,
         "candidate_sha": "c" * 40,
@@ -147,6 +171,7 @@ def receipt(provider: str = "local") -> dict[str, Any]:
         ],
         "verifier_id": "verifier-1",
         "backend_id": "backend-1",
+        "backend_class": backend_class,
         "producer_id": "producer-1",
         "started_at": TIME,
         "completed_at": "2026-07-24T01:01:00Z",
@@ -171,25 +196,57 @@ def test_schemas_are_draft_2020_12_and_packaged_copies_are_byte_identical() -> N
     assert RECEIPT_PATH.read_bytes() == PACKAGE_RECEIPT_PATH.read_bytes()
 
 
-def test_minimal_provider_neutral_policy_and_all_provider_identities_pass() -> None:
-    assert_valid(policy(), POLICY_PATH)
-    for provider, backend_class in [
-        ("github", "hosted"),
-        ("bitbucket", "hosted"),
-        ("gitlab", "hosted"),
-        ("forgejo", "self_hosted"),
-        ("gitea", "self_hosted"),
-        ("local", "local"),
-        ("offline_bundle", "offline_bundle"),
-    ]:
-        candidate = policy(provider, backend_class)
-        assert_valid(candidate, POLICY_PATH)
-        assert "github" not in candidate["repository"]
+def test_source_acquisition_and_execution_backend_models_validate_independently() -> (
+    None
+):
+    for backend_class in (
+        "hosted_provider_runner",
+        "self_hosted_clean_room",
+        "supervised_clean_room",
+    ):
+        assert_valid(policy(backend_class), POLICY_PATH)
+    assert_valid(policy("hosted_provider_runner", "github"), POLICY_PATH)
 
 
-def test_minimal_self_hosted_and_hosted_adapter_receipts_pass() -> None:
-    assert_valid(receipt("local"), RECEIPT_PATH)
-    hosted = receipt("gitlab")
+@pytest.mark.parametrize(
+    ("source_kind", "source_provider"),
+    [
+        ("provider_remote", "github"),
+        ("local_bare_repository", "none"),
+        ("offline_git_bundle", "none"),
+    ],
+)
+def test_all_source_kinds_validate_only_with_correct_provider_combinations(
+    source_kind: str, source_provider: str
+) -> None:
+    assert_valid(receipt(source_kind, source_provider), RECEIPT_PATH)
+
+
+def test_source_provider_conditionals_reject_invalid_combinations() -> None:
+    assert errors(receipt("provider_remote", "none"), RECEIPT_PATH)
+    assert errors(receipt("local_bare_repository", "github"), RECEIPT_PATH)
+    assert errors(receipt("offline_git_bundle", "gitlab"), RECEIPT_PATH)
+
+
+def test_source_adapter_names_reject_as_execution_backend_classes() -> None:
+    for backend_class in (
+        "local",
+        "offline_bundle",
+        "local_bare_repository",
+        "offline_git_bundle",
+    ):
+        assert errors(policy(backend_class), POLICY_PATH)
+        assert errors(receipt(backend_class=backend_class), RECEIPT_PATH)
+
+
+def test_minimal_self_hosted_and_offline_receipts_pass() -> None:
+    assert_valid(
+        receipt("local_bare_repository", "none", "self_hosted_clean_room"), RECEIPT_PATH
+    )
+    assert_valid(
+        receipt("offline_git_bundle", "none", "supervised_clean_room"), RECEIPT_PATH
+    )
+    hosted = receipt("provider_remote", "gitlab", "hosted_provider_runner")
     hosted["provider_metadata"] = {
         "pull_request_id": "123",
         "run_id": "run-456",
@@ -237,6 +294,11 @@ def test_abbreviated_or_malformed_git_objects_and_digests_reject(
     [
         "verifier_id",
         "backend_id",
+        "backend_class",
+        "source_kind",
+        "source_provider",
+        "source_locator",
+        "source_acquisition_digest",
         "revocation_status",
         "signature_or_attestation",
         "logs_and_digests",
@@ -297,13 +359,28 @@ def test_nonexecution_and_blocked_or_revoked_receipts_are_not_merge_eligible() -
 
 
 def test_provider_metadata_cannot_replace_required_core_evidence_or_identity() -> None:
-    candidate = receipt("github")
+    candidate = receipt("provider_remote", "github", "hosted_provider_runner")
     candidate["provider_metadata"] = {"pull_request_id": "42", "run_id": "abc"}
     del candidate["repository_id"]
     assert errors(candidate, RECEIPT_PATH)
-    candidate = receipt("github")
+    candidate = receipt("provider_remote", "github", "hosted_provider_runner")
     candidate["provider_metadata"] = {"pull_request_id": "42", "run_id": "abc"}
     del candidate["source_acquisition_digest"]
+    assert errors(candidate, RECEIPT_PATH)
+
+
+def test_source_and_backend_dimensions_cannot_substitute_for_each_other() -> None:
+    candidate = receipt()
+    candidate["backend_id"] = "local_bare_repository"
+    candidate["backend_class"] = "local_bare_repository"
+    assert errors(candidate, RECEIPT_PATH)
+    candidate = receipt()
+    candidate["source_kind"] = "backend-1"
+    candidate["source_provider"] = "none"
+    assert errors(candidate, RECEIPT_PATH)
+    candidate = receipt()
+    candidate["provider_metadata"] = {"run_id": "source-adapter-run"}
+    candidate["backend_class"] = "offline_bundle"
     assert errors(candidate, RECEIPT_PATH)
 
 
