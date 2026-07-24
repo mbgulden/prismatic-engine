@@ -57,7 +57,13 @@ def policy(
             "logs_required": True,
             "artifacts_required": True,
             "digest_requirements": [
-                {"kind": "log", "algorithm": "sha256", "required": True}
+                {"kind": "log", "algorithm": "sha256", "required": True},
+                {
+                    "kind": "artifact",
+                    "algorithm": "sha256",
+                    "required": True,
+                    "name": "result.txt",
+                },
             ],
         },
         "environment": {
@@ -134,22 +140,43 @@ def test_split_secret_detector_fails_closed_on_each_stream_boundary():
         assert detector.feed(parts[1]) is True
 
 
-def test_required_artifact_contract_fails_closed_before_command_execution(source):
+def test_required_named_artifact_is_captured_after_command_execution(source):
     acquired, evidence = source
-    commands = [command("first", "raise SystemExit(99)")]
-    with pytest.raises(
-        CleanRoomRunnerError,
-        match="BLOCKED_CONTRACT:artifact_names_not_expressible_in_schema_1_0",
-    ):
+    code = (
+        "import os, pathlib; "
+        "pathlib.Path(os.environ['PRISMATIC_ARTIFACT_ROOT'], 'result.txt').write_text('proof')"
+    )
+    run = run_clean_room(
+        acquired,
+        policy([command("first", code)]),
+        producer_id="producer",
+        verifier_id="verifier",
+        evidence_root=evidence,
+        isolation=CleanRoomIsolation(True, True),
+    )
+    assert run.marker == "CLEAN_ROOM_RUNNER_V1_OK"
+    assert [
+        (artifact.name, artifact.digest.size_bytes) for artifact in run.artifacts
+    ] == [("result.txt", 5)]
+    assert run.commands[0].stdout_log.parent == evidence / "logs"
+
+
+def test_missing_or_unsafe_artifact_requirement_fails_before_command_execution(source):
+    acquired, evidence = source
+    value = policy([command("first", "raise SystemExit(99)")])
+    value["evidence"]["digest_requirements"] = [
+        {"kind": "artifact", "algorithm": "sha256", "required": True}
+    ]
+    with pytest.raises(CleanRoomRunnerError, match="unsafe_artifact_requirement"):
         run_clean_room(
             acquired,
-            policy(commands),
+            value,
             producer_id="producer",
             verifier_id="verifier",
             evidence_root=evidence,
             isolation=CleanRoomIsolation(True, True),
         )
-    assert not evidence.exists(), "blocked contract must not promote evidence"
+    assert not evidence.exists()
 
 
 @pytest.mark.parametrize(
@@ -206,26 +233,30 @@ def test_authority_and_cwd_rejections(source):
         )
 
 
-def test_literal_argv_is_not_executed_when_artifact_contract_is_ambiguous(source):
+def test_literal_argv_is_not_executed(source):
     acquired, evidence = source
     literal = "a b;$(touch should-not-exist)|*"
-    with pytest.raises(CleanRoomRunnerError, match="BLOCKED_CONTRACT"):
-        run_clean_room(
-            acquired,
-            policy(
-                [
-                    {
-                        "id": "literal",
-                        "argv": [sys.executable, "-c", "raise SystemExit(99)", literal],
-                        "proof_class": "unit",
-                        "timeout_seconds": 20,
-                        "required": True,
-                    }
-                ]
-            ),
-            producer_id="producer",
-            verifier_id="verifier",
-            evidence_root=evidence,
-            isolation=CleanRoomIsolation(True, True),
-        )
+    code = (
+        "import os, pathlib; "
+        "pathlib.Path(os.environ['PRISMATIC_ARTIFACT_ROOT'], 'result.txt').write_text('ok')"
+    )
+    run = run_clean_room(
+        acquired,
+        policy(
+            [
+                {
+                    "id": "literal",
+                    "argv": [sys.executable, "-c", code, literal],
+                    "proof_class": "unit",
+                    "timeout_seconds": 20,
+                    "required": True,
+                }
+            ]
+        ),
+        producer_id="producer",
+        verifier_id="verifier",
+        evidence_root=evidence,
+        isolation=CleanRoomIsolation(True, True),
+    )
+    assert run.marker == "CLEAN_ROOM_RUNNER_V1_OK"
     assert not (acquired.checkout_path / "should-not-exist").exists()

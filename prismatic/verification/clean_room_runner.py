@@ -69,6 +69,17 @@ class EvidenceDigest:
 
 
 @dataclass(frozen=True)
+class ArtifactEvidence:
+    """Digest-only binding for one policy-named clean-room artifact."""
+
+    name: str
+    digest: EvidenceDigest
+    mode: int
+    uid: int
+    gid: int
+
+
+@dataclass(frozen=True)
 class ToolchainEntry:
     argv0: str
     resolved_path: str
@@ -108,7 +119,7 @@ class CleanRoomRun:
     environment_digest: EvidenceDigest
     toolchain_digest: EvidenceDigest
     commands: tuple[CommandExecution, ...]
-    artifacts: tuple[EvidenceDigest, ...]
+    artifacts: tuple[ArtifactEvidence, ...]
     evidence_root: Path
     started_at: str
     finished_at: str
@@ -146,26 +157,67 @@ def _schema() -> dict[str, object]:
         _fail("policy_schema_unavailable")
 
 
+def _artifact_name(value: object) -> str:
+    if (
+        type(value) is not str
+        or not value
+        or value.startswith("/")
+        or "\\" in value
+        or any(ord(char) < 32 for char in value)
+    ):
+        _fail("unsafe_artifact_requirement")
+    parts = value.split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        _fail("unsafe_artifact_requirement")
+    assert type(value) is str
+    return value
+
+
 def _validate_policy(
     policy: Mapping[str, object], source: AcquiredSource
-) -> tuple[dict[str, object], list[dict[str, object]]]:
+) -> tuple[dict[str, object], list[dict[str, object]], tuple[str, ...]]:
     if type(policy) is not dict:
         _fail("invalid_policy")
     errors = list(Draft202012Validator(_schema()).iter_errors(policy))
     if errors:
         _fail("invalid_policy")
+    evidence_raw = policy.get("evidence")
+    if (
+        type(evidence_raw) is not dict
+        or evidence_raw.get("artifacts_required") is not True
+    ):
+        _fail("invalid_artifact_requirement")
+    requirements = evidence_raw.get("digest_requirements")
+    if type(requirements) is not list:
+        _fail("invalid_artifact_requirement")
+    names: list[str] = []
+    for requirement in requirements:
+        if type(requirement) is not dict:
+            _fail("invalid_artifact_requirement")
+        kind = requirement.get("kind")
+        algorithm = requirement.get("algorithm")
+        required = requirement.get("required")
+        if (
+            type(kind) is not str
+            or type(algorithm) is not str
+            or type(required) is not bool
+        ):
+            _fail("invalid_artifact_requirement")
+        if kind == "artifact":
+            if algorithm != "sha256" or required is not True:
+                _fail("invalid_artifact_requirement")
+            name = _artifact_name(requirement.get("name"))
+            if name in names:
+                _fail("duplicate_artifact_requirement")
+            names.append(name)
+    if not names:
+        _fail("missing_artifact_requirement")
     copied = json.loads(_canonical(policy))
     if (
         copied["status"] != "active"
         or copied["repository"]["repository_id"] != source.repository_id
     ):
         _fail("policy_binding_invalid")
-    evidence = copied["evidence"]
-    # Schema 1.0 requires artifacts but exposes no authoritative artifact path or
-    # named selection contract. A digest-requirement name is metadata, not a path.
-    # Refuse before executing rather than synthesizing or silently omitting proof.
-    if evidence["artifacts_required"] is True:
-        _fail("BLOCKED_CONTRACT", detail="artifact_names_not_expressible_in_schema_1_0")
     commands = copied["commands"]
     if not isinstance(commands, list) or not commands:
         _fail("invalid_commands")
@@ -181,7 +233,7 @@ def _validate_policy(
             type(x) is str for x in command["argv"]
         ):
             _fail("invalid_commands", ident)
-    return copied, commands
+    return copied, commands, tuple(sorted(names))
 
 
 def _validate_limits(limits: RunnerLimits) -> None:
@@ -311,13 +363,123 @@ def _toolchain_unchanged(entry: ToolchainEntry) -> None:
         _fail("toolchain_changed")
 
 
-def _environment(home: Path, temp: Path) -> dict[str, str]:
+def _capture_artifacts(
+    artifact_root: Path, names: tuple[str, ...], limits: RunnerLimits
+) -> tuple[ArtifactEvidence, ...]:
+    """Hash only exact policy names through no-follow descriptor traversal."""
+    try:
+        root_fd = os.open(artifact_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError:
+        _fail("unsafe_artifact_root")
+    total = 0
+    captured: list[ArtifactEvidence] = []
+    try:
+        for name in names:
+            current_fd = root_fd
+            owned_fds: list[int] = []
+            try:
+                parts = name.split("/")
+                for component in parts[:-1]:
+                    try:
+                        next_fd = os.open(
+                            component,
+                            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                            dir_fd=current_fd,
+                        )
+                    except OSError:
+                        _fail("unsafe_artifact")
+                    owned_fds.append(next_fd)
+                    current_fd = next_fd
+                try:
+                    fd = os.open(
+                        parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=current_fd
+                    )
+                except OSError:
+                    _fail("missing_or_unsafe_artifact")
+                try:
+                    before = os.fstat(fd)
+                    if (
+                        not stat.S_ISREG(before.st_mode)
+                        or before.st_nlink != 1
+                        or before.st_size > limits.max_artifact_bytes
+                        or total + before.st_size > limits.max_total_artifact_bytes
+                    ):
+                        _fail("unsafe_artifact")
+                    digest = hashlib.sha256()
+                    size = 0
+                    while True:
+                        chunk = os.read(fd, 65536)
+                        if not chunk:
+                            break
+                        size += len(chunk)
+                        if (
+                            size > limits.max_artifact_bytes
+                            or total + size > limits.max_total_artifact_bytes
+                        ):
+                            _fail("artifact_overflow")
+                        digest.update(chunk)
+                    after = os.fstat(fd)
+                    try:
+                        named = os.stat(
+                            parts[-1], dir_fd=current_fd, follow_symlinks=False
+                        )
+                    except OSError:
+                        _fail("artifact_replaced")
+                    identity = (
+                        before.st_dev,
+                        before.st_ino,
+                        before.st_mode,
+                        before.st_nlink,
+                        before.st_size,
+                        before.st_mtime_ns,
+                        before.st_ctime_ns,
+                    )
+                    current_identity = (
+                        after.st_dev,
+                        after.st_ino,
+                        after.st_mode,
+                        after.st_nlink,
+                        after.st_size,
+                        after.st_mtime_ns,
+                        after.st_ctime_ns,
+                    )
+                    named_identity = (named.st_dev, named.st_ino)
+                    if (
+                        identity != current_identity
+                        or named_identity != identity[:2]
+                        or size != before.st_size
+                    ):
+                        _fail("artifact_changed")
+                    total += size
+                    captured.append(
+                        ArtifactEvidence(
+                            name,
+                            EvidenceDigest(
+                                "sha256", "sha256:" + digest.hexdigest(), size
+                            ),
+                            stat.S_IMODE(before.st_mode),
+                            before.st_uid,
+                            before.st_gid,
+                        )
+                    )
+                finally:
+                    os.close(fd)
+            finally:
+                for owned_fd in reversed(owned_fds):
+                    os.close(owned_fd)
+    finally:
+        os.close(root_fd)
+    return tuple(captured)
+
+
+def _environment(home: Path, temp: Path, artifact_root: Path) -> dict[str, str]:
     return {
         "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         "HOME": str(home),
         "TMPDIR": str(temp),
         "TEMP": str(temp),
         "TMP": str(temp),
+        "PRISMATIC_ARTIFACT_ROOT": str(artifact_root),
         "LANG": "C.UTF-8",
         "LC_ALL": "C.UTF-8",
         "TZ": "UTC",
@@ -479,7 +641,7 @@ def run_clean_room(
     ):
         _fail("isolation_not_enforced")
     _validate_limits(limits)
-    checked_policy, commands = _validate_policy(policy, source)
+    checked_policy, commands, artifact_names = _validate_policy(policy, source)
     # Validation immediately precedes command zero and is repeated after every command.
     try:
         validate_acquired_source(source)
@@ -492,8 +654,9 @@ def run_clean_room(
         temp = Path(temp_name)
         home = _private_dir(temp / "home")
         scratch = _private_dir(temp / "tmp")
+        artifact_root = _private_dir(temp / "artifacts")
         logs = _private_dir(temp / "logs")
-        env = _environment(home, scratch)
+        env = _environment(home, scratch, artifact_root)
         started = _now()
         deadline = time.monotonic() + limits.total_timeout_seconds
         executions: list[CommandExecution] = []
@@ -505,6 +668,11 @@ def run_clean_room(
                 validate_acquired_source(source)
             except SourceAcquisitionError as error:
                 _fail("source_validation_failed", str(command["id"]), error.code)
+        artifacts = _capture_artifacts(artifact_root, artifact_names, limits)
+        try:
+            validate_acquired_source(source)
+        except SourceAcquisitionError as error:
+            _fail("source_validation_failed", detail=error.code)
         # Promote only complete, non-secret successful logs atomically.
         final_logs = _private_dir(root / "logs")
         promoted: list[CommandExecution] = []
@@ -540,7 +708,7 @@ def run_clean_room(
             _sha(_canonical(env)),
             tools,
             tuple(promoted),
-            (),
+            artifacts,
             root,
             started,
             _now(),

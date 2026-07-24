@@ -2,6 +2,7 @@
 
 from .clean_room_runner import (
     CLEAN_ROOM_RUNNER_V1_OK,
+    ArtifactEvidence,
     CleanRoomIsolation,
     CleanRoomRun,
     CleanRoomRunnerError,
@@ -23,6 +24,7 @@ from .source_acquisition import (
 
 __all__ = [
     "CLEAN_ROOM_RUNNER_V1_OK",
+    "ArtifactEvidence",
     "CleanRoomIsolation",
     "CleanRoomRun",
     "CleanRoomRunnerError",
