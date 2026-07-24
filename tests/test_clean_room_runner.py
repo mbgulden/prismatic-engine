@@ -409,6 +409,61 @@ def test_intermediate_evidence_component_replacement_race_rejects_without_mutati
     assert not (target / "evidence").exists()
 
 
+@pytest.mark.parametrize("replacement", ["rename_recreate", "symlink_swap"])
+def test_post_bind_evidence_leaf_replacement_rejects_before_command_zero(
+    source, tmp_path, monkeypatch, replacement
+):
+    """The held root descriptor must not authorize a replaced named leaf."""
+    acquired, evidence = source
+    evidence.mkdir(mode=0o700)
+    target = tmp_path / "attacker-target"
+    target.mkdir(mode=0o755)
+    sentinel = target / "sentinel"
+    sentinel.write_bytes(b"unchanged")
+    target_before = os.stat(target)
+    command_zero = acquired.checkout_path / "command-zero"
+    runner = __import__(
+        "prismatic.verification.clean_room_runner", fromlist=["_create_bound_run_dir"]
+    )
+    original_create = runner._create_bound_run_dir
+
+    def create_then_replace(binding):
+        run_dir = original_create(binding)
+        evidence.rename(tmp_path / "bound-evidence-original")
+        if replacement == "symlink_swap":
+            evidence.symlink_to(target, target_is_directory=True)
+        else:
+            evidence.mkdir(mode=0o700)
+        return run_dir
+
+    monkeypatch.setattr(
+        "prismatic.verification.clean_room_runner._create_bound_run_dir",
+        create_then_replace,
+    )
+    with pytest.raises(CleanRoomRunnerError, match="unsafe_evidence_root"):
+        run_clean_room(
+            acquired,
+            policy(
+                [
+                    command(
+                        "zero",
+                        "from pathlib import Path; Path('command-zero').write_text('ran')",
+                    )
+                ]
+            ),
+            producer_id="producer",
+            verifier_id="verifier",
+            evidence_root=evidence,
+            isolation=CleanRoomIsolation(True, True),
+        )
+    target_after = os.stat(target)
+    assert not command_zero.exists()
+    assert sentinel.read_bytes() == b"unchanged"
+    assert [child.name for child in target.iterdir()] == ["sentinel"]
+    assert stat.S_IMODE(target_after.st_mode) == stat.S_IMODE(target_before.st_mode)
+    assert target_after.st_mtime_ns == target_before.st_mtime_ns
+
+
 def test_literal_argv_is_not_executed(source):
     acquired, evidence = source
     literal = "a b;$(touch should-not-exist)|*"

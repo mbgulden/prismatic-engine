@@ -17,9 +17,9 @@ import stat
 import subprocess
 import tempfile
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
 
 from jsonschema import Draft202012Validator
 
@@ -59,6 +59,9 @@ class RunnerLimits:
     max_artifact_bytes: int = 32 * 1024 * 1024
     max_total_artifact_bytes: int = 128 * 1024 * 1024
     terminate_grace_seconds: float = 2.0
+
+
+_DEFAULT_RUNNER_LIMITS = RunnerLimits()
 
 
 @dataclass(frozen=True)
@@ -331,7 +334,55 @@ def _private_dir(path: Path) -> Path:
     return path
 
 
-def _bind_evidence_root(evidence_root: Path, checkout: Path) -> Path:
+@dataclass(frozen=True)
+class _BoundEvidenceRoot:
+    """Evidence-root authority retained as no-follow directory descriptors."""
+
+    path: Path
+    parent_fd: int
+    root_fd: int
+    leaf: str
+    identity: tuple[int, int]
+
+    @property
+    def descriptor_path(self) -> Path:
+        # This is resolved through the still-open directory descriptor, never the
+        # caller-controlled evidence-root pathname.
+        return Path("/proc/self/fd") / str(self.root_fd)
+
+    def close(self) -> None:
+        os.close(self.root_fd)
+        os.close(self.parent_fd)
+
+
+def _assert_evidence_binding(binding: _BoundEvidenceRoot) -> None:
+    """Reject a renamed, replaced, or symlinked evidence-root leaf before use."""
+    try:
+        bound = os.fstat(binding.root_fd)
+        named = os.stat(binding.leaf, dir_fd=binding.parent_fd, follow_symlinks=False)
+    except OSError:
+        _fail("unsafe_evidence_root")
+    if (
+        not stat.S_ISDIR(bound.st_mode)
+        or bound.st_uid != os.geteuid()
+        or (bound.st_dev, bound.st_ino) != binding.identity
+        or not stat.S_ISDIR(named.st_mode)
+        or (named.st_dev, named.st_ino) != binding.identity
+    ):
+        _fail("unsafe_evidence_root")
+
+
+def _create_bound_run_dir(
+    binding: _BoundEvidenceRoot,
+) -> tempfile.TemporaryDirectory[str]:
+    """Create a private run directory through held root descriptor authority."""
+    _assert_evidence_binding(binding)
+    return tempfile.TemporaryDirectory(
+        prefix="clean-room-", dir=binding.descriptor_path
+    )
+
+
+def _bind_evidence_root(evidence_root: Path, checkout: Path) -> _BoundEvidenceRoot:
     """Bind only an absolute, canonical, no-follow external evidence directory.
 
     The caller's authority boundary is checked before any mkdir/chmod/process spawn.
@@ -412,11 +463,19 @@ def _bind_evidence_root(evidence_root: Path, checkout: Path) -> Path:
                 _fail("unsafe_evidence_root")
         except OSError:
             _fail("unsafe_evidence_root")
-        finally:
+        except BaseException:
             os.close(root_fd)
-    finally:
+            raise
+    except BaseException:
         os.close(parent_fd)
-    return Path(canonical)
+        raise
+    return _BoundEvidenceRoot(
+        Path(canonical),
+        parent_fd,
+        root_fd,
+        leaf,
+        (before.st_dev, before.st_ino),
+    )
 
 
 def _safe_cwd(checkout: Path, relative: object) -> Path:
@@ -630,6 +689,7 @@ def _execute(
     logs: Path,
     deadline: float,
     limits: RunnerLimits,
+    pass_fds: tuple[int, ...] = (),
 ) -> CommandExecution:
     """Execute with bounded, private file streaming; never buffer command output."""
     ident, argv = command["id"], command["argv"]
@@ -654,6 +714,7 @@ def _execute(
             stderr=subprocess.PIPE,
             shell=False,
             start_new_session=True,
+            pass_fds=pass_fds,
         )
     except OSError:
         _fail("spawn_failed", ident)
@@ -738,7 +799,7 @@ def run_clean_room(
     verifier_id: str,
     evidence_root: Path,
     isolation: CleanRoomIsolation,
-    limits: RunnerLimits = RunnerLimits(),
+    limits: RunnerLimits = _DEFAULT_RUNNER_LIMITS,
 ) -> CleanRoomRun:
     if type(source) is not AcquiredSource:
         _fail("invalid_acquired_source")
@@ -763,70 +824,95 @@ def run_clean_room(
         validate_acquired_source(source)
     except SourceAcquisitionError as error:
         _fail("source_validation_failed", detail=error.code)
-    root = _bind_evidence_root(evidence_root, source.checkout_path)
-    with tempfile.TemporaryDirectory(prefix="clean-room-", dir=root) as temp_name:
-        temp = Path(temp_name)
-        home = _private_dir(temp / "home")
-        scratch = _private_dir(temp / "tmp")
-        artifact_root = _private_dir(temp / "artifacts")
-        logs = _private_dir(temp / "logs")
-        env = _environment(home, scratch, artifact_root)
-        started = _now()
-        deadline = time.monotonic() + limits.total_timeout_seconds
-        executions: list[CommandExecution] = []
-        for command in commands:
-            executions.append(
-                _execute(command, source.checkout_path, env, logs, deadline, limits)
-            )
+    binding = _bind_evidence_root(evidence_root, source.checkout_path)
+    root = binding.path
+    try:
+        with _create_bound_run_dir(binding) as temp_name:
+            # A held descriptor prevents attacker-target mutation; the named leaf
+            # check also fails closed if it changed after bind but before command 0.
+            _assert_evidence_binding(binding)
+            temp = Path(temp_name)
+            home = _private_dir(temp / "home")
+            scratch = _private_dir(temp / "tmp")
+            artifact_root = _private_dir(temp / "artifacts")
+            logs = _private_dir(temp / "logs")
+            env = _environment(home, scratch, artifact_root)
+            started = _now()
+            deadline = time.monotonic() + limits.total_timeout_seconds
+            executions: list[CommandExecution] = []
+            for command in commands:
+                _assert_evidence_binding(binding)
+                executions.append(
+                    _execute(
+                        command,
+                        source.checkout_path,
+                        env,
+                        logs,
+                        deadline,
+                        limits,
+                        (binding.root_fd,),
+                    )
+                )
+                try:
+                    validate_acquired_source(source)
+                except SourceAcquisitionError as error:
+                    _fail("source_validation_failed", str(command["id"]), error.code)
+            artifacts = _capture_artifacts(artifact_root, artifact_names, limits)
             try:
                 validate_acquired_source(source)
             except SourceAcquisitionError as error:
-                _fail("source_validation_failed", str(command["id"]), error.code)
-        artifacts = _capture_artifacts(artifact_root, artifact_names, limits)
-        try:
-            validate_acquired_source(source)
-        except SourceAcquisitionError as error:
-            _fail("source_validation_failed", detail=error.code)
-        # Promote only complete, non-secret successful logs atomically.
-        final_logs = _private_dir(root / "logs")
-        promoted: list[CommandExecution] = []
-        for execution in executions:
-            out, err = (
-                final_logs / execution.stdout_log.name,
-                final_logs / execution.stderr_log.name,
-            )
-            os.replace(execution.stdout_log, out)
-            os.replace(execution.stderr_log, err)
-            promoted.append(
-                CommandExecution(
-                    **{**execution.__dict__, "stdout_log": out, "stderr_log": err}
+                _fail("source_validation_failed", detail=error.code)
+            _assert_evidence_binding(binding)
+            # Promote only complete, non-secret successful logs atomically.
+            final_logs = _private_dir(binding.descriptor_path / "logs")
+            public_logs = root / "logs"
+            promoted: list[CommandExecution] = []
+            for execution in executions:
+                bound_out, bound_err = (
+                    final_logs / execution.stdout_log.name,
+                    final_logs / execution.stderr_log.name,
                 )
+                out, err = (
+                    public_logs / execution.stdout_log.name,
+                    public_logs / execution.stderr_log.name,
+                )
+                os.replace(execution.stdout_log, bound_out)
+                os.replace(execution.stderr_log, bound_err)
+                promoted.append(
+                    CommandExecution(
+                        **{**execution.__dict__, "stdout_log": out, "stderr_log": err}
+                    )
+                )
+            _assert_evidence_binding(binding)
+            try:
+                validate_acquired_source(source)
+            except SourceAcquisitionError as error:
+                _fail("source_validation_failed", detail=error.code)
+            tools = _sha(
+                _canonical([entry.toolchain.digest.value for entry in promoted])
             )
-        try:
-            validate_acquired_source(source)
-        except SourceAcquisitionError as error:
-            _fail("source_validation_failed", detail=error.code)
-        tools = _sha(_canonical([entry.toolchain.digest.value for entry in promoted]))
-        run = CleanRoomRun(
-            CLEAN_ROOM_RUNNER_V1_OK,
-            str(checked_policy["policy_id"]),
-            str(checked_policy["policy_version"]),
-            _sha(_canonical(checked_policy)),
-            source.repository_id,
-            source.candidate_sha,
-            source.tree_sha,
-            source.checkout_id,
-            source.source_acquisition_digest,
-            producer_id,
-            verifier_id,
-            _sha(_canonical(env)),
-            tools,
-            tuple(promoted),
-            artifacts,
-            root,
-            started,
-            _now(),
-        )
-        if type(run.marker) is not str or run.marker != CLEAN_ROOM_RUNNER_V1_OK:
-            _fail("invalid_result")
-        return run
+            run = CleanRoomRun(
+                CLEAN_ROOM_RUNNER_V1_OK,
+                str(checked_policy["policy_id"]),
+                str(checked_policy["policy_version"]),
+                _sha(_canonical(checked_policy)),
+                source.repository_id,
+                source.candidate_sha,
+                source.tree_sha,
+                source.checkout_id,
+                source.source_acquisition_digest,
+                producer_id,
+                verifier_id,
+                _sha(_canonical(env)),
+                tools,
+                tuple(promoted),
+                artifacts,
+                root,
+                started,
+                _now(),
+            )
+            if type(run.marker) is not str or run.marker != CLEAN_ROOM_RUNNER_V1_OK:
+                _fail("invalid_result")
+            return run
+    finally:
+        binding.close()
