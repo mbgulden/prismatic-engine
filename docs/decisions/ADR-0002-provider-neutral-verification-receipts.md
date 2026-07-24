@@ -18,7 +18,7 @@ Producer logs, mutable worktrees, status icons, comments, and task-manager state
 
 Prismatic merge promotion requires an **independently verified, exact-head, clean-room verification receipt from at least one approved backend**.
 
-GitHub Actions is an approved backend/adapter when available. It is not mandatory, and it does not define verification semantics.
+GitHub Actions is an approved hosted verifier backend when available. It is not a source adapter, it is not mandatory, and it does not define verification semantics.
 
 The provider-neutral core owns:
 
@@ -35,7 +35,7 @@ The provider-neutral core owns:
 11. deterministic fail-closed receipt validation;
 12. merge-judge decision input.
 
-Provider adapters own only provider-specific transport:
+Source adapters own only provider/source-specific transport:
 
 - trigger/webhook/poll ingestion;
 - commit/ref metadata translation;
@@ -68,7 +68,7 @@ Initial backend classes:
 - Prismatic self-hosted clean-room verifier;
 - supervised independent clean-room verifier for emergency migration, explicitly identified and policy-approved.
 
-Future adapters include Bitbucket, GitLab, Forgejo/Gitea, local bare Git, and offline bundle verification. Approval applies to the backend identity and policy version, not merely to a provider name.
+Future source adapters include Bitbucket, GitLab, Forgejo/Gitea, local bare repositories, and offline Git bundles. They bind source identity and acquisition only. Approval to emit a receipt applies separately to verifier backend identity and policy version, not merely to a provider or source-adapter name.
 
 ## Receipt minimum fields
 
@@ -78,6 +78,7 @@ policy_id
 policy_version
 task_id
 repository_id
+source_kind
 source_provider
 source_locator
 base_sha
@@ -93,6 +94,7 @@ logs_and_digests
 artifacts_and_digests
 verifier_id
 backend_id
+backend_class
 producer_id
 started_at
 completed_at

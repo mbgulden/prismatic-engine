@@ -30,6 +30,9 @@ def test_dashboard_is_a_read_model_not_underlying_truth():
 def test_provider_neutral_verification_policy_is_canonical():
     architecture = (ROOT / "docs/architecture/verification-engine.md").read_text()
     contract = (ROOT / "docs/contracts/verification-contract.md").read_text()
+    documentation_policy = (
+        ROOT / "docs/governance/documentation-policy.md"
+    ).read_text()
     decision = (
         ROOT / "docs/decisions/ADR-0002-provider-neutral-verification-receipts.md"
     ).read_text()
@@ -37,7 +40,13 @@ def test_provider_neutral_verification_policy_is_canonical():
     assert "A local repository or Git bundle is an acquisition form" in architecture
     assert "no particular Git provider is mandatory" in contract
     assert "**must** emit the same versioned receipt shape" in contract
-    assert "not a claim that every adapter/backend already exists" in contract
+    assert "not a claim that every source adapter and verifier backend" in contract
+    for text in (contract, documentation_policy, decision):
+        assert "adapter/backend" not in text
+        assert "adapters/backends" not in text
+    assert "GitHub Actions is an approved hosted verifier backend" in decision
+    assert "source_kind" in decision
+    assert "backend_class" in decision
     assert (
         "independently verified, exact-head, clean-room verification receipt"
         in decision
