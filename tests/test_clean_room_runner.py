@@ -440,6 +440,7 @@ def test_post_bind_evidence_leaf_replacement_rejects_before_command_zero(
         "prismatic.verification.clean_room_runner._create_bound_run_dir",
         create_then_replace,
     )
+    fds_before = _fd_snapshot()
     with pytest.raises(CleanRoomRunnerError, match="unsafe_evidence_root"):
         run_clean_room(
             acquired,
@@ -456,12 +457,304 @@ def test_post_bind_evidence_leaf_replacement_rejects_before_command_zero(
             evidence_root=evidence,
             isolation=CleanRoomIsolation(True, True),
         )
+    assert _fd_snapshot() == fds_before
     target_after = os.stat(target)
     assert not command_zero.exists()
     assert sentinel.read_bytes() == b"unchanged"
     assert [child.name for child in target.iterdir()] == ["sentinel"]
     assert stat.S_IMODE(target_after.st_mode) == stat.S_IMODE(target_before.st_mode)
     assert target_after.st_mtime_ns == target_before.st_mtime_ns
+
+
+def _fd_snapshot() -> set[int]:
+    return {int(entry) for entry in os.listdir("/proc/self/fd")}
+
+
+def _assert_bind_failure_without_fd_leak(root: Path, checkout: Path) -> None:
+    from prismatic.verification.clean_room_runner import _bind_evidence_root
+
+    before = _fd_snapshot()
+    with pytest.raises(CleanRoomRunnerError, match="unsafe_evidence_root"):
+        _bind_evidence_root(root, checkout)
+    assert _fd_snapshot() == before
+
+
+def test_intermediate_bind_failures_close_untransferred_descriptor(
+    source, tmp_path, monkeypatch
+):
+    acquired, _ = source
+    intermediate = tmp_path / "intermediate"
+    intermediate.mkdir()
+    root = intermediate / "evidence"
+    runner = __import__(
+        "prismatic.verification.clean_room_runner", fromlist=["_bind_evidence_root"]
+    )
+    original_open, original_fstat = os.open, os.fstat
+    opened: set[int] = set()
+
+    def tracked_open(path, flags, *args, **kwargs):
+        fd = original_open(path, flags, *args, **kwargs)
+        if path == "intermediate":
+            opened.add(fd)
+        return fd
+
+    def fail_fstat(fd):
+        if fd in opened:
+            raise OSError("injected intermediate fstat failure")
+        return original_fstat(fd)
+
+    monkeypatch.setattr(runner.os, "open", tracked_open)
+    monkeypatch.setattr(runner.os, "fstat", fail_fstat)
+    _assert_bind_failure_without_fd_leak(root, acquired.checkout_path)
+
+
+def test_intermediate_stat_identity_and_type_failures_close_descriptor(
+    source, tmp_path, monkeypatch
+):
+    acquired, _ = source
+    intermediate = tmp_path / "intermediate"
+    intermediate.mkdir()
+    root = intermediate / "evidence"
+    runner = __import__(
+        "prismatic.verification.clean_room_runner", fromlist=["_bind_evidence_root"]
+    )
+    original_stat = os.stat
+
+    def fail_stat(path, *args, **kwargs):
+        if path == "intermediate":
+            raise OSError("injected intermediate stat failure")
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(runner.os, "stat", fail_stat)
+    _assert_bind_failure_without_fd_leak(root, acquired.checkout_path)
+
+    monkeypatch.undo()
+    original_open, original_fstat, original_stat = os.open, os.fstat, os.stat
+    opened: set[int] = set()
+
+    def tracked_open(path, flags, *args, **kwargs):
+        fd = original_open(path, flags, *args, **kwargs)
+        if path == "intermediate":
+            opened.add(fd)
+        return fd
+
+    def mismatched_stat(path, *args, **kwargs):
+        value = original_stat(path, *args, **kwargs)
+        if path == "intermediate":
+            fields = list(value)
+            fields[1] += 1
+            return os.stat_result(fields)
+        return value
+
+    monkeypatch.setattr(runner.os, "open", tracked_open)
+    monkeypatch.setattr(runner.os, "stat", mismatched_stat)
+    _assert_bind_failure_without_fd_leak(root, acquired.checkout_path)
+
+    monkeypatch.undo()
+    opened.clear()
+
+    def typed_open(path, flags, *args, **kwargs):
+        fd = original_open(path, flags, *args, **kwargs)
+        if path == "intermediate":
+            opened.add(fd)
+        return fd
+
+    def nondirectory_fstat(fd):
+        value = original_fstat(fd)
+        if fd in opened:
+            fields = list(value)
+            fields[0] = stat.S_IFREG | stat.S_IMODE(value.st_mode)
+            return os.stat_result(fields)
+        return value
+
+    monkeypatch.setattr(runner.os, "open", typed_open)
+    monkeypatch.setattr(runner.os, "fstat", nondirectory_fstat)
+    _assert_bind_failure_without_fd_leak(root, acquired.checkout_path)
+
+
+def test_next_component_open_and_leaf_checks_close_descriptors(
+    source, tmp_path, monkeypatch
+):
+    acquired, _ = source
+    intermediate = tmp_path / "intermediate"
+    intermediate.mkdir()
+    runner = __import__(
+        "prismatic.verification.clean_room_runner", fromlist=["_bind_evidence_root"]
+    )
+    original_open = os.open
+
+    def fail_next_open(path, flags, *args, **kwargs):
+        if path == "next":
+            raise OSError("injected next component open failure")
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(runner.os, "open", fail_next_open)
+    _assert_bind_failure_without_fd_leak(
+        intermediate / "next" / "evidence", acquired.checkout_path
+    )
+
+    monkeypatch.undo()
+    root = tmp_path / "leaf-evidence"
+
+    def fail_leaf_open(path, flags, *args, **kwargs):
+        if path == "leaf-evidence":
+            raise OSError("injected root open failure")
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(runner.os, "open", fail_leaf_open)
+    _assert_bind_failure_without_fd_leak(root, acquired.checkout_path)
+
+    monkeypatch.undo()
+    original_open, original_fstat, original_stat, original_fchmod = (
+        os.open,
+        os.fstat,
+        os.stat,
+        os.fchmod,
+    )
+    leaf_fds: set[int] = set()
+
+    def tracked_leaf_open(path, flags, *args, **kwargs):
+        fd = original_open(path, flags, *args, **kwargs)
+        if path == "leaf-evidence":
+            leaf_fds.add(fd)
+        return fd
+
+    def fail_leaf_fstat(fd):
+        if fd in leaf_fds:
+            raise OSError("injected root fstat failure")
+        return original_fstat(fd)
+
+    monkeypatch.setattr(runner.os, "open", tracked_leaf_open)
+    monkeypatch.setattr(runner.os, "fstat", fail_leaf_fstat)
+    _assert_bind_failure_without_fd_leak(root, acquired.checkout_path)
+
+    monkeypatch.undo()
+    leaf_fds.clear()
+
+    def stat_leaf_open(path, flags, *args, **kwargs):
+        fd = original_open(path, flags, *args, **kwargs)
+        if path == "leaf-evidence":
+            leaf_fds.add(fd)
+        return fd
+
+    def fail_leaf_stat(path, *args, **kwargs):
+        if path == "leaf-evidence":
+            raise OSError("injected root stat failure")
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(runner.os, "open", stat_leaf_open)
+    monkeypatch.setattr(runner.os, "stat", fail_leaf_stat)
+    _assert_bind_failure_without_fd_leak(root, acquired.checkout_path)
+
+    monkeypatch.undo()
+    leaf_fds.clear()
+
+    def chmod_leaf_open(path, flags, *args, **kwargs):
+        fd = original_open(path, flags, *args, **kwargs)
+        if path == "leaf-evidence":
+            leaf_fds.add(fd)
+        return fd
+
+    def fail_fchmod(fd, mode):
+        if fd in leaf_fds:
+            raise OSError("injected fchmod failure")
+        return original_fchmod(fd, mode)
+
+    monkeypatch.setattr(runner.os, "open", chmod_leaf_open)
+    monkeypatch.setattr(runner.os, "fchmod", fail_fchmod)
+    _assert_bind_failure_without_fd_leak(root, acquired.checkout_path)
+
+
+def test_post_chmod_leaf_checks_and_runner_paths_do_not_leak(
+    source, tmp_path, monkeypatch
+):
+    acquired, evidence = source
+    runner = __import__(
+        "prismatic.verification.clean_room_runner", fromlist=["_bind_evidence_root"]
+    )
+    original_fstat = os.fstat
+    calls = 0
+
+    def fail_post_chmod_fstat(fd):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("injected post-chmod fstat failure")
+        return original_fstat(fd)
+
+    monkeypatch.setattr(runner.os, "fstat", fail_post_chmod_fstat)
+    _assert_bind_failure_without_fd_leak(evidence, acquired.checkout_path)
+
+    monkeypatch.undo()
+    original_stat = os.stat
+    calls = 0
+
+    def fail_post_chmod_stat(path, *args, **kwargs):
+        nonlocal calls
+        if path == "evidence":
+            calls += 1
+            if calls == 2:
+                raise OSError("injected post-chmod stat failure")
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(runner.os, "stat", fail_post_chmod_stat)
+    _assert_bind_failure_without_fd_leak(evidence, acquired.checkout_path)
+
+    monkeypatch.undo()
+    before = _fd_snapshot()
+    run = run_clean_room(
+        acquired,
+        policy(
+            [
+                command(
+                    "ok",
+                    "import os, pathlib; pathlib.Path(os.environ['PRISMATIC_ARTIFACT_ROOT'], 'result.txt').write_text('ok')",
+                )
+            ]
+        ),
+        producer_id="producer",
+        verifier_id="verifier",
+        evidence_root=evidence,
+        isolation=CleanRoomIsolation(True, True),
+    )
+    assert run.marker == "CLEAN_ROOM_RUNNER_V1_OK"
+    assert _fd_snapshot() == before
+
+    for _ in range(3):
+        before = _fd_snapshot()
+        with pytest.raises(CleanRoomRunnerError, match="command_failed"):
+            run_clean_room(
+                acquired,
+                policy([command("bad", "raise SystemExit(6)")]),
+                producer_id="producer",
+                verifier_id="verifier",
+                evidence_root=evidence,
+                isolation=CleanRoomIsolation(True, True),
+            )
+        assert _fd_snapshot() == before
+
+
+def test_private_run_directory_creation_failure_closes_binding(source, monkeypatch):
+    acquired, evidence = source
+    runner = __import__(
+        "prismatic.verification.clean_room_runner", fromlist=["_create_bound_run_dir"]
+    )
+    before = _fd_snapshot()
+
+    def fail_private_run_directory(binding):
+        raise OSError("injected private run directory failure")
+
+    monkeypatch.setattr(runner, "_create_bound_run_dir", fail_private_run_directory)
+    with pytest.raises(OSError, match="private run directory"):
+        run_clean_room(
+            acquired,
+            policy([command("one", "print(1)")]),
+            producer_id="producer",
+            verifier_id="verifier",
+            evidence_root=evidence,
+            isolation=CleanRoomIsolation(True, True),
+        )
+    assert _fd_snapshot() == before
 
 
 def test_literal_argv_is_not_executed(source):

@@ -351,8 +351,22 @@ class _BoundEvidenceRoot:
         return Path("/proc/self/fd") / str(self.root_fd)
 
     def close(self) -> None:
-        os.close(self.root_fd)
-        os.close(self.parent_fd)
+        _close_owned_descriptors(self.root_fd, self.parent_fd)
+
+
+def _close_owned_descriptors(*fds: int | None) -> None:
+    """Close every owned descriptor, reporting rather than masking close failures."""
+    failure: OSError | None = None
+    for fd in fds:
+        if fd is None:
+            continue
+        try:
+            os.close(fd)
+        except OSError as error:
+            if failure is None:
+                failure = error
+    if failure is not None:
+        raise failure
 
 
 def _assert_evidence_binding(binding: _BoundEvidenceRoot) -> None:
@@ -403,32 +417,42 @@ def _bind_evidence_root(evidence_root: Path, checkout: Path) -> _BoundEvidenceRo
         _fail("unsafe_evidence_root")
 
     parts = Path(canonical).parts
+    parent_fd: int | None = None
     try:
         parent_fd = os.open(parts[0], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     except OSError:
         _fail("unsafe_evidence_root")
+    assert parent_fd is not None
+    root_fd: int | None = None
     try:
         for component in parts[1:-1]:
+            next_fd: int | None = None
+            transferred = False
             try:
                 next_fd = os.open(
                     component,
                     os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
                     dir_fd=parent_fd,
                 )
-            except OSError:
-                _fail("unsafe_evidence_root")
-            current = os.fstat(next_fd)
-            try:
+                current = os.fstat(next_fd)
                 named = os.stat(component, dir_fd=parent_fd, follow_symlinks=False)
                 if not stat.S_ISDIR(current.st_mode) or (
                     current.st_dev,
                     current.st_ino,
                 ) != (named.st_dev, named.st_ino):
                     _fail("unsafe_evidence_root")
+                transferred = True
             except OSError:
                 _fail("unsafe_evidence_root")
-            os.close(parent_fd)
-            parent_fd = next_fd
+            finally:
+                if transferred:
+                    # Transfer only after every post-open check succeeded.
+                    previous_parent_fd = parent_fd
+                    parent_fd = next_fd
+                    next_fd = None
+                    _close_owned_descriptors(previous_parent_fd)
+                else:
+                    _close_owned_descriptors(next_fd)
         leaf = parts[-1]
         try:
             os.mkdir(leaf, mode=0o700, dir_fd=parent_fd)
@@ -440,9 +464,6 @@ def _bind_evidence_root(evidence_root: Path, checkout: Path) -> _BoundEvidenceRo
             root_fd = os.open(
                 leaf, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd
             )
-        except OSError:
-            _fail("unsafe_evidence_root")
-        try:
             before = os.fstat(root_fd)
             named = os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
             if (
@@ -463,19 +484,21 @@ def _bind_evidence_root(evidence_root: Path, checkout: Path) -> _BoundEvidenceRo
                 _fail("unsafe_evidence_root")
         except OSError:
             _fail("unsafe_evidence_root")
-        except BaseException:
-            os.close(root_fd)
-            raise
-    except BaseException:
-        os.close(parent_fd)
-        raise
-    return _BoundEvidenceRoot(
-        Path(canonical),
-        parent_fd,
-        root_fd,
-        leaf,
-        (before.st_dev, before.st_ino),
-    )
+        assert parent_fd is not None
+        assert root_fd is not None
+        binding = _BoundEvidenceRoot(
+            Path(canonical),
+            parent_fd,
+            root_fd,
+            leaf,
+            (before.st_dev, before.st_ino),
+        )
+        # The binding now exclusively owns both descriptors.
+        parent_fd = None
+        root_fd = None
+        return binding
+    finally:
+        _close_owned_descriptors(root_fd, parent_fd)
 
 
 def _safe_cwd(checkout: Path, relative: object) -> Path:
