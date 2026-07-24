@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shutil
+import selectors
 import signal
 import stat
 import subprocess
@@ -84,8 +85,9 @@ def _fail(code: str, message: str = "source acquisition failed") -> None:
 
 
 def _safe_path(path: Path, *, kind: str) -> Path:
-    if not path.is_absolute():
-        _fail("invalid_path", f"{kind} must be absolute")
+    """Return an existing absolute path with no control characters or symlinks."""
+    if not path.is_absolute() or any(ord(char) < 32 for char in str(path)):
+        _fail("invalid_path", f"{kind} must be an absolute control-free path")
     current = Path(path.anchor)
     for part in path.parts[1:]:
         current /= part
@@ -96,6 +98,33 @@ def _safe_path(path: Path, *, kind: str) -> Path:
         if stat.S_ISLNK(mode):
             _fail("symlink_path", f"{kind} contains symlink")
     return path
+
+
+def _validated_auth_environment(
+    request: SourceAcquisitionRequest,
+    *,
+    askpass_helper: Path | None,
+    ssh_auth_socket: Path | None,
+) -> dict[str, str]:
+    """Validate opaque caller-owned handles and return only scrubbed env additions."""
+    if askpass_helper is None and ssh_auth_socket is None:
+        return {}
+    if request.source_kind != "provider_remote":
+        _fail("auth_not_allowed", "authentication is only valid for provider remotes")
+    additions: dict[str, str] = {}
+    if askpass_helper is not None:
+        helper = _safe_path(askpass_helper, kind="askpass helper")
+        mode = os.lstat(helper).st_mode
+        if not stat.S_ISREG(mode) or not os.access(helper, os.X_OK):
+            _fail("invalid_askpass_helper")
+        # Git/SSH receive a path only; no token/password is accepted by this API.
+        additions.update({"GIT_ASKPASS": str(helper), "SSH_ASKPASS": str(helper)})
+    if ssh_auth_socket is not None:
+        socket_path = _safe_path(ssh_auth_socket, kind="ssh auth socket")
+        if not stat.S_ISSOCK(os.lstat(socket_path).st_mode):
+            _fail("invalid_ssh_auth_socket")
+        additions["SSH_AUTH_SOCK"] = str(socket_path)
+    return additions
 
 
 def _canonical_locator(request: SourceAcquisitionRequest) -> str:
@@ -168,6 +197,7 @@ def _environment(home: Path) -> dict[str, str]:
         "GIT_CONFIG_SYSTEM",
         "GIT_ASKPASS",
         "SSH_ASKPASS",
+        "SSH_AUTH_SOCK",
     }
     env = {
         k: v
@@ -199,10 +229,16 @@ def _run(
     deadline: float,
     label: str,
     binary: bool = False,
+    allowed_returncodes: frozenset[int] = frozenset({0}),
 ) -> bytes:
+    """Run without shell expansion, draining pipes under hard aggregate limits."""
     remaining = min(policy.command_timeout_seconds, deadline - time.monotonic())
     if remaining <= 0:
         _fail("total_timeout", "deadline exceeded")
+    limit = min(
+        policy.max_command_output_bytes,
+        policy.max_tree_listing_bytes if binary else policy.max_command_output_bytes,
+    )
     proc = subprocess.Popen(
         argv,
         cwd=cwd,
@@ -212,21 +248,188 @@ def _run(
         stderr=subprocess.PIPE,
         start_new_session=True,
     )
+    retained = bytearray()
+    total = 0
+    overflow = False
+    selector = selectors.DefaultSelector()
+    assert proc.stdout is not None and proc.stderr is not None
+    selector.register(proc.stdout, selectors.EVENT_READ)
+    selector.register(proc.stderr, selectors.EVENT_READ)
     try:
-        out, err = proc.communicate(timeout=remaining)
-    except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGKILL)
-        proc.communicate()
+        while selector.get_map():
+            remaining = min(policy.command_timeout_seconds, deadline - time.monotonic())
+            if remaining <= 0:
+                raise TimeoutError
+            events = selector.select(remaining)
+            if not events:
+                if proc.poll() is not None:
+                    # EOF registration is cleared by the next read pass.
+                    continue
+                continue
+            for key, _ in events:
+                chunk = os.read(key.fd, 64 * 1024)
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                    continue
+                total += len(chunk)
+                if total > limit:
+                    overflow = True
+                    # Do not retain unbounded/raw output; kill the whole session now.
+                    os.killpg(proc.pid, signal.SIGKILL)
+                    break
+                retained.extend(chunk)
+            if overflow:
+                break
+        if overflow:
+            proc.wait(timeout=5)
+            _fail("tree_listing_overflow" if binary else "output_overflow", label)
+        # Drain-on-EOF completed; wait/reap without communicate() buffering anything.
+        proc.wait(
+            timeout=max(
+                0.01, min(policy.command_timeout_seconds, deadline - time.monotonic())
+            )
+        )
+    except (TimeoutError, subprocess.TimeoutExpired):
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.wait()
         _fail("command_timeout", label)
-    if len(out) + len(err) > policy.max_command_output_bytes and not binary:
-        _fail("output_overflow", label)
-    if proc.returncode:
+    finally:
+        selector.close()
+    if proc.returncode not in allowed_returncodes:
         _fail("git_command_failed", label)
-    return out
+    return bytes(retained)
 
 
 def _git(args: list[str], **kwargs: object) -> bytes:
     return _run(["git", *args], **kwargs)  # type: ignore[arg-type]
+
+
+def _git_dir(
+    repo: Path, *, policy: SourceAcquisitionPolicy, env: dict[str, str], deadline: float
+) -> Path:
+    value = (
+        _git(
+            ["rev-parse", "--absolute-git-dir"],
+            cwd=repo,
+            env=env,
+            policy=policy,
+            deadline=deadline,
+            label="git-dir",
+        )
+        .decode()
+        .strip()
+    )
+    return _safe_path(Path(value), kind="git directory")
+
+
+def _assert_detached(
+    repo: Path, *, policy: SourceAcquisitionPolicy, env: dict[str, str], deadline: float
+) -> None:
+    # symbolic-ref exits 1 when HEAD is detached and 0 when it is attached.
+    attached = _git(
+        ["symbolic-ref", "-q", "HEAD"],
+        cwd=repo,
+        env=env,
+        policy=policy,
+        deadline=deadline,
+        label="symbolic-head",
+        allowed_returncodes=frozenset({0, 1}),
+    )
+    if attached:
+        _fail("attached_head")
+
+
+def _check_complete_objects(
+    repo: Path,
+    candidate: str,
+    *,
+    policy: SourceAcquisitionPolicy,
+    env: dict[str, str],
+    deadline: float,
+) -> None:
+    git_dir = _git_dir(repo, policy=policy, env=env, deadline=deadline)
+    config = (
+        _git(
+            ["config", "--null", "--list"],
+            cwd=repo,
+            env=env,
+            policy=policy,
+            deadline=deadline,
+            label="object-config",
+        )
+        .decode("utf-8", "strict")
+        .casefold()
+    )
+    forbidden = (
+        "extensions.partialclone",
+        "extensions.partial",
+        ".promisor",
+        ".partialclonefilter",
+        "partialclonefilter=",
+    )
+    if any(item in config for item in forbidden):
+        _fail("incomplete_objects")
+    alternates = git_dir / "objects" / "info" / "alternates"
+    if alternates.exists() or any((git_dir / "objects").rglob("*.promisor")):
+        _fail("incomplete_objects")
+    # --missing=print enumerates the full reachable closure without lazy fetching.
+    closure = _git(
+        ["rev-list", "--objects", "--missing=print", candidate],
+        cwd=repo,
+        env=env,
+        policy=policy,
+        deadline=deadline,
+        label="reachability",
+    )
+    if any(line.startswith(b"?") for line in closure.splitlines()):
+        _fail("missing_reachable_object")
+
+
+@dataclass(frozen=True)
+class _BundleFence:
+    device: int
+    inode: int
+    size: int
+    mtime_ns: int
+    digest: str
+
+
+def _bundle_fence(bundle: Path) -> _BundleFence:
+    bundle = _safe_path(bundle, kind="bundle")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(bundle, flags)
+    try:
+        metadata = os.fstat(fd)
+        if not stat.S_ISREG(metadata.st_mode):
+            _fail("invalid_bundle")
+        digest = hashlib.sha256()
+        while chunk := os.read(fd, 64 * 1024):
+            digest.update(chunk)
+        after = os.fstat(fd)
+    finally:
+        os.close(fd)
+    if (metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns) != (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+    ):
+        _fail("bundle_changed")
+    return _BundleFence(
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        digest.hexdigest(),
+    )
+
+
+def _assert_bundle_unchanged(bundle: Path, fence: _BundleFence) -> None:
+    if _bundle_fence(bundle) != fence:
+        _fail("bundle_changed")
 
 
 def _digest(source: AcquiredSource) -> str:
@@ -285,11 +488,10 @@ def _check_repository(
         .decode()
         .strip()
     )
-    if (
-        shallow != "false"
-        or (repo / ".git" / "objects" / "info" / "alternates").exists()
-    ):
+    git_dir = _git_dir(repo, policy=policy, env=env, deadline=deadline)
+    if shallow != "false" or (git_dir / "shallow").exists():
         _fail("incomplete_objects")
+    _assert_detached(repo, policy=policy, env=env, deadline=deadline)
     head = (
         _git(
             ["rev-parse", "HEAD"],
@@ -324,6 +526,7 @@ def _check_repository(
     ).decode()
     if status:
         _fail("dirty_checkout")
+    _check_complete_objects(repo, head, policy=policy, env=env, deadline=deadline)
     return fmt, head, tree
 
 
@@ -381,12 +584,11 @@ def acquire_source(
     _safe_path(workspace_root, kind="workspace root")
     if not workspace_root.is_dir():
         _fail("invalid_workspace")
-    if askpass_helper is not None or ssh_auth_socket is not None:
-        _fail(
-            "auth_not_supported",
-            "auth helpers are not enabled by this bounded implementation",
-        )
+    auth_env = _validated_auth_environment(
+        request, askpass_helper=askpass_helper, ssh_auth_socket=ssh_auth_socket
+    )
     destination: Path | None = None
+    bundle_fence: _BundleFence | None = None
     deadline = time.monotonic() + policy.total_timeout_seconds
     try:
         destination = Path(tempfile.mkdtemp(prefix="source-", dir=workspace_root))
@@ -394,6 +596,7 @@ def acquire_source(
         home = destination / "home"
         (home / "empty-template").mkdir(parents=True, mode=0o700)
         env = _environment(home)
+        env.update(auth_env)
         repo = destination / "checkout"
         _git(
             ["init", "--quiet", str(repo)],
@@ -436,8 +639,7 @@ def acquire_source(
             fetch_source = locator
         elif request.source_kind == "offline_git_bundle":
             bundle = Path(locator)
-            if not stat.S_ISREG(os.lstat(bundle).st_mode):
-                _fail("invalid_bundle")
+            bundle_fence = _bundle_fence(bundle)
             _git(
                 ["bundle", "verify", str(bundle)],
                 cwd=repo,
@@ -446,6 +648,26 @@ def acquire_source(
                 deadline=deadline,
                 label="bundle-verify",
             )
+            heads = (
+                _git(
+                    ["bundle", "list-heads", str(bundle)],
+                    cwd=repo,
+                    env=env,
+                    policy=policy,
+                    deadline=deadline,
+                    label="bundle-heads",
+                )
+                .decode("utf-8", "strict")
+                .splitlines()
+            )
+            exact = [
+                line
+                for line in heads
+                if line.split(maxsplit=1) == [request.candidate_sha, request.source_ref]
+            ]
+            if len(exact) != 1:
+                _fail("bundle_ref_mismatch")
+            _assert_bundle_unchanged(bundle, bundle_fence)
             fetch_source = locator
         else:
             scheme = urlsplit(locator).scheme
@@ -453,6 +675,8 @@ def acquire_source(
                 _fail("remote_scheme_not_allowed")
             fetch_source = locator
         private_ref = "refs/prismatic/acquired/" + uuid.uuid4().hex
+        if bundle_fence is not None:
+            _assert_bundle_unchanged(Path(locator), bundle_fence)
         _git(
             [
                 "fetch",
@@ -467,6 +691,8 @@ def acquire_source(
             deadline=deadline,
             label="fetch",
         )
+        if bundle_fence is not None:
+            _assert_bundle_unchanged(Path(locator), bundle_fence)
         ref_object = (
             _git(
                 ["rev-parse", private_ref],
