@@ -358,6 +358,88 @@ def test_nonexecution_and_blocked_or_revoked_receipts_are_not_merge_eligible() -
     assert_valid(candidate, RECEIPT_PATH)
 
 
+@pytest.mark.parametrize(
+    ("exit_state", "exit_code"),
+    [
+        ("completed", 1),
+        ("timed_out", None),
+        ("cancelled", None),
+        ("failed", 1),
+        ("not_started", None),
+    ],
+)
+def test_unsuccessful_executed_commands_cannot_pass_or_be_merge_eligible(
+    exit_state: str, exit_code: int | None
+) -> None:
+    candidate = receipt()
+    candidate["commands_and_exit_states"][0].update(
+        {"exit_state": exit_state, "exit_code": exit_code}
+    )
+    candidate["decision"] = {"status": "pass", "merge_eligible": True}
+    assert errors(candidate, RECEIPT_PATH)
+    candidate["decision"] = {"status": "blocked", "merge_eligible": False}
+    assert_valid(candidate, RECEIPT_PATH)
+
+
+def test_completed_command_requires_an_integer_exit_code() -> None:
+    candidate = receipt()
+    candidate["commands_and_exit_states"][0]["exit_code"] = None
+    assert errors(candidate, RECEIPT_PATH)
+
+
+def test_unknown_revocation_is_blocked_and_non_merge_eligible() -> None:
+    candidate = receipt()
+    candidate["revocation_status"] = "unknown"
+    candidate["decision"] = {"status": "pass", "merge_eligible": True}
+    assert errors(candidate, RECEIPT_PATH)
+    candidate["decision"] = {"status": "blocked", "merge_eligible": False}
+    assert_valid(candidate, RECEIPT_PATH)
+
+
+def test_empty_changed_paths_reject() -> None:
+    candidate = receipt()
+    candidate["changed_paths"] = []
+    assert errors(candidate, RECEIPT_PATH)
+
+
+def test_active_successful_receipt_may_pass_and_be_merge_eligible() -> None:
+    candidate = receipt()
+    candidate["decision"] = {"status": "pass", "merge_eligible": True}
+    assert_valid(candidate, RECEIPT_PATH)
+
+
+@pytest.mark.parametrize(
+    ("kinds", "providers"),
+    [
+        (["provider_remote"], ["none"]),
+        (["local_bare_repository"], ["github"]),
+        (["offline_git_bundle"], ["github"]),
+        (["provider_remote"], ["github", "none"]),
+        (["local_bare_repository"], ["github", "none"]),
+    ],
+)
+def test_unusable_policy_source_allowlists_reject(
+    kinds: list[str], providers: list[str]
+) -> None:
+    candidate = policy()
+    requirements = candidate["repository"]["source_requirements"]
+    requirements["allowed_source_kinds"] = kinds
+    requirements["allowed_source_providers"] = providers
+    assert errors(candidate, POLICY_PATH)
+
+
+def test_coherent_mixed_remote_and_local_policy_source_allowlist_validates() -> None:
+    candidate = policy()
+    requirements = candidate["repository"]["source_requirements"]
+    requirements["allowed_source_kinds"] = [
+        "provider_remote",
+        "local_bare_repository",
+        "offline_git_bundle",
+    ]
+    requirements["allowed_source_providers"] = ["github", "none"]
+    assert_valid(candidate, POLICY_PATH)
+
+
 def test_provider_metadata_cannot_replace_required_core_evidence_or_identity() -> None:
     candidate = receipt("provider_remote", "github", "hosted_provider_runner")
     candidate["provider_metadata"] = {"pull_request_id": "42", "run_id": "abc"}
