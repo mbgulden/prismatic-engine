@@ -494,6 +494,13 @@ def determine_merge_eligibility(
         if not isinstance(r_cmds, list) or len(r_cmds) == 0:
             return False, "missing_commands_and_exit_states"
 
+        receipt_started_dt = _parse_timestamp(receipt.get("started_at"))
+        receipt_completed_dt = _parse_timestamp(receipt.get("completed_at"))
+        if receipt_started_dt is None or receipt_completed_dt is None:
+            return False, "malformed_receipt_execution_interval"
+        if receipt_completed_dt < receipt_started_dt:
+            return False, "receipt_execution_interval_invalid"
+
         r_cmd_map: dict[str, dict[str, Any]] = {}
         for r_cmd in r_cmds:
             if not isinstance(r_cmd, dict):
@@ -526,6 +533,12 @@ def determine_merge_eligibility(
 
             if cmd_completed_dt < cmd_started_dt:
                 return False, f"command_timestamp_ordering_invalid: {cid}"
+
+            if (
+                cmd_started_dt < receipt_started_dt
+                or cmd_completed_dt > receipt_completed_dt
+            ):
+                return False, f"command_outside_receipt_interval: {cid}"
 
             duration_ms = r_cmd.get("duration_ms")
             if (

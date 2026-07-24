@@ -957,6 +957,8 @@ def test_command_duration_ms_exceeds_timeout_fails() -> None:
     policy["commands"][0]["timeout_seconds"] = 600
     started_time = _now_str(-641)
     completed_time = _now_str(-40)
+    receipt["started_at"] = started_time
+    receipt["completed_at"] = completed_time
     receipt["commands_and_exit_states"][0]["started_at"] = started_time
     receipt["commands_and_exit_states"][0]["completed_at"] = completed_time
     receipt["commands_and_exit_states"][0]["duration_ms"] = 601000
@@ -971,6 +973,8 @@ def test_command_timestamp_derived_duration_exceeds_timeout_fails() -> None:
     policy["commands"][0]["timeout_seconds"] = 600
     started_time = _now_str(-641)
     completed_time = _now_str(-40)
+    receipt["started_at"] = started_time
+    receipt["completed_at"] = completed_time
     receipt["commands_and_exit_states"][0]["started_at"] = started_time
     receipt["commands_and_exit_states"][0]["completed_at"] = completed_time
     receipt["commands_and_exit_states"][0]["duration_ms"] = 30000
@@ -1038,3 +1042,25 @@ def test_compliant_command_timestamps_and_duration_pass() -> None:
     eligible, reason = determine_merge_eligibility(receipt, policy)
     assert eligible is True
     assert reason is None
+
+
+def test_command_before_receipt_interval_fails() -> None:
+    receipt = valid_receipt()
+    policy = valid_policy()
+    receipt["commands_and_exit_states"][0]["started_at"] = "2020-01-01T00:00:00Z"
+    receipt["commands_and_exit_states"][0]["completed_at"] = "2020-01-01T00:00:30Z"
+    receipt["commands_and_exit_states"][0]["duration_ms"] = 30000
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is False
+    assert reason == "command_outside_receipt_interval: focused-tests"
+
+
+def test_command_after_receipt_interval_fails() -> None:
+    receipt = valid_receipt()
+    policy = valid_policy()
+    receipt["commands_and_exit_states"][0]["started_at"] = "2099-01-01T00:00:00Z"
+    receipt["commands_and_exit_states"][0]["completed_at"] = "2099-01-01T00:00:30Z"
+    receipt["commands_and_exit_states"][0]["duration_ms"] = 30000
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is False
+    assert reason == "command_outside_receipt_interval: focused-tests"
