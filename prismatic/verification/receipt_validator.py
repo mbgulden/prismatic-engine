@@ -5,6 +5,7 @@ GRO-4208 / PNV-4 Provider-neutral receipt validation layer.
 
 from __future__ import annotations
 
+import calendar
 import copy
 import hashlib
 import json
@@ -22,6 +23,10 @@ except ImportError:
 
 SHA1_PATTERN = re.compile(r"^[0-9a-fA-F]{40}$")
 DIGEST_PATTERN = re.compile(r"^(sha256:[0-9a-fA-F]{64}|sha512:[0-9a-fA-F]{128})$")
+UTC_TIMESTAMP_NS_PATTERN = re.compile(
+    r"^(?P<whole>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})"
+    r"(?:\.(?P<fraction>\d{1,9}))?Z$"
+)
 ALL_ZERO_SHA256 = "sha256:" + "0" * 64
 ALL_ZERO_SHA512 = "sha512:" + "0" * 128
 ALL_ZERO_GIT_SHA = "0" * 40
@@ -93,6 +98,22 @@ def _parse_timestamp(ts_val: Any) -> datetime | None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt.astimezone(timezone.utc)
     except Exception:
+        return None
+
+
+def _parse_utc_timestamp_ns(ts_val: Any) -> int | None:
+    """Parse canonical UTC RFC3339 timestamps without losing nanoseconds."""
+    if not isinstance(ts_val, str):
+        return None
+    match = UTC_TIMESTAMP_NS_PATTERN.fullmatch(ts_val.strip())
+    if match is None:
+        return None
+    try:
+        whole = datetime.strptime(match.group("whole"), "%Y-%m-%dT%H:%M:%S")
+        epoch_seconds = calendar.timegm(whole.timetuple())
+        fraction = (match.group("fraction") or "").ljust(9, "0")
+        return epoch_seconds * 1_000_000_000 + int(fraction or "0")
+    except (ValueError, OverflowError):
         return None
 
 
@@ -494,11 +515,11 @@ def determine_merge_eligibility(
         if not isinstance(r_cmds, list) or len(r_cmds) == 0:
             return False, "missing_commands_and_exit_states"
 
-        receipt_started_dt = _parse_timestamp(receipt.get("started_at"))
-        receipt_completed_dt = _parse_timestamp(receipt.get("completed_at"))
-        if receipt_started_dt is None or receipt_completed_dt is None:
+        receipt_started_ns = _parse_utc_timestamp_ns(receipt.get("started_at"))
+        receipt_completed_ns = _parse_utc_timestamp_ns(receipt.get("completed_at"))
+        if receipt_started_ns is None or receipt_completed_ns is None:
             return False, "malformed_receipt_execution_interval"
-        if receipt_completed_dt < receipt_started_dt:
+        if receipt_completed_ns < receipt_started_ns:
             return False, "receipt_execution_interval_invalid"
 
         r_cmd_map: dict[str, dict[str, Any]] = {}
@@ -526,17 +547,17 @@ def determine_merge_eligibility(
             if not completed_str or not isinstance(completed_str, str):
                 return False, f"missing_command_timestamp: {cid}"
 
-            cmd_started_dt = _parse_timestamp(started_str)
-            cmd_completed_dt = _parse_timestamp(completed_str)
-            if cmd_started_dt is None or cmd_completed_dt is None:
+            cmd_started_ns = _parse_utc_timestamp_ns(started_str)
+            cmd_completed_ns = _parse_utc_timestamp_ns(completed_str)
+            if cmd_started_ns is None or cmd_completed_ns is None:
                 return False, f"malformed_command_timestamp: {cid}"
 
-            if cmd_completed_dt < cmd_started_dt:
+            if cmd_completed_ns < cmd_started_ns:
                 return False, f"command_timestamp_ordering_invalid: {cid}"
 
             if (
-                cmd_started_dt < receipt_started_dt
-                or cmd_completed_dt > receipt_completed_dt
+                cmd_started_ns < receipt_started_ns
+                or cmd_completed_ns > receipt_completed_ns
             ):
                 return False, f"command_outside_receipt_interval: {cid}"
 
@@ -549,7 +570,7 @@ def determine_merge_eligibility(
             ):
                 return False, f"invalid_command_duration_ms: {cid}"
 
-            ts_derived_ms = (cmd_completed_dt - cmd_started_dt).total_seconds() * 1000.0
+            ts_derived_ms = (cmd_completed_ns - cmd_started_ns) / 1_000_000
 
             # Rounding tolerance for timestamp-derived vs reported duration_ms (1000 ms = 1s)
             ROUNDING_TOLERANCE_MS = 1000.0

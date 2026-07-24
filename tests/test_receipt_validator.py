@@ -1064,3 +1064,35 @@ def test_command_after_receipt_interval_fails() -> None:
     eligible, reason = determine_merge_eligibility(receipt, policy)
     assert eligible is False
     assert reason == "command_outside_receipt_interval: focused-tests"
+
+
+def test_command_one_nanosecond_before_receipt_interval_fails() -> None:
+    receipt = valid_receipt()
+    policy = valid_policy()
+    started = receipt["started_at"].removesuffix("Z")
+    completed = receipt["completed_at"].removesuffix("Z")
+    receipt["started_at"] = f"{started}.000000001Z"
+    receipt["completed_at"] = f"{completed}.000000001Z"
+    command = receipt["commands_and_exit_states"][0]
+    command["started_at"] = f"{started}.000000000Z"
+    command["completed_at"] = f"{completed}.000000000Z"
+    command["duration_ms"] = 30000
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is False
+    assert reason == "command_outside_receipt_interval: focused-tests"
+
+
+def test_command_one_nanosecond_after_receipt_interval_fails() -> None:
+    receipt = valid_receipt()
+    policy = valid_policy()
+    started = receipt["started_at"].removesuffix("Z")
+    completed = receipt["completed_at"].removesuffix("Z")
+    receipt["started_at"] = f"{started}.000000000Z"
+    receipt["completed_at"] = f"{completed}.000000000Z"
+    command = receipt["commands_and_exit_states"][0]
+    command["started_at"] = f"{started}.000000001Z"
+    command["completed_at"] = f"{completed}.000000001Z"
+    command["duration_ms"] = 30000
+    eligible, reason = determine_merge_eligibility(receipt, policy)
+    assert eligible is False
+    assert reason == "command_outside_receipt_interval: focused-tests"
