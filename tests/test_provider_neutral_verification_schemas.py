@@ -12,10 +12,14 @@ import pytest
 from jsonschema import Draft202012Validator
 
 ROOT = Path(__file__).resolve().parents[1]
-POLICY_PATH = ROOT / "schemas" / "provider-neutral-verification-policy.schema.json"
-RECEIPT_PATH = ROOT / "schemas" / "provider-neutral-verification-receipt.schema.json"
-PACKAGE_POLICY_PATH = ROOT / "prismatic" / "schemas" / POLICY_PATH.name
-PACKAGE_RECEIPT_PATH = ROOT / "prismatic" / "schemas" / RECEIPT_PATH.name
+POLICY_PATH = (
+    ROOT / "prismatic" / "schemas" / "provider-neutral-verification-policy.schema.json"
+)
+RECEIPT_PATH = (
+    ROOT / "prismatic" / "schemas" / "provider-neutral-verification-receipt.schema.json"
+)
+PACKAGE_POLICY_PATH = POLICY_PATH
+PACKAGE_RECEIPT_PATH = RECEIPT_PATH
 SHA = "a" * 40
 DIGEST = "sha256:" + "b" * 64
 TIME = "2026-07-24T01:00:00Z"
@@ -77,7 +81,15 @@ def policy(
             }
         ],
         "approved_verifiers": {
-            "identities": ["verifier-1"],
+            "identities": [
+                {
+                    "id": "verifier-1",
+                    "key_id": "verification-key-1",
+                    "algorithm": "ed25519",
+                    "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAonIAm5bXuYIKs/REfChIGowpzL9SabNGIL3/H2shVJs=\n-----END PUBLIC KEY-----\n",
+                    "created_at": "2026-01-01T00:00:00Z",
+                }
+            ],
             "require_producer_verifier_separation": True,
         },
         "clean_room": {

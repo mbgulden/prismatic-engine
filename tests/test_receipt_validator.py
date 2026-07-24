@@ -16,11 +16,38 @@ from prismatic.verification.receipt_validator import (
     validate_receipt_freshness,
 )
 
+import base64
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
+from prismatic.verification.attestation import canonicalize_receipt
+
 SHA_A = "a" * 40
 SHA_B = "b" * 40
 SHA_C = "c" * 40
 DIGEST_VALID = "sha256:" + "d" * 64
 DIGEST_ZERO = "sha256:" + "0" * 64
+
+TEST_KEY_ID = "verification-key-1"
+TEST_VERIFIER_ID = "verifier-1"
+TEST_PRIVATE_KEY = ed25519.Ed25519PrivateKey.generate()
+TEST_PUBLIC_KEY_PEM = (
+    TEST_PRIVATE_KEY.public_key()
+    .public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    .decode("ascii")
+)
+
+
+def resign_receipt(receipt: dict[str, Any]) -> dict[str, Any]:
+    receipt["signature_or_attestation"]["value"] = ""
+    payload_bytes = canonicalize_receipt(receipt)
+    sig_bytes = TEST_PRIVATE_KEY.sign(payload_bytes)
+    receipt["signature_or_attestation"]["value"] = base64.b64encode(sig_bytes).decode(
+        "ascii"
+    )
+    return receipt
 
 
 def _now_str(offset_seconds: float = 0) -> str:
@@ -61,7 +88,15 @@ def valid_policy() -> dict[str, Any]:
             }
         ],
         "approved_verifiers": {
-            "identities": ["verifier-1"],
+            "identities": [
+                {
+                    "id": TEST_VERIFIER_ID,
+                    "key_id": TEST_KEY_ID,
+                    "algorithm": "ed25519",
+                    "public_key_pem": TEST_PUBLIC_KEY_PEM,
+                    "created_at": "2026-01-01T00:00:00Z",
+                }
+            ],
             "require_producer_verifier_separation": True,
         },
         "clean_room": {
@@ -122,7 +157,7 @@ def valid_receipt(finished_offset: float = -10) -> dict[str, Any]:
     completed_time = _now_str(finished_offset)
     expires_time = _now_str(finished_offset + 3600)
 
-    return {
+    res = {
         "schema_version": "1.0",
         "policy_id": "pnv-policy-1",
         "policy_version": "1.0.0",
@@ -160,7 +195,7 @@ def valid_receipt(finished_offset: float = -10) -> dict[str, Any]:
             {"reference": "artifacts/report.json", "digest": DIGEST_VALID},
             {"reference": "artifacts/toolchain.json", "digest": DIGEST_VALID},
         ],
-        "verifier_id": "verifier-1",
+        "verifier_id": TEST_VERIFIER_ID,
         "backend_id": "backend-1",
         "backend_class": "self_hosted_clean_room",
         "producer_id": "producer-1",
@@ -174,10 +209,16 @@ def valid_receipt(finished_offset: float = -10) -> dict[str, Any]:
         "signature_or_attestation": {
             "type": "attestation",
             "algorithm": "ed25519",
-            "key_id": "verification-key-1",
-            "value": "detached-attestation-placeholder",
+            "key_id": TEST_KEY_ID,
+            "value": "",
         },
     }
+    payload_bytes = canonicalize_receipt(res)
+    sig_bytes = TEST_PRIVATE_KEY.sign(payload_bytes)
+    res["signature_or_attestation"]["value"] = base64.b64encode(sig_bytes).decode(
+        "ascii"
+    )
+    return res
 
 
 # Test 1: Fresh receipt within window -> fresh
@@ -382,6 +423,7 @@ def test_malformed_sha() -> None:
 def test_empty_changed_paths_handled_by_policy() -> None:
     receipt = valid_receipt()
     receipt["changed_paths"] = []
+    resign_receipt(receipt)
     policy = valid_policy()
     policy["bindings"]["require_changed_paths"] = True
     policy["bindings"]["allow_empty_changed_paths"] = False
@@ -823,6 +865,7 @@ def test_adversarial_digest_requirement_kinds_sha512() -> None:
         {"kind": "environment", "algorithm": "sha512", "required": True},
         {"kind": "toolchain", "algorithm": "sha512", "required": True},
     ]
+    resign_receipt(receipt)
 
     eligible, reason = determine_merge_eligibility(receipt, policy)
     assert eligible is True

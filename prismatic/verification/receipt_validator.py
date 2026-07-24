@@ -422,7 +422,13 @@ def determine_merge_eligibility(
         approved_verifiers = policy.get("approved_verifiers", {})
         identities = approved_verifiers.get("identities", [])
         r_verifier_id = receipt.get("verifier_id")
-        if r_verifier_id not in identities:
+        valid_verifier_ids = set()
+        for item in identities:
+            if isinstance(item, dict) and isinstance(item.get("id"), str):
+                valid_verifier_ids.add(item["id"])
+            elif isinstance(item, str):
+                valid_verifier_ids.add(item)
+        if r_verifier_id not in valid_verifier_ids:
             return False, "unapproved_verifier_identity"
 
         # 5. Producer / Verifier separation
@@ -916,23 +922,14 @@ def determine_merge_eligibility(
                 if calc_hex.lower() != expected_hex.lower():
                     return False, "evidence_digest_mismatch"
 
-        # 15. Attestation policy check
+        # 15. Attestation policy check & cryptographic verification
         att_policy = policy.get("attestation", {})
-        if att_policy.get("required", False):
-            sig = receipt.get("signature_or_attestation")
-            if not isinstance(sig, dict):
-                return False, "missing_attestation"
-            val = sig.get("value")
-            if not val or not isinstance(val, str) or not val.strip():
-                return False, "empty_attestation_value"
-            algo = sig.get("algorithm")
-            allowed_algos = att_policy.get("allowed_algorithms", [])
-            if algo not in allowed_algos:
-                return False, "unapproved_attestation_algorithm"
-            key_id = sig.get("key_id")
-            allowed_key_ids = att_policy.get("allowed_key_ids", [])
-            if key_id not in allowed_key_ids:
-                return False, "unapproved_attestation_key_id"
+        if att_policy.get("required", False) or "signature_or_attestation" in receipt:
+            from .attestation import verify_receipt_attestation
+
+            is_valid_att, att_reason = verify_receipt_attestation(receipt, policy)
+            if not is_valid_att:
+                return False, att_reason or "attestation_verification_failed"
 
         return True, None
 

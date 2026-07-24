@@ -41,7 +41,15 @@ def policy(
         },
         "approved_backends": [{"id": "backend", "class": "self_hosted_clean_room"}],
         "approved_verifiers": {
-            "identities": ["verifier"],
+            "identities": [
+                {
+                    "id": "verifier",
+                    "key_id": "key",
+                    "algorithm": "ed25519",
+                    "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAonIAm5bXuYIKs/REfChIGowpzL9SabNGIL3/H2shVJs=\n-----END PUBLIC KEY-----\n",
+                    "created_at": "2026-01-01T00:00:00Z",
+                }
+            ],
             "require_producer_verifier_separation": True,
         },
         "clean_room": {
