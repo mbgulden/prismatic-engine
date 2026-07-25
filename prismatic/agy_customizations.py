@@ -776,7 +776,11 @@ def install_bundle(
                     if _path_matches(target, desired_data[target]):
                         target.unlink()
                     else:
-                        rollback_errors.append(f"{target}:current-path-preserved")
+                        hold = holds.get(target)
+                        rollback_errors.append(
+                            f"{target}:current-path-preserved;"
+                            f"original-preserved-at={hold}"
+                        )
                         continue
                 hold = holds.pop(target, None)
                 if hold is not None:

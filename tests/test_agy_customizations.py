@@ -495,6 +495,78 @@ def test_install_preserves_destination_created_after_preflight(
     )
 
 
+def test_install_preserves_both_versions_when_destination_appears_after_capture(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    victim = tmp_path / ".agents" / "skills.json"
+    victim.parent.mkdir(parents=True)
+    original_bytes = b"preflight-original"
+    new_user_bytes = b"appeared-after-capture"
+    victim.write_bytes(original_bytes)
+    victim.chmod(0o640)
+    original_capture = customizations._capture_existing
+    injected = False
+
+    def capture_then_create(path: Path) -> Path:
+        nonlocal injected
+        hold = original_capture(path)
+        if path == victim and not injected:
+            path.write_bytes(new_user_bytes)
+            path.chmod(0o600)
+            injected = True
+        return hold
+
+    monkeypatch.setattr(customizations, "_capture_existing", capture_then_create)
+    with pytest.raises(
+        customizations.CustomizationError, match="original-preserved-at="
+    ):
+        customizations.install_bundle(tmp_path, force=True)
+
+    assert victim.read_bytes() == new_user_bytes
+    assert victim.stat().st_mode & 0o777 == 0o600
+    holds = list(victim.parent.glob(f".{victim.name}.prismatic-hold-*"))
+    assert len(holds) == 1
+    assert holds[0].read_bytes() == original_bytes
+    assert holds[0].stat().st_mode & 0o777 == 0o640
+    assert not (tmp_path / customizations.MANAGED_REL).exists()
+    assert not (tmp_path / customizations.BACKUP_ROOT_REL).exists()
+
+
+def test_uninstall_preserves_destination_created_after_capture(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    code, _ = customizations.install_bundle(tmp_path)
+    assert code == 0
+    victim = tmp_path / ".agents" / "rules" / "prismatic-engine.md"
+    new_user_bytes = b"appeared-after-uninstall-capture"
+    original_capture = customizations._capture_existing
+    injected = False
+
+    def capture_then_create(path: Path) -> Path:
+        nonlocal injected
+        hold = original_capture(path)
+        if path == victim and not injected:
+            path.write_bytes(new_user_bytes)
+            path.chmod(0o600)
+            injected = True
+        return hold
+
+    monkeypatch.setattr(customizations, "_capture_existing", capture_then_create)
+    code, result = customizations.uninstall_bundle(tmp_path)
+
+    assert code == 0
+    assert result["cleanup_warnings"] == []
+    assert victim.read_bytes() == new_user_bytes
+    assert victim.stat().st_mode & 0o777 == 0o600
+    assert not list(tmp_path.rglob("*.prismatic-hold-*"))
+    assert not (tmp_path / customizations.MANAGED_REL).exists()
+    assert not any(
+        (tmp_path / relative).exists()
+        for relative in customizations.REQUIRED_FILES
+        if tmp_path / relative != victim
+    )
+
+
 def test_uninstall_preserves_file_replaced_after_verification(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
