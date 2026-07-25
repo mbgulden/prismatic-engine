@@ -36,14 +36,14 @@ The owner-only launcher configuration is strict JSON:
   "version": 1,
   "producers": {
     "agy-pnv6": {
-      "command": ["/absolute/canonical/executable", "arg1"],
+      "command": ["/absolute/canonical/launcher-executable"],
       "timeout_seconds": 300
     }
   }
 }
 ```
 
-The executable must be an absolute canonical regular executable owned by root or the runtime user, must not be group/world writable, and every parent directory must have the same trusted ownership/write boundary. The consumer uses no shell or thread-unsafe pre-exec hook. It streams and bounds one JSON request and one JSON receipt over pipes, kills the complete launcher process group on timeout or output overflow, and expects exactly:
+The command must contain exactly one directly executed launcher artifact; interpreter-plus-script and all other argument-bearing forms are rejected so an unvalidated script path cannot bypass the trust boundary. The launcher must be an absolute canonical regular executable owned by root or the runtime user, must not be group/world writable, and every parent directory must have the same trusted ownership/write boundary. The consumer uses no shell or thread-unsafe pre-exec hook. It streams and bounds one JSON request and one JSON receipt over pipes, kills the complete launcher process group on timeout or output overflow, and expects exactly:
 
 ```json
 {

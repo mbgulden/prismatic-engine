@@ -685,8 +685,9 @@ def _load_launcher_config(path: Path, producer: str) -> tuple[list[str], int]:
     timeout = item["timeout_seconds"]
     if (
         not isinstance(command, list)
-        or not command
-        or any(not isinstance(part, str) or not part for part in command)
+        or len(command) != 1
+        or not isinstance(command[0], str)
+        or not command[0]
         or isinstance(timeout, bool)
         or not isinstance(timeout, int)
         or timeout < 1

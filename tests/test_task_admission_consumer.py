@@ -3,10 +3,13 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import sqlite3
 import stat
 import sys
+import tempfile
 import time
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -35,6 +38,30 @@ class Clock:
 
     def advance(self, seconds: int) -> None:
         self.value += timedelta(seconds=seconds)
+
+
+@pytest.fixture
+def secure_launcher_dir() -> Iterator[Path]:
+    root = Path(__file__).resolve().parents[1] / ".test-launchers"
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    root.chmod(0o700)
+    directory = Path(tempfile.mkdtemp(prefix="consumer-", dir=root))
+    directory.chmod(0o700)
+    try:
+        yield directory
+    finally:
+        shutil.rmtree(directory)
+        try:
+            root.rmdir()
+        except OSError:
+            pass
+
+
+def _launcher_script(directory: Path, name: str, body: str) -> Path:
+    script = directory / name
+    script.write_text(f"#!{Path(sys.executable).resolve()}\n{body}")
+    script.chmod(0o700)
+    return script
 
 
 def _git_runner(_: Path, ref: str) -> str:
@@ -481,14 +508,15 @@ def test_long_launch_renews_singleton_lease(tmp_path: Path) -> None:
 
 
 def test_command_launcher_uses_owner_only_provider_map_and_strict_receipt(
-    tmp_path: Path,
+    tmp_path: Path, secure_launcher_dir: Path
 ) -> None:
     clock, _, _, policy, db, record = _fixture(tmp_path)
-    launcher_script = tmp_path / "launcher.py"
-    launcher_script.write_text(
+    launcher_script = _launcher_script(
+        secure_launcher_dir,
+        "launcher",
         "import json,sys\n"
         "r=json.load(sys.stdin)\n"
-        "print(json.dumps({'accepted':True,'idempotency_key':r['event_id'],'launch_id':'cmd-'+r['task_id']}))\n"
+        "print(json.dumps({'accepted':True,'idempotency_key':r['event_id'],'launch_id':'cmd-'+r['task_id']}))\n",
     )
     config = tmp_path / "launcher.json"
     config.write_text(
@@ -497,10 +525,7 @@ def test_command_launcher_uses_owner_only_provider_map_and_strict_receipt(
                 "version": 1,
                 "producers": {
                     "fixture-producer": {
-                        "command": [
-                            str(Path(sys.executable).resolve()),
-                            str(launcher_script),
-                        ],
+                        "command": [str(launcher_script)],
                         "timeout_seconds": 10,
                     }
                 },
@@ -525,6 +550,39 @@ def test_command_launcher_uses_owner_only_provider_map_and_strict_receipt(
                 },
             )()
         )
+
+
+def test_interpreter_script_argument_bypass_is_rejected(tmp_path: Path) -> None:
+    clock, _, _, policy, db, _ = _fixture(tmp_path)
+    mutable_script = tmp_path / "world-writable-launcher.py"
+    mutable_script.write_text("raise SystemExit('must not execute')\n")
+    mutable_script.chmod(0o666)
+    config = tmp_path / "launcher.json"
+    config.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "producers": {
+                    "fixture-producer": {
+                        "command": [
+                            str(Path(sys.executable).resolve()),
+                            str(mutable_script),
+                        ],
+                        "timeout_seconds": 5,
+                    }
+                },
+            }
+        )
+    )
+    config.chmod(0o600)
+    with pytest.raises(LauncherError, match="launcher_config_invalid"):
+        _consumer(clock, policy, db).run_once(command_launcher(config))
+    connection = sqlite3.connect(db)
+    assert (
+        connection.execute("select status from task_admission_outbox").fetchone()[0]
+        == "pending"
+    )
+    connection.close()
 
 
 def test_launcher_executable_in_world_writable_parent_is_rejected(
@@ -559,10 +617,15 @@ def test_launcher_executable_in_world_writable_parent_is_rejected(
     connection.close()
 
 
-def test_command_launcher_output_is_bounded_and_requeues(tmp_path: Path) -> None:
+def test_command_launcher_output_is_bounded_and_requeues(
+    tmp_path: Path, secure_launcher_dir: Path
+) -> None:
     clock, _, _, policy, db, _ = _fixture(tmp_path)
-    launcher_script = tmp_path / "loud_launcher.py"
-    launcher_script.write_text("import sys\nsys.stdout.write('x' * 65537)\n")
+    launcher_script = _launcher_script(
+        secure_launcher_dir,
+        "loud-launcher",
+        "import sys\nsys.stdout.write('x' * 65537)\n",
+    )
     config = tmp_path / "launcher.json"
     config.write_text(
         json.dumps(
@@ -570,10 +633,7 @@ def test_command_launcher_output_is_bounded_and_requeues(tmp_path: Path) -> None
                 "version": 1,
                 "producers": {
                     "fixture-producer": {
-                        "command": [
-                            str(Path(sys.executable).resolve()),
-                            str(launcher_script),
-                        ],
+                        "command": [str(launcher_script)],
                         "timeout_seconds": 5,
                     }
                 },
@@ -598,11 +658,14 @@ def test_command_launcher_output_is_bounded_and_requeues(tmp_path: Path) -> None
 
 
 def test_command_launcher_timeout_requeues_without_orphaning_lease(
-    tmp_path: Path,
+    tmp_path: Path, secure_launcher_dir: Path
 ) -> None:
     clock, _, _, policy, db, _ = _fixture(tmp_path)
-    launcher_script = tmp_path / "slow_launcher.py"
-    launcher_script.write_text("import time\ntime.sleep(60)\n")
+    launcher_script = _launcher_script(
+        secure_launcher_dir,
+        "slow-launcher",
+        "import time\ntime.sleep(60)\n",
+    )
     config = tmp_path / "launcher.json"
     config.write_text(
         json.dumps(
@@ -610,10 +673,7 @@ def test_command_launcher_timeout_requeues_without_orphaning_lease(
                 "version": 1,
                 "producers": {
                     "fixture-producer": {
-                        "command": [
-                            str(Path(sys.executable).resolve()),
-                            str(launcher_script),
-                        ],
+                        "command": [str(launcher_script)],
                         "timeout_seconds": 1,
                     }
                 },
