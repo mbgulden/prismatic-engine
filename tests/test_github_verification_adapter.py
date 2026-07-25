@@ -8,6 +8,8 @@ import hmac
 import json
 import socket
 import subprocess
+from types import MappingProxyType
+
 import pytest
 
 from prismatic.verification.github_adapter import (
@@ -883,3 +885,69 @@ def test_independent_review_adversarial_contracts(
             )
         expected_code = "repository_mismatch" if location == "base" else "fork_mismatch"
         assert exc_info.value.code == expected_code
+
+
+def test_mapping_receipt_digest_and_repository_id_are_bounded() -> None:
+    secret = "secret"
+    payload = _make_payload()
+    body = json.dumps(payload).encode("utf-8")
+    headers = {
+        "X-Hub-Signature-256": _sign(body, secret),
+        "X-GitHub-Event": "pull_request",
+        "X-GitHub-Delivery": "mapping-and-repo-bound",
+    }
+    trigger = normalize_github_trigger(
+        body,
+        headers,
+        secrets=[secret],
+        expected_repository_full_name="org/repo",
+        repository_id="123456",
+    )
+    policy = _make_valid_policy()
+    receipt_one = _make_valid_receipt(trigger.task_id)
+    receipt_two = copy.deepcopy(receipt_one)
+    receipt_two["source_locator"] = "different-but-valid-locator"
+    receipt_two = resign_receipt(receipt_two)
+
+    projection_one = project_github_check_run(
+        trigger,
+        MappingProxyType(receipt_one),
+        policy,
+        expected_tree_sha="c" * 40,
+    )
+    projection_two = project_github_check_run(
+        trigger,
+        MappingProxyType(receipt_two),
+        policy,
+        expected_tree_sha="c" * 40,
+    )
+    assert projection_one.conclusion == projection_two.conclusion == "success"
+    assert projection_one.external_id != projection_two.external_id
+
+    for invalid_repository_id in ("9" * 1000, str(2**63), "0", "01"):
+        with pytest.raises(GitHubAdapterError) as exc_info:
+            normalize_github_trigger(
+                body,
+                headers,
+                secrets=[secret],
+                expected_repository_full_name="org/repo",
+                repository_id=invalid_repository_id,
+            )
+        assert exc_info.value.code == "invalid_configuration"
+
+    huge_payload_id = 10**1000
+    huge_payload = _make_payload(repo_id=huge_payload_id)
+    huge_body = json.dumps(huge_payload).encode("utf-8")
+    huge_headers = {
+        **headers,
+        "X-Hub-Signature-256": _sign(huge_body, secret),
+    }
+    with pytest.raises(GitHubAdapterError) as exc_info:
+        normalize_github_trigger(
+            huge_body,
+            huge_headers,
+            secrets=[secret],
+            expected_repository_full_name="org/repo",
+            repository_id="123456",
+        )
+    assert exc_info.value.code == "repository_mismatch"

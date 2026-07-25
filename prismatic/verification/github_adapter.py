@@ -17,6 +17,20 @@ from .receipt_validator import determine_merge_eligibility
 SHA40_PATTERN = re.compile(r"^[0-9a-fA-F]{40}$")
 ZERO_SHA40 = "0" * 40
 MAX_PULL_REQUEST_NUMBER = 2_147_483_647
+MAX_REPOSITORY_ID = 9_223_372_036_854_775_807
+REPOSITORY_ID_PATTERN = re.compile(r"[1-9][0-9]{0,18}\Z")
+
+
+def _repository_id_matches(value: Any, expected: str) -> bool:
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return 0 < value <= MAX_REPOSITORY_ID and str(value) == expected
+    return (
+        isinstance(value, str)
+        and REPOSITORY_ID_PATTERN.fullmatch(value) is not None
+        and value == expected
+    )
 
 
 def _valid_git_ref(ref: Any) -> bool:
@@ -103,18 +117,22 @@ def _validate_details_url(url: str | None, allowed_hosts: Sequence[str]) -> str 
 
 
 def _get_receipt_digest(receipt: Any) -> str:
-    if isinstance(receipt, dict):
+    if isinstance(receipt, Mapping):
         try:
             from .attestation import canonicalize_receipt
 
-            canon = canonicalize_receipt(receipt)
+            canon = canonicalize_receipt(dict(receipt))
             return hashlib.sha256(canon).hexdigest()
         except Exception:
             pass
         try:
-            raw = json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode(
-                "utf-8"
-            )
+            raw = json.dumps(
+                dict(receipt),
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            ).encode("utf-8")
             return hashlib.sha256(raw).hexdigest()
         except Exception:
             pass
@@ -142,16 +160,20 @@ def normalize_github_trigger(
     repository_name_pattern = re.compile(
         r"[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}\Z"
     )
-    repository_id_text = str(repository_id)
+    if (
+        not isinstance(repository_id, str)
+        or REPOSITORY_ID_PATTERN.fullmatch(repository_id) is None
+        or int(repository_id) > MAX_REPOSITORY_ID
+    ):
+        raise GitHubAdapterError(
+            "Invalid expected repository id", code="invalid_configuration"
+        )
+    repository_id_text = repository_id
     if not isinstance(
         expected_repository_full_name, str
     ) or not repository_name_pattern.fullmatch(expected_repository_full_name):
         raise GitHubAdapterError(
             "Invalid expected repository name", code="invalid_configuration"
-        )
-    if not repository_id_text.isdigit() or int(repository_id_text) <= 0:
-        raise GitHubAdapterError(
-            "Invalid expected repository id", code="invalid_configuration"
         )
 
     if isinstance(secrets, (str, bytes)) or not isinstance(secrets, Sequence):
@@ -242,7 +264,7 @@ def normalize_github_trigger(
         )
 
     repo_id_val = repo_data.get("id")
-    if repo_id_val is None or str(repo_id_val) != str(repository_id):
+    if not _repository_id_matches(repo_id_val, repository_id_text):
         raise GitHubAdapterError("Repository id mismatch", code="repository_mismatch")
 
     repo_node_id = repo_data.get("node_id")
@@ -284,14 +306,14 @@ def normalize_github_trigger(
 
     if (
         base_repo.get("full_name") != expected_repository_full_name
-        or str(base_repo.get("id")) != repository_id_text
+        or not _repository_id_matches(base_repo.get("id"), repository_id_text)
         or base_repo.get("node_id") != repo_node_id
     ):
         raise GitHubAdapterError("Base repository mismatch", code="repository_mismatch")
 
     if (
         head_repo.get("full_name") != expected_repository_full_name
-        or str(head_repo.get("id")) != repository_id_text
+        or not _repository_id_matches(head_repo.get("id"), repository_id_text)
         or head_repo.get("node_id") != repo_node_id
     ):
         raise GitHubAdapterError("Fork repository mismatch", code="fork_mismatch")
@@ -335,7 +357,7 @@ def normalize_github_trigger(
         replay_key=replay_key,
         event="pull_request",
         action=action,
-        repository_id=str(repository_id),
+        repository_id=repository_id_text,
         repository_node_id=repo_node_id,
         repository_full_name=repo_full_name,
         pull_request_number=pr_number,
@@ -367,7 +389,7 @@ def validate_trigger_receipt(
     if receipt.get("task_id") != trigger.task_id:
         return False, "task_id_mismatch"
 
-    if str(receipt.get("repository_id")) != str(trigger.repository_id):
+    if not _repository_id_matches(receipt.get("repository_id"), trigger.repository_id):
         return False, "repository_id_mismatch"
 
     if receipt.get("base_sha") != trigger.base_sha:
