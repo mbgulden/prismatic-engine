@@ -49,6 +49,13 @@ def test_wheel_and_sdist_content_inspection(tmp_path: Path) -> None:
             "prismatic/shipped_plugins/pwp/plugin.py",
             "prismatic/shipped_plugins/prismatic_hello_world/plugin-manifest.yaml",
             "prismatic/shipped_plugins/prismatic_hello_world/plugin.py",
+            "prismatic/resources/antigravity/workspace/agents/skills.json",
+            "prismatic/resources/antigravity/workspace/agents/rules/prismatic-engine.md",
+            "prismatic/resources/antigravity/workspace/agents/skills/prismatic-agy-execution/SKILL.md",
+            "prismatic/resources/antigravity/workspace/agents/skills/prismatic-context-discipline/SKILL.md",
+            "prismatic/resources/antigravity/workspace/agents/skills/prismatic-engine-operations/SKILL.md",
+            "prismatic/resources/antigravity/workspace/agents/skills/prismatic-evidence-and-review/SKILL.md",
+            "prismatic/resources/antigravity/workspace/agents/skills/prismatic-worktree-safety/SKILL.md",
         ]
         for item in required_wheel_files:
             assert item in members, f"Wheel missing required file {item}"
