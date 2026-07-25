@@ -15,6 +15,10 @@ Copy and complete these relative templates instead of inventing an unbounded pro
 
 Keep completed task/plan/result artifacts under the approved workspace or artifact boundary and bind them into the admitted run.
 
+## Platform prerequisites
+
+The canonical supervised runtime currently requires Linux (or a Linux container/WSL environment), `/proc`, `prctl` descendant containment, and `tmux`. It also requires an immutable reviewed AGY executable and a governed admission receipt. On an unsupported host, use the bundle for planning/review, report runtime execution as blocked, and do not substitute raw `agy`, detached processes, or an uncontained launcher.
+
 ## Required sequence
 
 1. Inspect the contract:

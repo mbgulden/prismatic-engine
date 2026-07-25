@@ -10,6 +10,8 @@ Prismatic Engine ships a small, provider-native Antigravity customization bundle
 
 This bundle configures agent behavior. It does not authenticate Antigravity, select a mutable model, copy machine state, or weaken Prismatic admission and approval gates.
 
+The bundle can be discovered by AGY on any supported AGY host, but Prismatic's canonical supervised runtime currently requires Linux (or Linux container/WSL), `/proc`, `prctl` descendant containment, and `tmux`. Unsupported hosts must report runtime execution as blocked rather than substituting raw or uncontained AGY launch.
+
 ## Discovery layout
 
 Antigravity discovers project customizations under `.agents/` (also recognized by current AGY documentation as a workspace customization root). Prismatic ships:
