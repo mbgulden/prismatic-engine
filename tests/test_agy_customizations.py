@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -42,7 +43,13 @@ def test_install_status_and_idempotent_reinstall(tmp_path: Path) -> None:
     assert code == 0
     assert installed["ok"] is True
     assert installed["changed"] is True
-    assert all(item["action"] == "create" for item in installed["plan"])
+    file_actions = {
+        item["action"]
+        for item in installed["plan"]
+        if item["path"] != customizations.MANAGED_REL.as_posix()
+    }
+    assert file_actions == {"create"}
+    assert installed["plan"][-1]["action"] == "create-manifest"
 
     manifest = json.loads((tmp_path / customizations.MANAGED_REL).read_text())
     assert manifest["schema"] == customizations.MANAGED_SCHEMA
@@ -58,7 +65,12 @@ def test_install_status_and_idempotent_reinstall(tmp_path: Path) -> None:
     assert code == 0
     assert repeated["changed"] is False
     assert repeated["would_change"] is False
-    assert all(item["action"] == "unchanged" for item in repeated["plan"])
+    assert repeated["plan"][-1]["action"] == "unchanged-manifest"
+    assert all(
+        item["action"] == "unchanged"
+        for item in repeated["plan"]
+        if item["path"] != customizations.MANAGED_REL.as_posix()
+    )
 
 
 def test_dry_run_has_no_side_effects(tmp_path: Path) -> None:
@@ -126,10 +138,17 @@ def test_unchanged_managed_file_can_upgrade(
         },
     )
 
-    code, upgraded = customizations.install_bundle(tmp_path)
+    code, blocked = customizations.install_bundle(tmp_path)
+    assert code == 2
+    assert set(blocked["conflicts"]) == {
+        relative,
+        customizations.MANAGED_REL.as_posix(),
+    }
+
+    code, upgraded = customizations.install_bundle(tmp_path, force=True)
     assert code == 0
     actions = {item["path"]: item["action"] for item in upgraded["plan"]}
-    assert actions[relative] == "update-managed"
+    assert actions[relative] == "replace-with-backup"
     assert (tmp_path / relative).read_bytes() == changed_bundle[relative]
 
 
@@ -169,20 +188,14 @@ def test_refuses_symlink_customization_root(tmp_path: Path) -> None:
 
 
 def test_tampered_manifest_cannot_target_unmanaged_agents_file(tmp_path: Path) -> None:
+    code, _ = customizations.install_bundle(tmp_path)
+    assert code == 0
     victim = tmp_path / ".agents" / "user-note.md"
-    victim.parent.mkdir(parents=True)
     victim.write_text("preserve")
     manifest = tmp_path / customizations.MANAGED_REL
-    manifest.write_text(
-        json.dumps(
-            {
-                "schema": customizations.MANAGED_SCHEMA,
-                "files": {
-                    ".agents/user-note.md": hashlib.sha256(b"preserve").hexdigest()
-                },
-            }
-        )
-    )
+    payload = json.loads(manifest.read_text())
+    payload["files"][".agents/user-note.md"] = hashlib.sha256(b"preserve").hexdigest()
+    manifest.write_text(json.dumps(payload))
     with pytest.raises(
         customizations.CustomizationError, match="unsafe managed manifest"
     ):
@@ -242,6 +255,319 @@ def test_audit_is_secret_safe_and_classifies_hazards(tmp_path: Path) -> None:
     ]
     assert "DO-NOT-RETURN-THIS-VALUE" not in encoded
     assert "PRIVATE-TRANSCRIPT" not in encoded
+
+
+def test_ancestor_collision_has_no_partial_install(tmp_path: Path) -> None:
+    blocker = tmp_path / ".agents" / "skills" / "prismatic-agy-execution"
+    blocker.parent.mkdir(parents=True)
+    blocker.write_text("not-a-directory")
+
+    code, result = customizations.install_bundle(tmp_path)
+
+    assert code == 2
+    assert result["changed"] is False
+    assert ".agents/skills/prismatic-agy-execution/SKILL.md" in result["conflicts"]
+    assert blocker.read_text() == "not-a-directory"
+    assert not (tmp_path / ".agents" / "rules").exists()
+    assert not (tmp_path / ".agents" / "skills.json").exists()
+    assert not (tmp_path / customizations.MANAGED_REL).exists()
+
+
+def test_force_install_rejects_symlinked_backup_root(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    conflict = workspace / ".agents" / "skills.json"
+    conflict.parent.mkdir(parents=True)
+    conflict.write_text("local")
+    (workspace / customizations.BACKUP_ROOT_REL).symlink_to(
+        outside, target_is_directory=True
+    )
+
+    with pytest.raises(customizations.CustomizationError, match="backup directory"):
+        customizations.install_bundle(workspace, force=True)
+
+    assert conflict.read_text() == "local"
+    assert list(outside.iterdir()) == []
+    assert not (workspace / customizations.MANAGED_REL).exists()
+    assert not (workspace / ".agents" / "rules").exists()
+
+
+def test_force_uninstall_rejects_symlinked_backup_root(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    outside = tmp_path / "outside"
+    workspace.mkdir()
+    outside.mkdir()
+    code, _ = customizations.install_bundle(workspace)
+    assert code == 0
+    drifted = workspace / ".agents" / "skills.json"
+    drifted.write_text("local")
+    (workspace / customizations.BACKUP_ROOT_REL).symlink_to(
+        outside, target_is_directory=True
+    )
+
+    with pytest.raises(customizations.CustomizationError, match="backup directory"):
+        customizations.uninstall_bundle(workspace, force=True)
+
+    assert drifted.read_text() == "local"
+    assert list(outside.iterdir()) == []
+    assert (workspace / customizations.MANAGED_REL).is_file()
+    assert all((workspace / path).exists() for path in customizations.REQUIRED_FILES)
+
+
+def test_backup_operation_collision_is_fail_closed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    workspace = tmp_path / "workspace"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    conflict = workspace / ".agents" / "skills.json"
+    conflict.parent.mkdir(parents=True)
+    conflict.write_text("local")
+    operation = workspace / customizations.BACKUP_ROOT_REL / "fixed"
+    operation.mkdir(parents=True)
+    (operation / "skills.json").symlink_to(outside / "sentinel")
+    (outside / "sentinel").write_text("outside")
+    monkeypatch.setattr(customizations, "_backup_operation_id", lambda: "fixed")
+
+    with pytest.raises(
+        customizations.CustomizationError, match="exclusive backup operation"
+    ):
+        customizations.install_bundle(workspace, force=True)
+
+    assert conflict.read_text() == "local"
+    assert (outside / "sentinel").read_text() == "outside"
+    assert (operation / "skills.json").is_symlink()
+
+
+def test_rapid_force_operations_keep_distinct_backups(tmp_path: Path) -> None:
+    target = tmp_path / ".agents" / "skills.json"
+    target.parent.mkdir(parents=True)
+    first = b"original-a"
+    second = b"local-b"
+    target.write_bytes(first)
+    code, _ = customizations.install_bundle(tmp_path, force=True)
+    assert code == 0
+    target.write_bytes(second)
+    code, _ = customizations.install_bundle(tmp_path, force=True)
+    assert code == 0
+
+    backups = sorted((tmp_path / customizations.BACKUP_ROOT_REL).glob("*/skills.json"))
+    assert len(backups) == 2
+    assert {path.read_bytes() for path in backups} == {first, second}
+    assert all(path.stat().st_mode & 0o777 == 0o600 for path in backups)
+
+
+def test_install_transaction_rolls_back_mid_commit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    original_replace = customizations.os.replace
+    calls = 0
+
+    def fail_second_replace(
+        source: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        target: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+    ) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("injected replace failure")
+        original_replace(source, target)
+
+    monkeypatch.setattr(customizations.os, "replace", fail_second_replace)
+    with pytest.raises(customizations.CustomizationError, match="transaction failed"):
+        customizations.install_bundle(tmp_path)
+
+    assert not any((tmp_path / path).exists() for path in customizations.REQUIRED_FILES)
+    assert not (tmp_path / customizations.MANAGED_REL).exists()
+
+
+def test_force_install_rollback_restores_original_bytes_and_mode(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    conflict = tmp_path / ".agents" / "skills.json"
+    conflict.parent.mkdir(parents=True)
+    original = b"local-content"
+    conflict.write_bytes(original)
+    conflict.chmod(0o640)
+    original_replace = customizations.os.replace
+
+    def fail_manifest_replace(
+        source: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        target: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+    ) -> None:
+        if Path(os.fsdecode(target)) == tmp_path / customizations.MANAGED_REL:
+            raise OSError("injected manifest replace failure")
+        original_replace(source, target)
+
+    monkeypatch.setattr(customizations.os, "replace", fail_manifest_replace)
+    with pytest.raises(customizations.CustomizationError, match="transaction failed"):
+        customizations.install_bundle(tmp_path, force=True)
+
+    assert conflict.read_bytes() == original
+    assert conflict.stat().st_mode & 0o777 == 0o640
+    assert not (tmp_path / customizations.MANAGED_REL).exists()
+    assert not (tmp_path / customizations.BACKUP_ROOT_REL).exists()
+    assert not (tmp_path / ".agents" / "rules").exists()
+
+
+def test_uninstall_transaction_rolls_back_mid_delete(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    code, _ = customizations.install_bundle(tmp_path)
+    assert code == 0
+    mode_target = tmp_path / ".agents" / "skills.json"
+    mode_target.chmod(0o600)
+    original_unlink = Path.unlink
+    managed = {tmp_path / path for path in customizations.REQUIRED_FILES}
+    managed.add(tmp_path / customizations.MANAGED_REL)
+    calls = 0
+
+    def fail_second_managed_unlink(self: Path, missing_ok: bool = False) -> None:
+        nonlocal calls
+        if self in managed:
+            calls += 1
+            if calls == 2:
+                raise OSError("injected unlink failure")
+        original_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", fail_second_managed_unlink)
+    with pytest.raises(customizations.CustomizationError, match="transaction failed"):
+        customizations.uninstall_bundle(tmp_path)
+
+    assert all((tmp_path / path).is_file() for path in customizations.REQUIRED_FILES)
+    assert mode_target.stat().st_mode & 0o777 == 0o600
+    assert (tmp_path / customizations.MANAGED_REL).is_file()
+    code, status = customizations.status_bundle(tmp_path)
+    assert code == 0
+    assert status["ok"] is True
+
+
+def test_manifest_fifo_is_rejected_without_reading(tmp_path: Path) -> None:
+    agents = tmp_path / ".agents"
+    agents.mkdir()
+    os.mkfifo(tmp_path / customizations.MANAGED_REL)
+
+    with pytest.raises(customizations.CustomizationError, match="regular file"):
+        customizations.install_bundle(tmp_path)
+
+
+def test_manifest_non_object_json_is_rejected(tmp_path: Path) -> None:
+    manifest = tmp_path / customizations.MANAGED_REL
+    manifest.parent.mkdir()
+    manifest.write_text("[]")
+
+    with pytest.raises(customizations.CustomizationError, match="manifest object"):
+        customizations.install_bundle(tmp_path)
+
+
+def test_manifest_digest_tampering_cannot_authorize_deletion(
+    tmp_path: Path,
+) -> None:
+    code, _ = customizations.install_bundle(tmp_path)
+    assert code == 0
+    target = tmp_path / ".agents" / "skills.json"
+    user_content = b"USER CONTENT"
+    target.write_bytes(user_content)
+    manifest_path = tmp_path / customizations.MANAGED_REL
+    manifest = json.loads(manifest_path.read_text())
+    manifest["files"][".agents/skills.json"] = hashlib.sha256(user_content).hexdigest()
+    manifest_path.write_text(json.dumps(manifest))
+
+    for force in (False, True):
+        with pytest.raises(
+            customizations.CustomizationError, match="trusted shipped bundle"
+        ):
+            customizations.uninstall_bundle(tmp_path, force=force)
+        assert target.read_bytes() == user_content
+
+
+def test_exact_files_without_manifest_report_adoption_change(tmp_path: Path) -> None:
+    for relative, data in customizations.bundle_files().items():
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+
+    code, preview = customizations.install_bundle(tmp_path, dry_run=True)
+    assert code == 0
+    assert preview["changed"] is False
+    assert preview["would_change"] is True
+    assert preview["plan"][-1]["action"] == "create-manifest"
+
+    code, adopted = customizations.install_bundle(tmp_path)
+    assert code == 0
+    assert adopted["changed"] is True
+    assert adopted["would_change"] is True
+    assert adopted["plan"][-1]["action"] == "create-manifest"
+    assert (tmp_path / customizations.MANAGED_REL).is_file()
+
+
+def test_audit_never_follows_symlinks_or_returns_secret_metadata(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "root"
+    outside = tmp_path / "outside-skill.md"
+    outside_secret = "password=" + "x" * 24
+    outside.write_text(f"---\nname: outside\ndescription: {outside_secret}\n---\n")
+    linked = root / "skills" / "linked" / "SKILL.md"
+    linked.parent.mkdir(parents=True)
+    linked.symlink_to(outside)
+    secret_value = "password=" + "y" * 24
+    skill = root / "skills" / "private" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text(
+        f"---\nname: private\ndescription: {secret_value}\nversion: 1\n---\n"
+    )
+
+    result = customizations.audit_customization_root(root)
+    encoded = json.dumps(result)
+
+    assert result["symlink_path_count"] == 1
+    assert result["candidate_count"] == 1
+    candidate = result["portable_candidates"][0]
+    assert candidate["sha256"] is None
+    assert "possible-secret-material" in candidate["hazards"]
+    assert candidate["metadata"] == {
+        "frontmatter_fields": ["name", "description", "version"],
+        "name_matches_directory": True,
+    }
+    assert outside_secret not in encoded
+    assert secret_value not in encoded
+
+
+def test_audit_skips_sensitive_parent_and_nonregular_candidate(
+    tmp_path: Path,
+) -> None:
+    sensitive = tmp_path / "credentials" / "AGENTS.md"
+    sensitive.parent.mkdir()
+    sensitive.write_text("PRIVATE-CONTENT")
+    fifo = tmp_path / "skills" / "fifo" / "SKILL.md"
+    fifo.parent.mkdir(parents=True)
+    os.mkfifo(fifo)
+
+    result = customizations.audit_customization_root(tmp_path)
+    encoded = json.dumps(result)
+
+    assert result["sensitive_path_count"] == 1
+    assert result["nonregular_path_count"] == 1
+    assert result["candidate_count"] == 0
+    assert "PRIVATE-CONTENT" not in encoded
+
+
+def test_audit_marks_non_object_frontmatter_invalid(tmp_path: Path) -> None:
+    skill = tmp_path / "skills" / "broken" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("---\n- list-item\n---\nbody\n")
+
+    result = customizations.audit_customization_root(tmp_path)
+
+    assert result["candidate_count"] == 1
+    candidate = result["portable_candidates"][0]
+    assert "invalid-frontmatter" in candidate["hazards"]
+    assert candidate["metadata"] == {
+        "frontmatter_fields": [],
+        "name_matches_directory": False,
+    }
 
 
 def test_invalid_bundle_rejects_machine_path_and_secret_material() -> None:

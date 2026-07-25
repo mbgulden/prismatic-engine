@@ -40,7 +40,7 @@ AUDIT_LOG=/tmp/george-agy-full-root-audit.json
 AUDIT_SHA256=bd2b9a4b47ce8b731a668959bc6ae2dad57e9554e6930197c7fc689f000c514b
 ```
 
-The audit returned metadata, relative candidate paths, hashes, and hazard classes. It did not return OAuth/token contents, transcripts, messages, conversations, logs, MCP data, caches, or model state.
+The original audit returned relative candidate paths, hashes, hazard classes, and selected raw frontmatter metadata while excluding OAuth/token contents, transcripts, messages, conversations, logs, MCP data, caches, and model state. Independent security review later showed that returning arbitrary frontmatter values and following candidate symlinks was not secret-safe. The shipped audit now skips symlinks/non-regular files and sensitive path components, returns only bounded field-presence/name-match indicators, and suppresses hashes for candidates containing possible secret material.
 
 No live custom AGY `agents/`, `workflows/`, `rules/`, plugins, hooks, `skills.json`, or `plugins.json` existed in either primary customization root. The reusable global corpus was skill-only: 27 directory-form `skills/<name>/SKILL.md` entries with valid required frontmatter. Twenty-six legacy flat `skills/*.md` projections duplicated those skills; 25 pairs were byte-identical, while the flat `prismatic-engine-operations.md` diverged from its directory copy. Two legacy directory names used underscores while frontmatter used hyphens. Flat projections, naming mismatches, and divergent duplicates are not distributed.
 

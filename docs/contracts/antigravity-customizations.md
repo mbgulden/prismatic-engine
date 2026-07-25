@@ -62,20 +62,21 @@ prismatic agy customizations uninstall --workspace /path/to/project
 
 `pip install` performs no home/workspace mutation. `install.sh` validates that the packaged bundle is present and prints the explicit preview/install commands; it does not choose or overwrite a target workspace for the user. Source checkouts already contain the canonical `.agents/` files.
 
-`--force` is available for install/uninstall conflicts, but it always backs up the replaced or removed file beneath `.agents/.prismatic-backups/<UTC timestamp>/` first.
+`--force` is available for install/uninstall conflicts, but it first writes every displaced regular file beneath an exclusive, collision-resistant `.agents/.prismatic-backups/<operation-id>/` directory. Backup ancestors are opened without following symlinks, backup files use exclusive creation, and an unsafe or pre-existing destination blocks the transaction.
 
 ## Managed-install guarantees
 
 1. The packaged bundle validates before any workspace mutation.
 2. Paths are relative, beneath `.agents/`, UTF-8, secret-free, and machine-path-free.
-3. Existing symlink roots/components are rejected.
-4. Conflict detection is whole-plan. Without `--force`, one conflict means no files are written or removed.
-5. Matching files may be adopted idempotently.
-6. Managed files may update automatically only while their current digest still equals the previously installed digest.
-7. Atomic replacement uses a same-directory temporary file and `os.replace`.
-8. Uninstall removes only files tracked by the managed manifest and still matching their installed digest.
-9. Drift is preserved by default. Force removal backs it up first.
-10. User-created files and unrelated `.agents` assets are never included in the managed manifest.
+3. Existing symlink roots/components, non-directory ancestors, non-regular managed targets, and non-regular manifests are rejected before mutation.
+4. Conflict detection and path preflight are whole-plan. Without `--force`, one conflict means no files are written or removed.
+5. Matching files may be adopted idempotently; creating or repairing only the manifest is reported as a change.
+6. The mutable manifest is inventory, not authorization. Install never trusts its digest to overwrite non-current bytes, and uninstall requires the complete manifest to match the currently shipped bundle before deleting anything.
+7. Non-current files require explicit `--force`, even when an older mutable manifest claims them. They are backed up before replacement/removal.
+8. Every write is staged before commit. Install and uninstall restore prior file contents and modes if a commit step fails.
+9. Backups use unique operation IDs and no-follow/exclusive creation; existing backup paths are never overwritten.
+10. Drift is preserved by default. Force removal backs it up first.
+11. User-created files and unrelated `.agents` assets are never included in the managed manifest.
 
 ## Explicit exclusions
 
@@ -96,8 +97,11 @@ The bundle and installer must not copy or manage:
 - it reads only recognized portable candidates such as `SKILL.md`, rules, `skills.json`, `plugins.json`, `hooks.json`, and `mcp_config.json`;
 - it counts but does not read generated/runtime paths;
 - it counts but does not read sensitive filenames;
+- it counts but never dereferences symlinks or non-regular files;
+- it classifies sensitive terms across every relative-path component before reading;
 - it counts other non-portable files without returning content;
-- it reports metadata, digests, and hazards such as machine paths, raw AGY launches, unrestricted execution, and permission bypasses.
+- it reports bounded structural indicators, optional digests for non-secret regular candidates, and hazard classes such as machine paths, raw AGY launches, unrestricted execution, and permission bypasses;
+- it never returns raw YAML/frontmatter values, and it suppresses candidate digests when possible secret material is detected.
 
 ## Authority boundary
 
@@ -108,7 +112,7 @@ Workspace skills improve AGY behavior; they do not create authorization. Governe
 Release proof must establish:
 
 1. source `.agents` and packaged resources are byte-identical;
-2. wheel and sdist contain all seven bundle files;
+2. wheel and sdist contain all ten bundle files;
 3. a non-editable wheel installed in a fresh venv can validate, dry-run, install, status, idempotently reinstall, preserve conflicts, and uninstall from an empty workspace;
 4. import resolution comes from the fresh venv, not the source tree;
 5. focused customization tests and existing canonical AGY workflow tests pass;
