@@ -23,7 +23,7 @@ def test_shipped_bundle_is_valid_and_secret_free() -> None:
     result = customizations.validate_bundle()
     assert result["ok"] is True
     assert result["errors"] == []
-    assert result["file_count"] == 7
+    assert result["file_count"] == 10
     assert set(result["files"]) == customizations.REQUIRED_FILES
 
 

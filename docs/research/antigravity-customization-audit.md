@@ -1,6 +1,6 @@
 # Antigravity/AGY Customization Audit
 
-**Audit scope:** live operator roots, installed AGY 1.1.6 behavior, Prismatic `origin/main`, merged canonical AGY workflow, and portable customization candidates.
+**Audit scope:** live operator roots, AGY 1.1.6→1.1.7 behavior observed during the slice, Prismatic `origin/main`, merged canonical AGY workflow, and portable customization candidates.
 **Audit method:** secret-safe structural inventory; private runtime contents were neither read nor copied.
 
 ## Executive finding
@@ -9,14 +9,16 @@ The live machine has valuable AGY procedures but no product-grade portable custo
 
 1. `~/.antigravity/skills` — 24 curated AGY skills plus mutable model/swarm/runtime configuration;
 2. `~/.gemini/config/skills` — legacy skills with duplicate flat Markdown projections and project registry state;
-3. `AGY_SKILLS_DIR` — pointed at one Hermes orchestrator profile, coupling AGY behavior to a machine-local agent profile.
+3. `AGY_SKILLS_DIR` — pointed at one Hermes orchestrator profile, coupling local operational scripts to a machine-local agent profile.
+
+The built-in AGY documentation identifies `~/.gemini/config` as the native global customization root and `.agents/`, `.agent/`, `_agents/`, or `_agent/` as workspace roots. It does **not** establish native discovery semantics for this machine's `AGY_CONFIG_DIR` or `AGY_SKILLS_DIR`; those are treated here as local integration conventions, not portable AGY guarantees.
 
 Prismatic already had portable Hermes skills and, through merged PR #396, a canonical AGY runtime launcher/containment workflow. It did not have a managed Antigravity workspace bundle or installed-wheel customization command.
 
 ## Live proof
 
 ```text
-AGY_VERSION=1.1.6
+AGY_VERSION=1.1.7 (1.1.6 was observed earlier in the same audit slice)
 AGY_COMMAND=agy
 SEPARATE_ANTIGRAVITY_COMMAND=absent
 AGY_CONFIG_DIR=~/.antigravity
@@ -39,6 +41,10 @@ AUDIT_SHA256=bd2b9a4b47ce8b731a668959bc6ae2dad57e9554e6930197c7fc689f000c514b
 ```
 
 The audit returned metadata, relative candidate paths, hashes, and hazard classes. It did not return OAuth/token contents, transcripts, messages, conversations, logs, MCP data, caches, or model state.
+
+No live custom AGY `agents/`, `workflows/`, `rules/`, plugins, hooks, `skills.json`, or `plugins.json` existed in either primary customization root. The reusable global corpus was skill-only: 27 directory-form `skills/<name>/SKILL.md` entries with valid required frontmatter. Twenty-six legacy flat `skills/*.md` projections duplicated those skills; 25 pairs were byte-identical, while the flat `prismatic-engine-operations.md` diverged from its directory copy. Two legacy directory names used underscores while frontmatter used hyphens. Flat projections, naming mismatches, and divergent duplicates are not distributed.
+
+Generic architecture/coding/review/debug/TDD skills were classified as possible future optional packs. The default Prismatic bundle deliberately synthesizes only the five governance-critical skills needed to operate the Engine safely; it does not silently promote the entire machine-local corpus.
 
 ## What was reusable
 
@@ -86,7 +92,7 @@ Prismatic does not package this wrapper. The merged `prismatic agy` render/admis
 
 Prismatic now ships:
 
-- repository-native `.agents/rules` and five progressive skills;
+- repository-native `.agents/rules`, five progressive skills, and task/plan/result workflow templates;
 - identical installed-package resources;
 - managed `audit`, `validate`, `install`, `status`, and `uninstall` commands;
 - dry-run, atomic writes, whole-plan conflict blocking, backup-before-force, managed digest upgrades, and drift-preserving uninstall;

@@ -24,6 +24,7 @@ Credential-free commands:
 ```bash
 prismatic --help
 prismatic agy contract
+prismatic agy customizations validate
 plugin-load-gate
 prismatic-gateway --help
 python scripts/release_smoke.py

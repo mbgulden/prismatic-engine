@@ -20,7 +20,12 @@ Antigravity discovers project customizations under `.agents/` (also recognized b
 │   └── prismatic-engine.md
 ├── skills.json
 └── skills/
-    ├── prismatic-agy-execution/SKILL.md
+    ├── prismatic-agy-execution/
+    │   ├── SKILL.md
+    │   └── templates/
+    │       ├── implementation-plan.md
+    │       ├── result.md
+    │       └── task.md
     ├── prismatic-context-discipline/SKILL.md
     ├── prismatic-engine-operations/SKILL.md
     ├── prismatic-evidence-and-review/SKILL.md
@@ -52,6 +57,8 @@ prismatic agy customizations status --workspace /path/to/project
 # Remove only unchanged managed files
 prismatic agy customizations uninstall --workspace /path/to/project
 ```
+
+`pip install` performs no home/workspace mutation. `install.sh` validates that the packaged bundle is present and prints the explicit preview/install commands; it does not choose or overwrite a target workspace for the user. Source checkouts already contain the canonical `.agents/` files.
 
 `--force` is available for install/uninstall conflicts, but it always backs up the replaced or removed file beneath `.agents/.prismatic-backups/<UTC timestamp>/` first.
 

@@ -5,6 +5,16 @@ description: Use this skill when preparing, launching, monitoring, recovering, o
 
 # Canonical Prismatic AGY Execution
 
+## Bundled workflow templates
+
+Copy and complete these relative templates instead of inventing an unbounded prompt or result format:
+
+- [`templates/task.md`](templates/task.md) — frozen task identity, scope, authority, and acceptance criteria;
+- [`templates/implementation-plan.md`](templates/implementation-plan.md) — plan-before-edit, preservation, risk, and verification ladder;
+- [`templates/result.md`](templates/result.md) — durable evidence packet with exact non-claims.
+
+Keep completed task/plan/result artifacts under the approved workspace or artifact boundary and bind them into the admitted run.
+
 ## Required sequence
 
 1. Inspect the contract:
