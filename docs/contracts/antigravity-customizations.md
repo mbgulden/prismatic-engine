@@ -73,7 +73,7 @@ prismatic agy customizations uninstall --workspace /path/to/project
 5. Matching files may be adopted idempotently; creating or repairing only the manifest is reported as a change.
 6. The mutable manifest is inventory, not authorization. Install never trusts its digest to overwrite non-current bytes, and uninstall requires the complete manifest to match the currently shipped bundle before deleting anything.
 7. Non-current files require explicit `--force`, even when an older mutable manifest claims them. They are backed up before replacement/removal.
-8. Every write is staged before commit. Install and uninstall restore prior file contents and modes if a commit step fails.
+8. Every write is staged before commit. Existing destinations are atomically captured and verified before replacement/removal; newly appeared destinations are never overwritten. Install and uninstall restore captured files and modes if a later commit step fails.
 9. Backups use unique operation IDs and no-follow/exclusive creation; existing backup paths are never overwritten.
 10. Drift is preserved by default. Force removal backs it up first.
 11. User-created files and unrelated `.agents` assets are never included in the managed manifest.
@@ -97,7 +97,8 @@ The bundle and installer must not copy or manage:
 - it reads only recognized portable candidates such as `SKILL.md`, rules, `skills.json`, `plugins.json`, `hooks.json`, and `mcp_config.json`;
 - it counts but does not read generated/runtime paths;
 - it counts but does not read sensitive filenames;
-- it counts but never dereferences symlinks or non-regular files;
+- it rejects a symlink supplied as the audit root and anchors traversal to a no-follow directory descriptor;
+- it counts but never dereferences descendant symlinks or non-regular files;
 - it classifies sensitive terms across every relative-path component before reading;
 - it counts other non-portable files without returning content;
 - it reports bounded structural indicators, optional digests for non-secret regular candidates, and hazard classes such as machine paths, raw AGY launches, unrestricted execution, and permission bypasses;

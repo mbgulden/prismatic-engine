@@ -395,14 +395,6 @@ def _stage_file(path: Path, data: bytes, mode: int = 0o644) -> Path:
         raise
 
 
-def _atomic_write(path: Path, data: bytes, mode: int = 0o644) -> None:
-    tmp = _stage_file(path, data, mode)
-    try:
-        os.replace(tmp, path)
-    finally:
-        tmp.unlink(missing_ok=True)
-
-
 def _cleanup_created_directories(created: Iterable[Path]) -> None:
     for directory in sorted(
         set(created), key=lambda item: len(item.parts), reverse=True
@@ -413,12 +405,75 @@ def _cleanup_created_directories(created: Iterable[Path]) -> None:
             pass
 
 
-def _restore_original(path: Path, original: tuple[bytes, int] | None) -> None:
-    if original is None:
-        path.unlink(missing_ok=True)
-        return
-    data, mode = original
-    _atomic_write(path, data, mode)
+def _capture_existing(path: Path) -> Path:
+    """Atomically move the current path to an unpredictable same-directory hold."""
+
+    try:
+        fd, temporary = tempfile.mkstemp(
+            prefix=f".{path.name}.prismatic-hold-", dir=path.parent
+        )
+        os.close(fd)
+    except OSError as exc:
+        raise CustomizationError(
+            f"unable to allocate transaction hold for {path}: {type(exc).__name__}"
+        ) from exc
+    hold = Path(temporary)
+    try:
+        os.replace(path, hold)
+    except Exception:
+        hold.unlink(missing_ok=True)
+        raise
+    return hold
+
+
+def _capture_matches(hold: Path, original: tuple[bytes, int]) -> bool:
+    current_data, current_mode = _read_regular_nofollow(hold)
+    return current_data == original[0] and current_mode == original[1]
+
+
+def _restore_capture(path: Path, hold: Path) -> None:
+    """Restore without overwriting a path that appeared after capture."""
+
+    try:
+        os.link(hold, path, follow_symlinks=False)
+    except FileExistsError as exc:
+        raise CustomizationError(
+            f"restore destination appeared; original preserved at {hold}"
+        ) from exc
+    except OSError as exc:
+        raise CustomizationError(
+            f"unable to restore captured file; original preserved at {hold}: "
+            f"{type(exc).__name__}"
+        ) from exc
+    hold.unlink()
+
+
+def _install_staged_noreplace(staged: Path, target: Path) -> None:
+    """Install a staged regular file without replacing a newly appeared path."""
+
+    try:
+        os.link(staged, target, follow_symlinks=False)
+    except FileExistsError as exc:
+        raise CustomizationError(
+            f"destination appeared after preflight: {target}"
+        ) from exc
+    except OSError as exc:
+        raise CustomizationError(
+            f"unable to install staged file without replacement: {target}: "
+            f"{type(exc).__name__}"
+        ) from exc
+    try:
+        staged.unlink()
+    except OSError:
+        pass
+
+
+def _path_matches(path: Path, expected: bytes, mode: int = 0o644) -> bool:
+    try:
+        current_data, current_mode = _read_regular_nofollow(path)
+    except CustomizationError:
+        return False
+    return current_data == expected and current_mode == mode
 
 
 def _backup_operation_id() -> str:
@@ -655,7 +710,9 @@ def install_bundle(
         }
     created_dirs: list[Path] = []
     staged: dict[Path, Path] = {}
-    committed: list[Path] = []
+    touched: list[Path] = []
+    holds: dict[Path, Path] = {}
+    desired_data: dict[Path, bytes] = {}
     backup_operation: Path | None = None
     backup_fd: int | None = None
     backup_created_dirs: list[Path] = []
@@ -671,6 +728,7 @@ def install_bundle(
                 if relative == MANAGED_REL.as_posix()
                 else files[relative]
             )
+            desired_data[target] = data
             staged[target] = _stage_file(target, data)
         backup_items = [
             item for item in plan if item["action"] == "replace-with-backup"
@@ -687,13 +745,42 @@ def install_bundle(
             if item["action"] not in changed_actions:
                 continue
             target = workspace / _safe_relative(item["path"])
-            os.replace(staged.pop(target), target)
-            committed.append(target)
+            original = originals[target]
+            if original is not None:
+                hold = _capture_existing(target)
+                holds[target] = hold
+                touched.append(target)
+                if not _capture_matches(hold, original):
+                    raise CustomizationError(
+                        f"managed file changed after preflight: {target}"
+                    )
+            _install_staged_noreplace(staged[target], target)
+            staged.pop(target)
+            if original is None:
+                touched.append(target)
+        for hold in holds.values():
+            try:
+                hold.unlink(missing_ok=True)
+            except OSError:
+                pass
+        holds.clear()
     except Exception as exc:
         rollback_errors: list[str] = []
-        for target in reversed(committed):
+        for target in reversed(touched):
             try:
-                _restore_original(target, originals[target])
+                try:
+                    os.lstat(target)
+                except FileNotFoundError:
+                    pass
+                else:
+                    if _path_matches(target, desired_data[target]):
+                        target.unlink()
+                    else:
+                        rollback_errors.append(f"{target}:current-path-preserved")
+                        continue
+                hold = holds.pop(target, None)
+                if hold is not None:
+                    _restore_capture(target, hold)
             except Exception as rollback_exc:
                 rollback_errors.append(f"{target}:{type(rollback_exc).__name__}")
         for tmp in staged.values():
@@ -857,7 +944,9 @@ def uninstall_bundle(
         current, _ = _read_regular_nofollow(path)
         if _sha256(current) != _sha256(original[0]):
             raise CustomizationError(f"managed file changed after preflight: {path}")
-    deleted: list[Path] = []
+    captured: dict[Path, Path] = {}
+    capture_order: list[Path] = []
+    cleanup_warnings: list[str] = []
     backup_operation: Path | None = None
     backup_fd: int | None = None
     backup_created_dirs: list[Path] = []
@@ -879,13 +968,31 @@ def uninstall_bundle(
             }:
                 continue
             target = workspace / _safe_relative(item["path"])
-            target.unlink()
-            deleted.append(target)
+            original = originals[target]
+            assert original is not None
+            hold = _capture_existing(target)
+            captured[target] = hold
+            capture_order.append(target)
+            if not _capture_matches(hold, original):
+                raise CustomizationError(
+                    f"managed file changed after preflight: {target}"
+                )
+        for target in capture_order:
+            hold = captured[target]
+            try:
+                hold.unlink(missing_ok=True)
+            except OSError as cleanup_exc:
+                cleanup_warnings.append(f"{hold}:{type(cleanup_exc).__name__}")
+        captured.clear()
     except Exception as exc:
         rollback_errors: list[str] = []
-        for target in reversed(deleted):
+        for target in reversed(capture_order):
+            hold = captured.get(target)
+            if hold is None:
+                continue
             try:
-                _restore_original(target, originals[target])
+                _restore_capture(target, hold)
+                captured.pop(target, None)
             except Exception as rollback_exc:
                 rollback_errors.append(f"{target}:{type(rollback_exc).__name__}")
         if backup_fd is not None:
@@ -910,20 +1017,16 @@ def uninstall_bundle(
         "conflicts": [],
         "plan": plan,
         "backup_operation": str(backup_operation) if backup_operation else None,
+        "cleanup_warnings": cleanup_warnings,
     }
 
 
 def _read_audit_candidate(
-    root: Path, relative: Path, *, max_bytes: int = 256_000
+    root_fd: int, relative: Path, *, max_bytes: int = 256_000
 ) -> bytes:
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     dir_flags = flags | getattr(os, "O_DIRECTORY", 0)
-    try:
-        current_fd = os.open(root, dir_flags)
-    except OSError as exc:
-        raise CustomizationError(
-            f"unable to open audit root safely: {type(exc).__name__}"
-        ) from exc
+    current_fd = os.dup(root_fd)
     try:
         for part in relative.parts[:-1]:
             next_fd = os.open(part, dir_flags, dir_fd=current_fd)
@@ -953,9 +1056,33 @@ def _read_audit_candidate(
 def audit_customization_root(root_path: str | Path) -> dict[str, Any]:
     """Return a secret-safe audit without following links or returning metadata values."""
 
-    root = Path(root_path).expanduser().resolve()
-    if not root.is_dir():
+    root = Path(root_path).expanduser().absolute()
+    try:
+        root_stat = os.lstat(root)
+    except OSError:
         return {"ok": False, "root": str(root), "error": "not-a-directory"}
+    if stat.S_ISLNK(root_stat.st_mode):
+        return {
+            "ok": False,
+            "root": str(root),
+            "error": "symlink-root",
+            "portable_candidates": [],
+            "candidate_count": 0,
+            "symlink_path_count": 1,
+        }
+    if not stat.S_ISDIR(root_stat.st_mode):
+        return {"ok": False, "root": str(root), "error": "not-a-directory"}
+    root_flags = (
+        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        root_fd = os.open(root, root_flags)
+    except OSError as exc:
+        return {
+            "ok": False,
+            "root": str(root),
+            "error": f"unsafe-root:{type(exc).__name__}",
+        }
     candidates: list[dict[str, Any]] = []
     runtime_files = 0
     sensitive_paths = 0
@@ -973,15 +1100,18 @@ def audit_customization_root(root_path: str | Path) -> dict[str, Any]:
         "oauth",
         "password",
     )
-    for current_text, dirnames, filenames in os.walk(
-        root, topdown=True, followlinks=False
+    for current_text, dirnames, filenames, current_fd in os.fwalk(
+        ".", topdown=True, follow_symlinks=False, dir_fd=root_fd
     ):
-        current = Path(current_text)
+        current_relative = Path(current_text)
+        if current_relative == Path("."):
+            current_relative = Path()
         safe_dirs: list[str] = []
         for dirname in sorted(dirnames):
-            directory = current / dirname
             try:
-                directory_stat = os.lstat(directory)
+                directory_stat = os.stat(
+                    dirname, dir_fd=current_fd, follow_symlinks=False
+                )
             except OSError:
                 nonregular_paths += 1
                 continue
@@ -993,10 +1123,10 @@ def audit_customization_root(root_path: str | Path) -> dict[str, Any]:
                 nonregular_paths += 1
         dirnames[:] = safe_dirs
         for filename in sorted(filenames):
-            path = current / filename
-            relative = path.relative_to(root)
+            relative = current_relative / filename
+            path = relative
             try:
-                path_stat = os.lstat(path)
+                path_stat = os.stat(filename, dir_fd=current_fd, follow_symlinks=False)
             except OSError:
                 nonregular_paths += 1
                 continue
@@ -1033,7 +1163,7 @@ def audit_customization_root(root_path: str | Path) -> dict[str, Any]:
                 "name_matches_directory": None,
             }
             try:
-                raw = _read_audit_candidate(root, relative)
+                raw = _read_audit_candidate(root_fd, relative)
                 text = raw.decode("utf-8")
             except (CustomizationError, UnicodeDecodeError) as exc:
                 message = str(exc)
@@ -1080,6 +1210,7 @@ def audit_customization_root(root_path: str | Path) -> dict[str, Any]:
                     "hazards": sorted(set(hazards)),
                 }
             )
+    os.close(root_fd)
     return {
         "ok": True,
         "root": str(root),

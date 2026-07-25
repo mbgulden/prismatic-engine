@@ -361,20 +361,30 @@ def test_rapid_force_operations_keep_distinct_backups(tmp_path: Path) -> None:
 def test_install_transaction_rolls_back_mid_commit(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    original_replace = customizations.os.replace
+    original_link = customizations.os.link
     calls = 0
 
-    def fail_second_replace(
+    def fail_second_link(
         source: str | bytes | os.PathLike[str] | os.PathLike[bytes],
         target: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        *,
+        src_dir_fd: int | None = None,
+        dst_dir_fd: int | None = None,
+        follow_symlinks: bool = True,
     ) -> None:
         nonlocal calls
         calls += 1
         if calls == 2:
-            raise OSError("injected replace failure")
-        original_replace(source, target)
+            raise OSError("injected link failure")
+        original_link(
+            source,
+            target,
+            src_dir_fd=src_dir_fd,
+            dst_dir_fd=dst_dir_fd,
+            follow_symlinks=follow_symlinks,
+        )
 
-    monkeypatch.setattr(customizations.os, "replace", fail_second_replace)
+    monkeypatch.setattr(customizations.os, "link", fail_second_link)
     with pytest.raises(customizations.CustomizationError, match="transaction failed"):
         customizations.install_bundle(tmp_path)
 
@@ -390,17 +400,27 @@ def test_force_install_rollback_restores_original_bytes_and_mode(
     original = b"local-content"
     conflict.write_bytes(original)
     conflict.chmod(0o640)
-    original_replace = customizations.os.replace
+    original_link = customizations.os.link
 
-    def fail_manifest_replace(
+    def fail_manifest_link(
         source: str | bytes | os.PathLike[str] | os.PathLike[bytes],
         target: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        *,
+        src_dir_fd: int | None = None,
+        dst_dir_fd: int | None = None,
+        follow_symlinks: bool = True,
     ) -> None:
         if Path(os.fsdecode(target)) == tmp_path / customizations.MANAGED_REL:
-            raise OSError("injected manifest replace failure")
-        original_replace(source, target)
+            raise OSError("injected manifest link failure")
+        original_link(
+            source,
+            target,
+            src_dir_fd=src_dir_fd,
+            dst_dir_fd=dst_dir_fd,
+            follow_symlinks=follow_symlinks,
+        )
 
-    monkeypatch.setattr(customizations.os, "replace", fail_manifest_replace)
+    monkeypatch.setattr(customizations.os, "link", fail_manifest_link)
     with pytest.raises(customizations.CustomizationError, match="transaction failed"):
         customizations.install_bundle(tmp_path, force=True)
 
@@ -418,20 +438,20 @@ def test_uninstall_transaction_rolls_back_mid_delete(
     assert code == 0
     mode_target = tmp_path / ".agents" / "skills.json"
     mode_target.chmod(0o600)
-    original_unlink = Path.unlink
+    original_capture = customizations._capture_existing
     managed = {tmp_path / path for path in customizations.REQUIRED_FILES}
     managed.add(tmp_path / customizations.MANAGED_REL)
     calls = 0
 
-    def fail_second_managed_unlink(self: Path, missing_ok: bool = False) -> None:
+    def fail_second_capture(path: Path) -> Path:
         nonlocal calls
-        if self in managed:
+        if path in managed:
             calls += 1
             if calls == 2:
-                raise OSError("injected unlink failure")
-        original_unlink(self, missing_ok=missing_ok)
+                raise OSError("injected capture failure")
+        return original_capture(path)
 
-    monkeypatch.setattr(Path, "unlink", fail_second_managed_unlink)
+    monkeypatch.setattr(customizations, "_capture_existing", fail_second_capture)
     with pytest.raises(customizations.CustomizationError, match="transaction failed"):
         customizations.uninstall_bundle(tmp_path)
 
@@ -441,6 +461,88 @@ def test_uninstall_transaction_rolls_back_mid_delete(
     code, status = customizations.status_bundle(tmp_path)
     assert code == 0
     assert status["ok"] is True
+
+
+def test_install_preserves_destination_created_after_preflight(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    victim = tmp_path / ".agents" / "rules" / "prismatic-engine.md"
+    user_bytes = b"created after preflight"
+    original_stage = customizations._stage_file
+    injected = False
+
+    def stage_then_create(path: Path, data: bytes, mode: int = 0o644) -> Path:
+        nonlocal injected
+        staged = original_stage(path, data, mode)
+        if path == victim and not injected:
+            path.write_bytes(user_bytes)
+            path.chmod(0o600)
+            injected = True
+        return staged
+
+    monkeypatch.setattr(customizations, "_stage_file", stage_then_create)
+    with pytest.raises(customizations.CustomizationError, match="destination appeared"):
+        customizations.install_bundle(tmp_path)
+
+    assert victim.read_bytes() == user_bytes
+    assert victim.stat().st_mode & 0o777 == 0o600
+    assert not (tmp_path / customizations.MANAGED_REL).exists()
+    assert not (tmp_path / customizations.BACKUP_ROOT_REL).exists()
+    assert not any(
+        (tmp_path / relative).exists()
+        for relative in customizations.REQUIRED_FILES
+        if tmp_path / relative != victim
+    )
+
+
+def test_uninstall_preserves_file_replaced_after_verification(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    code, _ = customizations.install_bundle(tmp_path)
+    assert code == 0
+    victim = tmp_path / ".agents" / "rules" / "prismatic-engine.md"
+    user_bytes = b"replaced after verification"
+    original_capture = customizations._capture_existing
+    injected = False
+
+    def replace_then_capture(path: Path) -> Path:
+        nonlocal injected
+        if path == victim and not injected:
+            path.write_bytes(user_bytes)
+            path.chmod(0o600)
+            injected = True
+        return original_capture(path)
+
+    monkeypatch.setattr(customizations, "_capture_existing", replace_then_capture)
+    with pytest.raises(
+        customizations.CustomizationError, match="changed after preflight"
+    ):
+        customizations.uninstall_bundle(tmp_path)
+
+    assert victim.read_bytes() == user_bytes
+    assert victim.stat().st_mode & 0o777 == 0o600
+    assert (tmp_path / customizations.MANAGED_REL).is_file()
+    assert not list(tmp_path.rglob("*.prismatic-hold-*"))
+
+
+def test_audit_rejects_symlink_root_without_reading_target(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    skill = outside / "skills" / "private" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    private_value = "PRIVATE-ROOT-VALUE"
+    skill.write_text(f"---\nname: private\ndescription: {private_value}\n---\nbody\n")
+    root_link = tmp_path / "root-link"
+    root_link.symlink_to(outside, target_is_directory=True)
+
+    result = customizations.audit_customization_root(root_link)
+    encoded = json.dumps(result)
+
+    assert result["ok"] is False
+    assert result["error"] == "symlink-root"
+    assert result["candidate_count"] == 0
+    assert result["symlink_path_count"] == 1
+    assert private_value not in encoded
+    assert str(outside) not in encoded
 
 
 def test_manifest_fifo_is_rejected_without_reading(tmp_path: Path) -> None:
