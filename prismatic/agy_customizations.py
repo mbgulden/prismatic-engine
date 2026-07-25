@@ -62,7 +62,9 @@ PORTABLE_NAMES = {
     "plugins.json",
     "skills.json",
 }
-ABSOLUTE_USER_PATH = re.compile(r"(?:/home/[^/\s`]+|/Users/[^/\s`]+|[A-Za-z]:\\\\Users\\\\[^\\\s`]+)")
+ABSOLUTE_USER_PATH = re.compile(
+    r"(?:/home/[^/\s`]+|/Users/[^/\s`]+|[A-Za-z]:\\\\Users\\\\[^\\\s`]+)"
+)
 SECRET_MATERIAL = re.compile(
     r"(?:-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|"
     r"(?:api[_-]?key|access[_-]?token|password|client[_-]?secret)\s*[:=]\s*[\"']?[A-Za-z0-9_./+\-=]{16,})",
@@ -70,8 +72,12 @@ SECRET_MATERIAL = re.compile(
 )
 DANGEROUS_PATTERNS = {
     "skip-permissions": re.compile(r"dangerously-skip-permissions", re.IGNORECASE),
-    "unrestricted-execution": re.compile(r"unrestricted[_ -]execution|bypass all", re.IGNORECASE),
-    "raw-agy-launch": re.compile(r"(?:^|\s)agy(?:-bin)?\s+.*--print", re.IGNORECASE | re.MULTILINE),
+    "unrestricted-execution": re.compile(
+        r"unrestricted[_ -]execution|bypass all", re.IGNORECASE
+    ),
+    "raw-agy-launch": re.compile(
+        r"(?:^|\s)agy(?:-bin)?\s+.*--print", re.IGNORECASE | re.MULTILINE
+    ),
     "mutable-user-path": ABSOLUTE_USER_PATH,
 }
 
@@ -104,14 +110,20 @@ def bundle_files() -> dict[str, bytes]:
     """Return the shipped workspace bundle as destination-relative bytes."""
 
     try:
-        packaged = {path.as_posix(): data for path, data in _walk_resource(_resource_root())}
+        packaged = {
+            path.as_posix(): data for path, data in _walk_resource(_resource_root())
+        }
     except (FileNotFoundError, ModuleNotFoundError) as exc:
-        raise CustomizationError(f"packaged Antigravity bundle unavailable: {exc}") from exc
+        raise CustomizationError(
+            f"packaged Antigravity bundle unavailable: {exc}"
+        ) from exc
     files: dict[str, bytes] = {}
     for relative, data in packaged.items():
         path = Path(relative)
         if not path.parts or path.parts[0] != "agents":
-            raise CustomizationError(f"unexpected packaged customization path: {relative}")
+            raise CustomizationError(
+                f"unexpected packaged customization path: {relative}"
+            )
         destination = Path(".agents", *path.parts[1:]).as_posix()
         files[destination] = data
     return files
@@ -154,7 +166,11 @@ def validate_bundle(files: dict[str, bytes] | None = None) -> dict[str, Any]:
         errors.append(f"unexpected bundle files: {unexpected}")
     for relative, raw in sorted(files.items()):
         path = Path(relative)
-        if path.is_absolute() or ".." in path.parts or not relative.startswith(".agents/"):
+        if (
+            path.is_absolute()
+            or ".." in path.parts
+            or not relative.startswith(".agents/")
+        ):
             errors.append(f"unsafe bundle path: {relative}")
             continue
         try:
@@ -178,7 +194,9 @@ def validate_bundle(files: dict[str, bytes] | None = None) -> dict[str, Any]:
             errors.append(f".agents/skills.json: invalid JSON: {type(exc).__name__}")
         else:
             if skills_cfg != {"entries": [{"path": ".agents/skills"}]}:
-                errors.append(".agents/skills.json: must declare only the managed workspace-relative skills path")
+                errors.append(
+                    ".agents/skills.json: must declare only the managed workspace-relative skills path"
+                )
     return {
         "ok": not errors,
         "schema": BUNDLE_SCHEMA,
@@ -221,7 +239,9 @@ def _read_manifest(workspace: Path) -> dict[str, Any] | None:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise CustomizationError(f"invalid managed manifest: {type(exc).__name__}") from exc
+        raise CustomizationError(
+            f"invalid managed manifest: {type(exc).__name__}"
+        ) from exc
     if data.get("schema") != MANAGED_SCHEMA or not isinstance(data.get("files"), dict):
         raise CustomizationError("invalid managed manifest schema")
     for relative, digest in data["files"].items():
@@ -237,7 +257,9 @@ def _read_manifest(workspace: Path) -> dict[str, Any] | None:
             or relative not in REQUIRED_FILES
             or not re.fullmatch(r"[0-9a-f]{64}", digest)
         ):
-            raise CustomizationError(f"unsafe managed manifest file entry: {relative!r}")
+            raise CustomizationError(
+                f"unsafe managed manifest file entry: {relative!r}"
+            )
     return data
 
 
@@ -272,7 +294,9 @@ def install_bundle(
     files = bundle_files()
     validation = validate_bundle(files)
     if not validation["ok"]:
-        raise CustomizationError("shipped bundle validation failed: " + "; ".join(validation["errors"]))
+        raise CustomizationError(
+            "shipped bundle validation failed: " + "; ".join(validation["errors"])
+        )
     old = _read_manifest(workspace)
     old_files = (old or {}).get("files", {})
     plan: list[dict[str, Any]] = []
@@ -361,7 +385,9 @@ def status_bundle(workspace_path: str | Path) -> tuple[int, dict[str, Any]]:
         else:
             state = "drifted"
         states.append({"path": relative, "state": state})
-    manifest_current = manifest is not None and manifest.get("files") == validation.get("files")
+    manifest_current = manifest is not None and manifest.get("files") == validation.get(
+        "files"
+    )
     current = (
         validation["ok"]
         and manifest_current
@@ -383,7 +409,11 @@ def _prune_empty_managed_dirs(workspace: Path) -> None:
     for root in roots:
         if not root.exists() or root.is_symlink():
             continue
-        directories = sorted((p for p in root.rglob("*") if p.is_dir()), key=lambda p: len(p.parts), reverse=True)
+        directories = sorted(
+            (p for p in root.rglob("*") if p.is_dir()),
+            key=lambda p: len(p.parts),
+            reverse=True,
+        )
         for directory in directories:
             try:
                 directory.rmdir()
@@ -404,7 +434,13 @@ def uninstall_bundle(
     workspace = _workspace(workspace_path)
     manifest = _read_manifest(workspace)
     if manifest is None:
-        return 0, {"ok": True, "operation": "uninstall", "workspace": str(workspace), "changed": False, "plan": []}
+        return 0, {
+            "ok": True,
+            "operation": "uninstall",
+            "workspace": str(workspace),
+            "changed": False,
+            "plan": [],
+        }
     plan: list[dict[str, str]] = []
     conflicts: list[str] = []
     for relative, installed_hash in sorted(manifest["files"].items()):
@@ -476,11 +512,20 @@ def audit_customization_root(root_path: str | Path) -> dict[str, Any]:
         if (
             lower_parts & BLOCKED_RUNTIME_PARTS
             or path.suffix.lower() in {".db", ".wal", ".shm", ".pb"}
-            or path.name in {"active_work.json", "agent_status.json", "deploy-status.json", "swarm_locks.json"}
+            or path.name
+            in {
+                "active_work.json",
+                "agent_status.json",
+                "deploy-status.json",
+                "swarm_locks.json",
+            }
         ):
             runtime_files += 1
             continue
-        if any(term in path.name.lower() for term in ("token", "credential", "private-key", "oauth")):
+        if any(
+            term in path.name.lower()
+            for term in ("token", "credential", "private-key", "oauth")
+        ):
             sensitive_paths += 1
             continue
         is_rule = "rules" in lower_parts and path.suffix.lower() == ".md"
@@ -512,7 +557,11 @@ def audit_customization_root(root_path: str | Path) -> dict[str, Any]:
                 except yaml.YAMLError:
                     hazards.append("invalid-frontmatter")
                 else:
-                    metadata = {key: frontmatter.get(key) for key in ("name", "description", "version") if key in frontmatter}
+                    metadata = {
+                        key: frontmatter.get(key)
+                        for key in ("name", "description", "version")
+                        if key in frontmatter
+                    }
             else:
                 hazards.append("missing-frontmatter")
         candidates.append(
@@ -553,9 +602,13 @@ def cli(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(list(argv) if argv is not None else None)
     try:
         if args.action == "install":
-            code, result = install_bundle(args.workspace, dry_run=args.dry_run, force=args.force)
+            code, result = install_bundle(
+                args.workspace, dry_run=args.dry_run, force=args.force
+            )
         elif args.action == "uninstall":
-            code, result = uninstall_bundle(args.workspace, dry_run=args.dry_run, force=args.force)
+            code, result = uninstall_bundle(
+                args.workspace, dry_run=args.dry_run, force=args.force
+            )
         elif args.action == "status":
             code, result = status_bundle(args.workspace)
         elif args.action == "validate":
@@ -566,9 +619,15 @@ def cli(argv: Sequence[str] | None = None) -> int:
                 result["installed"] = installed
                 code = max(code, installed_code)
         else:
-            roots = args.config_root or [os.environ.get("AGY_CONFIG_DIR", "~/.gemini/config")]
+            roots = args.config_root or [
+                os.environ.get("AGY_CONFIG_DIR", "~/.gemini/config")
+            ]
             audits = [audit_customization_root(root) for root in roots]
-            result = {"ok": all(item["ok"] for item in audits), "operation": "audit", "roots": audits}
+            result = {
+                "ok": all(item["ok"] for item in audits),
+                "operation": "audit",
+                "roots": audits,
+            }
             code = 0 if result["ok"] else 1
     except CustomizationError as exc:
         result = {"ok": False, "error": str(exc)}

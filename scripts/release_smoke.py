@@ -71,7 +71,9 @@ def main() -> int:
         raise RuntimeError("canonical AGY CLI contract is unavailable or drifted")
     agy_customizations = validate_bundle()
     if not agy_customizations["ok"] or agy_customizations["file_count"] < 1:
-        raise RuntimeError("portable AGY customization bundle is unavailable or invalid")
+        raise RuntimeError(
+            "portable AGY customization bundle is unavailable or invalid"
+        )
 
     load_result = verify_shipped_plugins_load()
     if not load_result.passed:

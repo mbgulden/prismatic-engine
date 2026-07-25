@@ -100,7 +100,9 @@ def test_force_install_backs_up_conflict(tmp_path: Path) -> None:
     assert backups[0].stat().st_mode & 0o777 == 0o600
 
 
-def test_unchanged_managed_file_can_upgrade(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_unchanged_managed_file_can_upgrade(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     code, _ = customizations.install_bundle(tmp_path)
     assert code == 0
     original_bundle = customizations.bundle_files()
@@ -115,7 +117,10 @@ def test_unchanged_managed_file_can_upgrade(monkeypatch: pytest.MonkeyPatch, tmp
             "ok": True,
             "schema": customizations.BUNDLE_SCHEMA,
             "file_count": len(changed_bundle),
-            "files": {name: hashlib.sha256(data).hexdigest() for name, data in changed_bundle.items()},
+            "files": {
+                name: hashlib.sha256(data).hexdigest()
+                for name, data in changed_bundle.items()
+            },
             "errors": [],
             "warnings": [],
         },
@@ -145,7 +150,9 @@ def test_uninstall_preserves_drift_without_partial_removal(tmp_path: Path) -> No
     assert removed["ok"] is True
     assert not any((tmp_path / path).exists() for path in customizations.REQUIRED_FILES)
     assert not (tmp_path / customizations.MANAGED_REL).exists()
-    backups = list((tmp_path / customizations.BACKUP_ROOT_REL).glob("*/rules/prismatic-engine.md"))
+    backups = list(
+        (tmp_path / customizations.BACKUP_ROOT_REL).glob("*/rules/prismatic-engine.md")
+    )
     assert len(backups) == 1
     assert "Local rule." in backups[0].read_text()
 
@@ -154,7 +161,9 @@ def test_refuses_symlink_customization_root(tmp_path: Path) -> None:
     outside = tmp_path / "outside"
     outside.mkdir()
     (tmp_path / ".agents").symlink_to(outside, target_is_directory=True)
-    with pytest.raises(customizations.CustomizationError, match="symlink customization root"):
+    with pytest.raises(
+        customizations.CustomizationError, match="symlink customization root"
+    ):
         customizations.install_bundle(tmp_path)
     assert list(outside.iterdir()) == []
 
@@ -168,11 +177,15 @@ def test_tampered_manifest_cannot_target_unmanaged_agents_file(tmp_path: Path) -
         json.dumps(
             {
                 "schema": customizations.MANAGED_SCHEMA,
-                "files": {".agents/user-note.md": hashlib.sha256(b"preserve").hexdigest()},
+                "files": {
+                    ".agents/user-note.md": hashlib.sha256(b"preserve").hexdigest()
+                },
             }
         )
     )
-    with pytest.raises(customizations.CustomizationError, match="unsafe managed manifest"):
+    with pytest.raises(
+        customizations.CustomizationError, match="unsafe managed manifest"
+    ):
         customizations.uninstall_bundle(tmp_path, force=True)
     assert victim.read_text() == "preserve"
 
@@ -243,7 +256,9 @@ def test_invalid_bundle_rejects_machine_path_and_secret_material() -> None:
     assert any("secret material" in error for error in result["errors"])
 
 
-def test_cli_namespace_dispatches_to_customization_cli(capsys: pytest.CaptureFixture[str]) -> None:
+def test_cli_namespace_dispatches_to_customization_cli(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     code = agy_cli(["customizations", "validate"])
     assert code == 0
     output = json.loads(capsys.readouterr().out)
@@ -253,9 +268,5 @@ def test_cli_namespace_dispatches_to_customization_cli(capsys: pytest.CaptureFix
 
 def test_bundle_contains_expected_progressive_skills() -> None:
     files = customizations.bundle_files()
-    names = {
-        Path(path).parent.name
-        for path in files
-        if path.endswith("/SKILL.md")
-    }
+    names = {Path(path).parent.name for path in files if path.endswith("/SKILL.md")}
     assert names == EXPECTED_SKILLS

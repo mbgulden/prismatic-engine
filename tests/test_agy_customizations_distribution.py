@@ -10,7 +10,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-def _run(command: list[str], *, cwd: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+def _run(
+    command: list[str], *, cwd: Path, env: dict[str, str]
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         command,
         cwd=cwd,
