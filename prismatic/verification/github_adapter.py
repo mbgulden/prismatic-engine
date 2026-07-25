@@ -16,6 +16,24 @@ from .receipt_validator import determine_merge_eligibility
 
 SHA40_PATTERN = re.compile(r"^[0-9a-fA-F]{40}$")
 ZERO_SHA40 = "0" * 40
+MAX_PULL_REQUEST_NUMBER = 2_147_483_647
+
+
+def _valid_git_ref(ref: Any) -> bool:
+    if not isinstance(ref, str) or not ref or len(ref) > 256:
+        return False
+    if ref == "@" or ref.startswith(("/", ".")) or ref.endswith(("/", ".")):
+        return False
+    if ".." in ref or "@{" in ref or "//" in ref:
+        return False
+    if any(ord(char) <= 32 or ord(char) == 127 for char in ref):
+        return False
+    if any(char in "~^:?*[\\" for char in ref):
+        return False
+    return all(
+        component and not component.startswith(".") and not component.endswith(".lock")
+        for component in ref.split("/")
+    )
 
 
 class GitHubAdapterError(ValueError):
@@ -141,7 +159,11 @@ def normalize_github_trigger(
             "Secrets must be a sequence of strings", code="missing_secrets"
         )
 
-    valid_secrets = [s for s in secrets if isinstance(s, str) and len(s) > 0]
+    if any(not isinstance(secret, str) for secret in secrets):
+        raise GitHubAdapterError(
+            "Secrets must contain only strings", code="invalid_secrets"
+        )
+    valid_secrets = [secret for secret in secrets if secret]
     if not valid_secrets:
         raise GitHubAdapterError(
             "No valid non-empty secret provided", code="missing_secrets"
@@ -173,9 +195,7 @@ def normalize_github_trigger(
         computed = hmac.new(
             secret.encode("utf-8"), raw_body, hashlib.sha256
         ).hexdigest()
-        if hmac.compare_digest(computed.lower(), provided_sig.lower()):
-            sig_matched = True
-            break
+        sig_matched |= hmac.compare_digest(computed, provided_sig)
 
     if not sig_matched:
         raise GitHubAdapterError(
@@ -186,9 +206,7 @@ def normalize_github_trigger(
     if not event_header:
         raise GitHubAdapterError("Missing X-GitHub-Event header", code="missing_event")
     if event_header != "pull_request":
-        raise GitHubAdapterError(
-            f"Unsupported event type '{event_header}'", code="unsupported_event"
-        )
+        raise GitHubAdapterError("Unsupported event type", code="unsupported_event")
 
     delivery_id = headers_lower.get("x-github-delivery")
     if not delivery_id or not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", delivery_id):
@@ -211,9 +229,7 @@ def normalize_github_trigger(
 
     action = payload.get("action")
     if action not in ("opened", "reopened", "synchronize"):
-        raise GitHubAdapterError(
-            f"Unsupported action '{action}'", code="unsupported_action"
-        )
+        raise GitHubAdapterError("Unsupported action", code="unsupported_action")
 
     repo_data = payload.get("repository")
     if not isinstance(repo_data, dict):
@@ -242,7 +258,11 @@ def normalize_github_trigger(
         raise GitHubAdapterError("Missing pull_request object", code="invalid_payload")
 
     pr_number = pr_data.get("number")
-    if isinstance(pr_number, bool) or not isinstance(pr_number, int) or pr_number <= 0:
+    if (
+        isinstance(pr_number, bool)
+        or not isinstance(pr_number, int)
+        or not 1 <= pr_number <= MAX_PULL_REQUEST_NUMBER
+    ):
         raise GitHubAdapterError(
             "Invalid pull_request number", code="invalid_pr_number"
         )
@@ -262,14 +282,18 @@ def normalize_github_trigger(
             "Fork or base repository object missing/ambiguous", code="fork_ambiguity"
         )
 
-    if base_repo.get("full_name") != expected_repository_full_name or str(
-        base_repo.get("id")
-    ) != str(repository_id):
+    if (
+        base_repo.get("full_name") != expected_repository_full_name
+        or str(base_repo.get("id")) != repository_id_text
+        or base_repo.get("node_id") != repo_node_id
+    ):
         raise GitHubAdapterError("Base repository mismatch", code="repository_mismatch")
 
-    if head_repo.get("full_name") != expected_repository_full_name or str(
-        head_repo.get("id")
-    ) != str(repository_id):
+    if (
+        head_repo.get("full_name") != expected_repository_full_name
+        or str(head_repo.get("id")) != repository_id_text
+        or head_repo.get("node_id") != repo_node_id
+    ):
         raise GitHubAdapterError("Fork repository mismatch", code="fork_mismatch")
 
     base_sha = base_data.get("sha")
@@ -295,11 +319,12 @@ def normalize_github_trigger(
     base_ref = base_data.get("ref")
     head_ref = head_data.get("ref")
 
-    if not isinstance(base_ref, str) or not base_ref or len(base_ref) > 256:
+    if not _valid_git_ref(base_ref):
         raise GitHubAdapterError("Invalid base ref", code="invalid_ref")
 
-    if not isinstance(head_ref, str) or not head_ref or len(head_ref) > 256:
+    if not _valid_git_ref(head_ref):
         raise GitHubAdapterError("Invalid head ref", code="invalid_ref")
+    assert isinstance(base_ref, str) and isinstance(head_ref, str)
 
     source_payload_digest = f"sha256:{hashlib.sha256(raw_body).hexdigest()}"
     replay_key = f"github:delivery:{delivery_id}"

@@ -39,6 +39,7 @@ def _make_payload(
     base_repo_dict = {
         "id": int(repo_id) if str(repo_id).isdigit() else repo_id,
         "full_name": repo_full_name,
+        "node_id": repo_node_id,
     }
     if head_repo_override is not None:
         head_repo_dict = head_repo_override
@@ -46,6 +47,7 @@ def _make_payload(
         head_repo_dict = {
             "id": 999999,
             "full_name": "forkowner/repo",
+            "node_id": "R_fork999999",
         }
     else:
         head_repo_dict = copy.deepcopy(base_repo_dict)
@@ -765,3 +767,119 @@ def test_pure_api_isolation_under_monkeypatch(monkeypatch: pytest.MonkeyPatch) -
         trigger, receipt, policy, expected_tree_sha=tree_sha
     )
     assert proj.conclusion == "success"
+
+
+def test_independent_review_adversarial_contracts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret = "primary-secret"
+    payload = _make_payload()
+    body = json.dumps(payload).encode("utf-8")
+    headers = {
+        "X-Hub-Signature-256": _sign(body, secret),
+        "X-GitHub-Event": "pull_request",
+        "X-GitHub-Delivery": "review-adversarial",
+    }
+
+    original_compare = hmac.compare_digest
+    compare_calls = 0
+
+    def _counting_compare(left: str, right: str) -> bool:
+        nonlocal compare_calls
+        compare_calls += 1
+        return original_compare(left, right)
+
+    monkeypatch.setattr(hmac, "compare_digest", _counting_compare)
+    normalize_github_trigger(
+        body,
+        headers,
+        secrets=[secret, "secondary-secret"],
+        expected_repository_full_name="org/repo",
+        repository_id="123456",
+    )
+    assert compare_calls == 2
+
+    with pytest.raises(GitHubAdapterError) as exc_info:
+        normalize_github_trigger(
+            body,
+            headers,
+            secrets=(secret, b"not-a-string"),  # type: ignore[arg-type]
+            expected_repository_full_name="org/repo",
+            repository_id="123456",
+        )
+    assert exc_info.value.code == "invalid_secrets"
+
+    arbitrary_event = "ARBITRARY_HEADER_LEAK_MARKER"
+    event_headers = {**headers, "X-GitHub-Event": arbitrary_event}
+    with pytest.raises(GitHubAdapterError) as exc_info:
+        normalize_github_trigger(
+            body,
+            event_headers,
+            secrets=[secret],
+            expected_repository_full_name="org/repo",
+            repository_id="123456",
+        )
+    assert arbitrary_event not in str(exc_info.value)
+
+    arbitrary_action = "ARBITRARY_PAYLOAD_LEAK_MARKER"
+    action_payload = _make_payload(action=arbitrary_action)
+    action_body = json.dumps(action_payload).encode("utf-8")
+    action_headers = {
+        **headers,
+        "X-Hub-Signature-256": _sign(action_body, secret),
+    }
+    with pytest.raises(GitHubAdapterError) as exc_info:
+        normalize_github_trigger(
+            action_body,
+            action_headers,
+            secrets=[secret],
+            expected_repository_full_name="org/repo",
+            repository_id="123456",
+        )
+    assert arbitrary_action not in str(exc_info.value)
+
+    for invalid_ref in ("feature\x00injected", "feature..branch", ".hidden", "x.lock"):
+        ref_payload = _make_payload(head_ref=invalid_ref)
+        ref_body = json.dumps(ref_payload).encode("utf-8")
+        ref_headers = {**headers, "X-Hub-Signature-256": _sign(ref_body, secret)}
+        with pytest.raises(GitHubAdapterError) as exc_info:
+            normalize_github_trigger(
+                ref_body,
+                ref_headers,
+                secrets=[secret],
+                expected_repository_full_name="org/repo",
+                repository_id="123456",
+            )
+        assert exc_info.value.code == "invalid_ref"
+
+    huge_pr_payload = _make_payload(pr_number=int("9" * 1001))
+    huge_pr_body = json.dumps(huge_pr_payload).encode("utf-8")
+    huge_pr_headers = {
+        **headers,
+        "X-Hub-Signature-256": _sign(huge_pr_body, secret),
+    }
+    with pytest.raises(GitHubAdapterError) as exc_info:
+        normalize_github_trigger(
+            huge_pr_body,
+            huge_pr_headers,
+            secrets=[secret],
+            expected_repository_full_name="org/repo",
+            repository_id="123456",
+        )
+    assert exc_info.value.code == "invalid_pr_number"
+
+    for location in ("base", "head"):
+        node_payload = _make_payload()
+        node_payload["pull_request"][location]["repo"]["node_id"] = "R_mismatch"
+        node_body = json.dumps(node_payload).encode("utf-8")
+        node_headers = {**headers, "X-Hub-Signature-256": _sign(node_body, secret)}
+        with pytest.raises(GitHubAdapterError) as exc_info:
+            normalize_github_trigger(
+                node_body,
+                node_headers,
+                secrets=[secret],
+                expected_repository_full_name="org/repo",
+                repository_id="123456",
+            )
+        expected_code = "repository_mismatch" if location == "base" else "fork_mismatch"
+        assert exc_info.value.code == expected_code

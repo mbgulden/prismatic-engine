@@ -78,8 +78,8 @@ payload = {
     "repository": {"id": 123, "full_name": "org/repo", "node_id": "R_node123"},
     "pull_request": {
         "number": 1,
-        "base": {"ref": "main", "sha": "a" * 40, "repo": {"id": 123, "full_name": "org/repo"}},
-        "head": {"ref": "feat", "sha": "b" * 40, "repo": {"id": 123, "full_name": "org/repo"}},
+        "base": {"ref": "main", "sha": "a" * 40, "repo": {"id": 123, "full_name": "org/repo", "node_id": "R_node123"}},
+        "head": {"ref": "feat", "sha": "b" * 40, "repo": {"id": 123, "full_name": "org/repo", "node_id": "R_node123"}},
     },
 }
 body = json.dumps(payload).encode("utf-8")
