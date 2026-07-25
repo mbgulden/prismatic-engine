@@ -11,8 +11,10 @@ import hashlib
 import json
 import os
 import re
+import signal
 import stat
 import subprocess
+
 import time
 import uuid
 from pathlib import Path
@@ -409,10 +411,31 @@ class AGYCLIHarness(AgentHarness):
     def cancel(self, run_id: str) -> bool:
         record = self._record(run_id)
         session = str(record["session"])
-        if _proc_start_ticks(int(record["pane_pid"])) != record["pane_start_ticks"]:
+        pane_pid = int(record["pane_pid"])
+        pane_start_ticks = str(record["pane_start_ticks"])
+        if _proc_start_ticks(pane_pid) != pane_start_ticks:
             return False
+        try:
+            os.kill(pane_pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return False
+        process_result_path = self._launch_dir(run_id) / "process-result.json"
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if process_result_path.is_file():
+                break
+            time.sleep(0.05)
+        else:
+            raise AgyWorkflowError(
+                "AGY supervisor did not publish exact-tree cleanup after cancellation"
+            )
+        process_result = json.loads(process_result_path.read_text(encoding="utf-8"))
+        if process_result.get(
+            "process_tree_cleanup_verified"
+        ) is not True or process_result.get("surviving_process_identities"):
+            raise AgyWorkflowError("AGY exact process tree survived cancellation")
         tmux = str(self._config.get("tmux", "/usr/bin/tmux"))
-        result = subprocess.run(
+        subprocess.run(
             [tmux, "kill-session", "-t", session],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -420,7 +443,7 @@ class AGYCLIHarness(AgentHarness):
         )
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
-            if _proc_start_ticks(int(record["pane_pid"])) != record["pane_start_ticks"]:
+            if _proc_start_ticks(pane_pid) != pane_start_ticks:
                 break
             time.sleep(0.05)
         else:
@@ -432,11 +455,13 @@ class AGYCLIHarness(AgentHarness):
                 "session": session,
                 "cancelled_at": time.time(),
                 "exact_pane_cleanup": True,
+                "exact_process_tree_cleanup": True,
+                "observed_process_count": process_result.get("observed_process_count"),
                 "operator_or_policy_action_required": True,
             },
         )
         self._release_slot(Path(record["active_slot_path"]), run_id)
-        return result.returncode == 0
+        return True
 
     def logs(self, run_id: str, tail: int = 100) -> list[str]:
         if type(tail) is not int or not 1 <= tail <= 10_000:

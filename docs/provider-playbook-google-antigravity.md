@@ -74,7 +74,7 @@ Prefer a different provider or verifier identity for independent review. Same-mo
 | permission prompt in headless mode | invocation defect | stop and repair command contract |
 | result without marker/evidence | incomplete producer output | do not accept |
 | no observable CPU/I/O/log/artifact progress | activity becomes `quiet`, then `suspect` | show in dashboard; do not auto-kill; operator/governed policy investigates or cancels exact run |
-| pane identity survives explicit cleanup | containment failure | block all retry until repaired |
+| pane or any exact PID/start-tick descendant survives explicit cleanup | containment failure | keep slot occupied; block retry until repaired |
 
 Historical swarm evidence used 15-minute warnings, 30-minute kills, and a three-retry ceiling after earlier five-minute watchdogs killed valid work. PE retains the useful activity signals but rejects wall-clock and inactivity-based automatic termination. The dashboard projects exact-run activity; cancellation is explicit.
 

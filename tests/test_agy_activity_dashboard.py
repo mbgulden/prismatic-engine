@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -45,6 +46,11 @@ def _fixture_runtime(tmp_path: Path) -> Path:
         {
             "identifier": run.name,
             "started_at_unix": 1000.0,
+            "pane_pid": os.getpid(),
+            "pane_start_ticks": Path(f"/proc/{os.getpid()}/stat")
+            .read_text()
+            .split(") ", 1)[1]
+            .split()[19],
             "runtime_deadline": None,
         },
     )
@@ -81,6 +87,19 @@ def test_activity_projection_is_monitor_only_and_omits_attempt_token(tmp_path: P
     assert run["verification_status"] == "pending"
     assert "attempt_token" not in run
     assert "must-not-project" not in json.dumps(payload)
+
+
+def test_stale_activity_does_not_claim_running_without_exact_pane(tmp_path: Path):
+    runtime = _fixture_runtime(tmp_path)
+    receipt_path = runtime / "agy-dashboard-test" / "launch-receipt.json"
+    receipt = json.loads(receipt_path.read_text())
+    receipt["pane_pid"] = 999_999_999
+    receipt["pane_start_ticks"] = "1"
+    _write_json(receipt_path, receipt)
+    projected = list_agy_activity_runs(runtime)["runs"][0]
+    assert projected["state"] == "orphaned"
+    assert projected["activity"]["classification"] == "stale_unverified"
+    assert projected["activity"]["pane_identity_verified_alive"] is False
 
 
 def test_direct_canonical_cli_run_is_also_projected(tmp_path: Path):

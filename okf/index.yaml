@@ -130,6 +130,7 @@
         "tests/test_agy_cli_canonical_workflow.py",
         "tests/test_agy_cli_harness.py",
         "tests/test_agy_activity_dashboard.py",
+        "tests/test_agy_process_containment.py",
         "docs/contracts/canonical-agy-cli-workflow.md",
         "docs/decisions/ADR-0003-canonical-agy-cli-workflow.md"
       ],

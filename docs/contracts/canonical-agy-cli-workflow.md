@@ -3,7 +3,7 @@
 **Status:** Canonical
 **Owner:** Prismatic Engine orchestration maintainers
 **Last verified:** 2026-07-25
-**Runtime contract:** `prismatic/agy_cli.py`  
+**Runtime contract:** `prismatic/agy_cli.py`
 **Lifecycle harness:** `prismatic/harnesses/agy_cli.py`
 
 ## Purpose
@@ -40,7 +40,7 @@ admitted frozen task
 8. AGY writes an implementation plan before edits and a result containing `PRISMATIC_AGY_RESULT_V1` before completion.
 9. The launch receipt binds workflow version, admission event/attempt/token, session, pane PID/start ticks, task digest, executable digest, and manifest digest.
 10. While running, the exact process tree emits durable activity receipts from CPU ticks, process count, I/O counters, diagnostics/log growth, and artifact changes. The dashboard classifies recent progress as `working`, `quiet`, or `suspect`; these are monitoring signals, never automatic termination triggers.
-11. Completion writes a process result and tears down the exact tmux session. The original pane identity must no longer be live.
+11. The supervisor is a Linux child subreaper. On normal root-child exit or explicit cancellation it terminates, reaps, and verifies every observed exact PID/start-tick descendant—including daemonized `setsid()` children—before writing a successful process-tree cleanup receipt, tearing down the tmux session, or releasing the active slot.
 12. Producer completion sets verification state to `pending`; it never authorizes acceptance, merge, deployment, or a downstream workflow transition. Cancellation is an explicit operator or governed-policy action against the exact run.
 
 ## Book-end adaptation

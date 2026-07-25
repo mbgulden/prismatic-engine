@@ -22,6 +22,17 @@ def _read_json(path: Path) -> dict[str, Any] | None:
         return None
 
 
+def _process_identity_alive(pid: object, start_ticks: object) -> bool:
+    if type(pid) is not int or not isinstance(start_ticks, str):
+        return False
+    try:
+        raw = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+        fields = raw[raw.rfind(")") + 2 :].split()
+    except (OSError, IndexError):
+        return False
+    return fields[19] == start_ticks and fields[0] != "Z"
+
+
 def resolve_activity_runtime_dir(path: str | Path | None = None) -> Path | None:
     raw = str(path) if path is not None else os.environ.get("PRISMATIC_AGY_RUNTIME_DIR")
     if not raw:
@@ -74,14 +85,18 @@ def list_agy_activity_runs(
         }
         process = _read_json(run_dir / "process-result.json")
         cancelled = _read_json(run_dir / "cancel-receipt.json")
+        pane_identity_alive = _process_identity_alive(
+            launch_receipt.get("pane_pid"), launch_receipt.get("pane_start_ticks")
+        )
         if cancelled is not None:
             state = "cancelled"
         elif process is not None:
             state = "completed" if process.get("exit_code") == 0 else "failed"
-        elif activity.get("process_alive"):
+        elif activity.get("process_alive") and pane_identity_alive:
             state = "running"
         else:
-            state = "failed"
+            state = "orphaned"
+            activity = {**activity, "classification": "stale_unverified"}
         observed = activity.get("observed_at_unix")
         age = round(max(0.0, now - float(observed)), 3) if observed else None
         runs.append(
@@ -104,7 +119,8 @@ def list_agy_activity_runs(
                     "receipt_age_seconds": age,
                     "quiet_seconds": activity.get("quiet_seconds"),
                     "process_alive": bool(activity.get("process_alive")),
-                    "metrics": activity.get("metrics") or {},
+                    "pane_identity_verified_alive": pane_identity_alive,
+                    "metrics": activity.get("metrics", {}),
                 },
                 "runtime_deadline": None,
                 "automatic_kill": False,

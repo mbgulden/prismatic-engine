@@ -8,6 +8,7 @@ Prismatic's admission, exact-artifact, and external-action gates outside AGY.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import hashlib
 import json
 import os
@@ -22,7 +23,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
-CANONICAL_AGY_WORKFLOW_VERSION = "1.1.0"
+CANONICAL_AGY_WORKFLOW_VERSION = "1.1.1"
 CANONICAL_TRANSPORT = "tmux-durable-anchor"
 # AGY requires a Go duration for print mode. This is the maximum whole-second
 # duration accepted by time.ParseDuration (~292 years), used only as a protocol
@@ -381,6 +382,10 @@ def wait_tmux(
             raise AgyWorkflowError("tmux session disappeared before result receipt")
         time.sleep(0.2)
     result = json.loads(result_path.read_text(encoding="utf-8"))
+    if result.get("process_tree_cleanup_verified") is not True or result.get(
+        "surviving_process_identities"
+    ):
+        raise AgyWorkflowError("exact AGY process tree cleanup was not verified")
     subprocess.run(
         [tmux, "kill-session", "-t", session],
         stdout=subprocess.DEVNULL,
@@ -416,8 +421,31 @@ def _canonical_child_env(spec: AgyLaunchSpec) -> dict[str, str]:
     return env
 
 
-def _process_tree_metrics(root_pid: int) -> dict[str, int]:
+def _enable_child_subreaper() -> None:
+    """Keep daemonizing descendants attached to the exact AGY supervisor."""
+    pr_set_child_subreaper = 36
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(pr_set_child_subreaper, 1, 0, 0, 0) != 0:
+        error_number = ctypes.get_errno()
+        raise AgyWorkflowError(
+            f"failed to enable exact-run child subreaper: errno={error_number}"
+        )
+
+
+def _identity_alive(pid: int, start_ticks: str) -> bool:
+    try:
+        raw = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+        fields = raw[raw.rfind(")") + 2 :].split()
+        return fields[19] == start_ticks and fields[0] != "Z"
+    except (FileNotFoundError, ProcessLookupError, PermissionError, IndexError):
+        return False
+
+
+def _process_tree_snapshot(
+    root_pid: int,
+) -> tuple[dict[str, int], list[dict[str, Any]]]:
     parents: dict[int, int] = {}
+    starts: dict[int, str] = {}
     stats: dict[int, tuple[int, int]] = {}
     io_totals: dict[int, tuple[int, int]] = {}
     proc = Path("/proc")
@@ -429,6 +457,7 @@ def _process_tree_metrics(root_pid: int) -> dict[str, int]:
             raw_stat = (entry / "stat").read_text()
             fields = raw_stat[raw_stat.rfind(")") + 2 :].split()
             parents[pid] = int(fields[1])
+            starts[pid] = fields[19]
             stats[pid] = (int(fields[11]), int(fields[12]))
             io_values: dict[str, int] = {}
             for line in (entry / "io").read_text().splitlines():
@@ -449,12 +478,76 @@ def _process_tree_metrics(root_pid: int) -> dict[str, int]:
             if parent in tree and pid not in tree:
                 tree.add(pid)
                 changed = True
-    return {
-        "process_count": len(tree & stats.keys()),
-        "cpu_ticks": sum(sum(stats.get(pid, (0, 0))) for pid in tree),
-        "read_bytes": sum(io_totals.get(pid, (0, 0))[0] for pid in tree),
-        "write_bytes": sum(io_totals.get(pid, (0, 0))[1] for pid in tree),
+    descendants = tree - {root_pid}
+    identities = [
+        {"pid": pid, "start_ticks": starts[pid]}
+        for pid in sorted(descendants)
+        if pid in starts
+    ]
+    metrics = {
+        "process_count": len(descendants & stats.keys()),
+        "cpu_ticks": sum(sum(stats.get(pid, (0, 0))) for pid in descendants),
+        "read_bytes": sum(io_totals.get(pid, (0, 0))[0] for pid in descendants),
+        "write_bytes": sum(io_totals.get(pid, (0, 0))[1] for pid in descendants),
     }
+    return metrics, identities
+
+
+def _signal_exact_identities(
+    identities: dict[tuple[int, str], None], signum: int
+) -> None:
+    for pid, start_ticks in list(identities):
+        if not _identity_alive(pid, start_ticks):
+            continue
+        try:
+            os.kill(pid, signum)
+        except ProcessLookupError:
+            continue
+
+
+def _reap_children() -> None:
+    while True:
+        try:
+            pid, _status = os.waitpid(-1, os.WNOHANG)
+        except ChildProcessError:
+            return
+        if pid == 0:
+            return
+
+
+def _contain_exact_process_tree(
+    supervisor_pid: int,
+    observed: dict[tuple[int, str], None],
+) -> list[dict[str, Any]]:
+    """Terminate and verify all exact descendants after exit or explicit cancel."""
+    _metrics, current = _process_tree_snapshot(supervisor_pid)
+    for identity in current:
+        observed[(int(identity["pid"]), str(identity["start_ticks"]))] = None
+    _signal_exact_identities(observed, signal.SIGTERM)
+    term_deadline = time.monotonic() + 2.0
+    while time.monotonic() < term_deadline:
+        _metrics, current = _process_tree_snapshot(supervisor_pid)
+        for identity in current:
+            observed[(int(identity["pid"]), str(identity["start_ticks"]))] = None
+        if not any(_identity_alive(pid, ticks) for pid, ticks in observed):
+            return []
+        time.sleep(0.05)
+    _signal_exact_identities(observed, signal.SIGKILL)
+    kill_deadline = time.monotonic() + 3.0
+    survivors: list[dict[str, Any]] = []
+    while time.monotonic() < kill_deadline:
+        _metrics, current = _process_tree_snapshot(supervisor_pid)
+        for identity in current:
+            observed[(int(identity["pid"]), str(identity["start_ticks"]))] = None
+        survivors = [
+            {"pid": pid, "start_ticks": ticks}
+            for pid, ticks in observed
+            if _identity_alive(pid, ticks)
+        ]
+        if not survivors:
+            return []
+        time.sleep(0.05)
+    return survivors
 
 
 def _artifact_metrics(spec: AgyLaunchSpec) -> dict[str, int | float]:
@@ -491,18 +584,24 @@ def _run_manifest(path: Path) -> int:
     for key in ("task_sha256", "argv", "goal_prompt", "transport", "workflow_version"):
         if manifest.get(key) != expected.get(key):
             raise AgyWorkflowError(f"manifest drift: {key}")
+    _enable_child_subreaper()
+    supervisor_pid = os.getpid()
     result_record = Path(manifest["process_result_path"])
     child: subprocess.Popen[bytes] | None = None
+    cancel_signal: int | None = None
 
-    def forward(signum: int, _frame: object) -> None:
-        if child is not None and child.poll() is None:
-            child.send_signal(signal.SIGTERM if signum == signal.SIGHUP else signum)
+    def request_cancel(signum: int, _frame: object) -> None:
+        nonlocal cancel_signal
+        cancel_signal = signal.SIGTERM if signum == signal.SIGHUP else signum
 
     for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
-        signal.signal(signum, forward)
+        signal.signal(signum, request_cancel)
     started = time.time()
     stdout_path = Path(spec.stdout_path)
     stderr_path = Path(spec.stderr_path)
+    observed: dict[tuple[int, str], None] = {}
+    survivors: list[dict[str, Any]] = []
+    cleanup_verified = False
     with (
         stdout_path.open("ab", buffering=0) as stdout,
         stderr_path.open("ab", buffering=0) as stderr,
@@ -516,23 +615,41 @@ def _run_manifest(path: Path) -> int:
             env=_canonical_child_env(spec),
         )
         child_start_ticks = _proc_start_ticks(child.pid)
+        observed[(child.pid, child_start_ticks)] = None
         activity_path = Path(str(manifest["activity_path"]))
         last_signature: tuple[int | float, ...] | None = None
         last_progress_at = started
         sequence = 0
         while True:
-            exit_code = child.poll()
+            polled_exit_code = child.poll()
+            metrics, identities = _process_tree_snapshot(supervisor_pid)
+            for identity in identities:
+                observed[(int(identity["pid"]), str(identity["start_ticks"]))] = None
+            terminal_requested = (
+                polled_exit_code is not None or cancel_signal is not None
+            )
+            if terminal_requested:
+                survivors = _contain_exact_process_tree(supervisor_pid, observed)
+                if child.poll() is None:
+                    exit_code = child.wait()
+                else:
+                    exit_code = int(child.returncode)
+                _reap_children()
+                cleanup_verified = not survivors
+                metrics, identities = _process_tree_snapshot(supervisor_pid)
+            else:
+                exit_code = None
             now = time.time()
-            metrics: dict[str, int | float] = {
-                **_process_tree_metrics(child.pid),
+            metrics_with_artifacts: dict[str, int | float] = {
+                **metrics,
                 **_artifact_metrics(spec),
             }
-            signature = _activity_signature(metrics)
+            signature = _activity_signature(metrics_with_artifacts)
             changed = last_signature is None or signature != last_signature
             if changed:
                 last_progress_at = now
             quiet_seconds = max(0.0, now - last_progress_at)
-            if exit_code is not None:
+            if terminal_requested:
                 classification = "terminal"
             elif quiet_seconds >= ACTIVITY_SUSPECT_SECONDS:
                 classification = "suspect"
@@ -551,16 +668,21 @@ def _run_manifest(path: Path) -> int:
                     "last_progress_at_unix": last_progress_at,
                     "quiet_seconds": round(quiet_seconds, 3),
                     "classification": classification,
-                    "process_alive": exit_code is None,
+                    "process_alive": not terminal_requested,
                     "child_pid": child.pid,
                     "child_start_ticks": child_start_ticks,
+                    "process_identities": identities,
                     "runtime_deadline": None,
                     "automatic_kill": False,
-                    "metrics": metrics,
+                    "cancel_requested": cancel_signal is not None,
+                    "process_tree_cleanup_verified": cleanup_verified
+                    if terminal_requested
+                    else None,
+                    "metrics": metrics_with_artifacts,
                 },
             )
             last_signature = signature
-            if exit_code is not None:
+            if terminal_requested:
                 break
             time.sleep(ACTIVITY_POLL_SECONDS)
         assert exit_code is not None
@@ -570,6 +692,10 @@ def _run_manifest(path: Path) -> int:
         "child_pid": child.pid,
         "child_start_ticks": child_start_ticks,
         "exit_code": exit_code,
+        "cancel_requested": cancel_signal is not None,
+        "process_tree_cleanup_verified": cleanup_verified,
+        "surviving_process_identities": survivors,
+        "observed_process_count": len(observed),
         "elapsed_seconds": round(time.time() - started, 3),
         "finished_at_unix": time.time(),
         "stdout_path": spec.stdout_path,
@@ -584,7 +710,7 @@ def _run_manifest(path: Path) -> int:
         else None,
     }
     _atomic_json(result_record, record)
-    return exit_code
+    return exit_code if cleanup_verified else 125
 
 
 def _spec_from_args(args: argparse.Namespace) -> AgyLaunchSpec:

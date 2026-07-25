@@ -125,7 +125,7 @@ Security-sensitive findings retained in PE's rejection list include untrusted Li
 6. Plan and result are created before terminal receipt.
 7. stdout/stderr/diagnostics remain separate.
 8. Launch receipt binds tmux session, pane PID/start ticks, task digest, and manifest digest.
-9. Wait tears down only the exact session and proves pane identity is gone.
+9. Normal completion or explicit cancellation adopts daemonizing descendants through a child subreaper, terminates and reaps the exact observed PID/start-tick tree, then tears down only the exact session after full-tree cleanup proof.
 10. A live AGY proof and GRO-4210 retry remain separately authorized operations.
 
 ## Boundary
