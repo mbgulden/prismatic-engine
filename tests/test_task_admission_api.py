@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -10,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from prismatic.gateway import server
+from prismatic.task_admission_consumer import LauncherError, TaskAdmissionConsumer
 
 OPERATOR_TOKEN = "test-operator-token"
 APPROVER_TOKEN = "test-approver-token"
@@ -100,6 +102,48 @@ def _headers(token: str = OPERATOR_TOKEN) -> dict[str, str]:
         "Authorization": f"Bearer {token}",
         "Idempotency-Key": KEY,
         "Content-Type": "application/json",
+    }
+
+
+def _prepare_retryable_reconciliation(
+    client: TestClient, payload: dict[str, object], tmp_path: Path
+) -> dict[str, str]:
+    created = client.post(
+        "/api/dashboard/task-admissions",
+        content=json.dumps(payload),
+        headers=_headers(),
+    )
+    assert created.status_code == 201
+    record = created.json()["record"]
+    consumer = TaskAdmissionConsumer(
+        db_path=tmp_path / "bus.sqlite",
+        policy_path=tmp_path / "admission-policy.json",
+        identity="fixture-consumer",
+        lease_seconds=30,
+    )
+    with pytest.raises(LauncherError):
+        consumer.run_once(
+            lambda _request: (_ for _ in ()).throw(
+                LauncherError("temporary launcher failure")
+            )
+        )
+    connection = sqlite3.connect(tmp_path / "bus.sqlite")
+    claim_id = connection.execute(
+        "select claim_id from task_admission_consumer_claims"
+    ).fetchone()[0]
+    connection.close()
+    return {
+        "task_id": str(payload["task_id"]),
+        "expected_event_id": str(record["event_id"]),
+        "expected_claim_id": str(claim_id),
+        "expected_current_state": "retryable_failed",
+        "evidence_type": "reviewed_merge_completion",
+        "candidate_sha": "1" * 40,
+        "candidate_tree": "2" * 40,
+        "merge_sha": "3" * 40,
+        "merge_tree": "4" * 40,
+        "evidence_sha256": "5" * 64,
+        "reason_code": "completed_via_reviewed_bounded_repair",
     }
 
 
@@ -281,3 +325,110 @@ def test_missing_policy_fails_closed(
     )
     assert response.status_code == 503
     assert response.json()["error"] == "admission_policy_unavailable"
+
+
+def test_terminal_reconciliation_requires_operator_and_launches_nothing(
+    api_fixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, payload, tmp_path = api_fixture
+    reconciliation = _prepare_retryable_reconciliation(client, payload, tmp_path)
+    endpoint = "/api/dashboard/task-admissions/GRO-4210/terminal-reconciliation"
+
+    assert client.post(endpoint, json=reconciliation).status_code == 401
+    assert (
+        client.post(
+            endpoint,
+            json=reconciliation,
+            headers=_headers(APPROVER_TOKEN),
+        ).status_code
+        == 403
+    )
+
+    def forbidden_subprocess(*_args, **_kwargs):
+        raise AssertionError("terminal reconciliation must not launch subprocesses")
+
+    monkeypatch.setattr(
+        "prismatic.task_admission_consumer.subprocess.Popen", forbidden_subprocess
+    )
+    first = client.post(
+        endpoint,
+        content=json.dumps(reconciliation),
+        headers=_headers(),
+    )
+    assert first.status_code == 200
+    body = first.json()
+    assert body["ok"] is True
+    assert body["replayed"] is False
+    assert body["launch_performed"] is False
+    assert body["record"]["outbox_status"] == "failed"
+    assert body["record"]["claim_state"] == "terminal_failed"
+    assert body["record"]["launch_receipt"] is None
+    assert OPERATOR_TOKEN not in first.text
+
+    replay = client.post(
+        endpoint,
+        content=json.dumps(reconciliation),
+        headers=_headers(),
+    )
+    assert replay.status_code == 200
+    assert replay.json()["replayed"] is True
+    assert replay.json()["record"] == body["record"]
+
+    connection = sqlite3.connect(tmp_path / "bus.sqlite")
+    assert (
+        connection.execute("select status from task_admission_outbox").fetchone()[0]
+        == "failed"
+    )
+    assert connection.execute(
+        "select state,last_error_code,launch_receipt_json "
+        "from task_admission_consumer_claims"
+    ).fetchone() == (
+        "terminal_failed",
+        "externally_completed_reviewed_repair",
+        None,
+    )
+    assert (
+        connection.execute(
+            "select count(*) from task_admission_lifecycle "
+            "where event='terminal_reconciled'"
+        ).fetchone()[0]
+        == 1
+    )
+    connection.close()
+
+
+def test_terminal_reconciliation_api_conflict_and_parser_fail_closed(
+    api_fixture,
+) -> None:
+    client, payload, tmp_path = api_fixture
+    reconciliation = _prepare_retryable_reconciliation(client, payload, tmp_path)
+    endpoint = "/api/dashboard/task-admissions/GRO-4210/terminal-reconciliation"
+    first = client.post(
+        endpoint, content=json.dumps(reconciliation), headers=_headers()
+    )
+    assert first.status_code == 200
+
+    conflict = dict(reconciliation)
+    conflict["merge_tree"] = "6" * 40
+    response = client.post(endpoint, content=json.dumps(conflict), headers=_headers())
+    assert response.status_code == 409
+    assert response.json()["error"] == "terminal_reconciliation_conflict"
+
+    wrong_task = dict(reconciliation)
+    wrong_task["task_id"] = "GRO-9999"
+    response = client.post(endpoint, content=json.dumps(wrong_task), headers=_headers())
+    assert response.status_code == 409
+    assert response.json()["error"] == "terminal_reconciliation_task_id_mismatch"
+
+    duplicate = json.dumps(reconciliation)[:-1] + ',"merge_sha":"' + "7" * 40 + '"}'
+    response = client.post(endpoint, content=duplicate, headers=_headers())
+    assert response.status_code == 422
+    assert response.json()["error"] == "duplicate_json_key"
+
+    response = client.post(
+        endpoint,
+        content=b"x" * (8 * 1024 + 1),
+        headers=_headers(),
+    )
+    assert response.status_code == 413
+    assert response.json()["error"] == "invalid_body_size"
