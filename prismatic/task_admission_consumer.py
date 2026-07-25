@@ -13,13 +13,13 @@ import hashlib
 import hmac
 import json
 import os
-import resource
+import selectors
 import signal
 import sqlite3
 import stat
 import subprocess
-import tempfile
 import threading
+import time
 import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -703,48 +703,101 @@ def _load_launcher_config(path: Path, producer: str) -> tuple[list[str], int]:
         not executable.is_absolute()
         or executable != canonical_executable
         or not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid not in {0, os.geteuid()}
         or stat.S_IMODE(metadata.st_mode) & 0o022
         or not os.access(executable, os.X_OK)
     ):
         raise LauncherError("launcher_executable_invalid")
+    for parent in executable.parents:
+        try:
+            parent_metadata = parent.lstat()
+        except OSError as exc:
+            raise LauncherError("launcher_executable_invalid") from exc
+        if (
+            not stat.S_ISDIR(parent_metadata.st_mode)
+            or parent_metadata.st_uid not in {0, os.geteuid()}
+            or stat.S_IMODE(parent_metadata.st_mode) & 0o022
+        ):
+            raise LauncherError("launcher_executable_invalid")
     return [str(canonical_executable), *command[1:]], timeout
 
 
 def command_launcher(config_path: Path) -> Launcher:
     def launch(request: LaunchRequest) -> Mapping[str, Any]:
         command, timeout = _load_launcher_config(config_path, request.producer_identity)
+        process: subprocess.Popen[bytes] | None = None
+        selector: selectors.BaseSelector | None = None
         try:
-            with tempfile.TemporaryFile(mode="w+b") as output:
-                process = subprocess.Popen(
-                    command,
-                    stdin=subprocess.PIPE,
-                    stdout=output,
-                    stderr=subprocess.DEVNULL,
-                    text=True,
-                    shell=False,
-                    start_new_session=True,
-                    preexec_fn=lambda: resource.setrlimit(
-                        resource.RLIMIT_FSIZE,
-                        (_MAX_LAUNCHER_OUTPUT, _MAX_LAUNCHER_OUTPUT),
-                    ),
-                )
-                try:
-                    process.communicate(
-                        input=_canonical_json(request.as_dict()), timeout=timeout
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=False,
+                shell=False,
+                start_new_session=True,
+            )
+            if process.stdin is None or process.stdout is None:
+                raise LauncherError("launcher_pipe_unavailable")
+            request_bytes = _canonical_json(request.as_dict()).encode()
+            if len(request_bytes) > 32 * 1024:
+                raise LauncherError("launcher_request_too_large")
+            process.stdin.write(request_bytes)
+            process.stdin.close()
+            selector = selectors.DefaultSelector()
+            selector.register(process.stdout, selectors.EVENT_READ)
+            output = bytearray()
+            deadline = time.monotonic() + timeout
+            eof = False
+            while not eof:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise LauncherError("launcher_command_timeout")
+                events = selector.select(remaining)
+                if not events:
+                    raise LauncherError("launcher_command_timeout")
+                for key, _ in events:
+                    chunk = os.read(
+                        key.fd,
+                        min(64 * 1024, _MAX_LAUNCHER_OUTPUT + 1 - len(output)),
                     )
-                except subprocess.TimeoutExpired as exc:
+                    if not chunk:
+                        eof = True
+                        break
+                    output.extend(chunk)
+                    if len(output) > _MAX_LAUNCHER_OUTPUT:
+                        raise LauncherError("launcher_output_too_large")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise LauncherError("launcher_command_timeout")
+            process.wait(timeout=remaining)
+            if process.returncode != 0:
+                raise LauncherError("launcher_command_failed")
+            raw_receipt = bytes(output)
+        except LauncherError:
+            if process is not None and process.poll() is None:
+                try:
                     os.killpg(process.pid, signal.SIGKILL)
-                    process.communicate()
-                    raise LauncherError("launcher_command_timeout") from exc
-                if process.returncode != 0:
-                    raise LauncherError("launcher_command_failed")
-                size = output.tell()
-                if size > _MAX_LAUNCHER_OUTPUT:
-                    raise LauncherError("launcher_output_too_large")
-                output.seek(0)
-                raw_receipt = output.read(_MAX_LAUNCHER_OUTPUT + 1)
+                except ProcessLookupError:
+                    pass
+                process.wait()
+            raise
         except (OSError, subprocess.SubprocessError) as exc:
+            if process is not None and process.poll() is None:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait()
             raise LauncherError("launcher_command_failed") from exc
+        finally:
+            if selector is not None:
+                selector.close()
+            if process is not None:
+                if process.stdin is not None and not process.stdin.closed:
+                    process.stdin.close()
+                if process.stdout is not None:
+                    process.stdout.close()
         try:
             receipt = json.loads(raw_receipt)
         except json.JSONDecodeError as exc:

@@ -527,6 +527,76 @@ def test_command_launcher_uses_owner_only_provider_map_and_strict_receipt(
         )
 
 
+def test_launcher_executable_in_world_writable_parent_is_rejected(
+    tmp_path: Path,
+) -> None:
+    clock, _, _, policy, db, _ = _fixture(tmp_path)
+    launcher_script = tmp_path / "direct-launcher"
+    launcher_script.write_text("#!/bin/sh\nexit 0\n")
+    launcher_script.chmod(0o755)
+    config = tmp_path / "launcher.json"
+    config.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "producers": {
+                    "fixture-producer": {
+                        "command": [str(launcher_script)],
+                        "timeout_seconds": 5,
+                    }
+                },
+            }
+        )
+    )
+    config.chmod(0o600)
+    with pytest.raises(LauncherError, match="launcher_executable_invalid"):
+        _consumer(clock, policy, db).run_once(command_launcher(config))
+    connection = sqlite3.connect(db)
+    assert (
+        connection.execute("select status from task_admission_outbox").fetchone()[0]
+        == "pending"
+    )
+    connection.close()
+
+
+def test_command_launcher_output_is_bounded_and_requeues(tmp_path: Path) -> None:
+    clock, _, _, policy, db, _ = _fixture(tmp_path)
+    launcher_script = tmp_path / "loud_launcher.py"
+    launcher_script.write_text("import sys\nsys.stdout.write('x' * 65537)\n")
+    config = tmp_path / "launcher.json"
+    config.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "producers": {
+                    "fixture-producer": {
+                        "command": [
+                            str(Path(sys.executable).resolve()),
+                            str(launcher_script),
+                        ],
+                        "timeout_seconds": 5,
+                    }
+                },
+            }
+        )
+    )
+    config.chmod(0o600)
+    with pytest.raises(LauncherError, match="launcher_output_too_large"):
+        _consumer(clock, policy, db).run_once(command_launcher(config))
+    connection = sqlite3.connect(db)
+    assert (
+        connection.execute("select status from task_admission_outbox").fetchone()[0]
+        == "pending"
+    )
+    assert (
+        connection.execute(
+            "select count(*) from task_admission_writer_lease"
+        ).fetchone()[0]
+        == 0
+    )
+    connection.close()
+
+
 def test_command_launcher_timeout_requeues_without_orphaning_lease(
     tmp_path: Path,
 ) -> None:

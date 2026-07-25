@@ -43,7 +43,7 @@ The owner-only launcher configuration is strict JSON:
 }
 ```
 
-The executable must be an absolute canonical regular executable and must not be group/world writable. The consumer uses no shell. It writes one bounded JSON request to stdin and expects exactly:
+The executable must be an absolute canonical regular executable owned by root or the runtime user, must not be group/world writable, and every parent directory must have the same trusted ownership/write boundary. The consumer uses no shell or thread-unsafe pre-exec hook. It streams and bounds one JSON request and one JSON receipt over pipes, kills the complete launcher process group on timeout or output overflow, and expects exactly:
 
 ```json
 {
