@@ -766,9 +766,20 @@ def cli(argv: Sequence[str] | None = None) -> int:
         "wait", help="Wait without a runtime deadline for one canonical tmux run"
     )
     wait.add_argument("--receipt", required=True)
+    customizations = commands.add_parser(
+        "customizations",
+        add_help=False,
+        help="Audit or manage the portable Prismatic AGY workspace bundle",
+    )
+    customizations.add_argument("customization_args", nargs=argparse.REMAINDER)
     internal = commands.add_parser("_run-manifest", help=argparse.SUPPRESS)
     internal.add_argument("manifest")
-    args = parser.parse_args(list(argv) if argv is not None else None)
+    raw_args = list(argv) if argv is not None else list(sys.argv[1:])
+    if raw_args and raw_args[0] == "customizations":
+        from prismatic.agy_customizations import cli as customizations_cli
+
+        return int(customizations_cli(raw_args[1:]) or 0)
+    args = parser.parse_args(raw_args)
     if args.command == "contract":
         print(json.dumps(canonical_contract(), indent=2, sort_keys=True))
         return 0
@@ -778,6 +789,10 @@ def cli(argv: Sequence[str] | None = None) -> int:
         result = wait_tmux(Path(args.receipt).resolve())
         print(json.dumps(result, indent=2, sort_keys=True))
         return int(result.get("exit_code", 1))
+    if args.command == "customizations":
+        from prismatic.agy_customizations import cli as customizations_cli
+
+        return int(customizations_cli(args.customization_args) or 0)
     spec = _spec_from_args(args)
     if args.command == "render":
         print(json.dumps(spec.manifest(), indent=2, sort_keys=True))

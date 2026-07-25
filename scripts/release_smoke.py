@@ -53,6 +53,7 @@ def project_metadata() -> dict[str, Any]:
 def main() -> int:
     import prismatic
     from prismatic.agy_cli import canonical_contract
+    from prismatic.agy_customizations import validate_bundle
     from prismatic.cli import run as cli_run
     from prismatic.quality.plugin_load import verify_shipped_plugins_load
 
@@ -68,6 +69,11 @@ def main() -> int:
         or agy_contract["runtime_policy"] != "no-wall-clock-cap-progress-supervised"
     ):
         raise RuntimeError("canonical AGY CLI contract is unavailable or drifted")
+    agy_customizations = validate_bundle()
+    if not agy_customizations["ok"] or agy_customizations["file_count"] < 1:
+        raise RuntimeError(
+            "portable AGY customization bundle is unavailable or invalid"
+        )
 
     load_result = verify_shipped_plugins_load()
     if not load_result.passed:
@@ -94,6 +100,8 @@ def main() -> int:
         "package_metadata": metadata,
         "plugin_load_reason": load_result.reason,
         "agy_contract_marker": agy_contract["result_marker"],
+        "agy_customizations_file_count": agy_customizations["file_count"],
+        "agy_customizations_valid": agy_customizations["ok"],
         "launch_marker": "PUBLIC_LAUNCH_SMOKE_OK" in launch,
         "security_marker": "PUBLIC_SECURITY_READINESS_OK" in security,
         "dashboard_visual_marker": "DASHBOARD_VISUAL_QA_OK" in dashboard,

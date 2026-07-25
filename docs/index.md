@@ -27,6 +27,8 @@ When sources disagree, fail closed and open a decision/update rather than choosi
 - [Verification Engine architecture](architecture/verification-engine.md)
 - [Verification contract](contracts/verification-contract.md)
 - [Canonical AGY CLI workflow](contracts/canonical-agy-cli-workflow.md)
+- [Portable Antigravity customizations](contracts/antigravity-customizations.md)
+- [Antigravity customization audit](research/antigravity-customization-audit.md)
 - [AGY workflow deep dive](research/agentic-swarm-ops-agy-workflow-deep-dive.md)
 - [Evidence retention](contracts/evidence-retention.md)
 - [Decision index](decisions/index.md)

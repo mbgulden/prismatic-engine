@@ -78,6 +78,20 @@ Prefer a different provider or verifier identity for independent review. Same-mo
 
 Historical swarm evidence used 15-minute warnings, 30-minute kills, and a three-retry ceiling after earlier five-minute watchdogs killed valid work. PE retains the useful activity signals but rejects wall-clock and inactivity-based automatic termination. The dashboard projects exact-run activity; cancellation is explicit.
 
+## Portable workspace customizations
+
+Prismatic ships a checked-in `.agents/` bundle and identical installed-package resources. These rules and progressive skills teach AGY the canonical execution, context, evidence, and worktree contracts without copying machine-local state.
+
+```bash
+prismatic agy customizations validate
+prismatic agy customizations audit --config-root "$HOME/.antigravity" --config-root "$HOME/.gemini"
+prismatic agy customizations install --workspace /path/to/project --dry-run
+prismatic agy customizations install --workspace /path/to/project
+prismatic agy customizations status --workspace /path/to/project
+```
+
+The installer is explicit and fail-closed: whole-plan conflict detection, atomic writes, backup-before-force, managed-digest upgrades, and drift-preserving uninstall. It never installs OAuth state, model bindings, hooks, plugins, MCP servers, runtime databases, transcripts, or user-specific paths. See [`contracts/antigravity-customizations.md`](contracts/antigravity-customizations.md).
+
 ## Binary updates
 
 Do not run admitted work from an auto-updating mutable executable path. Update workflow:

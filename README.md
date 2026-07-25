@@ -74,6 +74,17 @@ prismatic agy contract
 
 See [Canonical AGY CLI workflow](docs/contracts/canonical-agy-cli-workflow.md). Rendering is side-effect free; real launch additionally requires upstream admission and `--execute`.
 
+Prismatic repositories include a safe `.agents/` workspace bundle for Antigravity. Installed-wheel users can audit or install the same managed bundle into any workspace:
+
+```bash
+prismatic agy customizations validate
+prismatic agy customizations audit --config-root "$HOME/.gemini"
+prismatic agy customizations install --workspace /path/to/project --dry-run
+prismatic agy customizations install --workspace /path/to/project
+```
+
+Installation is explicit, idempotent, conflict-preserving, and secret-free; it does not modify global AGY state. See [Portable Antigravity customizations](docs/contracts/antigravity-customizations.md).
+
 ---
 
 ## Minimal demo
