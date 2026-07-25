@@ -1,148 +1,94 @@
 # Provider Playbook: Google Antigravity (AGY)
 
-> **Binary:** `agy` | **Auth:** OAuth (Google Flow) | **PTY Required:** ✓  
-> **Concurrent tasks:** 7 max | **Cost:** Flow credits (10,000/mo budget)
+**Status:** Canonical provider projection
+**Owner:** Prismatic Engine orchestration maintainers
+**Last verified:** 2026-07-25
+**Normative workflow:** [`contracts/canonical-agy-cli-workflow.md`](contracts/canonical-agy-cli-workflow.md)
 
-## Pipeline Stage → AGY Command Map
+AGY is a provider/runtime behind Prismatic's canonical execution contract. This playbook cannot weaken task admission, tmux transport, executable identity, result durability, independent verification, or operator-action gates.
 
-### Stage 1: Worker Implementation
-
-**Mode:** Interactive (PTY) — multi-turn coding with self-validation
-
-```bash
-# Standard implementation
-agy --prompt-interactive --add-dir <repo_path>
-
-# With specific task
-agy --prompt-interactive --add-dir <repo_path> \
-  "Implement <feature> in <file>. Self-validate: build, test, fix, retest."
-```
-
-**Key flags:**
-| Flag | Purpose |
-|------|---------|
-| `--prompt-interactive` | Multi-turn agent mode with tool use |
-| `--add-dir <repo>` | Grant access to repo directory |
-| `--sandbox` | Restrict file access to workspace only |
-
-**Credit cost:** 5 credits per code-generation task  
-**Timeout:** No enforced limit (interactive) — monitor with tmux  
-
----
-
-### Stage 2: Self-Validation Loop
-
-AGY runs this internally during implementation mode. The agent:
-1. Builds (compiles/lints)
-2. Runs test suite
-3. Fixes failures
-4. Re-tests
-5. Hands off only when clean
-
-**Max iterations:** 3 (escalate to orchestrator after 3 failed loops)  
-**Artifact:** Build log + test results + fix commits  
-**Credit cost:** Included in implementation cost (5 credits/task)
-
----
-
-### Stage 3: Peer Review (Read-Only)
-
-**Mode:** Print (non-interactive) — bounded research, NO code changes
+## Front-door commands
 
 ```bash
-# Research-only mode
-agy --print "REVIEW <branch> against <spec>. READ-ONLY — no code changes.
-  Produce: review_report.md, gap_analysis.md, suggested_fixes.md.
-  For each finding, cite specific lines. Include research citations for factual claims.
-  Verdict: APPROVED | NEEDS_FIXES | REJECTED"
+prismatic agy contract
+prismatic agy render <hash-bound specification arguments>
+prismatic agy launch <hash-bound specification arguments> \
+  --admission-receipt <PRISMATIC_AGY_ADMISSION_V1.json> \
+  --runtime-dir <dir> --execute
+prismatic agy wait --receipt <launch-receipt.json>
 ```
 
-**Key flags:**
-| Flag | Purpose |
-|------|---------|
-| `--print` | Non-interactive, exits when done — prevents builder instinct |
-| `--sandbox` | Restrict to read-only access |
+Use `contract` before building integrations. Use `render` to bind the task, binary, model, paths, prompt, and timeout without launching. `launch --execute` is a local execution gate, not a substitute for event admission or human authorization.
 
-**Credit cost:** 3 credits per review  
-**Timeout:** `--print_timeout: 300` (5 minutes — set in PRISMATIC_ENGINE.yaml)
+## Canonical unattended mode
 
-**BEST PRACTICE:** Use a DIFFERENT provider for peer review when possible. AGY-implemented code reviewed by Claude catches more issues than same-model review.
+| Control | Required value |
+|---|---|
+| Transport | unique tmux durable anchor |
+| Prompt | starts `/goal `; maximum 1,200 characters |
+| Context | detailed frozen task file, not an oversized inline prompt |
+| Mode | `--print` |
+| Permissions | `--dangerously-skip-permissions` only after admission |
+| Runtime duration | no PE wall-clock cap; AGY maximum duration is passed only as a protocol bridge |
+| Model | live canonical ID such as `gemini-3.6-flash-high` |
+| Filesystem | bounded `--add-dir`; `--sandbox` by default |
+| Runtime | regular, non-symlink, non-group/world-writable, reviewed SHA-256 |
+| Outputs | separate stdout, stderr, and internal `--log-file` diagnostics |
+| Book end | plan → execute → summary/walkthrough → durable result → exit |
+| Acceptance | independent exact-artifact verification |
 
----
+## Prompt contract
 
-### Stage 4: Fix Application
+The inline goal identifies the task file, workspace, plan path, result path, evidence expectations, and prohibited external actions. Detailed requirements stay in the hash-bound task file.
 
-Same as Stage 1 — AGY in implementation mode, applying fixes from the peer review report.
+Every code-edit task requires an implementation plan before edits. Every result includes:
 
-```bash
-agy --prompt-interactive --add-dir <repo_path> \
-  "Apply fixes from peer review: <review_report>. Address ALL NEEDS_FIXES items. 
-   Do NOT change architecture without re-review. One commit per fix."
-```
+- `PRISMATIC_AGY_RESULT_V1`;
+- files changed;
+- exact verification commands, outcomes, and log paths;
+- commit identity when applicable;
+- boundaries, non-claims, and follow-ups.
 
-**Credit cost:** 5 credits per fix-application task
+AGY must not post Linear/GitHub updates, create or approve PRs, merge, deploy, restart services, or increase concurrency. Governed PE adapters own those transitions.
 
----
+## Routing guidance
 
-### Stage 5: Orchestrator Review (Fred)
+| Work | AGY fit | Conditions |
+|---|---|---|
+| bounded implementation | yes | exact workspace/scope, plan-first, tests, independent review |
+| read-only research/review | yes | explicit no-code task file and artifact output |
+| visual QA | yes | local screenshots/paths, bounded comparison, rendered evidence |
+| broad long-form research | chunk first | keep each goal bounded and artifact-specific |
+| merge/deploy/financial/public send | no direct action | explicit operator/governed adapter gate |
 
-Not an AGY stage — Fred verifies and merges.
+Prefer a different provider or verifier identity for independent review. Same-model self-review is producer evidence, not independence.
 
----
+## Failure classification
 
-### Stage 6: Post-Publish Validation (Jules Loop)
+| Signal | Classification | Action |
+|---|---|---|
+| binary/task/manifest digest drift | trust failure | fail closed before launch |
+| tmux session vanishes without process result | transport failure | block and preserve logs |
+| backend timeout text | provider transport failure | preserve partial artifacts; retry only through governed attempt cap |
+| no filesystem progress while CPU/I/O/log progress continues | still working | retain run; dashboard shows the active signals |
+| permission prompt in headless mode | invocation defect | stop and repair command contract |
+| result without marker/evidence | incomplete producer output | do not accept |
+| no observable CPU/I/O/log/artifact progress | activity becomes `quiet`, then `suspect` | show in dashboard; do not auto-kill; operator/governed policy investigates or cancels exact run |
+| pane identity survives explicit cleanup | containment failure | block all retry until repaired |
 
-```bash
-# Active review (AGY implements fixes detected post-publish)
-agy --prompt-interactive --add-dir <repo_path> \
-  "Validate published code on <branch>. Run full validation loop. Fix any issues found."
+Historical swarm evidence used 15-minute warnings, 30-minute kills, and a three-retry ceiling after earlier five-minute watchdogs killed valid work. PE retains the useful activity signals but rejects wall-clock and inactivity-based automatic termination. The dashboard projects exact-run activity; cancellation is explicit.
 
-# Read-only review (different agent — Claude or Ned)
-# See provider-playbook-claude-code.md
-```
+## Binary updates
 
----
+Do not run admitted work from an auto-updating mutable executable path. Update workflow:
 
-## Credit Cost Reference
+1. acquire candidate bytes;
+2. identify reported version and SHA-256;
+3. review changelog and run a bounded timeout/tool smoke;
+4. copy into an owner-controlled version path;
+5. bind the reviewed digest in the launch specification;
+6. independently verify before making it available to admitted work.
 
-| Operation | Flow Credits | Notes |
-|-----------|-------------|-------|
-| Code generation (per task) | 5 | Implementation + self-validation |
-| Code review (per review) | 3 | Print-mode read-only |
-| Research (per task) | 8 | Deep research with citations |
-| Omni Flash 4s | 15 | Image generation, 4 seconds |
-| Omni Flash 6s | 20 | Image generation, 6 seconds |
-| Omni Flash 8s | 25 | Image generation, 8 seconds |
-| Omni Flash 10s | 30 | Image generation, 10 seconds |
-| Veo Fast (any duration) | 10 | Video generation, fast mode |
-| Veo Quality 8s | 100 | ⚠️ HIGH COST — requires human approval |
-| Veo Quality 10s | 120 | ⚠️ HIGH COST — requires human approval |
+## Historical note
 
-**Monthly budget:** 10,000 Flow credits  
-**Hard stop:** 9,000 (90% — emergency reserve)  
-**Per-task max:** 500 credits  
-**Per-session max:** 2,000 credits
-
----
-
-## AGY Capabilities Unique to Google Antigravity
-
-| Capability | Available |
-|------------|-----------|
-| Code generation | ✅ |
-| Code review | ✅ |
-| Research | ✅ |
-| Asset generation (Omni/Veo) | ✅ |
-| Multi-agent orchestration | ✅ (native sub-agent framework) |
-| Vision (`from_file()`) | ✅ |
-| Credit budget tracking (Flow) | ✅ |
-
----
-
-## Pitfalls
-
-- **OAuth expiry:** AGY OAuth can expire mid-session. Always configure a fallback provider in `PRISMATIC_ENGINE.yaml`.
-- **--print mode prevents builder instinct:** Without `--print`, AGY defaults to implementation mode and may write code during review. Always use `--print` for research/review tasks.
-- **Veo Quality high cost:** Veo Quality engine is 100-120 credits (10-12x the cost of Omni Flash). The policy engine blocks it without human approval.
-- **Credit exhaustion at 90%:** The hard_stop_at 90% rule ensures emergency reserve. Don't configure to 100%.
-- **`--print` timeout:** Default is 300s. Increase for large codebases or deep research.
+Older examples in this repository used direct raw `Popen`, interactive PTY, five-minute review timeouts, or broad supervisors. They are historical evidence unless they call `prismatic.agy_cli` or demonstrate conformance to the canonical contract. See [`research/agentic-swarm-ops-agy-workflow-deep-dive.md`](research/agentic-swarm-ops-agy-workflow-deep-dive.md).

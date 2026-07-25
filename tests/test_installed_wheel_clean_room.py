@@ -12,6 +12,7 @@ Verifies that:
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -157,6 +158,37 @@ def test_clean_room_installed_wheel_plugin_contract(tmp_path: Path) -> None:
     assert res_policy_block.returncode == 0, (
         f"Policy block preview failed: {res_policy_block.stderr}\n{res_policy_block.stdout}"
     )
+
+    agy_contract = subprocess.run(
+        [str(venv_dir / "bin" / "prismatic"), "agy", "contract"],
+        cwd=empty_cwd,
+        env=clean_env,
+        capture_output=True,
+        text=True,
+    )
+    assert agy_contract.returncode == 0, agy_contract.stderr
+    contract = json.loads(agy_contract.stdout)
+    assert contract["transport"] == "tmux-durable-anchor"
+    assert contract["prompt_prefix"] == "/goal "
+    assert contract["runtime_deadline"] is None
+    assert contract["runtime_policy"] == "no-wall-clock-cap-progress-supervised"
+    registry_check = subprocess.run(
+        [
+            str(venv_py),
+            "-c",
+            "from importlib.resources import files; "
+            "import importlib; "
+            "p=files('prismatic.harnesses').joinpath('registry.json'); "
+            "assert p.is_file(); "
+            "assert importlib.import_module('prismatic.harnesses.agy_cli').AGYCLIHarness().name == 'agy-cli'; "
+            "assert importlib.import_module('prismatic.agy_activity').list_agy_activity_runs()['status'] == 'unavailable'",
+        ],
+        cwd=empty_cwd,
+        env=clean_env,
+        capture_output=True,
+        text=True,
+    )
+    assert registry_check.returncode == 0, registry_check.stderr
 
     smoke_env = {
         **clean_env,

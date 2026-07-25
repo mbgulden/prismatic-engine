@@ -109,6 +109,34 @@
       "review_after": "2026-10-21"
     },
     {
+      "id": "canonical-agy-execution",
+      "objective": "Every unattended AGY producer uses one durable, hash-bound, evidence-first execution workflow.",
+      "owner": "Prismatic Engine orchestration maintainers",
+      "system_of_record": "canonical AGY manifest + launch/process receipts + exact task and executable digests",
+      "key_results": [
+        "all PE AGY CLI launches begin with /goal and use the tmux durable anchor",
+        "task, executable, manifest, session, and process identity are retained and fail closed on drift",
+        "plan/result/log artifacts are durable and producer output never self-authorizes acceptance",
+        "long AGY runs have no wall-clock cap and expose durable exact-run activity to the dashboard without automatic inactivity kills"
+      ],
+      "functions": [
+        "prismatic/agy_cli.py",
+        "prismatic/agy_activity.py",
+        "prismatic/harnesses/agy_cli.py",
+        "prismatic/gateway/server.py",
+        "prismatic/cli/__init__.py"
+      ],
+      "evidence": [
+        "tests/test_agy_cli_canonical_workflow.py",
+        "tests/test_agy_cli_harness.py",
+        "tests/test_agy_activity_dashboard.py",
+        "docs/contracts/canonical-agy-cli-workflow.md",
+        "docs/decisions/ADR-0003-canonical-agy-cli-workflow.md"
+      ],
+      "current_surface": "canonical CLI/harness/contract plus dashboard activity projection; legacy launcher delegation pending",
+      "review_after": "2026-10-25"
+    },
+    {
       "id": "authoritative-operator-view",
       "objective": "Dashboard and chat show truthful state derived from durable stores.",
       "owner": "gateway/dashboard maintainers",

@@ -91,6 +91,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     crons.add_argument("args", nargs=argparse.REMAINDER)
 
+    agy = subparsers.add_parser(
+        "agy", help="Canonical Google Antigravity CLI workflow and tmux transport"
+    )
+    agy.add_argument("args", nargs=argparse.REMAINDER)
+
     merge_factory = subparsers.add_parser(
         "merge-factory",
         help="Merge factory admission, leases, locks, and judge attestation commands",
@@ -168,6 +173,11 @@ def run(argv: Sequence[str] | None = None) -> int:
         from prismatic.core_crons import cli as crons_cli
 
         return int(crons_cli(args.args) or 0)
+
+    if args.command == "agy":
+        from prismatic.agy_cli import cli as agy_cli
+
+        return int(agy_cli(args.args) or 0)
 
     if args.command == "merge-factory":
         from prismatic.cli.merge_factory import main as merge_factory_cli_main

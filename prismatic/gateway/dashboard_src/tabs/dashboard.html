@@ -768,6 +768,16 @@
                         </table>
                     </div>
                 </div>
+                <!-- Canonical AGY Activity -->
+                <div id="agy-activity-panel" class="glass-panel p-5 rounded-xl space-y-4 lg:col-span-2">
+                    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-2">
+                        <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider">AGY Exact-Run Activity</h3>
+                        <span id="agy-activity-policy" class="px-2 py-1 rounded-full text-[10px] font-bold border border-cyan-500/30 bg-cyan-500/10 text-cyan-200">No wall-clock cap · monitor only</span>
+                    </div>
+                    <p class="text-xs text-slate-500">Durable process-tree, CPU, I/O, log, and artifact activity receipts. Quiet or suspect is a review signal—not an automatic kill.</p>
+                    <div id="agy-activity-summary" class="text-xs text-slate-400">Loading canonical AGY activity…</div>
+                    <div id="agy-activity-runs" class="grid grid-cols-1 xl:grid-cols-2 gap-3"></div>
+                </div>
             </div>
         </div>
 

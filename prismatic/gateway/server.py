@@ -50,6 +50,7 @@ from prismatic.gateway.ws_broadcaster import (
     start_ws_broadcaster,
     stop_ws_broadcaster,
 )
+from prismatic.agy_activity import list_agy_activity_runs
 from prismatic.agy_completed_work import (
     AGY_COMPLETED_WORK_INGESTION_MARKER,
     get_completed_work,
@@ -551,6 +552,13 @@ async def get_harnesses() -> list[dict[str, Any]]:
     registry_path = Path(__file__).resolve().parents[1] / "harnesses" / "registry.json"
     registry = json.loads(registry_path.read_text(encoding="utf-8"))
     return registry["harnesses"]
+
+
+@app.get("/api/agy/activity")
+@app.get("/api/gateway/agy/activity")
+def agy_activity(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
+    """Project durable exact-run AGY activity receipts for the dashboard."""
+    return list_agy_activity_runs(limit=limit)
 
 
 @app.get("/api/plugins/catalog")

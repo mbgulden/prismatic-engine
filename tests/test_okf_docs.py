@@ -18,6 +18,7 @@ def test_registry_covers_agent_and_system_verification():
         "canonical-knowledge",
         "sustainable-maintainability",
         "provider-neutral-verification",
+        "canonical-agy-execution",
     } <= ids
 
 
@@ -52,6 +53,20 @@ def test_provider_neutral_verification_policy_is_canonical():
         in decision
     )
     assert "GRO-4203" in decision
+
+
+def test_canonical_agy_workflow_is_indexed_and_normative():
+    index = (ROOT / "docs/index.md").read_text()
+    contract = (ROOT / "docs/contracts/canonical-agy-cli-workflow.md").read_text()
+    decision = (
+        ROOT / "docs/decisions/ADR-0003-canonical-agy-cli-workflow.md"
+    ).read_text()
+    playbook = (ROOT / "docs/provider-playbook-google-antigravity.md").read_text()
+    assert "Canonical AGY CLI workflow" in index
+    assert "tmux durable anchor" in contract
+    assert "raw detached `Popen`" in decision
+    assert "Normative workflow" in playbook
+    assert "--print_timeout" not in playbook
 
 
 def test_okf_schema_validation_fails_closed():

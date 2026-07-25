@@ -70,6 +70,8 @@ Dashboard = intended main user touchpoint for most commands, tools, functions, a
 
 In the desired end state, a normal user should not need to know shell commands for daily operations. The dashboard should make most actions available as validated UI controls backed by the same PE Core APIs that agents and CLI commands use.
 
+Canonical unattended AGY execution follows that rule today: `prismatic agy` is a headless facade over `AGYCLIHarness`, durable admission/run/artifact receipts, and independent verification—not a competing source of truth. A future dashboard control must call the same harness contract and project the same lifecycle states. See `docs/contracts/canonical-agy-cli-workflow.md`.
+
 Dashboard-first does **not** mean removing Telegram. Telegram remains useful for:
 
 - lock-screen notifications
