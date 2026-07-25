@@ -1050,6 +1050,62 @@
             document.getElementById("foundation-console").textContent = "Console cleared.\n";
         }
 
+        async function loadCanonicalAgyActivity() {
+            const summary = document.getElementById('agy-activity-summary');
+            const runsEl = document.getElementById('agy-activity-runs');
+            if (!summary || !runsEl) return;
+            try {
+                const res = await fetch('/api/gateway/agy/activity?limit=20');
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const payload = await res.json();
+                if (payload.status !== 'ok') {
+                    summary.textContent = payload.reason || 'Canonical AGY activity is not configured.';
+                    runsEl.innerHTML = '';
+                    return;
+                }
+                const runs = payload.runs || [];
+                const counts = payload.activity_counts || {};
+                summary.textContent = `${runs.length} retained run(s) · working ${counts.working || 0} · quiet ${counts.quiet || 0} · suspect ${counts.suspect || 0} · no automatic runtime kill`;
+                if (!runs.length) {
+                    runsEl.innerHTML = '<div class="text-xs text-slate-500 italic">No canonical AGY run receipts yet.</div>';
+                    return;
+                }
+                const tones = {
+                    working: 'border-emerald-500/30 bg-emerald-500/5 text-emerald-200',
+                    quiet: 'border-amber-500/30 bg-amber-500/5 text-amber-200',
+                    suspect: 'border-rose-500/30 bg-rose-500/5 text-rose-200',
+                    terminal: 'border-slate-700 bg-slate-900/60 text-slate-300',
+                    starting: 'border-cyan-500/30 bg-cyan-500/5 text-cyan-200'
+                };
+                runsEl.innerHTML = runs.map(run => {
+                    const activity = run.activity || {};
+                    const metrics = activity.metrics || {};
+                    const classification = activity.classification || 'unknown';
+                    const tone = tones[classification] || tones.terminal;
+                    const seen = activity.receipt_age_seconds == null ? 'no receipt' : `${Math.round(activity.receipt_age_seconds)}s ago`;
+                    return `<div class="rounded-lg border p-3 ${tone}" data-agy-run="${escapeHtml(run.run_id)}">
+                        <div class="flex items-center justify-between gap-2">
+                            <span class="font-mono text-xs font-bold">${escapeHtml(run.run_id)}</span>
+                            <span class="uppercase text-[10px] font-bold">${escapeHtml(classification)}</span>
+                        </div>
+                        <div class="mt-2 grid grid-cols-2 md:grid-cols-4 gap-2 text-[10px] text-slate-400">
+                            <span>state ${escapeHtml(run.state)}</span>
+                            <span>seen ${escapeHtml(seen)}</span>
+                            <span>processes ${escapeHtml(metrics.process_count ?? 0)}</span>
+                            <span>CPU ticks ${escapeHtml(metrics.cpu_ticks ?? 0)}</span>
+                            <span>writes ${escapeHtml(metrics.write_bytes ?? 0)} B</span>
+                            <span>artifacts ${escapeHtml(metrics.artifact_file_count ?? 0)}</span>
+                            <span>quiet ${escapeHtml(Math.round(activity.quiet_seconds || 0))}s</span>
+                            <span>verification ${escapeHtml(run.verification_status || 'pending')}</span>
+                        </div>
+                    </div>`;
+                }).join('');
+            } catch (err) {
+                summary.textContent = `AGY activity unavailable: ${err.message}`;
+                runsEl.innerHTML = '';
+            }
+        }
+
         // Fetch API States
         async function fetchData() {
             // Global telemetry poll
@@ -2761,8 +2817,12 @@
             }
             loadPluginGovernance();
             loadPWPStatus();
+            loadCanonicalAgyActivity();
             connectWS();
-            pollingInterval = setInterval(fetchData, 4000);
+            pollingInterval = setInterval(() => {
+                fetchData();
+                loadCanonicalAgyActivity();
+            }, 4000);
             
             // Close modal on click outside
             window.onclick = function(event) {

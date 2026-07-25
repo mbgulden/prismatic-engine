@@ -4,7 +4,7 @@ These console scripts are the public entrypoints declared in `pyproject.toml`. K
 
 | Entrypoint | Purpose | Stability |
 |---|---|---:|
-| `prismatic` | Main operator CLI for status, doctor, init, serve, task, journal, visual verification, worktrees, and crons | stable |
+| `prismatic` | Main operator CLI for status, doctor, init, serve, task, journal, visual verification, worktrees, crons, and canonical AGY workflow | stable |
 | `plugin-load-gate` | Verify shipped plugins load against the current core version | stable |
 | `prismatic-engine` | Dispatcher runtime entrypoint | stable for internal/runtime use |
 | `prismatic-engine-skills` | Skill management CLI | stable for runtime use |
@@ -23,6 +23,7 @@ Credential-free commands:
 
 ```bash
 prismatic --help
+prismatic agy contract
 plugin-load-gate
 prismatic-gateway --help
 python scripts/release_smoke.py

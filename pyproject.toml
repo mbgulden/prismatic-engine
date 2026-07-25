@@ -69,6 +69,7 @@ prismatic = [
     "templates/**/*",
     "config/**/*",
     "schemas/**/*",
+    "harnesses/*.json",
     "gateway/templates/**/*",
     "gateway/dashboard_src/**/*",
     "gateway/static/**/*",

@@ -52,12 +52,22 @@ def project_metadata() -> dict[str, Any]:
 
 def main() -> int:
     import prismatic
+    from prismatic.agy_cli import canonical_contract
     from prismatic.cli import run as cli_run
     from prismatic.quality.plugin_load import verify_shipped_plugins_load
 
     cli_rc = cli_run([])
     if cli_rc != 0:
         raise RuntimeError(f"prismatic CLI returned {cli_rc}")
+    agy_contract = canonical_contract()
+    if (
+        agy_contract["transport"] != "tmux-durable-anchor"
+        or agy_contract["prompt_prefix"] != "/goal "
+        or agy_contract["maximum_attempts"] != 3
+        or agy_contract["runtime_deadline"] is not None
+        or agy_contract["runtime_policy"] != "no-wall-clock-cap-progress-supervised"
+    ):
+        raise RuntimeError("canonical AGY CLI contract is unavailable or drifted")
 
     load_result = verify_shipped_plugins_load()
     if not load_result.passed:
@@ -83,6 +93,7 @@ def main() -> int:
         "runtime_version": prismatic.__version__,
         "package_metadata": metadata,
         "plugin_load_reason": load_result.reason,
+        "agy_contract_marker": agy_contract["result_marker"],
         "launch_marker": "PUBLIC_LAUNCH_SMOKE_OK" in launch,
         "security_marker": "PUBLIC_SECURITY_READINESS_OK" in security,
         "dashboard_visual_marker": "DASHBOARD_VISUAL_QA_OK" in dashboard,

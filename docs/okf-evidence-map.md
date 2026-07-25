@@ -30,6 +30,7 @@ The validator requires this table to contain every machine-readable objective ID
 | `systemic-orchestration-correctness` | durable state stores and event/lease records |
 | `canonical-knowledge` | docs/index.md + okf/index.yaml + accepted ADRs |
 | `sustainable-maintainability` | versioned quality, incident, rollback, and evidence metrics |
+| `canonical-agy-execution` | canonical AGY manifest + launch/process receipts + exact task and executable digests |
 | `authoritative-operator-view` | plugin/job/artifact/audit and orchestration stores |
 <!-- OKF_REGISTRY_PARITY_END -->
 
@@ -54,6 +55,15 @@ If a workflow exists in PE Core, it should have:
 | Orchestration remains correct under replay and contention | cap is never exceeded; stale holders cannot mutate | atomic leases, fencing, idempotent cohort, recovery drills | barrier/race/adversarial tests and retained recovery evidence | durable orchestration stores | CLI/API |
 | Verification remains effective | planted faults are detected and stale policies are surfaced | meta-verification maintenance loop | seeded-fault detection and verifier-drift reports | verification evidence ledger | CI/operations |
 | Agent speed remains sustainable | accepted value rises without hidden debt | quality/debt maintenance loop | escaped defects, rollback, rework, evidence latency, 30/90/180-day burden | versioned quality/incident metrics | reports/dashboard target |
+
+## Canonical AGY execution OKF map
+
+| Objective | Key result | Function/workflow | Evidence | System of record | Current surface |
+|---|---|---|---|---|---|
+| Unattended AGY work follows one durable workflow | Every PE launch uses `/goal`, a hash-bound binary/task, and a unique tmux anchor | `prismatic agy contract|render|launch|wait` | manifest, launch receipt, process receipt, plan/result/log artifacts | canonical AGY manifest + launch/process receipts + exact task and executable digests | CLI/harness/contract |
+| Long AGY work remains observable without arbitrary termination | No wall-clock deadline; exact process-tree CPU/I/O/log/artifact activity is classified as working/quiet/suspect without auto-kill | `prismatic.agy_activity` + `/api/gateway/agy/activity` | activity receipts, API tests, dashboard source/generated markers | canonical AGY activity receipts | Dashboard AGY Exact-Run Activity panel |
+| AGY failure is contained and attributable | Explicit cancellation and terminal cleanup use child-subreaper adoption and exact PID/start-tick verification for the full descendant tree before session teardown or slot release; stdout/stderr/diagnostics remain separate; drift fails closed | `launch_tmux()` / `wait_tmux()` / `AGYCLIHarness.cancel()` | normal-exit and cancellation tests with detached SIGTERM-ignoring `setsid()` descendants plus retained receipts | launch/process/cancel receipt store | CLI/harness/dashboard |
+| Producer completion does not authorize acceptance | Every result remains pending independent exact-artifact verification | canonical result marker + downstream verifier/merge judge | result digest, reviewed commit/tree, independent receipt | result artifact + verification receipt + Git identity | contract; event binding pending |
 
 ## Public-launch OKF map
 

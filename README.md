@@ -66,6 +66,14 @@ curl -s http://127.0.0.1:9000/api/plugins/governance | python -m json.tool
 curl -s http://127.0.0.1:9000/api/plugins/audit-events | python -m json.tool
 ```
 
+Inspect the canonical unattended AGY contract before integrating or launching AGY:
+
+```bash
+prismatic agy contract
+```
+
+See [Canonical AGY CLI workflow](docs/contracts/canonical-agy-cli-workflow.md). Rendering is side-effect free; real launch additionally requires upstream admission and `--execute`.
+
 ---
 
 ## Minimal demo
