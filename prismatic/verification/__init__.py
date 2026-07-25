@@ -31,6 +31,14 @@ from .receipt_validator import (
     determine_merge_eligibility,
     validate_receipt_freshness,
 )
+from .github_adapter import (
+    GitHubAdapterError,
+    GitHubCheckRunProjection,
+    GitHubVerificationTrigger,
+    normalize_github_trigger,
+    project_github_check_run,
+    validate_trigger_receipt,
+)
 
 __all__ = [
     "CLEAN_ROOM_RUNNER_V1_OK",
@@ -55,4 +63,10 @@ __all__ = [
     "validate_receipt_freshness",
     "canonicalize_receipt",
     "verify_receipt_attestation",
+    "GitHubAdapterError",
+    "GitHubCheckRunProjection",
+    "GitHubVerificationTrigger",
+    "normalize_github_trigger",
+    "project_github_check_run",
+    "validate_trigger_receipt",
 ]
