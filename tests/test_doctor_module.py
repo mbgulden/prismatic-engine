@@ -433,5 +433,298 @@ def test_native_revocation_state_missing_is_required_error(tmp_path, monkeypatch
     assert _compute_verdict([], [], set(), reports) == "ERROR"
 
 
+def test_canonical_consumer_probe_ok_on_valid_inventory():
+    reports = _probe_native_components()
+    consumer_probe = next(
+        item for item in reports if item.name == "native.canonical_consumer"
+    )
+    assert consumer_probe.required is True
+    assert consumer_probe.status == "ok"
+    assert "cap-1 task-admission" in consumer_probe.message
+
+
+def test_canonical_consumer_probe_error_when_legacy_declared(tmp_path, monkeypatch):
+    import prismatic.doctor as doctor_mod
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    bad_json = config_dir / "runtime-services.json"
+    bad_json.write_text(
+        '{"schema_version": 1, "components": [{'
+        '"id": "consumer", "module_path": "prismatic.gateway.event_handlers.dispatch_consumer_v3",'
+        '"state_paths": ["/home/ubuntu/.prismatic/bus/dispatch_consumer.rowid"]'
+        "}]}",
+        encoding="utf-8",
+    )
+
+    fake_pkg = tmp_path / "prismatic"
+    fake_pkg.mkdir()
+    ok, msg = doctor_mod._probe_canonical_consumer(fake_pkg)
+    assert ok is False
+    assert "canonical inventory" in msg
+
+
+def test_canonical_consumer_probe_uses_absolute_inventory_override(
+    tmp_path, monkeypatch
+):
+    import prismatic.doctor as doctor_mod
+    from pathlib import Path
+
+    manifest = Path(__file__).resolve().parents[1] / "config" / "runtime-services.json"
+    monkeypatch.setenv("PRISMATIC_RUNTIME_SERVICES_CONFIG", str(manifest))
+    installed_like_package = tmp_path / "site-packages" / "prismatic"
+    installed_like_package.mkdir(parents=True)
+    ok, msg = doctor_mod._probe_canonical_consumer(installed_like_package)
+    assert ok is True
+    assert "one-shot consumer" in msg
+
+
+def test_canonical_consumer_probe_rejects_malformed_and_incomplete_inventory(
+    tmp_path, monkeypatch
+):
+    import copy
+    import json
+    from pathlib import Path
+    import prismatic.doctor as doctor_mod
+
+    source = Path(__file__).resolve().parents[1] / "config" / "runtime-services.json"
+    base = json.loads(source.read_text(encoding="utf-8"))
+    manifest = tmp_path / "runtime-services.json"
+    monkeypatch.setenv("PRISMATIC_RUNTIME_SERVICES_CONFIG", str(manifest))
+    package_root = tmp_path / "site-packages" / "prismatic"
+    package_root.mkdir(parents=True)
+
+    def rejected(document, expected):
+        manifest.write_text(json.dumps(document), encoding="utf-8")
+        ok, msg = doctor_mod._probe_canonical_consumer(package_root)
+        assert ok is False
+        assert expected in msg
+
+    consumer_index = next(
+        index
+        for index, item in enumerate(base["components"])
+        if item["id"] == "consumer"
+    )
+    for field, value, expected in (
+        ("module_path", ["prismatic.task_admission_consumer"], "module_path"),
+        ("source_path", None, "source_path"),
+        ("state_paths", "not-a-list", "state_paths"),
+        ("environment_files", [None], "environment_files"),
+    ):
+        document = copy.deepcopy(base)
+        document["components"][consumer_index][field] = value
+        rejected(document, expected)
+
+    for needle, expected in (
+        ("event_log.sqlite", "state_paths"),
+        ("task-admission.json", "state_paths"),
+    ):
+        document = copy.deepcopy(base)
+        component = document["components"][consumer_index]
+        component["state_paths"] = [
+            path for path in component["state_paths"] if needle not in path
+        ]
+        rejected(document, expected)
+
+    document = copy.deepcopy(base)
+    document["components"].append(copy.deepcopy(document["components"][consumer_index]))
+    rejected(document, "exactly one consumer")
+
+    document = copy.deepcopy(base)
+    document["schema_version"] = True
+    rejected(document, "structure invalid")
+
+    document = copy.deepcopy(base)
+    document["components"][consumer_index]["separately_versioned"] = 0
+    rejected(document, "separately_versioned")
+
+    document = copy.deepcopy(base)
+    document["components"][consumer_index]["source_path"] = (
+        "/tmp/counterfeit/prismatic/task_admission_consumer.py"
+    )
+    rejected(document, "source_path")
+
+    document = copy.deepcopy(base)
+    document["components"][consumer_index]["state_paths"] = [
+        "/tmp/event_log.sqlite",
+        "/tmp/not_task_admission_policy_real",
+        "/tmp/not_task_admission_launchers_real",
+    ]
+    rejected(document, "state_paths")
+
+
+def _systemd_show_result(
+    *,
+    load: str = "loaded",
+    active: str = "inactive",
+    unit: str = "disabled",
+    command: str = "",
+    returncode: int = 0,
+):
+    import subprocess
+
+    output = (
+        f"LoadState={load}\nActiveState={active}\n"
+        f"UnitFileState={unit}\nExecStart={command}\n"
+    )
+    return subprocess.CompletedProcess(
+        ["systemctl", "show"], returncode, stdout=output, stderr=""
+    )
+
+
+def test_legacy_consumer_service_probe_error_when_active(monkeypatch):
+    import subprocess
+    import prismatic.doctor as doctor_mod
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: _systemd_show_result(
+            active="active",
+            unit="enabled",
+            command="python -m prismatic.gateway.event_handlers.dispatch_consumer_v3",
+        ),
+    )
+    ok, msg = doctor_mod._probe_legacy_consumer_service()
+    assert ok is False
+    assert "not safely contained" in msg
+
+
+def test_legacy_consumer_service_probe_ok_when_masked(monkeypatch):
+    import subprocess
+    import prismatic.doctor as doctor_mod
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: _systemd_show_result(
+            load="masked", active="inactive", unit="masked"
+        ),
+    )
+    ok, msg = doctor_mod._probe_legacy_consumer_service()
+    assert ok is True
+    assert "safely inactive and masked" in msg
+
+
+def test_consumer_service_probe_ok_for_disabled_canonical_one_shot(monkeypatch):
+    import subprocess
+    import prismatic.doctor as doctor_mod
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: _systemd_show_result(
+            command="python -m prismatic.task_admission_consumer"
+        ),
+    )
+    ok, msg = doctor_mod._probe_legacy_consumer_service()
+    assert ok is True
+    assert "canonical one-shot" in msg
+
+
+def test_consumer_service_probe_rejects_canonical_substring_bypasses(monkeypatch):
+    import subprocess
+    import prismatic.doctor as doctor_mod
+
+    bypasses = (
+        "python -m evil --label=prismatic.task_admission_consumer",
+        "python -m prismatic.task_admission_consumer_evil",
+        "/bin/echo prismatic.task_admission_consumer",
+        "python -m prismatic.task_admission_consumer --unknown value",
+        "python -m prismatic.task_admission_consumer --db",
+        "python -m prismatic.task_admission_consumer --db /tmp/a --db /tmp/b",
+    )
+    for command in bypasses:
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *args, _command=command, **kwargs: _systemd_show_result(
+                command=_command
+            ),
+        )
+        ok, msg = doctor_mod._probe_legacy_consumer_service()
+        assert ok is False, (command, msg)
+        assert "legacy-or-unknown" in msg
+
+
+def test_consumer_service_probe_accepts_systemd_structured_exact_argv(monkeypatch):
+    import subprocess
+    import prismatic.doctor as doctor_mod
+
+    command = (
+        "{ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 -m "
+        "prismatic.task_admission_consumer --identity consumer-1 ; "
+        "ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }"
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: _systemd_show_result(command=command),
+    )
+    ok, msg = doctor_mod._probe_legacy_consumer_service()
+    assert ok is True
+    assert "canonical one-shot" in msg
+
+
+@patch("subprocess.run")
+def test_inactive_disabled_legacy_command_still_fails_closed(mock_run):
+    import prismatic.doctor as doctor_mod
+
+    mock_run.return_value = _systemd_show_result(
+        command="python -m prismatic.gateway.event_handlers.dispatch_consumer_v3"
+    )
+    ok, msg = doctor_mod._probe_legacy_consumer_service()
+    assert ok is False
+    assert "legacy-or-unknown" in msg
+
+
+@patch("subprocess.run")
+def test_legacy_consumer_service_probe_rejects_incomplete_output(mock_run):
+    import subprocess
+    import prismatic.doctor as doctor_mod
+
+    mock_run.return_value = subprocess.CompletedProcess(
+        ["systemctl", "show"], 0, stdout="ActiveState=inactive\n", stderr=""
+    )
+    ok, msg = doctor_mod._probe_legacy_consumer_service()
+    assert ok is False
+    assert "incomplete properties" in msg
+
+
+@patch("subprocess.run")
+def test_legacy_consumer_service_probe_rejects_unexpected_states(mock_run):
+    import prismatic.doctor as doctor_mod
+
+    for active, unit in (
+        ("activating", "disabled"),
+        ("inactive", "static"),
+        ("unknown", "disabled"),
+        ("garbage", "garbage"),
+    ):
+        mock_run.return_value = _systemd_show_result(
+            active=active,
+            unit=unit,
+            command="python -m prismatic.task_admission_consumer",
+        )
+        ok, msg = doctor_mod._probe_legacy_consumer_service()
+        assert ok is False, (active, unit, msg)
+        assert "not safely contained" in msg
+
+
+def test_legacy_consumer_service_probe_error_when_systemd_inspection_unavailable(
+    monkeypatch,
+):
+    import subprocess
+    import prismatic.doctor as doctor_mod
+
+    def mock_run_fail(cmd, **kwargs):
+        raise OSError("systemctl binary missing")
+
+    monkeypatch.setattr(subprocess, "run", mock_run_fail)
+    ok, msg = doctor_mod._probe_legacy_consumer_service()
+    assert ok is False
+    assert "systemd inspection support unavailable" in msg
+
+
 if __name__ == "__main__":
     unittest.main()
