@@ -352,12 +352,27 @@ def _probe_native_components() -> list[CapabilityReport]:
     """Probe required provider-neutral control-plane contracts without writes."""
 
     package_root = Path(__file__).resolve().parent
+    from prismatic.verification.receipt_store import (
+        verification_receipt_store_path,
+        verification_revocation_store_path,
+    )
+
+    receipt_db = verification_receipt_store_path()
+    revocation_store = verification_revocation_store_path()
+    revocation_state_ready = not receipt_db.exists() or (
+        revocation_store.is_file() and not revocation_store.is_symlink()
+    )
     checks = [
         (
             "native.receipt_store",
             importlib.util.find_spec("prismatic.verification.receipt_store")
             is not None,
             "immutable receipt store and native acceptance read model",
+        ),
+        (
+            "native.revocation_state",
+            revocation_state_ready,
+            "fail-closed revocation state beside an existing receipt database",
         ),
         (
             "native.dashboard",

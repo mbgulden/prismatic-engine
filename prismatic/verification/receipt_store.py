@@ -35,6 +35,7 @@ _IDENTITY_FIELDS = (
     "candidate_sha",
     "tree_sha",
     "canonical_repository_root",
+    "checkout_clean_state",
     "clean_checkout_id",
     "verifier_id",
     "backend_id",
@@ -51,6 +52,7 @@ _HOSTED_SIGNAL_STATUSES = {"success", "failure", "unavailable", "unknown"}
 _NATIVE_REQUIRED_FIELDS = {
     "base_tree_sha",
     "canonical_repository_root",
+    "checkout_clean_state",
     "changed_path_containment",
     "verifier_isolation",
     "proof_scope_status",
@@ -162,6 +164,27 @@ def _validate_native_bindings(receipt: dict[str, Any]) -> None:
         raise ValueError("canonical_repository_root must be nonsymlink and canonical")
     if Path(_git(root, "rev-parse", "--show-toplevel")) != root:
         raise ValueError("canonical_repository_root is not the exact Git root")
+
+    clean_state = receipt["checkout_clean_state"]
+    if not isinstance(clean_state, dict) or clean_state.get("status") != "clean":
+        raise ValueError("checkout_clean_state must claim clean")
+    porcelain = _git(root, "status", "--porcelain=v1", "--untracked-files=all")
+    if porcelain:
+        raise ValueError("canonical repository checkout is not clean")
+    if clean_state.get("porcelain_sha256") != f"sha256:{_sha256_text(porcelain)}":
+        raise ValueError("checkout_clean_state digest does not match Git status")
+    observed_at = clean_state.get("observed_at")
+    if not isinstance(observed_at, str):
+        raise ValueError("checkout_clean_state observed_at must be text")
+    try:
+        observed = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("checkout_clean_state observed_at is invalid") from exc
+    if observed.tzinfo is None:
+        raise ValueError("checkout_clean_state observed_at must be timezone-aware")
+    clean_state_age = (datetime.now(timezone.utc) - observed).total_seconds()
+    if clean_state_age < -60 or clean_state_age > 300:
+        raise ValueError("checkout_clean_state observation is not fresh")
 
     candidate_sha = receipt.get("candidate_sha")
     base_sha = receipt.get("base_sha")
@@ -317,6 +340,7 @@ class StoredVerificationReceipt:
             "base_sha": self.receipt.get("base_sha"),
             "base_tree_sha": self.receipt.get("base_tree_sha"),
             "canonical_repository_root": self.receipt.get("canonical_repository_root"),
+            "checkout_clean_state": self.receipt.get("checkout_clean_state"),
             "changed_path_containment": self.receipt.get("changed_path_containment"),
             "verifier_isolation": self.receipt.get("verifier_isolation"),
             "proof_scope_status": self.receipt.get("proof_scope_status"),
@@ -356,10 +380,48 @@ def verification_receipt_store_path(db_path: Path | str | None = None) -> Path:
     return Path(db_path) if db_path is not None else _default_db_path()
 
 
+def verification_revocation_store_path(
+    db_path: Path | str | None = None,
+    revocation_store_path: Path | str | None = None,
+) -> Path:
+    """Resolve the canonical fail-closed revocation source."""
+
+    if revocation_store_path is not None:
+        return Path(revocation_store_path)
+    configured = os.environ.get("PRISMATIC_VERIFICATION_REVOCATION_STORE")
+    if configured:
+        return Path(configured)
+    return verification_receipt_store_path(db_path).with_name(
+        "provider_neutral_verification_revocations.json"
+    )
+
+
 class VerificationReceiptStore:
-    def __init__(self, db_path: Path | str | None = None):
+    def __init__(
+        self,
+        db_path: Path | str | None = None,
+        *,
+        revocation_store_path: Path | str | None = None,
+    ):
         self.db_path = verification_receipt_store_path(db_path)
+        db_already_exists = self.db_path.exists()
+        self.revocation_store_path = verification_revocation_store_path(
+            db_path, revocation_store_path
+        )
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.revocation_store_path.parent.mkdir(parents=True, exist_ok=True)
+        if not self.revocation_store_path.exists() and not db_already_exists:
+            try:
+                fd = os.open(
+                    self.revocation_store_path,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                    0o600,
+                )
+            except FileExistsError:
+                pass
+            else:
+                with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                    stream.write("[]\n")
         self._ensure_schema()
 
     def _connect(self) -> sqlite3.Connection:
@@ -422,10 +484,11 @@ class VerificationReceiptStore:
                 )
                 """
             )
+            conn.execute("DROP INDEX IF EXISTS idx_pnvr_one_terminal_event")
             conn.execute(
                 """
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_pnvr_one_terminal_event
-                ON provider_neutral_receipt_lifecycle_events(receipt_id)
+                CREATE INDEX IF NOT EXISTS idx_pnvr_lifecycle_receipt
+                ON provider_neutral_receipt_lifecycle_events(receipt_id, created_at)
                 """
             )
 
@@ -449,7 +512,9 @@ class VerificationReceiptStore:
             }
         ):
             raise ValueError("secret-like content detected; receipt was not stored")
-        eligible, reason = determine_merge_eligibility(receipt, policy)
+        eligible, reason = determine_merge_eligibility(
+            receipt, policy, revocation_store=self.revocation_store_path
+        )
         receipt_json = _canonical_json(receipt)
         policy_json = _canonical_json(policy)
         identity_json = _canonical_json(identity)
@@ -470,6 +535,7 @@ class VerificationReceiptStore:
         created_at = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
+            _validate_native_bindings(receipt)
             supersedes = receipt.get("supersedes")
             superseded_row = None
             if supersedes is not None:
@@ -573,6 +639,58 @@ class VerificationReceiptStore:
                 )
             return self._row(row, conn=conn)
 
+    def revoke(
+        self,
+        receipt_id: str,
+        *,
+        reason: str,
+        revoked_by: str,
+    ) -> StoredVerificationReceipt:
+        """Append an immutable revocation event and return effective state."""
+
+        reason = str(reason or "").strip()
+        revoked_by = str(revoked_by or "").strip()
+        if not reason or len(reason) > 500:
+            raise ValueError("revocation reason must be 1-500 characters")
+        if not revoked_by or len(revoked_by) > 200:
+            raise ValueError("revoked_by must be 1-200 characters")
+        event_reason = f"revoked_by:{revoked_by}:{reason}"
+        event_id = "pnvrl-" + _sha256_text(f"revoked:{receipt_id}")
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT * FROM provider_neutral_verification_receipts WHERE receipt_id = ?",
+                (receipt_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(receipt_id)
+            existing = conn.execute(
+                """
+                SELECT reason FROM provider_neutral_receipt_lifecycle_events
+                WHERE event_id = ?
+                """,
+                (event_id,),
+            ).fetchone()
+            if existing is not None:
+                if existing["reason"] != event_reason:
+                    raise ValueError("conflicting immutable revocation replay")
+                return self._row(row, conn=conn)
+            conn.execute(
+                """
+                INSERT INTO provider_neutral_receipt_lifecycle_events (
+                    event_id, receipt_id, event_type, successor_receipt_id,
+                    reason, created_at
+                ) VALUES (?, ?, 'revoked', NULL, ?, ?)
+                """,
+                (
+                    event_id,
+                    receipt_id,
+                    event_reason,
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+            return self._row(row, conn=conn)
+
     def get(self, receipt_id: str) -> StoredVerificationReceipt:
         with self._connect() as conn:
             row = conn.execute(
@@ -641,13 +759,14 @@ class VerificationReceiptStore:
         counts["total"] = len(rows)
         return counts
 
-    @staticmethod
     def _row(
-        row: sqlite3.Row, *, conn: sqlite3.Connection | None = None
+        self, row: sqlite3.Row, *, conn: sqlite3.Connection | None = None
     ) -> StoredVerificationReceipt:
         receipt = json.loads(row["receipt_json"])
         policy = json.loads(row["policy_json"])
-        merge_eligible, decision_reason = determine_merge_eligibility(receipt, policy)
+        merge_eligible, decision_reason = determine_merge_eligibility(
+            receipt, policy, revocation_store=self.revocation_store_path
+        )
         classification = _classification(receipt, merge_eligible, decision_reason)
         superseded_by = None
         if conn is not None:
@@ -656,6 +775,9 @@ class VerificationReceiptStore:
                 SELECT event_type, successor_receipt_id, reason
                 FROM provider_neutral_receipt_lifecycle_events
                 WHERE receipt_id = ?
+                ORDER BY CASE WHEN event_type = 'revoked' THEN 0 ELSE 1 END,
+                         created_at DESC, event_id DESC
+                LIMIT 1
                 """,
                 (row["receipt_id"],),
             ).fetchone()
@@ -663,7 +785,11 @@ class VerificationReceiptStore:
                 classification = event["event_type"]
                 merge_eligible = False
                 decision_reason = event["reason"]
-                superseded_by = event["successor_receipt_id"]
+                superseded_by = (
+                    event["successor_receipt_id"]
+                    if event["event_type"] == "superseded"
+                    else None
+                )
         return StoredVerificationReceipt(
             receipt_id=row["receipt_id"],
             created_at=row["created_at"],
@@ -711,6 +837,18 @@ def persist_verification_receipt(
 ) -> StoredVerificationReceipt:
     return VerificationReceiptStore(db_path).persist(
         receipt, policy, hosted_signals=hosted_signals
+    )
+
+
+def revoke_verification_receipt(
+    receipt_id: str,
+    *,
+    reason: str,
+    revoked_by: str,
+    db_path: Path | str | None = None,
+) -> StoredVerificationReceipt:
+    return VerificationReceiptStore(db_path).revoke(
+        receipt_id, reason=reason, revoked_by=revoked_by
     )
 
 

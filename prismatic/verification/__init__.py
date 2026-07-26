@@ -40,9 +40,11 @@ from .receipt_store import (
     list_verification_receipts,
     persist_verification_receipt,
     receipt_identity,
+    revoke_verification_receipt,
     verification_receipt_counts,
     verification_receipt_schema,
     verification_receipt_store_path,
+    verification_revocation_store_path,
 )
 from .github_adapter import (
     GitHubAdapterError,
@@ -82,9 +84,11 @@ __all__ = [
     "list_verification_receipts",
     "persist_verification_receipt",
     "receipt_identity",
+    "revoke_verification_receipt",
     "verification_receipt_counts",
     "verification_receipt_schema",
     "verification_receipt_store_path",
+    "verification_revocation_store_path",
     "canonicalize_receipt",
     "verify_receipt_attestation",
     "GitHubAdapterError",

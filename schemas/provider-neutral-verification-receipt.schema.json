@@ -389,6 +389,16 @@
       "maxLength": 4096,
       "pattern": "^/"
     },
+    "checkout_clean_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "observed_at", "porcelain_sha256"],
+      "properties": {
+        "status": {"const": "clean"},
+        "observed_at": {"type": "string", "format": "date-time"},
+        "porcelain_sha256": {"$ref": "#/$defs/digest"}
+      }
+    },
     "changed_paths": {
       "type": "array",
       "maxItems": 4096,

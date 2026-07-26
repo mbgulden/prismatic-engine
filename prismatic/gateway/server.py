@@ -55,6 +55,7 @@ from prismatic.verification.receipt_store import (
     get_verification_receipt,
     list_verification_receipts,
     persist_verification_receipt,
+    revoke_verification_receipt,
     verification_receipt_counts,
     verification_receipt_schema,
 )
@@ -1215,6 +1216,39 @@ async def record_provider_neutral_verification_receipt(
         "side_effects": {
             "github": False,
             "github_actions": False,
+            "linear": False,
+            "merge": False,
+            "deploy": False,
+        },
+    }
+
+
+@app.post("/api/verification/receipts/{receipt_id}/revoke")
+@app.post("/api/gateway/verification/receipts/{receipt_id}/revoke")
+async def revoke_provider_neutral_verification_receipt(
+    receipt_id: str, body: dict[str, Any]
+) -> dict[str, Any]:
+    """Append an authenticated immutable native revocation event."""
+
+    try:
+        row = revoke_verification_receipt(
+            receipt_id,
+            reason=str(body.get("reason") or ""),
+            revoked_by=str(body.get("revoked_by") or ""),
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail="verification receipt not found"
+        ) from exc
+    except ValueError as exc:
+        status_code = 409 if "conflicting immutable" in str(exc) else 422
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    return {
+        "status": "revoked",
+        "marker": PROVIDER_NEUTRAL_VERIFICATION_RECEIPT_MARKER,
+        "receipt": row.as_dict(),
+        "side_effects": {
+            "github": False,
             "linear": False,
             "merge": False,
             "deploy": False,

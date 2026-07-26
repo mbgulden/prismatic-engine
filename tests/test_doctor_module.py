@@ -29,6 +29,7 @@ from prismatic.doctor import (
     _probe_config_paths,
     _probe_github,
     _probe_linear,
+    _probe_native_components,
     _compute_verdict,
 )
 from prismatic.cli.doctor import run as doctor_cli_run, EXIT_OK, EXIT_ERROR
@@ -413,6 +414,23 @@ class TestBackwardCompatDispatchDelegate(unittest.TestCase):
                 rc = dispatcher.cmd_doctor(ns)
             self.assertEqual(rc, EXIT_OK)
             fake_cli.assert_called_once_with(ns)
+
+
+def test_native_revocation_state_missing_is_required_error(tmp_path, monkeypatch):
+    db_path = tmp_path / "receipts.sqlite3"
+    db_path.write_bytes(b"")
+    monkeypatch.setenv("PRISMATIC_VERIFICATION_RECEIPT_DB", str(db_path))
+    monkeypatch.setenv(
+        "PRISMATIC_VERIFICATION_REVOCATION_STORE", str(tmp_path / "missing.json")
+    )
+
+    reports = _probe_native_components()
+    revocation = next(
+        item for item in reports if item.name == "native.revocation_state"
+    )
+    assert revocation.required is True
+    assert revocation.status == "error"
+    assert _compute_verdict([], [], set(), reports) == "ERROR"
 
 
 if __name__ == "__main__":

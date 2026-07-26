@@ -6,11 +6,16 @@ import json
 import sqlite3
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
+from prismatic.agy_operator_action_approval import (
+    _policy_gate,
+    _revalidated_approval_view,
+)
 from prismatic.agy_promotion_ledger import _native_acceptance_for
 from prismatic.doctor import CapabilityReport, ProviderReport, _compute_verdict
 from prismatic.gateway.server import app
@@ -79,6 +84,11 @@ def valid_receipt(finished_offset: float = -10) -> dict:
         candidate_sha=_NATIVE_GIT["candidate_sha"],
         tree_sha=_NATIVE_GIT["tree_sha"],
         canonical_repository_root=_NATIVE_GIT["root"],
+        checkout_clean_state={
+            "status": "clean",
+            "observed_at": datetime.now(timezone.utc).isoformat(),
+            "porcelain_sha256": "sha256:" + hashlib.sha256(b"").hexdigest(),
+        },
         source_locator=_NATIVE_GIT["root"],
         changed_paths=changed_paths,
         changed_path_containment={
@@ -375,6 +385,73 @@ def test_native_binding_rejects_symlink_repository_root(tmp_path) -> None:
         store.persist(receipt, valid_policy())
 
 
+@pytest.mark.parametrize("dirty_kind", ["tracked", "untracked"])
+def test_native_binding_rejects_dirty_checkout(tmp_path, dirty_kind: str) -> None:
+    store = VerificationReceiptStore(tmp_path / f"dirty-{dirty_kind}.sqlite3")
+    receipt = valid_receipt()
+    root = Path(_NATIVE_GIT["root"])
+    if dirty_kind == "tracked":
+        (root / "prismatic/verification/receipt_validator.py").write_text(
+            "dirty after signed candidate\n", encoding="utf-8"
+        )
+    else:
+        (root / "untracked-proof-input.txt").write_text("dirty\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="checkout is not clean"):
+        store.persist(receipt, valid_policy())
+    assert store.counts()["total"] == 0
+
+
+def test_external_and_append_only_revocation_remove_authorization(
+    tmp_path, monkeypatch
+) -> None:
+    db_path = tmp_path / "revoked.sqlite3"
+    monkeypatch.setenv("PRISMATIC_VERIFICATION_RECEIPT_DB", str(db_path))
+    store = VerificationReceiptStore(db_path)
+    receipt = valid_receipt()
+    stored = store.persist(receipt, valid_policy())
+    row_payload = {
+        "packet": {"issue_identifier": receipt["task_id"]},
+        "evidence_retention": {"source_commit_sha": receipt["candidate_sha"]},
+    }
+    assert _native_acceptance_for(row_payload)["merge_authorized"] is True
+
+    store.revocation_store_path.unlink()
+    missing_store = store.get(stored.receipt_id)
+    assert missing_store.merge_eligible is False
+    assert missing_store.decision_reason == "revocation_store_missing"
+    store.revocation_store_path.write_text("not-json", encoding="utf-8")
+    malformed_store = store.get(stored.receipt_id)
+    assert malformed_store.merge_eligible is False
+    assert malformed_store.decision_reason == "malformed_revocation_store"
+
+    store.revocation_store_path.write_text(
+        json.dumps([receipt["task_id"]]), encoding="utf-8"
+    )
+    externally_revoked = store.get(stored.receipt_id)
+    assert externally_revoked.classification == "revoked"
+    assert externally_revoked.merge_eligible is False
+    assert "revoked" in str(externally_revoked.decision_reason)
+    assert _native_acceptance_for(row_payload)["merge_authorized"] is False
+
+    store.revocation_store_path.write_text("[]\n", encoding="utf-8")
+    lifecycle_revoked = store.revoke(
+        stored.receipt_id, reason="compromised verifier", revoked_by="security-operator"
+    )
+    assert lifecycle_revoked.classification == "revoked"
+    assert lifecycle_revoked.merge_eligible is False
+    assert lifecycle_revoked.superseded_by is None
+    replay = store.revoke(
+        stored.receipt_id, reason="compromised verifier", revoked_by="security-operator"
+    )
+    assert replay.classification == "revoked"
+    with pytest.raises(ValueError, match="conflicting immutable revocation"):
+        store.revoke(
+            stored.receipt_id, reason="different", revoked_by="security-operator"
+        )
+    assert _native_acceptance_for(row_payload)["merge_authorized"] is False
+
+
 def test_promotion_authorization_requires_matching_effective_native_receipt(
     tmp_path, monkeypatch
 ) -> None:
@@ -425,6 +502,89 @@ def test_promotion_authorization_fails_closed_without_or_with_stale_receipt(
     assert stale["status"] == "stale"
     assert stale["merge_authorized"] is False
     assert stale["deploy_authorized"] is False
+
+
+def test_downstream_operator_gate_requires_exact_native_authorization() -> None:
+    promotion = {
+        "status": "decision_ready",
+        "recommendation": "open_or_update_pr",
+        "target_issue": "GRO-4208",
+        "completed_work_id": "work-1",
+        "evidence": {
+            "authorization": {
+                "acceptance_authority": "native_provider_neutral_receipt",
+                "merge_authorized": False,
+                "deploy_authorized": False,
+                "hosted_signals_required": False,
+            },
+            "native_acceptance": {
+                "status": "blocked",
+                "authoritative": True,
+                "merge_authorized": False,
+                "deploy_authorized": False,
+            },
+        },
+    }
+    assert _policy_gate(promotion, "approve", "open_or_update_pr") == "manual_review"
+
+    promotion["evidence"]["authorization"]["merge_authorized"] = True
+    promotion["evidence"]["native_acceptance"] = {
+        "status": "accepted",
+        "authoritative": True,
+        "receipt_id": "pnvr-" + "a" * 64,
+        "receipt_sha256": "b" * 64,
+        "repository_id": "repo-prismatic-engine",
+        "task_id": "GRO-4208",
+        "base_sha": "c" * 40,
+        "base_tree_sha": "d" * 40,
+        "candidate_sha": "e" * 40,
+        "tree_sha": "f" * 40,
+        "checkout_clean_state": {"status": "clean"},
+        "merge_authorized": True,
+        "deploy_authorized": True,
+    }
+    assert _policy_gate(promotion, "approve", "open_or_update_pr") == "pass"
+
+
+def test_cached_operator_approval_is_held_after_native_revocation(monkeypatch) -> None:
+    current_promotion = {
+        "status": "decision_ready",
+        "recommendation": "open_or_update_pr",
+        "target_issue": "GRO-4208",
+        "completed_work_id": "work-1",
+        "evidence": {
+            "authorization": {
+                "acceptance_authority": "native_provider_neutral_receipt",
+                "merge_authorized": False,
+                "deploy_authorized": False,
+                "hosted_signals_required": False,
+            },
+            "native_acceptance": {
+                "status": "revoked",
+                "authoritative": True,
+                "merge_authorized": False,
+                "deploy_authorized": False,
+            },
+        },
+    }
+    monkeypatch.setattr(
+        "prismatic.agy_operator_action_approval.get_promotion_decision",
+        lambda _decision_id: current_promotion,
+    )
+    stored = {
+        "operator_action_approval_id": "approval-1",
+        "promotion_decision_id": "promotion-1",
+        "completed_work_id": "work-1",
+        "requested_action": "open_or_update_pr",
+        "operator_decision": "approve",
+        "policy_gate": "pass",
+    }
+
+    current = _revalidated_approval_view(stored)
+    assert current["stored_policy_gate"] == "pass"
+    assert current["policy_gate"] == "manual_review"
+    assert current["revalidation_status"] == "held_by_current_native_receipt"
+    assert current["execution_preview"]["would_execute"] is False
 
 
 def test_doctor_github_absence_is_optional_warn_not_error() -> None:
@@ -482,6 +642,19 @@ def test_receipt_api_and_dashboard_contract_work_without_github(
         assert listing["count"] == 1
         assert listing["hosted_signals_required"] is False
         assert listing["receipts"][0]["classification"] == "accepted"
+
+        receipt_id = body["receipt"]["receipt_id"]
+        revoked = client.post(
+            f"/api/verification/receipts/{receipt_id}/revoke",
+            json={"reason": "operator revoked", "revoked_by": "test-operator"},
+        )
+        assert revoked.status_code == 200
+        revoked_body = revoked.json()
+        assert revoked_body["status"] == "revoked"
+        assert revoked_body["receipt"]["classification"] == "revoked"
+        assert revoked_body["receipt"]["merge_eligible"] is False
+        detail = client.get(f"/api/verification/receipts/{receipt_id}").json()
+        assert detail["receipt"]["classification"] == "revoked"
 
         dashboard = client.get("/dashboard")
         assert dashboard.status_code == 200

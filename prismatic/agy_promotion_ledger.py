@@ -175,7 +175,13 @@ def _native_acceptance_for(row_payload: dict[str, Any]) -> dict[str, Any]:
         "authoritative": True,
         "receipt_id": receipt.receipt_id,
         "receipt_sha256": receipt.receipt_sha256,
+        "repository_id": receipt.receipt.get("repository_id"),
+        "task_id": receipt.receipt.get("task_id"),
+        "base_sha": receipt.receipt.get("base_sha"),
+        "base_tree_sha": receipt.receipt.get("base_tree_sha"),
         "candidate_sha": candidate_sha,
+        "tree_sha": receipt.receipt.get("tree_sha"),
+        "checkout_clean_state": receipt.receipt.get("checkout_clean_state"),
         "merge_authorized": accepted,
         "deploy_authorized": accepted,
         "hosted_signals_required": False,
@@ -257,15 +263,19 @@ def build_promotion_decision(
     )
     native_acceptance = _native_acceptance_for(row_payload)
     source_allows_promotion = _source_decision_allows_promotion(source_decision)
+    native_allows_promotion = bool(native_acceptance.get("merge_authorized"))
     recommendation = _recommendation_from_source(source_decision)
     status = (
         "decision_ready"
         if source_allows_promotion
+        and native_allows_promotion
         and verification_gate == "pass"
         and integration == "pass_ready_for_review"
         else str(source_decision.get("status") or "manual_review")
     )
     if not source_allows_promotion and status == "decision_ready":
+        status = "manual_review"
+    if not native_allows_promotion:
         status = "manual_review"
     if status != "decision_ready" and recommendation == "open_or_update_pr":
         recommendation = "manual_review"
@@ -450,6 +460,7 @@ def _revalidated_record_view(record: dict[str, Any]) -> dict[str, Any]:
             else "manual_review"
         )
         view["source_decision"] = current.get("source_decision") or {}
+        view["target_issue"] = current.get("target_issue")
         evidence = dict(view.get("evidence") or {})
         current_evidence = current.get("evidence") or {}
         evidence["native_acceptance"] = current_evidence.get("native_acceptance")
@@ -470,6 +481,7 @@ def _revalidated_record_view(record: dict[str, Any]) -> dict[str, Any]:
     view["source_decision"] = (
         current.get("source_decision") or record.get("source_decision") or {}
     )
+    view["target_issue"] = current.get("target_issue")
     evidence = dict(view.get("evidence") or {})
     current_evidence = current.get("evidence") or {}
     evidence["native_acceptance"] = current_evidence.get("native_acceptance")

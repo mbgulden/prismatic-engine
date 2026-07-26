@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import sqlite3
 
+import pytest
 from fastapi.testclient import TestClient
 
 from prismatic.agy_completed_work import ingest_completed_work
@@ -76,12 +77,52 @@ def retained_packet(tmp_path, *, source_commit_sha: str | None = VALID_SOURCE_SH
     return p
 
 
+def accepted_native_receipt(row_payload):
+    task_id = str((row_payload.get("packet") or {}).get("issue_identifier") or "")
+    candidate_sha = str(
+        (row_payload.get("evidence_retention") or {}).get("source_commit_sha") or ""
+    )
+    return {
+        "status": "accepted",
+        "reason": None,
+        "authoritative": True,
+        "receipt_id": "pnvr-" + "a" * 64,
+        "receipt_sha256": "b" * 64,
+        "repository_id": "repo-prismatic-engine",
+        "task_id": task_id,
+        "base_sha": VALID_BASE_SHA,
+        "base_tree_sha": "e" * 40,
+        "candidate_sha": candidate_sha,
+        "tree_sha": "f" * 40,
+        "checkout_clean_state": {
+            "status": "clean",
+            "observed_at": "2026-07-26T00:00:00+00:00",
+            "porcelain_sha256": "sha256:" + "0" * 64,
+        },
+        "merge_authorized": True,
+        "deploy_authorized": True,
+        "hosted_signals_required": False,
+    }
+
+
+@pytest.fixture(autouse=True)
+def _accepted_native_authority(monkeypatch):
+    monkeypatch.setattr(
+        "prismatic.agy_promotion_ledger._native_acceptance_for",
+        accepted_native_receipt,
+    )
+
+
 def seed(monkeypatch, tmp_path):
     db = tmp_path / "completed_work.db"
     executor_runs = tmp_path / "executor-runs.json"
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("PRISMATIC_AGY_COMPLETED_WORK_DB", str(db))
     monkeypatch.setenv("PRISMATIC_AGY_EXECUTOR_RUNS_STATE", str(executor_runs))
+    monkeypatch.setattr(
+        "prismatic.agy_promotion_ledger._native_acceptance_for",
+        accepted_native_receipt,
+    )
     row = ingest_completed_work(retained_packet(tmp_path), db_path=db)
     return row
 
