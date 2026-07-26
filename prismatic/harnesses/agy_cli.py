@@ -26,8 +26,8 @@ from prismatic.agy_cli import (
     AgyLaunchSpec,
     AgyWorkflowError,
     launch_tmux,
+    reconcile_terminal_run,
     validate_admission_receipt,
-    wait_tmux,
 )
 from prismatic.harnesses.base import AgentHarness, HarnessCapabilities, HarnessStatus
 
@@ -74,6 +74,16 @@ def _proc_start_ticks(pid: int) -> str | None:
         return raw[raw.rfind(")") + 2 :].split()[19]
     except (OSError, IndexError):
         return None
+
+
+def _private_lock_fd(path: Path) -> int:
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags, 0o600)
+    metadata = os.fstat(fd)
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+        os.close(fd)
+        raise AgyWorkflowError("AGY lock is not a private regular file")
+    return fd
 
 
 def _tail(path: Path, count: int) -> list[str]:
@@ -179,6 +189,13 @@ class AGYCLIHarness(AgentHarness):
 
     def _slot_is_active(self, path: Path) -> bool:
         try:
+            metadata = path.lstat()
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or stat.S_ISLNK(metadata.st_mode)
+                or metadata.st_nlink != 1
+            ):
+                return True
             slot = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return True
@@ -186,26 +203,53 @@ class AGYCLIHarness(AgentHarness):
         if not isinstance(existing_run, str) or not _RUN_ID_RE.fullmatch(existing_run):
             return True
         launch_dir = self._launch_dir(existing_run)
-        if (launch_dir / "process-result.json").is_file() or (
-            launch_dir / "cancel-receipt.json"
-        ).is_file():
-            return False
         record_path = launch_dir / "harness-run.json"
         receipt_path = launch_dir / "launch-receipt.json"
         identity = None
         for candidate in (record_path, receipt_path):
             try:
+                metadata = candidate.lstat()
+                if not stat.S_ISREG(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode):
+                    continue
                 identity = json.loads(candidate.read_text(encoding="utf-8"))
                 break
             except (OSError, json.JSONDecodeError):
                 continue
         if isinstance(identity, dict):
             try:
-                return _proc_start_ticks(int(identity["pane_pid"])) == str(
+                if _proc_start_ticks(int(identity["pane_pid"])) == str(
                     identity["pane_start_ticks"]
-                )
+                ):
+                    return True
             except (KeyError, TypeError, ValueError):
-                return True
+                pass
+        process_path = launch_dir / "process-result.json"
+        try:
+            metadata = process_path.lstat()
+            if stat.S_ISREG(metadata.st_mode) and not stat.S_ISLNK(metadata.st_mode):
+                process = json.loads(process_path.read_text(encoding="utf-8"))
+                if (
+                    process.get("workflow_version") == CANONICAL_AGY_WORKFLOW_VERSION
+                    and process.get("identifier") == existing_run
+                    and process.get("process_tree_cleanup_verified") is True
+                    and process.get("surviving_process_identities") == []
+                ):
+                    return False
+        except (OSError, json.JSONDecodeError):
+            pass
+        cancel_path = launch_dir / "cancel-receipt.json"
+        try:
+            metadata = cancel_path.lstat()
+            if stat.S_ISREG(metadata.st_mode) and not stat.S_ISLNK(metadata.st_mode):
+                cancelled = json.loads(cancel_path.read_text(encoding="utf-8"))
+                if (
+                    cancelled.get("run_id") == existing_run
+                    and cancelled.get("exact_pane_cleanup") is True
+                    and cancelled.get("exact_process_tree_cleanup") is True
+                ):
+                    return False
+        except (OSError, json.JSONDecodeError):
+            pass
         try:
             owner_pid = int(slot["owner_pid"])
             owner_start_ticks = str(slot["owner_start_ticks"])
@@ -219,7 +263,7 @@ class AGYCLIHarness(AgentHarness):
             raise AgyWorkflowError("AGY harness concurrent_runs must be 1..32")
         slots = self._runtime_dir() / "active-slots"
         slots.mkdir(mode=0o700, exist_ok=True)
-        lock_fd = os.open(slots / ".slot-lock", os.O_RDWR | os.O_CREAT, 0o600)
+        lock_fd = _private_lock_fd(slots / ".slot-lock")
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
             payload = {
@@ -246,10 +290,17 @@ class AGYCLIHarness(AgentHarness):
 
     @staticmethod
     def _release_slot(path: Path, run_id: str) -> None:
-        lock_fd = os.open(path.parent / ".slot-lock", os.O_RDWR | os.O_CREAT, 0o600)
+        lock_fd = _private_lock_fd(path.parent / ".slot-lock")
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
             try:
+                metadata = path.lstat()
+                if (
+                    not stat.S_ISREG(metadata.st_mode)
+                    or stat.S_ISLNK(metadata.st_mode)
+                    or metadata.st_nlink != 1
+                ):
+                    raise AgyWorkflowError("AGY slot is not a private regular file")
                 payload = json.loads(path.read_text(encoding="utf-8"))
                 if payload.get("run_id") == run_id:
                     path.unlink()
@@ -266,6 +317,9 @@ class AGYCLIHarness(AgentHarness):
         model = str(task.get("model") or self.models[0])
         if model not in self.models:
             raise AgyWorkflowError(f"AGY model is not configured: {model}")
+        producer_identity = str(task.get("producer_identity") or "agy-cli-producer")
+        if not _RUN_ID_RE.fullmatch(producer_identity):
+            raise AgyWorkflowError("AGY producer_identity contains unsafe characters")
         binary, binary_sha256 = self._binary()
         workspace = Path(str(task.get("workspace") or ""))
         task_file = Path(str(task.get("task_file") or ""))
@@ -301,50 +355,38 @@ class AGYCLIHarness(AgentHarness):
             return existing_run
         slot_path = self._claim_slot(run_id)
         try:
-            receipt = launch_tmux(
+            launch_tmux(
                 spec,
                 self._runtime_dir(),
                 admission_receipt=admission,
                 tmux=str(self._config.get("tmux", "/usr/bin/tmux")),
+                run_record={
+                    "task_ref": task.get("task_ref"),
+                    "artifact_root": str(artifact_root),
+                    "producer_identity": producer_identity,
+                },
+                active_slot_path=slot_path,
             )
         except Exception:
-            self._release_slot(slot_path, run_id)
-            try:
-                artifact_root.rmdir()
-            except OSError:
-                pass
+            launch_dir = self._launch_dir(run_id)
+            record_path = launch_dir / "harness-run.json"
+            if not record_path.is_file():
+                self._release_slot(slot_path, run_id)
+                try:
+                    artifact_root.rmdir()
+                except OSError:
+                    pass
+            else:
+                try:
+                    record = reconcile_terminal_run(launch_dir)
+                    if (
+                        record.get("state") == "review_pending"
+                        and not slot_path.exists()
+                    ):
+                        return run_id
+                except Exception:
+                    pass
             raise
-        record = {
-            "schema_version": "1.0",
-            "workflow_version": CANONICAL_AGY_WORKFLOW_VERSION,
-            "run_id": run_id,
-            "task_ref": task.get("task_ref"),
-            "status": HarnessStatus.RUNNING.value,
-            "started_at": receipt["started_at_unix"],
-            "completed_at": None,
-            "artifact_root": str(artifact_root),
-            "result_path": spec.result_path,
-            "plan_path": spec.plan_path,
-            "stdout_path": spec.stdout_path,
-            "stderr_path": spec.stderr_path,
-            "diagnostics_path": spec.diagnostics_path,
-            "activity_path": receipt["activity_path"],
-            "runtime_deadline": None,
-            "active_slot_path": str(slot_path),
-            "launch_receipt_path": str(
-                self._launch_dir(run_id) / "launch-receipt.json"
-            ),
-            "session": receipt["session"],
-            "pane_pid": receipt["pane_pid"],
-            "pane_start_ticks": receipt["pane_start_ticks"],
-            "task_sha256": receipt["task_sha256"],
-            "event_id": receipt["event_id"],
-            "attempt": receipt["attempt"],
-            "attempt_token": receipt["attempt_token"],
-            "verification_status": "pending",
-            "error": None,
-        }
-        _atomic_json(self._launch_dir(run_id) / "harness-run.json", record)
         return run_id
 
     def status(self, run_id: str) -> dict[str, Any]:
@@ -353,26 +395,15 @@ class AGYCLIHarness(AgentHarness):
         cancel_receipt = launch_dir / "cancel-receipt.json"
         process_result = launch_dir / "process-result.json"
         if cancel_receipt.is_file():
-            status = HarnessStatus.CANCELLED
-            error = None
-            completed_at = json.loads(cancel_receipt.read_text())["cancelled_at"]
+            record = reconcile_terminal_run(launch_dir)
+            status = HarnessStatus(record["status"])
+            error = record.get("error")
+            completed_at = record.get("completed_at")
         elif process_result.is_file():
-            wait_tmux(
-                Path(record["launch_receipt_path"]),
-                tmux=str(self._config.get("tmux", "/usr/bin/tmux")),
-            )
-            process = json.loads(process_result.read_text())
-            result = Path(record["result_path"])
-            plan = Path(record["plan_path"])
-            complete = (
-                process.get("exit_code") == 0
-                and result.is_file()
-                and CANONICAL_RESULT_MARKER in result.read_text(errors="replace")
-                and plan.is_file()
-            )
-            status = HarnessStatus.COMPLETED if complete else HarnessStatus.FAILED
-            error = None if complete else "producer exit/result contract failed"
-            completed_at = process.get("finished_at_unix")
+            record = reconcile_terminal_run(launch_dir)
+            status = HarnessStatus(record["status"])
+            error = record.get("error")
+            completed_at = record.get("completed_at")
         else:
             live = (
                 _proc_start_ticks(int(record["pane_pid"])) == record["pane_start_ticks"]
@@ -380,12 +411,6 @@ class AGYCLIHarness(AgentHarness):
             status = HarnessStatus.RUNNING if live else HarnessStatus.FAILED
             error = None if live else "tmux pane identity disappeared without result"
             completed_at = None
-        if status in {
-            HarnessStatus.COMPLETED,
-            HarnessStatus.FAILED,
-            HarnessStatus.CANCELLED,
-        }:
-            self._release_slot(Path(record["active_slot_path"]), run_id)
         activity_path = Path(record["activity_path"])
         activity = (
             json.loads(activity_path.read_text(encoding="utf-8"))
@@ -399,11 +424,14 @@ class AGYCLIHarness(AgentHarness):
         )
         return {
             "status": status.value,
+            "state": record.get("state", status.value),
             "started_at": record["started_at"],
             "completed_at": completed_at,
             "error": error,
-            "verification_status": "pending",
-            "producer_completed": status is HarnessStatus.COMPLETED,
+            "verification_status": record.get("verification_status", "pending"),
+            "review_status": record.get("review_status"),
+            "reviewed_by": record.get("reviewed_by"),
+            "producer_completed": bool(record.get("producer_completed")),
             "runtime_deadline": None,
             "activity": activity,
         }
@@ -448,8 +476,9 @@ class AGYCLIHarness(AgentHarness):
             time.sleep(0.05)
         else:
             raise AgyWorkflowError("AGY exact pane identity survived cancellation")
+        cancel_receipt_path = self._launch_dir(run_id) / "cancel-receipt.json"
         _atomic_json(
-            self._launch_dir(run_id) / "cancel-receipt.json",
+            cancel_receipt_path,
             {
                 "run_id": run_id,
                 "session": session,
@@ -460,7 +489,7 @@ class AGYCLIHarness(AgentHarness):
                 "operator_or_policy_action_required": True,
             },
         )
-        self._release_slot(Path(record["active_slot_path"]), run_id)
+        reconcile_terminal_run(self._launch_dir(run_id))
         return True
 
     def logs(self, run_id: str, tail: int = 100) -> list[str]:
