@@ -2,6 +2,48 @@ import importlib.util
 import json
 from pathlib import Path
 import sqlite3
+import subprocess
+
+
+def canonical_agy_result_text() -> str:
+    marker = "AGY_PACKET_FIXTURES_REPAIR_HINTS_OK"
+    changed = ["prismatic/agy_completed_work.py"]
+    repo = Path.cwd().resolve()
+
+    def git_value(*args: str) -> str:
+        return subprocess.check_output(
+            ["git", "-C", str(repo), *args], text=True
+        ).strip()
+
+    packet = {
+        "agent": "agy",
+        "issue_identifier": "GRO-3954",
+        "run_id": "launch-terminal-pass",
+        "source_branch": "feature/agy-gro-3954",
+        "source_path": str(repo),
+        "base_branch": "main",
+        "source_commit_sha": git_value("rev-parse", "HEAD^{commit}"),
+        "base_commit_sha": git_value("rev-parse", "main^{commit}"),
+        "changed_files": changed,
+        "result_summary": "canonical completed-work fixture",
+        "verification_lane": "ad-hoc targeted",
+        "result": "PASS",
+        "classification": "merge_ready",
+        "lane_scope": {"allowed_paths": ["prismatic/"], "touched_paths": changed},
+        "proof": {
+            "command": "python3 -m pytest -q tests",
+            "result": "PASS",
+            "log": "/tmp/agy.log",
+            "scope": "GRO-3954",
+            "ad_hoc_or_canonical": "ad-hoc targeted",
+            "non_claims": ["Prompt5 unlocked", "production_deployed"],
+            "marker": marker,
+        },
+        "artifacts": [{"path": "/tmp/agy.log"}],
+        "non_claims": ["Prompt5 unlocked", "production_deployed"],
+        "marker": marker,
+    }
+    return "```json\n" + json.dumps(packet, sort_keys=True) + "\n```\n"
 
 
 def load_module():
@@ -44,10 +86,10 @@ def test_terminal_agy_packet_is_reconciled_when_comment_writeback_was_missed(
     tmp_path, monkeypatch
 ):
     mod = load_module()
+    monkeypatch.setenv("HOME", "/home/ubuntu")
+    monkeypatch.setenv("PRISMATIC_STATE_DIR", str(tmp_path))
     log_path = tmp_path / "agy.log"
-    log_path.write_text(
-        "COMMAND=pytest tests/\nRESULT=PASS\nLOG=/tmp/agy.log\nSCOPE=GRO-3954\nAD_HOC_OR_CANONICAL=ad-hoc targeted\nNOT_CLAIMING=Prompt5 unlocked\nMARKER=AGY_PACKET_FIXTURES_REPAIR_HINTS_OK\n"
-    )
+    log_path.write_text(canonical_agy_result_text())
     db = tmp_path / "event_router.db"
     make_db(db, log_path)
     monkeypatch.setattr(mod, "LAUNCH_DB", db)
@@ -71,7 +113,8 @@ def test_terminal_agy_packet_is_reconciled_when_comment_writeback_was_missed(
         "AGY_PACKET_WRITTEN GRO-3954 AGY_PACKET_FIXTURES_REPAIR_HINTS_OK result=PASS"
     ]
     assert comments and comments[0][0] == "GRO-3954"
-    assert "RESULT=PASS" in comments[0][1]
+    assert '"result": "PASS"' in comments[0][1]
+    assert "COMPLETED_WORK_ID=agy-cw-" in comments[0][1]
     assert events and events[0][0][2] == "WORK_RESULT_PACKET"
 
 
@@ -79,8 +122,10 @@ def test_terminal_agy_packet_reconciliation_is_idempotent_when_marker_exists(
     tmp_path, monkeypatch
 ):
     mod = load_module()
+    monkeypatch.setenv("HOME", "/home/ubuntu")
+    monkeypatch.setenv("PRISMATIC_STATE_DIR", str(tmp_path))
     log_path = tmp_path / "agy.log"
-    log_path.write_text("RESULT=PASS\nMARKER=AGY_PACKET_FIXTURES_REPAIR_HINTS_OK\n")
+    log_path.write_text(canonical_agy_result_text())
     db = tmp_path / "event_router.db"
     make_db(db, log_path)
     monkeypatch.setattr(mod, "LAUNCH_DB", db)

@@ -31,6 +31,12 @@ DEFAULT_DB_NAME = "agy_completed_work.db"
 DEFAULT_EVIDENCE_DIR_NAME = "agy-completed-work-evidence"
 MAX_RETAINED_EVIDENCE_BYTES = 2 * 1024 * 1024
 AGY_PACKET_NORMALIZATION_MARKER = "AGY_RESULT_PACKET_NORMALIZED_OK"
+
+
+class AgyCompletedWorkConflictError(ValueError):
+    """Raised when a completed-work packet conflicts with an existing deterministic ID."""
+
+
 INTEGRATION_CLASSIFICATIONS = {
     "merge_ready": "pass_ready_for_review",
     "blocked_missing_proof": "invalid_repairable",
@@ -1289,6 +1295,12 @@ class CompletedWorkRow:
         }
 
 
+def _packets_equal(p1: Mapping[str, Any], p2: Mapping[str, Any]) -> bool:
+    return json.dumps(dict(p1), sort_keys=True, default=str) == json.dumps(
+        dict(p2), sort_keys=True, default=str
+    )
+
+
 class AgyCompletedWorkStore:
     """SQLite store for completed AGY packets and gate decisions."""
 
@@ -1443,7 +1455,7 @@ class AgyCompletedWorkStore:
             dirty_source=dirty_source,
             source_is_stale=source_is_stale,
             conflicts=conflicts or (),
-            trusted_agents=("agy", "fred", "jules"),
+            trusted_agents=("agy", "fred", "jules", "kai", "george"),
         )
         raw_proof = normalized_packet.get("proof")
         proof: Mapping[str, Any] = raw_proof if isinstance(raw_proof, Mapping) else {}
@@ -1453,42 +1465,59 @@ class AgyCompletedWorkStore:
             non_claims = tuple()
         now = datetime.now(timezone.utc).isoformat()
         row_id = completed_work_id(normalized_packet)
-        gate_payload = gate.as_dict()
-        classification = gate.classification.value
-        evidence_retention = retain_completed_work_evidence(
-            row_id=row_id,
-            created_at=now,
-            updated_at=now,
-            packet=normalized_packet,
-            gate_payload=gate_payload,
-            classification=classification,
-            packet_classification=packet_classification_for(normalized_packet),
-            integration_classification=integration_classification_for(
-                classification, gate.proof_result
-            ),
-            evidence_root=self.evidence_dir,
-        )
-        values = (
-            row_id,
-            now,
-            now,
-            gate.agent,
-            gate.source_branch,
-            gate.source_path,
-            gate.base_branch,
-            classification,
-            1 if gate.eligible_for_merge else 0,
-            1 if gate.requires_clean_rebuild else 0,
-            gate.proof_result,
-            gate.proof_marker,
-            AGY_COMPLETED_WORK_MARKER,
-            AGY_COMPLETED_WORK_INGESTION_MARKER,
-            json.dumps(normalized_packet, sort_keys=True),
-            json.dumps(gate_payload, sort_keys=True),
-            json.dumps(list(non_claims), sort_keys=True),
-            json.dumps(evidence_retention, sort_keys=True),
-        )
+
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            existing = conn.execute(
+                "SELECT * FROM agy_completed_work WHERE id = ?", (row_id,)
+            ).fetchone()
+            if existing is not None:
+                existing_row = row_from_sqlite(existing)
+                if _packets_equal(existing_row.packet, normalized_packet):
+                    conn.rollback()
+                    return existing_row
+                conn.rollback()
+                raise AgyCompletedWorkConflictError(
+                    f"deterministic completed-work ID conflict for '{row_id}': incoming packet differs from existing immutable row"
+                )
+
+            # Hold the writer lock through evidence retention and insertion so a
+            # conflicting packet cannot race to establish the shared bundle.
+            gate_payload = gate.as_dict()
+            classification = gate.classification.value
+            evidence_retention = retain_completed_work_evidence(
+                row_id=row_id,
+                created_at=now,
+                updated_at=now,
+                packet=normalized_packet,
+                gate_payload=gate_payload,
+                classification=classification,
+                packet_classification=packet_classification_for(normalized_packet),
+                integration_classification=integration_classification_for(
+                    classification, gate.proof_result
+                ),
+                evidence_root=self.evidence_dir,
+            )
+            values = (
+                row_id,
+                now,
+                now,
+                gate.agent,
+                gate.source_branch,
+                gate.source_path,
+                gate.base_branch,
+                classification,
+                1 if gate.eligible_for_merge else 0,
+                1 if gate.requires_clean_rebuild else 0,
+                gate.proof_result,
+                gate.proof_marker,
+                AGY_COMPLETED_WORK_MARKER,
+                AGY_COMPLETED_WORK_INGESTION_MARKER,
+                json.dumps(normalized_packet, sort_keys=True),
+                json.dumps(gate_payload, sort_keys=True),
+                json.dumps(list(non_claims), sort_keys=True),
+                json.dumps(evidence_retention, sort_keys=True),
+            )
             conn.execute(
                 """
                 INSERT INTO agy_completed_work (
@@ -1498,23 +1527,6 @@ class AgyCompletedWorkStore:
                     gate_marker, ingestion_marker, packet_json, gate_json,
                     non_claims_json, evidence_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    updated_at = excluded.updated_at,
-                    agent = excluded.agent,
-                    source_branch = excluded.source_branch,
-                    source_path = excluded.source_path,
-                    base_branch = excluded.base_branch,
-                    classification = excluded.classification,
-                    eligible_for_merge = excluded.eligible_for_merge,
-                    requires_clean_rebuild = excluded.requires_clean_rebuild,
-                    proof_result = excluded.proof_result,
-                    proof_marker = excluded.proof_marker,
-                    gate_marker = excluded.gate_marker,
-                    ingestion_marker = excluded.ingestion_marker,
-                    packet_json = excluded.packet_json,
-                    gate_json = excluded.gate_json,
-                    non_claims_json = excluded.non_claims_json,
-                    evidence_json = agy_completed_work.evidence_json
                 """,
                 values,
             )
