@@ -3138,6 +3138,67 @@ async def create_task_admission(request: Request) -> dict[str, Any] | JSONRespon
     )
 
 
+@app.post(
+    "/api/dashboard/task-admissions/{task_id}/terminal-reconciliation",
+    response_model=None,
+)
+async def reconcile_terminal_task_admission(
+    task_id: str, request: Request
+) -> dict[str, Any] | JSONResponse:
+    """Terminalize a failed admission launch without synthesizing success."""
+
+    from prismatic.task_admission import TaskAdmissionError, TaskAdmissionStore
+    from prismatic.task_admission_consumer import (
+        MAX_TERMINAL_RECONCILIATION_BODY_BYTES,
+        TaskAdmissionConsumer,
+        parse_terminal_reconciliation_json,
+    )
+
+    if (
+        request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        != "application/json"
+    ):
+        return JSONResponse(
+            {"ok": False, "error": "content_type_required"}, status_code=415
+        )
+    try:
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                declared_size = int(content_length)
+            except ValueError as exc:
+                raise TaskAdmissionError("invalid_body_size", 413) from exc
+            if (
+                declared_size < 0
+                or declared_size > MAX_TERMINAL_RECONCILIATION_BODY_BYTES
+            ):
+                raise TaskAdmissionError("invalid_body_size", 413)
+        body = bytearray()
+        async for chunk in request.stream():
+            if len(body) + len(chunk) > MAX_TERMINAL_RECONCILIATION_BODY_BYTES:
+                raise TaskAdmissionError("invalid_body_size", 413)
+            body.extend(chunk)
+        payload = parse_terminal_reconciliation_json(bytes(body))
+        if payload["task_id"] != task_id:
+            raise TaskAdmissionError("terminal_reconciliation_task_id_mismatch", 409)
+        admission_store = TaskAdmissionStore()
+        if admission_store.policy_path is None:
+            raise TaskAdmissionError("terminal_reconciliation_policy_unavailable", 503)
+        result = TaskAdmissionConsumer(
+            db_path=admission_store.db_path,
+            policy_path=admission_store.policy_path,
+            identity=f"terminal-reconcile:{request.state.control_actor}",
+        ).terminal_reconcile(payload)
+    except Exception as exc:
+        return _task_admission_error(exc)
+    return {
+        "ok": True,
+        "replayed": result.replayed,
+        "launch_performed": False,
+        "record": result.record,
+    }
+
+
 @app.get("/api/dashboard/task-admissions", response_model=None)
 async def list_task_admissions(
     limit: int = Query(50, ge=1, le=200),

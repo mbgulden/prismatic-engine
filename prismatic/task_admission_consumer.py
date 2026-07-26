@@ -13,6 +13,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import selectors
 import signal
 import sqlite3
@@ -28,6 +29,7 @@ from pathlib import Path
 from typing import Any
 
 from prismatic.task_admission import (
+    TaskAdmissionError,
     _assert_database_family_private,
     _canonical_json,
     _default_git_runner,
@@ -35,11 +37,34 @@ from prismatic.task_admission import (
     _load_policy,
     _prepare_database_file,
     _read_policy_bytes,
+    _reject_duplicate_pairs,
     _validate_schema,
 )
 
 _TOPIC = "dashboard.task.admitted.v1"
 _MAX_LAUNCHER_OUTPUT = 64 * 1024
+MAX_TERMINAL_RECONCILIATION_BODY_BYTES = 8 * 1024
+_TERMINAL_RECONCILIATION_KEYS = {
+    "task_id",
+    "expected_event_id",
+    "expected_claim_id",
+    "expected_current_state",
+    "evidence_type",
+    "candidate_sha",
+    "candidate_tree",
+    "merge_sha",
+    "merge_tree",
+    "evidence_sha256",
+    "reason_code",
+}
+_TASK_ID_RE = re.compile(r"^[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+$")
+_EVENT_ID_RE = re.compile(r"^task-admission:[0-9a-f]{64}$")
+_CLAIM_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+_GIT_OBJECT_RE = re.compile(r"^[0-9a-f]{40}$")
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_RECONCILIATION_EVIDENCE_TYPE = "reviewed_merge_completion"
+_RECONCILIATION_REASON = "completed_via_reviewed_bounded_repair"
+_RECONCILIATION_ERROR_CODE = "externally_completed_reviewed_repair"
 
 
 class ConsumerError(RuntimeError):
@@ -106,7 +131,50 @@ class ConsumerResult:
     launch_id: str | None = None
 
 
+@dataclass(frozen=True)
+class TerminalReconciliationResult:
+    replayed: bool
+    record: dict[str, Any]
+
+
 Launcher = Callable[[LaunchRequest], Mapping[str, Any]]
+
+
+def parse_terminal_reconciliation_json(raw: bytes) -> dict[str, str]:
+    """Parse one bounded terminal-reconciliation request fail closed."""
+
+    if not raw or len(raw) > MAX_TERMINAL_RECONCILIATION_BODY_BYTES:
+        raise TaskAdmissionError("invalid_body_size", 413 if raw else 422)
+    try:
+        payload = json.loads(
+            raw.decode("utf-8"), object_pairs_hook=_reject_duplicate_pairs
+        )
+    except TaskAdmissionError:
+        raise
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise TaskAdmissionError("invalid_json", 422) from exc
+    if not isinstance(payload, dict) or set(payload) != _TERMINAL_RECONCILIATION_KEYS:
+        raise TaskAdmissionError("terminal_reconciliation_shape_invalid", 422)
+    if any(not isinstance(value, str) for value in payload.values()):
+        raise TaskAdmissionError("terminal_reconciliation_shape_invalid", 422)
+    if _TASK_ID_RE.fullmatch(payload["task_id"]) is None:
+        raise TaskAdmissionError("terminal_reconciliation_task_id_invalid", 422)
+    if _EVENT_ID_RE.fullmatch(payload["expected_event_id"]) is None:
+        raise TaskAdmissionError("terminal_reconciliation_event_id_invalid", 422)
+    if _CLAIM_ID_RE.fullmatch(payload["expected_claim_id"]) is None:
+        raise TaskAdmissionError("terminal_reconciliation_claim_id_invalid", 422)
+    if payload["expected_current_state"] != "retryable_failed":
+        raise TaskAdmissionError("terminal_reconciliation_state_invalid", 422)
+    if payload["evidence_type"] != _RECONCILIATION_EVIDENCE_TYPE:
+        raise TaskAdmissionError("terminal_reconciliation_evidence_type_invalid", 422)
+    if payload["reason_code"] != _RECONCILIATION_REASON:
+        raise TaskAdmissionError("terminal_reconciliation_reason_invalid", 422)
+    for key in ("candidate_sha", "candidate_tree", "merge_sha", "merge_tree"):
+        if _GIT_OBJECT_RE.fullmatch(payload[key]) is None:
+            raise TaskAdmissionError("terminal_reconciliation_git_object_invalid", 422)
+    if _SHA256_RE.fullmatch(payload["evidence_sha256"]) is None:
+        raise TaskAdmissionError("terminal_reconciliation_evidence_digest_invalid", 422)
+    return dict(payload)
 
 
 def _utc(value: datetime) -> datetime:
@@ -227,6 +295,193 @@ class TaskAdmissionConsumer:
                 _timestamp(self.now()),
             ),
         )
+
+    def terminal_reconcile(
+        self, payload: Mapping[str, Any]
+    ) -> TerminalReconciliationResult:
+        """Terminalize one failed admission launch without claiming producer success."""
+
+        try:
+            evidence = parse_terminal_reconciliation_json(
+                _canonical_json(dict(payload)).encode()
+            )
+        except TaskAdmissionError:
+            raise
+        except (TypeError, ValueError) as exc:
+            raise TaskAdmissionError(
+                "terminal_reconciliation_shape_invalid", 422
+            ) from exc
+        detail_sha256 = hashlib.sha256(_canonical_json(evidence).encode()).hexdigest()
+        task_id = evidence["task_id"]
+        event_id = evidence["expected_event_id"]
+        claim_id = evidence["expected_claim_id"]
+        now = _utc(self.now())
+        now_text = _timestamp(now)
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            admission = connection.execute(
+                "SELECT task_id,event_id FROM task_admissions WHERE task_id=?",
+                (task_id,),
+            ).fetchone()
+            outbox = connection.execute(
+                "SELECT task_id,status FROM task_admission_outbox WHERE event_id=?",
+                (event_id,),
+            ).fetchone()
+            claim = connection.execute(
+                "SELECT task_id,claim_id,state,attempt_count,lease_expires_at,"
+                "last_error_code,launch_receipt_json FROM task_admission_consumer_claims "
+                "WHERE event_id=?",
+                (event_id,),
+            ).fetchone()
+            if admission is None or outbox is None or claim is None:
+                raise TaskAdmissionError("terminal_reconciliation_not_found", 404)
+            if (
+                admission["event_id"] != event_id
+                or outbox["task_id"] != task_id
+                or claim["task_id"] != task_id
+                or claim["claim_id"] != claim_id
+            ):
+                raise TaskAdmissionError("terminal_reconciliation_tuple_mismatch", 409)
+
+            replay_active_lease = connection.execute(
+                "SELECT 1 FROM task_admission_writer_lease LIMIT 1"
+            ).fetchone()
+            replay_completion = connection.execute(
+                "SELECT 1 FROM task_admission_lifecycle "
+                "WHERE event_id=? AND event='launched' LIMIT 1",
+                (event_id,),
+            ).fetchone()
+            prior = connection.execute(
+                "SELECT detail_sha256 FROM task_admission_lifecycle "
+                "WHERE event_id=? AND event='terminal_reconciled' "
+                "ORDER BY lifecycle_id",
+                (event_id,),
+            ).fetchall()
+            if prior:
+                exact_replay = (
+                    len(prior) == 1
+                    and hmac.compare_digest(
+                        str(prior[0]["detail_sha256"]), detail_sha256
+                    )
+                    and outbox["status"] == "failed"
+                    and claim["state"] == "terminal_failed"
+                    and claim["last_error_code"] == _RECONCILIATION_ERROR_CODE
+                    and claim["launch_receipt_json"] is None
+                    and replay_active_lease is None
+                    and replay_completion is None
+                )
+                if not exact_replay:
+                    raise TaskAdmissionError("terminal_reconciliation_conflict", 409)
+                connection.rollback()
+                return TerminalReconciliationResult(
+                    replayed=True,
+                    record={
+                        "task_id": task_id,
+                        "event_id": event_id,
+                        "claim_id": claim_id,
+                        "outbox_status": "failed",
+                        "claim_state": "terminal_failed",
+                        "error_code": _RECONCILIATION_ERROR_CODE,
+                        "launch_receipt": None,
+                        "detail_sha256": detail_sha256,
+                    },
+                )
+
+            if outbox["status"] not in {"pending", "claimed"}:
+                raise TaskAdmissionError(
+                    "terminal_reconciliation_outbox_state_conflict", 409
+                )
+            if claim["state"] != evidence["expected_current_state"]:
+                raise TaskAdmissionError(
+                    "terminal_reconciliation_claim_state_conflict", 409
+                )
+            if claim["launch_receipt_json"] is not None:
+                raise TaskAdmissionError(
+                    "terminal_reconciliation_launch_receipt_present", 409
+                )
+            active_lease = connection.execute(
+                "SELECT 1 FROM task_admission_writer_lease LIMIT 1"
+            ).fetchone()
+            if active_lease is not None:
+                raise TaskAdmissionError(
+                    "terminal_reconciliation_writer_lease_active", 409
+                )
+            if outbox["status"] == "claimed":
+                try:
+                    claim_lease_expires = _parse_timestamp(
+                        str(claim["lease_expires_at"])
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise TaskAdmissionError(
+                        "terminal_reconciliation_claim_lease_invalid", 409
+                    ) from exc
+                if claim_lease_expires > now:
+                    raise TaskAdmissionError(
+                        "terminal_reconciliation_claim_lease_active", 409
+                    )
+            completion = connection.execute(
+                "SELECT 1 FROM task_admission_lifecycle "
+                "WHERE event_id=? AND event='launched' LIMIT 1",
+                (event_id,),
+            ).fetchone()
+            if completion is not None:
+                raise TaskAdmissionError(
+                    "terminal_reconciliation_completion_conflict", 409
+                )
+
+            outbox_update = connection.execute(
+                "UPDATE task_admission_outbox SET status='failed',claimed_at=NULL,"
+                "processed_at=NULL WHERE event_id=? AND status=?",
+                (event_id, outbox["status"]),
+            )
+            claim_update = connection.execute(
+                "UPDATE task_admission_consumer_claims SET state='terminal_failed',"
+                "last_error_code=?,launch_receipt_json=NULL,updated_at=? "
+                "WHERE event_id=? AND claim_id=? AND state='retryable_failed'",
+                (_RECONCILIATION_ERROR_CODE, now_text, event_id, claim_id),
+            )
+            if outbox_update.rowcount != 1 or claim_update.rowcount != 1:
+                raise TaskAdmissionError(
+                    "terminal_reconciliation_concurrent_change", 409
+                )
+            claim_record = Claim(
+                event_id=event_id,
+                task_id=task_id,
+                claim_id=claim_id,
+                attempt=int(claim["attempt_count"]),
+                recovered=False,
+            )
+            self._append_lifecycle(
+                connection,
+                claim_record,
+                "terminal_reconciled",
+                detail=evidence,
+            )
+            connection.commit()
+            return TerminalReconciliationResult(
+                replayed=False,
+                record={
+                    "task_id": task_id,
+                    "event_id": event_id,
+                    "claim_id": claim_id,
+                    "outbox_status": "failed",
+                    "claim_state": "terminal_failed",
+                    "error_code": _RECONCILIATION_ERROR_CODE,
+                    "launch_receipt": None,
+                    "detail_sha256": detail_sha256,
+                },
+            )
+        except TaskAdmissionError:
+            connection.rollback()
+            raise
+        except sqlite3.Error as exc:
+            connection.rollback()
+            raise TaskAdmissionError(
+                "terminal_reconciliation_storage_failed", 503
+            ) from exc
+        finally:
+            connection.close()
 
     def claim_one(self) -> Claim | None:
         now = _utc(self.now())
