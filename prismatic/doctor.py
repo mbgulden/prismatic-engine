@@ -348,6 +348,141 @@ def _probe_capabilities(names: list[str] | None = None) -> list[CapabilityReport
     return reports
 
 
+def _probe_canonical_consumer(package_root: Path) -> tuple[bool, str]:
+    """Inspect config/runtime-services.json for canonical consumer declaration."""
+    manifest_path = package_root.parent / "config" / "runtime-services.json"
+    if not manifest_path.is_file():
+        return (
+            False,
+            f"runtime service inventory missing at {manifest_path}",
+        )
+    try:
+        import json
+
+        with manifest_path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as exc:
+        return (
+            False,
+            f"runtime service inventory invalid JSON: {exc}",
+        )
+    if (
+        not isinstance(data, dict)
+        or "components" not in data
+        or not isinstance(data["components"], list)
+    ):
+        return (
+            False,
+            "runtime service inventory structure invalid",
+        )
+    consumer_comp = next(
+        (
+            c
+            for c in data["components"]
+            if isinstance(c, dict) and c.get("id") == "consumer"
+        ),
+        None,
+    )
+    if consumer_comp is None:
+        return (
+            False,
+            "consumer component missing from runtime service inventory",
+        )
+    module_path = consumer_comp.get("module_path", "")
+    state_paths = consumer_comp.get("state_paths", [])
+    if (
+        "dispatch_consumer_v3" in module_path
+        or module_path != "prismatic.task_admission_consumer"
+    ):
+        return (
+            False,
+            f"declared consumer points to non-canonical module: {module_path!r}",
+        )
+    if any("dispatch_consumer.rowid" in str(sp) for sp in state_paths):
+        return (
+            False,
+            "declared consumer state_paths contains legacy cursor file dispatch_consumer.rowid",
+        )
+    return (
+        True,
+        "cap-1 task-admission one-shot consumer declared as canonical runtime service",
+    )
+
+
+def _probe_legacy_consumer_service() -> tuple[bool, str]:
+    """Inspect live prismatic-consumer.service systemd state fail-closed."""
+    try:
+        res_active = subprocess.run(
+            ["systemctl", "is-active", "prismatic-consumer.service"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        res_enabled = subprocess.run(
+            ["systemctl", "is-enabled", "prismatic-consumer.service"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except Exception as exc:
+        return (
+            False,
+            f"systemd inspection support unavailable: unable to inspect prismatic-consumer.service ({exc})",
+        )
+
+    active_out = res_active.stdout.strip().lower()
+    enabled_out = res_enabled.stdout.strip().lower()
+    combined_err = (res_active.stderr + res_enabled.stderr).lower()
+
+    if "not-found" in active_out and "not-found" in enabled_out:
+        return (
+            True,
+            "legacy prismatic-consumer.service is safely inactive and disabled (unit not found)",
+        )
+
+    if (
+        "system has not been booted with systemd" in combined_err
+        or "command not found" in combined_err
+    ):
+        return (
+            False,
+            "systemd inspection support unavailable: systemd not active or systemctl missing",
+        )
+
+    if active_out == "active" or enabled_out == "enabled":
+        return (
+            False,
+            f"legacy prismatic-consumer.service is forbidden active/enabled (is-active: {active_out or 'unknown'}, is-enabled: {enabled_out or 'unknown'})",
+        )
+
+    if active_out in ("inactive", "failed", "unknown") and enabled_out in (
+        "disabled",
+        "masked",
+        "not-found",
+        "unknown",
+    ):
+        return (
+            True,
+            "legacy prismatic-consumer.service is safely inactive and disabled",
+        )
+
+    if (
+        res_active.returncode != 0
+        and res_enabled.returncode != 0
+        and not active_out
+        and not enabled_out
+    ):
+        return (
+            False,
+            f"systemd inspection support unavailable: systemctl returned error ({combined_err.strip() or 'failed'})",
+        )
+
+    return (
+        True,
+        "legacy prismatic-consumer.service is safely inactive and disabled",
+    )
+
+
 def _probe_native_components() -> list[CapabilityReport]:
     """Probe required provider-neutral control-plane contracts without writes."""
 
@@ -362,6 +497,12 @@ def _probe_native_components() -> list[CapabilityReport]:
     revocation_state_ready = not receipt_db.exists() or (
         revocation_store.is_file() and not revocation_store.is_symlink()
     )
+
+    canonical_consumer_ok, canonical_consumer_msg = _probe_canonical_consumer(
+        package_root
+    )
+    legacy_service_ok, legacy_service_msg = _probe_legacy_consumer_service()
+
     checks = [
         (
             "native.receipt_store",
@@ -400,12 +541,27 @@ def _probe_native_components() -> list[CapabilityReport]:
             (package_root / "gateway" / "server.py").is_file(),
             "production health API contract; live health not claimed",
         ),
+        (
+            "native.canonical_consumer",
+            canonical_consumer_ok,
+            canonical_consumer_msg,
+        ),
+        (
+            "native.legacy_consumer_service",
+            legacy_service_ok,
+            legacy_service_msg,
+        ),
     ]
     return [
         CapabilityReport(
             name=name,
             status="ok" if available else "error",
-            message=message if available else f"missing required {message}",
+            message=message
+            if available
+            or message.startswith(
+                ("declared", "legacy", "systemd", "consumer", "runtime")
+            )
+            else f"missing required {message}",
             required=True,
             role="native_required",
         )

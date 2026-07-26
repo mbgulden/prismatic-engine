@@ -429,8 +429,8 @@ def test_manifest_binds_known_operational_source_entrypoints() -> None:
     document = manifest()
     expected = {
         "consumer": (
-            "prismatic.gateway.event_handlers.dispatch_consumer_v3",
-            "prismatic/gateway/event_handlers/dispatch_consumer_v3.py",
+            "prismatic.task_admission_consumer",
+            "prismatic/task_admission_consumer.py",
         ),
         "watchdog": (
             "" + HOME + "/.prismatic/releases/{release_id}/scripts/watchdog.sh",
@@ -442,6 +442,15 @@ def test_manifest_binds_known_operational_source_entrypoints() -> None:
         item = component(document, component_id)
         assert item["module_path"] == module_path
         assert item["source_path"].endswith(source_suffix)
+
+
+def test_consumer_runtime_inventory_rejects_legacy_poller_and_cursor() -> None:
+    document = manifest()
+    item = component(document, "consumer")
+    assert item["module_path"] == "prismatic.task_admission_consumer"
+    assert "dispatch_consumer_v3" not in item["module_path"]
+    assert "dispatch_consumer_v3.py" not in item["source_path"]
+    assert all("dispatch_consumer.rowid" not in state for state in item["state_paths"])
 
 
 @pytest.mark.parametrize("component_id", ["gateway", "consumer", "merge-daemon"])

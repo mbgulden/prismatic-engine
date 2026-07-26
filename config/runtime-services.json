@@ -38,15 +38,16 @@
       "release_path_template": "/home/ubuntu/.prismatic/releases/{release_id}",
       "virtualenv_path_template": "/home/ubuntu/.prismatic/releases/{release_id}/.venv",
       "executable_path": "/home/ubuntu/.prismatic/releases/{release_id}/.venv/bin/python3",
-      "module_path": "prismatic.gateway.event_handlers.dispatch_consumer_v3",
-      "source_path": "/home/ubuntu/.prismatic/releases/{release_id}/prismatic/gateway/event_handlers/dispatch_consumer_v3.py",
+      "module_path": "prismatic.task_admission_consumer",
+      "source_path": "/home/ubuntu/.prismatic/releases/{release_id}/prismatic/task_admission_consumer.py",
       "working_directory": "/home/ubuntu/.prismatic/releases/{release_id}",
       "import_paths": [
         "/home/ubuntu/.prismatic/releases/{release_id}"
       ],
       "state_paths": [
         "/home/ubuntu/.prismatic/bus/event_log.sqlite",
-        "/home/ubuntu/.prismatic/bus/dispatch_consumer.rowid"
+        "/home/ubuntu/.prismatic/config/task_admission_policy.json",
+        "/home/ubuntu/.prismatic/config/task_admission_launchers.json"
       ],
       "environment_files": [
         "/home/ubuntu/.prismatic/env.d/consumer.env"

@@ -433,5 +433,81 @@ def test_native_revocation_state_missing_is_required_error(tmp_path, monkeypatch
     assert _compute_verdict([], [], set(), reports) == "ERROR"
 
 
+def test_canonical_consumer_probe_ok_on_valid_inventory():
+    reports = _probe_native_components()
+    consumer_probe = next(
+        item for item in reports if item.name == "native.canonical_consumer"
+    )
+    assert consumer_probe.required is True
+    assert consumer_probe.status == "ok"
+    assert "cap-1 task-admission" in consumer_probe.message
+
+
+def test_canonical_consumer_probe_error_when_legacy_declared(tmp_path, monkeypatch):
+    import prismatic.doctor as doctor_mod
+
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    bad_json = config_dir / "runtime-services.json"
+    bad_json.write_text(
+        '{"schema_version": 1, "components": [{'
+        '"id": "consumer", "module_path": "prismatic.gateway.event_handlers.dispatch_consumer_v3",'
+        '"state_paths": ["/home/ubuntu/.prismatic/bus/dispatch_consumer.rowid"]'
+        "}]}",
+        encoding="utf-8",
+    )
+
+    fake_pkg = tmp_path / "prismatic"
+    fake_pkg.mkdir()
+    ok, msg = doctor_mod._probe_canonical_consumer(fake_pkg)
+    assert ok is False
+    assert "non-canonical module" in msg
+
+
+def test_legacy_consumer_service_probe_error_when_active_or_enabled(monkeypatch):
+    import subprocess
+    import prismatic.doctor as doctor_mod
+
+    def mock_run(cmd, **kwargs):
+        if "is-active" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, stdout="active\n", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="disabled\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+    ok, msg = doctor_mod._probe_legacy_consumer_service()
+    assert ok is False
+    assert "forbidden active/enabled" in msg
+
+
+def test_legacy_consumer_service_probe_ok_when_inactive_and_disabled(monkeypatch):
+    import subprocess
+    import prismatic.doctor as doctor_mod
+
+    def mock_run(cmd, **kwargs):
+        if "is-active" in cmd:
+            return subprocess.CompletedProcess(cmd, 3, stdout="inactive\n", stderr="")
+        return subprocess.CompletedProcess(cmd, 1, stdout="disabled\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+    ok, msg = doctor_mod._probe_legacy_consumer_service()
+    assert ok is True
+    assert "safely inactive and disabled" in msg
+
+
+def test_legacy_consumer_service_probe_error_when_systemd_inspection_unavailable(
+    monkeypatch,
+):
+    import subprocess
+    import prismatic.doctor as doctor_mod
+
+    def mock_run_fail(cmd, **kwargs):
+        raise OSError("systemctl binary missing")
+
+    monkeypatch.setattr(subprocess, "run", mock_run_fail)
+    ok, msg = doctor_mod._probe_legacy_consumer_service()
+    assert ok is False
+    assert "systemd inspection support unavailable" in msg
+
+
 if __name__ == "__main__":
     unittest.main()
