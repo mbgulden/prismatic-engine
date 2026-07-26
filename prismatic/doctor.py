@@ -403,8 +403,6 @@ def _probe_canonical_consumer(package_root: Path) -> tuple[bool, str]:
         "state_paths": [
             "/home/ubuntu/.prismatic/bus/event_log.sqlite",
             "/home/ubuntu/.prismatic/policy/task-admission.json",
-            "/home/ubuntu/.prismatic/secrets/task-admission-launchers-0efed0ae.json",
-            "/home/ubuntu/.prismatic/secrets/task-admission-agy-runtime-0efed0ae.json",
         ],
         "environment_files": ["/home/ubuntu/.prismatic/env.d/task_admission.env"],
     }
