@@ -212,6 +212,10 @@ def test_successful_one_shot_claim_revalidate_launch_and_lifecycle(
     request = launched[0]
     assert request.writer_cap == 1
     assert request.event_id == record["event_id"]
+    assert request.claim_id == result.claim_id
+    assert request.attempt == result.attempt == 1
+    assert request.as_dict()["claim_id"] == result.claim_id
+    assert request.as_dict()["attempt"] == 1
     assert consumer.run_once(launcher) is None
 
     connection = sqlite3.connect(db)
@@ -493,6 +497,42 @@ def test_launcher_failure_requeues_and_retry_is_idempotent(tmp_path: Path) -> No
     result = consumer.run_once(repaired)
     assert result is not None and result.attempt == 2
     assert seen == [record["event_id"]]
+
+
+def test_third_launcher_failure_terminalizes_instead_of_poison_requeue(
+    tmp_path: Path,
+) -> None:
+    clock, _, _, policy, db, _ = _fixture(tmp_path)
+    consumer = _consumer(clock, policy, db)
+    attempts = []
+
+    def broken(request):
+        attempts.append(request.attempt)
+        raise LauncherError("temporary launcher failure")
+
+    for expected in (1, 2, 3):
+        with pytest.raises(LauncherError):
+            consumer.run_once(broken)
+        connection = sqlite3.connect(db)
+        status, state = connection.execute(
+            "select o.status,c.state from task_admission_outbox o "
+            "join task_admission_consumer_claims c using(event_id)"
+        ).fetchone()
+        connection.close()
+        assert status == ("failed" if expected == 3 else "pending")
+        assert state == ("terminal_failed" if expected == 3 else "retryable_failed")
+
+    assert attempts == [1, 2, 3]
+    connection = sqlite3.connect(db)
+    lifecycle = [
+        row[0]
+        for row in connection.execute(
+            "select event from task_admission_lifecycle order by lifecycle_id"
+        )
+    ]
+    connection.close()
+    assert lifecycle[-1] == "launch_failed"
+    assert consumer.run_once(broken) is None
 
 
 def test_launcher_receipt_must_bind_stable_event_id(tmp_path: Path) -> None:

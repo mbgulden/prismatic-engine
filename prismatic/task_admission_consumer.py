@@ -43,6 +43,7 @@ from prismatic.task_admission import (
 
 _TOPIC = "dashboard.task.admitted.v1"
 _MAX_LAUNCHER_OUTPUT = 64 * 1024
+_MAX_LAUNCH_ATTEMPTS = 3
 MAX_TERMINAL_RECONCILIATION_BODY_BYTES = 8 * 1024
 _TERMINAL_RECONCILIATION_KEYS = {
     "task_id",
@@ -95,6 +96,8 @@ class Claim:
 @dataclass(frozen=True)
 class LaunchRequest:
     event_id: str
+    claim_id: str
+    attempt: int
     task_id: str
     producer_identity: str
     base_commit: str
@@ -109,6 +112,8 @@ class LaunchRequest:
         return {
             "event_id": self.event_id,
             "idempotency_key": self.event_id,
+            "claim_id": self.claim_id,
+            "attempt": self.attempt,
             "task_id": self.task_id,
             "producer_identity": self.producer_identity,
             "base_commit": self.base_commit,
@@ -671,6 +676,8 @@ class TaskAdmissionConsumer:
             raise AdmissionRevalidationError("worktree_changed_during_revalidation")
         return LaunchRequest(
             event_id=claim.event_id,
+            claim_id=claim.claim_id,
+            attempt=claim.attempt,
             task_id=claim.task_id,
             producer_identity=payload["producer_identity"],
             base_commit=payload["base_commit"],
@@ -853,7 +860,11 @@ class TaskAdmissionConsumer:
             self._append_lifecycle(
                 connection,
                 claim,
-                "validation_failed" if terminal else "launch_failed",
+                (
+                    "validation_failed"
+                    if isinstance(exc, AdmissionRevalidationError)
+                    else "launch_failed"
+                ),
                 detail={"error_code": code},
             )
             connection.execute(
@@ -915,7 +926,7 @@ class TaskAdmissionConsumer:
             self._fail(claim, exc, terminal=True)
             raise
         except Exception as exc:
-            self._fail(claim, exc, terminal=False)
+            self._fail(claim, exc, terminal=claim.attempt >= _MAX_LAUNCH_ATTEMPTS)
             raise
 
 
