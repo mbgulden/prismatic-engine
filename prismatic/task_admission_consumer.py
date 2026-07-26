@@ -344,6 +344,14 @@ class TaskAdmissionConsumer:
             ):
                 raise TaskAdmissionError("terminal_reconciliation_tuple_mismatch", 409)
 
+            replay_active_lease = connection.execute(
+                "SELECT 1 FROM task_admission_writer_lease LIMIT 1"
+            ).fetchone()
+            replay_completion = connection.execute(
+                "SELECT 1 FROM task_admission_lifecycle "
+                "WHERE event_id=? AND event='launched' LIMIT 1",
+                (event_id,),
+            ).fetchone()
             prior = connection.execute(
                 "SELECT detail_sha256 FROM task_admission_lifecycle "
                 "WHERE event_id=? AND event='terminal_reconciled' "
@@ -360,6 +368,8 @@ class TaskAdmissionConsumer:
                     and claim["state"] == "terminal_failed"
                     and claim["last_error_code"] == _RECONCILIATION_ERROR_CODE
                     and claim["launch_receipt_json"] is None
+                    and replay_active_lease is None
+                    and replay_completion is None
                 )
                 if not exact_replay:
                     raise TaskAdmissionError("terminal_reconciliation_conflict", 409)

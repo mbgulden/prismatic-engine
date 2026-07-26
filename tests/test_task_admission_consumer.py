@@ -826,6 +826,96 @@ def test_terminal_reconciliation_conflicting_replay_rolls_back(tmp_path: Path) -
     connection.close()
 
 
+def test_terminal_reconciliation_exact_replay_rejects_active_writer_lease(
+    tmp_path: Path,
+) -> None:
+    clock, _, _, policy, db, _ = _fixture(tmp_path)
+    consumer = _consumer(clock, policy, db)
+    event_id, claim_id = _retryable_claim(consumer, db)
+    payload = _reconciliation("TST-1", event_id, claim_id)
+    consumer.terminal_reconcile(payload)
+    connection = sqlite3.connect(db)
+    timestamp = "2026-07-24T21:00:00Z"
+    connection.execute(
+        "insert into task_admission_writer_lease "
+        "(slot,event_id,claim_id,lease_expires_at,updated_at) values (1,?,?,?,?)",
+        (event_id, claim_id, timestamp, timestamp),
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(TaskAdmissionError, match="terminal_reconciliation_conflict"):
+        consumer.terminal_reconcile(payload)
+
+    connection = sqlite3.connect(db)
+    assert (
+        connection.execute("select status from task_admission_outbox").fetchone()[0]
+        == "failed"
+    )
+    assert connection.execute(
+        "select state,launch_receipt_json from task_admission_consumer_claims"
+    ).fetchone() == ("terminal_failed", None)
+    assert (
+        connection.execute(
+            "select count(*) from task_admission_lifecycle "
+            "where event='terminal_reconciled'"
+        ).fetchone()[0]
+        == 1
+    )
+    connection.close()
+
+
+def test_terminal_reconciliation_exact_replay_rejects_completion_contradiction(
+    tmp_path: Path,
+) -> None:
+    clock, _, _, policy, db, _ = _fixture(tmp_path)
+    consumer = _consumer(clock, policy, db)
+    event_id, claim_id = _retryable_claim(consumer, db)
+    payload = _reconciliation("TST-1", event_id, claim_id)
+    consumer.terminal_reconcile(payload)
+    connection = sqlite3.connect(db)
+    attempt = connection.execute(
+        "select attempt_count from task_admission_consumer_claims"
+    ).fetchone()[0]
+    connection.execute(
+        "insert into task_admission_lifecycle "
+        "(event_id,task_id,claim_id,event,attempt,consumer_identity,detail_sha256,created_at) "
+        "values (?,?,?,?,?,?,?,?)",
+        (
+            event_id,
+            "TST-1",
+            claim_id,
+            "launched",
+            attempt,
+            "contradiction-fixture",
+            None,
+            "2026-07-24T21:00:00Z",
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(TaskAdmissionError, match="terminal_reconciliation_conflict"):
+        consumer.terminal_reconcile(payload)
+
+    connection = sqlite3.connect(db)
+    assert (
+        connection.execute("select status from task_admission_outbox").fetchone()[0]
+        == "failed"
+    )
+    assert connection.execute(
+        "select state,launch_receipt_json from task_admission_consumer_claims"
+    ).fetchone() == ("terminal_failed", None)
+    assert (
+        connection.execute(
+            "select count(*) from task_admission_lifecycle "
+            "where event='terminal_reconciled'"
+        ).fetchone()[0]
+        == 1
+    )
+    connection.close()
+
+
 @pytest.mark.parametrize(
     ("mutation", "error"),
     [
