@@ -517,8 +517,8 @@ def test_canonical_consumer_probe_rejects_malformed_and_incomplete_inventory(
 
     for needle, expected in (
         ("event_log.sqlite", "state_paths"),
-        ("task_admission_policy", "state_paths"),
-        ("task_admission_launchers", "state_paths"),
+        ("task-admission.json", "state_paths"),
+        ("task-admission-launchers", "state_paths"),
     ):
         document = copy.deepcopy(base)
         component = document["components"][consumer_index]
