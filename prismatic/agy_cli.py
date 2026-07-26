@@ -8,7 +8,9 @@ Prismatic's admission, exact-artifact, and external-action gates outside AGY.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import ctypes
+import fcntl
 import hashlib
 import json
 import os
@@ -232,6 +234,269 @@ def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
             tmp.unlink()
 
 
+@contextlib.contextmanager
+def _run_state_lock(run_dir: Path):
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+    lock_fd = os.open(run_dir / ".run-state.lock", flags, 0o600)
+    try:
+        metadata = os.fstat(lock_fd)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            raise AgyWorkflowError(
+                "canonical run-state lock is not a private regular file"
+            )
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+
+
+def _release_active_slot(path: Path, run_id: str) -> None:
+    """Release only the cap slot bound to this exact run."""
+    lock_flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+    lock_fd = os.open(path.parent / ".slot-lock", lock_flags, 0o600)
+    try:
+        lock_metadata = os.fstat(lock_fd)
+        if not stat.S_ISREG(lock_metadata.st_mode) or lock_metadata.st_nlink != 1:
+            raise AgyWorkflowError("canonical slot lock is not a private regular file")
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        try:
+            metadata = path.lstat()
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or stat.S_ISLNK(metadata.st_mode)
+                or metadata.st_nlink != 1
+            ):
+                raise AgyWorkflowError(
+                    "canonical active slot is not a private regular file"
+                )
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return
+        if payload.get("run_id") == run_id:
+            path.unlink()
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+
+
+def _reconcile_terminal_run_unlocked(run_dir: Path) -> dict[str, Any]:
+    """Project a durable terminal process receipt into the canonical run record."""
+    run_dir = run_dir.resolve()
+    record_path = _require_absolute_regular(
+        run_dir / "harness-run.json", "harness_run_record"
+    )
+    process_path = run_dir / "process-result.json"
+    cancel_path = run_dir / "cancel-receipt.json"
+    process_present = process_path.exists() or process_path.is_symlink()
+    cancel_present = cancel_path.exists() or cancel_path.is_symlink()
+    if not process_present and not cancel_present:
+        return json.loads(record_path.read_text(encoding="utf-8"))
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    run_id = str(record.get("run_id") or "")
+    if run_id != run_dir.name or not _ID_RE.fullmatch(run_id):
+        raise AgyWorkflowError("canonical run record identity mismatch")
+    manifest_path = _require_absolute_regular(run_dir / "manifest.json", "manifest")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if (
+        manifest.get("identifier") != run_id
+        or manifest.get("task_sha256") != record.get("task_sha256")
+        or manifest.get("process_result_path") != str(process_path)
+        or manifest.get("activity_path") != record.get("activity_path")
+        or manifest.get("admission", {}).get("event_id") != record.get("event_id")
+        or manifest.get("admission", {}).get("attempt") != record.get("attempt")
+    ):
+        raise AgyWorkflowError("canonical manifest/run record binding mismatch")
+    if manifest.get("run_record_path") not in {None, str(record_path)}:
+        raise AgyWorkflowError("canonical run record path mismatch")
+    if manifest.get("active_slot_path") not in {
+        None,
+        record.get("active_slot_path"),
+    }:
+        raise AgyWorkflowError("canonical active slot binding mismatch")
+    review_status = record.get("review_status")
+    if review_status is not None:
+        if (
+            review_status not in {"accepted", "repair_required", "rejected"}
+            or record.get("state") != review_status
+            or record.get("verification_status") != "reviewed"
+        ):
+            raise AgyWorkflowError("canonical independent review state is inconsistent")
+        slot_raw = record.get("active_slot_path")
+        if slot_raw:
+            slot_path = Path(str(slot_raw))
+            expected_parent = run_dir.parent / "active-slots"
+            if (
+                not slot_path.is_absolute()
+                or slot_path.parent.resolve() != expected_parent.resolve()
+                or not re.fullmatch(r"slot-[0-9]+\.json", slot_path.name)
+            ):
+                raise AgyWorkflowError("canonical active slot path is invalid")
+            _release_active_slot(slot_path, run_id)
+        return record
+    if cancel_present:
+        cancel_receipt_path = _require_absolute_regular(cancel_path, "cancel_receipt")
+        cancelled = json.loads(cancel_receipt_path.read_text(encoding="utf-8"))
+        timestamp = cancelled.get("cancelled_at")
+        if (
+            cancelled.get("run_id") != run_id
+            or cancelled.get("session") != record.get("session")
+            or cancelled.get("exact_pane_cleanup") is not True
+            or cancelled.get("exact_process_tree_cleanup") is not True
+            or type(timestamp) not in {int, float}
+            or timestamp <= 0
+        ):
+            raise AgyWorkflowError("canonical cancellation receipt is invalid")
+        status = "cancelled"
+        state = "rejected"
+        error = None
+        completed_at = timestamp
+        producer_completed = False
+        release_allowed = True
+    else:
+        terminal_path = _require_absolute_regular(process_path, "process_result")
+        process = json.loads(terminal_path.read_text(encoding="utf-8"))
+        if (
+            process.get("workflow_version") != CANONICAL_AGY_WORKFLOW_VERSION
+            or process.get("identifier") != run_id
+            or process.get("activity_path") != record.get("activity_path")
+            or process.get("result_path") != record.get("result_path")
+            or type(process.get("finished_at_unix")) not in {int, float}
+        ):
+            raise AgyWorkflowError("canonical process result binding mismatch")
+        cleanup_ok = (
+            process.get("process_tree_cleanup_verified") is True
+            and process.get("surviving_process_identities") == []
+        )
+        result = Path(str(record.get("result_path") or ""))
+        plan = Path(str(record.get("plan_path") or ""))
+        result_regular = False
+        plan_regular = False
+        try:
+            _require_absolute_regular(result, "result")
+            result_regular = True
+            _require_absolute_regular(plan, "plan")
+            plan_regular = True
+        except AgyWorkflowError:
+            pass
+        contract_ok = (
+            process.get("exit_code") == 0
+            and process.get("result_exists") is True
+            and process.get("result_path") == str(result)
+            and isinstance(process.get("result_sha256"), str)
+            and cleanup_ok
+            and result_regular
+            and plan_regular
+            and _sha256_file(result) == process["result_sha256"]
+            and CANONICAL_RESULT_MARKER in result.read_text(errors="replace")
+        )
+        status = "completed" if contract_ok else "failed"
+        state = "review_pending" if cleanup_ok else "rejected"
+        error = None if contract_ok else "producer exit/result/cleanup contract failed"
+        completed_at = process.get("finished_at_unix")
+        producer_completed = contract_ok
+        release_allowed = cleanup_ok
+    slot_raw = record.get("active_slot_path")
+    slot_path: Path | None = None
+    if slot_raw:
+        slot_path = Path(str(slot_raw))
+        expected_parent = run_dir.parent / "active-slots"
+        if (
+            not slot_path.is_absolute()
+            or slot_path.parent.resolve() != expected_parent.resolve()
+            or not re.fullmatch(r"slot-[0-9]+\.json", slot_path.name)
+        ):
+            raise AgyWorkflowError("canonical active slot path is invalid")
+    finalized = {
+        **record,
+        "status": status,
+        "state": state,
+        "completed_at": completed_at,
+        "error": error,
+        "producer_completed": producer_completed,
+        "verification_status": "pending",
+    }
+    _atomic_json(record_path, finalized)
+    if slot_path is not None and release_allowed:
+        _release_active_slot(slot_path, run_id)
+    return finalized
+
+
+def reconcile_terminal_run(run_dir: Path) -> dict[str, Any]:
+    """Atomically reconcile one terminal AGY run."""
+    resolved = run_dir.resolve()
+    with _run_state_lock(resolved):
+        return _reconcile_terminal_run_unlocked(resolved)
+
+
+def _record_review_decision_unlocked(
+    run_dir: Path,
+    *,
+    decision: str,
+    reviewer: str,
+    summary: str,
+    reviewed_at: float | None = None,
+) -> dict[str, Any]:
+    """Advance one producer-terminal run through independent review."""
+    if decision not in {"accepted", "repair_required", "rejected"}:
+        raise AgyWorkflowError("invalid independent review decision")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@-]{0,95}", reviewer):
+        raise AgyWorkflowError("invalid independent reviewer identity")
+    if not isinstance(summary, str) or not summary.strip() or len(summary) > 500:
+        raise AgyWorkflowError("independent review summary must be 1..500 characters")
+    run_dir = run_dir.resolve()
+    record_path = _require_absolute_regular(
+        run_dir / "harness-run.json", "harness_run_record"
+    )
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    run_id = str(record.get("run_id") or "")
+    if run_id != run_dir.name or not _ID_RE.fullmatch(run_id):
+        raise AgyWorkflowError("canonical run record identity mismatch")
+    if record.get("producer_identity") == reviewer:
+        raise AgyWorkflowError("producer cannot independently review its own run")
+    existing = record.get("review_status")
+    if existing is not None:
+        if existing == decision and record.get("reviewed_by") == reviewer:
+            return record
+        raise AgyWorkflowError("independent review decision already recorded")
+    if record.get("state") != "review_pending":
+        raise AgyWorkflowError("run is not pending independent review")
+    timestamp = time.time() if reviewed_at is None else reviewed_at
+    if type(timestamp) not in {int, float} or timestamp <= 0:
+        raise AgyWorkflowError("invalid independent review timestamp")
+    reviewed = {
+        **record,
+        "state": decision,
+        "verification_status": "reviewed",
+        "review_status": decision,
+        "reviewed_by": reviewer,
+        "reviewed_at": float(timestamp),
+        "review_summary": summary.strip(),
+    }
+    _atomic_json(record_path, reviewed)
+    return reviewed
+
+
+def record_review_decision(
+    run_dir: Path,
+    *,
+    decision: str,
+    reviewer: str,
+    summary: str,
+    reviewed_at: float | None = None,
+) -> dict[str, Any]:
+    """Atomically record one independent review decision."""
+    resolved = run_dir.resolve()
+    with _run_state_lock(resolved):
+        return _record_review_decision_unlocked(
+            resolved,
+            decision=decision,
+            reviewer=reviewer,
+            summary=summary,
+            reviewed_at=reviewed_at,
+        )
+
+
 def _proc_start_ticks(pid: int) -> str:
     raw = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
     return raw[raw.rfind(")") + 2 :].split()[19]
@@ -271,6 +536,8 @@ def launch_tmux(
     *,
     admission_receipt: Path,
     tmux: str = "/usr/bin/tmux",
+    run_record: dict[str, Any] | None = None,
+    active_slot_path: Path | None = None,
 ) -> dict[str, Any]:
     manifest = spec.manifest()
     admission = validate_admission_receipt(admission_receipt, spec)
@@ -282,8 +549,21 @@ def launch_tmux(
     result_record = launch_dir / "process-result.json"
     activity_path = launch_dir / "activity.json"
     receipt_path = launch_dir / "launch-receipt.json"
+    run_record_path = launch_dir / "harness-run.json"
+    if active_slot_path is not None:
+        expected_slot_parent = runtime_dir / "active-slots"
+        if (
+            not active_slot_path.is_absolute()
+            or active_slot_path.parent.resolve() != expected_slot_parent.resolve()
+            or not re.fullmatch(r"slot-[0-9]+\.json", active_slot_path.name)
+        ):
+            raise AgyWorkflowError("active_slot_path is outside canonical slot storage")
     manifest["process_result_path"] = str(result_record)
     manifest["activity_path"] = str(activity_path)
+    manifest["run_record_path"] = str(run_record_path)
+    manifest["active_slot_path"] = (
+        str(active_slot_path.resolve()) if active_slot_path is not None else None
+    )
     manifest["runtime_deadline"] = None
     manifest["admission"] = {
         "marker": CANONICAL_ADMISSION_MARKER,
@@ -293,8 +573,8 @@ def launch_tmux(
         "receipt_path": str(admission_receipt),
         "receipt_sha256": _sha256_file(admission_receipt),
     }
-    _atomic_json(manifest_path, manifest)
     session = _tmux_session_name(spec.identifier, str(manifest["task_sha256"]))
+    started_at = time.time()
     exists = subprocess.run(
         [tmux, "has-session", "-t", session],
         stdout=subprocess.DEVNULL,
@@ -303,6 +583,35 @@ def launch_tmux(
     )
     if exists.returncode == 0:
         raise AgyWorkflowError(f"tmux session already exists: {session}")
+    canonical_record = {
+        **(run_record or {}),
+        "schema_version": "1.0",
+        "workflow_version": CANONICAL_AGY_WORKFLOW_VERSION,
+        "run_id": spec.identifier,
+        "status": "running",
+        "state": "running",
+        "started_at": started_at,
+        "completed_at": None,
+        "result_path": spec.result_path,
+        "plan_path": spec.plan_path,
+        "stdout_path": spec.stdout_path,
+        "stderr_path": spec.stderr_path,
+        "diagnostics_path": spec.diagnostics_path,
+        "activity_path": str(activity_path),
+        "runtime_deadline": None,
+        "active_slot_path": manifest["active_slot_path"],
+        "launch_receipt_path": str(receipt_path),
+        "session": session,
+        "task_sha256": manifest["task_sha256"],
+        "event_id": admission["event_id"],
+        "attempt": admission["attempt"],
+        "attempt_token": admission["attempt_token"],
+        "verification_status": "pending",
+        "producer_completed": False,
+        "error": None,
+    }
+    _atomic_json(manifest_path, manifest)
+    _atomic_json(run_record_path, canonical_record)
     runner = shlex.join(
         [
             sys.executable,
@@ -311,44 +620,109 @@ def launch_tmux(
             str(manifest_path),
         ]
     )
-    subprocess.run(
-        [tmux, "new-session", "-d", "-s", session, "-c", spec.workspace, runner],
-        check=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    subprocess.run(
-        [tmux, "set-option", "-t", session, "remain-on-exit", "on"], check=True
-    )
-    pane_pid = int(
-        subprocess.check_output(
-            [tmux, "display-message", "-p", "-t", f"{session}:0.0", "#{pane_pid}"],
+    try:
+        subprocess.run(
+            [tmux, "new-session", "-d", "-s", session, "-c", spec.workspace, runner],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
             text=True,
-        ).strip()
-    )
-    receipt = {
-        "workflow_version": CANONICAL_AGY_WORKFLOW_VERSION,
-        "transport": CANONICAL_TRANSPORT,
-        "identifier": spec.identifier,
-        "session": session,
-        "pane_pid": pane_pid,
-        "pane_start_ticks": _proc_start_ticks(pane_pid),
-        "task_sha256": manifest["task_sha256"],
-        "event_id": admission["event_id"],
-        "attempt": admission["attempt"],
-        "attempt_token": admission["attempt_token"],
-        "admission_receipt_sha256": _sha256_file(admission_receipt),
-        "manifest_path": str(manifest_path),
-        "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
-        "process_result_path": str(result_record),
-        "activity_path": str(activity_path),
-        "runtime_deadline": None,
-        "started_at_unix": time.time(),
-        "accepted": True,
-    }
-    _atomic_json(receipt_path, receipt)
-    return receipt
+        )
+    except Exception:
+        for provisional in (run_record_path, manifest_path):
+            try:
+                provisional.unlink()
+            except FileNotFoundError:
+                pass
+        try:
+            launch_dir.rmdir()
+        except OSError:
+            pass
+        raise
+    try:
+        pane_pid = int(
+            subprocess.check_output(
+                [
+                    tmux,
+                    "display-message",
+                    "-p",
+                    "-t",
+                    f"{session}:0.0",
+                    "#{pane_pid}",
+                ],
+                text=True,
+            ).strip()
+        )
+        receipt = {
+            "workflow_version": CANONICAL_AGY_WORKFLOW_VERSION,
+            "transport": CANONICAL_TRANSPORT,
+            "identifier": spec.identifier,
+            "session": session,
+            "pane_pid": pane_pid,
+            "pane_start_ticks": _proc_start_ticks(pane_pid),
+            "task_sha256": manifest["task_sha256"],
+            "event_id": admission["event_id"],
+            "attempt": admission["attempt"],
+            "attempt_token": admission["attempt_token"],
+            "admission_receipt_sha256": _sha256_file(admission_receipt),
+            "manifest_path": str(manifest_path),
+            "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+            "process_result_path": str(result_record),
+            "activity_path": str(activity_path),
+            "runtime_deadline": None,
+            "started_at_unix": started_at,
+            "accepted": True,
+        }
+        _atomic_json(receipt_path, receipt)
+        with _run_state_lock(launch_dir):
+            current_record = json.loads(run_record_path.read_text(encoding="utf-8"))
+            _atomic_json(
+                run_record_path,
+                {
+                    **current_record,
+                    "pane_pid": pane_pid,
+                    "pane_start_ticks": receipt["pane_start_ticks"],
+                },
+            )
+        return receipt
+    except Exception as exc:
+        subprocess.run(
+            [tmux, "kill-session", "-t", session],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if result_record.exists() or (launch_dir / "cancel-receipt.json").exists():
+                break
+            time.sleep(0.05)
+        reconciled = False
+        try:
+            terminal = reconcile_terminal_run(launch_dir)
+            reconciled = terminal.get("state") in {
+                "review_pending",
+                "accepted",
+                "repair_required",
+                "rejected",
+            }
+        except Exception:
+            pass
+        if not reconciled:
+            with _run_state_lock(launch_dir):
+                current_record = json.loads(run_record_path.read_text(encoding="utf-8"))
+                if current_record.get("state") == "running":
+                    _atomic_json(
+                        run_record_path,
+                        {
+                            **current_record,
+                            "status": "failed",
+                            "state": "rejected",
+                            "error": f"post-spawn launch failure: {type(exc).__name__}",
+                            "producer_completed": False,
+                        },
+                    )
+        raise
 
 
 def wait_tmux(
@@ -710,6 +1084,7 @@ def _run_manifest(path: Path) -> int:
         else None,
     }
     _atomic_json(result_record, record)
+    reconcile_terminal_run(path.parent)
     return exit_code if cleanup_verified else 125
 
 

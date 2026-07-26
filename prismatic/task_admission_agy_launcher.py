@@ -296,6 +296,7 @@ def launch_request(
             "admission_receipt": str(admission_path),
             "sandbox": True,
             "task_ref": request["task_id"],
+            "producer_identity": request["producer_identity"],
         }
     )
     if launched_run_id != run_id:

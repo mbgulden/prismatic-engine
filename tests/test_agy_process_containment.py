@@ -156,7 +156,11 @@ def test_explicit_cancel_contains_detached_descendant_before_slot_release(
         assert receipt["exact_process_tree_cleanup"] is True
         assert receipt["observed_process_count"] >= 2
         assert not _identity_active(pid, start_ticks)
-        assert not Path(harness._record(run_id)["active_slot_path"]).exists()
+        record = harness._record(run_id)
+        assert record["status"] == "cancelled"
+        assert record["state"] == "rejected"
+        assert record["producer_completed"] is False
+        assert not Path(record["active_slot_path"]).exists()
     finally:
         if _identity_active(pid, start_ticks):
             os.kill(pid, signal.SIGKILL)

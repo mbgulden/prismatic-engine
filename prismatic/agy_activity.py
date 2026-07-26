@@ -89,11 +89,15 @@ def list_agy_activity_runs(
             launch_receipt.get("pane_pid"), launch_receipt.get("pane_start_ticks")
         )
         if cancelled is not None:
-            state = "cancelled"
+            state = str(record.get("state") or "reconciliation_required")
+            if state == "running":
+                state = "reconciliation_required"
         elif process is not None:
-            state = "completed" if process.get("exit_code") == 0 else "failed"
+            state = str(record.get("state") or "reconciliation_required")
+            if state == "running":
+                state = "reconciliation_required"
         elif activity.get("process_alive") and pane_identity_alive:
-            state = "running"
+            state = str(record.get("state") or "running")
         else:
             state = "orphaned"
             activity = {**activity, "classification": "stale_unverified"}

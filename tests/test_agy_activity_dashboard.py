@@ -102,6 +102,55 @@ def test_stale_activity_does_not_claim_running_without_exact_pane(tmp_path: Path
     assert projected["activity"]["pane_identity_verified_alive"] is False
 
 
+def test_dashboard_flags_stale_running_record_with_terminal_receipt(tmp_path: Path):
+    runtime = _fixture_runtime(tmp_path)
+    run_dir = runtime / "agy-dashboard-test"
+    _write_json(
+        run_dir / "process-result.json",
+        {
+            "exit_code": 0,
+            "process_tree_cleanup_verified": True,
+            "surviving_process_identities": [],
+            "finished_at_unix": 1002.0,
+        },
+    )
+
+    payload = list_agy_activity_runs(runtime, limit=10)
+
+    assert payload["runs"][0]["state"] == "reconciliation_required"
+
+
+def test_dashboard_projects_canonical_review_pending_state(tmp_path: Path):
+    runtime = _fixture_runtime(tmp_path)
+    run_dir = runtime / "agy-dashboard-test"
+    record_path = run_dir / "harness-run.json"
+    record = json.loads(record_path.read_text())
+    record.update(
+        {
+            "status": "completed",
+            "state": "review_pending",
+            "producer_completed": True,
+            "completed_at": 1002.0,
+        }
+    )
+    _write_json(record_path, record)
+    _write_json(
+        run_dir / "process-result.json",
+        {
+            "exit_code": 0,
+            "result_exists": True,
+            "process_tree_cleanup_verified": True,
+            "surviving_process_identities": [],
+            "finished_at_unix": 1002.0,
+        },
+    )
+
+    projected = list_agy_activity_runs(runtime)["runs"][0]
+    assert projected["state"] == "review_pending"
+    assert projected["completed_at_unix"] == 1002.0
+    assert projected["verification_status"] == "pending"
+
+
 def test_direct_canonical_cli_run_is_also_projected(tmp_path: Path):
     runtime = _fixture_runtime(tmp_path)
     run_dir = runtime / "agy-dashboard-test"
