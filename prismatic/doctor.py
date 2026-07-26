@@ -20,6 +20,7 @@ Design contract:
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import subprocess
 import sys
@@ -57,7 +58,9 @@ class ProviderReport:
 
     name: str
     credential_source: str = "Not found"
-    status: str = "unknown"  # "connected" | "disconnected" | "auth_failed" | "skipped" | "n/a"
+    status: str = (
+        "unknown"  # "connected" | "disconnected" | "auth_failed" | "skipped" | "n/a"
+    )
     user: str = ""
     user_name: str = ""
     scopes: list[str] = field(default_factory=list)
@@ -69,6 +72,8 @@ class ProviderReport:
     api_message: str = ""
     remediation: str = ""
     rate_limit_info: dict[str, Any] = field(default_factory=dict)
+    required: bool = False
+    role: str = "optional_transport"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -86,6 +91,8 @@ class ProviderReport:
             "api_message": self.api_message,
             "remediation": self.remediation,
             "rate_limit_info": self.rate_limit_info,
+            "required": self.required,
+            "role": self.role,
         }
 
 
@@ -96,9 +103,17 @@ class CapabilityReport:
     name: str
     status: str  # "ok" | "error" | "missing_registry"
     message: str = ""
+    required: bool = False
+    role: str = "optional_capability"
 
     def to_dict(self) -> dict[str, Any]:
-        return {"name": self.name, "status": self.status, "message": self.message}
+        return {
+            "name": self.name,
+            "status": self.status,
+            "message": self.message,
+            "required": self.required,
+            "role": self.role,
+        }
 
 
 @dataclass
@@ -109,7 +124,11 @@ class DoctorReport:
     config: ConfigInfo = field(default_factory=ConfigInfo)
     providers: list[ProviderReport] = field(default_factory=list)
     capabilities: list[CapabilityReport] = field(default_factory=list)
+    native_components: list[CapabilityReport] = field(default_factory=list)
     verdict: str = "OK"  # "OK" | "WARN" | "ERROR"
+    acceptance_authority: str = "native_provider_neutral_receipt"
+    required_providers: list[str] = field(default_factory=list)
+    hosted_ci_required: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -117,7 +136,11 @@ class DoctorReport:
             "config": self.config.__dict__,
             "providers": [p.to_dict() for p in self.providers],
             "capabilities": [c.to_dict() for c in self.capabilities],
+            "native_components": [c.to_dict() for c in self.native_components],
             "verdict": self.verdict,
+            "acceptance_authority": self.acceptance_authority,
+            "required_providers": self.required_providers,
+            "hosted_ci_required": self.hosted_ci_required,
         }
 
 
@@ -270,6 +293,7 @@ def _probe_linear() -> ProviderReport:
             report.status = "connected"
             try:
                 from prismatic.linear.budget import linear_budget
+
                 util = linear_budget.get_current_utilization("prismatic.dispatcher")
                 report.rate_limit_info = {
                     "remaining": util["current_tokens"],
@@ -281,7 +305,9 @@ def _probe_linear() -> ProviderReport:
                 pass
         else:
             report.status = "disconnected"
-            report.remediation = "LinearTaskProvider failed to initialize; check LINEAR_API_KEY."
+            report.remediation = (
+                "LinearTaskProvider failed to initialize; check LINEAR_API_KEY."
+            )
     except Exception as exc:
         report.status = "auth_failed"
         report.error_detail = str(exc)
@@ -304,9 +330,7 @@ def _probe_capabilities(names: list[str] | None = None) -> list[CapabilityReport
     for cap_name in names:
         cap = registry.get(cap_name)
         if cap is None:
-            reports.append(
-                CapabilityReport(name=cap_name, status="missing_registry")
-            )
+            reports.append(CapabilityReport(name=cap_name, status="missing_registry"))
             continue
         try:
             ok, msg = cap.check_status()
@@ -320,24 +344,92 @@ def _probe_capabilities(names: list[str] | None = None) -> list[CapabilityReport
         if ok:
             reports.append(CapabilityReport(name=cap_name, status="ok", message=msg))
         else:
-            reports.append(
-                CapabilityReport(name=cap_name, status="error", message=msg)
-            )
+            reports.append(CapabilityReport(name=cap_name, status="error", message=msg))
     return reports
+
+
+def _probe_native_components() -> list[CapabilityReport]:
+    """Probe required provider-neutral control-plane contracts without writes."""
+
+    package_root = Path(__file__).resolve().parent
+    from prismatic.verification.receipt_store import (
+        verification_receipt_store_path,
+        verification_revocation_store_path,
+    )
+
+    receipt_db = verification_receipt_store_path()
+    revocation_store = verification_revocation_store_path()
+    revocation_state_ready = not receipt_db.exists() or (
+        revocation_store.is_file() and not revocation_store.is_symlink()
+    )
+    checks = [
+        (
+            "native.receipt_store",
+            importlib.util.find_spec("prismatic.verification.receipt_store")
+            is not None,
+            "immutable receipt store and native acceptance read model",
+        ),
+        (
+            "native.revocation_state",
+            revocation_state_ready,
+            "fail-closed revocation state beside an existing receipt database",
+        ),
+        (
+            "native.dashboard",
+            (package_root / "gateway" / "templates" / "dashboard.html").is_file(),
+            "canonical dashboard artifact",
+        ),
+        (
+            "native.event_queue",
+            importlib.util.find_spec("prismatic.agent_raw_output_queue") is not None,
+            "durable raw-output event queue",
+        ),
+        (
+            "native.exact_tree_verifier",
+            importlib.util.find_spec("prismatic.verification.source_acquisition")
+            is not None,
+            "exact source acquisition plus native Git binding verifier",
+        ),
+        (
+            "native.release_verifier",
+            importlib.util.find_spec("prismatic.merge_candidate_manifest") is not None,
+            "release evidence contract",
+        ),
+        (
+            "native.production_health_contract",
+            (package_root / "gateway" / "server.py").is_file(),
+            "production health API contract; live health not claimed",
+        ),
+    ]
+    return [
+        CapabilityReport(
+            name=name,
+            status="ok" if available else "error",
+            message=message if available else f"missing required {message}",
+            required=True,
+            role="native_required",
+        )
+        for name, available, message in checks
+    ]
 
 
 def _compute_verdict(
     providers: list[ProviderReport],
     capabilities: list[CapabilityReport],
+    required_providers: set[str] | None = None,
+    native_components: list[CapabilityReport] | None = None,
 ) -> str:
     """Roll up the report verdict.
 
-    ERROR: any provider is disconnected/auth_failed AND required for the
-    golden flow (GitHub, Linear).
-    WARN: any other provider is disconnected OR any capability is not ok.
-    OK: everything green.
+    ERROR: a required native component fails, or a provider explicitly required
+    by local policy is disconnected/authentication failed.
+    WARN: any optional provider is disconnected OR any optional capability is not ok.
+    OK: required native components and observed optional signals are green.
     """
-    golden_required = {"github", "linear"}
+    for component in native_components or []:
+        if component.required and component.status != "ok":
+            return "ERROR"
+    golden_required = required_providers or set()
     for prov in providers:
         if prov.name in golden_required and prov.status in (
             "disconnected",
@@ -362,9 +454,17 @@ def _compute_verdict(
 DEFAULT_CAPABILITY_NAMES = ["linear", "vcs.github", "agy", "jules", "telegram"]
 
 
+def _required_providers_from_environment() -> set[str]:
+    """Return explicit provider requirements; default is provider-neutral."""
+
+    raw = os.environ.get("PRISMATIC_REQUIRED_PROVIDERS", "")
+    return {item.strip().lower() for item in raw.split(",") if item.strip()}
+
+
 def run_doctor(
     provider: str | None = None,
     capability_names: list[str] | None = None,
+    required_providers: set[str] | None = None,
 ) -> DoctorReport:
     """Probe the engine, providers, and capabilities.
 
@@ -375,6 +475,9 @@ def run_doctor(
             empty providers list.
         capability_names: If given, only these capabilities are
             checked. Defaults to ``DEFAULT_CAPABILITY_NAMES``.
+        required_providers: Explicit provider names that can produce ERROR.
+            When omitted, ``PRISMATIC_REQUIRED_PROVIDERS`` is used; its
+            default is empty so hosted providers remain optional transport.
 
     Returns:
         A ``DoctorReport`` with the verdict, system info, config
@@ -386,7 +489,12 @@ def run_doctor(
     if capability_names is None:
         capability_names = DEFAULT_CAPABILITY_NAMES
 
-    report = DoctorReport()
+    explicit_required = (
+        _required_providers_from_environment()
+        if required_providers is None
+        else {item.lower() for item in required_providers}
+    )
+    report = DoctorReport(required_providers=sorted(explicit_required))
     report.system = _probe_system()
 
     prismatic_home, user_config_path, db_path = _probe_config_paths()
@@ -403,6 +511,20 @@ def run_doctor(
     if not provider or provider.lower() == "linear":
         report.providers.append(_probe_linear())
 
+    for provider_report in report.providers:
+        provider_report.required = provider_report.name in explicit_required
+        provider_report.role = (
+            "explicit_required_provider"
+            if provider_report.required
+            else "optional_transport"
+        )
+
     report.capabilities = _probe_capabilities(capability_names)
-    report.verdict = _compute_verdict(report.providers, report.capabilities)
+    report.native_components = _probe_native_components()
+    report.verdict = _compute_verdict(
+        report.providers,
+        report.capabilities,
+        explicit_required,
+        report.native_components,
+    )
     return report

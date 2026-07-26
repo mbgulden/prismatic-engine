@@ -50,6 +50,15 @@ from prismatic.gateway.ws_broadcaster import (
     start_ws_broadcaster,
     stop_ws_broadcaster,
 )
+from prismatic.verification.receipt_store import (
+    PROVIDER_NEUTRAL_VERIFICATION_RECEIPT_MARKER,
+    get_verification_receipt,
+    list_verification_receipts,
+    persist_verification_receipt,
+    revoke_verification_receipt,
+    verification_receipt_counts,
+    verification_receipt_schema,
+)
 from prismatic.agy_activity import list_agy_activity_runs
 from prismatic.agy_completed_work import (
     AGY_COMPLETED_WORK_INGESTION_MARKER,
@@ -1125,6 +1134,126 @@ async def completed_work_gate_contract_schema() -> dict[str, Any]:
     """Return the AGY completed-work integration gate contract."""
 
     return completed_work_gate_schema()
+
+
+@app.get("/api/verification/receipts/schema")
+@app.get("/api/gateway/verification/receipts/schema")
+async def provider_neutral_verification_receipt_contract() -> dict[str, Any]:
+    """Return the native provider-neutral verification receipt contract."""
+
+    return verification_receipt_schema()
+
+
+@app.get("/api/verification/receipts")
+@app.get("/api/gateway/verification/receipts")
+async def provider_neutral_verification_receipts(
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict[str, Any]:
+    """Return native receipts; hosted CI is optional metadata only."""
+
+    rows = [row.as_dict() for row in list_verification_receipts(limit=limit)]
+    return {
+        "status": "ok",
+        "marker": PROVIDER_NEUTRAL_VERIFICATION_RECEIPT_MARKER,
+        "count": len(rows),
+        "counts": verification_receipt_counts(),
+        "receipts": rows,
+        "acceptance_authority": "native_provider_neutral_receipt",
+        "hosted_signals_required": False,
+        "non_claims": {
+            "github_required": False,
+            "github_actions_required": False,
+            "auto_merge": False,
+            "auto_deploy": False,
+        },
+    }
+
+
+@app.get("/api/verification/receipts/{receipt_id}")
+@app.get("/api/gateway/verification/receipts/{receipt_id}")
+async def provider_neutral_verification_receipt(receipt_id: str) -> dict[str, Any]:
+    try:
+        row = get_verification_receipt(receipt_id)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail="verification receipt not found"
+        ) from exc
+    return {
+        "status": "ok",
+        "marker": PROVIDER_NEUTRAL_VERIFICATION_RECEIPT_MARKER,
+        "receipt": row.as_dict(),
+        "acceptance_authority": "native_provider_neutral_receipt",
+    }
+
+
+@app.post("/api/verification/receipts")
+@app.post("/api/gateway/verification/receipts")
+async def record_provider_neutral_verification_receipt(
+    body: dict[str, Any],
+) -> dict[str, Any]:
+    """Persist one immutable native receipt without provider side effects."""
+
+    receipt = body.get("receipt")
+    policy = body.get("policy")
+    if not isinstance(receipt, dict) or not isinstance(policy, dict):
+        raise HTTPException(
+            status_code=422, detail="receipt and policy must be objects"
+        )
+    try:
+        row = persist_verification_receipt(
+            receipt,
+            policy,
+            hosted_signals=body.get("hosted_signals"),
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = 409 if "conflicting immutable" in detail else 422
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+    return {
+        "status": "accepted" if row.merge_eligible else "recorded_blocked",
+        "marker": PROVIDER_NEUTRAL_VERIFICATION_RECEIPT_MARKER,
+        "receipt": row.as_dict(),
+        "side_effects": {
+            "github": False,
+            "github_actions": False,
+            "linear": False,
+            "merge": False,
+            "deploy": False,
+        },
+    }
+
+
+@app.post("/api/verification/receipts/{receipt_id}/revoke")
+@app.post("/api/gateway/verification/receipts/{receipt_id}/revoke")
+async def revoke_provider_neutral_verification_receipt(
+    receipt_id: str, body: dict[str, Any]
+) -> dict[str, Any]:
+    """Append an authenticated immutable native revocation event."""
+
+    try:
+        row = revoke_verification_receipt(
+            receipt_id,
+            reason=str(body.get("reason") or ""),
+            revoked_by=str(body.get("revoked_by") or ""),
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail="verification receipt not found"
+        ) from exc
+    except ValueError as exc:
+        status_code = 409 if "conflicting immutable" in str(exc) else 422
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    return {
+        "status": "revoked",
+        "marker": PROVIDER_NEUTRAL_VERIFICATION_RECEIPT_MARKER,
+        "receipt": row.as_dict(),
+        "side_effects": {
+            "github": False,
+            "linear": False,
+            "merge": False,
+            "deploy": False,
+        },
+    }
 
 
 @app.get("/api/completed-work/gate/demo")

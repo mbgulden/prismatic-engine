@@ -19,6 +19,8 @@
       ],
       "state_paths": [
         "/home/ubuntu/.prismatic/db",
+        "/home/ubuntu/.prismatic/db/provider_neutral_verification_receipts.sqlite3",
+        "/home/ubuntu/.prismatic/db/provider_neutral_verification_revocations.json",
         "/home/ubuntu/.prismatic/bus/event_log.sqlite"
       ],
       "environment_files": [

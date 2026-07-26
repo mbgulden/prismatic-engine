@@ -144,6 +144,29 @@ def test_supervisor_declares_completed_work_paths_only_as_state() -> None:
         assert all(state_path not in value for value in supervisor["environment_files"])
 
 
+def test_gateway_declares_native_receipt_state_only_as_state() -> None:
+    document = manifest()
+    gateway = component(document, "gateway")
+    receipt_paths = (
+        HOME + "/.prismatic/db/provider_neutral_verification_receipts.sqlite3",
+        HOME + "/.prismatic/db/provider_neutral_verification_revocations.json",
+    )
+
+    for receipt_path in receipt_paths:
+        assert receipt_path in gateway["state_paths"]
+        for field in (
+            "executable_path",
+            "module_path",
+            "source_path",
+            "working_directory",
+            "release_path_template",
+            "virtualenv_path_template",
+        ):
+            assert receipt_path not in str(gateway[field])
+        assert all(receipt_path not in value for value in gateway["import_paths"])
+        assert all(receipt_path not in value for value in gateway["environment_files"])
+
+
 def test_release_template_required_for_engine_code() -> None:
     document = manifest()
     component(document)["release_path_template"] = (
