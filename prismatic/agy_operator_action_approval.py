@@ -11,6 +11,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,11 +23,29 @@ from prismatic.agy_promotion_ledger import (
     latest_or_record_decision,
     list_promotion_decisions,
 )
+from prismatic.verification.receipt_store import (
+    VerificationReceiptStore,
+    verification_receipt_store_path,
+)
 
 ONE_AGENT_LEDGER_TO_OPERATOR_ACTION_APPROVAL_MARKER = (
     "ONE_AGENT_LEDGER_TO_OPERATOR_ACTION_APPROVAL_OK"
 )
 VALID_OPERATOR_DECISIONS = {"approve", "reject", "defer"}
+_NATIVE_BINDING_FIELDS = (
+    "receipt_id",
+    "receipt_sha256",
+    "repository_id",
+    "task_id",
+    "base_sha",
+    "base_tree_sha",
+    "candidate_sha",
+    "tree_sha",
+)
+_GIT_OID_RE = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?\Z")
+_SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
+_RECEIPT_ID_RE = re.compile(r"pnvr-[0-9a-f]{64}\Z")
+_REPOSITORY_ID_RE = re.compile(r"[A-Za-z0-9._:/-]{1,256}\Z")
 
 
 def _now() -> str:
@@ -102,36 +122,83 @@ def _normalize_operator_decision(operator_decision: str | None) -> str:
     return decision
 
 
+def _binding_formats_valid(bindings: dict[str, Any]) -> bool:
+    if not isinstance(bindings, dict):
+        return False
+    return (
+        bool(_RECEIPT_ID_RE.fullmatch(str(bindings.get("receipt_id") or "")))
+        and bool(_SHA256_RE.fullmatch(str(bindings.get("receipt_sha256") or "")))
+        and bool(_REPOSITORY_ID_RE.fullmatch(str(bindings.get("repository_id") or "")))
+        and 0 < len(str(bindings.get("task_id") or "")) <= 256
+        and all(
+            _GIT_OID_RE.fullmatch(str(bindings.get(field) or ""))
+            for field in ("base_sha", "base_tree_sha", "candidate_sha", "tree_sha")
+        )
+        and isinstance(bindings.get("checkout_clean_state"), dict)
+        and bindings["checkout_clean_state"].get("status") == "clean"
+    )
+
+
+def _authoritative_receipt_matches(expected: dict[str, Any]) -> bool:
+    store_path = verification_receipt_store_path()
+    if not store_path.is_file():
+        return False
+    try:
+        receipt = VerificationReceiptStore(store_path).find_latest(
+            task_id=str(expected["task_id"]),
+            candidate_sha=str(expected["candidate_sha"]),
+        )
+    except (OSError, ValueError, json.JSONDecodeError, sqlite3.Error, KeyError):
+        return False
+    if (
+        receipt is None
+        or receipt.classification != "accepted"
+        or not receipt.merge_eligible
+    ):
+        return False
+    actual = {
+        "receipt_id": receipt.receipt_id,
+        "receipt_sha256": receipt.receipt_sha256,
+        "repository_id": receipt.receipt.get("repository_id"),
+        "task_id": receipt.receipt.get("task_id"),
+        "base_sha": receipt.receipt.get("base_sha"),
+        "base_tree_sha": receipt.receipt.get("base_tree_sha"),
+        "candidate_sha": receipt.receipt.get("candidate_sha"),
+        "tree_sha": receipt.receipt.get("tree_sha"),
+        "checkout_clean_state": receipt.receipt.get("checkout_clean_state"),
+    }
+    return actual == expected
+
+
 def _native_authorization_allows(
     promotion_decision: dict[str, Any], requested_action: str
 ) -> bool:
     evidence = promotion_decision.get("evidence") or {}
+    if not isinstance(evidence, dict):
+        return False
     authorization = evidence.get("authorization") or {}
     native = evidence.get("native_acceptance") or {}
-    required_native_fields = (
-        "receipt_id",
-        "receipt_sha256",
-        "repository_id",
-        "task_id",
-        "base_sha",
-        "base_tree_sha",
-        "candidate_sha",
-        "tree_sha",
-    )
+    expected = evidence.get("expected_native_bindings") or {}
+    if not all(isinstance(item, dict) for item in (authorization, native, expected)):
+        return False
     target_task = str(
         promotion_decision.get("target_issue")
         or promotion_decision.get("completed_work_id")
         or ""
     )
-    clean_state = native.get("checkout_clean_state") or {}
+    native_bindings = {field: native.get(field) for field in _NATIVE_BINDING_FIELDS} | {
+        "checkout_clean_state": native.get("checkout_clean_state")
+    }
     return (
         authorization.get("acceptance_authority") == "native_provider_neutral_receipt"
         and authorization.get("hosted_signals_required") is False
         and native.get("status") == "accepted"
         and native.get("authoritative") is True
+        and native.get("merge_authorized") is True
         and native.get("task_id") == target_task
-        and clean_state.get("status") == "clean"
-        and all(native.get(field) for field in required_native_fields)
+        and _binding_formats_valid(expected)
+        and native_bindings == expected
+        and _authoritative_receipt_matches(expected)
         and (
             authorization.get("merge_authorized") is True
             if requested_action == "open_or_update_pr"

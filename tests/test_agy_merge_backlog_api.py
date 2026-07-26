@@ -111,6 +111,10 @@ def _accepted_native_authority(monkeypatch):
         "prismatic.agy_promotion_ledger._native_acceptance_for",
         accepted_native_receipt,
     )
+    monkeypatch.setattr(
+        "prismatic.agy_operator_action_approval._authoritative_receipt_matches",
+        lambda _expected: True,
+    )
 
 
 def seed(monkeypatch, tmp_path):
@@ -122,6 +126,10 @@ def seed(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "prismatic.agy_promotion_ledger._native_acceptance_for",
         accepted_native_receipt,
+    )
+    monkeypatch.setattr(
+        "prismatic.agy_operator_action_approval._authoritative_receipt_matches",
+        lambda _expected: True,
     )
     row = ingest_completed_work(retained_packet(tmp_path), db_path=db)
     return row

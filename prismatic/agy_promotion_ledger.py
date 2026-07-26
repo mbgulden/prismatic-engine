@@ -29,6 +29,22 @@ from prismatic.verification.receipt_store import (
 )
 
 ONE_AGENT_PROMOTION_DECISION_LEDGER_MARKER = "ONE_AGENT_PROMOTION_DECISION_LEDGER_OK"
+_NATIVE_BINDING_FIELDS = (
+    "receipt_id",
+    "receipt_sha256",
+    "repository_id",
+    "task_id",
+    "base_sha",
+    "base_tree_sha",
+    "candidate_sha",
+    "tree_sha",
+)
+
+
+def _expected_native_bindings(native_acceptance: dict[str, Any]) -> dict[str, Any]:
+    return {field: native_acceptance.get(field) for field in _NATIVE_BINDING_FIELDS} | {
+        "checkout_clean_state": native_acceptance.get("checkout_clean_state")
+    }
 
 
 def _now() -> str:
@@ -331,6 +347,7 @@ def build_promotion_decision(
         "dry_run_only": pr_dry_run.get("dry_run_only"),
         "source_decision": source_decision,
         "native_acceptance": native_acceptance,
+        "expected_native_bindings": _expected_native_bindings(native_acceptance),
         "authorization": {
             "acceptance_authority": "native_provider_neutral_receipt",
             "merge_authorized": bool(native_acceptance.get("merge_authorized")),
@@ -464,6 +481,9 @@ def _revalidated_record_view(record: dict[str, Any]) -> dict[str, Any]:
         evidence = dict(view.get("evidence") or {})
         current_evidence = current.get("evidence") or {}
         evidence["native_acceptance"] = current_evidence.get("native_acceptance")
+        evidence["expected_native_bindings"] = current_evidence.get(
+            "expected_native_bindings"
+        )
         evidence["authorization"] = current_evidence.get("authorization")
         evidence["current_evidence_revalidation"] = {
             "status": "failed_closed",
@@ -485,6 +505,9 @@ def _revalidated_record_view(record: dict[str, Any]) -> dict[str, Any]:
     evidence = dict(view.get("evidence") or {})
     current_evidence = current.get("evidence") or {}
     evidence["native_acceptance"] = current_evidence.get("native_acceptance")
+    evidence["expected_native_bindings"] = current_evidence.get(
+        "expected_native_bindings"
+    )
     evidence["authorization"] = current_evidence.get("authorization")
     evidence["current_evidence_revalidation"] = {
         "status": "passed",

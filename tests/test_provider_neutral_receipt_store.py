@@ -482,6 +482,37 @@ def test_promotion_authorization_requires_matching_effective_native_receipt(
     assert decision["deploy_authorized"] is True
     assert decision["hosted_signals_required"] is False
 
+    expected = {
+        field: decision[field]
+        for field in (
+            "receipt_id",
+            "receipt_sha256",
+            "repository_id",
+            "task_id",
+            "base_sha",
+            "base_tree_sha",
+            "candidate_sha",
+            "tree_sha",
+            "checkout_clean_state",
+        )
+    }
+    promotion = {
+        "status": "decision_ready",
+        "recommendation": "open_or_update_pr",
+        "target_issue": receipt["task_id"],
+        "evidence": {
+            "native_acceptance": decision,
+            "expected_native_bindings": expected,
+            "authorization": {
+                "acceptance_authority": "native_provider_neutral_receipt",
+                "merge_authorized": True,
+                "deploy_authorized": True,
+                "hosted_signals_required": False,
+            },
+        },
+    }
+    assert _policy_gate(promotion, "approve", "open_or_update_pr") == "pass"
+
 
 def test_promotion_authorization_fails_closed_without_or_with_stale_receipt(
     tmp_path, monkeypatch
@@ -504,7 +535,9 @@ def test_promotion_authorization_fails_closed_without_or_with_stale_receipt(
     assert stale["deploy_authorized"] is False
 
 
-def test_downstream_operator_gate_requires_exact_native_authorization() -> None:
+def test_downstream_operator_gate_requires_exact_native_authorization(
+    monkeypatch,
+) -> None:
     promotion = {
         "status": "decision_ready",
         "recommendation": "open_or_update_pr",
@@ -543,7 +576,51 @@ def test_downstream_operator_gate_requires_exact_native_authorization() -> None:
         "merge_authorized": True,
         "deploy_authorized": True,
     }
+    native = promotion["evidence"]["native_acceptance"]
+    promotion["evidence"]["expected_native_bindings"] = {
+        field: native[field]
+        for field in (
+            "receipt_id",
+            "receipt_sha256",
+            "repository_id",
+            "task_id",
+            "base_sha",
+            "base_tree_sha",
+            "candidate_sha",
+            "tree_sha",
+            "checkout_clean_state",
+        )
+    }
+    monkeypatch.setattr(
+        "prismatic.agy_operator_action_approval._authoritative_receipt_matches",
+        lambda _expected: True,
+    )
     assert _policy_gate(promotion, "approve", "open_or_update_pr") == "pass"
+
+    mutations = {
+        "receipt_id": "pnvr-" + "1" * 64,
+        "receipt_sha256": "2" * 64,
+        "repository_id": "repo-other",
+        "task_id": "GRO-9999",
+        "base_sha": "3" * 40,
+        "base_tree_sha": "4" * 40,
+        "candidate_sha": "5" * 40,
+        "tree_sha": "6" * 40,
+    }
+    expected = promotion["evidence"]["expected_native_bindings"]
+    for field, forged_value in mutations.items():
+        original = expected[field]
+        expected[field] = forged_value
+        assert (
+            _policy_gate(promotion, "approve", "open_or_update_pr") == "manual_review"
+        )
+        expected[field] = original
+
+    monkeypatch.setattr(
+        "prismatic.agy_operator_action_approval._authoritative_receipt_matches",
+        lambda _expected: False,
+    )
+    assert _policy_gate(promotion, "approve", "open_or_update_pr") == "manual_review"
 
 
 def test_cached_operator_approval_is_held_after_native_revocation(monkeypatch) -> None:
