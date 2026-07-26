@@ -254,13 +254,14 @@ def test_one_agent_completed_work_verified_pr_dry_run_bridge(monkeypatch, tmp_pa
     assert missing.status_code == 404
 
 
-def test_dashboard_renders_one_agent_completed_work_bridge_marker():
+def test_dashboard_renders_provider_neutral_verification_receipt_marker():
     html = Path("prismatic/gateway/templates/dashboard.html").read_text(
         encoding="utf-8"
     )
-    assert "ONE_AGENT_COMPLETED_WORK_TO_VERIFIED_PR_DRY_RUN_OK" in html
-    assert "verified-pr-dry-run/latest" in html
-    assert "Verified PR Dry Run" in html
+    assert "PROVIDER_NEUTRAL_VERIFICATION_RECEIPT_OK" in html
+    assert "provider-neutral-verification-receipt-card" in html
+    assert "OPTIONAL ${item.provider}" in html
+    assert "ONE_AGENT_COMPLETED_WORK_TO_VERIFIED_PR_DRY_RUN_OK" not in html
 
 
 def test_merge_backlog_api_list_detail_and_verify_use_persisted_rows(

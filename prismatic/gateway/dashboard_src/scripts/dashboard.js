@@ -1724,42 +1724,82 @@
         async function fetchCompletedWorkGate() {
             const badge = document.getElementById("completed-work-gate-badge");
             const classification = document.getElementById("completed-work-classification");
-            const eligible = document.getElementById("completed-work-eligible");
-            const linear = document.getElementById("completed-work-linear");
-            const reason = document.getElementById("completed-work-reason");
+            const artifact = document.getElementById("completed-work-artifact");
+            const proofClasses = document.getElementById("completed-work-proof-classes");
+            const verifier = document.getElementById("completed-work-verifier");
+            const freshness = document.getElementById("completed-work-freshness");
+            const hostedSignal = document.getElementById("completed-work-hosted-signal");
+            const proof = document.getElementById("completed-work-receipt-proof");
+            const marker = document.getElementById("completed-work-gate-marker");
             try {
-                const res = await fetch(`${API_PREFIX}/agy/completed-work/verified-pr-dry-run/latest`);
+                const res = await fetch(`${API_PREFIX}/verification/receipts?limit=1`);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
-                const latest = data.completed_work;
-                const dashboard = data.dashboard || {};
-                const linearWriteback = data.linear_writeback || {};
-                const sideEffects = data.side_effects || {};
-                const hasRow = Boolean(latest);
-                const ready = dashboard.status === "ready";
+                const latest = (data.receipts || [])[0];
+                const accepted = latest?.classification === "accepted" && latest?.merge_eligible === true;
                 if (badge) {
-                    badge.textContent = hasRow ? (ready ? "Verified PR Dry Run" : "Needs Attention") : "No Rows";
-                    badge.className = `px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${hasRow ? (ready ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300' : 'border-amber-500/20 bg-amber-500/10 text-amber-300') : 'border-slate-700 bg-slate-800 text-slate-300'}`;
+                    badge.textContent = latest ? (accepted ? "Native Accepted" : "Native Blocked") : "No Receipts";
+                    badge.className = `px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${latest ? (accepted ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300' : 'border-amber-500/20 bg-amber-500/10 text-amber-300') : 'border-slate-700 bg-slate-800 text-slate-300'}`;
                 }
-                if (classification) classification.textContent = dashboard.integration_classification || latest?.integration_classification || "no_rows";
-                if (eligible) eligible.textContent = ready ? "verified PR dry-run" : "no";
-                if (linear) {
-                    const posted = linearWriteback.posted === true || sideEffects.linear_comment_posted === true;
-                    const dryRun = linearWriteback.dry_run !== false;
-                    linear.textContent = posted ? "posted" : (dryRun ? "dry-run only" : "disabled");
+                if (marker) marker.textContent = data.marker || "PROVIDER_NEUTRAL_VERIFICATION_RECEIPT_OK";
+                if (classification) classification.textContent = latest ? `${latest.classification} / ${latest.merge_eligible ? "eligible" : "ineligible"}` : "no_receipts";
+                if (artifact) artifact.textContent = latest ? `${(latest.candidate_sha || "").slice(0, 12)} / tree ${(latest.tree_sha || "").slice(0, 12)}` : "—";
+                if (proofClasses) {
+                    const scopes = latest?.proof_scope_status || {};
+                    proofClasses.textContent = latest
+                        ? Object.entries(scopes).map(([name, state]) => `${name}:${state.status}`).join(", ") || "none"
+                        : "—";
                 }
-                if (reason) {
-                    reason.textContent = hasRow
-                        ? `${dashboard.marker || data.marker}: ${dashboard.issue_identifier || latest?.id || "latest"}`
-                        : "No completed AGY rows persisted yet";
+                if (verifier) {
+                    const isolation = latest?.verifier_isolation || {};
+                    verifier.textContent = latest
+                        ? `${latest.verifier_id || "unknown"} / ${latest.backend_class || "unknown"}; independent=${isolation.independent === true}; network=${isolation.network_isolated === true}; filesystem=${isolation.filesystem_isolated === true}`
+                        : "—";
+                }
+                if (freshness) freshness.textContent = latest ? `expires ${latest.expires_at || "unknown"}; revocation ${latest.revocation_status || "unknown"}` : "—";
+                if (hostedSignal) {
+                    const signals = latest?.hosted_signals || [];
+                    hostedSignal.textContent = signals.length
+                        ? signals.map(item => `OPTIONAL ${item.provider}: ${item.status}${item.reason_code ? ` (${item.reason_code})` : ""}`).join("; ")
+                        : "Optional / none required";
+                }
+                if (proof) {
+                    proof.textContent = latest ? JSON.stringify({
+                        receipt_id: latest.receipt_id,
+                        receipt_sha256: latest.receipt_sha256,
+                        policy_sha256: latest.policy_sha256,
+                        base_sha: latest.base_sha,
+                        base_tree_sha: latest.base_tree_sha,
+                        candidate_sha: latest.candidate_sha,
+                        tree_sha: latest.tree_sha,
+                        canonical_repository_root: latest.canonical_repository_root,
+                        changed_path_containment: latest.changed_path_containment,
+                        verifier_isolation: latest.verifier_isolation,
+                        proof_scope_status: latest.proof_scope_status,
+                        repository_id: latest.repository_id,
+                        source_kind: latest.source_kind,
+                        source_provider: latest.source_provider,
+                        source_locator: latest.source_locator,
+                        clean_checkout_id: latest.clean_checkout_id,
+                        source_acquisition_digest: latest.source_acquisition_digest,
+                        environment_digest: latest.environment_digest,
+                        changed_paths: latest.changed_paths,
+                        commands: latest.commands_and_exit_states,
+                        logs: latest.logs_and_digests,
+                        artifacts: latest.artifacts_and_digests,
+                        decision_reason: latest.decision_reason,
+                        non_claims: latest.non_claims,
+                        acceptance_authority: data.acceptance_authority,
+                        hosted_signals_required: data.hosted_signals_required,
+                    }, null, 2) : "No native receipts persisted yet";
                 }
             } catch (err) {
-                console.error("Error loading completed-work dashboard/Linear dry-run:", err);
+                console.error("Error loading provider-neutral verification receipts:", err);
                 if (badge) {
                     badge.textContent = "Unavailable";
                     badge.className = "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-rose-500/20 bg-rose-500/10 text-rose-300";
                 }
-                if (reason) reason.textContent = String(err.message || err);
+                if (proof) proof.textContent = String(err.message || err);
             }
         }
 

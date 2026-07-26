@@ -112,6 +112,24 @@
         "supervised_clean_room"
       ]
     },
+    "native_proof_scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "evidence_ids"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["pass", "fail", "unavailable", "not_required"]
+        },
+        "evidence_ids": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/id"}
+        },
+        "reason": {"$ref": "#/$defs/bounded_string"}
+      }
+    },
     "command_result": {
       "type": "object",
       "additionalProperties": false,
@@ -362,6 +380,15 @@
     "tree_sha": {
       "$ref": "#/$defs/git_sha"
     },
+    "base_tree_sha": {
+      "$ref": "#/$defs/git_sha"
+    },
+    "canonical_repository_root": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^/"
+    },
     "changed_paths": {
       "type": "array",
       "maxItems": 4096,
@@ -371,8 +398,60 @@
       },
       "minItems": 1
     },
+    "changed_path_containment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed_roots", "contained", "changed_paths_sha256"],
+      "properties": {
+        "allowed_roots": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/repo_path"}
+        },
+        "contained": {"type": "boolean"},
+        "changed_paths_sha256": {"$ref": "#/$defs/digest"}
+      }
+    },
     "clean_checkout_id": {
       "$ref": "#/$defs/id"
+    },
+    "verifier_isolation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "independent",
+        "network_isolated",
+        "filesystem_isolated",
+        "clean_room_id"
+      ],
+      "properties": {
+        "independent": {"type": "boolean"},
+        "network_isolated": {"type": "boolean"},
+        "filesystem_isolated": {"type": "boolean"},
+        "clean_room_id": {"$ref": "#/$defs/id"}
+      }
+    },
+    "proof_scope_status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "focused",
+        "canonical",
+        "clean_room",
+        "package",
+        "production",
+        "browser"
+      ],
+      "properties": {
+        "focused": {"$ref": "#/$defs/native_proof_scope"},
+        "canonical": {"$ref": "#/$defs/native_proof_scope"},
+        "clean_room": {"$ref": "#/$defs/native_proof_scope"},
+        "package": {"$ref": "#/$defs/native_proof_scope"},
+        "production": {"$ref": "#/$defs/native_proof_scope"},
+        "browser": {"$ref": "#/$defs/native_proof_scope"}
+      }
     },
     "source_acquisition_digest": {
       "$ref": "#/$defs/digest"
