@@ -349,12 +349,18 @@ def _probe_capabilities(names: list[str] | None = None) -> list[CapabilityReport
 
 
 def _probe_canonical_consumer(package_root: Path) -> tuple[bool, str]:
-    """Inspect config/runtime-services.json for canonical consumer declaration."""
-    manifest_path = package_root.parent / "config" / "runtime-services.json"
+    """Inspect the configured runtime inventory for the exact one-shot consumer."""
+    configured_path = os.environ.get("PRISMATIC_RUNTIME_SERVICES_CONFIG")
+    if configured_path:
+        manifest_path = Path(configured_path)
+        if not manifest_path.is_absolute():
+            return False, "PRISMATIC_RUNTIME_SERVICES_CONFIG must be absolute"
+    else:
+        manifest_path = package_root.parent / "config" / "runtime-services.json"
     if not manifest_path.is_file():
         return (
             False,
-            f"runtime service inventory missing at {manifest_path}",
+            f"runtime service inventory missing at {manifest_path}; installed-wheel runtimes must set PRISMATIC_RUNTIME_SERVICES_CONFIG",
         )
     try:
         import json
@@ -362,46 +368,82 @@ def _probe_canonical_consumer(package_root: Path) -> tuple[bool, str]:
         with manifest_path.open("r", encoding="utf-8") as f:
             data = json.load(f)
     except Exception as exc:
-        return (
-            False,
-            f"runtime service inventory invalid JSON: {exc}",
-        )
+        return False, f"runtime service inventory invalid JSON: {exc}"
     if (
         not isinstance(data, dict)
-        or "components" not in data
-        or not isinstance(data["components"], list)
+        or data.get("schema_version") != 1
+        or not isinstance(data.get("components"), list)
+    ):
+        return False, "runtime service inventory structure invalid"
+    consumers = [
+        component
+        for component in data["components"]
+        if isinstance(component, dict) and component.get("id") == "consumer"
+    ]
+    if len(consumers) != 1:
+        return False, "runtime service inventory must contain exactly one consumer"
+    consumer = consumers[0]
+    expected_scalars = {
+        "module_path": "prismatic.task_admission_consumer",
+        "deployment_mode": "immutable-release",
+        "release_binding": "engine",
+        "separately_versioned": False,
+    }
+    for field_name, expected in expected_scalars.items():
+        if consumer.get(field_name) != expected:
+            return (
+                False,
+                f"declared consumer has non-canonical {field_name}: {consumer.get(field_name)!r}",
+            )
+    source_path = consumer.get("source_path")
+    if not isinstance(source_path, str) or not source_path.endswith(
+        "/prismatic/task_admission_consumer.py"
     ):
         return (
             False,
-            "runtime service inventory structure invalid",
+            f"declared consumer has non-canonical source_path: {source_path!r}",
         )
-    consumer_comp = next(
-        (
-            c
-            for c in data["components"]
-            if isinstance(c, dict) and c.get("id") == "consumer"
+    state_paths = consumer.get("state_paths")
+    if not isinstance(state_paths, list) or any(
+        not isinstance(path, str) or not path for path in state_paths
+    ):
+        return (
+            False,
+            "declared consumer state_paths must be a list of non-empty strings",
+        )
+    if any(
+        "dispatch_consumer_v3" in path or "dispatch_consumer.rowid" in path
+        for path in state_paths
+    ):
+        return (
+            False,
+            "declared consumer state_paths contains a legacy poller/cursor path",
+        )
+    required_dependencies = {
+        "event bus": any(path.endswith("/event_log.sqlite") for path in state_paths),
+        "admission policy": any(
+            "task_admission_policy" in path
+            or "task-admission" in path
+            and "policy" in path
+            for path in state_paths
         ),
-        None,
-    )
-    if consumer_comp is None:
-        return (
-            False,
-            "consumer component missing from runtime service inventory",
+        "launcher config": any(
+            "task_admission_launchers" in path or "task-admission-launchers" in path
+            for path in state_paths
+        ),
+    }
+    missing = [name for name, present in required_dependencies.items() if not present]
+    if missing:
+        return False, "declared consumer missing required dependencies: " + ", ".join(
+            missing
         )
-    module_path = consumer_comp.get("module_path", "")
-    state_paths = consumer_comp.get("state_paths", [])
-    if (
-        "dispatch_consumer_v3" in module_path
-        or module_path != "prismatic.task_admission_consumer"
+    environment_files = consumer.get("environment_files")
+    if not isinstance(environment_files, list) or not all(
+        isinstance(path, str) and path for path in environment_files
     ):
         return (
             False,
-            f"declared consumer points to non-canonical module: {module_path!r}",
-        )
-    if any("dispatch_consumer.rowid" in str(sp) for sp in state_paths):
-        return (
-            False,
-            "declared consumer state_paths contains legacy cursor file dispatch_consumer.rowid",
+            "declared consumer environment_files must be a list of non-empty strings",
         )
     return (
         True,
@@ -410,16 +452,19 @@ def _probe_canonical_consumer(package_root: Path) -> tuple[bool, str]:
 
 
 def _probe_legacy_consumer_service() -> tuple[bool, str]:
-    """Inspect live prismatic-consumer.service systemd state fail-closed."""
+    """Inspect the legacy unit's state and command with strict systemd parsing."""
     try:
-        res_active = subprocess.run(
-            ["systemctl", "is-active", "prismatic-consumer.service"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        res_enabled = subprocess.run(
-            ["systemctl", "is-enabled", "prismatic-consumer.service"],
+        result = subprocess.run(
+            [
+                "systemctl",
+                "show",
+                "prismatic-consumer.service",
+                "--property=LoadState",
+                "--property=ActiveState",
+                "--property=UnitFileState",
+                "--property=ExecStart",
+                "--no-pager",
+            ],
             capture_output=True,
             text=True,
             check=False,
@@ -429,57 +474,66 @@ def _probe_legacy_consumer_service() -> tuple[bool, str]:
             False,
             f"systemd inspection support unavailable: unable to inspect prismatic-consumer.service ({exc})",
         )
-
-    active_out = res_active.stdout.strip().lower()
-    enabled_out = res_enabled.stdout.strip().lower()
-    combined_err = (res_active.stderr + res_enabled.stderr).lower()
-
-    if "not-found" in active_out and "not-found" in enabled_out:
+    if result.returncode != 0:
+        return (
+            False,
+            f"systemd inspection support unavailable: systemctl show failed ({result.stderr.strip() or 'no detail'})",
+        )
+    properties: dict[str, str] = {}
+    for line in result.stdout.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key in properties:
+            return (
+                False,
+                f"systemd inspection support unavailable: duplicate {key} property",
+            )
+        properties[key] = value.strip()
+    required = {"LoadState", "ActiveState", "UnitFileState", "ExecStart"}
+    if set(properties) != required:
+        missing = (
+            ", ".join(sorted(required - set(properties))) or "unexpected properties"
+        )
+        return (
+            False,
+            f"systemd inspection support unavailable: incomplete properties ({missing})",
+        )
+    load_state = properties["LoadState"].lower()
+    active_state = properties["ActiveState"].lower()
+    unit_state = properties["UnitFileState"].lower()
+    command = properties["ExecStart"].lower()
+    if (
+        load_state == "not-found"
+        and active_state == "inactive"
+        and unit_state
+        in {
+            "disabled",
+            "not-found",
+        }
+    ):
+        return True, "legacy prismatic-consumer.service is absent"
+    if load_state == "masked" and active_state == "inactive" and unit_state == "masked":
+        return True, "legacy prismatic-consumer.service is safely inactive and masked"
+    canonical_one_shot = (
+        "prismatic.task_admission_consumer" in command
+        and "dispatch_consumer_v3" not in command
+    )
+    if (
+        load_state == "loaded"
+        and active_state == "inactive"
+        and unit_state == "disabled"
+        and canonical_one_shot
+    ):
         return (
             True,
-            "legacy prismatic-consumer.service is safely inactive and disabled (unit not found)",
+            "prismatic-consumer.service is inactive/disabled and bound to the canonical one-shot consumer",
         )
-
-    if (
-        "system has not been booted with systemd" in combined_err
-        or "command not found" in combined_err
-    ):
-        return (
-            False,
-            "systemd inspection support unavailable: systemd not active or systemctl missing",
-        )
-
-    if active_out == "active" or enabled_out == "enabled":
-        return (
-            False,
-            f"legacy prismatic-consumer.service is forbidden active/enabled (is-active: {active_out or 'unknown'}, is-enabled: {enabled_out or 'unknown'})",
-        )
-
-    if active_out in ("inactive", "failed", "unknown") and enabled_out in (
-        "disabled",
-        "masked",
-        "not-found",
-        "unknown",
-    ):
-        return (
-            True,
-            "legacy prismatic-consumer.service is safely inactive and disabled",
-        )
-
-    if (
-        res_active.returncode != 0
-        and res_enabled.returncode != 0
-        and not active_out
-        and not enabled_out
-    ):
-        return (
-            False,
-            f"systemd inspection support unavailable: systemctl returned error ({combined_err.strip() or 'failed'})",
-        )
-
     return (
-        True,
-        "legacy prismatic-consumer.service is safely inactive and disabled",
+        False,
+        "prismatic-consumer.service is not safely contained "
+        f"(load={load_state or 'missing'}, active={active_state or 'missing'}, "
+        f"unit={unit_state or 'missing'}, command={'canonical-one-shot' if canonical_one_shot else 'legacy-or-unknown'})",
     )
 
 
