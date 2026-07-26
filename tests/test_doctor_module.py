@@ -461,7 +461,7 @@ def test_canonical_consumer_probe_error_when_legacy_declared(tmp_path, monkeypat
     fake_pkg.mkdir()
     ok, msg = doctor_mod._probe_canonical_consumer(fake_pkg)
     assert ok is False
-    assert "non-canonical module" in msg
+    assert "canonical inventory" in msg
 
 
 def test_canonical_consumer_probe_uses_absolute_inventory_override(
@@ -516,9 +516,9 @@ def test_canonical_consumer_probe_rejects_malformed_and_incomplete_inventory(
         rejected(document, expected)
 
     for needle, expected in (
-        ("event_log.sqlite", "event bus"),
-        ("task_admission_policy", "admission policy"),
-        ("task_admission_launchers", "launcher config"),
+        ("event_log.sqlite", "state_paths"),
+        ("task_admission_policy", "state_paths"),
+        ("task_admission_launchers", "state_paths"),
     ):
         document = copy.deepcopy(base)
         component = document["components"][consumer_index]
@@ -530,6 +530,28 @@ def test_canonical_consumer_probe_rejects_malformed_and_incomplete_inventory(
     document = copy.deepcopy(base)
     document["components"].append(copy.deepcopy(document["components"][consumer_index]))
     rejected(document, "exactly one consumer")
+
+    document = copy.deepcopy(base)
+    document["schema_version"] = True
+    rejected(document, "structure invalid")
+
+    document = copy.deepcopy(base)
+    document["components"][consumer_index]["separately_versioned"] = 0
+    rejected(document, "separately_versioned")
+
+    document = copy.deepcopy(base)
+    document["components"][consumer_index]["source_path"] = (
+        "/tmp/counterfeit/prismatic/task_admission_consumer.py"
+    )
+    rejected(document, "source_path")
+
+    document = copy.deepcopy(base)
+    document["components"][consumer_index]["state_paths"] = [
+        "/tmp/event_log.sqlite",
+        "/tmp/not_task_admission_policy_real",
+        "/tmp/not_task_admission_launchers_real",
+    ]
+    rejected(document, "state_paths")
 
 
 def _systemd_show_result(
@@ -595,6 +617,50 @@ def test_consumer_service_probe_ok_for_disabled_canonical_one_shot(monkeypatch):
         lambda *args, **kwargs: _systemd_show_result(
             command="python -m prismatic.task_admission_consumer"
         ),
+    )
+    ok, msg = doctor_mod._probe_legacy_consumer_service()
+    assert ok is True
+    assert "canonical one-shot" in msg
+
+
+def test_consumer_service_probe_rejects_canonical_substring_bypasses(monkeypatch):
+    import subprocess
+    import prismatic.doctor as doctor_mod
+
+    bypasses = (
+        "python -m evil --label=prismatic.task_admission_consumer",
+        "python -m prismatic.task_admission_consumer_evil",
+        "/bin/echo prismatic.task_admission_consumer",
+        "python -m prismatic.task_admission_consumer --unknown value",
+        "python -m prismatic.task_admission_consumer --db",
+        "python -m prismatic.task_admission_consumer --db /tmp/a --db /tmp/b",
+    )
+    for command in bypasses:
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *args, _command=command, **kwargs: _systemd_show_result(
+                command=_command
+            ),
+        )
+        ok, msg = doctor_mod._probe_legacy_consumer_service()
+        assert ok is False, (command, msg)
+        assert "legacy-or-unknown" in msg
+
+
+def test_consumer_service_probe_accepts_systemd_structured_exact_argv(monkeypatch):
+    import subprocess
+    import prismatic.doctor as doctor_mod
+
+    command = (
+        "{ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 -m "
+        "prismatic.task_admission_consumer --identity consumer-1 ; "
+        "ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }"
+    )
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: _systemd_show_result(command=command),
     )
     ok, msg = doctor_mod._probe_legacy_consumer_service()
     assert ok is True

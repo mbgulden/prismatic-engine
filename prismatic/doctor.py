@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import re
+import shlex
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -371,7 +373,8 @@ def _probe_canonical_consumer(package_root: Path) -> tuple[bool, str]:
         return False, f"runtime service inventory invalid JSON: {exc}"
     if (
         not isinstance(data, dict)
-        or data.get("schema_version") != 1
+        or type(data.get("schema_version")) is not int
+        or data["schema_version"] != 1
         or not isinstance(data.get("components"), list)
     ):
         return False, "runtime service inventory structure invalid"
@@ -383,72 +386,78 @@ def _probe_canonical_consumer(package_root: Path) -> tuple[bool, str]:
     if len(consumers) != 1:
         return False, "runtime service inventory must contain exactly one consumer"
     consumer = consumers[0]
-    expected_scalars = {
-        "module_path": "prismatic.task_admission_consumer",
+    expected_consumer = {
+        "id": "consumer",
+        "owner": "prismatic-engine",
+        "project": "prismatic-engine",
         "deployment_mode": "immutable-release",
         "release_binding": "engine",
         "separately_versioned": False,
+        "release_path_template": "/home/ubuntu/.prismatic/releases/{release_id}",
+        "virtualenv_path_template": "/home/ubuntu/.prismatic/releases/{release_id}/.venv",
+        "executable_path": "/home/ubuntu/.prismatic/releases/{release_id}/.venv/bin/python3",
+        "module_path": "prismatic.task_admission_consumer",
+        "source_path": "/home/ubuntu/.prismatic/releases/{release_id}/prismatic/task_admission_consumer.py",
+        "working_directory": "/home/ubuntu/.prismatic/releases/{release_id}",
+        "import_paths": ["/home/ubuntu/.prismatic/releases/{release_id}"],
+        "state_paths": [
+            "/home/ubuntu/.prismatic/bus/event_log.sqlite",
+            "/home/ubuntu/.prismatic/config/task_admission_policy.json",
+            "/home/ubuntu/.prismatic/config/task_admission_launchers.json",
+        ],
+        "environment_files": ["/home/ubuntu/.prismatic/env.d/consumer.env"],
     }
-    for field_name, expected in expected_scalars.items():
-        if consumer.get(field_name) != expected:
+    if set(consumer) != set(expected_consumer):
+        missing = sorted(set(expected_consumer) - set(consumer))
+        unexpected = sorted(set(consumer) - set(expected_consumer))
+        return (
+            False,
+            f"declared consumer fields differ from canonical inventory (missing={missing}, unexpected={unexpected})",
+        )
+    for field_name, expected in expected_consumer.items():
+        actual = consumer[field_name]
+        if type(actual) is not type(expected) or actual != expected:
             return (
                 False,
-                f"declared consumer has non-canonical {field_name}: {consumer.get(field_name)!r}",
+                f"declared consumer has non-canonical {field_name}: {actual!r}",
             )
-    source_path = consumer.get("source_path")
-    if not isinstance(source_path, str) or not source_path.endswith(
-        "/prismatic/task_admission_consumer.py"
-    ):
-        return (
-            False,
-            f"declared consumer has non-canonical source_path: {source_path!r}",
-        )
-    state_paths = consumer.get("state_paths")
-    if not isinstance(state_paths, list) or any(
-        not isinstance(path, str) or not path for path in state_paths
-    ):
-        return (
-            False,
-            "declared consumer state_paths must be a list of non-empty strings",
-        )
-    if any(
-        "dispatch_consumer_v3" in path or "dispatch_consumer.rowid" in path
-        for path in state_paths
-    ):
-        return (
-            False,
-            "declared consumer state_paths contains a legacy poller/cursor path",
-        )
-    required_dependencies = {
-        "event bus": any(path.endswith("/event_log.sqlite") for path in state_paths),
-        "admission policy": any(
-            "task_admission_policy" in path
-            or "task-admission" in path
-            and "policy" in path
-            for path in state_paths
-        ),
-        "launcher config": any(
-            "task_admission_launchers" in path or "task-admission-launchers" in path
-            for path in state_paths
-        ),
-    }
-    missing = [name for name, present in required_dependencies.items() if not present]
-    if missing:
-        return False, "declared consumer missing required dependencies: " + ", ".join(
-            missing
-        )
-    environment_files = consumer.get("environment_files")
-    if not isinstance(environment_files, list) or not all(
-        isinstance(path, str) and path for path in environment_files
-    ):
-        return (
-            False,
-            "declared consumer environment_files must be a list of non-empty strings",
-        )
     return (
         True,
         "cap-1 task-admission one-shot consumer declared as canonical runtime service",
     )
+
+
+def _is_canonical_one_shot_exec(command: str) -> bool:
+    """Accept only the exact Python module argv and known consumer CLI options."""
+    if not command or command.count("argv[]=") > 1:
+        return False
+    argv_text = command
+    if "argv[]=" in command:
+        argv_text = command.split("argv[]=", 1)[1].split(" ;", 1)[0].strip()
+    try:
+        argv = shlex.split(argv_text)
+    except ValueError:
+        return False
+    if (
+        len(argv) < 3
+        or re.fullmatch(r"python(?:3(?:\.\d+)?)?", Path(argv[0]).name) is None
+    ):
+        return False
+    if argv[1:3] != ["-m", "prismatic.task_admission_consumer"]:
+        return False
+    allowed_options = {"--db", "--policy", "--launcher-config", "--identity"}
+    seen: set[str] = set()
+    index = 3
+    while index < len(argv):
+        option = argv[index]
+        if option not in allowed_options or option in seen or index + 1 >= len(argv):
+            return False
+        value = argv[index + 1]
+        if not value or value.startswith("--"):
+            return False
+        seen.add(option)
+        index += 2
+    return True
 
 
 def _probe_legacy_consumer_service() -> tuple[bool, str]:
@@ -502,7 +511,7 @@ def _probe_legacy_consumer_service() -> tuple[bool, str]:
     load_state = properties["LoadState"].lower()
     active_state = properties["ActiveState"].lower()
     unit_state = properties["UnitFileState"].lower()
-    command = properties["ExecStart"].lower()
+    canonical_one_shot = _is_canonical_one_shot_exec(properties["ExecStart"])
     if (
         load_state == "not-found"
         and active_state == "inactive"
@@ -515,10 +524,6 @@ def _probe_legacy_consumer_service() -> tuple[bool, str]:
         return True, "legacy prismatic-consumer.service is absent"
     if load_state == "masked" and active_state == "inactive" and unit_state == "masked":
         return True, "legacy prismatic-consumer.service is safely inactive and masked"
-    canonical_one_shot = (
-        "prismatic.task_admission_consumer" in command
-        and "dispatch_consumer_v3" not in command
-    )
     if (
         load_state == "loaded"
         and active_state == "inactive"
