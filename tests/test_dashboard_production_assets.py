@@ -68,3 +68,18 @@ def test_live_dashboard_regions_preserve_narrow_viewport_containment():
     assert 'class="min-w-0 space-y-6"' in source
     assert 'class="glass-panel min-w-0 p-5' in source
     assert 'class="max-w-full overflow-x-auto"' in source
+
+
+def test_dashboard_morning_briefing_error_fallback_handling():
+    js_source = (
+        ROOT / "prismatic" / "gateway" / "dashboard_src" / "scripts" / "dashboard.js"
+    ).read_text()
+    generated = GENERATED_DASHBOARD.read_text()
+
+    assert "renderMorningBriefingError" in js_source
+    assert "renderMorningBriefingError" in generated
+    assert (
+        'renderMorningBriefingError(res.status === 404 ? "Report unavailable (404)" : `Report error (${res.status})`);'
+        in js_source
+    )
+    assert 'renderMorningBriefingError("Network error loading report");' in js_source

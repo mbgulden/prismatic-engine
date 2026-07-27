@@ -35,15 +35,49 @@ def test_latest_report_gateway_route(tmp_path, monkeypatch):
     home = tmp_path / "home"
     report_dir = home / ".prismatic" / "reports"
     report_dir.mkdir(parents=True)
-    (report_dir / "latest.json").write_text(json.dumps({
+    report_data = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "tasks_processed": 2,
-    }))
+    }
+    (report_dir / "latest.json").write_text(json.dumps(report_data))
     monkeypatch.setenv("HOME", str(home))
 
     from prismatic.gateway.server import app
 
     client = TestClient(app)
-    response = client.get("/api/report/latest")
-    assert response.status_code == 200
-    assert response.json()["tasks_processed"] == 2
+    res1 = client.get("/api/report/latest")
+    res2 = client.get("/api/gateway/overnight-report/latest")
+    assert res1.status_code == 200
+    assert res2.status_code == 200
+    assert res1.json() == res2.json() == report_data
+
+
+def test_latest_report_gateway_route_missing_404(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    (home / ".prismatic" / "reports").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+
+    from prismatic.gateway.server import app
+
+    client = TestClient(app)
+    res1 = client.get("/api/report/latest")
+    res2 = client.get("/api/gateway/overnight-report/latest")
+    assert res1.status_code == 404
+    assert res2.status_code == 404
+
+
+def test_latest_report_gateway_route_invalid_json_500(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    report_dir = home / ".prismatic" / "reports"
+    report_dir.mkdir(parents=True)
+    (report_dir / "latest.json").write_text("{invalid json")
+    monkeypatch.setenv("HOME", str(home))
+
+    from prismatic.gateway.server import app
+
+    client = TestClient(app)
+    res1 = client.get("/api/report/latest")
+    res2 = client.get("/api/gateway/overnight-report/latest")
+    assert res1.status_code == 500
+    assert res2.status_code == 500
+    assert res1.json() == res2.json()
