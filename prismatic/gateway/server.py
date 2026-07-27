@@ -3860,6 +3860,7 @@ async def dashboard_merge_status() -> dict[str, Any]:
 
 
 @app.get("/api/report/latest", response_model=None)
+@app.get("/api/gateway/overnight-report/latest", response_model=None)
 async def get_latest_report() -> Any:
     """Return the latest overnight factory report JSON.
 

@@ -2451,6 +2451,32 @@
             }
         }
 
+        function renderMorningBriefingError(reason) {
+            const timestampEl = document.getElementById("briefing-timestamp");
+            if (timestampEl) timestampEl.textContent = reason;
+
+            const fallbackBadge = document.getElementById("briefing-fallback-badge");
+            if (fallbackBadge) {
+                fallbackBadge.textContent = (reason.includes("404") || reason.includes("unavailable")) ? "Report Unavailable" : "Report Error";
+                fallbackBadge.className = "px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider border border-rose-500/20 bg-rose-500/10 text-rose-300";
+            }
+
+            const kpis = ["briefing-total-runs", "briefing-completed", "briefing-failed", "briefing-success-rate", "briefing-credits"];
+            kpis.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = "—";
+            });
+
+            const escContainer = document.getElementById("briefing-escalations");
+            if (escContainer) escContainer.innerHTML = `<div class="text-rose-400/80 italic">${reason}</div>`;
+
+            const commitsContainer = document.getElementById("briefing-commits");
+            if (commitsContainer) commitsContainer.innerHTML = `<div class="text-rose-400/80 italic">${reason}</div>`;
+
+            const runsTbody = document.getElementById("briefing-runs-tbody");
+            if (runsTbody) runsTbody.innerHTML = `<tr><td colspan="3" class="py-4 text-center text-rose-400/80 italic">${reason}</td></tr>`;
+        }
+
         async function fetchMorningBriefing() {
             try {
                 const res = await fetch("/api/gateway/overnight-report/latest");
@@ -2462,7 +2488,8 @@
                     
                     const fallbackBadge = document.getElementById("briefing-fallback-badge");
                     if (data.period && data.period.fallback_used) {
-                        fallbackBadge.classList.remove("hidden");
+                        fallbackBadge.textContent = "Fallback Lookback Mode";
+                        fallbackBadge.className = "px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider border border-amber-500/20 bg-amber-500/10 text-amber-300";
                     } else {
                         fallbackBadge.classList.add("hidden");
                     }
@@ -2520,9 +2547,12 @@
                     } else {
                         runsTbody.innerHTML = `<tr><td colspan="3" class="py-4 text-center text-slate-500 italic">No runs recorded.</td></tr>`;
                     }
+                } else {
+                    renderMorningBriefingError(res.status === 404 ? "Report unavailable (404)" : `Report error (${res.status})`);
                 }
             } catch (err) {
                 console.error("Error loading morning briefing:", err);
+                renderMorningBriefingError("Network error loading report");
             }
         }
 
