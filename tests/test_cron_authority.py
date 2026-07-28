@@ -527,7 +527,7 @@ def test_11_receipt_and_evidence_immutability_triggers(
     sample_evidence_kwargs: dict,
     sample_receipt_kwargs: dict,
 ):
-    """Test 11: Receipt and evidence UPDATE and DELETE attempts are rejected by triggers."""
+    """Test 11: Receipt/evidence mutations and INSERT OR REPLACE are rejected."""
     migrate_cron_authority(disposable_db)
     conn = connect_cron_authority(disposable_db)
 
@@ -584,6 +584,28 @@ def test_11_receipt_and_evidence_immutability_triggers(
             "DELETE FROM cron_evidence WHERE evidence_digest=?;",
             (sample_evidence_kwargs["evidence_digest"],),
         )
+
+    replaced_evidence = dict(sample_evidence_kwargs, created_at="2026-07-28T05:00:00Z")
+    with pytest.raises(sqlite3.IntegrityError, match="cannot be replaced"):
+        conn.execute(
+            "INSERT OR REPLACE INTO cron_evidence VALUES (?, ?, ?);",
+            tuple(replaced_evidence.values()),
+        )
+    assert conn.execute(
+        "SELECT created_at FROM cron_evidence WHERE evidence_digest=?",
+        (sample_evidence_kwargs["evidence_digest"],),
+    ).fetchone() == (sample_evidence_kwargs["created_at"],)
+
+    replaced_receipt = dict(sample_receipt_kwargs, signature="CHANGED")
+    with pytest.raises(sqlite3.IntegrityError, match="cannot be replaced"):
+        conn.execute(
+            "INSERT OR REPLACE INTO cron_receipts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+            tuple(replaced_receipt.values()),
+        )
+    assert conn.execute(
+        "SELECT signature FROM cron_receipts WHERE receipt_id=?",
+        (sample_receipt_kwargs["receipt_id"],),
+    ).fetchone() == (sample_receipt_kwargs["signature"],)
 
     conn.close()
 
@@ -751,6 +773,16 @@ def test_14_cursor_scope_collision_and_regression_trigger(disposable_db: Path):
         "SELECT cursor_value FROM cron_sweep_cursors WHERE scope_key='scope-job1-gen1';"
     ).fetchone() == (10,)
 
+    replacement = (*cursor_data[:5], 1, "2026-07-28T05:00:00Z")
+    with pytest.raises(sqlite3.IntegrityError, match="cannot be replaced"):
+        conn.execute(
+            "INSERT OR REPLACE INTO cron_sweep_cursors VALUES (?, ?, ?, ?, ?, ?, ?);",
+            replacement,
+        )
+    assert conn.execute(
+        "SELECT cursor_value FROM cron_sweep_cursors WHERE scope_key='scope-job1-gen1';"
+    ).fetchone() == (10,)
+
     # Regression and dynamically typed non-integer values fail closed.
     with pytest.raises(
         (sqlite3.IntegrityError, sqlite3.OperationalError), match="regression"
@@ -855,6 +887,7 @@ def test_18_active_caller_transaction_is_rejected_without_rollback(disposable_db
     conn.rollback()
     configured = connect_cron_authority(conn)
     assert configured.execute("PRAGMA foreign_keys").fetchone() == (1,)
+    assert configured.execute("PRAGMA recursive_triggers").fetchone() == (1,)
     conn.close()
 
 
@@ -940,6 +973,29 @@ def test_20_ownership_transition_fence_terminal_and_timestamp_guards(
         conn.execute(
             "INSERT INTO cron_execution_aggregates VALUES (?, ?, ?, ?, ?, ?, ?)",
             tuple(invalid_time.values()),
+        )
+
+    impossible_schedule = dict(
+        sample_aggregate_kwargs,
+        execution_id="bad-calendar-schedule",
+        schedule_bucket="2026-02-30T04:00:00Z",
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO cron_execution_aggregates VALUES (?, ?, ?, ?, ?, ?, ?)",
+            tuple(impossible_schedule.values()),
+        )
+
+    impossible_created = dict(
+        sample_aggregate_kwargs,
+        execution_id="bad-calendar-created",
+        command_digest="c" * 64,
+        created_at="2026-04-31T04:00:00Z",
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO cron_execution_aggregates VALUES (?, ?, ?, ?, ?, ?, ?)",
+            tuple(impossible_created.values()),
         )
 
     claimed_without_owner = dict(

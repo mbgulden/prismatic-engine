@@ -22,6 +22,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 from pathlib import Path
+import re
 import sqlite3
 from typing import Any
 
@@ -71,6 +72,22 @@ def resolve_db_target(target: Any) -> Any:
     return str(Path(target_str).resolve())
 
 
+_UTC_TIMESTAMP_PATTERN = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z$"
+)
+
+
+def _is_utc_timestamp(value: Any) -> int:
+    """Return 1 only for strict, calendar-valid RFC3339 UTC timestamps."""
+    if not isinstance(value, str) or _UTC_TIMESTAMP_PATTERN.fullmatch(value) is None:
+        return 0
+    try:
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError:
+        return 0
+    return int(parsed.utcoffset() == timezone.utc.utcoffset(parsed))
+
+
 def connect_cron_authority(target: Any, timeout: float = 30.0) -> sqlite3.Connection:
     """Create or configure a transaction-free SQLite connection for authority work."""
     resolved = resolve_db_target(target)
@@ -94,6 +111,12 @@ def connect_cron_authority(target: Any, timeout: float = 30.0) -> sqlite3.Connec
             "SQLite foreign keys could not be enabled",
             code="foreign_keys_unavailable",
         )
+    conn.execute("PRAGMA recursive_triggers = ON;")
+    if conn.execute("PRAGMA recursive_triggers;").fetchone() != (1,):
+        raise CronAuthorityError(
+            "SQLite recursive triggers could not be enabled",
+            code="recursive_triggers_unavailable",
+        )
     conn.create_function(
         "sha256_hex",
         1,
@@ -104,6 +127,7 @@ def connect_cron_authority(target: Any, timeout: float = 30.0) -> sqlite3.Connec
         ),
         deterministic=True,
     )
+    conn.create_function("is_utc_timestamp", 1, _is_utc_timestamp, deterministic=True)
     return conn
 
 
@@ -111,7 +135,7 @@ _CREATE_VERSION_TABLE_DDL = """
 CREATE TABLE IF NOT EXISTS cron_authority_schema_version (
     authority_id INTEGER PRIMARY KEY CHECK (authority_id = 1),
     schema_version INTEGER NOT NULL CHECK (typeof(schema_version) = 'integer' AND schema_version >= 1),
-    installed_at TEXT NOT NULL CHECK (installed_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]*Z' AND julianday(installed_at) IS NOT NULL)
+    installed_at TEXT NOT NULL CHECK (is_utc_timestamp(installed_at) = 1)
 );
 """
 
@@ -120,10 +144,10 @@ CREATE TABLE IF NOT EXISTS cron_execution_aggregates (
     execution_id TEXT PRIMARY KEY CHECK (length(execution_id) >= 1 AND length(execution_id) <= 128),
     cron_id TEXT NOT NULL CHECK (length(cron_id) >= 1 AND length(cron_id) <= 128),
     registry_generation INTEGER NOT NULL CHECK (typeof(registry_generation) = 'integer' AND registry_generation >= 1),
-    schedule_bucket TEXT NOT NULL CHECK (schedule_bucket GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]*Z' AND julianday(schedule_bucket) IS NOT NULL),
+    schedule_bucket TEXT NOT NULL CHECK (is_utc_timestamp(schedule_bucket) = 1),
     command_digest TEXT NOT NULL CHECK (length(command_digest) = 64 AND command_digest NOT GLOB '*[^0-9a-f]*'),
     release_digest TEXT NOT NULL CHECK (length(release_digest) = 64 AND release_digest NOT GLOB '*[^0-9a-f]*'),
-    created_at TEXT NOT NULL CHECK (created_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]*Z' AND julianday(created_at) IS NOT NULL),
+    created_at TEXT NOT NULL CHECK (is_utc_timestamp(created_at) = 1),
     CONSTRAINT uq_cron_aggregate UNIQUE (cron_id, registry_generation, schedule_bucket, command_digest, release_digest)
 );
 """
@@ -132,7 +156,7 @@ _CREATE_EVIDENCE_TABLE_DDL = """
 CREATE TABLE IF NOT EXISTS cron_evidence (
     evidence_digest TEXT PRIMARY KEY CHECK (length(evidence_digest) = 64 AND evidence_digest NOT GLOB '*[^0-9a-f]*'),
     canonical_bytes BLOB NOT NULL CHECK (typeof(canonical_bytes) = 'blob' AND length(canonical_bytes) <= 4000),
-    created_at TEXT NOT NULL CHECK (created_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]*Z' AND julianday(created_at) IS NOT NULL),
+    created_at TEXT NOT NULL CHECK (is_utc_timestamp(created_at) = 1),
     CONSTRAINT ck_evidence_content_address CHECK (evidence_digest = sha256_hex(canonical_bytes))
 );
 """
@@ -144,9 +168,9 @@ CREATE TABLE IF NOT EXISTS cron_execution_attempts (
     state TEXT NOT NULL CHECK (state IN ('admitted', 'claimed', 'running', 'reconciling', 'terminal')),
     runner_id TEXT CHECK (runner_id IS NULL OR (length(runner_id) >= 1 AND length(runner_id) <= 128)),
     fence_token INTEGER CHECK (fence_token IS NULL OR (typeof(fence_token) = 'integer' AND fence_token > 0)),
-    lease_expires_at TEXT CHECK (lease_expires_at IS NULL OR (lease_expires_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]*Z' AND julianday(lease_expires_at) IS NOT NULL)),
-    created_at TEXT NOT NULL CHECK (created_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]*Z' AND julianday(created_at) IS NOT NULL),
-    updated_at TEXT NOT NULL CHECK (updated_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]*Z' AND julianday(updated_at) IS NOT NULL),
+    lease_expires_at TEXT CHECK (lease_expires_at IS NULL OR is_utc_timestamp(lease_expires_at) = 1),
+    created_at TEXT NOT NULL CHECK (is_utc_timestamp(created_at) = 1),
+    updated_at TEXT NOT NULL CHECK (is_utc_timestamp(updated_at) = 1),
     CONSTRAINT ck_attempt_ownership CHECK (
         state IN ('admitted', 'terminal')
         OR (runner_id IS NOT NULL AND fence_token IS NOT NULL AND lease_expires_at IS NOT NULL)
@@ -164,14 +188,14 @@ CREATE TABLE IF NOT EXISTS cron_receipts (
     outcome TEXT NOT NULL CHECK (outcome IN ('succeeded', 'failed', 'timed_out', 'cancelled', 'blocked', 'missed_during_offline', 'awaiting_operator_approval', 'orphaned', 'reconciled')),
     runner_id TEXT NOT NULL CHECK (length(runner_id) >= 1 AND length(runner_id) <= 128),
     runner_release_digest TEXT NOT NULL CHECK (length(runner_release_digest) = 64 AND runner_release_digest NOT GLOB '*[^0-9a-f]*'),
-    started_at TEXT NOT NULL CHECK (started_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]*Z' AND julianday(started_at) IS NOT NULL),
-    finished_at TEXT NOT NULL CHECK (finished_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]*Z' AND julianday(finished_at) IS NOT NULL),
+    started_at TEXT NOT NULL CHECK (is_utc_timestamp(started_at) = 1),
+    finished_at TEXT NOT NULL CHECK (is_utc_timestamp(finished_at) = 1),
     error_classification TEXT CHECK (error_classification IS NULL OR length(error_classification) <= 128),
     evidence_digest TEXT REFERENCES cron_evidence(evidence_digest) ON DELETE RESTRICT CHECK (evidence_digest IS NULL OR (length(evidence_digest) = 64 AND evidence_digest NOT GLOB '*[^0-9a-f]*')),
     signing_key_id TEXT NOT NULL CHECK (length(signing_key_id) >= 1 AND length(signing_key_id) <= 128),
     signature TEXT NOT NULL CHECK (length(signature) >= 1 AND length(signature) <= 512),
     schema_version INTEGER NOT NULL CHECK (typeof(schema_version) = 'integer' AND schema_version = 1),
-    created_at TEXT NOT NULL CHECK (created_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]*Z' AND julianday(created_at) IS NOT NULL),
+    created_at TEXT NOT NULL CHECK (is_utc_timestamp(created_at) = 1),
     CONSTRAINT ck_required_outcome_evidence CHECK (
         outcome NOT IN ('failed', 'timed_out', 'blocked', 'missed_during_offline', 'awaiting_operator_approval', 'orphaned', 'reconciled')
         OR evidence_digest IS NOT NULL
@@ -189,18 +213,60 @@ CREATE TABLE IF NOT EXISTS cron_sweep_cursors (
     command_digest TEXT NOT NULL CHECK (length(command_digest) = 64 AND command_digest NOT GLOB '*[^0-9a-f]*'),
     catch_up_policy_version INTEGER NOT NULL CHECK (typeof(catch_up_policy_version) = 'integer' AND catch_up_policy_version >= 1),
     cursor_value INTEGER NOT NULL CHECK (typeof(cursor_value) = 'integer' AND cursor_value >= 0),
-    updated_at TEXT NOT NULL CHECK (updated_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]*Z' AND julianday(updated_at) IS NOT NULL),
+    updated_at TEXT NOT NULL CHECK (is_utc_timestamp(updated_at) = 1),
     CONSTRAINT uq_cron_sweep_scope UNIQUE (cron_id, registry_generation, command_digest, catch_up_policy_version)
 );
 """
 
 _TRIGGERS_DDL = [
     """
+    CREATE TRIGGER IF NOT EXISTS trg_cron_evidence_insert_collision
+    BEFORE INSERT ON cron_evidence
+    FOR EACH ROW
+    WHEN EXISTS (
+        SELECT 1 FROM cron_evidence WHERE evidence_digest = NEW.evidence_digest
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'cron_evidence rows cannot be replaced');
+    END;
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_cron_receipt_insert_collision
+    BEFORE INSERT ON cron_receipts
+    FOR EACH ROW
+    WHEN EXISTS (
+        SELECT 1 FROM cron_receipts
+        WHERE receipt_id = NEW.receipt_id
+           OR (execution_id = NEW.execution_id AND attempt = NEW.attempt)
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'cron_receipts rows cannot be replaced');
+    END;
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_cron_cursor_insert_collision
+    BEFORE INSERT ON cron_sweep_cursors
+    FOR EACH ROW
+    WHEN EXISTS (
+        SELECT 1 FROM cron_sweep_cursors
+        WHERE scope_key = NEW.scope_key
+           OR (
+               cron_id = NEW.cron_id
+               AND registry_generation = NEW.registry_generation
+               AND command_digest = NEW.command_digest
+               AND catch_up_policy_version = NEW.catch_up_policy_version
+           )
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'cursor rows cannot be replaced');
+    END;
+    """,
+    """
     CREATE TRIGGER IF NOT EXISTS trg_cron_evidence_no_update
     BEFORE UPDATE ON cron_evidence
     FOR EACH ROW
     BEGIN
-        SELECT RAISE(FAIL, 'cron_evidence rows are immutable');
+        SELECT RAISE(ABORT, 'cron_evidence rows are immutable');
     END;
     """,
     """
@@ -208,7 +274,7 @@ _TRIGGERS_DDL = [
     BEFORE DELETE ON cron_evidence
     FOR EACH ROW
     BEGIN
-        SELECT RAISE(FAIL, 'cron_evidence rows are immutable');
+        SELECT RAISE(ABORT, 'cron_evidence rows are immutable');
     END;
     """,
     """
@@ -216,7 +282,7 @@ _TRIGGERS_DDL = [
     BEFORE UPDATE ON cron_receipts
     FOR EACH ROW
     BEGIN
-        SELECT RAISE(FAIL, 'cron_receipts rows are immutable');
+        SELECT RAISE(ABORT, 'cron_receipts rows are immutable');
     END;
     """,
     """
@@ -224,7 +290,7 @@ _TRIGGERS_DDL = [
     BEFORE DELETE ON cron_receipts
     FOR EACH ROW
     BEGIN
-        SELECT RAISE(FAIL, 'cron_receipts rows are immutable');
+        SELECT RAISE(ABORT, 'cron_receipts rows are immutable');
     END;
     """,
     """
@@ -234,7 +300,7 @@ _TRIGGERS_DDL = [
     BEGIN
         SELECT CASE
             WHEN NEW.cursor_value < OLD.cursor_value THEN
-                RAISE(FAIL, 'cursor_value regression rejected')
+                RAISE(ABORT, 'cursor_value regression rejected')
         END;
     END;
     """,
@@ -248,7 +314,7 @@ _TRIGGERS_DDL = [
       OR NEW.command_digest IS NOT OLD.command_digest
       OR NEW.catch_up_policy_version IS NOT OLD.catch_up_policy_version
     BEGIN
-        SELECT RAISE(FAIL, 'cursor scope is immutable');
+        SELECT RAISE(ABORT, 'cursor scope is immutable');
     END;
     """,
     """
@@ -262,7 +328,7 @@ _TRIGGERS_DDL = [
         OR (OLD.state = 'reconciling' AND NEW.state = 'terminal')
     )
     BEGIN
-        SELECT RAISE(FAIL, 'illegal attempt state transition');
+        SELECT RAISE(ABORT, 'illegal attempt state transition');
     END;
     """,
     """
@@ -276,7 +342,7 @@ _TRIGGERS_DDL = [
         OR (NEW.runner_id IS NOT OLD.runner_id AND NEW.fence_token <= OLD.fence_token)
     )
     BEGIN
-        SELECT RAISE(FAIL, 'attempt fence regression or invalid renewal');
+        SELECT RAISE(ABORT, 'attempt fence regression or invalid renewal');
     END;
     """,
     """
@@ -285,7 +351,7 @@ _TRIGGERS_DDL = [
     FOR EACH ROW
     WHEN OLD.state = 'terminal'
     BEGIN
-        SELECT RAISE(FAIL, 'terminal attempts are immutable');
+        SELECT RAISE(ABORT, 'terminal attempts are immutable');
     END;
     """,
     """
@@ -302,7 +368,7 @@ _TRIGGERS_DDL = [
           AND aggregate.cron_id = NEW.cron_id
     )
     BEGIN
-        SELECT RAISE(FAIL, 'receipt identity or terminal attempt mismatch');
+        SELECT RAISE(ABORT, 'receipt identity or terminal attempt mismatch');
     END;
     """,
     """
@@ -310,7 +376,7 @@ _TRIGGERS_DDL = [
     BEFORE DELETE ON cron_sweep_cursors
     FOR EACH ROW
     BEGIN
-        SELECT RAISE(FAIL, 'cursor rows cannot be deleted');
+        SELECT RAISE(ABORT, 'cursor rows cannot be deleted');
     END;
     """,
     """
@@ -325,7 +391,7 @@ _TRIGGERS_DDL = [
           1
       )
     BEGIN
-        SELECT RAISE(FAIL, 'attempts must start at 1, increment by 1, and cannot insert terminal');
+        SELECT RAISE(ABORT, 'attempts must start at 1, increment by 1, and cannot insert terminal');
     END;
     """,
     """
@@ -333,7 +399,7 @@ _TRIGGERS_DDL = [
     BEFORE DELETE ON cron_execution_attempts
     FOR EACH ROW
     BEGIN
-        SELECT RAISE(FAIL, 'attempt rows cannot be deleted');
+        SELECT RAISE(ABORT, 'attempt rows cannot be deleted');
     END;
     """,
     """
@@ -347,7 +413,7 @@ _TRIGGERS_DDL = [
           WHERE execution_id = NEW.execution_id AND attempt = NEW.attempt
       )
     BEGIN
-        SELECT RAISE(FAIL, 'terminal transition requires matching receipt');
+        SELECT RAISE(ABORT, 'terminal transition requires matching receipt');
     END;
     """,
     """
@@ -363,6 +429,9 @@ _TRIGGERS_DDL = [
 ]
 
 _TRIGGER_NAMES = (
+    "trg_cron_evidence_insert_collision",
+    "trg_cron_receipt_insert_collision",
+    "trg_cron_cursor_insert_collision",
     "trg_cron_evidence_no_update",
     "trg_cron_evidence_no_delete",
     "trg_cron_receipts_no_update",
