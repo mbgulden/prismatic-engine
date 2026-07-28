@@ -23,7 +23,7 @@ The following redacted inventory records all discovered cron trigger authorities
 | User Crontab (`crontab -l`) | `ubuntu:ubuntu` | `0600` | `/var/spool/cron/crontabs/ubuntu` | `8ff18b26ef3c4b41efe91bbf30b93e0316ec49bd0bbb2d9eb9f4c8e25364d680` | YES (`/home/ubuntu/work/prismatic-pe-native-crons`) | Proposed Single Authority | Raw crontab export (`8ff18b26ef3c4b41efe91bbf30b93e0316ec49bd0bbb2d9eb9f4c8e25364d680`) |
 | System Cron.d (`e2scrub_all`) | `root:root` | `0644` | `/etc/cron.d/e2scrub_all` | `d4df081b982b23e66cac7102f9d91032f296caf13031991d90af44ee6cbf6e3b` | NO (OS package) | NO (Unrelated OS maintenance) | `/etc/cron.d/e2scrub_all` (`d4df081b982b23e66cac7102f9d91032f296caf13031991d90af44ee6cbf6e3b`) |
 | System Cron.d (`sysstat`) | `root:root` | `0644` | `/etc/cron.d/sysstat` | `47a67deba0d029d43209e6e512399543a945172f2a640021a6c21422a66adb1a` | NO (OS package) | NO (Unrelated OS metrics) | `/etc/cron.d/sysstat` (`47a67deba0d029d43209e6e512399543a945172f2a640021a6c21422a66adb1a`) |
-| Systemd Timers (`33 active`) | `root:root` | N/A | `/etc/systemd/system/*.timer` | Various | NO / Mixed | NO (Separate daemon timers) | Systemd unit directory |
+| Installed Prismatic systemd timers (`9` unit files; active and inactive) | Per-unit evidence in section 1.2 | Per-unit evidence in section 1.2 | Exact timer, service, executable, and configuration paths in section 1.2 | Exact per-file SHA-256 or `[REDACTED—SECRET-SCOPED]` in section 1.2 | Mixed; classified before migration | NONE selected by this discovery slice | Per-unit bytes plus exact enabled/active state in section 1.2 |
 | Native Cron Registry Store | `ubuntu:ubuntu` | `0600` | `/home/ubuntu/work/prismatic-pe-native-crons/prismatic_state/native_crons.json` | `4bc1666e896157486babc4704cb5c04de8cb6faf445520854593491669076d28` | YES (`/home/ubuntu/work/prismatic-pe-native-crons`) | Configuration Source | Repository default `SEO_NATIVE_CRONS` in `prismatic/native_crons.py` |
 | Upstream Outcome Contract | `ubuntu:ubuntu` | `0644` | `docs/contracts/cron-trigger-outcome-v1.md` | `0cc7b4445a9ea9172f5fb7a2a246bc0ca1c87d94e2ba7573a9ccfe27e04af885` | NO (Versioned spec) | Normative Spec | `BASE_COMMIT` `e63d621a26a944a66cd4af2c6b5ab3084fc92b55` |
 | Native Crons Registry Module | `ubuntu:ubuntu` | `0644` | `prismatic/native_crons.py` | `c8c580fa43e248815dc5c7e97dfe00d30d52d74bda53e20ee73e6f4029407c76` | NO (Tracked code) | Registry Definition | `BASE_COMMIT` `e63d621a26a944a66cd4af2c6b5ab3084fc92b55` |
@@ -31,10 +31,117 @@ The following redacted inventory records all discovered cron trigger authorities
 | Core Crons Module | `ubuntu:ubuntu` | `0644` | `prismatic/core_crons.py` | `2759c4038bc6f02cb9cdebcb518dbb9a1643d7c1d201a5ff0f4f1876ada59bb2` | NO (Tracked code) | Legacy Manifest (To Reconcile) | `BASE_COMMIT` `e63d621a26a944a66cd4af2c6b5ab3084fc92b55` |
 | Cron Authority Engine | `ubuntu:ubuntu` | `0644` | `prismatic/cron_authority.py` | `6f0db68c794616a5aae6bc37cac987fe985354ff9afca67ccdf80a7dcfb1f4a0` | NO (Tracked code) | Durable Authority Engine | `BASE_COMMIT` `e63d621a26a944a66cd4af2c6b5ab3084fc92b55` |
 
-### 1.2 Discovery Findings
+### 1.2 Installed Prismatic systemd timer inventory
+
+Read-only `systemctl list-unit-files --type=timer` discovery found the following installed Prismatic timer authorities. Disabled or inactive units remain inventoried because installed bytes can be re-enabled later. Secret-scoped configuration contents and digests are intentionally redacted; no secret bytes were read into this contract.
+
+#### 1.2.1 `prismatic-agent-bus-fred.timer` → `prismatic-agent-bus-fred.service`
+- **Timer state**: `enabled=enabled; active=active; load=loaded`
+- **Timer unit**: `/etc/systemd/system/prismatic-agent-bus-fred.timer` — `root:root` mode `0644` SHA-256 `d14c44d66bb6a515a72e38d69f66fd4c068a9a9d67337d0d1234edcf2dcc50c2`
+- **Service state**: `enabled=static; active=inactive; load=loaded`
+- **Service unit**: `/etc/systemd/system/prismatic-agent-bus-fred.service` — `root:root` mode `0644` SHA-256 `d635067c1736d852e80508d81b1fc11bcc875b0d1b1e36d0544e945611d68989`
+- **Execution identity**: `user=ubuntu; group=ubuntu; cwd=/home/ubuntu/prismatic-agent-bus`
+- **Referenced executable/configuration evidence**:
+  - `/usr/bin/python3` — `root:root` mode `0755` SHA-256 `1643dacd9feaedc58f3cc581e4d22577dfe25c09b10282936186ccf0f2e61118`
+  - `/home/ubuntu/prismatic-agent-bus/bin/prismatic_agent_bus.py` — `ubuntu:ubuntu` mode `0711` SHA-256 `db2e3dcf36fd766f1801a167b458ec4dd421db2b5d8a0903ce88f40c72b19299`
+- **Rollback source**: preserve the timer-unit bytes and service-unit bytes at the SHA-256 values above plus the exact enabled/active states above before any separately authorized mutation; rollback MUST restore those bytes, run `systemctl daemon-reload`, and restore the recorded enabled/active states.
+
+#### 1.2.2 `prismatic-agent-bus-george-audit.timer` → `prismatic-agent-bus-george-audit.service`
+- **Timer state**: `enabled=enabled; active=active; load=loaded`
+- **Timer unit**: `/etc/systemd/system/prismatic-agent-bus-george-audit.timer` — `root:root` mode `0644` SHA-256 `12b8878c34056f2d7c089cfac5d6e2a80d004d80477f020961e9ba9094b770ab`
+- **Service state**: `enabled=static; active=inactive; load=loaded`
+- **Service unit**: `/etc/systemd/system/prismatic-agent-bus-george-audit.service` — `root:root` mode `0644` SHA-256 `c76b21c72f1177480ff8ca6ee7cd3f9b73564a31a75641f3d431a3bedc4710e0`
+- **Execution identity**: `user=ubuntu; group=ubuntu; cwd=/home/ubuntu/prismatic-agent-bus`
+- **Referenced executable/configuration evidence**:
+  - `/usr/bin/python3` — `root:root` mode `0755` SHA-256 `1643dacd9feaedc58f3cc581e4d22577dfe25c09b10282936186ccf0f2e61118`
+  - `/home/ubuntu/prismatic-agent-bus/bin/prismatic_agent_bus.py` — `ubuntu:ubuntu` mode `0711` SHA-256 `db2e3dcf36fd766f1801a167b458ec4dd421db2b5d8a0903ce88f40c72b19299`
+- **Rollback source**: preserve the timer-unit bytes and service-unit bytes at the SHA-256 values above plus the exact enabled/active states above before any separately authorized mutation; rollback MUST restore those bytes, run `systemctl daemon-reload`, and restore the recorded enabled/active states.
+
+#### 1.2.3 `prismatic-agent-bus-kai.timer` → `prismatic-agent-bus-kai.service`
+- **Timer state**: `enabled=enabled; active=active; load=loaded`
+- **Timer unit**: `/etc/systemd/system/prismatic-agent-bus-kai.timer` — `root:root` mode `0644` SHA-256 `257218cd322f4155871b2226b3feaaa7720d25e417994be942ecc2d99c714d71`
+- **Service state**: `enabled=static; active=inactive; load=loaded`
+- **Service unit**: `/etc/systemd/system/prismatic-agent-bus-kai.service` — `root:root` mode `0644` SHA-256 `94008a0efc246a865b378f8aad8affc2b34cee58a67dcd541c3cf442ff2612e0`
+- **Execution identity**: `user=ubuntu; group=ubuntu; cwd=/home/ubuntu/prismatic-agent-bus`
+- **Referenced executable/configuration evidence**:
+  - `/usr/bin/python3` — `root:root` mode `0755` SHA-256 `1643dacd9feaedc58f3cc581e4d22577dfe25c09b10282936186ccf0f2e61118`
+  - `/home/ubuntu/prismatic-agent-bus/bin/prismatic_agent_bus.py` — `ubuntu:ubuntu` mode `0711` SHA-256 `db2e3dcf36fd766f1801a167b458ec4dd421db2b5d8a0903ce88f40c72b19299`
+- **Rollback source**: preserve the timer-unit bytes and service-unit bytes at the SHA-256 values above plus the exact enabled/active states above before any separately authorized mutation; rollback MUST restore those bytes, run `systemctl daemon-reload`, and restore the recorded enabled/active states.
+
+#### 1.2.4 `prismatic-curator-digest.timer` → `prismatic-curator-digest.service`
+- **Timer state**: `enabled=enabled; active=active; load=loaded`
+- **Timer unit**: `/etc/systemd/system/prismatic-curator-digest.timer` — `root:root` mode `0644` SHA-256 `1c33dcc36ba666d67adc1c375be759354bb2f6c9148a6721dcef17bf15e3aedf`
+- **Service state**: `enabled=disabled; active=inactive; load=loaded`
+- **Service unit**: `/etc/systemd/system/prismatic-curator-digest.service` — `root:root` mode `0644` SHA-256 `6dc5161d980967e52bee285cf6c46cb97fceda8398c8db11c77d85f5c747ec71`
+- **Execution identity**: `user=ubuntu; group=root(default); cwd=/home/ubuntu/.prismatic/runtime/prismatic-engine`
+- **Referenced executable/configuration evidence**:
+  - `/usr/bin/env` — `root:root` mode `0755` SHA-256 `0aefff8f912fb75716c5d4de3b6acde93edbe8fa280fc8ee895c1226d3e373ef`
+  - `/home/ubuntu/.prismatic/venv_stable/bin/python3` — `root:root` mode `0755` SHA-256 `1643dacd9feaedc58f3cc581e4d22577dfe25c09b10282936186ccf0f2e61118`
+  - `/home/ubuntu/.prismatic/env.d/linear_oauth.env` — `ubuntu:ubuntu` mode `0600` SHA-256 `[REDACTED—SECRET-SCOPED]`
+- **Rollback source**: preserve the timer-unit bytes and service-unit bytes at the SHA-256 values above plus the exact enabled/active states above before any separately authorized mutation; rollback MUST restore those bytes, run `systemctl daemon-reload`, and restore the recorded enabled/active states.
+
+#### 1.2.5 `prismatic-fleet-watchdog.timer` → `prismatic-fleet-watchdog.service`
+- **Timer state**: `enabled=disabled; active=inactive; load=loaded`
+- **Timer unit**: `/etc/systemd/system/prismatic-fleet-watchdog.timer` — `root:root` mode `0644` SHA-256 `057451dfd40caf5e5bfdc4e578e11d6ba2a59811dea20bb53cb40f756cd149e8`
+- **Service state**: `enabled=masked; active=inactive; load=masked`
+- **Service unit**: `/etc/systemd/system/prismatic-fleet-watchdog.service` — masked symlink `root:root` mode `0777` → `/dev/null`; link-text SHA-256 `fd5d32feb2d3562582258990ecfca9b88376957e512d5caac72ad89fc78d2df4`
+- **Execution identity**: `user=root(default); group=root(default); cwd=(unset)`
+- **Referenced executable/configuration evidence**:
+  - None declared by `ExecStart` or `EnvironmentFiles`.
+- **Rollback source**: preserve the timer-unit bytes and service-unit bytes at the SHA-256 values above plus the exact enabled/active states above before any separately authorized mutation; rollback MUST restore those bytes, run `systemctl daemon-reload`, and restore the recorded enabled/active states.
+
+#### 1.2.6 `prismatic-governance-autopacer.timer` → `prismatic-governance-autopacer.service`
+- **Timer state**: `enabled=enabled; active=active; load=loaded`
+- **Timer unit**: `/etc/systemd/system/prismatic-governance-autopacer.timer` — `root:root` mode `0644` SHA-256 `5504cd5ce9c3d54664659e406c6e61e86e785ea0bccdcb88103ed996bb8b9d23`
+- **Service state**: `enabled=static; active=inactive; load=loaded`
+- **Service unit**: `/etc/systemd/system/prismatic-governance-autopacer.service` — `root:root` mode `0644` SHA-256 `ed9eb7c7ecc15f1d81cc1d5ec967ebcd50baa4f6019556cc9a2d012257d02cf2`
+- **Execution identity**: `user=ubuntu; group=ubuntu; cwd=/home/ubuntu/prismatic-agent-bus`
+- **Referenced executable/configuration evidence**:
+  - `/usr/bin/python3` — `root:root` mode `0755` SHA-256 `1643dacd9feaedc58f3cc581e4d22577dfe25c09b10282936186ccf0f2e61118`
+  - `/home/ubuntu/prismatic-agent-bus/bin/prismatic_governance_autopacer.py` — `ubuntu:ubuntu` mode `0711` SHA-256 `62a7e0d7acc5b8ec9e6ff9eb39750ccaaef11c5250876438c8d9e80f1b19b776`
+- **Rollback source**: preserve the timer-unit bytes and service-unit bytes at the SHA-256 values above plus the exact enabled/active states above before any separately authorized mutation; rollback MUST restore those bytes, run `systemctl daemon-reload`, and restore the recorded enabled/active states.
+
+#### 1.2.7 `prismatic-soak-recorder.timer` → `prismatic-soak-recorder.service`
+- **Timer state**: `enabled=enabled; active=active; load=loaded`
+- **Timer unit**: `/etc/systemd/system/prismatic-soak-recorder.timer` — `root:root` mode `0644` SHA-256 `f50fa43bcefba58295e5f81f83d4428b2aaad2243fc2d087af7067c759ad7fd4`
+- **Service state**: `enabled=disabled; active=inactive; load=loaded`
+- **Service unit**: `/etc/systemd/system/prismatic-soak-recorder.service` — `root:root` mode `0644` SHA-256 `280fd4a4af090d9283a026f653933dec21da1ae0dbcf70735b05a8baca61cbb4`
+- **Execution identity**: `user=ubuntu; group=root(default); cwd=/home/ubuntu`
+- **Referenced executable/configuration evidence**:
+  - `/home/ubuntu/.prismatic/venv_stable/bin/python3` — `root:root` mode `0755` SHA-256 `1643dacd9feaedc58f3cc581e4d22577dfe25c09b10282936186ccf0f2e61118`
+  - `/home/ubuntu/.hermes/profiles/orchestrator/scripts/soak_recorder.py` — `ubuntu:ubuntu` mode `0755` SHA-256 `de0908f9209bc64c25716dfea1041eca37618463ce194e9975d45e00822960c3`
+- **Rollback source**: preserve the timer-unit bytes and service-unit bytes at the SHA-256 values above plus the exact enabled/active states above before any separately authorized mutation; rollback MUST restore those bytes, run `systemctl daemon-reload`, and restore the recorded enabled/active states.
+
+#### 1.2.8 `prismatic-watchdog.timer` → `prismatic-watchdog.service`
+- **Timer state**: `enabled=disabled; active=inactive; load=loaded`
+- **Timer unit**: `/etc/systemd/system/prismatic-watchdog.timer` — `root:root` mode `0644` SHA-256 `5e9e6c34888e36ce6b3d2efa48580e77a61e3b110e48c1a1c31ab0ee332f64a5`
+- **Service state**: `enabled=static; active=inactive; load=loaded`
+- **Service unit**: `/etc/systemd/system/prismatic-watchdog.service` — `root:root` mode `0644` SHA-256 `2b49dd8dac98333e0c5b922e6bb7736ff079af3705b99a00fa55b35d28dc5bda`
+- **Execution identity**: `user=root(default); group=root(default); cwd=/home/ubuntu/.prismatic/runtime/prismatic-engine`
+- **Referenced executable/configuration evidence**:
+  - `/home/ubuntu/.prismatic/runtime/prismatic-engine/scripts/watchdog.sh` — `ubuntu:ubuntu` mode `0755` SHA-256 `1598a548fd379b45dabb7a67cacac7b8be501598e98ea2c0ee9dbea118f5e8e7`
+- **Rollback source**: preserve the timer-unit bytes and service-unit bytes at the SHA-256 values above plus the exact enabled/active states above before any separately authorized mutation; rollback MUST restore those bytes, run `systemctl daemon-reload`, and restore the recorded enabled/active states.
+
+#### 1.2.9 `prismatic-webhook-drain.timer` → `prismatic-webhook-drain.service`
+- **Timer state**: `enabled=enabled; active=inactive; load=loaded`
+- **Timer unit**: `/etc/systemd/system/prismatic-webhook-drain.timer` — `root:root` mode `0644` SHA-256 `b114f0c2b150bbfa256ad124c3a273875b49961c4577dbde3e83dcca94f70314`
+- **Service state**: `enabled=static; active=inactive; load=loaded`
+- **Service unit**: `/etc/systemd/system/prismatic-webhook-drain.service` — `root:root` mode `0644` SHA-256 `7958ab9e63b7d46255a426d6019da7500a53868f4261909246df05e686892df1`
+- **Execution identity**: `user=ubuntu; group=root(default); cwd=/home/ubuntu/.prismatic/runtime/prismatic-engine`
+- **Referenced executable/configuration evidence**:
+  - `/home/ubuntu/.prismatic/venv_stable/bin/python3` — `root:root` mode `0755` SHA-256 `1643dacd9feaedc58f3cc581e4d22577dfe25c09b10282936186ccf0f2e61118`
+  - `/home/ubuntu/.prismatic/runtime/prismatic-engine/scripts/drain_webhook_queue.py` — `ubuntu:ubuntu` mode `0755` SHA-256 `5e4c85bd0836a8af4d713b5d750b1b0a651d4a922333897619bef1f7f63e0cc4`
+  - `/home/ubuntu/.prismatic/env.d/linear_oauth.env` — `ubuntu:ubuntu` mode `0600` SHA-256 `[REDACTED—SECRET-SCOPED]`
+- **Rollback source**: preserve the timer-unit bytes and service-unit bytes at the SHA-256 values above plus the exact enabled/active states above before any separately authorized mutation; rollback MUST restore those bytes, run `systemctl daemon-reload`, and restore the recorded enabled/active states.
+
+The inventory is evidence only. It does not assert that every timer schedules the same `cron_id`, and it does not authorize disabling, enabling, rewriting, or consolidating any unit. A later migration MUST classify each unit as PE cron authority, unrelated governance/control-plane authority, or preserved independent service before touching it.
+
+`INSTALLED_PRISMATIC_TIMER_COUNT=9`
+
+### 1.3 Discovery Findings
 
 1. **Mutable Checkout Vulnerability**: The active user crontab (`crontab -l`) contains entries created by `scripts/install_native_crons.py` that directly execute commands inside a mutable checkout path (`/home/ubuntu/work/prismatic-pe-native-crons`). If that checkout is modified, uncommitted code or arbitrary dependency edits execute immediately without release pinning or verification.
-2. **Dual-Authority Hazard**: Multiple independent trigger mechanisms currently exist: user crontab entries, systemd timers (`prismatic-governance-autopacer.timer`, `prismatic-agent-bus-fred.timer`), and OS crontabs (`/etc/cron.d`). Without a single trigger authority, schedule overlaps or duplicate execution claims cannot be transactionally detected or fenced.
+2. **Dual-Authority Hazard**: Multiple independent trigger mechanisms currently exist: user crontab entries, all nine installed Prismatic timer units inventoried in section 1.2, and OS crontabs (`/etc/cron.d`). A later migration MUST first classify each timer as PE cron authority, unrelated governance/control-plane authority, or preserved independent service; installed does not imply duplicate scheduling. Any shared `cron_id` across authorities would lack transactional duplicate fencing.
 3. **Direct Workload Execution Bypass**: The legacy crontab entries execute workload scripts directly (`python3 scripts/seo/aot_kpi_tracker.py`) without passing through the canonical durable cron authority (`prismatic/cron_authority.py`) or emitting normalized trigger envelopes. Consequently, uniqueness keys are not generated, claims are not fenced, and receipts are not appended.
 4. **Admission State Handling**: The native cron store (`prismatic_state/native_crons.json`) tracks job states (`active`, `paused`, `deactivated`, `deleted`). However, raw user crontab lines do not inspect this store before invoking commands; deactivated or paused crons in the crontab continue to run unless manually removed from the crontab.
 
@@ -44,6 +151,9 @@ Read-only discovery was executed using bounded inspection commands:
 - `crontab -l`
 - `ls -la /etc/cron.d/`
 - `systemctl list-timers --all --no-pager`
+- `systemctl list-unit-files --type=timer --no-pager`
+- bounded `systemctl show` for timer/service fragment, execution, identity, and state metadata
+- `stat`, `lstat`, and `readlink` metadata inspection without reading secret-scoped configuration contents
 - `sha256sum <file>`
 
 **Explicit Non-Claims**: Discovery was strictly read-only. No live system configuration, crontab, systemd unit, database, or repository file was mutated during discovery.
