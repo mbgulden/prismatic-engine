@@ -299,11 +299,65 @@ _TRIGGERS_DDL = [
           ON aggregate.execution_id = attempt.execution_id
         WHERE attempt.execution_id = NEW.execution_id
           AND attempt.attempt = NEW.attempt
-          AND attempt.state = 'terminal'
           AND aggregate.cron_id = NEW.cron_id
     )
     BEGIN
         SELECT RAISE(FAIL, 'receipt identity or terminal attempt mismatch');
+    END;
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_cron_sweep_cursors_no_delete
+    BEFORE DELETE ON cron_sweep_cursors
+    FOR EACH ROW
+    BEGIN
+        SELECT RAISE(FAIL, 'cursor rows cannot be deleted');
+    END;
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_cron_attempt_insert_guard
+    BEFORE INSERT ON cron_execution_attempts
+    FOR EACH ROW
+    WHEN NEW.state = 'terminal'
+      OR NEW.attempt != COALESCE(
+          (SELECT MAX(attempt) + 1
+           FROM cron_execution_attempts
+           WHERE execution_id = NEW.execution_id),
+          1
+      )
+    BEGIN
+        SELECT RAISE(FAIL, 'attempts must start at 1, increment by 1, and cannot insert terminal');
+    END;
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_cron_attempts_no_delete
+    BEFORE DELETE ON cron_execution_attempts
+    FOR EACH ROW
+    BEGIN
+        SELECT RAISE(FAIL, 'attempt rows cannot be deleted');
+    END;
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_cron_terminal_requires_receipt
+    BEFORE UPDATE OF state ON cron_execution_attempts
+    FOR EACH ROW
+    WHEN NEW.state = 'terminal'
+      AND OLD.state != 'terminal'
+      AND NOT EXISTS (
+          SELECT 1 FROM cron_receipts
+          WHERE execution_id = NEW.execution_id AND attempt = NEW.attempt
+      )
+    BEGIN
+        SELECT RAISE(FAIL, 'terminal transition requires matching receipt');
+    END;
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_cron_receipt_finalizes_attempt
+    AFTER INSERT ON cron_receipts
+    FOR EACH ROW
+    BEGIN
+        UPDATE cron_execution_attempts
+        SET state = 'terminal', updated_at = NEW.created_at
+        WHERE execution_id = NEW.execution_id AND attempt = NEW.attempt;
     END;
     """,
 ]
@@ -319,6 +373,11 @@ _TRIGGER_NAMES = (
     "trg_cron_attempt_fence_guard",
     "trg_cron_terminal_attempt_immutable",
     "trg_cron_receipt_identity_guard",
+    "trg_cron_sweep_cursors_no_delete",
+    "trg_cron_attempt_insert_guard",
+    "trg_cron_attempts_no_delete",
+    "trg_cron_terminal_requires_receipt",
+    "trg_cron_receipt_finalizes_attempt",
 )
 
 

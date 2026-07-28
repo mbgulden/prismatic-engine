@@ -76,7 +76,7 @@ def sample_attempt_kwargs(sample_aggregate_kwargs: dict) -> dict:
     return {
         "execution_id": sample_aggregate_kwargs["execution_id"],
         "attempt": 1,
-        "state": "terminal",
+        "state": "admitted",
         "runner_id": "runner-node-01",
         "fence_token": 1,
         "lease_expires_at": "2026-07-28T04:10:00Z",
@@ -617,7 +617,7 @@ def test_12_attempts_coexist_without_forced_reconciliation_to_next(
     )
 
     # Add Attempt 2 under same aggregate
-    attempt_2 = dict(sample_attempt_kwargs, attempt=2, state="terminal", fence_token=2)
+    attempt_2 = dict(sample_attempt_kwargs, attempt=2, state="admitted", fence_token=2)
     receipt_2 = dict(
         sample_receipt_kwargs,
         receipt_id="rcpt-20260728-0002",
@@ -762,6 +762,13 @@ def test_14_cursor_scope_collision_and_regression_trigger(disposable_db: Path):
         conn.execute(
             "UPDATE cron_sweep_cursors SET cursor_value='not-an-integer' WHERE scope_key='scope-job1-gen1';"
         )
+    with pytest.raises(sqlite3.IntegrityError, match="cannot be deleted"):
+        conn.execute(
+            "DELETE FROM cron_sweep_cursors WHERE scope_key='scope-job1-gen1';"
+        )
+    assert conn.execute(
+        "SELECT cursor_value FROM cron_sweep_cursors WHERE scope_key='scope-job1-gen1';"
+    ).fetchone() == (10,)
 
     conn.close()
 
@@ -948,9 +955,23 @@ def test_20_ownership_transition_fence_terminal_and_timestamp_guards(
             tuple(claimed_without_owner.values()),
         )
 
-    admitted = dict(
+    skipped_first_attempt = dict(
         sample_attempt_kwargs,
         attempt=2,
+        state="admitted",
+        runner_id=None,
+        fence_token=None,
+        lease_expires_at=None,
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="start at 1"):
+        conn.execute(
+            "INSERT INTO cron_execution_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            tuple(skipped_first_attempt.values()),
+        )
+
+    admitted = dict(
+        sample_attempt_kwargs,
+        attempt=1,
         state="admitted",
         runner_id=None,
         fence_token=None,
@@ -960,51 +981,60 @@ def test_20_ownership_transition_fence_terminal_and_timestamp_guards(
         "INSERT INTO cron_execution_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         tuple(admitted.values()),
     )
-    premature_receipt = dict(
-        sample_receipt_kwargs,
-        receipt_id="premature",
-        attempt=2,
-        evidence_digest=None,
-    )
-    with pytest.raises(sqlite3.IntegrityError, match="terminal attempt"):
+    with pytest.raises(sqlite3.IntegrityError, match="cannot be deleted"):
         conn.execute(
-            "INSERT INTO cron_receipts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            tuple(premature_receipt.values()),
+            "DELETE FROM cron_execution_attempts WHERE execution_id=? AND attempt=1",
+            (sample_aggregate_kwargs["execution_id"],),
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="requires matching receipt"):
+        conn.execute(
+            "UPDATE cron_execution_attempts SET state='terminal' WHERE execution_id=? AND attempt=1",
+            (sample_aggregate_kwargs["execution_id"],),
         )
 
     conn.execute(
         """UPDATE cron_execution_attempts
         SET state='claimed', runner_id='runner-a', fence_token=1,
             lease_expires_at='2026-07-28T04:10:00Z'
-        WHERE execution_id=? AND attempt=2""",
+        WHERE execution_id=? AND attempt=1""",
         (sample_aggregate_kwargs["execution_id"],),
     )
     with pytest.raises(sqlite3.IntegrityError, match="invalid renewal"):
         conn.execute(
-            "UPDATE cron_execution_attempts SET fence_token=2 WHERE execution_id=? AND attempt=2",
+            "UPDATE cron_execution_attempts SET fence_token=2 WHERE execution_id=? AND attempt=1",
             (sample_aggregate_kwargs["execution_id"],),
         )
     with pytest.raises(sqlite3.IntegrityError, match="invalid renewal"):
         conn.execute(
-            "UPDATE cron_execution_attempts SET runner_id='runner-b' WHERE execution_id=? AND attempt=2",
+            "UPDATE cron_execution_attempts SET runner_id='runner-b' WHERE execution_id=? AND attempt=1",
             (sample_aggregate_kwargs["execution_id"],),
         )
     conn.execute(
-        "UPDATE cron_execution_attempts SET runner_id='runner-b', fence_token=2 WHERE execution_id=? AND attempt=2",
+        "UPDATE cron_execution_attempts SET runner_id='runner-b', fence_token=2 WHERE execution_id=? AND attempt=1",
         (sample_aggregate_kwargs["execution_id"],),
     )
     with pytest.raises(sqlite3.IntegrityError, match="illegal attempt"):
         conn.execute(
-            "UPDATE cron_execution_attempts SET state='admitted' WHERE execution_id=? AND attempt=2",
+            "UPDATE cron_execution_attempts SET state='admitted' WHERE execution_id=? AND attempt=1",
             (sample_aggregate_kwargs["execution_id"],),
         )
-    conn.execute(
-        "UPDATE cron_execution_attempts SET state='terminal' WHERE execution_id=? AND attempt=2",
-        (sample_aggregate_kwargs["execution_id"],),
+
+    receipt = dict(
+        sample_receipt_kwargs,
+        runner_id="runner-b",
+        evidence_digest=None,
     )
+    conn.execute(
+        "INSERT INTO cron_receipts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        tuple(receipt.values()),
+    )
+    assert conn.execute(
+        "SELECT state FROM cron_execution_attempts WHERE execution_id=? AND attempt=1",
+        (sample_aggregate_kwargs["execution_id"],),
+    ).fetchone() == ("terminal",)
     with pytest.raises(sqlite3.IntegrityError, match="terminal attempts"):
         conn.execute(
-            "UPDATE cron_execution_attempts SET updated_at='2026-07-28T04:01:00Z' WHERE execution_id=? AND attempt=2",
+            "UPDATE cron_execution_attempts SET updated_at='2026-07-28T04:01:00Z' WHERE execution_id=? AND attempt=1",
             (sample_aggregate_kwargs["execution_id"],),
         )
     conn.close()
