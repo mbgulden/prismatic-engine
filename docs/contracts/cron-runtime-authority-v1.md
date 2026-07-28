@@ -81,14 +81,22 @@ $$\text{UniquenessKey} = (\mathtt{cron\_id}, \mathtt{registry\_generation}, \mat
 ## 3. Immutable thin-hook contract (`PE-CRON-RUNTIME-IMMUTABLE-HOOK`, `PE-CRON-RUNTIME-NO-DIRECT-EXEC`)
 
 ### 3.1 Pinned Executable Path & Digest
-The thin hook MUST be installed at a versioned, read-only, immutable path outside mutable checkouts:
-- **Absolute Path**: `/home/ubuntu/.prismatic/releases/v1.0.0/bin/pe-cron-trigger`
-- **Owner & Mode**: `ubuntu:ubuntu`, `0755` (read and execute only; write prohibited).
-- **Release Digest (`release_digest`)**: 64 lowercase hex characters matching SHA-256 of the release manifest.
-- **Config Digest (`config_digest`)**: 64 lowercase hex characters matching SHA-256 of the canonical cron registry JSON.
+Read-only discovery found **no current `pe-cron-trigger` artifact in any release**. Therefore this contract records no production path or production digest and authorizes no current cron invocation. A generator or installer MUST fail closed until a separately reviewed implementation release supplies the real artifact and all of the following concrete bindings.
+
+- **Observed full-commit absence canary**: `/home/ubuntu/.prismatic/releases/e63d621a26a944a66cd4af2c6b5ab3084fc92b55/bin/pe-cron-trigger`. That exact file does not exist and therefore MUST produce zero generated cron lines. Every future eligible path MUST use this same prefix/suffix with the real manifest's full 40-lowercase-hex merge commit as the single intervening directory component; semantic-version aliases, `latest`, shortened aliases, symlinks, and mutable worktree paths are forbidden.
+- **Owner & Mode**: the resolved artifact MUST be a regular non-symlink file owned by `ubuntu:ubuntu`, mode `0555` or stricter; every release-path parent MUST be non-group/world-writable.
+- **Canonical release manifest**: the same immutable directory MUST contain an RFC 8785 canonical manifest with concrete `release_id`, full merge commit, source tree, executable artifact SHA-256, and dependency-lock SHA-256. `release_digest` MUST equal lowercase SHA-256 of those exact canonical bytes.
+- **Canonical config binding**: the generated invocation MUST name an absolute immutable canonical cron-registry JSON path and a concrete `config_digest` equal to lowercase SHA-256 of its canonical bytes. Mutable state such as `prismatic_state/native_crons.json` cannot satisfy this binding.
+- **Generation gate**: before emitting any line, the generator MUST resolve the path without following a symlink, recompute the executable, lock, manifest, and config digests, require exact equality with the binding record, and require that the full merge commit in the manifest equals the release-directory name. Missing files, placeholders, aliases, digest-shape-only values, or any mismatch MUST yield zero generated cron lines.
+
+The concrete production path and digests necessarily originate in the future implementation release that creates the currently absent hook; inventing them in this design-only slice would be fabricated release proof. Their presence and recomputation are mandatory preconditions to the separately authorized installation event.
+
+For validator coverage only, the non-production release fixture digest is `f77751f09584ebc9af451a58b8c6a472e9c5415c1c178bb074e7c7c0dbf09b70` and the canonical empty-registry fixture config digest is `46adc580c4ee48b1165a745999e3a2797d207614a8ebd8b5c30740c7ab4390f9`. Both are concrete valid lowercase SHA-256 values, and both MUST be rejected by active deployment policy because neither identifies a verified installed hook/config pair.
 
 ### 3.2 Normalized Trigger-Envelope Input
 The thin-hook `pe-cron-trigger` MUST normalize every firing into the standard RFC 3339 UTC Trigger Envelope defined in `docs/contracts/cron-trigger-outcome-v1.md`:
+
+The following is a **non-production schema fixture** only. Its valid 64-hex `release_digest` demonstrates envelope shape; active deployment policy MUST reject it because no matching verified release manifest or hook exists.
 
 ```json
 {
@@ -99,7 +107,7 @@ The thin-hook `pe-cron-trigger` MUST normalize every firing into the standard RF
   "trigger_kind": "scheduled",
   "transport_kind": "crontab",
   "command_digest": "7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b",
-  "release_digest": "e63d621a26a944a66cd4af2c6b5ab3084fc92b55dcd4b18e5bd714db27ef8cf40",
+  "release_digest": "f77751f09584ebc9af451a58b8c6a472e9c5415c1c178bb074e7c7c0dbf09b70",
   "requested_at": "2026-07-28T04:00:00Z"
 }
 ```
@@ -122,7 +130,7 @@ The following table specifies the migration path from current surfaces to the si
 
 | Current Authority Surface | Current Source & Digest | Proposed Single Authority | Install Preconditions | Ownership / Mode / Privilege | Atomic & Idempotent Semantics | Verification Commands | Required Authorization |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| User Crontab Managed Block | `crontab -l` (`8ff18b26ef3c...`) | Single `ubuntu` crontab referencing `pe-cron-trigger` | Verified immutable release build at `/home/ubuntu/.prismatic/releases/v1.0.0/` | `ubuntu:ubuntu`, `0600` | Replace managed block `# BEGIN PRISMATIC_NATIVE_CRONS` atomically via tempfile crontab pipe | `crontab -l \| grep pe-cron-trigger` | Separate Admission Event |
+| User Crontab Managed Block | `crontab -l` (`8ff18b26ef3c...`) | Single `ubuntu` crontab referencing the concrete commit-addressed `pe-cron-trigger` binding | Existing hook artifact plus manifest/config binding pass every section 3.1 recomputation check; generated bytes contain no alias, placeholder, or mutable path | `ubuntu:ubuntu`, `0600` | Replace managed block `# BEGIN PRISMATIC_NATIVE_CRONS` atomically via tempfile crontab pipe; byte-identical reruns are no-ops | Parse every managed invocation and recompute its path, executable, lock, release-manifest, and config binding before comparing installed bytes | Separate Admission Event |
 | System Cron.d Files | `/etc/cron.d/*` (`d4df081b...`) | Preserved for OS maintenance; zero PE crons | OS package manager control | `root:root`, `0644` | Untouched by Prismatic installer | `ls -la /etc/cron.d/` | N/A (OS standard) |
 | Systemd Timers | `/etc/systemd/system/*.timer` | Deactivated for PE crons; single crontab authority | Governance autopacer transition complete | `root:root`, `0644` | `systemctl disable --now <unit>` if migrated | `systemctl list-timers` | Separate Service Migration |
 | Legacy Installer Script | `scripts/install_native_crons.py` (`c83d3388...`) | Reconciled to generate `pe-cron-trigger` crontab lines | Upstream contract accepted | `ubuntu:ubuntu`, `0644` | Generates crontab pointing strictly to immutable binary paths | `python3 scripts/install_native_crons.py --dry-run` | Code Review Merge |
@@ -176,7 +184,7 @@ GRO-4319 MUST NOT preempt GRO-4317 or GRO-4320. All interfaces defined herein re
 
 - [x] **`PE-CRON-RUNTIME-EVIDENCE`**: Complete redacted inventory of all discovered authorities, file modes, SHA-256 digests, and mutable checkout findings.
 - [x] **`PE-CRON-RUNTIME-SINGLE-AUTHORITY`**: Exactly one proposed user-crontab trigger authority with explicit prohibition of dual installation or fallbacks.
-- [x] **`PE-CRON-RUNTIME-IMMUTABLE-HOOK`**: Pinned immutable executable path (`/home/ubuntu/.prismatic/releases/v1.0.0/bin/pe-cron-trigger`) with release and config digests.
+- [x] **`PE-CRON-RUNTIME-IMMUTABLE-HOOK`**: Fail-closed full-commit path grammar plus mandatory concrete release-manifest/config recomputation; no production binding is claimed while the hook artifact is absent.
 - [x] **`PE-CRON-RUNTIME-NO-DIRECT-EXEC`**: Thin hook restricted to envelope submission with zero direct workload command execution.
 - [x] **`PE-CRON-RUNTIME-ROLLBACK-PLAN`**: Byte-for-byte pre-mutation crontab preservation, restoration commands, and digest verification.
 - [x] **One-Path Repository Containment**: Modifications restricted exclusively to `docs/contracts/cron-runtime-authority-v1.md`.
