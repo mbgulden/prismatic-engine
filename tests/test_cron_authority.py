@@ -148,12 +148,16 @@ def test_1_fresh_disposable_db_migration(disposable_db: Path):
 
     # Check schema version
     cursor.execute(
-        "SELECT schema_version, installed_at FROM cron_authority_schema_version;"
+        "SELECT authority_id, schema_version, installed_at FROM cron_authority_schema_version;"
     )
     rows = cursor.fetchall()
     assert len(rows) == 1
-    assert rows[0][0] == SCHEMA_VERSION
-    assert rows[0][1].endswith("Z")
+    assert rows[0][0:2] == (1, SCHEMA_VERSION)
+    assert rows[0][2].endswith("Z")
+    with pytest.raises(sqlite3.IntegrityError):
+        cursor.execute(
+            "INSERT INTO cron_authority_schema_version VALUES (2, 1, '2026-07-28T00:00:00Z');"
+        )
 
     # Check required tables
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
@@ -223,21 +227,23 @@ def test_5_unknown_newer_schema_version_fails_closed(disposable_db: Path):
     """Test 5: Unknown/newer schema version fails closed without mutation."""
     conn = connect_cron_authority(disposable_db)
     conn.execute(
-        "CREATE TABLE cron_authority_schema_version (schema_version INTEGER PRIMARY KEY, installed_at TEXT NOT NULL);"
+        "CREATE TABLE cron_authority_schema_version (authority_id INTEGER PRIMARY KEY, schema_version INTEGER NOT NULL, installed_at TEXT NOT NULL);"
     )
     conn.execute(
-        "INSERT INTO cron_authority_schema_version (schema_version, installed_at) VALUES (99, '2026-07-28T00:00:00Z');"
+        "INSERT INTO cron_authority_schema_version VALUES (1, 99, '2026-07-28T00:00:00Z');"
     )
     conn.commit()
 
     with pytest.raises(
-        CronAuthorityError, match="Unsupported cron authority schema version"
+        CronAuthorityError, match="Unsupported cron authority schema version rows"
     ):
         migrate_cron_authority(conn)
 
     cursor = conn.cursor()
-    cursor.execute("SELECT schema_version FROM cron_authority_schema_version;")
-    assert cursor.fetchone()[0] == 99
+    cursor.execute(
+        "SELECT authority_id, schema_version FROM cron_authority_schema_version;"
+    )
+    assert cursor.fetchone() == (1, 99)
     conn.close()
 
 
@@ -389,6 +395,14 @@ def test_9_rejections_for_invalid_types_states_digests_and_evidence(
             tuple(attempt_zero.values()),
         )
 
+    # Dynamic SQLite typing must not admit a textual attempt number.
+    attempt_text = dict(sample_attempt_kwargs, attempt="not-an-integer")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO cron_execution_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
+            tuple(attempt_text.values()),
+        )
+
     # 9b. Illegal attempt state rejected
     illegal_state = dict(sample_attempt_kwargs, state="illegal_state")
     with pytest.raises(sqlite3.IntegrityError):
@@ -414,6 +428,13 @@ def test_9_rejections_for_invalid_types_states_digests_and_evidence(
         conn.execute(
             "INSERT INTO cron_evidence VALUES (?, ?, ?);",
             ("E" * 64, b"valid_bytes", "2026-07-28T04:00:00Z"),
+        )
+
+    # Canonical evidence is stored as bytes, never as SQLite TEXT.
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO cron_evidence VALUES (?, ?, ?);",
+            ("f" * 64, "text-not-bytes", "2026-07-28T04:00:00Z"),
         )
 
     # 9e. Illegal receipt outcome rejected
@@ -614,6 +635,13 @@ def test_13_fence_and_lease_timestamp_constraints(
             tuple(bad_fence.values()),
         )
 
+    bad_fence_type = dict(sample_attempt_kwargs, fence_token="not-an-integer")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO cron_execution_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
+            tuple(bad_fence_type.values()),
+        )
+
     # 13b. Malformed lease timestamp (missing Z suffix) rejected
     bad_timestamp = dict(sample_attempt_kwargs, lease_expires_at="2026-07-28T04:10:00")
     with pytest.raises(sqlite3.IntegrityError):
@@ -626,7 +654,7 @@ def test_13_fence_and_lease_timestamp_constraints(
 
 
 def test_14_cursor_scope_collision_and_regression_trigger(disposable_db: Path):
-    """Test 14: Cursor scope collision is rejected and cursor regression is prevented by trigger."""
+    """Test 14: Contract scope is unique and integer cursor progress is monotonic."""
     migrate_cron_authority(disposable_db)
     conn = connect_cron_authority(disposable_db)
 
@@ -636,7 +664,7 @@ def test_14_cursor_scope_collision_and_regression_trigger(disposable_db: Path):
         1,
         "a" * 64,
         1,
-        "2026-07-28T04:00:00Z",
+        9,
         "2026-07-28T04:00:00Z",
     )
     conn.execute(
@@ -645,33 +673,55 @@ def test_14_cursor_scope_collision_and_regression_trigger(disposable_db: Path):
     )
     conn.commit()
 
-    # 14a. Scope collision rejected
-    dup_cursor = (
-        "scope-job1-gen1",
-        "cron.test-job",
-        1,
-        "a" * 64,
-        1,
-        "2026-07-28T05:00:00Z",
-        "2026-07-28T05:00:00Z",
-    )
+    # Primary scope-key collision is rejected.
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(
-            "INSERT INTO cron_sweep_cursors VALUES (?, ?, ?, ?, ?, ?, ?);", dup_cursor
+            "INSERT INTO cron_sweep_cursors VALUES (?, ?, ?, ?, ?, ?, ?);",
+            (
+                "scope-job1-gen1",
+                "cron.other",
+                1,
+                "b" * 64,
+                1,
+                1,
+                "2026-07-28T05:00:00Z",
+            ),
         )
 
-    # 14b. Monotonic forward update succeeds
+    # The normative contract tuple plus policy version is independently unique.
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO cron_sweep_cursors VALUES (?, ?, ?, ?, ?, ?, ?);",
+            (
+                "different-key",
+                "cron.test-job",
+                1,
+                "a" * 64,
+                1,
+                10,
+                "2026-07-28T05:00:00Z",
+            ),
+        )
+
+    # Numeric progress across a digit-width boundary succeeds.
     conn.execute(
-        "UPDATE cron_sweep_cursors SET cursor_value='2026-07-28T05:00:00Z' WHERE scope_key='scope-job1-gen1';"
+        "UPDATE cron_sweep_cursors SET cursor_value=10 WHERE scope_key='scope-job1-gen1';"
     )
     conn.commit()
+    assert conn.execute(
+        "SELECT cursor_value FROM cron_sweep_cursors WHERE scope_key='scope-job1-gen1';"
+    ).fetchone() == (10,)
 
-    # 14c. Cursor regression rejected by trigger
+    # Regression and dynamically typed non-integer values fail closed.
     with pytest.raises(
         (sqlite3.IntegrityError, sqlite3.OperationalError), match="regression"
     ):
         conn.execute(
-            "UPDATE cron_sweep_cursors SET cursor_value='2026-07-28T03:00:00Z' WHERE scope_key='scope-job1-gen1';"
+            "UPDATE cron_sweep_cursors SET cursor_value=8 WHERE scope_key='scope-job1-gen1';"
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "UPDATE cron_sweep_cursors SET cursor_value='not-an-integer' WHERE scope_key='scope-job1-gen1';"
         )
 
     conn.close()
