@@ -20,7 +20,7 @@ The following redacted inventory records all discovered cron trigger authorities
 
 | Authority Source | Owning User:Group | Mode | Absolute Executable / Config Path | Digest (SHA-256) | Mutable Checkout? | Selected Authority? | Rollback Source / Digest |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| User Crontab (`crontab -l`) | `ubuntu:ubuntu` | `0600` | `/var/spool/cron/crontabs/ubuntu` | `8ff18b26ef3c4b41efe91bbf30b93e0316ec49bd0bbb2d9eb9f4c8e25364d680` | YES (`/home/ubuntu/work/prismatic-pe-native-crons`) | Proposed Single Authority | Raw crontab export (`8ff18b26ef3c4b41efe91bbf30b93e0316ec49bd0bbb2d9eb9f4c8e25364d680`) |
+| User Crontab (`10` managed entries) | `ubuntu:ubuntu` | `0600` | Spool/export plus every interpreter, working directory, and referenced script in section 1.3 | Export, raw-command, interpreter, and script digests in section 1.3 | YES; every managed entry resolves into `/home/ubuntu/work/prismatic-pe-native-crons` | Proposed future authority only after immutable regeneration; current lines are ineligible | Byte-for-byte export SHA-256 `8ff18b26ef3c4b41efe91bbf30b93e0316ec49bd0bbb2d9eb9f4c8e25364d680` plus per-entry rollback bindings in section 1.3 |
 | System Cron.d (`e2scrub_all`) | `root:root` | `0644` | `/etc/cron.d/e2scrub_all` | `d4df081b982b23e66cac7102f9d91032f296caf13031991d90af44ee6cbf6e3b` | NO (OS package) | NO (Unrelated OS maintenance) | `/etc/cron.d/e2scrub_all` (`d4df081b982b23e66cac7102f9d91032f296caf13031991d90af44ee6cbf6e3b`) |
 | System Cron.d (`sysstat`) | `root:root` | `0644` | `/etc/cron.d/sysstat` | `47a67deba0d029d43209e6e512399543a945172f2a640021a6c21422a66adb1a` | NO (OS package) | NO (Unrelated OS metrics) | `/etc/cron.d/sysstat` (`47a67deba0d029d43209e6e512399543a945172f2a640021a6c21422a66adb1a`) |
 | Installed Prismatic systemd timers (`9` unit files; active and inactive) | Per-unit evidence in section 1.2 | Per-unit evidence in section 1.2 | Exact timer, service, executable, and configuration paths in section 1.2 | Exact per-file SHA-256 or `[REDACTED—SECRET-SCOPED]` in section 1.2 | Mixed; classified before migration | NONE selected by this discovery slice | Per-unit bytes plus exact enabled/active state in section 1.2 |
@@ -138,7 +138,111 @@ The inventory is evidence only. It does not assert that every timer schedules th
 
 `INSTALLED_PRISMATIC_TIMER_COUNT=9`
 
-### 1.3 Discovery Findings
+### 1.3 Installed user-crontab managed-entry inventory
+
+The managed block contains ten entries referencing nine Python workload scripts plus one `scripts/pwp` wrapper. Raw command bytes and any environment assignments are not reproduced; each entry is bound by SHA-256 of its exact raw command bytes. No secret values were emitted during discovery.
+
+- **Byte-for-byte crontab rollback source**: `crontab -l` export SHA-256 `8ff18b26ef3c4b41efe91bbf30b93e0316ec49bd0bbb2d9eb9f4c8e25364d680`; preserve the exact export with mode `0600` before any separately authorized mutation and restore it with `crontab <backup>` followed by digest equality verification.
+- **Shared mutable working directory**: `/home/ubuntu/work/prismatic-pe-native-crons` — directory `ubuntu:ubuntu` mode `0755` (directory bytes not hashed)
+- **Shared interpreter authority**: `/home/ubuntu/.local/share/pipx/venvs/hermes-agent/bin/python3` — symlink `ubuntu:ubuntu` mode `0777` → `/usr/bin/python3`; link-text SHA-256 `31f2aee4e71d21fbe5cf8b01ff0e069b9275f58929596ceb00d14d90e3e16cd6`; resolved `/usr/bin/python3.12` — `root:root` mode `0755` SHA-256 `1643dacd9feaedc58f3cc581e4d22577dfe25c09b10282936186ccf0f2e61118`
+
+#### 1.3.1 Managed entry `1`
+- **Schedule**: `0 3 * * *`
+- **Raw-command SHA-256**: `1bf6ef6f82a301a83c67ef28031ccc360a43f017803201bbf99814c31c907c83`
+- **Working directory**: `/home/ubuntu/work/prismatic-pe-native-crons`
+- **Interpreter**: `/home/ubuntu/.local/share/pipx/venvs/hermes-agent/bin/python3`
+- **Referenced workload executable/script evidence**:
+  - `/home/ubuntu/work/prismatic-pe-native-crons/scripts/pwp` — file `ubuntu:ubuntu` mode `0755` SHA-256 `1b3b9bc41e5d102b6c9801e9df5fe3d30321afdcefe5eeeb6f20d720d10adf84`
+- **Rollback source**: exact managed entry `1` from the byte-for-byte crontab export SHA-256 `8ff18b26ef3c4b41efe91bbf30b93e0316ec49bd0bbb2d9eb9f4c8e25364d680`; rollback MUST restore the entire export rather than reconstruct this line.
+
+#### 1.3.2 Managed entry `2`
+- **Schedule**: `0 4 * * 1`
+- **Raw-command SHA-256**: `1b18255788f463cd04f03794bfb6f0e0425d9871c08e850862cfd5e6991b5988`
+- **Working directory**: `/home/ubuntu/work/prismatic-pe-native-crons`
+- **Interpreter**: `/home/ubuntu/.local/share/pipx/venvs/hermes-agent/bin/python3`
+- **Referenced workload executable/script evidence**:
+  - `/home/ubuntu/work/prismatic-pe-native-crons/scripts/seo/aot_kpi_tracker.py` — file `ubuntu:ubuntu` mode `0600` SHA-256 `b6dc1910b381cd614cc73383b2c403bff1e6d895dd63ee1582417f31250d67d0`
+- **Rollback source**: exact managed entry `2` from the byte-for-byte crontab export SHA-256 `8ff18b26ef3c4b41efe91bbf30b93e0316ec49bd0bbb2d9eb9f4c8e25364d680`; rollback MUST restore the entire export rather than reconstruct this line.
+
+#### 1.3.3 Managed entry `3`
+- **Schedule**: `0 6 * * 0`
+- **Raw-command SHA-256**: `8dccad73f7cf639a741eeed002c2c055256629c76df780f6f36a92e313d79f15`
+- **Working directory**: `/home/ubuntu/work/prismatic-pe-native-crons`
+- **Interpreter**: `/home/ubuntu/.local/share/pipx/venvs/hermes-agent/bin/python3`
+- **Referenced workload executable/script evidence**:
+  - `/home/ubuntu/work/prismatic-pe-native-crons/scripts/seo/competitor_velocity.py` — file `ubuntu:ubuntu` mode `0644` SHA-256 `0b237d3d9cae6c47a257a4e0a5c99c494d9292a0299caa166264a30910206d0c`
+- **Rollback source**: exact managed entry `3` from the byte-for-byte crontab export SHA-256 `8ff18b26ef3c4b41efe91bbf30b93e0316ec49bd0bbb2d9eb9f4c8e25364d680`; rollback MUST restore the entire export rather than reconstruct this line.
+
+#### 1.3.4 Managed entry `4`
+- **Schedule**: `0 5 * * 0`
+- **Raw-command SHA-256**: `4da48bad3b3ee4809901bc63fce3e0125f13baf32354ee4ebd7b17dc9a1c751b`
+- **Working directory**: `/home/ubuntu/work/prismatic-pe-native-crons`
+- **Interpreter**: `/home/ubuntu/.local/share/pipx/venvs/hermes-agent/bin/python3`
+- **Referenced workload executable/script evidence**:
+  - `/home/ubuntu/work/prismatic-pe-native-crons/scripts/seo/managed_site_setup_audit.py` — file `ubuntu:ubuntu` mode `0600` SHA-256 `5939829ab719a879e855f3b646dfbfb00814ceaa3c95dd0a965bddce88581957`
+- **Rollback source**: exact managed entry `4` from the byte-for-byte crontab export SHA-256 `8ff18b26ef3c4b41efe91bbf30b93e0316ec49bd0bbb2d9eb9f4c8e25364d680`; rollback MUST restore the entire export rather than reconstruct this line.
+
+#### 1.3.5 Managed entry `5`
+- **Schedule**: `0 6 * * *`
+- **Raw-command SHA-256**: `69bd781980f78b1a4b7ddbdeefc6629cdec95b58e847bc18ec6fbc3601bd05b6`
+- **Working directory**: `/home/ubuntu/work/prismatic-pe-native-crons`
+- **Interpreter**: `/home/ubuntu/.local/share/pipx/venvs/hermes-agent/bin/python3`
+- **Referenced workload executable/script evidence**:
+  - `/home/ubuntu/work/prismatic-pe-native-crons/scripts/seo/ga4_insights.py` — file `ubuntu:ubuntu` mode `0600` SHA-256 `c0f7d178cdea8a27351014af1ebe87cb15bb37c32496bda783602be69b410f13`
+- **Rollback source**: exact managed entry `5` from the byte-for-byte crontab export SHA-256 `8ff18b26ef3c4b41efe91bbf30b93e0316ec49bd0bbb2d9eb9f4c8e25364d680`; rollback MUST restore the entire export rather than reconstruct this line.
+
+#### 1.3.6 Managed entry `6`
+- **Schedule**: `30 5 * * *`
+- **Raw-command SHA-256**: `cd7de97e645d3ef205efd408a76966629f1a604c095b22117225db371e0b568d`
+- **Working directory**: `/home/ubuntu/work/prismatic-pe-native-crons`
+- **Interpreter**: `/home/ubuntu/.local/share/pipx/venvs/hermes-agent/bin/python3`
+- **Referenced workload executable/script evidence**:
+  - `/home/ubuntu/work/prismatic-pe-native-crons/scripts/seo/gsc_query_page_export.py` — file `ubuntu:ubuntu` mode `0600` SHA-256 `31578b162dd645aa15d9976f616b6eefae861cf04b4d9db315e49c78992d2359`
+- **Rollback source**: exact managed entry `6` from the byte-for-byte crontab export SHA-256 `8ff18b26ef3c4b41efe91bbf30b93e0316ec49bd0bbb2d9eb9f4c8e25364d680`; rollback MUST restore the entire export rather than reconstruct this line.
+
+#### 1.3.7 Managed entry `7`
+- **Schedule**: `30 7 * * 0`
+- **Raw-command SHA-256**: `e6a3e128e83e022ba368c25acceb170051f8a92df8ab1fd65899ed5cffd9c6d5`
+- **Working directory**: `/home/ubuntu/work/prismatic-pe-native-crons`
+- **Interpreter**: `/home/ubuntu/.local/share/pipx/venvs/hermes-agent/bin/python3`
+- **Referenced workload executable/script evidence**:
+  - `/home/ubuntu/work/prismatic-pe-native-crons/scripts/seo/gsc_ubersuggest_countercontent.py` — file `ubuntu:ubuntu` mode `0600` SHA-256 `c48b9164f7f0a867442bb7f5c724890beac664999dc0a4329ef0665d95d4e35b`
+- **Rollback source**: exact managed entry `7` from the byte-for-byte crontab export SHA-256 `8ff18b26ef3c4b41efe91bbf30b93e0316ec49bd0bbb2d9eb9f4c8e25364d680`; rollback MUST restore the entire export rather than reconstruct this line.
+
+#### 1.3.8 Managed entry `8`
+- **Schedule**: `15 8 * * 1`
+- **Raw-command SHA-256**: `750f12a07fbc46ee7a2bab4be8168f43af46c58d5b8d3376cdf1102c59145783`
+- **Working directory**: `/home/ubuntu/work/prismatic-pe-native-crons`
+- **Interpreter**: `/home/ubuntu/.local/share/pipx/venvs/hermes-agent/bin/python3`
+- **Referenced workload executable/script evidence**:
+  - `/home/ubuntu/work/prismatic-pe-native-crons/scripts/seo/internal_link_orphan_audit.py` — file `ubuntu:ubuntu` mode `0600` SHA-256 `d1848b1a7463a64633df44885ff8b079417374475fdce9d1101ee0393c366850`
+- **Rollback source**: exact managed entry `8` from the byte-for-byte crontab export SHA-256 `8ff18b26ef3c4b41efe91bbf30b93e0316ec49bd0bbb2d9eb9f4c8e25364d680`; rollback MUST restore the entire export rather than reconstruct this line.
+
+#### 1.3.9 Managed entry `9`
+- **Schedule**: `45 8 * * 1`
+- **Raw-command SHA-256**: `67722f919da2486a7409e2c6cfbb65b111e7e0ef01aea428169b1b619310a969`
+- **Working directory**: `/home/ubuntu/work/prismatic-pe-native-crons`
+- **Interpreter**: `/home/ubuntu/.local/share/pipx/venvs/hermes-agent/bin/python3`
+- **Referenced workload executable/script evidence**:
+  - `/home/ubuntu/work/prismatic-pe-native-crons/scripts/seo/structured_data_drift_audit.py` — file `ubuntu:ubuntu` mode `0600` SHA-256 `08808055604a0dbe3607b9eabaeb8e119d654e048925b45220cac3bea3e45885`
+- **Rollback source**: exact managed entry `9` from the byte-for-byte crontab export SHA-256 `8ff18b26ef3c4b41efe91bbf30b93e0316ec49bd0bbb2d9eb9f4c8e25364d680`; rollback MUST restore the entire export rather than reconstruct this line.
+
+#### 1.3.10 Managed entry `10`
+- **Schedule**: `30 9 * * 1`
+- **Raw-command SHA-256**: `b220bd05323a211a3a28720207a0df3c66b0ef7ec4844ce9cb29e62455a4c7a3`
+- **Working directory**: `/home/ubuntu/work/prismatic-pe-native-crons`
+- **Interpreter**: `/home/ubuntu/.local/share/pipx/venvs/hermes-agent/bin/python3`
+- **Referenced workload executable/script evidence**:
+  - `/home/ubuntu/work/prismatic-pe-native-crons/scripts/seo/lighthouse_seo_a11y_monitor.py` — file `ubuntu:ubuntu` mode `0600` SHA-256 `9f1382f1ccef373640c131917a57332a613361334b84375eb8e1753daff4b313`
+- **Rollback source**: exact managed entry `10` from the byte-for-byte crontab export SHA-256 `8ff18b26ef3c4b41efe91bbf30b93e0316ec49bd0bbb2d9eb9f4c8e25364d680`; rollback MUST restore the entire export rather than reconstruct this line.
+
+This inventory is evidence only. Every entry currently depends on a mutable checkout and therefore is ineligible as the future immutable trigger authority. No entry was executed, installed, removed, or rewritten during discovery.
+
+`INSTALLED_MANAGED_CRON_ENTRY_COUNT=10`
+`REFERENCED_PYTHON_WORKLOAD_SCRIPT_COUNT=9`
+`REFERENCED_WRAPPER_SCRIPT_COUNT=1`
+
+### 1.4 Discovery Findings
 
 1. **Mutable Checkout Vulnerability**: The active user crontab (`crontab -l`) contains entries created by `scripts/install_native_crons.py` that directly execute commands inside a mutable checkout path (`/home/ubuntu/work/prismatic-pe-native-crons`). If that checkout is modified, uncommitted code or arbitrary dependency edits execute immediately without release pinning or verification.
 2. **Dual-Authority Hazard**: Multiple independent trigger mechanisms currently exist: user crontab entries, all nine installed Prismatic timer units inventoried in section 1.2, and OS crontabs (`/etc/cron.d`). A later migration MUST first classify each timer as PE cron authority, unrelated governance/control-plane authority, or preserved independent service; installed does not imply duplicate scheduling. Any shared `cron_id` across authorities would lack transactional duplicate fencing.
@@ -149,6 +253,7 @@ The inventory is evidence only. It does not assert that every timer schedules th
 
 Read-only discovery was executed using bounded inspection commands:
 - `crontab -l`
+- bounded managed-block parsing that emits schedules, path metadata, and raw-command SHA-256 without reproducing command/environment bytes
 - `ls -la /etc/cron.d/`
 - `systemctl list-timers --all --no-pager`
 - `systemctl list-unit-files --type=timer --no-pager`
