@@ -158,54 +158,92 @@ def classify_candidate_export(
             elif token == "--config-digest":
                 config_digest = cmd_parts[i + 1]
 
-        if binding_record:
-            if not release_digest and "release_digest" in binding_record:
-                release_digest = binding_record["release_digest"]
-            if not config_digest and "config_digest" in binding_record:
-                config_digest = binding_record["config_digest"]
+        # 1. Require --release-digest in command flags
+        if release_digest is None:
+            return False, "missing_release_digest"
 
-        if release_digest is not None:
-            valid_shape, shape_reason = validate_digest_shape(release_digest)
-            if not valid_shape:
-                return False, f"release_digest_{shape_reason}"
-            if manifest_bytes is not None:
-                recomputed = hashlib.sha256(manifest_bytes).hexdigest()
-                if recomputed != release_digest:
-                    return False, "mismatched_release_digest"
-            else:
-                return False, "missing_manifest_bytes"
+        # Validate shape of release_digest
+        valid_shape, shape_reason = validate_digest_shape(release_digest)
+        if not valid_shape:
+            return False, f"release_digest_{shape_reason}"
 
-        if config_digest is not None:
-            valid_shape, shape_reason = validate_digest_shape(config_digest)
-            if not valid_shape:
-                return False, f"config_digest_{shape_reason}"
-            if config_bytes is not None:
-                recomputed = hashlib.sha256(config_bytes).hexdigest()
-                if recomputed != config_digest:
-                    return False, "mismatched_config_digest"
-            else:
-                return False, "missing_config_bytes"
+        # 2. Require --config-digest in command flags
+        if config_digest is None:
+            return False, "missing_config_digest"
 
-        manifest_commit = None
-        if binding_record and "merge_commit" in binding_record:
-            manifest_commit = binding_record["merge_commit"]
-        elif manifest_bytes is not None:
-            try:
-                manifest_commit = json.loads(manifest_bytes.decode("utf-8")).get(
-                    "merge_commit"
-                )
-            except Exception:
-                pass
-        if manifest_commit is not None:
-            if commit_in_path != manifest_commit:
-                return False, "commit_path_mismatch"
+        # Validate shape of config_digest
+        valid_shape, shape_reason = validate_digest_shape(config_digest)
+        if not valid_shape:
+            return False, f"config_digest_{shape_reason}"
 
-        # Check hook binary existence
+        # 3. Require manifest_bytes and config_bytes
+        if manifest_bytes is None or not isinstance(manifest_bytes, bytes):
+            return False, "missing_manifest_bytes"
+        if config_bytes is None or not isinstance(config_bytes, bytes):
+            return False, "missing_config_bytes"
+
+        # 4 & 5. Require non-empty binding_record containing required fields
+        if not binding_record or not isinstance(binding_record, dict):
+            return False, "missing_binding_record"
+
+        if "release_digest" not in binding_record:
+            return False, "binding_missing_release_digest"
+        if "config_digest" not in binding_record:
+            return False, "binding_missing_config_digest"
+        if "merge_commit" not in binding_record:
+            return False, "binding_missing_merge_commit"
+        if "is_verified_pair" not in binding_record:
+            return False, "binding_missing_is_verified_pair"
+
+        # 6. Command digests equal binding-record digests
+        if release_digest != binding_record["release_digest"]:
+            return False, "command_binding_release_digest_mismatch"
+        if config_digest != binding_record["config_digest"]:
+            return False, "command_binding_config_digest_mismatch"
+
+        # 7. Command/binding digests equal SHA-256 recomputed from exact bytes
+        recomputed_rel = hashlib.sha256(manifest_bytes).hexdigest()
+        if (
+            release_digest != recomputed_rel
+            or binding_record["release_digest"] != recomputed_rel
+        ):
+            return False, "mismatched_release_digest"
+
+        recomputed_cfg = hashlib.sha256(config_bytes).hexdigest()
+        if (
+            config_digest != recomputed_cfg
+            or binding_record["config_digest"] != recomputed_cfg
+        ):
+            return False, "mismatched_config_digest"
+
+        # 8. Manifest merge_commit, binding-record merge_commit, and full release-directory commit match exactly
+        try:
+            manifest_data = json.loads(manifest_bytes.decode("utf-8"))
+            manifest_commit = manifest_data.get("merge_commit")
+        except Exception:
+            return False, "invalid_manifest_bytes"
+
+        if manifest_commit is None:
+            return False, "missing_manifest_merge_commit"
+
+        binding_commit = binding_record["merge_commit"]
+
+        if manifest_commit != binding_commit:
+            return False, "manifest_binding_commit_mismatch"
+
+        if commit_in_path != manifest_commit or commit_in_path != binding_commit:
+            return False, "commit_path_mismatch"
+
+        # 9. is_verified_pair is True — truthy substitutes such as 1 or non-empty strings do not pass
+        if (
+            type(binding_record["is_verified_pair"]) is not bool
+            or binding_record["is_verified_pair"] is not True
+        ):
+            return False, "unverified_hook_or_config_pair"
+
+        # 10. Only after all evidence succeeds may hook existence be evaluated and admission considered
         if not Path(executable).is_file():
             return False, "absent_hook_binary"
-
-        if binding_record and not binding_record.get("is_verified_pair", False):
-            return False, "unverified_hook_or_config_pair"
 
     return True, "admissible"
 
@@ -310,6 +348,7 @@ def test_pe_cron_runtime_percent_escape() -> None:
                 "environment_assignment_forbidden",
                 "invalid_hook_path_or_alias",
                 "absent_hook_binary",
+                "missing_release_digest",
             )
 
 
@@ -338,7 +377,27 @@ def test_pe_cron_runtime_absolute_hook() -> None:
     entry = f"0 3 * * * {valid_commit_path} --cron-id test.job"
     admissible, reason = is_admissible_cron_entry(entry)
     assert not admissible
-    assert reason == "absent_hook_binary"
+    assert reason == "missing_release_digest"
+
+    sample_manifest = b'{"release_id":"rel_01","merge_commit":"e63d621a26a944a66cd4af2c6b5ab3084fc92b55"}'
+    sample_config = b'{"crons":[]}'
+    rel_digest = hashlib.sha256(sample_manifest).hexdigest()
+    cfg_digest = hashlib.sha256(sample_config).hexdigest()
+    entry_with_evidence = f"0 3 * * * {valid_commit_path} --release-digest {rel_digest} --config-digest {cfg_digest}"
+    valid_binding = {
+        "release_digest": rel_digest,
+        "config_digest": cfg_digest,
+        "merge_commit": "e63d621a26a944a66cd4af2c6b5ab3084fc92b55",
+        "is_verified_pair": True,
+    }
+    admissible_ev, reason_ev = classify_candidate_export(
+        entry_with_evidence,
+        manifest_bytes=sample_manifest,
+        config_bytes=sample_config,
+        binding_record=valid_binding,
+    )
+    assert not admissible_ev
+    assert reason_ev == "absent_hook_binary"
 
     # Empty export check
     empty_export = (FIXTURES_DIR / "empty_managed_export.txt").read_text()
@@ -369,62 +428,107 @@ def test_pe_cron_runtime_digest() -> None:
 
     base_hook = "/home/ubuntu/.prismatic/releases/e63d621a26a944a66cd4af2c6b5ab3084fc92b55/bin/pe-cron-trigger"
 
+    valid_binding = {
+        "release_digest": recomputed_rel,
+        "config_digest": recomputed_cfg,
+        "merge_commit": "e63d621a26a944a66cd4af2c6b5ab3084fc92b55",
+        "is_verified_pair": True,
+    }
+
     # 1. Invalid length digest
-    entry = f"0 3 * * * {base_hook} --release-digest {digests['invalid_length_release_digest']}"
+    entry = f"0 3 * * * {base_hook} --release-digest {digests['invalid_length_release_digest']} --config-digest {recomputed_cfg}"
     admissible, reason = classify_candidate_export(
-        entry, manifest_bytes=sample_manifest
+        entry,
+        manifest_bytes=sample_manifest,
+        config_bytes=sample_config,
+        binding_record={
+            **valid_binding,
+            "release_digest": digests["invalid_length_release_digest"],
+        },
     )
     assert not admissible
     assert "invalid_length" in reason
 
     # 2. Uppercase digest
-    entry = (
-        f"0 3 * * * {base_hook} --release-digest {digests['uppercase_release_digest']}"
-    )
+    entry = f"0 3 * * * {base_hook} --release-digest {digests['uppercase_release_digest']} --config-digest {recomputed_cfg}"
     admissible, reason = classify_candidate_export(
-        entry, manifest_bytes=sample_manifest
+        entry,
+        manifest_bytes=sample_manifest,
+        config_bytes=sample_config,
+        binding_record={
+            **valid_binding,
+            "release_digest": digests["uppercase_release_digest"],
+        },
     )
     assert not admissible
     assert "uppercase" in reason
 
     # 3. Non-hex digest
-    entry = f"0 3 * * * {base_hook} --release-digest {digests['non_hex_digest']}"
+    entry = f"0 3 * * * {base_hook} --release-digest {digests['non_hex_digest']} --config-digest {recomputed_cfg}"
     admissible, reason = classify_candidate_export(
-        entry, manifest_bytes=sample_manifest
+        entry,
+        manifest_bytes=sample_manifest,
+        config_bytes=sample_config,
+        binding_record={
+            **valid_binding,
+            "release_digest": digests["non_hex_digest"],
+        },
     )
     assert not admissible
     assert "non_hex" in reason
 
     # 4. Placeholder digest
-    entry = f"0 3 * * * {base_hook} --release-digest {digests['placeholder_digest']}"
+    entry = f"0 3 * * * {base_hook} --release-digest {digests['placeholder_digest']} --config-digest {recomputed_cfg}"
     admissible, reason = classify_candidate_export(
-        entry, manifest_bytes=sample_manifest
+        entry,
+        manifest_bytes=sample_manifest,
+        config_bytes=sample_config,
+        binding_record={
+            **valid_binding,
+            "release_digest": digests["placeholder_digest"],
+        },
     )
     assert not admissible
     assert "placeholder" in reason
 
     # 5. Shape-valid but recomputation-mismatched release digest
     mismatched_rel = digests["shape_valid_mismatched_release_digest"]
-    entry = f"0 3 * * * {base_hook} --release-digest {mismatched_rel}"
+    entry = f"0 3 * * * {base_hook} --release-digest {mismatched_rel} --config-digest {recomputed_cfg}"
     admissible, reason = classify_candidate_export(
-        entry, manifest_bytes=sample_manifest
+        entry,
+        manifest_bytes=sample_manifest,
+        config_bytes=sample_config,
+        binding_record={**valid_binding, "release_digest": mismatched_rel},
     )
     assert not admissible
     assert reason == "mismatched_release_digest"
 
     # 6. Shape-valid but recomputation-mismatched config digest
     mismatched_cfg = digests["shape_valid_mismatched_config_digest"]
-    entry = f"0 3 * * * {base_hook} --config-digest {mismatched_cfg}"
-    admissible, reason = classify_candidate_export(entry, config_bytes=sample_config)
+    entry = f"0 3 * * * {base_hook} --release-digest {recomputed_rel} --config-digest {mismatched_cfg}"
+    admissible, reason = classify_candidate_export(
+        entry,
+        manifest_bytes=sample_manifest,
+        config_bytes=sample_config,
+        binding_record={**valid_binding, "config_digest": mismatched_cfg},
+    )
     assert not admissible
     assert reason == "mismatched_config_digest"
 
     # 7. Commit-path mismatch
     diff_commit_manifest = b'{"release_id":"rel_fixture_02","merge_commit":"1111111111111111111111111111111111111111"}'
     diff_rel_digest = hashlib.sha256(diff_commit_manifest).hexdigest()
-    entry = f"0 3 * * * {base_hook} --release-digest {diff_rel_digest}"
+    entry = f"0 3 * * * {base_hook} --release-digest {diff_rel_digest} --config-digest {recomputed_cfg}"
     admissible, reason = classify_candidate_export(
-        entry, manifest_bytes=diff_commit_manifest
+        entry,
+        manifest_bytes=diff_commit_manifest,
+        config_bytes=sample_config,
+        binding_record={
+            "release_digest": diff_rel_digest,
+            "config_digest": recomputed_cfg,
+            "merge_commit": "1111111111111111111111111111111111111111",
+            "is_verified_pair": True,
+        },
     )
     assert not admissible
     assert reason == "commit_path_mismatch"
@@ -436,6 +540,8 @@ def test_pe_cron_runtime_digest() -> None:
         manifest_bytes=sample_manifest,
         config_bytes=sample_config,
         binding_record={
+            "release_digest": recomputed_rel,
+            "config_digest": recomputed_cfg,
             "merge_commit": "e63d621a26a944a66cd4af2c6b5ab3084fc92b55",
             "is_verified_pair": False,
         },
@@ -459,17 +565,247 @@ def test_adversarial_digest_helper_bypass_blocked(monkeypatch) -> None:
     )
 
     sample_manifest = b'{"release_id":"rel_fixture_01","merge_commit":"e63d621a26a944a66cd4af2c6b5ab3084fc92b55"}'
+    sample_config = b'{"crons":[]}'
+    recomputed_cfg = hashlib.sha256(sample_config).hexdigest()
     mismatched_digest = (
         "1111111111111111111111111111111111111111111111111111111111111111"
     )
     base_hook = "/home/ubuntu/.prismatic/releases/e63d621a26a944a66cd4af2c6b5ab3084fc92b55/bin/pe-cron-trigger"
-    entry = f"0 3 * * * {base_hook} --release-digest {mismatched_digest}"
+    entry = f"0 3 * * * {base_hook} --release-digest {mismatched_digest} --config-digest {recomputed_cfg}"
+    binding_record = {
+        "release_digest": mismatched_digest,
+        "config_digest": recomputed_cfg,
+        "merge_commit": "e63d621a26a944a66cd4af2c6b5ab3084fc92b55",
+        "is_verified_pair": True,
+    }
 
     admissible, reason = classify_candidate_export(
-        entry, manifest_bytes=sample_manifest
+        entry,
+        manifest_bytes=sample_manifest,
+        config_bytes=sample_config,
+        binding_record=binding_record,
     )
     assert not admissible
     assert reason == "mismatched_release_digest"
+
+
+def test_pe_cron_runtime_fail_closed_evidence_regressions(monkeypatch) -> None:
+    """Marker: PE-CRON-RUNTIME-FAIL-CLOSED-EVIDENCE
+
+    Mocks hook existence to True and verifies that export classification fails closed
+    unless all required evidence is complete, valid, internally consistent, and verified.
+    Also tests the positive verified admission case.
+    """
+    monkeypatch.setattr(Path, "is_file", lambda self: True)
+
+    base_hook = "/home/ubuntu/.prismatic/releases/e63d621a26a944a66cd4af2c6b5ab3084fc92b55/bin/pe-cron-trigger"
+    manifest_bytes = b'{"release_id":"rel_fixture_01","merge_commit":"e63d621a26a944a66cd4af2c6b5ab3084fc92b55"}'
+    config_bytes = b'{"crons":[]}'
+    rel_digest = hashlib.sha256(manifest_bytes).hexdigest()
+    cfg_digest = hashlib.sha256(config_bytes).hexdigest()
+
+    full_entry = f"0 3 * * * {base_hook} --release-digest {rel_digest} --config-digest {cfg_digest}"
+    no_flags_entry = f"0 3 * * * {base_hook}"
+    rel_only_entry = f"0 3 * * * {base_hook} --release-digest {rel_digest}"
+    cfg_only_entry = f"0 3 * * * {base_hook} --config-digest {cfg_digest}"
+
+    valid_binding = {
+        "release_digest": rel_digest,
+        "config_digest": cfg_digest,
+        "merge_commit": "e63d621a26a944a66cd4af2c6b5ab3084fc92b55",
+        "is_verified_pair": True,
+    }
+
+    # 1. no digest flags + no binding record
+    ok, reason = classify_candidate_export(no_flags_entry)
+    assert not ok and reason == "missing_release_digest"
+
+    # 2. no digest flags + empty binding record
+    ok, reason = classify_candidate_export(no_flags_entry, binding_record={})
+    assert not ok and reason == "missing_release_digest"
+
+    # 3. no digest flags + exact bytes but no binding record
+    ok, reason = classify_candidate_export(
+        no_flags_entry,
+        manifest_bytes=manifest_bytes,
+        config_bytes=config_bytes,
+    )
+    assert not ok and reason == "missing_release_digest"
+
+    # 4. matching command digest flags + no binding record
+    ok, reason = classify_candidate_export(
+        full_entry,
+        manifest_bytes=manifest_bytes,
+        config_bytes=config_bytes,
+    )
+    assert not ok and reason == "missing_binding_record"
+
+    # 5. release digest only
+    ok, reason = classify_candidate_export(
+        rel_only_entry,
+        manifest_bytes=manifest_bytes,
+        config_bytes=config_bytes,
+        binding_record=valid_binding,
+    )
+    assert not ok and reason == "missing_config_digest"
+
+    # 6. config digest only
+    ok, reason = classify_candidate_export(
+        cfg_only_entry,
+        manifest_bytes=manifest_bytes,
+        config_bytes=config_bytes,
+        binding_record=valid_binding,
+    )
+    assert not ok and reason == "missing_release_digest"
+
+    # 7. binding record missing either digest
+    b_no_rel = {k: v for k, v in valid_binding.items() if k != "release_digest"}
+    ok, reason = classify_candidate_export(
+        full_entry,
+        manifest_bytes=manifest_bytes,
+        config_bytes=config_bytes,
+        binding_record=b_no_rel,
+    )
+    assert not ok and reason == "binding_missing_release_digest"
+
+    b_no_cfg = {k: v for k, v in valid_binding.items() if k != "config_digest"}
+    ok, reason = classify_candidate_export(
+        full_entry,
+        manifest_bytes=manifest_bytes,
+        config_bytes=config_bytes,
+        binding_record=b_no_cfg,
+    )
+    assert not ok and reason == "binding_missing_config_digest"
+
+    # 8. binding record missing merge commit
+    b_no_commit = {k: v for k, v in valid_binding.items() if k != "merge_commit"}
+    ok, reason = classify_candidate_export(
+        full_entry,
+        manifest_bytes=manifest_bytes,
+        config_bytes=config_bytes,
+        binding_record=b_no_commit,
+    )
+    assert not ok and reason == "binding_missing_merge_commit"
+
+    # 9. missing manifest bytes
+    ok, reason = classify_candidate_export(
+        full_entry,
+        config_bytes=config_bytes,
+        binding_record=valid_binding,
+    )
+    assert not ok and reason == "missing_manifest_bytes"
+
+    # 10. missing config bytes
+    ok, reason = classify_candidate_export(
+        full_entry,
+        manifest_bytes=manifest_bytes,
+        binding_record=valid_binding,
+    )
+    assert not ok and reason == "missing_config_bytes"
+
+    # 11. command digest versus binding-record mismatch
+    diff_digest = "a" * 64
+    entry_diff_rel = f"0 3 * * * {base_hook} --release-digest {diff_digest} --config-digest {cfg_digest}"
+    ok, reason = classify_candidate_export(
+        entry_diff_rel,
+        manifest_bytes=manifest_bytes,
+        config_bytes=config_bytes,
+        binding_record=valid_binding,
+    )
+    assert not ok and reason == "command_binding_release_digest_mismatch"
+
+    entry_diff_cfg = f"0 3 * * * {base_hook} --release-digest {rel_digest} --config-digest {diff_digest}"
+    ok, reason = classify_candidate_export(
+        entry_diff_cfg,
+        manifest_bytes=manifest_bytes,
+        config_bytes=config_bytes,
+        binding_record=valid_binding,
+    )
+    assert not ok and reason == "command_binding_config_digest_mismatch"
+
+    # 12. binding-record digest versus recomputed-byte mismatch
+    b_bad_rel = {**valid_binding, "release_digest": diff_digest}
+    entry_bad_rel = f"0 3 * * * {base_hook} --release-digest {diff_digest} --config-digest {cfg_digest}"
+    ok, reason = classify_candidate_export(
+        entry_bad_rel,
+        manifest_bytes=manifest_bytes,
+        config_bytes=config_bytes,
+        binding_record=b_bad_rel,
+    )
+    assert not ok and reason == "mismatched_release_digest"
+
+    b_bad_cfg = {**valid_binding, "config_digest": diff_digest}
+    entry_bad_cfg = f"0 3 * * * {base_hook} --release-digest {rel_digest} --config-digest {diff_digest}"
+    ok, reason = classify_candidate_export(
+        entry_bad_cfg,
+        manifest_bytes=manifest_bytes,
+        config_bytes=config_bytes,
+        binding_record=b_bad_cfg,
+    )
+    assert not ok and reason == "mismatched_config_digest"
+
+    # 13. manifest commit versus binding-record mismatch
+    manifest_diff_commit = b'{"release_id":"rel_01","merge_commit":"1111111111111111111111111111111111111111"}'
+    rel_diff_commit = hashlib.sha256(manifest_diff_commit).hexdigest()
+    entry_diff_commit_manifest = f"0 3 * * * {base_hook} --release-digest {rel_diff_commit} --config-digest {cfg_digest}"
+    b_diff_commit_manifest = {
+        **valid_binding,
+        "release_digest": rel_diff_commit,
+    }
+    ok, reason = classify_candidate_export(
+        entry_diff_commit_manifest,
+        manifest_bytes=manifest_diff_commit,
+        config_bytes=config_bytes,
+        binding_record=b_diff_commit_manifest,
+    )
+    assert not ok and reason == "manifest_binding_commit_mismatch"
+
+    # 14. manifest/binding commit versus release-directory mismatch
+    other_commit = "2222222222222222222222222222222222222222"
+    manifest_other = (
+        f'{{"release_id":"rel_01","merge_commit":"{other_commit}"}}'.encode("utf-8")
+    )
+    rel_other = hashlib.sha256(manifest_other).hexdigest()
+    entry_other = f"0 3 * * * {base_hook} --release-digest {rel_other} --config-digest {cfg_digest}"
+    b_other = {
+        **valid_binding,
+        "release_digest": rel_other,
+        "merge_commit": other_commit,
+    }
+    ok, reason = classify_candidate_export(
+        entry_other,
+        manifest_bytes=manifest_other,
+        config_bytes=config_bytes,
+        binding_record=b_other,
+    )
+    assert not ok and reason == "commit_path_mismatch"
+
+    # 15. is_verified_pair absent, false, 0, 1, or a non-boolean truthy value
+    for invalid_val in (None, False, 0, 1, "true", "True", [True]):
+        if invalid_val is None:
+            b_inv = {k: v for k, v in valid_binding.items() if k != "is_verified_pair"}
+        else:
+            b_inv = {**valid_binding, "is_verified_pair": invalid_val}
+        ok, reason = classify_candidate_export(
+            full_entry,
+            manifest_bytes=manifest_bytes,
+            config_bytes=config_bytes,
+            binding_record=b_inv,
+        )
+        assert not ok, f"is_verified_pair={invalid_val!r} should be rejected"
+        assert reason in (
+            "binding_missing_is_verified_pair",
+            "unverified_hook_or_config_pair",
+        )
+
+    # Positive test: all exact evidence valid and mocked hook exists -> admissible
+    ok, reason = classify_candidate_export(
+        full_entry,
+        manifest_bytes=manifest_bytes,
+        config_bytes=config_bytes,
+        binding_record=valid_binding,
+    )
+    assert ok and reason == "admissible"
 
 
 def test_pe_cron_runtime_idempotent_dryrun() -> None:
