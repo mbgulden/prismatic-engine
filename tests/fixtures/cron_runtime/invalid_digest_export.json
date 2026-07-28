@@ -1,0 +1,6 @@
+{
+  "invalid_length_release_digest": "f77751f09584ebc9af451a58b8c6a472",
+  "uppercase_release_digest": "F77751F09584EBC9AF451A58B8C6A472E9C5415C1C178BB074E7C7C0DBF09B70",
+  "mismatched_config_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+  "non_hex_digest": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+}
