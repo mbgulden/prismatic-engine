@@ -54,7 +54,7 @@ Every incoming trigger event MUST be normalized into a standard Trigger Envelope
 | `trigger_kind` | Enum String | `scheduled`, `catch_up`, `manual`, `external_event` | Semantic intent of the trigger firing. |
 | `transport_kind` | Enum String | `crontab`, `systemd`, `http_webhook`, `cli` | Transport channel that delivered the trigger event (recorded separately from `trigger_kind`). |
 | `command_digest` | String (SHA-256) | 64 lowercase hex chars | SHA-256 over the canonical non-secret executable specification defined below. |
-| `release_digest` | String (SHA-256) | 64 lowercase hex chars | SHA-256 digest of runner release artifact. |
+| `release_digest` | String (SHA-256) | 64 lowercase hex chars | SHA-256 of the canonical immutable-release manifest defined in section 7.4. |
 | `requested_at` | String (RFC 3339 UTC) | ISO format ending with `Z` | Time when scheduler emitted the trigger. |
 | `accepted_at` | String (RFC 3339 UTC) | ISO format ending with `Z` | Time when authority admitted the trigger envelope. |
 
@@ -122,12 +122,12 @@ The nine receipt outcomes MUST match GRO-4270 exactly:
 8. `orphaned`: Reconciliation could not establish a safe business outcome after lease loss.
 9. `reconciled`: Reconciliation established a conclusive outcome after an attempt failed to publish its own receipt.
 
-A receipt is terminal and immutable for its `(execution_id, attempt, receipt_id)`. The execution aggregate MAY contain more than one immutable attempt receipt only for an explicitly admitted retry, replay, approval continuation, or reconciliation. The authority MUST create a new attempt record in `admitted`, preserve the aggregate uniqueness key, allocate the next `attempt`, and validate authorization in one transaction. Duplicate delivery alone MUST NOT create an attempt.
+A receipt is terminal and immutable for its `(execution_id, attempt, receipt_id)`. The execution aggregate MAY contain more than one immutable attempt receipt only because an explicitly admitted retry, replay, or approval continuation created a later attempt. For those three paths, the authority MUST create a new attempt record in `admitted`, preserve the aggregate uniqueness key, allocate the next `attempt`, and validate authorization in one transaction. Reconciliation does not allocate an attempt number, and duplicate delivery alone MUST NOT create an attempt.
 
 ### 5.3 `reconciled` and illegal-transition rules
-`reconciled` is an appended terminal receipt for a reconciliation attempt; it is not a mutation of a prior receipt. Its `error_classification` and bounded evidence MUST identify the underlying conclusive class (`succeeded`, `failed`, `cancelled`, or `timed_out`). If a prior attempt already published an authoritative business outcome, reconciliation MUST return that receipt and MUST NOT append `reconciled`.
+`reconciled` is the reconciler-owned terminal receipt for the original expired attempt N; it is stored under `(execution_id, N)` and is not a new attempt or a mutation of a prior receipt. Its `error_classification` and bounded evidence MUST identify the underlying conclusive class (`succeeded`, `failed`, `cancelled`, or `timed_out`). If attempt N already published an authoritative receipt, reconciliation MUST return that receipt and MUST NOT append another.
 
-An expired attempt enters `reconciling` before any terminal receipt is chosen. The reconciler MUST publish either `reconciled` when conclusive evidence exists or `orphaned` when it does not. A separately authorized retry, replay, approval continuation, or reconciliation creates a new attempt under the same aggregate; it MUST NOT reopen or transition the prior terminal attempt. No policy may overwrite or delete an earlier attempt or receipt.
+An expired attempt N with no receipt is reacquired under a strictly greater fence and moves to `reconciling`; in one transaction the reconciler terminalizes that same attempt and appends exactly one receipt: `reconciled` when conclusive evidence exists or `orphaned` when it does not. A separately authorized retry, replay, or approval continuation may later create attempt N+1 under the same aggregate; it MUST NOT reopen or transition attempt N. No policy may overwrite or delete an earlier attempt or receipt.
 
 ---
 
@@ -159,8 +159,9 @@ The current repository provides:
 - The configured durable bus path `PRISMATIC_BUS_DB`, defaulting to `.prismatic/bus/event_log.sqlite`, referenced by `prismatic/timeline.py` and gateway readers.
 - SQLite WAL, foreign-key, idempotent admission, and outbox transactions in `prismatic/task_admission.py` (`TaskAdmissionStore`).
 - `BEGIN IMMEDIATE`, lease expiry, attempt count, claim lifecycle, and cap enforcement in `prismatic/task_admission_consumer.py`.
-- The accepted base receipt in `prismatic/cron_receipts/schema.py`.
-- Backup primitives in `prismatic/backup.py`.
+- The accepted base receipt in `prismatic/cron_receipts/schema.py`, which validates `runner_release_digest` shape but does not derive runtime identity.
+- Immutable release path templates in `prismatic/doctor.py`; retained artifact-byte and source-lineage checks in `prismatic/verifiers/plugins.py`; and `ReleaseEvidence` metadata in `prismatic/merge_candidate_manifest.py`. These are useful provenance primitives but do not currently bind a running process to one canonical release digest.
+- `prismatic/backup.py`, which creates tar archives of configured state paths but does not include `PRISMATIC_BUS_DB` by default, provide a live-WAL SQLite snapshot, or implement restore.
 
 No current table or store atomically joins cron execution claims to `CronRunReceipt` persistence. Therefore no current cron-execution authority satisfies this contract yet.
 
@@ -179,6 +180,11 @@ Each state mutation MUST execute in one `BEGIN IMMEDIATE` authority transaction 
 5. commits all changes together or rolls all of them back.
 
 A receipt MUST NOT be visible without its matching attempt transition, and an attempt MUST NOT become terminal without its matching receipt. Projection delivery occurs only after commit and cannot change the transaction result.
+
+### 7.4 Runtime release identity gap and required binding
+No current repository primitive derives and verifies `runner_release_digest` end to end for the executing immutable release. A future implementation MUST create a canonical release manifest inside the immutable release directory containing at least `release_id`, merge commit, source tree, executable artifact digest, and dependency-lock digest. `runner_release_digest` MUST equal lowercase `SHA-256` of the RFC 8785 canonical manifest bytes.
+
+At startup the runner MUST recompute every manifest-bound digest from the immutable release checkout/artifacts, reject dirty or mutable inputs, and register the verified digest with the authority. Admission MUST compare the trigger's `release_digest`, the runner's verified digest, and active deployment policy before allocating a claim; every resulting receipt MUST copy that verified value into `runner_release_digest`. Until this mechanism and mismatch canaries are accepted, the existing release-related primitives are evidence only and MUST NOT be represented as runtime release authority.
 
 ---
 
@@ -219,9 +225,17 @@ Buckets outside the registered lookback are expired and MUST receive bounded `mi
 - **Version Upgrades**: Minor-version migrations MUST be additive. Breaking semantics require a new major contract and explicit translation or fail-closed rejection. The authority MUST preserve readable v1 records.
 - **Completed Sweep Cursor**: The authority MUST persist a monotonic cursor scoped by `(cron_id, registry_generation, command_digest)` plus catch-up policy version. The cursor is scan progress, not execution authority; uniqueness constraints remain the duplicate-work guard.
 
-### 10.2 Orphan Sweeper & Restore Rules
-- **Orphan Reconciliation**: A bounded sweeper MUST claim expired leases using a new fence, move them to `reconciling`, and append exactly one authorized reconciliation-attempt receipt (`reconciled` with conclusive evidence or `orphaned` without it).
-- **Restore Invariants**: Restoring the authority database from state backups (e.g., generated via `prismatic/backup.py`) MUST preserve all existing uniqueness keys. A restored database MUST NOT permit a previously finalized terminal bucket to rerun as new work.
+### 10.2 Orphan sweeper
+- **Orphan Reconciliation**: A bounded sweeper MUST reacquire an expired receipt-less attempt N under a strictly greater fence, move that same attempt to `reconciling`, and terminalize it with exactly one receipt under `(execution_id, N)`: `reconciled` with conclusive evidence or `orphaned` without it. Reconciliation MUST NOT create attempt N+1.
+
+### 10.3 Current backup gap and required restore protocol
+`prismatic/backup.py` is not an authority backup/restore mechanism: its default candidates omit `PRISMATIC_BUS_DB`, its tar operation is not a SQLite-consistent live-WAL snapshot, and it implements no restore path. A future authority slice MUST:
+
+1. create a consistent snapshot of the configured bus database using SQLite's online backup API or an equivalently proven transaction-safe mechanism;
+2. bind the snapshot to a manifest containing schema/user version, snapshot SHA-256, creation time, and row-count/digest proofs for aggregates, attempts, receipts, evidence objects, and sweep cursors;
+3. restore only into a new database file, then pass `integrity_check`, `foreign_key_check`, schema compatibility, evidence digest revalidation, and uniqueness checks before activation;
+4. fence or stop all authority writers and atomically switch to the verified restored file—never overwrite a live database in place; and
+5. prove with restore canaries that finalized attempts do not rerun, attempt numbers do not regress, uniqueness keys and receipts remain immutable, evidence remains content-addressed, and sweep cursors resume without omission or duplicate work.
 
 ---
 
@@ -249,18 +263,18 @@ Buckets outside the registered lookback are expired and MUST receive bounded `mi
 | 4 | Delayed Delivery | Matches existing key | Delayed event ignored | Existing receipt returned | Rerunning finalized work |
 | 5 | Command Change | New `command_digest` generated | Forms new distinct uniqueness key | `succeeded` (new key) | Overwriting previous command receipt |
 | 6 | Registry Change | New `registry_generation` generated | Forms new distinct uniqueness key | `succeeded` (new key) | Merging distinct registry histories |
-| 7 | Crash-Before-Run | Matches original key | `claimed` -> `reconciling` -> `terminal` | `orphaned` absent conclusive work evidence | Unfenced retry or silent disappearance |
-| 8 | Crash-During-Run | Matches original key | `running` -> `reconciling` -> `terminal` | `reconciled` or `orphaned` from bounded evidence | Stale owner publishing success |
-| 9 | Crash-After-Work | Matches original key | `running` -> `reconciling` -> `terminal` | `reconciled` only with conclusive independent evidence | Unproven success or lost evidence |
+| 7 | Crash-Before-Run | Matches original key and attempt N | Attempt N: `claimed` -> `reconciling` -> `terminal` | Receipt for attempt N: `orphaned` absent conclusive work evidence | Attempt N+1 created by reconciliation or silent disappearance |
+| 8 | Crash-During-Run | Matches original key and attempt N | Attempt N: `running` -> `reconciling` -> `terminal` | Receipt for attempt N: `reconciled` or `orphaned` from bounded evidence | Stale owner publishing or reconciliation creating N+1 |
+| 9 | Crash-After-Work | Matches original key and attempt N | Attempt N: `running` -> `reconciling` -> `terminal` | Receipt for attempt N: `reconciled` only with conclusive independent evidence | Unproven success, lost evidence, or reconciliation creating N+1 |
 | 10 | Timeout | Matches original key | `running` -> `terminal` | `timed_out` | Silent process leak |
 | 11 | Cancellation | Matches original key | `running` -> `terminal` | `cancelled` | Overriding cancellation with success |
 | 12 | Dependency Block | Matches original key | `admitted` -> `terminal` | `blocked` | Running without prerequisites |
 | 13 | Paused / Deactivated / Deleted | Matches original key | `admitted` -> `terminal` | `blocked` | Running inactive cron |
 | 14 | Missed Catch-Up | Matches original key | `admitted` -> `terminal` | `missed_during_offline` | Silent drop without receipt |
 | 15 | Replay Fired | Matches original key | Authorized attempt N+1 begins at `admitted`; prior attempt remains terminal | `succeeded` or `failed` | Reopening prior attempt or creating a second aggregate |
-| 16 | Restore from Backup | Restores existing keys | Key status preserved in authority | Original terminal outcome | Rerunning terminal restored buckets |
+| 16 | Restore from Backup | Restores aggregates, attempts, receipts, evidence, and cursors | Verified new DB atomically activated while writers fenced | Original receipts and attempt numbers preserved | Live overwrite, regressed attempt, rerun, omitted evidence, or cursor drift |
 | 17 | Stale Fence Race | Superseded fence token | Stale request rejected without state change | Existing authoritative receipt, or later reconciler receipt | Stale owner mutation |
-| 18 | Release Mismatch | Release digest mismatch | `admitted` -> `terminal` | `blocked` | Running on unapproved release |
+| 18 | Release Mismatch | Trigger, verified runner, or policy digest differs | `admitted` -> `terminal` | `blocked` | Claim allocation or work on an unverified release |
 | 19 | Projection Outage | Matches original key | Unaffected authority commit | `succeeded` | Authority failure due to projection |
 | 20 | Approval Continuation | Matches original key | Authorized attempt N+1 begins at `admitted`; approval attempt remains terminal | `awaiting_operator_approval`, then later attempt outcome | Reopening prior attempt, new aggregate, or bypassed approval |
 
@@ -270,10 +284,12 @@ Buckets outside the registered lookback are expired and MUST receive bounded `mi
 
 ### 13.1 Future Implementation Slices
 1. **Schema & Dataclass Slice**: Expand receipt validation tooling if additive fields are introduced.
-2. **Authority Migration Slice**: Add versioned cron aggregate and append-only receipt tables to the configured `PRISMATIC_BUS_DB`, with fenced claim transactions and rollback tests.
-3. **Runner & Claim Engine Slice**: Build background runner process loop with heartbeat renewals.
-4. **Transport Adapter Slice**: Connect crontab, systemd, and HTTP webhook listeners to envelope normalizer.
-5. **Telemetry & Projection Slice**: Update secondary dashboard tabs and dedup projections.
+2. **Authority Migration Slice**: Add versioned aggregate, per-attempt, receipt, evidence, and cursor tables to configured `PRISMATIC_BUS_DB`, with fenced transactions and rollback tests.
+3. **Release Identity Slice**: Build and verify the canonical immutable-release manifest and bind `release_digest`/`runner_release_digest` end to end.
+4. **Backup and Restore Slice**: Implement consistent SQLite snapshots, manifests, offline verification, writer fencing, atomic activation, and restore canaries.
+5. **Runner & Claim Engine Slice**: Build the runner loop with same-owner heartbeat renewal and fenced reconciliation.
+6. **Transport Adapter Slice**: Connect crontab, systemd, and HTTP webhook listeners to the envelope normalizer.
+7. **Telemetry & Projection Slice**: Update secondary dashboard tabs and dedup projections.
 
 ### 13.2 Unresolved Decisions
 - **Cryptographic Key Management**: Selection of KMS vs local asymmetric key pairs for `CronRunReceipt` signature verification will be decided in the signing implementation slice.
