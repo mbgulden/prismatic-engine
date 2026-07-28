@@ -1,6 +1,10 @@
 {
   "invalid_length_release_digest": "f77751f09584ebc9af451a58b8c6a472",
   "uppercase_release_digest": "F77751F09584EBC9AF451A58B8C6A472E9C5415C1C178BB074E7C7C0DBF09B70",
-  "mismatched_config_digest": "0000000000000000000000000000000000000000000000000000000000000000",
-  "non_hex_digest": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+  "placeholder_digest": "0000000000000000000000000000000000000000000000000000000000000000",
+  "non_hex_digest": "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+  "shape_valid_mismatched_release_digest": "1111111111111111111111111111111111111111111111111111111111111111",
+  "shape_valid_mismatched_config_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+  "non_production_fixture_release_digest": "f77751f09584ebc9af451a58b8c6a472e9c5415c1c178bb074e7c7c0dbf09b70",
+  "non_production_fixture_config_digest": "46adc580c4ee48b1165a745999e3a2797d207614a8ebd8b5c30740c7ab4390f9"
 }

@@ -63,53 +63,156 @@ def is_full_commit_hook_path(path_str: str) -> bool:
     return bool(re.match(pattern, path_str))
 
 
-def is_admissible_cron_entry(entry_line: str) -> tuple[bool, str]:
-    """Classifies a candidate crontab entry line according to immutable runtime contract v1."""
-    line = entry_line.strip()
-    if not line or line.startswith("#"):
+def validate_digest_shape(digest_str: str) -> tuple[bool, str]:
+    """Validates that digest_str is a 64-character lowercase hexadecimal string."""
+    if not isinstance(digest_str, str):
+        return False, "invalid_digest_type"
+    if len(digest_str) != 64:
+        return False, "invalid_length_digest"
+    if digest_str.isupper() or any(c.isupper() for c in digest_str):
+        return False, "uppercase_digest"
+    if digest_str == "0" * 64:
+        return False, "placeholder_digest"
+    if not re.match(r"^[0-9a-f]{64}$", digest_str):
+        return False, "non_hex_digest"
+    return True, "valid_shape"
+
+
+def classify_candidate_export(
+    export_content: str | bytes,
+    manifest_bytes: bytes | None = None,
+    config_bytes: bytes | None = None,
+    binding_record: dict | None = None,
+) -> tuple[bool, str]:
+    """Classifies a candidate crontab export (or entry line) enforcing contract v1 rules:
+
+    - parses lowercase 64-hex release_digest and config_digest bindings;
+    - recomputes SHA-256 from candidate manifest/config bytes;
+    - compares recomputed values to parsed bindings;
+    - binds full manifest merge commit to full release directory component;
+    - rejects malformed, uppercase, wrong-length, placeholder, alias/short-SHA, missing-byte, and digest-mismatch cases;
+    - rejects valid-shape fixture digests when no verified real hook/config pair exists;
+    - yields zero admitted production lines at this base because the real hook/manifest/config binding remains absent.
+    """
+    if isinstance(export_content, bytes):
+        try:
+            content_str = export_content.decode("utf-8")
+        except UnicodeDecodeError:
+            return False, "invalid_encoding"
+    else:
+        content_str = export_content
+
+    lines = [line.strip() for line in content_str.splitlines() if line.strip()]
+    if not lines:
         return True, "comment_or_empty"
 
-    # Environment assignment before command is forbidden in managed trigger lines
-    if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", line):
-        return False, "environment_assignment_forbidden"
+    for line in lines:
+        if line.startswith("#"):
+            continue
 
-    tokens = line.split()
-    if len(tokens) < 6:
-        return False, "invalid_field_count"
+        # Environment assignment before command is forbidden in managed trigger lines
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", line):
+            return False, "environment_assignment_forbidden"
 
-    schedule = " ".join(tokens[:5])
-    if not validate_cron_schedule_syntax(schedule):
-        return False, "invalid_cron_schedule"
+        tokens = line.split()
+        if len(tokens) < 6:
+            return False, "invalid_field_count"
 
-    parts = line.split(maxsplit=5)
-    command = parts[5]
+        schedule = " ".join(tokens[:5])
+        if not validate_cron_schedule_syntax(schedule):
+            return False, "invalid_cron_schedule"
 
-    # Unescaped percent signs are cron newline/stdin injections
-    if "%" in command and r"\%" not in command:
-        return False, "unescaped_percent_injection"
+        parts = line.split(maxsplit=5)
+        command = parts[5]
 
-    # Embedded newlines
-    if "\n" in command or "\r" in command:
-        return False, "embedded_newline_injection"
+        # Unescaped percent signs are cron newline/stdin injections
+        if "%" in command and r"\%" not in command:
+            return False, "unescaped_percent_injection"
 
-    # Direct workload scripts or cd to mutable checkouts forbidden
-    if "cd /home/ubuntu/work" in command or "/home/ubuntu/work/" in command:
-        return False, "mutable_checkout_rejection"
+        # Embedded newlines
+        if "\n" in command or "\r" in command:
+            return False, "embedded_newline_injection"
 
-    if "python" in command and "pe-cron-trigger" not in command:
-        return False, "direct_workload_script_rejection"
+        # Direct workload scripts or cd to mutable checkouts forbidden
+        if "cd /home/ubuntu/work" in command or "/home/ubuntu/work/" in command:
+            return False, "mutable_checkout_rejection"
 
-    # Check executable path
-    cmd_parts = command.split()
-    executable = cmd_parts[0]
-    if not is_full_commit_hook_path(executable):
-        return False, "invalid_hook_path_or_alias"
+        if "python" in command and "pe-cron-trigger" not in command:
+            return False, "direct_workload_script_rejection"
 
-    # Check hook binary existence
-    if not Path(executable).is_file():
-        return False, "absent_hook_binary"
+        # Check executable path
+        cmd_parts = command.split()
+        executable = cmd_parts[0]
+        if not is_full_commit_hook_path(executable):
+            return False, "invalid_hook_path_or_alias"
+
+        commit_in_path = executable.split("/releases/")[1].split(
+            "/bin/pe-cron-trigger"
+        )[0]
+
+        release_digest = None
+        config_digest = None
+        for i, token in enumerate(cmd_parts[:-1]):
+            if token == "--release-digest":
+                release_digest = cmd_parts[i + 1]
+            elif token == "--config-digest":
+                config_digest = cmd_parts[i + 1]
+
+        if binding_record:
+            if not release_digest and "release_digest" in binding_record:
+                release_digest = binding_record["release_digest"]
+            if not config_digest and "config_digest" in binding_record:
+                config_digest = binding_record["config_digest"]
+
+        if release_digest is not None:
+            valid_shape, shape_reason = validate_digest_shape(release_digest)
+            if not valid_shape:
+                return False, f"release_digest_{shape_reason}"
+            if manifest_bytes is not None:
+                recomputed = hashlib.sha256(manifest_bytes).hexdigest()
+                if recomputed != release_digest:
+                    return False, "mismatched_release_digest"
+            else:
+                return False, "missing_manifest_bytes"
+
+        if config_digest is not None:
+            valid_shape, shape_reason = validate_digest_shape(config_digest)
+            if not valid_shape:
+                return False, f"config_digest_{shape_reason}"
+            if config_bytes is not None:
+                recomputed = hashlib.sha256(config_bytes).hexdigest()
+                if recomputed != config_digest:
+                    return False, "mismatched_config_digest"
+            else:
+                return False, "missing_config_bytes"
+
+        manifest_commit = None
+        if binding_record and "merge_commit" in binding_record:
+            manifest_commit = binding_record["merge_commit"]
+        elif manifest_bytes is not None:
+            try:
+                manifest_commit = json.loads(manifest_bytes.decode("utf-8")).get(
+                    "merge_commit"
+                )
+            except Exception:
+                pass
+        if manifest_commit is not None:
+            if commit_in_path != manifest_commit:
+                return False, "commit_path_mismatch"
+
+        # Check hook binary existence
+        if not Path(executable).is_file():
+            return False, "absent_hook_binary"
+
+        if binding_record and not binding_record.get("is_verified_pair", False):
+            return False, "unverified_hook_or_config_pair"
 
     return True, "admissible"
+
+
+def is_admissible_cron_entry(entry_line: str) -> tuple[bool, str]:
+    """Classifies a candidate crontab entry line according to immutable runtime contract v1."""
+    return classify_candidate_export(entry_line)
 
 
 def replace_managed_block_fixture(existing: str, block: str) -> str:
@@ -252,34 +355,121 @@ def test_pe_cron_runtime_absolute_hook() -> None:
 def test_pe_cron_runtime_digest() -> None:
     """Marker: PE-CRON-RUNTIME-DIGEST
 
-    Release/config digests are recomputed and compared, not shape-checked only.
+    Release/config digests are parsed, recomputed from manifest/config bytes,
+    bound to release directory commit, and verified against deployment policy.
     """
     invalid_digest_file = FIXTURES_DIR / "invalid_digest_export.json"
     assert invalid_digest_file.exists()
     digests = json.loads(invalid_digest_file.read_text())
 
-    def validate_sha256_digest(d: str, expected_content: bytes | None = None) -> bool:
-        if not re.match(r"^[0-9a-f]{64}$", d):
-            return False
-        if expected_content is not None:
-            recomputed = hashlib.sha256(expected_content).hexdigest()
-            if recomputed != d:
-                return False
-        return True
+    sample_manifest = b'{"release_id":"rel_fixture_01","merge_commit":"e63d621a26a944a66cd4af2c6b5ab3084fc92b55"}'
+    recomputed_rel = hashlib.sha256(sample_manifest).hexdigest()
+    sample_config = b'{"crons":[]}'
+    recomputed_cfg = hashlib.sha256(sample_config).hexdigest()
 
-    assert not validate_sha256_digest(
-        digests["invalid_length_release_digest"]
-    )  # 32 chars
-    assert not validate_sha256_digest(digests["uppercase_release_digest"])  # Uppercase
-    assert not validate_sha256_digest(digests["non_hex_digest"])  # Invalid chars
+    base_hook = "/home/ubuntu/.prismatic/releases/e63d621a26a944a66cd4af2c6b5ab3084fc92b55/bin/pe-cron-trigger"
 
-    # Recomputation test against content
-    sample_content = b"canonical cron registry json content"
-    correct_hash = hashlib.sha256(sample_content).hexdigest()
-    assert validate_sha256_digest(correct_hash, sample_content)
-    assert not validate_sha256_digest(
-        digests["mismatched_config_digest"], sample_content
+    # 1. Invalid length digest
+    entry = f"0 3 * * * {base_hook} --release-digest {digests['invalid_length_release_digest']}"
+    admissible, reason = classify_candidate_export(
+        entry, manifest_bytes=sample_manifest
     )
+    assert not admissible
+    assert "invalid_length" in reason
+
+    # 2. Uppercase digest
+    entry = (
+        f"0 3 * * * {base_hook} --release-digest {digests['uppercase_release_digest']}"
+    )
+    admissible, reason = classify_candidate_export(
+        entry, manifest_bytes=sample_manifest
+    )
+    assert not admissible
+    assert "uppercase" in reason
+
+    # 3. Non-hex digest
+    entry = f"0 3 * * * {base_hook} --release-digest {digests['non_hex_digest']}"
+    admissible, reason = classify_candidate_export(
+        entry, manifest_bytes=sample_manifest
+    )
+    assert not admissible
+    assert "non_hex" in reason
+
+    # 4. Placeholder digest
+    entry = f"0 3 * * * {base_hook} --release-digest {digests['placeholder_digest']}"
+    admissible, reason = classify_candidate_export(
+        entry, manifest_bytes=sample_manifest
+    )
+    assert not admissible
+    assert "placeholder" in reason
+
+    # 5. Shape-valid but recomputation-mismatched release digest
+    mismatched_rel = digests["shape_valid_mismatched_release_digest"]
+    entry = f"0 3 * * * {base_hook} --release-digest {mismatched_rel}"
+    admissible, reason = classify_candidate_export(
+        entry, manifest_bytes=sample_manifest
+    )
+    assert not admissible
+    assert reason == "mismatched_release_digest"
+
+    # 6. Shape-valid but recomputation-mismatched config digest
+    mismatched_cfg = digests["shape_valid_mismatched_config_digest"]
+    entry = f"0 3 * * * {base_hook} --config-digest {mismatched_cfg}"
+    admissible, reason = classify_candidate_export(entry, config_bytes=sample_config)
+    assert not admissible
+    assert reason == "mismatched_config_digest"
+
+    # 7. Commit-path mismatch
+    diff_commit_manifest = b'{"release_id":"rel_fixture_02","merge_commit":"1111111111111111111111111111111111111111"}'
+    diff_rel_digest = hashlib.sha256(diff_commit_manifest).hexdigest()
+    entry = f"0 3 * * * {base_hook} --release-digest {diff_rel_digest}"
+    admissible, reason = classify_candidate_export(
+        entry, manifest_bytes=diff_commit_manifest
+    )
+    assert not admissible
+    assert reason == "commit_path_mismatch"
+
+    # 8. Internally consistent non-production fixture fails deployment policy due to absent hook binary
+    valid_entry = f"0 3 * * * {base_hook} --release-digest {recomputed_rel} --config-digest {recomputed_cfg}"
+    admissible, reason = classify_candidate_export(
+        valid_entry,
+        manifest_bytes=sample_manifest,
+        config_bytes=sample_config,
+        binding_record={
+            "merge_commit": "e63d621a26a944a66cd4af2c6b5ab3084fc92b55",
+            "is_verified_pair": False,
+        },
+    )
+    assert not admissible
+    assert reason in ("absent_hook_binary", "unverified_hook_or_config_pair")
+
+
+def test_adversarial_digest_helper_bypass_blocked(monkeypatch) -> None:
+    """Adversarial regression proving that monkeypatching or bypassing a detached digest helper
+
+    cannot make a digest-mismatched candidate export admissible.
+    """
+
+    def detached_helper_bypass(d: str, expected_content: bytes | None = None) -> bool:
+        return True  # Maliciously approve everything
+
+    monkeypatch.setattr(
+        "tests.test_cron_runtime_export_contract.validate_digest_shape",
+        lambda d: (True, "fake_valid"),
+    )
+
+    sample_manifest = b'{"release_id":"rel_fixture_01","merge_commit":"e63d621a26a944a66cd4af2c6b5ab3084fc92b55"}'
+    mismatched_digest = (
+        "1111111111111111111111111111111111111111111111111111111111111111"
+    )
+    base_hook = "/home/ubuntu/.prismatic/releases/e63d621a26a944a66cd4af2c6b5ab3084fc92b55/bin/pe-cron-trigger"
+    entry = f"0 3 * * * {base_hook} --release-digest {mismatched_digest}"
+
+    admissible, reason = classify_candidate_export(
+        entry, manifest_bytes=sample_manifest
+    )
+    assert not admissible
+    assert reason == "mismatched_release_digest"
 
 
 def test_pe_cron_runtime_idempotent_dryrun() -> None:
