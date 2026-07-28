@@ -18,7 +18,7 @@ import jsonschema
 
 SCHEMA_VERSION: int = 1
 
-VALID_TERMINAL_OUTCOMES: set[str] = {
+VALID_TERMINAL_OUTCOMES: frozenset[str] = frozenset({
     "succeeded",
     "failed",
     "timed_out",
@@ -28,7 +28,7 @@ VALID_TERMINAL_OUTCOMES: set[str] = {
     "awaiting_operator_approval",
     "orphaned",
     "reconciled",
-}
+})
 
 SHA256_REGEX: re.Pattern[str] = re.compile(r"^[0-9a-f]{64}$")
 RFC3339_TZ_REGEX: re.Pattern[str] = re.compile(

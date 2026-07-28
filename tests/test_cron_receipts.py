@@ -12,11 +12,16 @@ Proves:
 
 from __future__ import annotations
 
+import builtins
 from dataclasses import fields
 from datetime import datetime, timedelta, timezone
 import importlib.resources
 import json
+import os
 from pathlib import Path
+import socket
+import subprocess
+import time
 import pytest
 import jsonschema
 
@@ -53,7 +58,7 @@ def valid_receipt_kwargs() -> dict:
 def test_valid_dataclass_serializes_and_validates_schema(valid_receipt_kwargs):
     """Test 1: A valid dataclass serializes and validates against Draft 2020-12 schema."""
     receipt = CronRunReceipt(**valid_receipt_kwargs)
-    
+
     # Method validations
     receipt.validate()
     d = receipt.to_dict()
@@ -77,7 +82,7 @@ def test_datetime_object_support(valid_receipt_kwargs):
     """Verify timezone-aware datetime objects are accepted and formatted as UTC RFC 3339."""
     dt_start = datetime(2026, 7, 27, 10, 0, 0, tzinfo=timezone.utc)
     dt_finish = datetime(2026, 7, 27, 10, 5, 0, tzinfo=timezone.utc)
-    
+
     kwargs = dict(valid_receipt_kwargs)
     kwargs["started_at"] = dt_start
     kwargs["finished_at"] = dt_finish
@@ -112,6 +117,9 @@ def test_every_terminal_outcome_accepted(valid_receipt_kwargs):
         "reconciled",
     }
     assert VALID_TERMINAL_OUTCOMES == expected_outcomes
+    assert isinstance(VALID_TERMINAL_OUTCOMES, frozenset)
+    with pytest.raises(AttributeError):
+        VALID_TERMINAL_OUTCOMES.add("injected_not_in_schema")  # type: ignore[attr-defined]
 
     for outcome in VALID_TERMINAL_OUTCOMES:
         kwargs = dict(valid_receipt_kwargs)
@@ -227,18 +235,31 @@ def test_schema_resource_loading_via_importlib():
         "cron-run-receipt-v1.schema.json"
     )
     assert schema_file.is_file()
-    
+
     schema = load_cron_receipt_schema()
     assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
     assert schema["properties"]["schema_version"]["const"] == 1
 
 
-def test_no_side_effects(valid_receipt_kwargs, monkeypatch):
-    """Test 6: Receipt instantiation and validation have no side effects or I/O."""
-    # Prevent open() to confirm no filesystem I/O outside importlib
-    receipt = CronRunReceipt(**valid_receipt_kwargs)
-    d = receipt.to_dict()
-    assert isinstance(d, dict)
+def test_construction_and_serialization_have_no_external_side_effects(
+    valid_receipt_kwargs, monkeypatch
+):
+    """Test 6: Construction and serialization do not perform external side effects."""
+    def forbidden(*args, **kwargs):
+        raise AssertionError("unexpected external side effect")
 
-    # Validate execution_id is documented as opaque
+    environment_before = dict(os.environ)
+    cwd_before = Path.cwd()
+    monkeypatch.setattr(builtins, "open", forbidden)
+    monkeypatch.setattr(Path, "write_text", forbidden)
+    monkeypatch.setattr(Path, "write_bytes", forbidden)
+    monkeypatch.setattr(socket, "create_connection", forbidden)
+    monkeypatch.setattr(subprocess, "Popen", forbidden)
+    monkeypatch.setattr(time, "time", forbidden)
+
+    receipt = CronRunReceipt(**valid_receipt_kwargs)
+    serialized = receipt.to_dict()
+    assert json.loads(receipt.to_json()) == serialized
+    assert dict(os.environ) == environment_before
+    assert Path.cwd() == cwd_before
     assert "opaque" in CronRunReceipt.__doc__.lower()
