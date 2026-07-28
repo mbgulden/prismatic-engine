@@ -148,7 +148,7 @@ CREATE TABLE IF NOT EXISTS cron_execution_aggregates (
     command_digest TEXT NOT NULL CHECK (length(command_digest) = 64 AND command_digest NOT GLOB '*[^0-9a-f]*'),
     release_digest TEXT NOT NULL CHECK (length(release_digest) = 64 AND release_digest NOT GLOB '*[^0-9a-f]*'),
     created_at TEXT NOT NULL CHECK (is_utc_timestamp(created_at) = 1),
-    CONSTRAINT uq_cron_aggregate UNIQUE (cron_id, registry_generation, schedule_bucket, command_digest, release_digest)
+    CONSTRAINT uq_cron_aggregate UNIQUE (cron_id, registry_generation, schedule_bucket, command_digest)
 );
 """
 
@@ -219,6 +219,40 @@ CREATE TABLE IF NOT EXISTS cron_sweep_cursors (
 """
 
 _TRIGGERS_DDL = [
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_cron_aggregate_insert_collision
+    BEFORE INSERT ON cron_execution_aggregates
+    FOR EACH ROW
+    WHEN EXISTS (
+        SELECT 1 FROM cron_execution_aggregates
+        WHERE execution_id = NEW.execution_id
+           OR (
+               cron_id = NEW.cron_id
+               AND registry_generation = NEW.registry_generation
+               AND schedule_bucket = NEW.schedule_bucket
+               AND command_digest = NEW.command_digest
+           )
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'cron execution aggregates cannot be replaced');
+    END;
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_cron_aggregates_no_update
+    BEFORE UPDATE ON cron_execution_aggregates
+    FOR EACH ROW
+    BEGIN
+        SELECT RAISE(ABORT, 'cron execution aggregates are immutable');
+    END;
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_cron_aggregates_no_delete
+    BEFORE DELETE ON cron_execution_aggregates
+    FOR EACH ROW
+    BEGIN
+        SELECT RAISE(ABORT, 'cron execution aggregates are immutable');
+    END;
+    """,
     """
     CREATE TRIGGER IF NOT EXISTS trg_cron_evidence_insert_collision
     BEFORE INSERT ON cron_evidence
@@ -429,6 +463,9 @@ _TRIGGERS_DDL = [
 ]
 
 _TRIGGER_NAMES = (
+    "trg_cron_aggregate_insert_collision",
+    "trg_cron_aggregates_no_update",
+    "trg_cron_aggregates_no_delete",
     "trg_cron_evidence_insert_collision",
     "trg_cron_receipt_insert_collision",
     "trg_cron_cursor_insert_collision",
@@ -448,6 +485,38 @@ _TRIGGER_NAMES = (
     "trg_cron_terminal_requires_receipt",
     "trg_cron_receipt_finalizes_attempt",
 )
+
+_TABLE_NAMES = (
+    "cron_authority_schema_version",
+    "cron_execution_aggregates",
+    "cron_evidence",
+    "cron_execution_attempts",
+    "cron_receipts",
+    "cron_sweep_cursors",
+)
+
+
+def _main_ddl(sql: str) -> str:
+    """Qualify authority DDL to the durable main schema."""
+    for prefix in ("CREATE TABLE IF NOT EXISTS ", "CREATE TRIGGER IF NOT EXISTS "):
+        if prefix in sql:
+            return sql.replace(prefix, f"{prefix}main.", 1)
+    raise CronAuthorityError("Unsupported authority DDL", code="schema_object_mismatch")
+
+
+def _reject_temp_schema_collisions(cursor: sqlite3.Cursor) -> None:
+    """Reject TEMP objects that could divert unqualified authority operations."""
+    names = (*_TABLE_NAMES, *_TRIGGER_NAMES)
+    placeholders = ",".join("?" for _ in names)
+    rows = cursor.execute(
+        f"SELECT type, name FROM temp.sqlite_master WHERE name IN ({placeholders});",
+        names,
+    ).fetchall()
+    if rows:
+        raise CronAuthorityError(
+            f"TEMP schema collides with cron authority objects: {rows!r}",
+            code="schema_object_mismatch",
+        )
 
 
 def _normalize_ddl(sql: str) -> str:
@@ -472,7 +541,7 @@ def _validate_schema_objects(cursor: sqlite3.Cursor) -> None:
     )
     for (object_type, name), expected_ddl in expected.items():
         row = cursor.execute(
-            "SELECT sql FROM sqlite_master WHERE type=? AND name=?;",
+            "SELECT sql FROM main.sqlite_master WHERE type=? AND name=?;",
             (object_type, name),
         ).fetchone()
         if (
@@ -507,15 +576,16 @@ def migrate_cron_authority(target: Any, timeout: float = 30.0) -> None:
 
         # Check existing version table
         cursor = conn.cursor()
+        _reject_temp_schema_collisions(cursor)
         cursor.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='cron_authority_schema_version';"
+            "SELECT name FROM main.sqlite_master WHERE type='table' AND name='cron_authority_schema_version';"
         )
         version_table_exists = cursor.fetchone() is not None
 
         if version_table_exists:
             try:
                 cursor.execute(
-                    "SELECT authority_id, schema_version FROM cron_authority_schema_version;"
+                    "SELECT authority_id, schema_version FROM main.cron_authority_schema_version;"
                 )
             except sqlite3.DatabaseError as exc:
                 raise CronAuthorityError(
@@ -534,15 +604,15 @@ def migrate_cron_authority(target: Any, timeout: float = 30.0) -> None:
             return
 
         # Execute DDL
-        cursor.execute(_CREATE_VERSION_TABLE_DDL)
-        cursor.execute(_CREATE_AGGREGATES_TABLE_DDL)
-        cursor.execute(_CREATE_EVIDENCE_TABLE_DDL)
-        cursor.execute(_CREATE_ATTEMPTS_TABLE_DDL)
-        cursor.execute(_CREATE_RECEIPTS_TABLE_DDL)
-        cursor.execute(_CREATE_CURSORS_TABLE_DDL)
+        cursor.execute(_main_ddl(_CREATE_VERSION_TABLE_DDL))
+        cursor.execute(_main_ddl(_CREATE_AGGREGATES_TABLE_DDL))
+        cursor.execute(_main_ddl(_CREATE_EVIDENCE_TABLE_DDL))
+        cursor.execute(_main_ddl(_CREATE_ATTEMPTS_TABLE_DDL))
+        cursor.execute(_main_ddl(_CREATE_RECEIPTS_TABLE_DDL))
+        cursor.execute(_main_ddl(_CREATE_CURSORS_TABLE_DDL))
 
         for trigger_sql in _TRIGGERS_DDL:
-            cursor.execute(trigger_sql)
+            cursor.execute(_main_ddl(trigger_sql))
 
         _validate_schema_objects(cursor)
 
@@ -552,7 +622,7 @@ def migrate_cron_authority(target: Any, timeout: float = 30.0) -> None:
             now_utc = now_utc[:-6] + "Z"
 
         cursor.execute(
-            "INSERT INTO cron_authority_schema_version (authority_id, schema_version, installed_at) VALUES (1, ?, ?);",
+            "INSERT INTO main.cron_authority_schema_version (authority_id, schema_version, installed_at) VALUES (1, ?, ?);",
             (SCHEMA_VERSION, now_utc),
         )
 

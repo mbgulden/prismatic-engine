@@ -305,13 +305,45 @@ def test_6_duplicate_aggregate_uniqueness_rejected(
         execution_id="exec-20260728-0003",
         release_digest="c" * 64,
     )
-    conn.execute(
-        "INSERT INTO cron_execution_aggregates VALUES (?, ?, ?, ?, ?, ?, ?)",
-        tuple(distinct_release.values()),
-    )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO cron_execution_aggregates VALUES (?, ?, ?, ?, ?, ?, ?)",
+            tuple(distinct_release.values()),
+        )
+
+    with pytest.raises(sqlite3.IntegrityError, match="cannot be replaced"):
+        conn.execute(
+            "INSERT OR REPLACE INTO cron_execution_aggregates VALUES (?, ?, ?, ?, ?, ?, ?)",
+            tuple(distinct_release.values()),
+        )
+
+    replacement_by_id = dict(sample_aggregate_kwargs, cron_id="cron.rebound")
+    with pytest.raises(sqlite3.IntegrityError, match="cannot be replaced"):
+        conn.execute(
+            "INSERT OR REPLACE INTO cron_execution_aggregates VALUES (?, ?, ?, ?, ?, ?, ?)",
+            tuple(replacement_by_id.values()),
+        )
+
+    with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+        conn.execute(
+            "UPDATE cron_execution_aggregates SET command_digest=? WHERE execution_id=?",
+            ("d" * 64, sample_aggregate_kwargs["execution_id"]),
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+        conn.execute(
+            "DELETE FROM cron_execution_aggregates WHERE execution_id=?",
+            (sample_aggregate_kwargs["execution_id"],),
+        )
+
     assert conn.execute(
-        "SELECT count(*) FROM cron_execution_aggregates"
-    ).fetchone() == (2,)
+        "SELECT execution_id, cron_id, release_digest FROM cron_execution_aggregates"
+    ).fetchall() == [
+        (
+            sample_aggregate_kwargs["execution_id"],
+            sample_aggregate_kwargs["cron_id"],
+            sample_aggregate_kwargs["release_digest"],
+        )
+    ]
     conn.close()
 
 
@@ -868,6 +900,29 @@ def test_17_exact_schema_and_trigger_validation_fail_closed(disposable_db: Path)
     assert conn.execute(
         "SELECT count(*) FROM sqlite_master WHERE name='cron_authority_schema_version'"
     ).fetchone() == (0,)
+    conn.close()
+
+    temp_squatted = disposable_db.with_name("temp-squatted.sqlite")
+    conn = sqlite3.connect(temp_squatted)
+    conn.execute(
+        """
+        CREATE TEMP TABLE cron_authority_schema_version (
+            authority_id INTEGER,
+            schema_version INTEGER,
+            installed_at TEXT
+        )
+        """
+    )
+    assert not conn.in_transaction
+    with pytest.raises(CronAuthorityError) as temp_collision:
+        migrate_cron_authority(conn)
+    assert temp_collision.value.code == "schema_object_mismatch"
+    assert conn.execute(
+        "SELECT count(*) FROM main.sqlite_master WHERE name='cron_authority_schema_version'"
+    ).fetchone() == (0,)
+    assert conn.execute(
+        "SELECT count(*) FROM temp.sqlite_master WHERE name='cron_authority_schema_version'"
+    ).fetchone() == (1,)
     conn.close()
 
 
