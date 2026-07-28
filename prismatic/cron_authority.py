@@ -22,29 +22,33 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
-from typing import Any, Union
+from typing import Any
 
 SCHEMA_VERSION: int = 1
 
-VALID_ATTEMPT_STATES: frozenset[str] = frozenset({
-    "admitted",
-    "claimed",
-    "running",
-    "reconciling",
-    "terminal",
-})
+VALID_ATTEMPT_STATES: frozenset[str] = frozenset(
+    {
+        "admitted",
+        "claimed",
+        "running",
+        "reconciling",
+        "terminal",
+    }
+)
 
-VALID_RECEIPT_OUTCOMES: frozenset[str] = frozenset({
-    "succeeded",
-    "failed",
-    "timed_out",
-    "cancelled",
-    "blocked",
-    "missed_during_offline",
-    "awaiting_operator_approval",
-    "orphaned",
-    "reconciled",
-})
+VALID_RECEIPT_OUTCOMES: frozenset[str] = frozenset(
+    {
+        "succeeded",
+        "failed",
+        "timed_out",
+        "cancelled",
+        "blocked",
+        "missed_during_offline",
+        "awaiting_operator_approval",
+        "orphaned",
+        "reconciled",
+    }
+)
 
 
 class CronAuthorityError(ValueError):
@@ -66,9 +70,7 @@ def resolve_db_target(target: Any) -> Any:
     return str(Path(target_str).resolve())
 
 
-def connect_cron_authority(
-    target: Any, timeout: float = 30.0
-) -> sqlite3.Connection:
+def connect_cron_authority(target: Any, timeout: float = 30.0) -> sqlite3.Connection:
     """Create or configure a sqlite3 Connection for cron authority operations.
 
     Enforces `PRAGMA foreign_keys = ON;` and sets specified timeout.
@@ -205,9 +207,7 @@ _TRIGGERS_DDL = [
 ]
 
 
-def migrate_cron_authority(
-    target: Any, timeout: float = 30.0
-) -> None:
+def migrate_cron_authority(target: Any, timeout: float = 30.0) -> None:
     """Migrate SQLite database to cron authority schema v1 atomically and idempotently.
 
     - Target can be a string path, Path object, or sqlite3.Connection.
@@ -217,7 +217,9 @@ def migrate_cron_authority(
     - Preserves pre-existing tables and rows in the database.
     - Any error rolls back all migration statements completely.
     """
-    close_connection_on_exit = not (hasattr(target, "cursor") and hasattr(target, "execute"))
+    close_connection_on_exit = not (
+        hasattr(target, "cursor") and hasattr(target, "execute")
+    )
     conn = connect_cron_authority(target, timeout=timeout)
 
     try:
@@ -232,7 +234,9 @@ def migrate_cron_authority(
         version_table_exists = cursor.fetchone() is not None
 
         if version_table_exists:
-            cursor.execute("SELECT schema_version FROM cron_authority_schema_version ORDER BY schema_version DESC LIMIT 1;")
+            cursor.execute(
+                "SELECT schema_version FROM cron_authority_schema_version ORDER BY schema_version DESC LIMIT 1;"
+            )
             row = cursor.fetchone()
             if row is not None:
                 existing_version = row[0]
