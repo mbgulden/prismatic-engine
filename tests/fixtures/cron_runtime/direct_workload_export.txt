@@ -1,0 +1,3 @@
+# BEGIN PRISMATIC_NATIVE_CRONS
+0 6 * * 0 python3 /home/ubuntu/.prismatic/releases/e63d621a26a944a66cd4af2c6b5ab3084fc92b55/scripts/seo/competitor_velocity.py
+# END PRISMATIC_NATIVE_CRONS

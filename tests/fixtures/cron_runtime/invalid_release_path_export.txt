@@ -1,0 +1,5 @@
+# BEGIN PRISMATIC_NATIVE_CRONS
+0 3 * * * /home/ubuntu/.prismatic/releases/v1.0.0/bin/pe-cron-trigger --cron-id seo.ubersuggest-token-refresh
+0 4 * * 1 /home/ubuntu/.prismatic/releases/latest/bin/pe-cron-trigger --cron-id seo.aot-weekly-rankings
+0 5 * * 0 /home/ubuntu/.prismatic/releases/e63d621/bin/pe-cron-trigger --cron-id seo.managed-sites-setup-audit
+# END PRISMATIC_NATIVE_CRONS
