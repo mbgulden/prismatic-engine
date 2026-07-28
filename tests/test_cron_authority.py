@@ -21,6 +21,8 @@ Proves:
 
 from __future__ import annotations
 
+import hashlib
+import inspect
 from pathlib import Path
 import sqlite3
 import pytest
@@ -41,6 +43,21 @@ def disposable_db(tmp_path: Path) -> Path:
     return tmp_path / "test_cron_authority.sqlite"
 
 
+@pytest.fixture(autouse=True)
+def forbid_production_db_connections(monkeypatch: pytest.MonkeyPatch):
+    """Fail every test before sqlite3 can open the production bus path."""
+    real_connect = sqlite3.connect
+    production = Path("/home/ubuntu/.prismatic/bus/event_log.sqlite")
+
+    def guarded_connect(database, *args, **kwargs):
+        value = str(database)
+        if value != ":memory:" and not value.startswith("file:"):
+            assert Path(value).resolve() != production
+        return real_connect(database, *args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, "connect", guarded_connect)
+
+
 @pytest.fixture
 def sample_aggregate_kwargs() -> dict:
     return {
@@ -49,6 +66,7 @@ def sample_aggregate_kwargs() -> dict:
         "registry_generation": 1,
         "schedule_bucket": "2026-07-28T04:00:00Z",
         "command_digest": "a" * 64,
+        "release_digest": "b" * 64,
         "created_at": "2026-07-28T04:00:00Z",
     }
 
@@ -58,7 +76,7 @@ def sample_attempt_kwargs(sample_aggregate_kwargs: dict) -> dict:
     return {
         "execution_id": sample_aggregate_kwargs["execution_id"],
         "attempt": 1,
-        "state": "claimed",
+        "state": "terminal",
         "runner_id": "runner-node-01",
         "fence_token": 1,
         "lease_expires_at": "2026-07-28T04:10:00Z",
@@ -69,9 +87,10 @@ def sample_attempt_kwargs(sample_aggregate_kwargs: dict) -> dict:
 
 @pytest.fixture
 def sample_evidence_kwargs() -> dict:
+    canonical_bytes = b'{"status":"ok"}'
     return {
-        "evidence_digest": "e" * 64,
-        "canonical_bytes": b'{"status":"ok"}',
+        "evidence_digest": hashlib.sha256(canonical_bytes).hexdigest(),
+        "canonical_bytes": canonical_bytes,
         "created_at": "2026-07-28T04:00:00Z",
     }
 
@@ -123,6 +142,13 @@ class FailingConnectionWrapper:
 
     def cursor(self):
         return FailingCursorWrapper(self.real_conn.cursor())
+
+    @property
+    def in_transaction(self):
+        return self.real_conn.in_transaction
+
+    def create_function(self, *args, **kwargs):
+        return self.real_conn.create_function(*args, **kwargs)
 
     def execute(self, sql: str, *args, **kwargs):
         if "cron_evidence" in sql:
@@ -256,8 +282,8 @@ def test_6_duplicate_aggregate_uniqueness_rejected(
 
     conn.execute(
         """INSERT INTO cron_execution_aggregates
-        (execution_id, cron_id, registry_generation, schedule_bucket, command_digest, created_at)
-        VALUES (?, ?, ?, ?, ?, ?);""",
+        (execution_id, cron_id, registry_generation, schedule_bucket, command_digest, release_digest, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?);""",
         tuple(sample_aggregate_kwargs.values()),
     )
     conn.commit()
@@ -269,10 +295,23 @@ def test_6_duplicate_aggregate_uniqueness_rejected(
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(
             """INSERT INTO cron_execution_aggregates
-            (execution_id, cron_id, registry_generation, schedule_bucket, command_digest, created_at)
-            VALUES (?, ?, ?, ?, ?, ?);""",
+            (execution_id, cron_id, registry_generation, schedule_bucket, command_digest, release_digest, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?);""",
             tuple(duplicate_tuple.values()),
         )
+
+    distinct_release = dict(
+        duplicate_tuple,
+        execution_id="exec-20260728-0003",
+        release_digest="c" * 64,
+    )
+    conn.execute(
+        "INSERT INTO cron_execution_aggregates VALUES (?, ?, ?, ?, ?, ?, ?)",
+        tuple(distinct_release.values()),
+    )
+    assert conn.execute(
+        "SELECT count(*) FROM cron_execution_aggregates"
+    ).fetchone() == (2,)
     conn.close()
 
 
@@ -285,8 +324,8 @@ def test_7_duplicate_execution_id_rejected(
 
     conn.execute(
         """INSERT INTO cron_execution_aggregates
-        (execution_id, cron_id, registry_generation, schedule_bucket, command_digest, created_at)
-        VALUES (?, ?, ?, ?, ?, ?);""",
+        (execution_id, cron_id, registry_generation, schedule_bucket, command_digest, release_digest, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?);""",
         tuple(sample_aggregate_kwargs.values()),
     )
     conn.commit()
@@ -298,8 +337,8 @@ def test_7_duplicate_execution_id_rejected(
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(
             """INSERT INTO cron_execution_aggregates
-            (execution_id, cron_id, registry_generation, schedule_bucket, command_digest, created_at)
-            VALUES (?, ?, ?, ?, ?, ?);""",
+            (execution_id, cron_id, registry_generation, schedule_bucket, command_digest, release_digest, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?);""",
             tuple(duplicate_id.values()),
         )
     conn.close()
@@ -317,7 +356,7 @@ def test_8_duplicate_receipt_id_and_second_receipt_for_attempt_rejected(
     conn = connect_cron_authority(disposable_db)
 
     conn.execute(
-        "INSERT INTO cron_execution_aggregates VALUES (?, ?, ?, ?, ?, ?);",
+        "INSERT INTO cron_execution_aggregates VALUES (?, ?, ?, ?, ?, ?, ?);",
         tuple(sample_aggregate_kwargs.values()),
     )
     conn.execute(
@@ -344,7 +383,7 @@ def test_8_duplicate_receipt_id_and_second_receipt_for_attempt_rejected(
     receipt_dup_id = dict(sample_receipt_kwargs, execution_id="exec-20260728-0002")
 
     conn.execute(
-        "INSERT INTO cron_execution_aggregates VALUES (?, ?, ?, ?, ?, ?);",
+        "INSERT INTO cron_execution_aggregates VALUES (?, ?, ?, ?, ?, ?, ?);",
         tuple(aggregate_2.values()),
     )
     conn.execute(
@@ -383,7 +422,7 @@ def test_9_rejections_for_invalid_types_states_digests_and_evidence(
     conn = connect_cron_authority(disposable_db)
 
     conn.execute(
-        "INSERT INTO cron_execution_aggregates VALUES (?, ?, ?, ?, ?, ?);",
+        "INSERT INTO cron_execution_aggregates VALUES (?, ?, ?, ?, ?, ?, ?);",
         tuple(sample_aggregate_kwargs.values()),
     )
 
@@ -463,7 +502,7 @@ def test_10_missing_evidence_foreign_key_rejected(
     conn = connect_cron_authority(disposable_db)
 
     conn.execute(
-        "INSERT INTO cron_execution_aggregates VALUES (?, ?, ?, ?, ?, ?);",
+        "INSERT INTO cron_execution_aggregates VALUES (?, ?, ?, ?, ?, ?, ?);",
         tuple(sample_aggregate_kwargs.values()),
     )
     conn.execute(
@@ -493,7 +532,7 @@ def test_11_receipt_and_evidence_immutability_triggers(
     conn = connect_cron_authority(disposable_db)
 
     conn.execute(
-        "INSERT INTO cron_execution_aggregates VALUES (?, ?, ?, ?, ?, ?);",
+        "INSERT INTO cron_execution_aggregates VALUES (?, ?, ?, ?, ?, ?, ?);",
         tuple(sample_aggregate_kwargs.values()),
     )
     conn.execute(
@@ -561,7 +600,7 @@ def test_12_attempts_coexist_without_forced_reconciliation_to_next(
     conn = connect_cron_authority(disposable_db)
 
     conn.execute(
-        "INSERT INTO cron_execution_aggregates VALUES (?, ?, ?, ?, ?, ?);",
+        "INSERT INTO cron_execution_aggregates VALUES (?, ?, ?, ?, ?, ?, ?);",
         tuple(sample_aggregate_kwargs.values()),
     )
     conn.execute(
@@ -578,7 +617,7 @@ def test_12_attempts_coexist_without_forced_reconciliation_to_next(
     )
 
     # Add Attempt 2 under same aggregate
-    attempt_2 = dict(sample_attempt_kwargs, attempt=2, state="admitted", fence_token=2)
+    attempt_2 = dict(sample_attempt_kwargs, attempt=2, state="terminal", fence_token=2)
     receipt_2 = dict(
         sample_receipt_kwargs,
         receipt_id="rcpt-20260728-0002",
@@ -601,7 +640,7 @@ def test_12_attempts_coexist_without_forced_reconciliation_to_next(
         "SELECT attempt, state FROM cron_execution_attempts WHERE execution_id=? ORDER BY attempt;",
         (sample_aggregate_kwargs["execution_id"],),
     )
-    assert cursor.fetchall() == [(1, "claimed"), (2, "admitted")]
+    assert cursor.fetchall() == [(1, "terminal"), (2, "terminal")]
 
     cursor.execute(
         "SELECT receipt_id, attempt, outcome FROM cron_receipts WHERE execution_id=? ORDER BY attempt;",
@@ -623,7 +662,7 @@ def test_13_fence_and_lease_timestamp_constraints(
     conn = connect_cron_authority(disposable_db)
 
     conn.execute(
-        "INSERT INTO cron_execution_aggregates VALUES (?, ?, ?, ?, ?, ?);",
+        "INSERT INTO cron_execution_aggregates VALUES (?, ?, ?, ?, ?, ?, ?);",
         tuple(sample_aggregate_kwargs.values()),
     )
 
@@ -753,14 +792,219 @@ def test_15_task_admission_coexistence(disposable_db: Path):
 
 
 def test_16_production_bus_db_untouched():
-    """Test 16: No test resolves or writes the production bus DB."""
-    prod_bus_path = Path("/home/ubuntu/.prismatic/bus/event_log.sqlite")
-    stat_before = prod_bus_path.stat() if prod_bus_path.exists() else None
+    """Test 16: API requires an explicit target and the autouse guard forbids production."""
+    target = inspect.signature(migrate_cron_authority).parameters["target"]
+    assert target.default is inspect.Parameter.empty
+    assert resolve_db_target(":memory:") == ":memory:"
 
-    target = resolve_db_target(":memory:")
-    assert target == ":memory:"
 
-    if prod_bus_path.exists():
-        stat_after = prod_bus_path.stat()
-        assert stat_before.st_mtime_ns == stat_after.st_mtime_ns
-        assert stat_before.st_size == stat_after.st_size
+def test_17_exact_schema_and_trigger_validation_fail_closed(disposable_db: Path):
+    """Version watermarks never bless missing, malformed, or squatted objects."""
+    migrate_cron_authority(disposable_db)
+    conn = connect_cron_authority(disposable_db)
+    conn.execute("DROP TRIGGER trg_cron_receipts_no_update")
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(CronAuthorityError) as missing:
+        migrate_cron_authority(disposable_db)
+    assert missing.value.code == "schema_object_mismatch"
+
+    squatted = disposable_db.with_name("squatted.sqlite")
+    conn = sqlite3.connect(squatted)
+    conn.executescript(
+        """
+        CREATE TABLE unrelated(id INTEGER PRIMARY KEY);
+        CREATE TRIGGER trg_cron_receipts_no_update
+        BEFORE UPDATE ON unrelated BEGIN SELECT 1; END;
+        """
+    )
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(CronAuthorityError) as collision:
+        migrate_cron_authority(squatted)
+    assert collision.value.code == "schema_object_mismatch"
+    conn = sqlite3.connect(squatted)
+    assert conn.execute(
+        "SELECT count(*) FROM sqlite_master WHERE name='cron_authority_schema_version'"
+    ).fetchone() == (0,)
+    conn.close()
+
+
+def test_18_active_caller_transaction_is_rejected_without_rollback(disposable_db: Path):
+    """Connection setup never mutates or rolls back a caller-owned transaction."""
+    conn = sqlite3.connect(disposable_db)
+    conn.execute("CREATE TABLE caller_work(value TEXT)")
+    conn.execute("INSERT INTO caller_work VALUES ('pending')")
+    assert conn.in_transaction
+
+    with pytest.raises(CronAuthorityError) as active:
+        connect_cron_authority(conn)
+    assert active.value.code == "active_caller_transaction"
+    assert conn.in_transaction
+    assert conn.execute("SELECT value FROM caller_work").fetchall() == [("pending",)]
+
+    conn.rollback()
+    configured = connect_cron_authority(conn)
+    assert configured.execute("PRAGMA foreign_keys").fetchone() == (1,)
+    conn.close()
+
+
+def test_19_release_evidence_and_receipt_identity_constraints(
+    disposable_db: Path,
+    sample_aggregate_kwargs: dict,
+    sample_attempt_kwargs: dict,
+    sample_evidence_kwargs: dict,
+    sample_receipt_kwargs: dict,
+):
+    """Release identity, evidence address, outcome evidence, and cron identity are durable."""
+    migrate_cron_authority(disposable_db)
+    conn = connect_cron_authority(disposable_db)
+    aggregate_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(cron_execution_aggregates)")
+    }
+    assert "release_digest" in aggregate_columns
+    conn.execute(
+        "INSERT INTO cron_execution_aggregates VALUES (?, ?, ?, ?, ?, ?, ?)",
+        tuple(sample_aggregate_kwargs.values()),
+    )
+    conn.execute(
+        "INSERT INTO cron_execution_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        tuple(sample_attempt_kwargs.values()),
+    )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO cron_evidence VALUES (?, ?, ?)",
+            ("e" * 64, b'{"status":"ok"}', "2026-07-28T04:00:00Z"),
+        )
+    conn.execute(
+        "INSERT INTO cron_evidence VALUES (?, ?, ?)",
+        tuple(sample_evidence_kwargs.values()),
+    )
+
+    failed_without_evidence = dict(
+        sample_receipt_kwargs,
+        outcome="failed",
+        evidence_digest=None,
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO cron_receipts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            tuple(failed_without_evidence.values()),
+        )
+
+    wrong_cron = dict(sample_receipt_kwargs, cron_id="cron.other")
+    with pytest.raises(sqlite3.IntegrityError, match="identity"):
+        conn.execute(
+            "INSERT INTO cron_receipts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            tuple(wrong_cron.values()),
+        )
+
+    conn.execute(
+        "INSERT INTO cron_receipts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        tuple(sample_receipt_kwargs.values()),
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_20_ownership_transition_fence_terminal_and_timestamp_guards(
+    disposable_db: Path,
+    sample_aggregate_kwargs: dict,
+    sample_attempt_kwargs: dict,
+    sample_receipt_kwargs: dict,
+):
+    """Ownership, transitions, fences, terminality, and calendar-valid UTC are fail-closed."""
+    migrate_cron_authority(disposable_db)
+    conn = connect_cron_authority(disposable_db)
+    conn.execute(
+        "INSERT INTO cron_execution_aggregates VALUES (?, ?, ?, ?, ?, ?, ?)",
+        tuple(sample_aggregate_kwargs.values()),
+    )
+
+    invalid_time = dict(
+        sample_aggregate_kwargs,
+        execution_id="bad-time",
+        schedule_bucket="2026-99-99T99:99:99junkZ",
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO cron_execution_aggregates VALUES (?, ?, ?, ?, ?, ?, ?)",
+            tuple(invalid_time.values()),
+        )
+
+    claimed_without_owner = dict(
+        sample_attempt_kwargs,
+        state="claimed",
+        runner_id=None,
+        fence_token=None,
+        lease_expires_at=None,
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO cron_execution_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            tuple(claimed_without_owner.values()),
+        )
+
+    admitted = dict(
+        sample_attempt_kwargs,
+        attempt=2,
+        state="admitted",
+        runner_id=None,
+        fence_token=None,
+        lease_expires_at=None,
+    )
+    conn.execute(
+        "INSERT INTO cron_execution_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        tuple(admitted.values()),
+    )
+    premature_receipt = dict(
+        sample_receipt_kwargs,
+        receipt_id="premature",
+        attempt=2,
+        evidence_digest=None,
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="terminal attempt"):
+        conn.execute(
+            "INSERT INTO cron_receipts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            tuple(premature_receipt.values()),
+        )
+
+    conn.execute(
+        """UPDATE cron_execution_attempts
+        SET state='claimed', runner_id='runner-a', fence_token=1,
+            lease_expires_at='2026-07-28T04:10:00Z'
+        WHERE execution_id=? AND attempt=2""",
+        (sample_aggregate_kwargs["execution_id"],),
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="invalid renewal"):
+        conn.execute(
+            "UPDATE cron_execution_attempts SET fence_token=2 WHERE execution_id=? AND attempt=2",
+            (sample_aggregate_kwargs["execution_id"],),
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="invalid renewal"):
+        conn.execute(
+            "UPDATE cron_execution_attempts SET runner_id='runner-b' WHERE execution_id=? AND attempt=2",
+            (sample_aggregate_kwargs["execution_id"],),
+        )
+    conn.execute(
+        "UPDATE cron_execution_attempts SET runner_id='runner-b', fence_token=2 WHERE execution_id=? AND attempt=2",
+        (sample_aggregate_kwargs["execution_id"],),
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="illegal attempt"):
+        conn.execute(
+            "UPDATE cron_execution_attempts SET state='admitted' WHERE execution_id=? AND attempt=2",
+            (sample_aggregate_kwargs["execution_id"],),
+        )
+    conn.execute(
+        "UPDATE cron_execution_attempts SET state='terminal' WHERE execution_id=? AND attempt=2",
+        (sample_aggregate_kwargs["execution_id"],),
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="terminal attempts"):
+        conn.execute(
+            "UPDATE cron_execution_attempts SET updated_at='2026-07-28T04:01:00Z' WHERE execution_id=? AND attempt=2",
+            (sample_aggregate_kwargs["execution_id"],),
+        )
+    conn.close()
