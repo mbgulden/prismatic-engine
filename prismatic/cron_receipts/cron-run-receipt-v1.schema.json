@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://prismatic.growthwebdev.com/schemas/cron-run-receipt-v1.schema.json",
+  "title": "Prismatic CronRunReceipt v1",
+  "description": "Schema for immutable CronRunReceipt v1 contracts. Defines data shape, bounds, terminal outcomes, and field constraints. execution_id is opaque in v1; GRO-4345 owns trigger-identity and uniqueness-key semantics.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "receipt_id",
+    "cron_id",
+    "execution_id",
+    "outcome",
+    "attempt",
+    "runner_id",
+    "runner_release_digest",
+    "started_at",
+    "finished_at",
+    "error_classification",
+    "evidence_digest",
+    "signing_key_id",
+    "signature"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Explicit schema version number."
+    },
+    "receipt_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Unique identifier for this receipt."
+    },
+    "cron_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Identifier for the target cron job definition."
+    },
+    "execution_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Opaque execution identity in v1. GRO-4345 owns trigger-identity and uniqueness-key semantics."
+    },
+    "outcome": {
+      "type": "string",
+      "enum": [
+        "succeeded",
+        "failed",
+        "timed_out",
+        "cancelled",
+        "blocked",
+        "missed_during_offline",
+        "awaiting_operator_approval",
+        "orphaned",
+        "reconciled"
+      ],
+      "description": "Terminal outcome of the cron execution attempt."
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Execution attempt count, 1-indexed."
+    },
+    "runner_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Identity of the runner process or node executing the task."
+    },
+    "runner_release_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Exact SHA-256 digest of the runner release artifact (64 lowercase hex chars)."
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$",
+      "description": "Timezone-aware RFC 3339 UTC timestamp when execution started."
+    },
+    "finished_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$",
+      "description": "Timezone-aware RFC 3339 UTC timestamp when execution finished."
+    },
+    "error_classification": {
+      "type": ["string", "null"],
+      "maxLength": 128,
+      "description": "Bounded error classification if failed/errored, or null."
+    },
+    "evidence_digest": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Bounded SHA-256 digest of evidence artifact (64 lowercase hex chars), or null."
+    },
+    "signing_key_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Identity of the key used to sign the receipt."
+    },
+    "signature": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "description": "Signature value over the receipt contract payload."
+    }
+  }
+}
