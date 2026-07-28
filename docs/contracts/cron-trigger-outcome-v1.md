@@ -58,9 +58,17 @@ Every incoming trigger event MUST be normalized into a standard Trigger Envelope
 | `requested_at` | String (RFC 3339 UTC) | ISO format ending with `Z` | Time when scheduler emitted the trigger. |
 | `accepted_at` | String (RFC 3339 UTC) | ISO format ending with `Z` | Time when authority admitted the trigger envelope. |
 
-### 3.2 Timestamp Normalization and Field Redaction
+### 3.2 Timestamp normalization and field redaction
 - All timestamps MUST be normalized to UTC RFC 3339 strings with explicit `Z` suffixes (e.g., `2026-07-28T02:00:00Z`).
 - Secret materials (API keys, bearer tokens, OAuth tokens, private credentials) MUST NOT enter the canonical command specification. `command_digest` MUST cover a canonical, length-prefixed encoding of non-secret executable argv, working directory, and approved configuration references; redaction is a logging defense, not an identity transform.
+
+### 3.3 Timezone and DST policy
+Every cron registry entry MUST carry an IANA timezone, `dst_gap_policy` (`skip` or `next_valid`), and `dst_fold_policy` (`first`, `second`, or `both`). The authority, not the transport, MUST calculate `schedule_bucket` from the registered schedule and these policies.
+
+- For a nonexistent local time, `skip` emits a non-run receipt whose `schedule_bucket` is the UTC transition instant and whose bounded evidence records the intended local wall time; `next_valid` maps execution to the first valid instant after the gap.
+- For an ambiguous local time, `first` selects the earlier UTC instant, `second` selects the later instant, and `both` creates two distinct UTC buckets in chronological order.
+- The selected or mapped instant MUST be serialized as UTC `Z`. Registry validation MUST reject any policy/schedule combination that can map two intended firings to the same uniqueness key.
+- A timezone or DST-policy change MUST increment `registry_generation`. The runner release and registry generation together bind the timezone database and policy used for calculation.
 
 ---
 
@@ -71,7 +79,9 @@ The exact execution uniqueness key tuple MUST be defined as:
 
 $$\text{UniquenessKey} = (\mathtt{cron\_id}, \mathtt{registry\_generation}, \mathtt{schedule\_bucket}, \mathtt{command\_digest})$$
 
-- **Unique Scope**: Within a single canonical authority, no two execution claims or terminal receipts MAY share the same `(cron_id, registry_generation, schedule_bucket, command_digest)` tuple.
+- **Aggregate Uniqueness**: The authority MUST store exactly one execution aggregate for each `(cron_id, registry_generation, schedule_bucket, command_digest)` tuple. Duplicate deliveries resolve to that aggregate.
+- **Attempt and Receipt Uniqueness**: An aggregate MAY contain multiple explicitly authorized attempts. `attempt` MUST increase monotonically from 1, and the authority MUST enforce one immutable receipt per `(execution_id, attempt)` plus global uniqueness of `receipt_id`. Receipts share the aggregate key by design; they do not violate aggregate uniqueness.
+- **Execution ID Mapping**: On first admission the authority MUST allocate one opaque `execution_id` and bind it permanently to the aggregate uniqueness key. Every attempt and receipt for that aggregate MUST reuse that `execution_id`; a different uniqueness key MUST NOT reuse it.
 - **Evidence Fields**: `trigger_kind`, `transport_kind`, `trigger_event_id`, and `attempt` count are evidence attributes and MUST NOT be used as inputs to the execution uniqueness key.
 
 ### 4.2 Convergence and Identity Changes
@@ -82,8 +92,8 @@ $$\text{UniquenessKey} = (\mathtt{cron\_id}, \mathtt{registry\_generation}, \mat
 
 ## 5. State machine
 
-### 5.1 Claim aggregate states
-The canonical authority owns one execution aggregate per uniqueness key. Its mutable claim state is distinct from immutable `CronRunReceipt` records:
+### 5.1 Per-attempt claim states
+The canonical authority owns one execution aggregate per uniqueness key. Each explicitly admitted attempt has its own mutable claim state, distinct from prior attempts and immutable `CronRunReceipt` records:
 
 ```mermaid
 stateDiagram-v2
@@ -98,7 +108,7 @@ stateDiagram-v2
     reconciling --> terminal: Reconciler publishes conclusive outcome
 ```
 
-Legal claim states are `admitted`, `claimed`, `running`, `reconciling`, and `terminal`. An authority transaction MAY move a non-terminal claim forward or move `reconciling` to `terminal`; it MUST NOT regress a claim, replace its uniqueness key, or mutate an existing receipt.
+Legal per-attempt states are `admitted`, `claimed`, `running`, `reconciling`, and `terminal`. An authority transaction MAY move a non-terminal attempt forward or move `reconciling` to `terminal`; a terminal attempt has no outgoing transition. It MUST NOT regress an attempt, replace the aggregate uniqueness key, or mutate an existing receipt.
 
 ### 5.2 Immutable receipt outcomes
 The nine receipt outcomes MUST match GRO-4270 exactly:
@@ -112,12 +122,12 @@ The nine receipt outcomes MUST match GRO-4270 exactly:
 8. `orphaned`: Reconciliation could not establish a safe business outcome after lease loss.
 9. `reconciled`: Reconciliation established a conclusive outcome after an attempt failed to publish its own receipt.
 
-A receipt is terminal and immutable for its `(execution_id, attempt, receipt_id)`. The execution aggregate MAY contain more than one immutable attempt receipt only for an explicitly admitted retry, replay, approval continuation, or reconciliation. Such an append MUST preserve the execution uniqueness key, increment `attempt`, and pass the current fence in the same authority transaction. Duplicate delivery alone MUST NOT increment `attempt`.
+A receipt is terminal and immutable for its `(execution_id, attempt, receipt_id)`. The execution aggregate MAY contain more than one immutable attempt receipt only for an explicitly admitted retry, replay, approval continuation, or reconciliation. The authority MUST create a new attempt record in `admitted`, preserve the aggregate uniqueness key, allocate the next `attempt`, and validate authorization in one transaction. Duplicate delivery alone MUST NOT create an attempt.
 
 ### 5.3 `reconciled` and illegal-transition rules
 `reconciled` is an appended terminal receipt for a reconciliation attempt; it is not a mutation of a prior receipt. Its `error_classification` and bounded evidence MUST identify the underlying conclusive class (`succeeded`, `failed`, `cancelled`, or `timed_out`). If a prior attempt already published an authoritative business outcome, reconciliation MUST return that receipt and MUST NOT append `reconciled`.
 
-An expired claim enters `reconciling` before any terminal receipt is chosen. The reconciler MUST publish either `reconciled` when conclusive evidence exists or `orphaned` when it does not. Once an execution aggregate is terminal, a new attempt is forbidden unless a separately authorized retry, replay, or approval-continuation policy atomically reopens the same aggregate. No policy may overwrite or delete an earlier receipt.
+An expired attempt enters `reconciling` before any terminal receipt is chosen. The reconciler MUST publish either `reconciled` when conclusive evidence exists or `orphaned` when it does not. A separately authorized retry, replay, approval continuation, or reconciliation creates a new attempt under the same aggregate; it MUST NOT reopen or transition the prior terminal attempt. No policy may overwrite or delete an earlier attempt or receipt.
 
 ---
 
@@ -155,7 +165,7 @@ The current repository provides:
 No current table or store atomically joins cron execution claims to `CronRunReceipt` persistence. Therefore no current cron-execution authority satisfies this contract yet.
 
 ### 7.2 Selected authority boundary
-A future implementation slice MUST extend the existing configured `PRISMATIC_BUS_DB` authority with versioned cron-execution aggregate and append-only receipt tables. It MUST reuse the repository's SQLite WAL and explicit transaction pattern rather than create `cron_execution_authority.db`, `cron_receipts.db`, or another mutable database. The configured bus database becomes cron authority only after migrations, backup/restore proof, and exact transactional canaries are accepted; until then, cron execution admission MUST remain disabled.
+A future implementation slice MUST extend the existing configured `PRISMATIC_BUS_DB` authority with versioned cron-execution aggregate, per-attempt, append-only receipt, and content-addressed evidence tables. It MUST reuse the repository's SQLite WAL and explicit transaction pattern rather than create `cron_execution_authority.db`, `cron_receipts.db`, or another mutable database. The configured bus database becomes cron authority only after migrations, backup/restore proof, and exact transactional canaries are accepted; until then, cron execution admission MUST remain disabled.
 
 `EventRouterDedup`, dead-letter storage, journal records, Linear issues, transport acknowledgements, and dashboard projections are evidence or views and MUST NOT become authority.
 
@@ -164,11 +174,11 @@ Each state mutation MUST execute in one `BEGIN IMMEDIATE` authority transaction 
 
 1. resolves the uniqueness key and current aggregate;
 2. validates owner, fence token, lease, attempt, and legal transition;
-3. updates claim state and appends the immutable `CronRunReceipt` when an outcome is published;
+3. updates attempt state, stores any content-addressed evidence object, and appends the immutable `CronRunReceipt` when an outcome is published;
 4. advances any reconciliation or completed-sweep cursor; and
 5. commits all changes together or rolls all of them back.
 
-A receipt MUST NOT be visible without its matching aggregate transition, and an aggregate MUST NOT become terminal without its matching receipt. Projection delivery occurs only after commit and cannot change the transaction result.
+A receipt MUST NOT be visible without its matching attempt transition, and an attempt MUST NOT become terminal without its matching receipt. Projection delivery occurs only after commit and cannot change the transaction result.
 
 ---
 
@@ -198,7 +208,7 @@ Every cron job MUST declare one catch-up policy plus finite `lookback_limit` and
 Buckets outside the registered lookback are expired and MUST receive bounded `missed_during_offline` evidence through a finite range-summary receipt policy. Catch-up MUST NOT create an unbounded loop or one receipt per bucket across an unbounded outage.
 
 ### 9.2 Replay and Idempotency Rules
-- **Identity Preservation**: An explicitly authorized replay MUST preserve the original `(cron_id, registry_generation, schedule_bucket, command_digest)` uniqueness tuple and append a receipt with a strictly incremented `attempt`; it MUST NOT create a new claim aggregate or schedule bucket. Ordinary duplicate delivery returns existing state and does not create an attempt.
+- **Identity Preservation**: An explicitly authorized replay MUST preserve the original `(cron_id, registry_generation, schedule_bucket, command_digest)` uniqueness tuple, create a new per-attempt record in `admitted`, and later append at most one receipt for that strictly incremented `attempt`; it MUST NOT create a new aggregate or schedule bucket. Ordinary duplicate delivery returns existing state and does not create an attempt.
 - **Projection Isolation**: Outages or schema changes in secondary projections (dashboards, dedup caches) MUST NOT alter or block canonical authority state transactions.
 
 ---
@@ -217,9 +227,12 @@ Buckets outside the registered lookback are expired and MUST receive bounded `mi
 
 ## 11. Security and evidence
 
-### 11.1 Evidence Bounding and Redaction
-- Evidence payloads MUST be bounded (maximum 4000 characters for text outputs, 64-hex char SHA-256 for `evidence_digest`).
-- All log lines, stack traces, and environment variables MUST be filtered through secret redaction regexes before storage.
+### 11.1 Evidence bounding, redaction, and digest canonicalization
+- Evidence MUST be a JSON object with string keys. After redaction it MUST encode to at most 4000 UTF-8 bytes; raw logs, complete environments, binary data, and unbounded stack traces are forbidden.
+- Secret values MUST be removed before canonicalization and replaced only with the stable literal `[REDACTED]`. If redaction cannot be proven, evidence storage and receipt publication MUST fail closed.
+- The redacted object MUST be canonicalized using RFC 8785 JSON Canonicalization Scheme. `evidence_digest` MUST equal lowercase hexadecimal `SHA-256(canonical_utf8_bytes)` and therefore contain exactly 64 hexadecimal characters.
+- The canonical bytes MUST be stored once in an append-only, content-addressed evidence table in `PRISMATIC_BUS_DB`, keyed by `evidence_digest`, in the same authority transaction as the receipt. A hash collision with different bytes MUST fail closed.
+- `evidence_digest` MAY be null only when the outcome contract does not require evidence. It MUST be non-null for `failed`, `timed_out`, `blocked`, `missed_during_offline`, `awaiting_operator_approval`, `orphaned`, and `reconciled`; policy MAY also require it for `succeeded` or `cancelled`.
 
 ### 11.2 Signing Mechanics
 - `signing_key_id` and `signature` fields in `CronRunReceipt` remain data-only placeholders in v1 until a cryptographic signing implementation is authorized in a separate slice.
@@ -244,12 +257,12 @@ Buckets outside the registered lookback are expired and MUST receive bounded `mi
 | 12 | Dependency Block | Matches original key | `admitted` -> `terminal` | `blocked` | Running without prerequisites |
 | 13 | Paused / Deactivated / Deleted | Matches original key | `admitted` -> `terminal` | `blocked` | Running inactive cron |
 | 14 | Missed Catch-Up | Matches original key | `admitted` -> `terminal` | `missed_during_offline` | Silent drop without receipt |
-| 15 | Replay Fired | Matches original key | Replays under original key with incremented attempt | `succeeded` or `failed` | Creating duplicate schedule bucket |
+| 15 | Replay Fired | Matches original key | Authorized attempt N+1 begins at `admitted`; prior attempt remains terminal | `succeeded` or `failed` | Reopening prior attempt or creating a second aggregate |
 | 16 | Restore from Backup | Restores existing keys | Key status preserved in authority | Original terminal outcome | Rerunning terminal restored buckets |
 | 17 | Stale Fence Race | Superseded fence token | Stale request rejected without state change | Existing authoritative receipt, or later reconciler receipt | Stale owner mutation |
 | 18 | Release Mismatch | Release digest mismatch | `admitted` -> `terminal` | `blocked` | Running on unapproved release |
 | 19 | Projection Outage | Matches original key | Unaffected authority commit | `succeeded` | Authority failure due to projection |
-| 20 | Approval Continuation | Matches original key | Authorized new fenced attempt on same aggregate | `awaiting_operator_approval`, then later attempt outcome | New uniqueness key or bypassed approval |
+| 20 | Approval Continuation | Matches original key | Authorized attempt N+1 begins at `admitted`; approval attempt remains terminal | `awaiting_operator_approval`, then later attempt outcome | Reopening prior attempt, new aggregate, or bypassed approval |
 
 ---
 
