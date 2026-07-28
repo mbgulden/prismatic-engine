@@ -17,6 +17,43 @@ from .oauth_credentials import (
     verify_ubersuggest_mcp,
 )
 
+# Optional capability registration: publish-kpi-tracker is added as part of this plugin's
+# extended capability surface. Import lazily so that the existing pwp-design-token-plugin
+# does not require the new dependency tree at install time.
+try:
+    from plugins.pwp.capabilities.publish_kpi_tracker import (  # type: ignore
+        PUBLISH_KPI_TRACKER_CAPABILITY_ID,
+        PUBLISH_KPI_TRACKER_SITES_DIR,
+        PUBLISH_KPI_TRACKER_VERSION,
+        aggregate_publish_kpi,
+        list_publish_kpi_sites,
+        load_publish_kpi_schema,
+        load_publish_kpi_site,
+        publish_publish_kpi_dashboard,
+        register_publish_kpi_plugin as _register_publish_kpi_plugin,
+        validate_publish_kpi_collection,
+    )
+except Exception:
+    PUBLISH_KPI_TRACKER_CAPABILITY_ID = "pwp.publish-kpi-tracker"
+    PUBLISH_KPI_TRACKER_VERSION = "1.0.0"
+    PUBLISH_KPI_TRACKER_SITES_DIR = None
+    PUBLISH_KPI_TRACKER_AVAILABLE = False
+
+    def _missing(*_args, **_kwargs):
+        return {
+            "error": "pwp.publish-kpi-tracker not installed; pip-install or remove the routes."
+        }
+
+    list_publish_kpi_sites = _missing
+    load_publish_kpi_site = _missing
+    load_publish_kpi_schema = _missing
+    validate_publish_kpi_collection = _missing
+    aggregate_publish_kpi = _missing
+    publish_publish_kpi_dashboard = _missing
+    _register_publish_kpi_plugin = None
+else:
+    PUBLISH_KPI_TRACKER_AVAILABLE = True
+
 
 PWP_CAPABILITY_CONTRACT: Dict[str, Any] = {
     "plugin_id": "pwp-design-token-plugin",
@@ -46,6 +83,13 @@ class PWPDesignTokenPlugin(PrismaticPlugin):
     def on_init(self, context: PluginContext) -> None:
         """Called by the loader on initial scan."""
         self.context = context
+        # Register the PWP publish-kpi-tracker capability (additive dashboard surface).
+        if PUBLISH_KPI_TRACKER_AVAILABLE and _register_publish_kpi_plugin is not None:
+            try:
+                _register_publish_kpi_plugin(self)
+            except Exception as exc:
+                # Capability registration must never break plugin load.
+                print(f"pwp.publish-kpi-tracker registration failed: {exc}")
 
     def capability_contract(self) -> Dict[str, Any]:
         """Return the additive PWP capability contract for PE dashboards/agents."""

@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://prismatic.growthwebdev.com/schemas/kpi-collection.schema.json",
+  "title": "PWP Publish KPI Collection",
+  "description": "Canonical schema for a portable KPI collection. A site extends (or replaces) the canonical parent collection by referencing it via the `extends` slug in the per-site file.",
+  "type": "object",
+  "required": ["schema_version", "name", "owner", "metrics"],
+  "properties": {
+    "schema_version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "owner": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "site_slug": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,63}$" },
+    "domain": { "type": "string", "format": "hostname" },
+    "extends": { "type": "string" },
+    "tracking_property": { "type": "string" },
+    "expected_data_layer_events": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z0-9_]+$" }
+    },
+    "ga4_recommended_events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["select_item","select_content","view_item","view_cart","add_to_cart","begin_checkout","add_payment_info","add_shipping_info","purchase","complete_registration","refund"]
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/metric" }
+    },
+    "share_targets": { "type": "object" },
+    "delivery_cadence": { "type": "object" },
+    "kpi_collection_theme": { "type": "object" }
+  },
+  "$defs": {
+    "metric": {
+      "type": "object",
+      "required": ["id", "label", "source"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+        "label": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "source": {
+          "type": "string",
+          "enum": ["ga4","stripe","telegram","internal","derived","gsc","mcp","sheets","ci","verifier"]
+        },
+        "event": { "type": "string" },
+        "metric": { "type": "string" },
+        "field": { "type": "string" },
+        "filter": { "type": "string" },
+        "format": { "type": "string", "enum": ["number","percent","currency","duration"] },
+        "formula": { "type": "string" },
+        "source_urls": {
+          "type": "array",
+          "items": { "type": "string", "format": "uri" }
+        },
+        "front_of_card": { "type": "boolean" },
+        "alert_threshold": {
+          "type": "object",
+          "properties": {
+            "operator": { "type": "string", "enum": ["gt","lt","gte","lte","eq"] },
+            "value": { "type": "number" }
+          }
+        }
+      }
+    }
+  }
+}

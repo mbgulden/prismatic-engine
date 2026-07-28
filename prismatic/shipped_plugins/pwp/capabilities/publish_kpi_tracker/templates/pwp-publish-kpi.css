@@ -1,0 +1,15 @@
+/* pwp-publish-kpi.css — multi-site KPI dashboard styles. */
+.pwp-kpi-table { width: 100%; border-collapse: collapse; font-family: -apple-system, "Inter", sans-serif; }
+.pwp-kpi-table th, .pwp-kpi-table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid rgba(95, 114, 97, 0.18); vertical-align: top; }
+.pwp-kpi-table thead th { background: rgba(95, 114, 97, 0.10); font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: #2F3631; }
+.pwp-kpi-table .num { font-variant-numeric: tabular-nums; font-size: 13px; }
+.pwp-kpi-table .muted { color: #8C8275; font-size: 12px; }
+.pwp-kpi-accordions details { border: 1px solid rgba(95, 114, 97, 0.18); border-radius: 6px; margin-bottom: 12px; padding: 12px 16px; background: rgba(255, 255, 255, 0.86); }
+.pwp-kpi-accordions summary { cursor: pointer; font-size: 14px; }
+.pwp-kpi-list { list-style: none; padding: 0; margin: 12px 0 0 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
+.pwp-kpi-list li { padding: 8px 12px; background: rgba(95, 114, 97, 0.06); border-radius: 4px; }
+.pwp-kpi-detail { border: 1px solid rgba(95, 114, 97, 0.18); border-radius: 6px; margin-bottom: 8px; padding: 12px 16px; background: rgba(255, 255, 255, 0.86); }
+.pwp-kpi-detail summary { cursor: pointer; font-size: 14px; }
+.pwp-kpi-detail dl { display: grid; grid-template-columns: 80px 1fr; gap: 4px 12px; margin: 12px 0 0 0; }
+.pwp-kpi-detail dt { color: #5C625E; font-size: 12px; }
+.pwp-kpi-detail dd { font-size: 13px; margin: 0; }
