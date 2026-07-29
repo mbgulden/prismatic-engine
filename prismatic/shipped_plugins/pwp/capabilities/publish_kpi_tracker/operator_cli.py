@@ -92,7 +92,13 @@ def _resolve_publish_root(args) -> Path:
 
 
 def cmd_build_dashboard(args) -> int:
-    runtime = kpi.read_runtime_values(args.runtime_values_path)
+    """Build the dashboard. When --runtime-values-path is not given, the
+    runtime values pipeline (runtime_values.build_runtime_values) is
+    invoked automatically so the dashboard shows real values from
+    per-site snapshots + live-mode adapters."""
+    runtime = None  # default; build_dashboard will trigger the pipeline
+    if args.runtime_values_path:
+        runtime = kpi.read_runtime_values(args.runtime_values_path)
     manifest = kpi.build_dashboard(
         publish_root=str(_resolve_publish_root(args)),
         runtime_values=runtime,
@@ -104,7 +110,20 @@ def cmd_build_dashboard(args) -> int:
 
 
 def cmd_list_sites(args) -> int:
-    summaries = kpi.build_all_site_summaries()
+    """List registered sites with their headline metrics. By default the
+    runtime values pipeline is invoked so the headline_value field
+    reflects current values from <slug>.runtime.json + live adapters.
+    Pass --no-runtime-values to skip the pipeline (raw headline=None)."""
+    runtime = None  # default; pipeline runs
+    if getattr(args, "no_runtime_values", False):
+        runtime = {}
+    elif args.runtime_values_path:
+        runtime = kpi.read_runtime_values(args.runtime_values_path)
+    if runtime is None:
+        # Run the pipeline ourselves so headline_value is populated.
+        from plugins.pwp.capabilities.publish_kpi_tracker import runtime_values as rv
+        runtime = rv.build_runtime_values()
+    summaries = kpi.build_all_site_summaries(runtime_values=runtime)
     print(json.dumps(summaries, indent=2, sort_keys=True))
     return 0
 
@@ -165,6 +184,40 @@ def cmd_migrate(args) -> int:
     return rc
 
 
+def cmd_snapshot(args) -> int:
+    """Bootstrap a `<slug>.runtime.json` template for each registered site.
+
+    The template contains every metric_key in the resolved collection with
+    `null` placeholders, so the operator can fill in values manually (or
+    have a live-mode adapter fill them). Existing files are NOT
+    overwritten unless --force is passed.
+    """
+    from plugins.pwp.capabilities.publish_kpi_tracker import runtime_values as rv
+    sites_dir = Path(args.sites_dir) if args.sites_dir else rv.default_sites_dir()
+    sites_dir.mkdir(parents=True, exist_ok=True)
+    manifest = {"sites": [], "sites_dir": str(sites_dir), "force": args.force}
+    for slug in sorted(kpi.list_sites()):
+        try:
+            flat = kpi.resolve_collection(slug)
+        except (FileNotFoundError, ValueError) as exc:
+            manifest["sites"].append({"slug": slug, "status": "error", "error": str(exc)})
+            continue
+        target = sites_dir / f"{slug}.runtime.json"
+        if target.exists() and not args.force:
+            manifest["sites"].append({"slug": slug, "status": "skipped (exists)"})
+            continue
+        template = {key: None for key in flat.get("metrics", {}).keys()}
+        target.write_text(json.dumps(template, indent=2, sort_keys=True), encoding="utf-8")
+        manifest["sites"].append({
+            "slug": slug,
+            "status": "written",
+            "path": str(target),
+            "metric_count": len(template),
+        })
+    print(json.dumps(manifest, indent=2, sort_keys=True))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="pwp-kpi-tracker",
@@ -186,7 +239,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Window label written into the dashboard header (default last24h).")
     sb.set_defaults(func=cmd_build_dashboard)
 
-    sl = sub.add_parser("list-sites", help="List registered sites.")
+    sl = sub.add_parser("list-sites", help="List registered sites with their headline metrics.")
+    sl.add_argument("--no-runtime-values", action="store_true",
+                    help="Skip the runtime values pipeline (headline_value=None).")
     sl.set_defaults(func=cmd_list_sites)
 
     sh = sub.add_parser("show", help="Show the resolved collection for one site.")
@@ -209,6 +264,16 @@ def build_parser() -> argparse.ArgumentParser:
     sm.add_argument("--force", action="store_true",
                     help="Overwrite existing per-site *.kpi.json files. Default is to skip sites whose file already exists.")
     sm.set_defaults(func=cmd_migrate)
+
+    ss = sub.add_parser(
+        "snapshot",
+        help="Bootstrap a <slug>.runtime.json template for each registered site.",
+    )
+    ss.add_argument("--sites-dir",
+                    help="Output directory for *.runtime.json (default: plugins/pwp/.../sites/).")
+    ss.add_argument("--force", action="store_true",
+                    help="Overwrite existing <slug>.runtime.json files. Default is to skip sites whose file already exists.")
+    ss.set_defaults(func=cmd_snapshot)
 
     return p
 

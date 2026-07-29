@@ -205,6 +205,36 @@ def test_render_index_with_runtime_values_shows_real_numbers(monkeypatch):
     assert "1,234" in html or "1234" in html
 
 
+def test_format_value_percent_multiplies_by_100():
+    """The percent format multiplies by 100 because metrics store fractions.
+    0.0638 (fraction) → 6.38% (display). This is the contract used by the
+    canonical active-oahu.kpi.json formula `booking_complete / booking_click`.
+    """
+    from plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import _format_value
+    assert _format_value(0.0638, "percent") == "6.38%"
+    assert _format_value(0.0, "percent") == "0.00%"
+    assert _format_value(1.0, "percent") == "100.00%"
+    # Edge: very small fraction.
+    assert _format_value(0.000123, "percent") == "0.01%"
+
+
+def test_format_value_percent_is_audit_safe():
+    """The format is self-consistent: round-trip 0.0638 → "6.38%" parses
+    back to 6.38, which divided by 100 gives the original 0.0638.
+    A wrong implementation would either fail this round-trip or
+    produce a number that's off by 100x."""
+    from plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import _format_value
+    raw = 0.0638
+    rendered = _format_value(raw, "percent")
+    # Rendered must contain "%", must NOT contain "0.06%" (the old bug).
+    assert "%" in rendered
+    assert "0.06%" not in rendered, f"old bug regressed: {rendered!r}"
+    # Parse the displayed percent back to a number and confirm it's
+    # within 0.01 of raw * 100.
+    numeric = float(rendered.rstrip("%"))
+    assert abs(numeric - raw * 100) < 0.01
+
+
 def test_format_value_handles_missing():
     from plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import _format_value
     assert _format_value(None) == "—"
@@ -218,8 +248,12 @@ def test_format_value_renders_deterministic_outputs():
     a = _format_value(1234, "number")
     b = _format_value(1234, "number")
     assert a == b
-    # Percent formatting.
-    assert _format_value(0.1234, "percent") == "0.12%"
+    # Percent formatting: stored as fraction, multiplied by 100 for display.
+    # 0.0638 (fraction) → "6.38%" (display). NOT "0.06%".
+    assert _format_value(0.0638, "percent") == "6.38%"
+    assert _format_value(0.1234, "percent") == "12.34%"
+    assert _format_value(1.0, "percent") == "100.00%"
+    assert _format_value(0.5, "percent") == "50.00%"
     # Currency formatting.
     assert _format_value(1234.5, "currency") == "$1,234.50"
     # Duration formatting.

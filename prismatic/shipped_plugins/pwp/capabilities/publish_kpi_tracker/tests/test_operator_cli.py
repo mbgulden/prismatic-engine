@@ -41,6 +41,48 @@ def test_list_sites_returns_both_registered_sites():
     assert slugs == {"hd-engine", "active-oahu"}
 
 
+def test_list_sites_populates_headline_value_via_pipeline():
+    """When <slug>.runtime.json exists, list-sites must populate
+    headline_value (not null). Regression guard: previously cmd_list_sites
+    didn't run the runtime pipeline so headline_value was always None."""
+    # Create a runtime snapshot with values for the headline metric.
+    sites_dir = Path(__file__).resolve().parents[1] / "sites"
+    runtime_path = sites_dir / "hd-engine.runtime.json"
+    sentinel = {"funnel_top.free_chart_generated_total": 999.0}
+    runtime_path.write_text(json.dumps(sentinel), encoding="utf-8")
+    try:
+        out = _run("list-sites")
+        assert out.returncode == 0, out.stderr
+        arr = json.loads(out.stdout)
+        hd = next(s for s in arr if s["slug"] == "hd-engine")
+        assert hd["headline_value"] == 999.0, \
+            f"headline_value not populated: {hd}"
+    finally:
+        if runtime_path.exists():
+            runtime_path.unlink()
+
+
+def test_list_sites_no_runtime_values_skips_pipeline():
+    """The --no-runtime-values flag forces headline_value to None even
+    when a runtime snapshot is present."""
+    sites_dir = Path(__file__).resolve().parents[1] / "sites"
+    runtime_path = sites_dir / "hd-engine.runtime.json"
+    runtime_path.write_text(
+        json.dumps({"funnel_top.free_chart_generated_total": 999.0}),
+        encoding="utf-8",
+    )
+    try:
+        out = _run("list-sites", "--no-runtime-values")
+        assert out.returncode == 0, out.stderr
+        arr = json.loads(out.stdout)
+        hd = next(s for s in arr if s["slug"] == "hd-engine")
+        assert hd["headline_value"] is None, \
+            f"--no-runtime-values did not skip pipeline: {hd}"
+    finally:
+        if runtime_path.exists():
+            runtime_path.unlink()
+
+
 def test_validate_reports_ok():
     out = _run("validate")
     assert out.returncode == 0, out.stderr

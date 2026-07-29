@@ -60,22 +60,43 @@ def publish_publish_kpi_dashboard(publish_root, runtime_values=None) -> dict:
 
 
 def build_dashboard(*, publish_root, runtime_values=None, window="last24h",
-                    write_snapshot=True) -> dict:
+                    write_snapshot=True, sites_dir=None) -> dict:
     """Single entry point used by both the FastAPI endpoint and ad-hoc CLI runs.
 
     Args:
         publish_root: directory the PWP dashboard host expects HTML in.
         runtime_values: optional dict slug -> {metric_key: value} for front-of-card
             metrics. The function is permissive: missing values render as "—".
+            When None (the default), the runtime values pipeline
+            (`runtime_values.RuntimeValuesBuilder`) populates the dict
+            from per-site snapshots (`<slug>.runtime.json`) and any
+            live-mode adapters that have credentials. The pipeline walks
+            every registered site and emits one row per site.
         window: label written into the dashboard's "Window" header.
         write_snapshot: when true, write a JSON snapshot beside the HTML pages.
+        sites_dir: directory that holds `<slug>.kpi.json` + the optional
+            `<slug>.runtime.json` snapshots. Default is the canonical
+            plugins/pwp/.../sites/ path.
 
     Returns:
-        manifest dict with `sites`, `output_dir`, `snapshot_path`, `window`.
+        manifest dict with `sites`, `output_dir`, `snapshot_path`, `window`,
+        and `runtime_values_path` (the file that was read, if any).
     """
-    runtime_values = runtime_values or {}
     publish_root = Path(publish_root)
     publish_root.mkdir(parents=True, exist_ok=True)
+
+    # If no runtime_values were passed, run the pipeline. The pipeline
+    # walks every registered site, applies the canonical snapshot
+    # (`<slug>.runtime.json`) first, then dispatches each metric to
+    # its source adapter (ga4, stripe, gsc, telegram, internal,
+    # verifier), and finally computes derived metrics. Sites with no
+    # data produce no row.
+    if runtime_values is None:
+        from . import runtime_values as rv
+        runtime_values = rv.build_runtime_values(sites_dir=sites_dir)
+        runtime_values_path = None  # auto-built; not from a file
+    else:
+        runtime_values_path = None  # caller-supplied; not from a file
 
     # Write CSS (single source of truth for visual treatment).
     (publish_root / "pwp-publish-kpi.css").write_text(
@@ -94,6 +115,7 @@ def build_dashboard(*, publish_root, runtime_values=None, window="last24h",
         "window": window,
         "output_dir": str(publish_root),
         "snapshot_path": None,
+        "runtime_values_path": runtime_values_path,
     }
     for site in agg["sites"]:
         slug = site["slug"]

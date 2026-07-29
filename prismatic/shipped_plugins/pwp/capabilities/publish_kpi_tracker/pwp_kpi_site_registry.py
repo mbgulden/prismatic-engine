@@ -57,9 +57,21 @@ def _resolve_registry_path() -> Path:
 
 
 def _resolve_schema_path() -> Path:
+    """Resolve the schema file location. Lives inside the PWP plugin
+    directory (Ned's lane) so the schema travels with the plugin code.
+    The PWP_REPO env var overrides.
+    """
     env_root = os.environ.get("PWP_REPO_ROOT")
     root = Path(env_root) if env_root else REPO_ROOT
-    return root / "schemas" / "pwp-kpi-registry.schema.json"
+    return (
+        root
+        / "plugins"
+        / "pwp"
+        / "capabilities"
+        / "publish_kpi_tracker"
+        / "schemas"
+        / "kpi-registry.schema.json"
+    )
 
 
 def _resolve_sites_dir() -> Path:

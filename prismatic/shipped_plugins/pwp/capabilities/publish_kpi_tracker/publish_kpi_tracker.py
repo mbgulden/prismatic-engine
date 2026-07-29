@@ -202,9 +202,16 @@ def _format_value(value: Any, fmt: str = "number") -> str:
 
     - None / missing  -> "—"  (placeholder, not silent collapse)
     - numbers         -> localized digits
-    - percent         -> 2dp + "%"
+    - percent         -> 2dp + "%"  (stored as a fraction: 0.0638 -> "6.38%")
     - currency        -> "$" + 2dp + locale grouping
     - duration        -> seconds, rounded
+
+    Percent contract: the metric is stored as a fraction (0 ≤ value ≤ 1).
+    `format: "percent"` multiplies by 100 and appends "%". So a metric
+    with `formula: "purchase_total / page_view"` returning 0.0638
+    renders as "6.38%" (NOT "0.06%"). This matches the canonical
+    `active-oahu.kpi.json` formula `booking_complete / booking_click`,
+    which produces a fraction in [0, 1] and is displayed as a percentage.
 
     The function is deterministic: same input -> same output.
     """
@@ -212,7 +219,8 @@ def _format_value(value: Any, fmt: str = "number") -> str:
         return "—"
     try:
         if fmt == "percent":
-            return f"{float(value):.2f}%"
+            # Stored as fraction. Multiply by 100 for display.
+            return f"{float(value) * 100:.2f}%"
         if fmt == "currency":
             return f"${float(value):,.2f}"
         if fmt == "duration":

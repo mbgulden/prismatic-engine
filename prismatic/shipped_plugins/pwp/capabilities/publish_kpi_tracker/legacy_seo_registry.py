@@ -2,7 +2,8 @@
 
 The real-world `config/seo_sites.json` is the v1 shape: a flat array of sites
 with `gsc_property`, `sitemap_url`, `site_dir_candidates`, `expected_data_layer_events`,
-and direct GA4/GTM fields. The PWP `schemas/pwp-kpi-registry.schema.json` is the v2
+and direct GA4/GTM fields. The PWP `kpi-registry.schema.json` (inside
+plugins/pwp/capabilities/publish_kpi_tracker/schemas/) is the v2
 shape: required top-level `pwp_kpi_capability`, `default_metric_specs`, and per-site
 `pwp_kpi_override` / `pwp_kpi_metric_specs` blocks.
 
