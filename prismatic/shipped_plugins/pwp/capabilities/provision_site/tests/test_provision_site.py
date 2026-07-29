@@ -112,11 +112,43 @@ def test_cloudflare_client_requires_token() -> None:
 
 
 def test_cloudflare_client_from_env_missing() -> None:
-    """from_env must surface a helpful error when CF_API_TOKEN is unset."""
+    """from_env must surface a helpful error listing the env vars it tried."""
     with patch.dict(os.environ, {}, clear=True):
-        with pytest.raises(ValueError, match="CF_API_TOKEN"):
+        with pytest.raises(ValueError) as excinfo:
             from plugins.pwp.capabilities.provision_site import CloudflareClient
             CloudflareClient.from_env()
+    msg = str(excinfo.value)
+    # The error should list every env var the user could set.
+    for name in ("CF_API_TOKEN", "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_PAGES_API_TOKEN"):
+        assert name in msg, f"{name} not in error message: {msg}"
+
+
+def test_cloudflare_client_from_env_precedence() -> None:
+    """When multiple token env vars are set, CF_API_TOKEN wins; if absent,
+    CLOUDFLARE_API_TOKEN; if absent, CLOUDFLARE_PAGES_API_TOKEN."""
+    from plugins.pwp.capabilities.provision_site import CloudflareClient
+    # Only CLOUDFLARE_PAGES_API_TOKEN set
+    with patch.dict(os.environ, {"CLOUDFLARE_PAGES_API_TOKEN": "pages-tok"}, clear=True):
+        cf = CloudflareClient.from_env()
+        assert cf._token == "pages-tok"
+        assert cf._token_source == "CLOUDFLARE_PAGES_API_TOKEN"
+    # CLOUDFLARE_API_TOKEN takes precedence over CLOUDFLARE_PAGES_API_TOKEN
+    with patch.dict(os.environ, {
+        "CLOUDFLARE_API_TOKEN": "general-tok",
+        "CLOUDFLARE_PAGES_API_TOKEN": "pages-tok",
+    }, clear=True):
+        cf = CloudflareClient.from_env()
+        assert cf._token == "general-tok"
+        assert cf._token_source == "CLOUDFLARE_API_TOKEN"
+    # CF_API_TOKEN wins over everything
+    with patch.dict(os.environ, {
+        "CF_API_TOKEN": "canonical-tok",
+        "CLOUDFLARE_API_TOKEN": "general-tok",
+        "CLOUDFLARE_PAGES_API_TOKEN": "pages-tok",
+    }, clear=True):
+        cf = CloudflareClient.from_env()
+        assert cf._token == "canonical-tok"
+        assert cf._token_source == "CF_API_TOKEN"
 
 
 def test_cloudflare_client_parses_errors() -> None:
@@ -158,7 +190,7 @@ def test_orchestrator_runs_steps_in_order(tmp_path: Path) -> None:
     state after each step."""
     step_calls: list[str] = []
 
-    def fake_step(step_name: str, domain: str, owner: str, run, *, publish_root: Path):
+    def fake_step(step_name, domain, owner, run, *, publish_root, prior_outputs=None):
         step_calls.append(step_name)
         return prov_types.StepResult(name=step_name, status="complete")
 
@@ -180,7 +212,7 @@ def test_orchestrator_stops_on_step_failure(tmp_path: Path) -> None:
     failed, and persist the state."""
     call_count = {"n": 0}
 
-    def fake_step(step_name: str, domain: str, owner: str, run, *, publish_root: Path):
+    def fake_step(step_name, domain, owner, run, *, publish_root, prior_outputs=None):
         call_count["n"] += 1
         if step_name == "verify_domain":
             return prov_types.StepResult(
@@ -219,7 +251,7 @@ def test_orchestrator_resume_skips_completed_steps(tmp_path: Path) -> None:
     }))
     call_count = {"n": 0}
 
-    def fake_step(step_name: str, domain: str, owner: str, run, *, publish_root: Path):
+    def fake_step(step_name, domain, owner, run, *, publish_root, prior_outputs=None):
         call_count["n"] += 1
         return prov_types.StepResult(name=step_name, status="complete")
 
@@ -236,6 +268,38 @@ def test_orchestrator_resume_skips_completed_steps(tmp_path: Path) -> None:
     # from the prior state (complete).
     verify_step = next(s for s in run.steps if s.name == "verify_domain")
     assert verify_step.status == "complete"
+
+
+def test_orchestrator_passes_prior_outputs_to_step(tmp_path: Path) -> None:
+    """When resuming a failed run, prior_outputs from the prior step
+    attempts are passed to step functions so they can recover state
+    (e.g. reuse a challenge token)."""
+    captured = {}
+
+    def fake_step(step_name, domain, owner, run, *, publish_root, prior_outputs=None):
+        captured["prior_outputs"] = prior_outputs
+        return prov_types.StepResult(name=step_name, status="complete")
+
+    # Pre-populate state with verify_domain FAILED with a challenge_token.
+    state_path = tmp_path / "example.com.json"
+    state_path.write_text(json.dumps({
+        "domain": "example.com", "owner": "me@example.com",
+        "started_at": "2026-01-01T00:00:00+00:00",
+        "overall_status": "in_progress",
+        "steps": [
+            {"name": "verify_domain", "status": "failed",
+             "started_at": "x", "finished_at": "y",
+             "output": {"challenge_token": "pwp-verify-fixed-token",
+                        "record_name": "_pwp-verify.example.com"}},
+        ],
+    }))
+    with patch.object(orchestrator, "_run_step", side_effect=fake_step):
+        orchestrator.run(
+            domain="example.com", owner="me@example.com",
+            publish_root=tmp_path, resume=True,
+        )
+    # The step received prior_outputs containing the prior challenge_token.
+    assert captured["prior_outputs"].get("verify_domain", {}).get("challenge_token") == "pwp-verify-fixed-token"
 
 
 def test_orchestrator_status_returns_none_for_unknown_domain(tmp_path: Path) -> None:
@@ -291,6 +355,34 @@ def test_step_verify_domain_success_after_record_created(tmp_path: Path) -> None
     assert result.status == "complete"
     assert result.output["challenge_token"].startswith("pwp-verify-")
     assert "pwp-verify-x" in result.output["observed_values"]
+    # First run — should NOT mark the token as reused.
+    assert result.output["reused_prior_token"] is False
+
+
+def test_step_verify_domain_reuses_prior_token(tmp_path: Path) -> None:
+    """When called with prior_outputs containing a challenge_token,
+    the step should reuse it (so the user doesn't have to update the
+    TXT record with a new value each run)."""
+    prior = {"verify_domain": {"challenge_token": "pwp-verify-fixed"}}
+    with patch(
+        "plugins.pwp.capabilities.provision_site.steps.verify",
+        return_value=_mk_verify_result(verified=True, expected="pwp-verify-fixed"),
+    ):
+        run_state = prov_types.ProvisionRun(
+            domain="example.com",
+            owner="me@example.com",
+            started_at="2026-01-01T00:00:00+00:00",
+        )
+        result = step_verify_domain(
+            domain="example.com",
+            owner="me@example.com",
+            run=run_state,
+            publish_root=tmp_path,
+            prior_outputs=prior,
+        )
+    assert result.status == "complete"
+    assert result.output["challenge_token"] == "pwp-verify-fixed"
+    assert result.output["reused_prior_token"] is True
 
 
 def test_step_register_in_registry_writes_appendix(tmp_path: Path) -> None:

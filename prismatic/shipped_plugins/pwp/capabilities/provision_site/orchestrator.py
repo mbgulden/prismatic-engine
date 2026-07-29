@@ -57,8 +57,16 @@ def _run_step(
     run: ProvisionRun,
     *,
     publish_root: Path,
+    prior_outputs: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> StepResult:
-    """Run a single step by name. Looks up the step fn in step_module."""
+    """Run a single step by name. Looks up the step fn in step_module.
+
+    `prior_outputs` is a dict keyed by step name mapping to that step's
+    last output (from a prior persisted run, when resuming). Step
+    functions can read this to pick up state from a previous attempt
+    (e.g. a challenge token issued before the user created the TXT
+    record).
+    """
     fn: Optional[Callable[..., StepResult]] = getattr(step_module, f"step_{step_name}", None)
     if fn is None:
         return StepResult(
@@ -69,7 +77,13 @@ def _run_step(
     started = dt.datetime.now(dt.timezone.utc).isoformat()
     result = StepResult(name=step_name, status="pending", started_at=started)
     try:
-        out = fn(domain=domain, owner=owner, run=run, publish_root=publish_root)
+        out = fn(
+            domain=domain,
+            owner=owner,
+            run=run,
+            publish_root=publish_root,
+            prior_outputs=prior_outputs or {},
+        )
         # Step functions return either a StepResult (preferred) or a dict.
         if isinstance(out, StepResult):
             result = out
@@ -134,6 +148,15 @@ def run(
         if prior_step and prior_step.get("status") == "complete":
             run_state.steps.append(StepResult(**prior_step))
 
+    # Build prior_outputs: a dict mapping step_name -> last output dict
+    # from the prior persisted run (if any). Steps use this to recover
+    # state between attempts (e.g. reuse a challenge token across
+    # attempts while the user creates the TXT record).
+    prior_outputs: Dict[str, Dict[str, Any]] = {}
+    for prior_step in prior.get("steps", []):
+        if prior_step.get("status") != "complete" and prior_step.get("output"):
+            prior_outputs[prior_step["name"]] = prior_step["output"]
+
     # Run the remaining steps.
     for sname in STEP_NAMES:
         if step_filter is not None and sname not in step_filter:
@@ -142,7 +165,9 @@ def run(
         if any(s.name == sname and s.status == "complete" for s in run_state.steps):
             continue
         result = _run_step(
-            sname, domain, owner, run_state, publish_root=publish_root
+            sname, domain, owner, run_state,
+            publish_root=publish_root,
+            prior_outputs=prior_outputs,
         )
         run_state.steps.append(result)
         # Persist after every step so the UI can poll progress.

@@ -20,7 +20,7 @@ import json
 import os
 import secrets
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from ..domain_verifier import (
     VERIFY_PREFIX,
@@ -33,7 +33,9 @@ from .migrate import trigger_migrate
 
 
 def step_verify_domain(
-    *, domain: str, owner: str, run, publish_root: Path, **_: Any
+    *, domain: str, owner: str, run, publish_root: Path,
+    prior_outputs: Optional[Dict[str, Dict[str, Any]]] = None,
+    **_: Any
 ) -> StepResult:
     """Verify the domain via DNS TXT challenge.
 
@@ -41,25 +43,18 @@ def step_verify_domain(
     token and writes it to `run.steps[0].output["challenge_token"]`,
     then immediately checks if it's already present (it won't be on
     the first run). The owner is expected to create the TXT record
-    and re-run provisioning, which will skip this step (already
-    complete only if verified) — or if not yet verified, this step
-    runs again and re-checks.
-
-    For Phase 1, a single rerun is required. Phase 2 can add a
-    "wait for verification" polling mode.
+    and re-run provisioning, which will reuse the SAME token (via
+    `prior_outputs`) so the record value matches. If the record was
+    found, the step is marked complete; subsequent steps then run.
     """
     out: Dict[str, Any] = {}
-    # Look for an existing challenge token from a prior incomplete run.
-    challenge_token = None
-    for s in run.steps:
-        if s.name == "verify_domain" and s.output.get("challenge_token"):
-            challenge_token = s.output["challenge_token"]
-            break
-    if not challenge_token:
-        challenge_token = generate_challenge_token()
+    prior = prior_outputs or {}
+    prior_token = prior.get("verify_domain", {}).get("challenge_token")
+    challenge_token = prior_token or generate_challenge_token()
     out["challenge_token"] = challenge_token
     out["record_name"] = f"{VERIFY_PREFIX}.{domain}"
     out["expected_value"] = challenge_token
+    out["reused_prior_token"] = prior_token is not None
 
     # Check if the TXT record is present.
     result = verify(domain, challenge_token)
@@ -216,12 +211,15 @@ def step_migrate_kpi(
         slug = slug_from_domain(domain)
 
     try:
-        result = trigger_migrate(slug)
+        # Pass the publish_root so trigger_migrate reads the right
+        # sites.json appendix (the one this orchestrator wrote to).
+        result = trigger_migrate(slug, publish_root=publish_root)
         return StepResult(
             name="migrate_kpi",
             status="complete",
             output={
                 "slug": slug,
+                "publish_root": str(publish_root),
                 "manifest": result,
             },
         )

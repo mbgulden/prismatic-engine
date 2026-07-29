@@ -121,13 +121,16 @@ class CloudflareClient:
         timeout: float = 30.0,
         max_retries: int = 3,
         retry_backoff: float = 1.5,
+        _token_source: str = "explicit",
     ) -> None:
         if not token:
             raise ValueError(
-                "Cloudflare token is empty. Set CF_API_TOKEN env var or pass "
-                "token=... explicitly."
+                "Cloudflare token is empty. Set CF_API_TOKEN / "
+                "CLOUDFLARE_API_TOKEN / CLOUDFLARE_PAGES_API_TOKEN env "
+                "var, or pass token=... explicitly."
             )
         self._token = token
+        self._token_source = _token_source
         self._timeout = timeout
         self._max_retries = max_retries
         self._retry_backoff = retry_backoff
@@ -142,14 +145,35 @@ class CloudflareClient:
 
     @classmethod
     def from_env(cls) -> "CloudflareClient":
-        """Construct from `CF_API_TOKEN` env var. Raises ValueError if unset."""
-        token = os.environ.get("CF_API_TOKEN", "").strip()
+        """Construct from a Cloudflare API token env var.
+
+        Accepts any of (in order of precedence):
+          - CF_API_TOKEN           (the canonical PWP name)
+          - CLOUDFLARE_API_TOKEN   (the Cloudflare-docs name)
+          - CLOUDFLARE_PAGES_API_TOKEN (Pages-scoped fallback)
+
+        Raises ValueError with a list of the names tried if none are set.
+        """
+        names = (
+            "CF_API_TOKEN",
+            "CLOUDFLARE_API_TOKEN",
+            "CLOUDFLARE_PAGES_API_TOKEN",
+        )
+        token = ""
+        used_name = ""
+        for name in names:
+            value = os.environ.get(name, "").strip()
+            if value:
+                token = value
+                used_name = name
+                break
         if not token:
             raise ValueError(
-                "CF_API_TOKEN env var is not set. Set it to a Cloudflare API "
-                "token with Zone:Edit + DNS:Edit + Zone:Read scopes."
+                "None of the Cloudflare token env vars are set. Tried: "
+                + ", ".join(names) + ". Set one to a Cloudflare API token "
+                "with Zone:Edit + DNS:Edit + Zone:Read scopes."
             )
-        return cls(token=token)
+        return cls(token=token, _token_source=used_name)
 
     # -- HTTP helpers -------------------------------------------------
 

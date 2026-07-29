@@ -16,7 +16,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 def _resolve_registry_path() -> Path:
@@ -35,14 +35,22 @@ def _resolve_registry_path() -> Path:
 
 
 def _build_minimal_registry(slug: str, appendix_path: Path) -> Dict[str, Any]:
-    """Build a minimal v2-shape registry with just one site entry.
+    """Build a minimal v1-shape registry with just one site entry.
 
-    Phase 1: the appendix file is the source of truth for the new
-    site. We hand-construct a v2 registry that wraps it. Phase 2
-    will replace this with proper adapter wiring.
+    `operator_migrate.run()` validates the registry as v1 (`version: 1`)
+    before doing anything else. Phase 1 builds a v1-compatible registry
+    inline from the sites.json appendix; Phase 2 will wire the appendix
+    into the canonical v1/v2 registry loader properly.
+
+    v1 shape (see `pwp_kpi_site_registry.validate_registry_shape`):
+      {
+        "version": 1,
+        "sites": [{"slug": ..., "name": ..., "domain": ..., ...}],
+        "default_metric_specs": {...}
+      }
     """
     if not appendix_path.exists():
-        return {"sites": [], "default_metric_specs": {}}
+        return {"version": 1, "sites": [], "default_metric_specs": {}}
     appendix = json.loads(appendix_path.read_text(encoding="utf-8"))
     site_entries: List[Dict[str, Any]] = []
     for domain, entry in appendix.items():
@@ -59,7 +67,9 @@ def _build_minimal_registry(slug: str, appendix_path: Path) -> Dict[str, Any]:
             "pwp_kpi_override": entry.get("pwp_kpi_override", {"enabled": True}),
         })
     return {
-        "version": 2,
+        "version": 1,
+        "sites": site_entries,
+        "default_metric_specs": {},
         "pwp_kpi_capability": {
             "enabled": True,
             "operator": "ned",
@@ -75,24 +85,25 @@ def _build_minimal_registry(slug: str, appendix_path: Path) -> Dict[str, Any]:
     }
 
 
-def trigger_migrate(slug: str) -> Dict[str, Any]:
+def trigger_migrate(slug: str, publish_root: Optional[Path] = None) -> Dict[str, Any]:
     """Run `operator_migrate.run()` for `slug` against the appendix.
 
-    Returns the manifest from operator_migrate.run().
-
-    The sites.json appendix is what this step reads from. The
-    canonical PWP_REPO layout puts it at <PWP_REPO>/tmp-provisioning/
-    during a real run, but Phase 1 lives in `/tmp/pwp-provisioning/`
-    for portability across machines — the orchestrator always passes
-    `--publish-root` which the operator_cli writes to that location.
-    We fall back to the env-var-pinned location if `/tmp` is not
-    writable in the deployment environment.
+    Args:
+      slug: the site's slug to bootstrap.
+      publish_root: where to read the sites.json appendix from. If
+        None, falls back to $PWP_PROVISIONING_ROOT then /tmp/pwp-
+        provisioning/. The orchestrator passes the actual publish
+        root so the appendix written by register_in_registry matches
+        the file trigger_migrate reads from.
     """
-    appendix_env = os.environ.get("PWP_PROVISIONING_ROOT", "").strip()
-    if appendix_env:
-        appendix = Path(appendix_env) / "sites.json"
+    if publish_root is not None:
+        appendix = Path(publish_root) / "sites.json"
     else:
-        appendix = Path("/tmp/pwp-provisioning/sites.json")
+        appendix_env = os.environ.get("PWP_PROVISIONING_ROOT", "").strip()
+        if appendix_env:
+            appendix = Path(appendix_env) / "sites.json"
+        else:
+            appendix = Path("/tmp/pwp-provisioning/sites.json")
     minimal_registry = _build_minimal_registry(slug, appendix)
 
     # Write the minimal registry to a temp file and point
