@@ -157,6 +157,36 @@ def test_adapt_v1_sets_pwp_kpi_override_enabled_true():
         assert s["pwp_kpi_override"]["enabled"] is True
 
 
+def test_adapt_v1_forces_ga4_measurement_id_to_null_gap5():
+    """GAP-#5: env-var-only GA4 resolution.
+
+    A v1 site entry that carries a static `ga4_measurement_id` literal
+    must be forced to `None` after adaptation so the runtime always
+    resolves the live GA4 property from `ga4_measurement_env`. This
+    eliminates the tracking-property drift between shipped config and
+    deployed loader — the static config used to lie about HDE's GA4 ID.
+    """
+    v1_with_literal = {
+        "version": 1,
+        "sites": [
+            {
+                "slug": "drifty",
+                "name": "Drifty",
+                "domain": "drifty.example",
+                "ga4_measurement_id": "G-DRIFTED01",
+                "ga4_measurement_env": "DRIFTY_GA4_MEAS_ID",
+                "expected_data_layer_events": ["page_view"],
+            }
+        ],
+    }
+    v2 = adapt_v1_to_v2(v1_with_literal)
+    site = v2["sites"][0]
+    # The literal was forced to None — env-var is the only source of truth.
+    assert site["ga4_measurement_id"] is None
+    # The env-var name is preserved unchanged.
+    assert site["ga4_measurement_env"] == "DRIFTY_GA4_MEAS_ID"
+
+
 def test_adapt_v1_collects_unique_event_names():
     # Two sites with overlapping event lists should dedup.
     events = _collect_v1_event_names(V1_REGISTRY["sites"])

@@ -31,7 +31,7 @@
       "slug": "disabled-site",
       "name": "Disabled Site",
       "domain": "disabled.example",
-      "ga4_measurement_id": "G-DISABLED01",
+      "ga4_measurement_env": "TEST_DISABLED_MEAS_ID",
       "pwp_kpi_override": {"enabled": false}
     }
   ]

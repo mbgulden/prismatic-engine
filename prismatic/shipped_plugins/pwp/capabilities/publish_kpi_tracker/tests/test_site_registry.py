@@ -63,16 +63,20 @@ def test_validate_registry_shape_rejects_duplicate_slug():
     assert any("duplicate slug" in e for e in errs)
 
 
-def test_iter_sites_resolves_tracking_property_from_env():
+def test_iter_sites_resolves_tracking_property_from_env(monkeypatch):
+    """GAP-#5: env-var-only GA4 resolution. Every site's tracking_property
+    must come from its `ga4_measurement_env` env-var. The static
+    `ga4_measurement_id` literal is ignored (forced to None by the v1→v2
+    adapter)."""
+    monkeypatch.setenv("TEST_AOT_MEAS_ID", "G-TESTAOAO01")
+    monkeypatch.setenv("TEST_DISABLED_MEAS_ID", "G-DISABLED01")
     reg_doc = reg.load_registry(FIXTURES / "test_registry.json")
     sites = list(reg.iter_sites(reg_doc))
     by_slug = {s["slug"]: s for s in sites}
-    # active-oahu has no literal ga4_measurement_id, so it should resolve from env
     assert by_slug["active-oahu"]["_tracking_property_resolved"] == "G-TESTAOAO01"
     assert by_slug["active-oahu"]["_tracking_property_source"] == "env"
-    # disabled-site has the value inline
     assert by_slug["disabled-site"]["_tracking_property_resolved"] == "G-DISABLED01"
-    assert by_slug["disabled-site"]["_tracking_property_source"] == "literal"
+    assert by_slug["disabled-site"]["_tracking_property_source"] == "env"
 
 
 def test_iter_metric_specs_for_site_merges_defaults_and_overrides():

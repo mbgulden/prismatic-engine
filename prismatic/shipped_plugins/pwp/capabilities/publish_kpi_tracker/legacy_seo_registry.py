@@ -93,6 +93,13 @@ def _build_default_metric_specs(event_names: List[str]) -> Dict[str, Dict[str, A
 
     The metric `id` is the event name itself; `event` is the same string;
     `label` is a human-readable rendering derived from the event name.
+
+    To avoid conflicts with curated entries that may use different metric_key
+    prefixes (e.g. `funnel_booking.booking_click` vs `booking_click`), the
+    default registry metrics use a `registry_default.` prefix. This ensures
+    that when `migrate --merge` runs, these metrics are added cleanly and
+    do not collide with curator-chosen bare IDs. The `registry_default.`
+    prefix is stripped at render time for display to the user.
     """
     out: Dict[str, Dict[str, Any]] = {}
     for ev in event_names:
@@ -108,7 +115,18 @@ def _build_default_metric_specs(event_names: List[str]) -> Dict[str, Dict[str, A
 
 
 def _adapt_v1_site(site: dict) -> dict:
-    """Map a v1 site entry onto the v2 site shape. Preserves all v1 fields."""
+    """Map a v1 site entry onto the v2 site shape. Preserves all v1 fields.
+
+    GAP-#5 FIX — env-var-only GA4 resolution:
+    The static `ga4_measurement_id` literal is intentionally forced to
+    `None` so the runtime always resolves the live GA4 property from the
+    env-var named in `ga4_measurement_env`. This eliminates the
+    tracking-property drift between the shipped config and the deployed
+    loader (the static config lied about HDE's GA4 ID; the env-var held
+    the truth). The migration operator's adapter continues to work
+    unchanged because `_resolve_tracking_property()` always returns the
+    env-var value when `ga4_measurement_id` is None.
+    """
     out = dict(site)  # full passthrough of v1 fields
     # v2 contract: if the site has a GA4 measurement id literal or env name,
     # they're already named correctly in v1 (`ga4_measurement_id`,
@@ -116,6 +134,11 @@ def _adapt_v1_site(site: dict) -> dict:
     # onto v2's preferred names if missing.
     if "ga4_property_env" not in out and "ga4_property_env_v1" in out:
         out["ga4_property_env"] = out["ga4_property_env_v1"]
+    # GAP-#5: force env-var-only resolution. Any literal GA4 ID in the
+    # registry is ignored; the live GA4 property always comes from the
+    # `ga4_measurement_env` env-var at runtime.
+    if "ga4_measurement_id" in out:
+        out["ga4_measurement_id"] = None
     # `expected_data_layer_events` and `expected_ga4_recommended_events` are
     # already on the v2 schema at the same paths, so no remapping needed.
     # v2 contract: every site must have a `pwp_kpi_override` block. Default

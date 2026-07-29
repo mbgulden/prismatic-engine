@@ -83,16 +83,19 @@ def _resolve_sites_dir() -> Path:
 def _resolve_tracking_property(site: dict) -> Tuple[Optional[str], Optional[str]]:
     """Resolve the GA4 measurement ID for a site.
 
-    Order of preference:
-      1. `ga4_measurement_id` literal value in the registry
-      2. `os.environ.get(site['ga4_measurement_env'])` if the env name is set
-      3. None
+    GAP-#5 FIX — env-var-only:
+    The static `ga4_measurement_id` literal is intentionally ignored.
+    The live GA4 property always comes from the env-var named in
+    `ga4_measurement_env`. This eliminates the tracking-property drift
+    between the shipped config and the deployed loader — the static
+    config used to lie about HDE's GA4 ID; the env-var holds the truth.
 
-    Returns (measurement_id, source) where source ∈ {"literal","env","none"}.
+    Order of preference:
+      1. `os.environ.get(site['ga4_measurement_env'])` if the env name is set
+      2. None
+
+    Returns (measurement_id, source) where source ∈ {"env", "none"}.
     """
-    literal = site.get("ga4_measurement_id")
-    if literal and GA4_MEAS_RE.match(literal):
-        return literal, "literal"
     env_name = site.get("ga4_measurement_env")
     if env_name:
         v = os.environ.get(env_name)
