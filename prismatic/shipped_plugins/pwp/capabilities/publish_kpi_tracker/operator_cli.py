@@ -175,6 +175,7 @@ def cmd_migrate(args) -> int:
             registry_path=Path(args.registry) if args.registry else None,
             sites_dir=Path(args.sites_dir) if args.sites_dir else None,
             force=args.force,
+            merge=args.merge,
         )
         print(json.dumps(manifest, indent=2, sort_keys=True))
         rc = 1 if manifest.get("validation_errors") else 0
@@ -216,6 +217,31 @@ def cmd_snapshot(args) -> int:
         })
     print(json.dumps(manifest, indent=2, sort_keys=True))
     return 0
+
+
+def cmd_cron(args) -> int:
+    """GAP-#7: dispatch the unified cron orchestrator for one cadence.
+
+    Walks every registered site in the registry and invokes the
+    per-site launcher (cron_launcher.py) with each site's share-targets
+    env vars loaded. Sites whose `delivery_cadence` doesn't match the
+    requested kind are skipped — this lets a single Prismatic Engine
+    cron entry drive daily/weekly/monthly runs without per-site wiring.
+    """
+    from plugins.pwp.capabilities.publish_kpi_tracker import cron_orchestrator as orch
+    try:
+        manifest = orch.run(
+            kind=args.kind,
+            registry_path=Path(args.registry) if args.registry else None,
+            publish_root=Path(args.publish_root) if args.publish_root else None,
+            launcher=Path(args.launcher) if args.launcher else None,
+            timeout=args.timeout,
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(manifest, indent=2, sort_keys=True))
+    return 1 if any(s.get("status") == "failed" for s in manifest["sites"]) else 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -263,6 +289,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Don't write files; print the manifest instead.")
     sm.add_argument("--force", action="store_true",
                     help="Overwrite existing per-site *.kpi.json files. Default is to skip sites whose file already exists.")
+    sm.add_argument("--merge", action="store_true",
+                    help="Merge registry-derived metrics into existing per-site files. Curated entries ALWAYS win (registry never overwrites curated values). New events in the registry that aren't already in the curated file are added.")
     sm.set_defaults(func=cmd_migrate)
 
     ss = sub.add_parser(
@@ -274,6 +302,27 @@ def build_parser() -> argparse.ArgumentParser:
     ss.add_argument("--force", action="store_true",
                     help="Overwrite existing <slug>.runtime.json files. Default is to skip sites whose file already exists.")
     ss.set_defaults(func=cmd_snapshot)
+
+    sc = sub.add_parser(
+        "cron",
+        help=(
+            "GAP-#7: Unified cron orchestrator. Walks config/seo_sites.json and "
+            "dispatches the per-site launcher (cron_launcher.py) for every site "
+            "whose delivery_cadence matches the requested kind (daily/weekly/monthly). "
+            "Per-site share-targets env vars are loaded from each <slug>.kpi.json."
+        ),
+    )
+    sc.add_argument("kind", choices=["daily", "weekly", "monthly"],
+                    help="The cron cadence to dispatch.")
+    sc.add_argument("--registry",
+                    help="Path to seo_sites.json (default inferred from PWP_REPO_ROOT).")
+    sc.add_argument("--publish-root",
+                    help="Directory the per-site runs land in (default /tmp/pwp-kpi-runs/<kind>).")
+    sc.add_argument("--launcher",
+                    help="Path to cron_launcher.py (default PWP_KPI_CRON_LAUNCHER or HDE_KPI_REPO_ROOT).")
+    sc.add_argument("--timeout", type=int, default=120,
+                    help="Per-site subprocess timeout in seconds (default 120).")
+    sc.set_defaults(func=cmd_cron)
 
     return p
 
