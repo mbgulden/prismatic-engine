@@ -52,7 +52,8 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from .pwp_kpi_site_registry import (
     iter_sites,
@@ -60,6 +61,11 @@ from .pwp_kpi_site_registry import (
     site_override_enabled,
 )
 from . import publish_kpi_tracker as kpi
+
+
+# `publish_root` and `launcher` accept either `Path` or `str` so the CLI
+# can pass argparse's string args directly without explicit coercion.
+PathLike = Union[Path, str]
 
 
 DEFAULT_LAUNCHER = Path(
@@ -202,9 +208,9 @@ def dispatch_one_site(
 def run(
     *,
     kind: str,
-    registry_path: Optional[Path] = None,
-    publish_root: Optional[Path] = None,
-    launcher: Optional[Path] = None,
+    registry_path: Optional[PathLike] = None,
+    publish_root: Optional[PathLike] = None,
+    launcher: Optional[PathLike] = None,
     timeout: int = 120,
 ) -> Dict[str, Any]:
     """Walk every registered site, dispatch the launcher per-site.
@@ -217,11 +223,15 @@ def run(
     if kind not in ("daily", "weekly", "monthly"):
         raise ValueError(f"unknown cron kind: {kind!r}; expected daily|weekly|monthly")
 
-    registry = load_registry(registry_path)
-    publish_root = publish_root or Path("/tmp/pwp-kpi-runs") / kind
-    publish_root.mkdir(parents=True, exist_ok=True)
+    registry = load_registry(Path(registry_path) if registry_path else None)
+    if publish_root is None or publish_root == "":
+        publish_root_path = Path("/tmp/pwp-kpi-runs") / kind
+    else:
+        publish_root_path = Path(publish_root)
+    publish_root_path.mkdir(parents=True, exist_ok=True)
+    publish_root = publish_root_path
 
-    launcher_path = launcher or _resolve_launcher()
+    launcher_path = Path(launcher) if launcher else _resolve_launcher()
 
     manifest: Dict[str, Any] = {
         "kind": kind,

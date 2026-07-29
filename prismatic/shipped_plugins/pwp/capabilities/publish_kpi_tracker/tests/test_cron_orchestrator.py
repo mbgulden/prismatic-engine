@@ -238,3 +238,26 @@ def test_run_handles_resolve_collection_error(tmp_path: Path, monkeypatch) -> No
     )
     statuses = {s["slug"]: s["status"] for s in manifest["sites"]}
     assert statuses.get("missing") == "error"
+
+
+def test_run_coerces_string_publish_root(tmp_path: Path, monkeypatch) -> None:
+    """The orchestrator's `publish_root` parameter is documented as
+    `Optional[Path]` but should accept a `str` too — when called from
+    the CLI's argparse with a string argument, `publish_root.mkdir()`
+    would otherwise crash with `AttributeError: 'str' object has no
+    attribute 'mkdir'`. Regression test for the dispatch string/Path bug.
+    """
+    monkeypatch.setattr(
+        "plugins.pwp.capabilities.publish_kpi_tracker.cron_orchestrator.iter_sites",
+        lambda reg: iter([]),
+    )
+    publish_root_str = str(tmp_path / "string-publish-root")
+    manifest = orch.run(
+        kind="daily",
+        publish_root=publish_root_str,  # pass a string, not a Path
+        launcher=tmp_path / "stub_launcher.py",
+    )
+    # The string was coerced to Path; publish_root in the manifest
+    # must be the canonical Path-as-string.
+    assert manifest["publish_root"] == publish_root_str
+    assert (tmp_path / "string-publish-root").is_dir()
