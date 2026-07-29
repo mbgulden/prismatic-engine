@@ -102,7 +102,13 @@ def validate(collection: dict, parent: dict | None = None) -> List[str]:
 
 
 def resolve_collection(slug: str) -> dict:
-    """Flatten parent metrics + site metrics, overriding on key collision."""
+    """Flatten parent metrics + site metrics, overriding on key collision.
+
+    `front_of_card` is site-local: an inherited metric's `front_of_card` flag
+    is *not* surfaced on the child unless the child re-declares the metric and
+    explicitly sets it. This keeps the per-site "headline" cards meaningful
+    instead of inheriting whatever the parent chose to highlight.
+    """
     site = load_site(slug)
     parent_slug = site.get("extends") or (
         DEFAULT_PARENT_SLUG if slug != DEFAULT_PARENT_SLUG else None
@@ -112,11 +118,24 @@ def resolve_collection(slug: str) -> dict:
         if parent_slug and (SITES_DIR / f"{parent_slug}.kpi.json").exists()
         else None
     )
-    merged_metrics = dict(site.get("metrics", {}))
+    site_metrics = dict(site.get("metrics", {}))
     if parent:
-        merged_metrics = {**parent.get("metrics", {}), **merged_metrics}
+        # Parent metrics not overridden by the child are inherited but
+        # *stripped of front_of_card* so the child's headline list is
+        # always derived from metrics the child explicitly highlighted.
+        merged = {}
+        for mid, m in parent.get("metrics", {}).items():
+            mm = dict(m)
+            if mid not in site_metrics:
+                mm.pop("front_of_card", None)
+            merged[mid] = mm
+        # Then layer the child's own metrics on top.
+        merged.update(site_metrics)
+        flat_metrics = merged
+    else:
+        flat_metrics = site_metrics
     flat = dict(site)
-    flat["metrics"] = merged_metrics
+    flat["metrics"] = flat_metrics
     flat["_parent_slug"] = parent_slug
     return flat
 
@@ -178,24 +197,98 @@ def _esc(s: Any) -> str:
     )
 
 
+def _format_value(value: Any, fmt: str = "number") -> str:
+    """Format a runtime value for display.
+
+    - None / missing  -> "—"  (placeholder, not silent collapse)
+    - numbers         -> localized digits
+    - percent         -> 2dp + "%"
+    - currency        -> "$" + 2dp + locale grouping
+    - duration        -> seconds, rounded
+
+    The function is deterministic: same input -> same output.
+    """
+    if value is None:
+        return "—"
+    try:
+        if fmt == "percent":
+            return f"{float(value):.2f}%"
+        if fmt == "currency":
+            return f"${float(value):,.2f}"
+        if fmt == "duration":
+            return f"{int(round(float(value)))}s"
+        # default: number
+        if isinstance(value, float) and value.is_integer():
+            return f"{int(value):,}"
+        if isinstance(value, (int, float)):
+            return f"{float(value):,.2f}".rstrip("0").rstrip(".")
+        return str(value)
+    except (TypeError, ValueError):
+        return str(value)
+
+
 def render_index(agg: dict) -> str:
-    rows = []
+    """Multi-site index page.
+
+    Layout: one **per-site row** (`<section class="pwp-kpi-site-row">`) per
+    registered site. Each row contains:
+
+      - a header with the site name, slug, domain, owner, metric count,
+        and a link to the per-site detail page
+      - a card grid: one card per front-of-card metric, with the metric
+        label and a placeholder value (`—`) when `runtime_values` is not
+        provided for that metric
+
+    This is the **smallest visual unit that closes the loop**: even when
+    no runtime values are supplied (e.g., the dashboard is being rendered
+    ahead of the cron), each site still renders its full grid of headline
+    metrics with `—` placeholders, so the operator can SEE that the
+    site is registered and which metrics are tracked.
+
+    Self-rendering: this function takes only the aggregated data shape
+    (produced by `aggregate()`) and produces deterministic HTML. The
+    data shape + rendering function live in the same file
+    (`publish_kpi_tracker.py`), so they cannot drift.
+    """
+    sections = []
     for s in agg.get("sites", []):
-        cards = "".join(
-            f'<td class="num">{_esc(c.get("label"))}<br><span class="muted">{_esc(c.get("value"))}</span></td>'
+        cards_html = "".join(
+            f'<div class="pwp-kpi-card">'
+            f'<div class="pwp-kpi-card-label">{_esc(c.get("label") or c.get("metric_key") or "?")}</div>'
+            f'<div class="pwp-kpi-card-value">{_esc(_format_value(c.get("value"), c.get("format", "number")))}</div>'
+            + (
+                f'<div class="pwp-kpi-card-delta">{_esc(c.get("delta_pct"))}</div>'
+                if c.get("delta_pct")
+                else ""
+            )
+            + "</div>"
             for c in s.get("front_of_card", [])
         )
-        detail = f'<a href="/pwp/kpi/{_esc(s["slug"])}.html">View details</a>'
-        rows.append(
-            f"<tr><td><strong>{_esc(s['name'])}</strong><br>"
-            f'<span class="muted">{_esc(s["domain"])}</span></td>'
-            f'<td><a href="/pwp/kpi/{_esc(s["slug"])}.html">{_esc(s["slug"])}</a></td>'
-            f"<td>{_esc(s['owner'])}</td>"
-            f"<td>{detail}</td>"
-            f"<td>{s.get('metric_count', 0)}</td>"
-            f"<td>{cards or '<span class=muted>—</span>'}</td></tr>"
+        # Per-site row: header + card grid. Always rendered, even when no
+        # runtime values are present (cards_html may be empty if the site
+        # has no front_of_card metrics; we still want the row visible).
+        no_cards_msg = '<p class="muted">No front-of-card metrics registered.</p>'
+        sections.append(
+            f'<section class="pwp-kpi-site-row" id="site-{_esc(s["slug"])}">'
+            f'<header class="pwp-kpi-site-header">'
+            f'<h3>{_esc(s["name"])} <span class="muted">({_esc(s["slug"])})</span></h3>'
+            f'<p class="muted">'
+            f'{_esc(s["domain"])} · {_esc(s.get("owner") or "—")} · '
+            f'{s.get("metric_count", 0)} metrics'
+            + (
+                f' · extends {_esc(s["extends"])}'
+                if s.get("extends")
+                else ""
+            )
+            + '</p>'
+            f'<p><a href="/pwp/kpi/{_esc(s["slug"])}.html">Open detail page →</a></p>'
+            f'</header>'
+            f'<div class="pwp-kpi-card-grid">'
+            f'{cards_html or no_cards_msg}'
+            f'</div>'
+            f'</section>'
         )
-    table = "\n".join(rows)
+    sections_html = "\n".join(sections)
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -213,12 +306,7 @@ def render_index(agg: dict) -> str:
 <main>
   <section class="pwp-section">
     <h2>Multi-site index</h2>
-    <table class="pwp-kpi-table">
-      <thead>
-        <tr><th>Site</th><th>Slug</th><th>Owner</th><th>Detail</th><th># Metrics</th><th>Front-of-card metrics</th></tr>
-      </thead>
-      <tbody>{table}</tbody>
-    </table>
+    {sections_html}
   </section>
   <section class="pwp-section">
     <h2>Accordion view</h2>
@@ -294,7 +382,7 @@ def render_accordion(agg: dict) -> str:
     for s in agg.get("sites", []):
         cards = "".join(
             f"<li><strong>{_esc(c.get('label'))}</strong>: "
-            f'<span class="num">{_esc(c.get("value"))}</span>'
+            f'<span class="num">{_esc(_format_value(c.get("value"), c.get("format", "number")))}</span>'
             + (
                 f' <span class="muted">{_esc(c.get("delta_pct"))}</span>'
                 if c.get("delta_pct")

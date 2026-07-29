@@ -1,0 +1,122 @@
+{
+  "schema_version": "1.0",
+  "name": "hde-funnel",
+  "owner": "ned",
+  "site_slug": "hd-engine",
+  "domain": "humandesignengine.com",
+  "tracking_property": "G-Q6TPL08VM7",
+  "extends": null,
+  "expected_data_layer_events": [
+    "hde_chart_generated",
+    "hde_daily_work_cta_clicked",
+    "hde_sanctuary_checkout_submitted",
+    "hde_nervous_system_practice_started",
+    "hde_nervous_system_practice_completed",
+    "hde_transit_prompt_viewed",
+    "checkout_report_selected",
+    "checkout_cta_clicked",
+    "checkout_session_create_started",
+    "checkout_session_created",
+    "checkout_stripe_redirect",
+    "checkout_success_page_view",
+    "checkout_purchase_confirmed",
+    "checkout_success_lookup_error",
+    "checkout_error"
+  ],
+  "ga4_recommended_events": [
+    "select_item",
+    "select_content",
+    "view_item",
+    "view_cart",
+    "begin_checkout",
+    "add_payment_info",
+    "add_shipping_info",
+    "purchase",
+    "refund",
+    "complete_registration"
+  ],
+  "site": {
+    "title": "Human Design Engine",
+    "operator": "ned",
+    "expected_dataLayer_events": [
+      "hde_chart_generated",
+      "hde_daily_work_cta_clicked",
+      "hde_sanctuary_checkout_submitted",
+      "hde_nervous_system_practice_started",
+      "hde_nervous_system_practice_completed",
+      "hde_transit_prompt_viewed",
+      "checkout_report_selected",
+      "checkout_cta_clicked",
+      "checkout_session_create_started",
+      "checkout_session_created",
+      "checkout_stripe_redirect",
+      "checkout_success_page_view",
+      "checkout_purchase_confirmed",
+      "checkout_success_lookup_error",
+      "checkout_error"
+    ]
+  },
+  "metrics": {
+    "funnel_top.free_chart_generated_total": {
+      "id": "free_chart_generated_total",
+      "label": "Charts generated (free reading)",
+      "source": "ga4",
+      "event": "hde_chart_generated",
+      "front_of_card": true
+    },
+    "funnel_top.practice_completed_total": {
+      "id": "practice_completed_total",
+      "label": "Nervous-system practices completed",
+      "source": "ga4",
+      "event": "hde_nervous_system_practice_completed"
+    },
+    "funnel_sanctuary.sanctuary_page_view": {
+      "id": "sanctuary_page_view",
+      "label": "Sanctuary page views",
+      "source": "ga4",
+      "filter": "path =~ /(deconditioning|landing-sheplantedatree)/"
+    },
+    "funnel_sanctuary.sanctuary_purchase_total": {
+      "id": "sanctuary_purchase_total",
+      "label": "Sanctuary purchases",
+      "source": "stripe",
+      "event": "checkout.session.completed",
+      "filter": "metadata.funnel == sanctuary",
+      "front_of_card": true
+    },
+    "funnel_buy_report.purchase_total": {
+      "id": "purchase_total",
+      "label": "Report purchases",
+      "source": "stripe",
+      "event": "checkout.session.completed",
+      "filter": "metadata.funnel == report_checkout",
+      "front_of_card": true
+    },
+    "funnel_buy_report.buy_report_conversion_rate": {
+      "id": "buy_report_conversion_rate",
+      "label": "Conversion rate",
+      "source": "derived",
+      "formula": "purchase_total / buy_report_page_view",
+      "format": "percent"
+    },
+    "site_hygiene.sitemap_coverage_pct": {
+      "id": "sitemap_coverage_pct",
+      "label": "Sitemap GA coverage",
+      "source": "verifier",
+      "format": "percent"
+    }
+  },
+  "share_targets": {
+    "google_sheet_id_env": "HDE_KPI_SHEET_ID",
+    "credential_file_env":  "HDE_GOOGLE_SERVICE_ACCOUNT_JSON",
+    "email_to_env":         "HDE_KPI_EMAIL_TO",
+    "email_to_default":     "mbgulden@gmail.com",
+    "dashboard_route":      "/pwp/kpi/",
+    "dashboard_section_label": "HDE KPI tracker"
+  },
+  "delivery_cadence": {
+    "daily":   {"kind": "daily"},
+    "weekly":  {"kind": "weekly"},
+    "monthly": {"kind": "monthly"}
+  }
+}

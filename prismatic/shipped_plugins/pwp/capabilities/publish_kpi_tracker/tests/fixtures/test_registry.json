@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "default_tracking_property_env": "PWP_DEFAULT_GA4_MEASUREMENT_ID",
+  "pwp_kpi_capability": {
+    "enabled": true,
+    "operator": "ned",
+    "shares": {
+      "email_to_default": "mbgulden@gmail.com",
+      "dashboard_route":  "/pwp/kpi/"
+    }
+  },
+  "default_metric_specs": {
+    "site_hygiene.sitemap_coverage_pct": {
+      "id": "sitemap_coverage_pct",
+      "label": "Sitemap GA coverage",
+      "source": "verifier",
+      "format": "percent"
+    }
+  },
+  "sites": [
+    {
+      "slug": "active-oahu",
+      "name": "Active Oahu Tours",
+      "domain": "activeoahutours.com",
+      "origin": "https://activeoahutours.com",
+      "ga4_measurement_env": "TEST_AOT_MEAS_ID",
+      "expected_data_layer_events": ["booking_click", "booking_complete"],
+      "expected_ga4_recommended_events": ["begin_checkout", "purchase"]
+    },
+    {
+      "slug": "disabled-site",
+      "name": "Disabled Site",
+      "domain": "disabled.example",
+      "ga4_measurement_id": "G-DISABLED01",
+      "pwp_kpi_override": {"enabled": false}
+    }
+  ]
+}

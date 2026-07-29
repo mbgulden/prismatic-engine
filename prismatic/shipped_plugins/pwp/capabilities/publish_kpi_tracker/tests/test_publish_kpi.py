@@ -140,3 +140,98 @@ def test_load_site_missing_raises(monkeypatch):
     _patch_sites(monkeypatch)
     with pytest.raises(FileNotFoundError):
         load_site("nope")
+
+
+# ── New: per-site-row layout + value formatting ─────────────────────────────
+def test_render_index_uses_per_site_row_layout(monkeypatch):
+    """The multi-site index must render one section.site-row per site,
+    each containing a card-grid. This is the smallest visual unit that
+    closes the loop (per-site rows replace the old summary table)."""
+    _patch_sites(monkeypatch)
+    slugs = list_sites()
+    agg = aggregate(runtime_values={s: {} for s in slugs})
+    html = render_index(agg)
+    n_rows = html.count('class="pwp-kpi-site-row"')
+    assert n_rows == len(slugs), \
+        f"expected {len(slugs)} per-site rows, got {n_rows}"
+    # Each row should contain a card grid (even if empty).
+    n_grids = html.count('class="pwp-kpi-card-grid"')
+    assert n_grids == len(slugs)
+
+
+def test_render_index_card_grid_renders_em_dash_for_missing_values(monkeypatch):
+    """When runtime_values is empty, each card shows a `—` placeholder
+    instead of collapsing the cell to an empty span. The grid stays
+    visible."""
+    _patch_sites(monkeypatch)
+    slugs = list_sites()
+    agg = aggregate(runtime_values={s: {} for s in slugs})
+    html = render_index(agg)
+    # No front-of-card metric should ever silently collapse. Either we
+    # render a `<div class="pwp-kpi-card-value">—</div>` placeholder, or
+    # the per-site row explicitly says "No front-of-card metrics
+    # registered."
+    n_em_dash_placeholders = html.count('<div class="pwp-kpi-card-value">—</div>')
+    n_no_metrics_msg = html.count("No front-of-card metrics registered")
+    assert n_em_dash_placeholders + n_no_metrics_msg > 0, \
+        "expected at least one `—` placeholder or a no-metrics note"
+
+
+def test_render_index_is_self_rendering_and_deterministic(monkeypatch):
+    """Same aggregated data must always produce byte-identical HTML."""
+    _patch_sites(monkeypatch)
+    slugs = list_sites()
+    agg = aggregate(runtime_values={s: {"fake": 42} for s in slugs})
+    html_a = render_index(agg)
+    html_b = render_index(agg)
+    assert html_a == html_b, "render_index is not deterministic"
+
+
+def test_render_index_with_runtime_values_shows_real_numbers(monkeypatch):
+    """When runtime_values are provided, the cards show formatted values,
+    not placeholders."""
+    _patch_sites(monkeypatch)
+    # Find a front-of-card metric for hd-engine to test against.
+    flat = resolve_collection("hd-engine")
+    foc_metric_id = next(
+        (mid for mid, m in flat["metrics"].items() if m.get("front_of_card")),
+        None,
+    )
+    if foc_metric_id is None:
+        pytest.skip("hd-engine fixture has no front_of_card metrics")
+    agg = aggregate(runtime_values={"hd-engine": {foc_metric_id: 1234}})
+    html = render_index(agg)
+    # The value should appear in some form (1234 → "1,234" or "1234")
+    assert "1,234" in html or "1234" in html
+
+
+def test_format_value_handles_missing():
+    from plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import _format_value
+    assert _format_value(None) == "—"
+    assert _format_value(None, "percent") == "—"
+    assert _format_value(None, "currency") == "—"
+
+
+def test_format_value_renders_deterministic_outputs():
+    from plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import _format_value
+    # Same input -> same output (deterministic).
+    a = _format_value(1234, "number")
+    b = _format_value(1234, "number")
+    assert a == b
+    # Percent formatting.
+    assert _format_value(0.1234, "percent") == "0.12%"
+    # Currency formatting.
+    assert _format_value(1234.5, "currency") == "$1,234.50"
+    # Duration formatting.
+    assert _format_value(45, "duration") == "45s"
+
+
+def test_format_value_falls_back_to_str_on_typeerror():
+    from plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import _format_value
+    # Strings pass through.
+    assert _format_value("abc") == "abc"
+    # Garbage that can't be coerced falls back to str(value).
+    class Weird:
+        def __repr__(self):
+            return "<weird>"
+    assert _format_value(Weird()) == "<weird>"

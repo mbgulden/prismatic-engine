@@ -1,0 +1,222 @@
+#!/usr/bin/env python3
+"""pwp.publish_kpi_tracker operator CLI.
+
+Three subcommands:
+
+  pwp-kpi-tracker build-dashboard
+    Build the multi-site KPI dashboard. Reads registered *.kpi.json files
+    under the capability's sites/ dir, applies optional runtime values,
+    writes HTML pages + dashboard_data.json to the publish root.
+
+  pwp-kpi-tracker migrate
+    Derive per-site *.kpi.json files from the registry
+    (config/seo_sites.json) and the registry's default_metric_specs +
+    per-site pwp_kpi_metric_specs.
+
+  pwp-kpi-tracker list-sites
+    List all registered sites with their metric counts.
+
+  pwp-kpi-tracker show <slug>
+    Print the resolved (parent + child) collection for one site.
+
+  pwp-kpi-tracker validate
+    Run the canonical validator over every registered *.kpi.json file.
+
+Used by:
+  - Prismatic Engine cron via `python3 scripts/seo/pwp-kpi-tracker.py ...`
+  - Local ad-hoc operator runs
+
+Run with --help for per-command options.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+# Make the package importable regardless of the cwd the operator is launched from.
+HERE = Path(__file__).resolve().parent
+# Path layout: <PWP_REPO>/prismatic/shipped_plugins/pwp/capabilities/publish_kpi_tracker/operator_cli.py
+# (the `plugins` at the top of the repo is a symlink to `prismatic/shipped_plugins/`).
+# For `import plugins.pwp.capabilities.publish_kpi_tracker` to work, sys.path must
+# contain the directory that has `plugins/` as a child. There are two such
+# candidates: the symlink (`<PWP_REPO>/plugins`) and the symlink target
+# (`<PWP_REPO>/prismatic/shipped_plugins`). We insert both.
+# Resolve candidates the file might live under. The repo has a `plugins/`
+# symlink pointing to `prismatic/shipped_plugins/`, so there are two possible
+# `parents[N]` chains to the repo root depending on whether __file__ resolves
+# through the symlink or not. Try a small list of candidates and insert the
+# first one that exists.
+PWP_REPO_OVERRIDE = os.environ.get("PWP_REPO_ROOT")
+if PWP_REPO_OVERRIDE:
+    candidates = [Path(PWP_REPO_OVERRIDE)]
+else:
+    # Insert in order: (resolved) symlink target path's grandparent,
+    # symlink path's grandparent, symlink target's parent of __file__,
+    # and a few more. The first dir that has a `plugins` package is the one
+    # we want.
+    seen = set()
+    candidates = []
+    for p in [HERE] + list(HERE.parents) + list(Path(__file__).resolve().parents):
+        for root in (p, p / "prismatic" / "shipped_plugins"):
+            if root.is_dir() and str(root) not in seen:
+                seen.add(str(root))
+                candidates.append(root)
+# Always insert the symlink target first, then the symlink, so the
+# `plugins` namespace package at the repo root does not shadow the
+# `plugins.pwp.capabilities.publish_kpi_tracker` submodule chain.
+inserted = set()
+for root in candidates:
+    if root.name == "shipped_plugins" and root.is_dir():
+        p = str(root)
+        if p not in sys.path and p not in inserted:
+            sys.path.insert(0, p)
+            inserted.add(p)
+for root in candidates:
+    if root.name == "prismatic-pwp-ubersuggest-auth" and root.is_dir():
+        p = str(root)
+        if p not in sys.path and p not in inserted:
+            sys.path.insert(0, p)
+            inserted.add(p)
+
+from plugins.pwp.capabilities import publish_kpi_tracker as kpi  # noqa: E402
+
+
+def _resolve_publish_root(args) -> Path:
+    if args.publish_root:
+        return Path(args.publish_root)
+    return Path("/tmp/pwp-kpi-dashboard")
+
+
+def cmd_build_dashboard(args) -> int:
+    runtime = kpi.read_runtime_values(args.runtime_values_path)
+    manifest = kpi.build_dashboard(
+        publish_root=str(_resolve_publish_root(args)),
+        runtime_values=runtime,
+        window=args.window,
+        write_snapshot=True,
+    )
+    print(json.dumps(manifest, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_list_sites(args) -> int:
+    summaries = kpi.build_all_site_summaries()
+    print(json.dumps(summaries, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_show(args) -> int:
+    try:
+        flat = kpi.resolve_collection(args.slug)
+    except FileNotFoundError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    # Drop the _parent_slug marker for a cleaner public dump.
+    flat.pop("_parent_slug", None)
+    flat.pop("_runtime_overrides", None)
+    print(json.dumps(flat, indent=2, sort_keys=True))
+    return 0
+
+
+def cmd_validate(args) -> int:
+    errs_total = 0
+    for slug in kpi.list_sites():
+        try:
+            coll = kpi.load_site(slug)
+        except FileNotFoundError as exc:
+            print(f"  {slug}: missing - {exc}")
+            errs_total += 1
+            continue
+        errs = kpi.validate(coll)
+        if errs:
+            errs_total += len(errs)
+            for e in errs:
+                print(f"  {slug}: {e}")
+        else:
+            print(f"  {slug}: ok")
+    return 0 if errs_total == 0 else 1
+
+
+def cmd_migrate(args) -> int:
+    """Derive per-site *.kpi.json files from the registry."""
+    # Absolute import (not relative) so this works whether the CLI is invoked
+    # as `python3 plugins/.../operator_cli.py` (script mode, __package__ == "")
+    # or via `python3 -m plugins.pwp.capabilities.publish_kpi_tracker.operator_cli`
+    # (module mode, __package__ set). Mirrors the import pattern used at the
+    # top of this file for `kpi`.
+    from plugins.pwp.capabilities.publish_kpi_tracker import operator_migrate as migrate
+    rc = 1
+    try:
+        manifest = migrate.run(
+            dry_run=args.dry_run,
+            registry_path=Path(args.registry) if args.registry else None,
+            sites_dir=Path(args.sites_dir) if args.sites_dir else None,
+            force=args.force,
+        )
+        print(json.dumps(manifest, indent=2, sort_keys=True))
+        rc = 1 if manifest.get("validation_errors") else 0
+    except (ValueError, FileNotFoundError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    return rc
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="pwp-kpi-tracker",
+        description="Operator CLI for the PWP publish-kpi-tracker capability.",
+    )
+    p.add_argument(
+        "--publish-root",
+        help="Directory the dashboard pages land in (default /tmp/pwp-kpi-dashboard)",
+    )
+    p.add_argument(
+        "--runtime-values-path",
+        help="JSON file with {slug: {metric_key: value}} overrides.",
+    )
+
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    sb = sub.add_parser("build-dashboard", help="Render the dashboard to a publish root.")
+    sb.add_argument("--window", default="last24h",
+                    help="Window label written into the dashboard header (default last24h).")
+    sb.set_defaults(func=cmd_build_dashboard)
+
+    sl = sub.add_parser("list-sites", help="List registered sites.")
+    sl.set_defaults(func=cmd_list_sites)
+
+    sh = sub.add_parser("show", help="Show the resolved collection for one site.")
+    sh.add_argument("slug")
+    sh.set_defaults(func=cmd_show)
+
+    sv = sub.add_parser("validate", help="Validate every registered *.kpi.json.")
+    sv.set_defaults(func=cmd_validate)
+
+    sm = sub.add_parser(
+        "migrate",
+        help="Derive per-site *.kpi.json files from the registry (config/seo_sites.json).",
+    )
+    sm.add_argument("--registry",
+                    help="Path to seo_sites.json (default inferred from PWP_REPO_ROOT).")
+    sm.add_argument("--sites-dir",
+                    help="Output directory for *.kpi.json (default: plugins/pwp/.../sites/).")
+    sm.add_argument("--dry-run", action="store_true",
+                    help="Don't write files; print the manifest instead.")
+    sm.add_argument("--force", action="store_true",
+                    help="Overwrite existing per-site *.kpi.json files. Default is to skip sites whose file already exists.")
+    sm.set_defaults(func=cmd_migrate)
+
+    return p
+
+
+def main(argv=None) -> int:
+    args = build_parser().parse_args(argv)
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
