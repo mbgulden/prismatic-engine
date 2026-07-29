@@ -21,7 +21,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 HERE = Path(__file__).resolve().parent
 # Resolve PWP_REPO by walking up from HERE until we find a directory that
@@ -142,18 +142,83 @@ def _filter_validated(collections: dict, slug_to_collection: dict) -> List[str]:
     return errs
 
 
+def _merge_into_existing(target: Path, registry_coll: dict) -> Tuple[dict, List[str]]:
+    """Merge registry-derived metrics into an existing curated <slug>.kpi.json.
+
+    Contract: curated entries ALWAYS win. Registry adds new metrics that
+    aren't already in the curated file but never overwrites curated
+    values. Top-level fields (extends, tracking_property, site,
+    share_targets, delivery_cadence, etc.) are left untouched — the
+    curator owns them.
+
+    Comparison is done by **bare metric id** (the segment after the
+    last `.` in the metric_key), not by the full metric_key. This
+    means a registry metric keyed `booking_click` is treated as the
+    same metric as a curated entry keyed `funnel_booking.booking_click`.
+    Without this normalization, an earlier `migrate` run that emitted
+    bare keys would create phantom duplicates.
+
+    Returns (merged_collection, [list_of_added_metric_keys]).
+    """
+    existing = json.loads(target.read_text(encoding="utf-8"))
+    existing_metrics = dict(existing.get("metrics", {}))
+    registry_metrics = dict(registry_coll.get("metrics", {}))
+
+    # Build a set of semantic keys already in the curated file.
+    # For GA4 events, the semantic key is the `event` name.
+    def _semantic_key(metric_spec: dict) -> Optional[Tuple[str, str]]:
+        source = metric_spec.get("source")
+        if source == "ga4":
+            event = metric_spec.get("event")
+            if event:
+                return "ga4", event
+        return None
+
+    existing_semantic_keys = set()
+    for k, v in existing_metrics.items():
+        sk = _semantic_key(v)
+        if sk:
+            existing_semantic_keys.add(sk)
+
+    added: List[str] = []
+    for mid, spec in registry_metrics.items():
+        if mid in existing_metrics:
+            # Direct metric_key collision — curated wins.
+            continue
+        sk = _semantic_key(spec)
+        if sk and sk in existing_semantic_keys:
+            # Semantic collision (same source+event) under a different
+            # metric_key — curated wins.
+            continue
+        existing_metrics[mid] = spec
+        added.append(mid)
+    merged = dict(existing)
+    merged["metrics"] = existing_metrics
+    return merged, added
+
+
 def run(*, dry_run: bool = False, registry_path: Optional[Path] = None,
-        sites_dir: Optional[Path] = None, force: bool = False) -> dict:
+        sites_dir: Optional[Path] = None, force: bool = False,
+        merge: bool = False) -> dict:
     """Migrate config/seo_sites.json into per-site *.kpi.json files.
 
     Returns a manifest with `sites` (list of {slug, status, path, error}) and
     `registry_path` / `sites_dir` so the operator can echo or write a summary.
 
-    Safety: a site is skipped (status="skipped (exists)") if its target file
-    already exists and `force=False`. This protects curated per-site
-    *.kpi.json files from being clobbered by a registry re-run. Pass
-    `force=True` to overwrite. Dry-run never writes; the manifest shows the
-    would-be write set.
+    Modes:
+      - default (`force=False, merge=False`): a site whose target file
+        already exists is reported as `skipped (exists)`. Curated
+        per-site *.kpi.json files are protected from registry re-runs.
+      - `force=True`: overwrite existing per-site files with the
+        registry-derived content. Use this when re-bootstrapping a
+        site from scratch.
+      - `merge=True`: read the existing curated file and add any
+        registry-derived metrics that aren't already present. Curated
+        entries ALWAYS win (registry never overwrites curated values).
+        This is the right mode when the registry adds new events but
+        the curated file's metric specs should be preserved.
+
+    Dry-run never writes; the manifest shows the would-be write set.
     """
     registry = load_registry(registry_path)
     errs = validate_registry_shape(registry, load_schema())
@@ -163,7 +228,7 @@ def run(*, dry_run: bool = False, registry_path: Optional[Path] = None,
     sites_dir = sites_dir or (PWP_REPO / "plugins" / "pwp" / "capabilities" / "publish_kpi_tracker" / "sites")
     sites_dir.mkdir(parents=True, exist_ok=True)
 
-    manifest: Dict[str, Any] = {"sites": [], "registry_path": str(_resolve_registry_path() if not registry_path else registry_path), "sites_dir": str(sites_dir), "dry_run": dry_run, "force": force}
+    manifest: Dict[str, Any] = {"sites": [], "registry_path": str(_resolve_registry_path() if not registry_path else registry_path), "sites_dir": str(sites_dir), "dry_run": dry_run, "force": force, "merge": merge}
     slug_to_collection: Dict[str, dict] = {}
 
     for site in iter_sites(registry):
@@ -172,21 +237,40 @@ def run(*, dry_run: bool = False, registry_path: Optional[Path] = None,
             manifest["sites"].append({"slug": slug, "status": "skipped (disabled)"})
             continue
         target = sites_dir / f"{slug}.kpi.json"
+        try:
+            coll = _build_collection(registry, site)
+        except Exception as exc:
+            manifest["sites"].append({"slug": slug, "status": "error", "error": str(exc)})
+            continue
+
+        # merge mode: file exists → merge registry metrics into existing
+        if merge and target.exists():
+            merged, added = _merge_into_existing(target, coll)
+            slug_to_collection[slug] = merged
+            if not dry_run:
+                target.write_text(
+                    json.dumps(merged, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+            manifest["sites"].append({
+                "slug": slug,
+                "status": "merged" if not dry_run else "dry_run_merge",
+                "path": str(target),
+                "metric_count": len(merged.get("metrics", {})),
+                "added_metrics": added,
+            })
+            continue
+
+        # default safety: file exists → skip
         if target.exists() and not force and not dry_run:
-            # Curated file already on disk; protect it. Re-running migrate is
-            # safe. To intentionally re-bootstrap from the registry, pass
-            # `force=True`.
             manifest["sites"].append({
                 "slug": slug,
                 "status": "skipped (exists)",
                 "path": str(target),
             })
             continue
-        try:
-            coll = _build_collection(registry, site)
-        except Exception as exc:
-            manifest["sites"].append({"slug": slug, "status": "error", "error": str(exc)})
-            continue
+
+        # otherwise: write a fresh file
         slug_to_collection[slug] = coll
         if not dry_run:
             target.write_text(

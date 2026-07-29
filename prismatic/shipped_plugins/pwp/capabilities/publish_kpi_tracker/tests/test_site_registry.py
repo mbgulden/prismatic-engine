@@ -236,3 +236,143 @@ def test_pwp_repo_resolves_via_symlink_path():
     assert (reg.REPO_ROOT / "config" / "seo_sites.json").is_file()
     assert (mig.PWP_REPO / "config" / "seo_sites.json").is_file()
     assert reg.REPO_ROOT == mig.PWP_REPO
+
+
+# ── New: --merge mode for incremental curation ─────────────────────────────
+def test_run_merge_adds_registry_metrics_to_existing_file(tmp_path: Path):
+    """--merge adds registry metrics not already in the curated file,
+    without overwriting curated entries."""
+    # Build a curated file with one custom metric.
+    sites_dir = tmp_path / "sites"
+    sites_dir.mkdir()
+    curated = {
+        "schema_version": "1.0",
+        "name": "test-fixture",
+        "owner": "ned",
+        "site_slug": "active-oahu",
+        "domain": "activeoahutours.com",
+        "tracking_property": "G-CURATED",
+        "metrics": {
+            "funnel_booking.curated_metric": {
+                "id": "curated_metric",
+                "label": "Curated Metric",
+                "source": "ga4",
+                "event": "curated_event",
+                "format": "number",
+                "front_of_card": True,
+            },
+        },
+    }
+    (sites_dir / "active-oahu.kpi.json").write_text(
+        json.dumps(curated, indent=2), encoding="utf-8"
+    )
+    # Run merge against the test_registry.json fixture. The registry's
+    # default_metric_specs has metric specs that aren't in the curated
+    # file; the curated metric must survive untouched.
+    manifest = mig.run(
+        dry_run=False,
+        registry_path=FIXTURES / "test_registry.json",
+        sites_dir=sites_dir,
+        merge=True,
+    )
+    statuses = {s["slug"]: s for s in manifest["sites"]}
+    site_status = statuses.get("active-oahu", {})
+    assert site_status.get("status") == "merged", site_status
+    added = site_status.get("added_metrics", [])
+    assert len(added) > 0, "expected registry metrics to be added"
+
+    # The curated metric must still be present.
+    body = json.loads((sites_dir / "active-oahu.kpi.json").read_text())
+    assert "funnel_booking.curated_metric" in body["metrics"]
+    assert body["metrics"]["funnel_booking.curated_metric"]["label"] == "Curated Metric"
+    # tracking_property is a top-level field that the curator owns;
+    # merge mode does NOT touch it.
+    assert body["tracking_property"] == "G-CURATED"
+
+
+def test_run_merge_does_not_overwrite_curated_metric():
+    """Even if the registry and curated file both have the same metric_key,
+    the curated version wins."""
+    from plugins.pwp.capabilities.publish_kpi_tracker.operator_migrate import (
+        _merge_into_existing,
+    )
+    existing = {
+        "metrics": {
+            "funnel_booking.booking_click": {
+                "id": "booking_click",
+                "label": "Curated Label",
+                "source": "ga4",
+            }
+        }
+    }
+    registry_coll = {
+        "metrics": {
+            "funnel_booking.booking_click": {
+                "id": "booking_click",
+                "label": "Registry Label",
+                "source": "ga4",
+            },
+            "funnel_booking.new_event": {
+                "id": "new_event",
+                "label": "New Event",
+                "source": "ga4",
+            },
+        }
+    }
+    # Use a tmp file because _merge_into_existing takes a Path.
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        json.dump(existing, f)
+        tmp_path = f.name
+    try:
+        merged, added = _merge_into_existing(Path(tmp_path), registry_coll)
+        assert merged["metrics"]["funnel_booking.booking_click"]["label"] == "Curated Label"
+        assert "funnel_booking.new_event" in merged["metrics"]
+        assert added == ["funnel_booking.new_event"]
+    finally:
+        Path(tmp_path).unlink()
+
+
+def test_run_merge_dry_run_does_not_write():
+    """--merge --dry-run reports would-be changes without writing."""
+    sites_dir = tmp_path = __import__("pathlib").Path("/tmp") / "kpi-merge-dry-run"
+    sites_dir.mkdir(exist_ok=True)
+    # Use a curated file that has one metric the registry doesn't have.
+    curated = {
+        "schema_version": "1.0",
+        "name": "test-fixture",
+        "owner": "ned",
+        "site_slug": "active-oahu",
+        "domain": "activeoahutours.com",
+        "tracking_property": "G-CURATED",
+        "metrics": {
+            "funnel_booking.curated_only": {
+                "id": "curated_only",
+                "label": "Curated Only",
+                "source": "ga4",
+                "event": "curated_only",
+            }
+        },
+    }
+    (sites_dir / "active-oahu.kpi.json").write_text(
+        json.dumps(curated, indent=2), encoding="utf-8"
+    )
+    try:
+        before = (sites_dir / "active-oahu.kpi.json").read_text()
+        manifest = mig.run(
+            dry_run=True,
+            registry_path=FIXTURES / "test_registry.json",
+            sites_dir=sites_dir,
+            merge=True,
+        )
+        statuses = {s["slug"]: s for s in manifest["sites"]}
+        site_status = statuses.get("active-oahu", {})
+        assert site_status.get("status") == "dry_run_merge"
+        # File must not be modified.
+        after = (sites_dir / "active-oahu.kpi.json").read_text()
+        assert before == after
+    finally:
+        # Clean up.
+        if sites_dir.exists():
+            import shutil
+            shutil.rmtree(sites_dir)
