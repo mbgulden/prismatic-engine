@@ -262,8 +262,8 @@ def test_orchestrator_resume_skips_completed_steps(tmp_path: Path) -> None:
             publish_root=tmp_path,
             resume=True,
         )
-    # verify_domain was skipped (came from prior state); the other 4 ran.
-    assert call_count["n"] == 4
+    # verify_domain was skipped (came from prior state); the remaining 6 ran.
+    assert call_count["n"] == 6
     # verify_domain is still in run.steps but its status was preserved
     # from the prior state (complete).
     verify_step = next(s for s in run.steps if s.name == "verify_domain")
@@ -453,3 +453,352 @@ def _mk_client_with_mock(responses):
     cf = CloudflareClient(token="fake-token-for-tests", max_retries=0)
     cf._session.request = MagicMock(side_effect=responses)
     return cf
+"""Phase 2 tests to append to test_provision_site.py.
+
+Tests:
+  - GoogleClient.from_env (missing creds, valid creds, jwt signing)
+  - GoogleClient.ga4_property_create (mocked API)
+  - GoogleClient.gtm_container_create (mocked API)
+  - step_gsc_verify (Cloudflare TXT-create path, resume, prior zone_id required)
+  - step_ga4_property (success, missing creds, reused_prior_output)
+  - step_gtm_container (success, missing creds, reused_prior_output)
+  - End-to-end: full STEP_NAMES now 7 entries
+"""
+
+import json
+import os
+import textwrap
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+# Sentinel imports (these are loaded once via the main test file's imports)
+from plugins.pwp.capabilities.provision_site import orchestrator, types as prov_types
+from plugins.pwp.capabilities.provision_site.steps import (
+    ga4, gtm, gsc,
+    step_verify_domain,
+)
+
+
+# -- GoogleClient: JWT signing & from_env ----------------------------------
+
+def _gen_test_sa(tmp_path):
+    """Generate a real test service-account JSON (returns sa_path, sa_dict)."""
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.hazmat.primitives import serialization
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode()
+    sa = {
+        "type": "service_account",
+        "client_email": "test-sa@pwp-test.iam.gserviceaccount.com",
+        "private_key": pem,
+        "token_uri": "https://oauth2.googleapis.com/token",
+    }
+    p = tmp_path / "sa.json"
+    p.write_text(json.dumps(sa))
+    return p, sa
+
+
+def test_google_client_from_env_missing(tmp_path, monkeypatch):
+    """from_env should raise clearly when no SA creds are configured."""
+    monkeypatch.delenv("GOOGLE_SA_JSON", raising=False)
+    monkeypatch.delenv("GOOGLE_SA_INLINE", raising=False)
+    from plugins.pwp.capabilities.provision_site.google_client import (
+        GoogleClient, GoogleAuthError,
+    )
+    with pytest.raises(GoogleAuthError) as excinfo:
+        GoogleClient.from_env()
+    msg = str(excinfo.value)
+    assert "GOOGLE_SA_JSON" in msg
+    assert "GOOGLE_SA_INLINE" in msg
+
+
+def test_google_client_from_env_json_file(tmp_path):
+    """from_env with GOOGLE_SA_JSON pointing at a valid file should succeed."""
+    from plugins.pwp.capabilities.provision_site.google_client import GoogleClient
+    sa_path, _ = _gen_test_sa(tmp_path)
+    with patch.dict(os.environ, {"GOOGLE_SA_JSON": str(sa_path)}):
+        gc = GoogleClient.from_env()
+    assert gc.service_account_email == "test-sa@pwp-test.iam.gserviceaccount.com"
+
+
+def test_google_client_from_env_inline(tmp_path):
+    """from_env with GOOGLE_SA_INLINE should succeed."""
+    from plugins.pwp.capabilities.provision_site.google_client import GoogleClient
+    _, sa = _gen_test_sa(tmp_path)
+    with patch.dict(os.environ, {"GOOGLE_SA_INLINE": json.dumps(sa)}, clear=True):
+        gc = GoogleClient.from_env()
+    assert gc.service_account_email == sa["client_email"]
+
+
+def test_google_client_ga4_account_id_env():
+    """ga4_account_id property uses GA4_ACCOUNT_ID env var (or constructor arg)."""
+    from plugins.pwp.capabilities.provision_site.google_client import (
+        GoogleClient, GoogleError,
+    )
+    sa = {"type": "service_account", "client_email": "x@x", "private_key": "k", "token_uri": "u"}
+    # No env var at all: property must raise.
+    with patch.dict(os.environ, {}, clear=True):
+        gc = GoogleClient(service_account=sa)
+        with pytest.raises(GoogleError, match="GA4 account ID"):
+            gc.ga4_account_id
+    # Constructor arg takes precedence over env.
+    with patch.dict(os.environ, {"GA4_ACCOUNT_ID": "999"}, clear=True):
+        gc = GoogleClient(service_account=sa)
+        assert gc.ga4_account_id == "999"
+
+
+def test_google_client_jwt_signing_is_three_part_rs256(tmp_path):
+    """_make_jwt returns a 3-part dot-separated RS256 token."""
+    from plugins.pwp.capabilities.provision_site.google_client import _make_jwt, _b64url
+    _, sa = _gen_test_sa(tmp_path)
+    jwt = _make_jwt(sa, scope="https://www.googleapis.com/auth/analytics.edit", aud="https://oauth2.googleapis.com/token")
+    parts = jwt.split(".")
+    assert len(parts) == 3
+    # Decode header (b64url) to verify alg.
+    import base64
+    pad = lambda s: s + "=" * (-len(s) % 4)
+    header = json.loads(base64.urlsafe_b64decode(pad(parts[0])))
+    assert header["alg"] == "RS256"
+    assert header["typ"] == "JWT"
+    payload = json.loads(base64.urlsafe_b64decode(pad(parts[1])))
+    assert payload["iss"] == sa["client_email"]
+    assert payload["aud"] == "https://oauth2.googleapis.com/token"
+
+
+# -- step_ga4_property -----------------------------------------------------
+
+def test_step_ga4_property_missing_creds(tmp_path, monkeypatch, base_run_state):
+    """step_ga4_property returns a clean failure when GOOGLE_SA_JSON is unset."""
+    monkeypatch.delenv("GOOGLE_SA_JSON", raising=False)
+    monkeypatch.delenv("GOOGLE_SA_INLINE", raising=False)
+    monkeypatch.delenv("GA4_ACCOUNT_ID", raising=False)
+    result = ga4.step_ga4_property(
+        domain="example.com", owner="me@example.com",
+        run=base_run_state, publish_root=tmp_path,
+    )
+    assert result.status == "failed"
+    assert "GOOGLE_SA_JSON" in result.error
+
+
+def test_step_ga4_property_success(tmp_path, base_run_state):
+    """step_ga4_property succeeds when the API returns a property + stream."""
+    sa_path, _ = _gen_test_sa(tmp_path)
+    fake_property = {
+        "name": "properties/987654",
+        "displayName": "Example",
+        "createTime": "2026-01-01T00:00:00Z",
+    }
+    fake_stream = {
+        "name": "properties/987654/dataStreams/111",
+        "displayName": "Example — Web",
+        "webStreamData": {"measurementId": "G-TEST1234"},
+    }
+    fake_token = {"access_token": "fake-access-token", "expires_in": 3600}
+    with patch.dict(os.environ, {
+        "GOOGLE_SA_JSON": str(sa_path),
+        "GA4_ACCOUNT_ID": "12345",
+    }):
+        # Mock the JWT exchange (return fake token immediately).
+        # Then mock the property + stream API calls.
+        from plugins.pwp.capabilities.provision_site import google_client as gc_mod
+        from plugins.pwp.capabilities.provision_site.google_client import GoogleClient
+        with patch.object(gc_mod, "_exchange_jwt_for_access_token",
+                          return_value="fake-access-token"):
+            # Mock the two API requests.
+            def fake_request(method, url, *, scope, json_body=None, params=None):
+                if method == "POST" and url.endswith("/v1beta/properties"):
+                    return fake_property
+                if method == "POST" and url.endswith("/dataStreams"):
+                    return fake_stream
+                raise AssertionError(f"unexpected request: {method} {url}")
+            with patch.object(GoogleClient, "_request", side_effect=fake_request):
+                result = ga4.step_ga4_property(
+                    domain="example.com",
+                    owner="me@example.com",
+                    run=base_run_state,
+                    publish_root=tmp_path,
+                )
+    assert result.status == "complete", result.error
+    assert result.output["measurement_id"] == "G-TEST1234"
+    assert result.output["property_id"] == "987654"
+    assert result.output["ga4_account_id"] == "12345"
+
+
+def test_step_ga4_property_reuses_prior_output(tmp_path, base_run_state):
+    """When prior_outputs contains ga4_property, the step returns it without API call."""
+    prior = {"ga4_property": {
+        "measurement_id": "G-CACHED",
+        "property_id": "999",
+    }}
+    result = ga4.step_ga4_property(
+        domain="example.com", owner="me@example.com",
+        run=base_run_state, publish_root=tmp_path,
+        prior_outputs=prior,
+    )
+    assert result.status == "complete"
+    assert result.output["measurement_id"] == "G-CACHED"
+    assert result.output["reused_prior_output"] is True
+
+
+# -- step_gtm_container ----------------------------------------------------
+
+def test_step_gtm_container_missing_creds(tmp_path, monkeypatch, base_run_state):
+    """step_gtm_container fails cleanly without credentials."""
+    monkeypatch.delenv("GOOGLE_SA_JSON", raising=False)
+    monkeypatch.delenv("GOOGLE_SA_INLINE", raising=False)
+    monkeypatch.delenv("GTM_ACCOUNT_ID", raising=False)
+    result = gtm.step_gtm_container(
+        domain="example.com", owner="me@example.com",
+        run=base_run_state, publish_root=tmp_path,
+    )
+    assert result.status == "failed"
+    assert "GOOGLE_SA_JSON" in result.error
+
+
+def test_step_gtm_container_success(tmp_path, base_run_state):
+    """step_gtm_container succeeds when the API returns a container."""
+    sa_path, _ = _gen_test_sa(tmp_path)
+    fake_container = {
+        "publicId": "GTM-P5H2XK8",
+        "containerId": "987654",
+        "name": "Example",
+        "domains": ["example.com"],
+    }
+    with patch.dict(os.environ, {
+        "GOOGLE_SA_JSON": str(sa_path),
+        "GTM_ACCOUNT_ID": "55555",
+    }):
+        from plugins.pwp.capabilities.provision_site import google_client as gc_mod
+        from plugins.pwp.capabilities.provision_site.google_client import GoogleClient
+        with patch.object(gc_mod, "_exchange_jwt_for_access_token",
+                          return_value="fake-access-token"):
+            def fake_request(method, url, *, scope, json_body=None, params=None):
+                return fake_container
+            with patch.object(GoogleClient, "_request", side_effect=fake_request):
+                result = gtm.step_gtm_container(
+                    domain="example.com", owner="me@example.com",
+                    run=base_run_state, publish_root=tmp_path,
+                )
+    assert result.status == "complete", result.error
+    assert result.output["public_id"] == "GTM-P5H2XK8"
+    assert result.output["account_id"] == "55555"
+
+
+# -- step_gsc_verify (real, Cloudflare-managed TXT) -----------------------
+
+def test_step_gsc_verify_no_zone_id(tmp_path, base_run_state):
+    """gsc_verify fails with a clear error if cloudflare_zone has not completed."""
+    result = gsc.step_gsc_verify(
+        domain="example.com", owner="me@example.com",
+        run=base_run_state, publish_root=tmp_path,
+        prior_outputs={},
+    )
+    assert result.status == "failed"
+    assert "cloudflare_zone" in result.error
+
+
+def test_step_gsc_verify_placeholder_mode(tmp_path, base_run_state):
+    """gsc_verify writes a placeholder TXT record via mocked Cloudflare."""
+    prior = {"cloudflare_zone": {"zone_id": "fake-zone-123"}}
+    # Mock Cloudflare.from_env + dns_list (empty) + dns_create.
+    from plugins.pwp.capabilities.provision_site import cloudflare_client
+    from plugins.pwp.capabilities.provision_site.steps import gsc as gsc_module
+    with patch.object(gsc_module, "CloudflareClient") as MockCF:
+        mock_cf_instance = MockCF.from_env.return_value
+        mock_cf_instance.dns_list.return_value = []
+        fake_dns_record = MagicMock()
+        fake_dns_record.id = "dns-record-456"
+        mock_cf_instance.dns_create.return_value = fake_dns_record
+        result = gsc.step_gsc_verify(
+            domain="example.com", owner="me@example.com",
+            run=base_run_state, publish_root=tmp_path,
+            prior_outputs=prior,
+        )
+    assert result.status == "complete", result.error
+    assert result.output["verification_mode"] == "placeholder"
+    assert result.output["record_id"] == "dns-record-456"
+    assert result.output["token"].startswith("pwp-gsc-")
+    assert "GSC_VERIFICATION_TOKEN" in result.output["note"]
+    # Confirm Cloudflare API was called with the right TXT content.
+    call_args = mock_cf_instance.dns_create.call_args
+    assert call_args.kwargs["type_"] == "TXT"
+    assert call_args.kwargs["name"] == "example.com"
+    assert call_args.kwargs["content"].startswith("pwp-gsc-")
+
+
+def test_step_gsc_verify_google_issued_mode(tmp_path, base_run_state):
+    """If GSC_VERIFICATION_TOKEN env var is set, use it verbatim instead of minting."""
+    prior = {"cloudflare_zone": {"zone_id": "fake-zone-123"}}
+    from plugins.pwp.capabilities.provision_site import cloudflare_client
+    from plugins.pwp.capabilities.provision_site.steps import gsc as gsc_module
+    with patch.dict(os.environ, {"GSC_VERIFICATION_TOKEN": "google-issued-real-token"}):
+        with patch.object(gsc_module, "CloudflareClient") as MockCF:
+            mock_cf_instance = MockCF.from_env.return_value
+            mock_cf_instance.dns_list.return_value = []
+            fake_dns_record = MagicMock()
+            fake_dns_record.id = "dns-record-789"
+            mock_cf_instance.dns_create.return_value = fake_dns_record
+            result = gsc.step_gsc_verify(
+                domain="example.com", owner="me@example.com",
+                run=base_run_state, publish_root=tmp_path,
+                prior_outputs=prior,
+            )
+    assert result.status == "complete"
+    assert result.output["verification_mode"] == "google-issued"
+    assert result.output["token"] == "google-issued-real-token"
+    call_args = mock_cf_instance.dns_create.call_args
+    assert call_args.kwargs["content"] == "google-issued-real-token"
+
+
+def test_step_gsc_verify_reuses_prior_output(tmp_path, base_run_state):
+    """If a prior gsc_verify attempt succeeded, skip the API call."""
+    prior = {
+        "cloudflare_zone": {"zone_id": "fake-zone-123"},
+        "gsc_verify": {"record_id": "prior-record-abc", "verification_mode": "google-issued"},
+    }
+    from plugins.pwp.capabilities.provision_site import cloudflare_client
+    from plugins.pwp.capabilities.provision_site.steps import gsc as gsc_module
+    with patch.object(gsc_module, "CloudflareClient") as MockCF:
+        result = gsc.step_gsc_verify(
+            domain="example.com", owner="me@example.com",
+            run=base_run_state, publish_root=tmp_path,
+            prior_outputs=prior,
+        )
+    # Cloudflare should NOT be called (we reused prior).
+    MockCF.from_env.assert_not_called()
+    assert result.status == "complete"
+    assert result.output["record_id"] == "prior-record-abc"
+    assert result.output["reused_prior_output"] is True
+
+
+# -- end-to-end STEP_NAMES now 7 entries -----------------------------------
+
+def test_step_names_phase_2_includes_new_steps():
+    """Phase 2 adds gsc_verify (real), ga4_property, gtm_container."""
+    expected = [
+        "verify_domain",
+        "cloudflare_zone",
+        "gsc_verify",
+        "ga4_property",
+        "gtm_container",
+        "register_in_registry",
+        "migrate_kpi",
+    ]
+    assert orchestrator.STEP_NAMES == expected
+
+
+# -- fixture ----------------------------------------------------------------
+
+@pytest.fixture
+def base_run_state():
+    return prov_types.ProvisionRun(
+        domain="example.com",
+        owner="me@example.com",
+        started_at="2026-01-01T00:00:00+00:00",
+    )

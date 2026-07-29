@@ -31,12 +31,14 @@ from .types import ProvisionRun, StepResult
 # Phase 1 step order. Each step is a function (run, run_state) -> StepResult.
 # Steps must NOT raise — they return StepResult with status="failed" + error.
 STEP_NAMES: List[str] = [
-    "verify_domain",
-    "cloudflare_zone",
-    "gsc_verify",
-    "register_in_registry",
-    "migrate_kpi",
-]
+    "verify_domain",       # TXT challenge proves domain control.
+    "cloudflare_zone",     # Find or create zone, confirm it's on Cloudflare.
+    "gsc_verify",          # Write the Google Search Console DNS-TXT record.
+    "ga4_property",        # Create the GA4 property + measurement ID.
+    "gtm_container",       # Create the GTM container for site scripts.
+    "register_in_registry",  # Add the domain to the local sites.json appendix.
+    "migrate_kpi",         # Bootstrap the per-site <slug>.kpi.json.
+]  # Phase 2 added gsc_verify (real), ga4_property, gtm_container.
 
 
 def _resolve_publish_root(publish_root: Optional[Path]) -> Path:

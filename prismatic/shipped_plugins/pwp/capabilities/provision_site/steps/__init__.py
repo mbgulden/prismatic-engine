@@ -22,6 +22,9 @@ import secrets
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from .gsc import step_gsc_verify
+from .ga4 import step_ga4_property  # noqa: F401  (re-exported for orchestrator)
+from .gtm import step_gtm_container  # noqa: F401
 from ..domain_verifier import (
     VERIFY_PREFIX,
     generate_challenge_token,
@@ -124,34 +127,8 @@ def step_cloudflare_zone(
         )
 
 
-def step_gsc_verify(
-    *, domain: str, owner: str, run, publish_root: Path, **_: Any
-) -> StepResult:
-    """Verify the domain with Google Search Console via DNS TXT.
-
-    Google Search Console supports `sc-domain:` verification via a
-    DNS TXT record at the apex. The record name is `google-site-
-    verification=<token>` (no prefix — the value itself contains
-    the prefix). The token comes from the GSC API; Phase 1 will use
-    a placeholder token since we don't have the GSC service account
-    wired yet.
-
-    For Phase 1, this step is a SKIPPED placeholder — the actual
-    GSC verification will be wired in Phase 2 when the shared
-    service account is provisioned.
-    """
-    return StepResult(
-        name="gsc_verify",
-        status="skipped",
-        output={
-            "reason": "GSC service account not yet provisioned (Phase 2)",
-            "instruction": (
-                "Once a service account is available, this step will "
-                "call Search Console API sites.add with type=sc-domain "
-                "and verify via DNS TXT at the apex."
-            ),
-        },
-    )
+# `step_gsc_verify` lives in `steps/gsc.py` (Phase 2). The `from .gsc`
+# import at the top of this module re-exports it under that name.
 
 
 def step_register_in_registry(
