@@ -324,6 +324,11 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Per-site subprocess timeout in seconds (default 120).")
     sc.set_defaults(func=cmd_cron)
 
+    # Provisioning (Phase 1 Cloudflare-first MVP) — delegates to the
+    # provision_site capability's operator_cli.attach_subparser().
+    from plugins.pwp.capabilities.provision_site import operator_cli as prov_cli
+    prov_cli.attach_subparser(sub)
+
     return p
 
 
