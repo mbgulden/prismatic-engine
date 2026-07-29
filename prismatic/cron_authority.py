@@ -26,7 +26,7 @@ import re
 import sqlite3
 from typing import Any
 
-SCHEMA_VERSION: int = 1
+SCHEMA_VERSION: int = 2
 
 VALID_ATTEMPT_STATES: frozenset[str] = frozenset(
     {
@@ -50,6 +50,18 @@ VALID_RECEIPT_OUTCOMES: frozenset[str] = frozenset(
         "orphaned",
         "reconciled",
     }
+)
+
+VALID_TRIGGER_KINDS: frozenset[str] = frozenset(
+    {"scheduled", "manual", "retry", "hook", "recovery"}
+)
+
+VALID_TRANSPORT_KINDS: frozenset[str] = frozenset(
+    {"http", "hook", "recovery", "internal"}
+)
+
+VALID_DISPOSITIONS: frozenset[str] = frozenset(
+    {"accepted", "rejected", "converged"}
 )
 
 
@@ -215,6 +227,27 @@ CREATE TABLE IF NOT EXISTS cron_sweep_cursors (
     cursor_value INTEGER NOT NULL CHECK (typeof(cursor_value) = 'integer' AND cursor_value >= 0),
     updated_at TEXT NOT NULL CHECK (is_utc_timestamp(updated_at) = 1),
     CONSTRAINT uq_cron_sweep_scope UNIQUE (cron_id, registry_generation, command_digest, catch_up_policy_version)
+);
+"""
+
+_CREATE_TRIGGER_DELIVERIES_TABLE_DDL = """
+CREATE TABLE IF NOT EXISTS cron_trigger_deliveries (
+    trigger_event_id TEXT PRIMARY KEY CHECK (length(trigger_event_id) >= 1 AND length(trigger_event_id) <= 128),
+    trigger_digest TEXT NOT NULL CHECK (length(trigger_digest) = 64 AND trigger_digest NOT GLOB '*[^0-9a-f]*'),
+    canonical_bytes BLOB NOT NULL CHECK (typeof(canonical_bytes) = 'blob' AND length(canonical_bytes) <= 4000),
+    trigger_kind TEXT NOT NULL CHECK (trigger_kind IN ('scheduled', 'manual', 'retry', 'hook', 'recovery')),
+    transport_kind TEXT NOT NULL CHECK (transport_kind IN ('http', 'hook', 'recovery', 'internal')),
+    cron_id TEXT NOT NULL CHECK (length(cron_id) >= 1 AND length(cron_id) <= 128),
+    registry_generation INTEGER NOT NULL CHECK (typeof(registry_generation) = 'integer' AND registry_generation >= 1),
+    schedule_bucket TEXT NOT NULL CHECK (is_utc_timestamp(schedule_bucket) = 1),
+    command_digest TEXT NOT NULL CHECK (length(command_digest) = 64 AND command_digest NOT GLOB '*[^0-9a-f]*'),
+    release_digest TEXT NOT NULL CHECK (length(release_digest) = 64 AND release_digest NOT GLOB '*[^0-9a-f]*'),
+    execution_id TEXT REFERENCES cron_execution_aggregates(execution_id) ON DELETE RESTRICT,
+    disposition TEXT NOT NULL CHECK (disposition IN ('accepted', 'rejected', 'converged')),
+    reason_code TEXT NOT NULL CHECK (length(reason_code) >= 1 AND length(reason_code) <= 128),
+    submitted_at TEXT NOT NULL CHECK (is_utc_timestamp(submitted_at) = 1),
+    created_at TEXT NOT NULL CHECK (is_utc_timestamp(created_at) = 1),
+    CONSTRAINT ck_trigger_delivery_content_address CHECK (trigger_digest = sha256_hex(canonical_bytes))
 );
 """
 
@@ -462,7 +495,37 @@ _TRIGGERS_DDL = [
     """,
 ]
 
-_TRIGGER_NAMES = (
+_V2_TRIGGERS_DDL = [
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_cron_trigger_deliveries_insert_collision
+    BEFORE INSERT ON cron_trigger_deliveries
+    FOR EACH ROW
+    WHEN EXISTS (
+        SELECT 1 FROM cron_trigger_deliveries WHERE trigger_event_id = NEW.trigger_event_id
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'cron_trigger_deliveries rows cannot be replaced');
+    END;
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_cron_trigger_deliveries_no_update
+    BEFORE UPDATE ON cron_trigger_deliveries
+    FOR EACH ROW
+    BEGIN
+        SELECT RAISE(ABORT, 'cron_trigger_deliveries rows are immutable');
+    END;
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_cron_trigger_deliveries_no_delete
+    BEFORE DELETE ON cron_trigger_deliveries
+    FOR EACH ROW
+    BEGIN
+        SELECT RAISE(ABORT, 'cron_trigger_deliveries rows are immutable');
+    END;
+    """,
+]
+
+_V1_TRIGGER_NAMES = (
     "trg_cron_aggregate_insert_collision",
     "trg_cron_aggregates_no_update",
     "trg_cron_aggregates_no_delete",
@@ -486,7 +549,15 @@ _TRIGGER_NAMES = (
     "trg_cron_receipt_finalizes_attempt",
 )
 
-_TABLE_NAMES = (
+_V2_TRIGGER_NAMES = (
+    "trg_cron_trigger_deliveries_insert_collision",
+    "trg_cron_trigger_deliveries_no_update",
+    "trg_cron_trigger_deliveries_no_delete",
+)
+
+_TRIGGER_NAMES = _V1_TRIGGER_NAMES + _V2_TRIGGER_NAMES
+
+_V1_TABLE_NAMES = (
     "cron_authority_schema_version",
     "cron_execution_aggregates",
     "cron_evidence",
@@ -494,6 +565,9 @@ _TABLE_NAMES = (
     "cron_receipts",
     "cron_sweep_cursors",
 )
+
+_V2_TABLE_NAMES = _V1_TABLE_NAMES + ("cron_trigger_deliveries",)
+_TABLE_NAMES = _V2_TABLE_NAMES
 
 
 def _main_ddl(sql: str) -> str:
@@ -524,7 +598,7 @@ def _normalize_ddl(sql: str) -> str:
     return "".join(sql.lower().replace("if not exists", "").replace(";", "").split())
 
 
-def _validate_schema_objects(cursor: sqlite3.Cursor) -> None:
+def _validate_schema_objects(cursor: sqlite3.Cursor, target_version: int = 2) -> None:
     expected = {
         ("table", "cron_authority_schema_version"): _CREATE_VERSION_TABLE_DDL,
         ("table", "cron_execution_aggregates"): _CREATE_AGGREGATES_TABLE_DDL,
@@ -536,9 +610,18 @@ def _validate_schema_objects(cursor: sqlite3.Cursor) -> None:
     expected.update(
         {
             ("trigger", name): ddl
-            for name, ddl in zip(_TRIGGER_NAMES, _TRIGGERS_DDL, strict=True)
+            for name, ddl in zip(_V1_TRIGGER_NAMES, _TRIGGERS_DDL, strict=True)
         }
     )
+    if target_version >= 2:
+        expected[("table", "cron_trigger_deliveries")] = _CREATE_TRIGGER_DELIVERIES_TABLE_DDL
+        expected.update(
+            {
+                ("trigger", name): ddl
+                for name, ddl in zip(_V2_TRIGGER_NAMES, _V2_TRIGGERS_DDL, strict=True)
+            }
+        )
+
     for (object_type, name), expected_ddl in expected.items():
         row = cursor.execute(
             "SELECT sql FROM main.sqlite_master WHERE type=? AND name=?;",
@@ -556,12 +639,12 @@ def _validate_schema_objects(cursor: sqlite3.Cursor) -> None:
 
 
 def migrate_cron_authority(target: Any, timeout: float = 30.0) -> None:
-    """Migrate SQLite database to cron authority schema v1 atomically and idempotently.
+    """Migrate SQLite database to cron authority schema v2 atomically and idempotently.
 
     - Target can be a string path, Path object, or sqlite3.Connection.
     - Uses `BEGIN IMMEDIATE` write transaction.
     - Rejects unknown or newer schema versions fail-closed.
-    - Idempotent at schema version 1.
+    - Idempotent at schema version 2.
     - Preserves pre-existing tables and rows in the database.
     - Any error rolls back all migration statements completely.
     """
@@ -593,28 +676,42 @@ def migrate_cron_authority(target: Any, timeout: float = 30.0) -> None:
                     code="unsupported_schema_version",
                 ) from exc
             rows = cursor.fetchall()
-            if rows != [(1, SCHEMA_VERSION)]:
+            if rows == [(1, 2)]:
+                _validate_schema_objects(cursor, target_version=2)
+                conn.commit()
+                return
+            elif rows == [(1, 1)]:
+                _validate_schema_objects(cursor, target_version=1)
+                cursor.execute(_main_ddl(_CREATE_TRIGGER_DELIVERIES_TABLE_DDL))
+                for trigger_sql in _V2_TRIGGERS_DDL:
+                    cursor.execute(_main_ddl(trigger_sql))
+                cursor.execute(
+                    "UPDATE main.cron_authority_schema_version SET schema_version = 2 WHERE authority_id = 1;"
+                )
+                _validate_schema_objects(cursor, target_version=2)
+                conn.commit()
+                return
+            else:
                 raise CronAuthorityError(
                     f"Unsupported cron authority schema version rows: {rows!r}",
                     code="unsupported_schema_version",
                 )
-            _validate_schema_objects(cursor)
-            # Idempotent migration requires the exact authoritative v1 objects.
-            conn.commit()
-            return
 
-        # Execute DDL
+        # Fresh DB migration directly to v2
         cursor.execute(_main_ddl(_CREATE_VERSION_TABLE_DDL))
         cursor.execute(_main_ddl(_CREATE_AGGREGATES_TABLE_DDL))
         cursor.execute(_main_ddl(_CREATE_EVIDENCE_TABLE_DDL))
         cursor.execute(_main_ddl(_CREATE_ATTEMPTS_TABLE_DDL))
         cursor.execute(_main_ddl(_CREATE_RECEIPTS_TABLE_DDL))
         cursor.execute(_main_ddl(_CREATE_CURSORS_TABLE_DDL))
+        cursor.execute(_main_ddl(_CREATE_TRIGGER_DELIVERIES_TABLE_DDL))
 
         for trigger_sql in _TRIGGERS_DDL:
             cursor.execute(_main_ddl(trigger_sql))
+        for trigger_sql in _V2_TRIGGERS_DDL:
+            cursor.execute(_main_ddl(trigger_sql))
 
-        _validate_schema_objects(cursor)
+        _validate_schema_objects(cursor, target_version=2)
 
         # Record schema version
         now_utc = datetime.now(timezone.utc).isoformat()
