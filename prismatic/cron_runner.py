@@ -10,12 +10,12 @@ This module implements:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
 import hashlib
 import json
 import re
 import sqlite3
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from prismatic.cron_authority import (
@@ -42,7 +42,9 @@ VALID_CATCH_UP_POLICIES: frozenset[str] = frozenset(
 
 _HEX64_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _HEX40_PATTERN = re.compile(r"^[0-9a-f]{40}$")
-_RELEASE_ROOT_PATTERN = re.compile(r"^/home/ubuntu/\.prismatic/releases/([0-9a-f]{40})(?:/.*)?$")
+_RELEASE_ROOT_PATTERN = re.compile(
+    r"^/home/ubuntu/\.prismatic/releases/([0-9a-f]{40})(?:/.*)?$"
+)
 _UTC_TIMESTAMP_PATTERN = re.compile(
     r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?Z$"
 )
@@ -68,7 +70,9 @@ def _get_utc_now() -> str:
 def compute_command_digest(argv: tuple[str, ...], cwd: str) -> str:
     """Compute canonical 64-hex SHA-256 command digest from argv and cwd."""
     data = {"argv": list(argv), "cwd": cwd}
-    canonical_json = json.dumps(data, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    canonical_json = json.dumps(data, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
     return hashlib.sha256(canonical_json).hexdigest()
 
 
@@ -87,31 +91,64 @@ class CronTriggerEnvelope:
     submitted_at: str
 
     def __post_init__(self) -> None:
-        if not isinstance(self.trigger_event_id, str) or not (1 <= len(self.trigger_event_id) <= 128):
-            raise CronAuthorityError("trigger_event_id must be 1..128 chars", code="invalid_envelope")
+        if not isinstance(self.trigger_event_id, str) or not (
+            1 <= len(self.trigger_event_id) <= 128
+        ):
+            raise CronAuthorityError(
+                "trigger_event_id must be 1..128 chars", code="invalid_envelope"
+            )
         if any(ord(c) < 32 or ord(c) == 127 for c in self.trigger_event_id):
-            raise CronAuthorityError("trigger_event_id cannot contain control characters", code="invalid_envelope")
+            raise CronAuthorityError(
+                "trigger_event_id cannot contain control characters",
+                code="invalid_envelope",
+            )
 
         if self.trigger_kind not in VALID_TRIGGER_KINDS:
-            raise CronAuthorityError(f"Invalid trigger_kind: {self.trigger_kind!r}", code="invalid_envelope")
+            raise CronAuthorityError(
+                f"Invalid trigger_kind: {self.trigger_kind!r}", code="invalid_envelope"
+            )
         if self.transport_kind not in VALID_TRANSPORT_KINDS:
-            raise CronAuthorityError(f"Invalid transport_kind: {self.transport_kind!r}", code="invalid_envelope")
+            raise CronAuthorityError(
+                f"Invalid transport_kind: {self.transport_kind!r}",
+                code="invalid_envelope",
+            )
 
         if not isinstance(self.cron_id, str) or not (1 <= len(self.cron_id) <= 128):
-            raise CronAuthorityError("cron_id must be 1..128 chars", code="invalid_envelope")
+            raise CronAuthorityError(
+                "cron_id must be 1..128 chars", code="invalid_envelope"
+            )
 
         if type(self.registry_generation) is not int or self.registry_generation < 1:
-            raise CronAuthorityError("registry_generation must be int >= 1", code="invalid_envelope")
+            raise CronAuthorityError(
+                "registry_generation must be int >= 1", code="invalid_envelope"
+            )
 
         if not _is_valid_utc_timestamp(self.schedule_bucket):
-            raise CronAuthorityError(f"Invalid schedule_bucket: {self.schedule_bucket!r}", code="invalid_envelope")
+            raise CronAuthorityError(
+                f"Invalid schedule_bucket: {self.schedule_bucket!r}",
+                code="invalid_envelope",
+            )
         if not _is_valid_utc_timestamp(self.submitted_at):
-            raise CronAuthorityError(f"Invalid submitted_at: {self.submitted_at!r}", code="invalid_envelope")
+            raise CronAuthorityError(
+                f"Invalid submitted_at: {self.submitted_at!r}", code="invalid_envelope"
+            )
 
-        if not isinstance(self.command_digest, str) or _HEX64_PATTERN.fullmatch(self.command_digest) is None:
-            raise CronAuthorityError(f"Invalid command_digest: {self.command_digest!r}", code="invalid_envelope")
-        if not isinstance(self.release_digest, str) or _HEX64_PATTERN.fullmatch(self.release_digest) is None:
-            raise CronAuthorityError(f"Invalid release_digest: {self.release_digest!r}", code="invalid_envelope")
+        if (
+            not isinstance(self.command_digest, str)
+            or _HEX64_PATTERN.fullmatch(self.command_digest) is None
+        ):
+            raise CronAuthorityError(
+                f"Invalid command_digest: {self.command_digest!r}",
+                code="invalid_envelope",
+            )
+        if (
+            not isinstance(self.release_digest, str)
+            or _HEX64_PATTERN.fullmatch(self.release_digest) is None
+        ):
+            raise CronAuthorityError(
+                f"Invalid release_digest: {self.release_digest!r}",
+                code="invalid_envelope",
+            )
 
     def to_canonical_dict(self) -> dict[str, Any]:
         return {
@@ -127,7 +164,9 @@ class CronTriggerEnvelope:
         }
 
     def to_canonical_bytes(self) -> bytes:
-        return json.dumps(self.to_canonical_dict(), sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return json.dumps(
+            self.to_canonical_dict(), sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
 
     def trigger_digest(self) -> str:
         return hashlib.sha256(self.to_canonical_bytes()).hexdigest()
@@ -143,9 +182,14 @@ class CronDependency:
 
     def __post_init__(self) -> None:
         if not isinstance(self.cron_id, str) or not (1 <= len(self.cron_id) <= 128):
-            raise CronAuthorityError("cron_id must be 1..128 chars", code="invalid_dependency")
+            raise CronAuthorityError(
+                "cron_id must be 1..128 chars", code="invalid_dependency"
+            )
         if not _is_valid_utc_timestamp(self.schedule_bucket):
-            raise CronAuthorityError(f"Invalid schedule_bucket: {self.schedule_bucket!r}", code="invalid_dependency")
+            raise CronAuthorityError(
+                f"Invalid schedule_bucket: {self.schedule_bucket!r}",
+                code="invalid_dependency",
+            )
 
 
 @dataclass(frozen=True)
@@ -162,24 +206,47 @@ class CronRegistrySnapshot:
     depends_on: tuple[CronDependency, ...] = ()
     catch_up_policy: str = "run_once"
     max_replay_buckets: int = 10
+    source_id: str = "prismatic.cron-authority.sqlite/cron_registry_snapshots_v1"
+    schema_id: str = "prismatic.cron.registry-snapshot"
+    schema_version: int = 1
+    trusted_runner_identity: str = "runner_default"
+    dependency_digest: str = "0" * 64
+    release_root: str = ""
+    release_root_evidence: dict[str, Any] = field(default_factory=dict)
+    executable_evidence: dict[str, Any] = field(default_factory=dict)
+    cwd_evidence: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not isinstance(self.cron_id, str) or not (1 <= len(self.cron_id) <= 128):
-            raise CronAuthorityError("cron_id must be 1..128 chars", code="invalid_snapshot")
+            raise CronAuthorityError(
+                "cron_id must be 1..128 chars", code="invalid_snapshot"
+            )
 
         if type(self.registry_generation) is not int or self.registry_generation < 1:
-            raise CronAuthorityError("registry_generation must be int >= 1", code="invalid_snapshot")
+            raise CronAuthorityError(
+                "registry_generation must be int >= 1", code="invalid_snapshot"
+            )
 
-        if not isinstance(self.command_digest, str) or _HEX64_PATTERN.fullmatch(self.command_digest) is None:
+        if (
+            not isinstance(self.command_digest, str)
+            or _HEX64_PATTERN.fullmatch(self.command_digest) is None
+        ):
             raise CronAuthorityError("Invalid command_digest", code="invalid_snapshot")
-        if not isinstance(self.release_digest, str) or _HEX64_PATTERN.fullmatch(self.release_digest) is None:
+        if (
+            not isinstance(self.release_digest, str)
+            or _HEX64_PATTERN.fullmatch(self.release_digest) is None
+        ):
             raise CronAuthorityError("Invalid release_digest", code="invalid_snapshot")
 
         if not isinstance(self.argv, tuple) or len(self.argv) == 0:
-            raise CronAuthorityError("argv must be a non-empty tuple of strings", code="invalid_snapshot")
+            raise CronAuthorityError(
+                "argv must be a non-empty tuple of strings", code="invalid_snapshot"
+            )
         for arg in self.argv:
             if not isinstance(arg, str) or not arg:
-                raise CronAuthorityError("argv elements must be non-empty strings", code="invalid_snapshot")
+                raise CronAuthorityError(
+                    "argv elements must be non-empty strings", code="invalid_snapshot"
+                )
 
         m = _RELEASE_ROOT_PATTERN.fullmatch(self.cwd)
         if not m:
@@ -188,16 +255,25 @@ class CronRegistrySnapshot:
                 code="invalid_snapshot",
             )
         if ".." in self.cwd or "/latest" in self.cwd or "//" in self.cwd:
-            raise CronAuthorityError(f"cwd contains relative path or alias: {self.cwd!r}", code="invalid_snapshot")
+            raise CronAuthorityError(
+                f"cwd contains relative path or alias: {self.cwd!r}",
+                code="invalid_snapshot",
+            )
 
         if self.state not in VALID_SNAPSHOT_STATES:
-            raise CronAuthorityError(f"Invalid snapshot state: {self.state!r}", code="invalid_snapshot")
+            raise CronAuthorityError(
+                f"Invalid snapshot state: {self.state!r}", code="invalid_snapshot"
+            )
 
         if self.catch_up_policy not in VALID_CATCH_UP_POLICIES:
-            raise CronAuthorityError(f"Invalid catch_up_policy: {self.catch_up_policy!r}", code="invalid_snapshot")
+            raise CronAuthorityError(
+                f"Invalid catch_up_policy: {self.catch_up_policy!r}",
+                code="invalid_snapshot",
+            )
 
         if (
             type(self.max_replay_buckets) is not int
+            or isinstance(self.max_replay_buckets, bool)
             or self.max_replay_buckets < 1
             or self.max_replay_buckets > MAX_REPLAY_BUCKETS_LIMIT
         ):
@@ -208,18 +284,29 @@ class CronRegistrySnapshot:
 
         # Validate depends_on
         if not isinstance(self.depends_on, tuple):
-            raise CronAuthorityError("depends_on must be a tuple", code="invalid_snapshot")
+            raise CronAuthorityError(
+                "depends_on must be a tuple", code="invalid_snapshot"
+            )
         if len(self.depends_on) > 100:
-            raise CronAuthorityError("Excessive dependency count (>100)", code="invalid_snapshot")
+            raise CronAuthorityError(
+                "Excessive dependency count (>100)", code="invalid_snapshot"
+            )
         seen_deps: set[tuple[str, str]] = set()
         for dep in self.depends_on:
             if not isinstance(dep, CronDependency):
-                raise CronAuthorityError("depends_on elements must be CronDependency instances", code="invalid_snapshot")
+                raise CronAuthorityError(
+                    "depends_on elements must be CronDependency instances",
+                    code="invalid_snapshot",
+                )
             if dep.cron_id == self.cron_id:
-                raise CronAuthorityError(f"Self-dependency rejected: {self.cron_id}", code="invalid_snapshot")
+                raise CronAuthorityError(
+                    f"Self-dependency rejected: {self.cron_id}", code="invalid_snapshot"
+                )
             key = (dep.cron_id, dep.schedule_bucket)
             if key in seen_deps:
-                raise CronAuthorityError(f"Duplicate dependency rejected: {key}", code="invalid_snapshot")
+                raise CronAuthorityError(
+                    f"Duplicate dependency rejected: {key}", code="invalid_snapshot"
+                )
             seen_deps.add(key)
 
         # Verify command digest matches computed digest
@@ -254,8 +341,7 @@ class BoundedProcessAdapter(Protocol):
         fence_token: int,
         runner_id: str,
         runner_release_digest: str,
-    ) -> AdapterResult:
-        ...
+    ) -> AdapterResult: ...
 
 
 def select_catch_up_buckets(
@@ -266,27 +352,57 @@ def select_catch_up_buckets(
     last_cursor_bucket: str | None = None,
 ) -> list[str]:
     """Pure bounded selection of catch-up schedule buckets."""
+    if (
+        type(max_replay_buckets) is not int
+        or isinstance(max_replay_buckets, bool)
+        or not (1 <= max_replay_buckets <= MAX_REPLAY_BUCKETS_LIMIT)
+    ):
+        raise CronAuthorityError(
+            f"max_replay_buckets must be a non-boolean integer between 1 and {MAX_REPLAY_BUCKETS_LIMIT}",
+            code="invalid_max_replay_buckets",
+        )
+
     if catch_up_policy not in VALID_CATCH_UP_POLICIES:
-        raise CronAuthorityError(f"Invalid catch_up_policy: {catch_up_policy!r}", code="invalid_catch_up_policy")
+        raise CronAuthorityError(
+            f"Invalid catch_up_policy: {catch_up_policy!r}",
+            code="invalid_catch_up_policy",
+        )
 
     if not _is_valid_utc_timestamp(current_bucket):
-        raise CronAuthorityError(f"Invalid current_bucket: {current_bucket!r}", code="invalid_schedule_bucket")
+        raise CronAuthorityError(
+            f"Invalid current_bucket: {current_bucket!r}",
+            code="invalid_schedule_bucket",
+        )
 
     for i in range(len(schedule_buckets)):
         b = schedule_buckets[i]
         if not _is_valid_utc_timestamp(b):
-            raise CronAuthorityError(f"Invalid bucket in schedule_buckets: {b!r}", code="invalid_schedule_bucket")
+            raise CronAuthorityError(
+                f"Invalid bucket in schedule_buckets: {b!r}",
+                code="invalid_schedule_bucket",
+            )
         if i > 0 and schedule_buckets[i] <= schedule_buckets[i - 1]:
-            raise CronAuthorityError("schedule_buckets must be strictly ascending", code="invalid_schedule_bucket")
+            raise CronAuthorityError(
+                "schedule_buckets must be strictly ascending",
+                code="invalid_schedule_bucket",
+            )
 
-    if last_cursor_bucket is not None and not _is_valid_utc_timestamp(last_cursor_bucket):
-        raise CronAuthorityError(f"Invalid last_cursor_bucket: {last_cursor_bucket!r}", code="invalid_schedule_bucket")
+    if last_cursor_bucket is not None and not _is_valid_utc_timestamp(
+        last_cursor_bucket
+    ):
+        raise CronAuthorityError(
+            f"Invalid last_cursor_bucket: {last_cursor_bucket!r}",
+            code="invalid_schedule_bucket",
+        )
 
     # Filter eligible missed buckets
     missed: list[str] = []
     for b in schedule_buckets:
         if b > current_bucket:
-            raise CronAuthorityError(f"Future schedule_bucket rejected: {b} > {current_bucket}", code="future_bucket_rejected")
+            raise CronAuthorityError(
+                f"Future schedule_bucket rejected: {b} > {current_bucket}",
+                code="future_bucket_rejected",
+            )
         if last_cursor_bucket is not None and b <= last_cursor_bucket:
             continue
         missed.append(b)
@@ -306,14 +422,26 @@ def select_catch_up_buckets(
 
 def _validate_runner_binding(runner_id: str, runner_release_digest: str) -> None:
     if not isinstance(runner_id, str) or not (1 <= len(runner_id) <= 128):
-        raise CronAuthorityError("runner_id must be 1..128 chars", code="invalid_runner_binding")
+        raise CronAuthorityError(
+            "runner_id must be 1..128 chars", code="invalid_runner_binding"
+        )
     if any(ord(c) < 32 or ord(c) == 127 for c in runner_id):
-        raise CronAuthorityError("runner_id cannot contain control characters", code="invalid_runner_binding")
-    if not isinstance(runner_release_digest, str) or _HEX64_PATTERN.fullmatch(runner_release_digest) is None:
-        raise CronAuthorityError("runner_release_digest must be 64 lowercase hex", code="invalid_runner_binding")
+        raise CronAuthorityError(
+            "runner_id cannot contain control characters", code="invalid_runner_binding"
+        )
+    if (
+        not isinstance(runner_release_digest, str)
+        or _HEX64_PATTERN.fullmatch(runner_release_digest) is None
+    ):
+        raise CronAuthorityError(
+            "runner_release_digest must be 64 lowercase hex",
+            code="invalid_runner_binding",
+        )
 
 
-def _are_dependencies_satisfied(cursor: sqlite3.Cursor, snapshot: CronRegistrySnapshot) -> tuple[bool, str | None]:
+def _are_dependencies_satisfied(
+    cursor: sqlite3.Cursor, snapshot: CronRegistrySnapshot
+) -> tuple[bool, str | None]:
     for dep in snapshot.depends_on:
         row = cursor.execute(
             """
@@ -328,7 +456,10 @@ def _are_dependencies_satisfied(cursor: sqlite3.Cursor, snapshot: CronRegistrySn
             (dep.cron_id, dep.schedule_bucket, dep.required_outcome),
         ).fetchone()
         if row is None:
-            return False, f"Unsatisfied dependency on cron_id={dep.cron_id}, bucket={dep.schedule_bucket}"
+            return (
+                False,
+                f"Unsatisfied dependency on cron_id={dep.cron_id}, bucket={dep.schedule_bucket}",
+            )
     return True, None
 
 
@@ -341,18 +472,30 @@ def run_once(
     adapter: BoundedProcessAdapter,
     db_target: Any,
     timeout: float = 30.0,
+    pre_spawn_hook: Any | None = None,
 ) -> dict[str, Any]:
     """Execute bounded run_once workflow against the cron authority."""
     _validate_runner_binding(runner_id, runner_release_digest)
 
     if envelope.cron_id != snapshot.cron_id:
-        raise CronAuthorityError("Envelope and snapshot cron_id mismatch", code="cross_binding_mismatch")
+        raise CronAuthorityError(
+            "Envelope and snapshot cron_id mismatch", code="cross_binding_mismatch"
+        )
     if envelope.registry_generation != snapshot.registry_generation:
-        raise CronAuthorityError("Envelope and snapshot registry_generation mismatch", code="cross_binding_mismatch")
+        raise CronAuthorityError(
+            "Envelope and snapshot registry_generation mismatch",
+            code="cross_binding_mismatch",
+        )
     if envelope.command_digest != snapshot.command_digest:
-        raise CronAuthorityError("Envelope and snapshot command_digest mismatch", code="cross_binding_mismatch")
+        raise CronAuthorityError(
+            "Envelope and snapshot command_digest mismatch",
+            code="cross_binding_mismatch",
+        )
     if envelope.release_digest != snapshot.release_digest:
-        raise CronAuthorityError("Envelope and snapshot release_digest mismatch", code="cross_binding_mismatch")
+        raise CronAuthorityError(
+            "Envelope and snapshot release_digest mismatch",
+            code="cross_binding_mismatch",
+        )
 
     # Migrate target database
     migrate_cron_authority(db_target, timeout=timeout)
@@ -397,7 +540,12 @@ def run_once(
                 SELECT execution_id, release_digest FROM main.cron_execution_aggregates
                 WHERE cron_id = ? AND registry_generation = ? AND schedule_bucket = ? AND command_digest = ?;
                 """,
-                (envelope.cron_id, envelope.registry_generation, envelope.schedule_bucket, envelope.command_digest),
+                (
+                    envelope.cron_id,
+                    envelope.registry_generation,
+                    envelope.schedule_bucket,
+                    envelope.command_digest,
+                ),
             ).fetchone()
 
             now_utc = _get_utc_now()
@@ -414,9 +562,18 @@ def run_once(
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'rejected', 'conflicting_release_digest', ?, ?);
                         """,
                         (
-                            envelope.trigger_event_id, trig_digest, trigger_bytes, envelope.trigger_kind, envelope.transport_kind,
-                            envelope.cron_id, envelope.registry_generation, envelope.schedule_bucket, envelope.command_digest, envelope.release_digest,
-                            envelope.submitted_at, now_utc,
+                            envelope.trigger_event_id,
+                            trig_digest,
+                            trigger_bytes,
+                            envelope.trigger_kind,
+                            envelope.transport_kind,
+                            envelope.cron_id,
+                            envelope.registry_generation,
+                            envelope.schedule_bucket,
+                            envelope.command_digest,
+                            envelope.release_digest,
+                            envelope.submitted_at,
+                            now_utc,
                         ),
                     )
                     conn.commit()
@@ -438,15 +595,25 @@ def run_once(
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'converged', 'duplicate_tuple', ?, ?);
                     """,
                     (
-                        envelope.trigger_event_id, trig_digest, trigger_bytes, envelope.trigger_kind, envelope.transport_kind,
-                        envelope.cron_id, envelope.registry_generation, envelope.schedule_bucket, envelope.command_digest, envelope.release_digest,
-                        execution_id, envelope.submitted_at, now_utc,
+                        envelope.trigger_event_id,
+                        trig_digest,
+                        trigger_bytes,
+                        envelope.trigger_kind,
+                        envelope.transport_kind,
+                        envelope.cron_id,
+                        envelope.registry_generation,
+                        envelope.schedule_bucket,
+                        envelope.command_digest,
+                        envelope.release_digest,
+                        execution_id,
+                        envelope.submitted_at,
+                        now_utc,
                     ),
                 )
             else:
                 # Create aggregate and attempt 1
                 agg_hash = hashlib.sha256(
-                    f"{envelope.cron_id}:{envelope.registry_generation}:{envelope.schedule_bucket}:{envelope.command_digest}".encode("utf-8")
+                    f"{envelope.cron_id}:{envelope.registry_generation}:{envelope.schedule_bucket}:{envelope.command_digest}".encode()
                 ).hexdigest()
                 execution_id = f"exec_{agg_hash[:32]}"
 
@@ -456,7 +623,15 @@ def run_once(
                         execution_id, cron_id, registry_generation, schedule_bucket, command_digest, release_digest, created_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?);
                     """,
-                    (execution_id, envelope.cron_id, envelope.registry_generation, envelope.schedule_bucket, envelope.command_digest, envelope.release_digest, now_utc),
+                    (
+                        execution_id,
+                        envelope.cron_id,
+                        envelope.registry_generation,
+                        envelope.schedule_bucket,
+                        envelope.command_digest,
+                        envelope.release_digest,
+                        now_utc,
+                    ),
                 )
                 cursor.execute(
                     """
@@ -475,9 +650,19 @@ def run_once(
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'accepted', 'admitted', ?, ?);
                     """,
                     (
-                        envelope.trigger_event_id, trig_digest, trigger_bytes, envelope.trigger_kind, envelope.transport_kind,
-                        envelope.cron_id, envelope.registry_generation, envelope.schedule_bucket, envelope.command_digest, envelope.release_digest,
-                        execution_id, envelope.submitted_at, now_utc,
+                        envelope.trigger_event_id,
+                        trig_digest,
+                        trigger_bytes,
+                        envelope.trigger_kind,
+                        envelope.transport_kind,
+                        envelope.cron_id,
+                        envelope.registry_generation,
+                        envelope.schedule_bucket,
+                        envelope.command_digest,
+                        envelope.release_digest,
+                        execution_id,
+                        envelope.submitted_at,
+                        now_utc,
                     ),
                 )
 
@@ -514,7 +699,9 @@ def run_once(
 
         if gated:
             now_utc = _get_utc_now()
-            ev_data = json.dumps({"gated_reason": gated_reason, "cron_id": snapshot.cron_id}).encode("utf-8")
+            ev_data = json.dumps(
+                {"gated_reason": gated_reason, "cron_id": snapshot.cron_id}
+            ).encode("utf-8")
             ev_digest = hashlib.sha256(ev_data).hexdigest()
 
             cursor.execute(
@@ -555,8 +742,19 @@ def run_once(
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?);
                 """,
                 (
-                    rcpt.receipt_id, rcpt.execution_id, rcpt.attempt, rcpt.cron_id, rcpt.outcome, rcpt.runner_id, rcpt.runner_release_digest,
-                    rcpt.started_at, rcpt.finished_at, rcpt.error_classification, rcpt.evidence_digest, rcpt.signing_key_id, rcpt.signature,
+                    rcpt.receipt_id,
+                    rcpt.execution_id,
+                    rcpt.attempt,
+                    rcpt.cron_id,
+                    rcpt.outcome,
+                    rcpt.runner_id,
+                    rcpt.runner_release_digest,
+                    rcpt.started_at,
+                    rcpt.finished_at,
+                    rcpt.error_classification,
+                    rcpt.evidence_digest,
+                    rcpt.signing_key_id,
+                    rcpt.signature,
                     now_utc,
                 ),
             )
@@ -573,7 +771,9 @@ def run_once(
         # Step 4: Claim attempt 1 (§7.3)
         now_dt = datetime.now(timezone.utc)
         now_utc = _get_utc_now()
-        lease_expires_dt = datetime.fromtimestamp(now_dt.timestamp() + 30.0, timezone.utc)
+        lease_expires_dt = datetime.fromtimestamp(
+            now_dt.timestamp() + 30.0, timezone.utc
+        )
         lease_expires_at = lease_expires_dt.isoformat()
         if lease_expires_at.endswith("+00:00"):
             lease_expires_at = lease_expires_at[:-6] + "Z"
@@ -604,23 +804,68 @@ def run_once(
             }
 
         # Step 5: Pre-spawn revalidation (§7.5)
+        if pre_spawn_hook is not None:
+            pre_spawn_hook(conn, execution_id, 1, snapshot)
+
         # Revalidate state and ownership
         row_reval = cursor.execute(
             "SELECT state, runner_id, fence_token FROM main.cron_execution_attempts WHERE execution_id = ? AND attempt = 1;",
             (execution_id,),
         ).fetchone()
-        if row_reval is None or row_reval[0] != "claimed" or row_reval[1] != runner_id or row_reval[2] != fence_token:
+        if (
+            row_reval is None
+            or row_reval[0] != "claimed"
+            or row_reval[1] != runner_id
+            or row_reval[2] != fence_token
+        ):
             conn.rollback()
-            raise CronAuthorityError("Pre-spawn ownership revalidation failed", code="pre_spawn_revalidation_failed")
+            return {
+                "disposition": "rejected",
+                "reason_code": "pre_spawn_revalidation_failed",
+                "execution_id": execution_id,
+                "receipt": None,
+                "adapter_called": False,
+            }
 
         if snapshot.state != "active":
             conn.rollback()
-            raise CronAuthorityError(f"Pre-spawn state revalidation failed: {snapshot.state}", code="pre_spawn_revalidation_failed")
+            return {
+                "disposition": "rejected",
+                "reason_code": "pre_spawn_state_revalidation_failed",
+                "execution_id": execution_id,
+                "receipt": None,
+                "adapter_called": False,
+            }
+
+        row_agg_reval = cursor.execute(
+            "SELECT registry_generation, command_digest, release_digest FROM main.cron_execution_aggregates WHERE execution_id = ?;",
+            (execution_id,),
+        ).fetchone()
+        if (
+            row_agg_reval is None
+            or row_agg_reval[0] != snapshot.registry_generation
+            or row_agg_reval[1] != snapshot.command_digest
+            or row_agg_reval[2] != snapshot.release_digest
+        ):
+            conn.rollback()
+            return {
+                "disposition": "rejected",
+                "reason_code": "pre_spawn_aggregate_revalidation_failed",
+                "execution_id": execution_id,
+                "receipt": None,
+                "adapter_called": False,
+            }
 
         deps_ok, _ = _are_dependencies_satisfied(cursor, snapshot)
         if not deps_ok:
             conn.rollback()
-            raise CronAuthorityError("Pre-spawn dependency revalidation failed", code="pre_spawn_revalidation_failed")
+            return {
+                "disposition": "rejected",
+                "reason_code": "pre_spawn_dependency_revalidation_failed",
+                "execution_id": execution_id,
+                "receipt": None,
+                "adapter_called": False,
+            }
 
         cursor.execute(
             """
@@ -663,10 +908,17 @@ def run_once(
             or row_fin_check[2] != fence_token
         ):
             conn.rollback()
-            raise CronAuthorityError("Finalization rejected due to stale owner or fence mismatch", code="stale_owner_finalization_rejected")
+            raise CronAuthorityError(
+                "Finalization rejected due to stale owner or fence mismatch",
+                code="stale_owner_finalization_rejected",
+            )
 
         ev_digest: str | None = None
-        if adapter_res.outcome != "succeeded" or adapter_res.stdout or adapter_res.stderr:
+        if (
+            adapter_res.outcome != "succeeded"
+            or adapter_res.stdout
+            or adapter_res.stderr
+        ):
             ev_data = json.dumps(
                 {
                     "exit_code": adapter_res.exit_code,
@@ -707,8 +959,19 @@ def run_once(
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?);
             """,
             (
-                rcpt.receipt_id, rcpt.execution_id, rcpt.attempt, rcpt.cron_id, rcpt.outcome, rcpt.runner_id, rcpt.runner_release_digest,
-                rcpt.started_at, rcpt.finished_at, rcpt.error_classification, rcpt.evidence_digest, rcpt.signing_key_id, rcpt.signature,
+                rcpt.receipt_id,
+                rcpt.execution_id,
+                rcpt.attempt,
+                rcpt.cron_id,
+                rcpt.outcome,
+                rcpt.runner_id,
+                rcpt.runner_release_digest,
+                rcpt.started_at,
+                rcpt.finished_at,
+                rcpt.error_classification,
+                rcpt.evidence_digest,
+                rcpt.signing_key_id,
+                rcpt.signature,
                 _get_utc_now(),
             ),
         )
@@ -740,7 +1003,9 @@ def reconcile_expired_attempts(
     """Reconcile expired claimed/running execution attempts once (§7.9)."""
     _validate_runner_binding(runner_id, runner_release_digest)
     if type(limit) is not int or limit < 1:
-        raise CronAuthorityError("limit must be int >= 1", code="invalid_reconcile_limit")
+        raise CronAuthorityError(
+            "limit must be int >= 1", code="invalid_reconcile_limit"
+        )
 
     migrate_cron_authority(db_target, timeout=timeout)
     conn = connect_cron_authority(db_target, timeout=timeout)
@@ -768,7 +1033,9 @@ def reconcile_expired_attempts(
 
         for exec_id, attempt_num, old_fence, old_runner, cron_id in expired_rows:
             new_fence = (old_fence or 0) + 1
-            new_lease_dt = datetime.fromtimestamp(datetime.now(timezone.utc).timestamp() + 30.0, timezone.utc)
+            new_lease_dt = datetime.fromtimestamp(
+                datetime.now(timezone.utc).timestamp() + 30.0, timezone.utc
+            )
             new_lease_at = new_lease_dt.isoformat()
             if new_lease_at.endswith("+00:00"):
                 new_lease_at = new_lease_at[:-6] + "Z"
@@ -779,7 +1046,15 @@ def reconcile_expired_attempts(
                 SET state = 'reconciling', runner_id = ?, fence_token = ?, lease_expires_at = ?, updated_at = ?
                 WHERE execution_id = ? AND attempt = ? AND fence_token = ? AND state IN ('claimed', 'running');
                 """,
-                (runner_id, new_fence, new_lease_at, now_utc, exec_id, attempt_num, old_fence),
+                (
+                    runner_id,
+                    new_fence,
+                    new_lease_at,
+                    now_utc,
+                    exec_id,
+                    attempt_num,
+                    old_fence,
+                ),
             )
 
             if res_upd.rowcount > 0:
@@ -823,8 +1098,19 @@ def reconcile_expired_attempts(
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?);
                     """,
                     (
-                        rcpt.receipt_id, rcpt.execution_id, rcpt.attempt, rcpt.cron_id, rcpt.outcome, rcpt.runner_id, rcpt.runner_release_digest,
-                        rcpt.started_at, rcpt.finished_at, rcpt.error_classification, rcpt.evidence_digest, rcpt.signing_key_id, rcpt.signature,
+                        rcpt.receipt_id,
+                        rcpt.execution_id,
+                        rcpt.attempt,
+                        rcpt.cron_id,
+                        rcpt.outcome,
+                        rcpt.runner_id,
+                        rcpt.runner_release_digest,
+                        rcpt.started_at,
+                        rcpt.finished_at,
+                        rcpt.error_classification,
+                        rcpt.evidence_digest,
+                        rcpt.signing_key_id,
+                        rcpt.signature,
                         now_utc,
                     ),
                 )

@@ -23,8 +23,9 @@ from __future__ import annotations
 
 import hashlib
 import inspect
-from pathlib import Path
 import sqlite3
+from pathlib import Path
+
 import pytest
 
 from prismatic.cron_authority import (
