@@ -39,6 +39,8 @@ STEP_CATEGORIES: Dict[str, str] = {
     "gsc_verify": "blocking",
     "ga4_property": "soft",
     "gtm_container": "soft",
+    "register_stripe": "soft",
+    "github_checkout": "soft",
     "register_in_registry": "blocking",
     "migrate_kpi": "blocking",
 }
@@ -49,6 +51,8 @@ from .ga4 import step_ga4_property  # noqa: F401  (re-exported for orchestrator)
 from .gtm import step_gtm_container  # noqa: F401
 from .platform_detect import step_platform_detect
 from .vercel_project import step_vercel_project
+from .stripe import step_register_stripe  # noqa: F401
+from .github import step_github_checkout  # noqa: F401
 from ..domain_verifier import (
     VERIFY_PREFIX,
     generate_challenge_token,

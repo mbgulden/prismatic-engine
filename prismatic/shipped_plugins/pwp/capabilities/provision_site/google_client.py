@@ -105,22 +105,20 @@ class GSCSite:
 def _load_service_account(
     json_path: Optional[str] = None,
     inline: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Load + validate a Google service-account JSON key.
+) -> Optional[Dict[str, Any]]:
+    """Load + validate a Google credentials JSON key.
 
-    Returns the parsed key dict. Raises GoogleAuthError on any failure.
+    Returns the parsed key dict, or None if no credentials are
+    configured. Raises GoogleAuthError only on parse / validation
+    errors when a candidate is found but malformed.
+
+    The caller (`GoogleClient.from_env`) is responsible for falling
+    back to auth_loader when this returns None.
     """
     candidates_json_path = json_path or os.environ.get("GOOGLE_SA_JSON", "").strip()
     candidates_inline = inline or os.environ.get("GOOGLE_SA_INLINE", "").strip()
     if not candidates_json_path and not candidates_inline:
-        raise GoogleAuthError(
-            "Google service-account not configured. Set GOOGLE_SA_JSON "
-            "(path to a service-account JSON key) or GOOGLE_SA_INLINE "
-            "(the JSON content). The service account must have "
-            "analytics.edit (GA4), tagmanager.edit (GTM) on the target "
-            "account. GSC verification is done via DNS TXT using the "
-            "Cloudflare API and does not require Google creds."
-        )
+        return None  # no candidates; caller should fall back to auth_loader
     if candidates_inline:
         try:
             sa = json.loads(candidates_inline)
@@ -134,16 +132,27 @@ def _load_service_account(
             sa = json.loads(p.read_text(encoding="utf-8"))
         except json.JSONDecodeError as e:
             raise GoogleAuthError(f"GOOGLE_SA_JSON file is not valid JSON: {e}")
-    # Minimal validation.
-    required = ("type", "client_email", "private_key", "token_uri")
-    missing = [k for k in required if k not in sa]
-    if missing:
+    # Minimal validation — branch on type.
+    if sa.get("type") == "service_account":
+        required = ("type", "client_email", "private_key", "token_uri")
+        missing = [k for k in required if k not in sa]
+        if missing:
+            raise GoogleAuthError(
+                "Service-account JSON missing required fields: "
+                + ", ".join(missing)
+            )
+    elif sa.get("type") == "authorized_user":
+        required = ("type", "client_id", "client_secret", "refresh_token")
+        missing = [k for k in required if k not in sa]
+        if missing:
+            raise GoogleAuthError(
+                "OAuth user-credentials JSON missing required fields: "
+                + ", ".join(missing)
+            )
+    else:
         raise GoogleAuthError(
-            "Service-account JSON missing required fields: " + ", ".join(missing)
-        )
-    if sa["type"] != "service_account":
-        raise GoogleAuthError(
-            f"JSON is not a service account (type={sa['type']!r})"
+            f"Unsupported credentials type: {sa.get('type')!r}. "
+            "Expected 'service_account' or 'authorized_user'."
         )
     return sa
 
@@ -210,10 +219,37 @@ def _exchange_jwt_for_access_token(sa: Dict[str, Any], scope: str) -> str:
             status_code=resp.status_code,
         )
     body = resp.json()
-    token = body.get("access_token")
-    if not token:
-        raise GoogleAuthError(f"No access_token in token response: {body}")
-    return token
+    return body["access_token"]
+
+
+def _exchange_refresh_token_for_access_token(
+    client_id: str, client_secret: str, refresh_token: str, scope: str,
+) -> str:
+    """Exchange an OAuth user-credentials refresh_token for an access token.
+
+    This is the path for end-user credentials (gcloud ADC's
+    authorized_user type) — uses grant_type=refresh_token instead of
+    the JWT-bearer grant used by service accounts.
+    """
+    resp = requests.post(
+        "https://oauth2.googleapis.com/token",
+        data={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token",
+            "scope": scope,
+        },
+        timeout=30,
+    )
+    if resp.status_code != 200:
+        raise GoogleAuthError(
+            f"refresh_token exchange failed: HTTP {resp.status_code} "
+            f"{resp.text[:300]}",
+            status_code=resp.status_code,
+        )
+    body = resp.json()
+    return body["access_token"]
 
 
 # --- The client -----------------------------------------------------------
@@ -247,7 +283,19 @@ class GoogleClient:
                 "pass service_account={\"type\": \"service_account\", ...}."
             )
         self._sa = service_account
-        self._service_account_email = service_account["client_email"]
+        # Credentials kind — "service_account" or "authorized_user".
+        # Determines which OAuth grant we use to obtain access tokens.
+        sa_type = service_account.get("type", "")
+        if sa_type == "service_account":
+            self._creds_kind = "service_account"
+        elif sa_type == "authorized_user":
+            self._creds_kind = "authorized_user"
+        else:
+            raise GoogleAuthError(
+                f"Unsupported credentials type: {sa_type!r}. "
+                "Expected 'service_account' or 'authorized_user'."
+            )
+        self._service_account_email = service_account.get("client_email", "")
         self._ga4_account_id = (
             ga4_account_id or os.environ.get("GA4_ACCOUNT_ID", "").strip()
         )
@@ -269,8 +317,20 @@ class GoogleClient:
         for (cached_scope, expiry), token in list(self._token_cache.items()):
             if cached_scope == scope and expiry > now + 300:
                 return token
-        # Mint fresh.
-        token = _exchange_jwt_for_access_token(self._sa, scope=scope)
+        # Mint fresh — branch on credential type.
+        if self._creds_kind == "service_account":
+            token = _exchange_jwt_for_access_token(self._sa, scope=scope)
+        elif self._creds_kind == "authorized_user":
+            token = _exchange_refresh_token_for_access_token(
+                client_id=self._sa["client_id"],
+                client_secret=self._sa["client_secret"],
+                refresh_token=self._sa["refresh_token"],
+                scope=scope,
+            )
+        else:
+            raise GoogleAuthError(
+                f"Unknown credential kind: {self._creds_kind}"
+            )
         self._token_cache[(scope, now)] = token
         # Garbage-collect expired entries (avoid unbounded growth).
         stale = [k for k in self._token_cache if k[1] <= now - 60]
@@ -349,8 +409,30 @@ class GoogleClient:
 
     @classmethod
     def from_env(cls) -> "GoogleClient":
-        """Construct from GOOGLE_SA_JSON / GOOGLE_SA_INLINE env vars."""
+        """Construct from GOOGLE_SA_JSON / GOOGLE_SA_INLINE env vars.
+
+        If those aren't set, falls back to auth_loader.get_secret('google_adc')
+        which discovers the gcloud application_default_credentials.json file.
+        """
         sa = _load_service_account()
+        if sa is None:
+            from . import auth_loader
+            result = auth_loader.get_secret("google_adc")
+            if result.found:
+                # Treat the ADC as a service-account-like dict
+                try:
+                    sa = json.loads(result.value) if isinstance(result.value, str) else result.value
+                except Exception as e:
+                    raise GoogleAuthError(
+                        f"google_adc from {result.source} is not valid JSON: {e}"
+                    ) from e
+        if sa is None:
+            raise GoogleAuthError(
+                "No Google credentials found. Set GOOGLE_SA_JSON env var to a "
+                "service-account JSON path, or run `gcloud auth "
+                "application-default login` to populate "
+                "~/.config/gcloud/application_default_credentials.json"
+            )
         return cls(service_account=sa)
 
     # -- GA4 Admin API -----------------------------------------------------

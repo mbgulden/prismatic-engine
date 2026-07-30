@@ -38,9 +38,14 @@ STEP_NAMES: List[str] = [
     "gsc_verify",          # Write the Google Search Console DNS-TXT record.
     "ga4_property",        # Create the GA4 property + measurement ID.
     "gtm_container",       # Create the GTM container for site scripts.
+    "register_stripe",     # Validate Stripe creds + persist external_sources.stripe.
+    "github_checkout",     # Resolve repo, fetch default branch + HEAD.
     "register_in_registry",  # Add the domain to the local sites.json appendix.
     "migrate_kpi",         # Bootstrap the per-site <slug>.kpi.json.
-]  # Phase 3 added platform_detect + vercel_project.
+]
+# Phase 3 added platform_detect + vercel_project.
+# Phase 4 added register_stripe (between gtm and register_in_registry).
+# Phase 4.1 added github_checkout (between register_stripe and register_in_registry).
 
 
 def _resolve_publish_root(publish_root: Optional[Path]) -> Path:

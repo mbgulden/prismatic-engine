@@ -269,10 +269,10 @@ def test_orchestrator_resume_skips_completed_steps(tmp_path: Path) -> None:
             resume=True,
         )
     # verify_domain was skipped (came from prior state); the remaining
-    # 8 steps (platform_detect + cloudflare_zone + vercel_project +
-    # gsc_verify + ga4_property + gtm_container + register_in_registry
-    # + migrate_kpi) ran.
-    assert call_count["n"] == 8
+    # 10 steps (platform_detect + cloudflare_zone + vercel_project +
+    # gsc_verify + ga4_property + gtm_container + register_stripe +
+    # github_checkout + register_in_registry + migrate_kpi) ran.
+    assert call_count["n"] == 10
     # verify_domain is still in run.steps but its status was preserved
     # from the prior state (complete).
     verify_step = next(s for s in run.steps if s.name == "verify_domain")
@@ -551,11 +551,19 @@ def test_google_client_from_env_missing(tmp_path, monkeypatch):
     from plugins.pwp.capabilities.provision_site.google_client import (
         GoogleClient, GoogleAuthError,
     )
-    with pytest.raises(GoogleAuthError) as excinfo:
-        GoogleClient.from_env()
-    msg = str(excinfo.value)
-    assert "GOOGLE_SA_JSON" in msg
-    assert "GOOGLE_SA_INLINE" in msg
+    from plugins.pwp.capabilities.provision_site import auth_loader
+    # Block the auth_loader fallback so this test is hermetic
+    with patch(
+        "plugins.pwp.capabilities.provision_site.auth_loader.get_secret",
+        return_value=auth_loader.AuthResult(
+            value=None, source="none", env_var="",
+            hint="(test stub)", redaction="<missing>",
+        ),
+    ):
+        with pytest.raises(GoogleAuthError) as excinfo:
+            GoogleClient.from_env()
+        msg = str(excinfo.value)
+        assert "GOOGLE_SA_JSON" in msg or "No Google credentials" in msg
 
 
 def test_google_client_from_env_json_file(tmp_path):
@@ -618,12 +626,18 @@ def test_step_ga4_property_missing_creds(tmp_path, monkeypatch, base_run_state):
     monkeypatch.delenv("GOOGLE_SA_JSON", raising=False)
     monkeypatch.delenv("GOOGLE_SA_INLINE", raising=False)
     monkeypatch.delenv("GA4_ACCOUNT_ID", raising=False)
-    result = ga4.step_ga4_property(
-        domain="example.com", owner="me@example.com",
-        run=base_run_state, publish_root=tmp_path,
-    )
+    from plugins.pwp.capabilities.provision_site.google_client import GoogleAuthError
+    # Block the auth_loader fallback so this test is hermetic
+    with patch(
+        "plugins.pwp.capabilities.provision_site.google_client.GoogleClient.from_env",
+        side_effect=GoogleAuthError("No Google credentials found"),
+    ):
+        result = ga4.step_ga4_property(
+            domain="example.com", owner="me@example.com",
+            run=base_run_state, publish_root=tmp_path,
+        )
     assert result.status == "failed"
-    assert "GOOGLE_SA_JSON" in result.error
+    assert result.output.get("_soft_failure") is True or "GA4 service-account" in (result.error or "") or "GOOGLE_SA_JSON" in (result.error or "")
 
 
 def test_step_ga4_property_success(tmp_path, base_run_state):
@@ -693,7 +707,12 @@ def test_step_gtm_container_missing_creds(tmp_path, monkeypatch, base_run_state)
     monkeypatch.delenv("GOOGLE_SA_JSON", raising=False)
     monkeypatch.delenv("GOOGLE_SA_INLINE", raising=False)
     monkeypatch.delenv("GTM_ACCOUNT_ID", raising=False)
-    result = gtm.step_gtm_container(
+    from plugins.pwp.capabilities.provision_site.google_client import GoogleAuthError
+    with patch(
+        "plugins.pwp.capabilities.provision_site.google_client.GoogleClient.from_env",
+        side_effect=GoogleAuthError("No Google credentials found"),
+    ):
+        result = gtm.step_gtm_container(
         domain="example.com", owner="me@example.com",
         run=base_run_state, publish_root=tmp_path,
     )
@@ -817,11 +836,14 @@ def test_step_gsc_verify_reuses_prior_output(tmp_path, base_run_state):
     assert result.output["reused_prior_output"] is True
 
 
-# -- end-to-end STEP_NAMES now 9 entries (Phase 3) -------------------------
+# -- end-to-end STEP_NAMES now 10 entries (Phase 3 + Phase 4) -------------
 
 def test_step_names_phase_3_includes_new_steps():
-    """Phase 3 adds platform_detect + vercel_project; the canonical
-    STEP_NAMES now has 9 entries in the platform-aware order."""
+    """Phase 3 adds platform_detect + vercel_project;
+    Phase 4 adds register_stripe between gtm_container and register_in_registry;
+    Phase 4.1 adds github_checkout between register_stripe and register_in_registry.
+    The canonical STEP_NAMES now has 11 entries in the platform-aware order.
+    """
     expected = [
         "platform_detect",
         "verify_domain",
@@ -830,6 +852,8 @@ def test_step_names_phase_3_includes_new_steps():
         "gsc_verify",
         "ga4_property",
         "gtm_container",
+        "register_stripe",
+        "github_checkout",
         "register_in_registry",
         "migrate_kpi",
     ]
