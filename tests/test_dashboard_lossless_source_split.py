@@ -97,8 +97,11 @@ def test_deep_link_and_canonical_dashboard_markers_are_preserved() -> None:
         "native-cron",
         "workspace-tree-mobile-responsive",
         "file viewer · powered by /api/workspaces",
-        "/api/workspace-tree/node?file=",
-        "/api/workspace-tree/preview?file=",
+        "selectedWorkspaceId",
+        "selectedRelativePath",
+        "data-workspace-id=",
+        "data-relative-path=",
+        "workspace_id: workspaceId",
         "workspace-legacy-link",
         "Resources · Model usage and budget caps",
         "Jules Daily Capacity",
@@ -116,6 +119,12 @@ def test_deep_link_and_canonical_dashboard_markers_are_preserved() -> None:
     assert html.count('id="section-pwp"') == 1
     assert html.count('id="section-crons"') == 1
     assert html.count('id="section-workspaces"') == 1
+    assert "/api/workspace-tree/node?file=" not in html
+    assert "/api/workspace-tree/preview?file=" not in html
+    assert "/workspace-tree?file=" not in html
+    assert "data-path=" not in html
+    assert "canonical-merge-winner-map-2026-07-06.md" not in html
+    assert 'href="/dashboard#workspaces"' in html
 
 
 def test_manifest_missing_duplicate_and_traversal_entries_fail_closed(
