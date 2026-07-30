@@ -33,7 +33,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from ..types import StepResult
 
@@ -58,9 +58,7 @@ def _domain_to_slug(domain: str) -> str:
     return parts[0] if parts else domain
 
 
-def _load_kpi_collections(
-    sites_root: Path, slug: str
-) -> Optional[Dict[str, Any]]:
+def _load_kpi_collections(sites_root: Path, slug: str) -> Optional[Dict[str, Any]]:
     path = sites_root / f"{slug}.kpi.json"
     if not path.exists():
         return None
@@ -70,9 +68,7 @@ def _load_kpi_collections(
         return None
 
 
-def _save_kpi_collections(
-    sites_root: Path, slug: str, data: Dict[str, Any]
-) -> None:
+def _save_kpi_collections(sites_root: Path, slug: str, data: Dict[str, Any]) -> None:
     path = sites_root / f"{slug}.kpi.json"
     path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
 
@@ -160,6 +156,7 @@ def step_github_checkout(
     # 1. Construct the GitHubClient (auth_loader falls back)
     try:
         from ..github_client import GitHubClient, GitHubError
+
         client = GitHubClient.from_env()
     except ValueError as exc:
         return StepResult(
@@ -329,4 +326,5 @@ def step_github_checkout(
 def _now_iso() -> str:
     """ISO-8601 timestamp in UTC."""
     from datetime import datetime, timezone
+
     return datetime.now(timezone.utc).isoformat()

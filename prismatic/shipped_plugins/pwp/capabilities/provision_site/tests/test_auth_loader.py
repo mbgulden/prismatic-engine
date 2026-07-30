@@ -21,16 +21,14 @@ from __future__ import annotations
 import json
 import os
 import stat
-import tempfile
 from pathlib import Path
-from unittest.mock import patch
 
-import pytest
 
 from plugins.pwp.capabilities.provision_site import auth_loader
 
 
 # --- Active profile resolution -------------------------------------------
+
 
 def test_resolve_active_profile_hermes_profile_bare(monkeypatch) -> None:
     monkeypatch.setenv("HERMES_PROFILE", "ned")
@@ -64,6 +62,7 @@ def test_resolve_active_profile_defaults_to_ned(monkeypatch) -> None:
 
 # --- profile_env_path ----------------------------------------------------
 
+
 def test_profile_env_path_handles_relative() -> None:
     p = auth_loader._profile_env_path("ned")
     assert p == auth_loader.PROFILES_DIR / "ned" / ".env"
@@ -76,6 +75,7 @@ def test_profile_env_path_handles_absolute() -> None:
 
 
 # --- AuthResult ----------------------------------------------------------
+
 
 def test_auth_result_to_dict_is_serializable() -> None:
     r = auth_loader.AuthResult(
@@ -93,8 +93,12 @@ def test_auth_result_to_dict_is_serializable() -> None:
 
 
 def test_auth_result_found_property() -> None:
-    r1 = auth_loader.AuthResult(value="x", source="env", env_var="X", hint="", redaction="")
-    r2 = auth_loader.AuthResult(value=None, source="none", env_var="X", hint="", redaction="")
+    r1 = auth_loader.AuthResult(
+        value="x", source="env", env_var="X", hint="", redaction=""
+    )
+    r2 = auth_loader.AuthResult(
+        value=None, source="none", env_var="X", hint="", redaction=""
+    )
     assert r1.found is True
     assert r2.found is False
 
@@ -117,6 +121,7 @@ def test_auth_result_export_to_env(monkeypatch) -> None:
 
 # --- Redaction ------------------------------------------------------------
 
+
 def test_redact_truncates_value() -> None:
     r = auth_loader._redact("sk_live_abc123def456ghi789")
     # Should NOT include any part of the value past the prefix
@@ -130,6 +135,7 @@ def test_redact_handles_empty() -> None:
 
 # --- get_secret: explicit -------------------------------------------------
 
+
 def test_get_secret_explicit_overrides_everything(monkeypatch, tmp_path: Path) -> None:
     """An explicit value bypasses all other sources."""
     monkeypatch.setenv("STRIPE_RESTRICTED_KEY", "ignored_due_to_explicit")
@@ -140,6 +146,7 @@ def test_get_secret_explicit_overrides_everything(monkeypatch, tmp_path: Path) -
 
 
 # --- get_secret: env var path --------------------------------------------
+
 
 def test_get_secret_finds_env_var(monkeypatch) -> None:
     for k in ("STRIPE_RESTRICTED_KEY", "STRIPE_API_KEY", "STRIPE_SECRET_KEY"):
@@ -167,6 +174,7 @@ def test_get_secret_env_precedence(monkeypatch) -> None:
 
 # --- get_secret: profile-env path ----------------------------------------
 
+
 def test_get_secret_finds_profile_env(tmp_path: Path, monkeypatch) -> None:
     """A profile .env with the right key is found."""
     # Create an isolated profile env
@@ -189,6 +197,7 @@ def test_get_secret_finds_profile_env(tmp_path: Path, monkeypatch) -> None:
 
 # --- get_secret: gcloud-adc path (google_adc) ---------------------------
 
+
 def test_get_secret_finds_gcloud_adc(tmp_path: Path, monkeypatch) -> None:
     """gcloud ADC JSON is discovered under the active profile."""
     adc = {
@@ -200,9 +209,13 @@ def test_get_secret_finds_gcloud_adc(tmp_path: Path, monkeypatch) -> None:
     # Create the ADC in the fake profile's gcloud dir
     profile_dir = tmp_path / "test-profile"
     (profile_dir / "home" / ".config" / "gcloud").mkdir(parents=True)
-    (profile_dir / "home" / ".config" / "gcloud" / "application_default_credentials.json").write_text(
-        json.dumps(adc)
-    )
+    (
+        profile_dir
+        / "home"
+        / ".config"
+        / "gcloud"
+        / "application_default_credentials.json"
+    ).write_text(json.dumps(adc))
 
     monkeypatch.setattr(auth_loader, "PROFILES_DIR", tmp_path)
     monkeypatch.setattr(auth_loader, "ACTIVE_PROFILE", "test-profile")
@@ -217,6 +230,7 @@ def test_get_secret_finds_gcloud_adc(tmp_path: Path, monkeypatch) -> None:
 
 
 # --- get_secret: project-env path (shared hd-platform) ------------------
+
 
 def test_get_secret_finds_project_env(tmp_path: Path, monkeypatch) -> None:
     """A shared project .env (like <WORK_DIR>/hd-platform/.env) is found."""
@@ -237,6 +251,7 @@ def test_get_secret_finds_project_env(tmp_path: Path, monkeypatch) -> None:
 
 # --- get_secret: not found -----------------------------------------------
 
+
 def test_get_secret_returns_helpful_hint_when_missing(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -256,14 +271,13 @@ def test_get_secret_returns_helpful_hint_when_missing(
 
 # --- register_secret -----------------------------------------------------
 
+
 def test_register_secret_creates_new_file(tmp_path: Path, monkeypatch) -> None:
     """register_secret creates a new .env file if it doesn't exist."""
     monkeypatch.setattr(auth_loader, "PROFILES_DIR", tmp_path)
     monkeypatch.setattr(auth_loader, "ACTIVE_PROFILE", "new-profile")
 
-    path = auth_loader.register_secret(
-        "stripe_secret_key", value="sk_test_registered"
-    )
+    path = auth_loader.register_secret("stripe_secret_key", value="sk_test_registered")
     assert path.exists()
     content = path.read_text()
     assert "STRIPE_RESTRICTED_KEY=sk_test_registered" in content
@@ -277,13 +291,9 @@ def test_register_secret_updates_existing_keys(tmp_path: Path, monkeypatch) -> N
     profile_dir = tmp_path / "existing-profile"
     profile_dir.mkdir()
     env_path = profile_dir / ".env"
-    env_path.write_text(
-        "OTHER_KEY=other_value\nSTRIPE_RESTRICTED_KEY=old\n"
-    )
+    env_path.write_text("OTHER_KEY=other_value\nSTRIPE_RESTRICTED_KEY=old\n")
 
-    path = auth_loader.register_secret(
-        "stripe_secret_key", value="sk_test_new"
-    )
+    path = auth_loader.register_secret("stripe_secret_key", value="sk_test_new")
     content = path.read_text()
     assert "OTHER_KEY=other_value" in content
     assert "STRIPE_RESTRICTED_KEY=sk_test_new" in content
@@ -303,6 +313,7 @@ def test_register_secret_sets_file_mode_0600(tmp_path: Path, monkeypatch) -> Non
 
 # --- list_known ----------------------------------------------------------
 
+
 def test_list_known_includes_stripe() -> None:
     specs = auth_loader.list_known()
     names = {s["name"] for s in specs}
@@ -313,12 +324,13 @@ def test_list_known_includes_stripe() -> None:
     assert "cloudflare_token" in names
 
 
-
 # --- Layout B (HERMES_HOME points at a profile root) --------------------
+
 
 def test_resolve_profiles_dir_layout_a_hermes_root() -> None:
     """Layout A: HERMES_HOME = ~/.hermes → PROFILES_DIR = ~/.hermes/profiles."""
     from pathlib import Path
+
     profiles_dir, profile = auth_loader._resolve_profiles_dir(
         Path("/home/test/.hermes")
     )
@@ -330,6 +342,7 @@ def test_resolve_profiles_dir_layout_b_profile_root() -> None:
     """Layout B: HERMES_HOME = ~/.hermes/profiles/<name> →
     PROFILES_DIR = ~/.hermes/profiles (parent IS the profiles dir)."""
     from pathlib import Path
+
     profiles_dir, profile = auth_loader._resolve_profiles_dir(
         Path("/home/test/.hermes/profiles/ned")
     )
@@ -341,6 +354,7 @@ def test_resolve_profiles_dir_no_false_positive() -> None:
     """A path that contains '/profiles/' mid-string but not at the end
     must NOT be misclassified as Layout B."""
     from pathlib import Path
+
     # '/profiles/' in the middle, no profile name at end
     profiles_dir, profile = auth_loader._resolve_profiles_dir(
         Path("/srv/profiles/data")
@@ -351,10 +365,10 @@ def test_resolve_profiles_dir_no_false_positive() -> None:
 
 # --- AuthResult.__repr__ / __str__ redaction ----------------------------
 
+
 def test_auth_result_repr_does_not_leak_value(monkeypatch) -> None:
     """__repr__ and __str__ must never include the raw secret value,
     even though the dataclass field is named `value`."""
-    import dataclasses
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_supersecret_xxxxxxxxxxxxxxxxxxxxxxxxxx")
     r = auth_loader.get_secret("github_token")
     secret = "ghp_supersecret_xxxxxxxxxxxxxxxxxxxxxxxxxx"
@@ -376,6 +390,7 @@ def test_auth_result_repr_does_not_leak_value_in_dataclass_repr() -> None:
     """Make sure even direct dataclass repr (bypassing our __repr__) is
     safe to log via to_dict(), which is the canonical export path."""
     from dataclasses import asdict
+
     r = auth_loader.AuthResult(
         value="ghp_supersecret",
         source="env",
