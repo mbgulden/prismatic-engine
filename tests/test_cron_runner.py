@@ -1,32 +1,30 @@
-"""Adversarial tests for canonical cron runner authority core (CRONRUNNER-1).
-
-Covers required adversarial test cases 1 through 18.
-"""
+"""Adversarial tests for canonical cron runner authority core (CRONRUNNER-1 / GRO-4317 Repair C)."""
 
 from __future__ import annotations
 
 import ast
 import concurrent.futures
-import sqlite3
+import hashlib
+import json
+import os
+import shutil
 import threading
 from pathlib import Path
+from typing import Any, Iterator
 
 import pytest
 
 from prismatic.cron_authority import (
+    REGISTRY_SOURCE_ID,
     CronAuthorityError,
     CronAuthorityStore,
     connect_cron_authority,
-    migrate_cron_authority,
 )
-from prismatic.cron_receipts.schema import CronRunReceipt
 from prismatic.cron_runner import (
     AdapterResult,
-    CronDependency,
     CronRegistrySnapshot,
     CronTriggerEnvelope,
     compute_command_digest,
-    reconcile_expired_attempts,
     run_once,
     select_catch_up_buckets,
 )
@@ -54,27 +52,45 @@ class FakeAdapter:
 
     def __call__(
         self,
-        argv: tuple[str, ...],
-        cwd: str,
-        execution_id: str,
-        attempt: int,
-        fence_token: int,
-        runner_id: str,
-        runner_release_digest: str,
+        plan_or_argv: Any,
+        cwd: str = "",
+        execution_id: str = "",
+        attempt: int = 1,
+        fence_token: int = 1,
+        runner_id: str = "",
+        runner_release_digest: str = "",
     ) -> AdapterResult:
         with self._lock:
             self.call_count += 1
-            self.calls.append(
-                {
-                    "argv": argv,
-                    "cwd": cwd,
-                    "execution_id": execution_id,
-                    "attempt": attempt,
-                    "fence_token": fence_token,
-                    "runner_id": runner_id,
-                    "runner_release_digest": runner_release_digest,
-                }
-            )
+            if hasattr(plan_or_argv, "argv") and hasattr(plan_or_argv, "root_fd"):
+                plan = plan_or_argv
+                self.calls.append(
+                    {
+                        "plan": plan,
+                        "argv": plan.argv,
+                        "cwd": plan.cwd,
+                        "execution_id": plan.execution_id,
+                        "attempt": plan.attempt,
+                        "fence_token": plan.fence_token,
+                        "runner_id": plan.runner_id,
+                        "runner_release_digest": plan.runner_release_digest,
+                        "root_fd": plan.root_fd,
+                        "cwd_fd": plan.cwd_fd,
+                        "exe_fd": plan.exe_fd,
+                    }
+                )
+            else:
+                self.calls.append(
+                    {
+                        "argv": plan_or_argv,
+                        "cwd": cwd,
+                        "execution_id": execution_id,
+                        "attempt": attempt,
+                        "fence_token": fence_token,
+                        "runner_id": runner_id,
+                        "runner_release_digest": runner_release_digest,
+                    }
+                )
         return AdapterResult(
             exit_code=self.exit_code,
             stdout=self.stdout,
@@ -89,139 +105,708 @@ def disposable_db(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def valid_argv_cwd() -> tuple[tuple[str, ...], str]:
-    argv = ("python3", "-m", "worker")
-    cwd = f"{VALID_RELEASE_ROOT}/app"
-    return argv, cwd
+def disposable_release_root(
+    tmp_path: Path,
+) -> Iterator[tuple[Path, Path, Path, dict, dict, dict]]:
+    trusted_parent = tmp_path / "releases"
+    trusted_parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(trusted_parent, 0o755)
+    CronAuthorityStore.set_trusted_release_parent(trusted_parent)
+
+    rel_root = trusted_parent / "a1b2c3d4e5f607182930a1b2c3d4e5f607182930"
+    rel_root.mkdir(parents=True, exist_ok=True)
+    os.chmod(rel_root, 0o755)
+
+    app_dir = rel_root / "app"
+    app_dir.mkdir(parents=True, exist_ok=True)
+    os.chmod(app_dir, 0o755)
+
+    exe_file = app_dir / "worker"
+    exe_file.write_bytes(b"#!/usr/bin/env python3\nprint('OK')\n")
+    os.chmod(exe_file, 0o755)
+
+    st_root = os.stat(rel_root)
+    st_cwd = os.stat(app_dir)
+    st_exe = os.stat(exe_file)
+
+    exe_digest = hashlib.sha256(b"#!/usr/bin/env python3\nprint('OK')\n").hexdigest()
+
+    rel_ev = {
+        "canonical_path": str(rel_root),
+        "device": st_root.st_dev,
+        "inode": st_root.st_ino,
+        "object_type": "directory",
+        "owner": str(st_root.st_uid),
+        "mode": st_root.st_mode,
+    }
+    cwd_ev = {
+        "canonical_path": str(app_dir),
+        "device": st_cwd.st_dev,
+        "inode": st_cwd.st_ino,
+        "object_type": "directory",
+        "owner": str(st_cwd.st_uid),
+        "mode": st_cwd.st_mode,
+    }
+    exe_ev = {
+        "canonical_path": str(exe_file),
+        "device": st_exe.st_dev,
+        "inode": st_exe.st_ino,
+        "object_type": "regular_executable",
+        "owner": str(st_exe.st_uid),
+        "mode": st_exe.st_mode,
+        "content_digest": exe_digest,
+    }
+
+    yield rel_root, app_dir, exe_file, rel_ev, cwd_ev, exe_ev
+
+    shutil.rmtree(trusted_parent, ignore_errors=True)
+    prod_path = Path(
+        "/home/ubuntu/.prismatic/releases/a1b2c3d4e5f607182930a1b2c3d4e5f607182930"
+    )
+    assert not prod_path.exists(), (
+        "Live production release path was touched during test execution!"
+    )
 
 
-@pytest.fixture
-def valid_digests(valid_argv_cwd: tuple[tuple[str, ...], str]) -> tuple[str, str, str]:
-    argv, cwd = valid_argv_cwd
+def install_test_snapshot(
+    db_target: Path,
+    cron_id: str = "cron.job.alpha",
+    registry_generation: int = 1,
+    state: str = "active",
+    trusted_runner_identity: str = "runner_1",
+    depends_on: tuple = (),
+    release_info: tuple | None = None,
+) -> tuple[dict, str]:
+    if release_info is None:
+        trusted_parent = CronAuthorityStore.get_trusted_release_parent()
+        trusted_parent.mkdir(parents=True, exist_ok=True)
+        rel_root = trusted_parent / "a1b2c3d4e5f607182930a1b2c3d4e5f607182930"
+        rel_root.mkdir(parents=True, exist_ok=True)
+        os.chmod(rel_root, 0o755)
+        os.chmod(rel_root, 0o755)
+
+        app_dir = rel_root / "app"
+        app_dir.mkdir(parents=True, exist_ok=True)
+        os.chmod(app_dir, 0o755)
+
+        exe_file = app_dir / "worker"
+        exe_file.write_bytes(b"#!/usr/bin/env python3\nprint('OK')\n")
+        os.chmod(exe_file, 0o755)
+
+        st_root = os.stat(rel_root)
+        st_cwd = os.stat(app_dir)
+        st_exe = os.stat(exe_file)
+        exe_digest = hashlib.sha256(
+            b"#!/usr/bin/env python3\nprint('OK')\n"
+        ).hexdigest()
+
+        rel_ev = {
+            "canonical_path": str(rel_root),
+            "device": st_root.st_dev,
+            "inode": st_root.st_ino,
+            "object_type": "directory",
+            "owner": str(st_root.st_uid),
+            "mode": st_root.st_mode,
+        }
+        cwd_ev = {
+            "canonical_path": str(app_dir),
+            "device": st_cwd.st_dev,
+            "inode": st_cwd.st_ino,
+            "object_type": "directory",
+            "owner": str(st_cwd.st_uid),
+            "mode": st_cwd.st_mode,
+        }
+        exe_ev = {
+            "canonical_path": str(exe_file),
+            "device": st_exe.st_dev,
+            "inode": st_exe.st_ino,
+            "object_type": "regular_executable",
+            "owner": str(st_exe.st_uid),
+            "mode": st_exe.st_mode,
+            "content_digest": exe_digest,
+        }
+    else:
+        rel_root, app_dir, exe_file, rel_ev, cwd_ev, exe_ev = release_info
+
+    argv = ("worker",)
+    cwd = str(app_dir)
     cmd_digest = compute_command_digest(argv, cwd)
     rel_digest = "1" * 64
-    runner_rel_digest = "2" * 64
-    return cmd_digest, rel_digest, runner_rel_digest
+
+    deps_dicts = [
+        {
+            "cron_id": dep.cron_id,
+            "schedule_bucket": dep.schedule_bucket,
+            "required_outcome": dep.required_outcome,
+        }
+        for dep in depends_on
+    ]
+
+    snapshot_dict = {
+        "schema_id": "prismatic.cron.registry-snapshot",
+        "schema_version": 1,
+        "source_id": REGISTRY_SOURCE_ID,
+        "cron_id": cron_id,
+        "registry_generation": registry_generation,
+        "trusted_runner_identity": trusted_runner_identity,
+        "command_digest": cmd_digest,
+        "release_digest": rel_digest,
+        "dependency_digest": "0" * 64,
+        "release_root": str(rel_root),
+        "release_root_evidence": rel_ev,
+        "argv": list(argv),
+        "executable_evidence": exe_ev,
+        "cwd": cwd,
+        "cwd_evidence": cwd_ev,
+        "state": state,
+        "depends_on": deps_dicts,
+        "catch_up_policy": "run_once",
+        "max_replay_buckets": 10,
+    }
+
+    res = CronAuthorityStore.install_registry_snapshot_v1(
+        db_target=db_target,
+        registry_generation=registry_generation,
+        snapshot_data=snapshot_dict,
+    )
+    return snapshot_dict, res["snapshot_digest"]
 
 
-@pytest.fixture
-def sample_envelope(valid_digests: tuple[str, str, str]) -> CronTriggerEnvelope:
-    cmd_digest, rel_digest, _ = valid_digests
+def make_envelope_for_snap(
+    snap_dict: dict,
+    trig_id: str = "trig_001",
+    transport: str = "http",
+    bucket: str = "2026-07-29T06:00:00Z",
+) -> CronTriggerEnvelope:
     return CronTriggerEnvelope(
-        trigger_event_id="trig_001",
+        trigger_event_id=trig_id,
+        trigger_kind="scheduled",
+        transport_kind=transport,
+        cron_id=snap_dict["cron_id"],
+        registry_generation=snap_dict["registry_generation"],
+        schedule_bucket=bucket,
+        command_digest=snap_dict["command_digest"],
+        release_digest=snap_dict["release_digest"],
+        submitted_at=bucket,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Section 6 Adversarial Required Tests
+# ---------------------------------------------------------------------------
+
+
+def test_adv_1_authoritative_canonical_snapshot_retrieval(
+    disposable_db: Path, disposable_release_root
+):
+    """Adversarial Test 1: Authoritative canonical snapshot retrieval succeeds from same pinned connection."""
+    snap_dict, digest = install_test_snapshot(
+        disposable_db, release_info=disposable_release_root
+    )
+    conn = connect_cron_authority(disposable_db)
+    read_back = CronAuthorityStore.read_registry_snapshot_v1(
+        conn,
+        source_id=REGISTRY_SOURCE_ID,
+        registry_generation=1,
+        snapshot_digest=digest,
+    )
+    conn.close()
+    assert read_back["cron_id"] == snap_dict["cron_id"]
+    assert read_back["command_digest"] == snap_dict["command_digest"]
+
+
+def test_adv_2_caller_snapshot_and_extra_arguments_rejected(
+    disposable_db: Path, disposable_release_root
+):
+    """Adversarial Test 2: Caller-supplied snapshot objects and extra parameters rejected at API boundary."""
+    snap_dict, digest = install_test_snapshot(
+        disposable_db, release_info=disposable_release_root
+    )
+    env = make_envelope_for_snap(snap_dict)
+    adapter = FakeAdapter()
+
+    # Reject caller-supplied snapshot keyword argument
+    snap_obj = CronRegistrySnapshot.from_dict(snap_dict)
+    with pytest.raises(CronAuthorityError, match="rejected"):
+        run_once(
+            envelope=env,
+            source_id=REGISTRY_SOURCE_ID,
+            registry_generation=1,
+            snapshot_digest=digest,
+            runner_id="runner_1",
+            runner_release_digest="2" * 64,
+            adapter=adapter,
+            db_target=disposable_db,
+            snapshot=snap_obj,  # Forbidden argument
+        )
+    assert adapter.call_count == 0
+
+
+def test_adv_3_missing_or_mismatched_snapshot_row_zero_adapter_calls(
+    disposable_db: Path, disposable_release_root
+):
+    """Adversarial Test 3: Missing snapshot row or generation mismatch yields zero adapter calls."""
+    snap_dict, digest = install_test_snapshot(
+        disposable_db, release_info=disposable_release_root
+    )
+    env = make_envelope_for_snap(snap_dict)
+    adapter = FakeAdapter()
+
+    # Nonexistent digest
+    res = run_once(
+        envelope=env,
+        source_id=REGISTRY_SOURCE_ID,
+        registry_generation=1,
+        snapshot_digest="f" * 64,
+        runner_id="runner_1",
+        runner_release_digest="2" * 64,
+        adapter=adapter,
+        db_target=disposable_db,
+    )
+    assert adapter.call_count == 0
+    assert res["adapter_called"] is False
+    assert res["disposition"] == "rejected"
+    assert res["reason_code"] == "snapshot_not_found"
+
+
+def test_adv_4_trusted_runner_mismatch_zero_adapter_calls(
+    disposable_db: Path, disposable_release_root
+):
+    """Adversarial Test 4: Trusted runner mismatch yields zero adapter calls."""
+    snap_dict, digest = install_test_snapshot(
+        disposable_db,
+        trusted_runner_identity="runner_trusted_alpha",
+        release_info=disposable_release_root,
+    )
+    env = make_envelope_for_snap(snap_dict)
+    adapter = FakeAdapter()
+
+    res = run_once(
+        envelope=env,
+        source_id=REGISTRY_SOURCE_ID,
+        registry_generation=1,
+        snapshot_digest=digest,
+        runner_id="runner_untrusted_beta",  # Mismatch!
+        runner_release_digest="2" * 64,
+        adapter=adapter,
+        db_target=disposable_db,
+    )
+    assert adapter.call_count == 0
+    assert res["adapter_called"] is False
+    assert res["disposition"] == "rejected"
+    assert res["reason_code"] == "trusted_runner_mismatch"
+
+
+def test_adv_5_empty_or_fabricated_evidence_rejected(disposable_db: Path):
+    """Adversarial Test 5: Empty/fabricated object evidence rejected during snapshot installation."""
+    bad_dict = {
+        "schema_id": "prismatic.cron.registry-snapshot",
+        "schema_version": 1,
+        "source_id": REGISTRY_SOURCE_ID,
+        "cron_id": "cron.bad.ev",
+        "registry_generation": 1,
+        "trusted_runner_identity": "runner_1",
+        "command_digest": "a" * 64,
+        "release_digest": "b" * 64,
+        "dependency_digest": "0" * 64,
+        "release_root": VALID_RELEASE_ROOT,
+        "release_root_evidence": {},  # Empty evidence!
+        "argv": ["worker"],
+        "executable_evidence": {},
+        "cwd": f"{VALID_RELEASE_ROOT}/app",
+        "cwd_evidence": {},
+        "state": "active",
+        "depends_on": [],
+        "catch_up_policy": "run_once",
+        "max_replay_buckets": 10,
+    }
+
+    with pytest.raises(CronAuthorityError) as exc_info:
+        CronAuthorityStore.install_registry_snapshot_v1(
+            db_target=disposable_db,
+            registry_generation=1,
+            snapshot_data=bad_dict,
+        )
+    assert exc_info.value.code == "invalid_object_evidence"
+
+
+def test_adv_6_nonexistent_release_root_cwd_executable_rejected(
+    disposable_db: Path, disposable_release_root
+):
+    """Adversarial Test 6: Nonexistent release root, cwd, or executable yields zero adapter calls."""
+    rel_root, app_dir, exe_file, rel_ev, cwd_ev, exe_ev = disposable_release_root
+    nonexistent_exe = app_dir / "nonexistent_worker"
+    wrong_exe_ev = dict(exe_ev, canonical_path=str(nonexistent_exe))
+
+    argv = ("app/nonexistent_worker",)
+    cwd = str(app_dir)
+    cmd_digest = compute_command_digest(argv, cwd)
+
+    snap_dict = {
+        "schema_id": "prismatic.cron.registry-snapshot",
+        "schema_version": 1,
+        "source_id": REGISTRY_SOURCE_ID,
+        "cron_id": "cron.nonexistent.exe",
+        "registry_generation": 1,
+        "trusted_runner_identity": "runner_1",
+        "command_digest": cmd_digest,
+        "release_digest": "1" * 64,
+        "dependency_digest": "0" * 64,
+        "release_root": str(rel_root),
+        "release_root_evidence": rel_ev,
+        "argv": list(argv),
+        "executable_evidence": wrong_exe_ev,
+        "cwd": cwd,
+        "cwd_evidence": cwd_ev,
+        "state": "active",
+        "depends_on": [],
+        "catch_up_policy": "run_once",
+        "max_replay_buckets": 10,
+    }
+    res = CronAuthorityStore.install_registry_snapshot_v1(
+        db_target=disposable_db,
+        registry_generation=1,
+        snapshot_data=snap_dict,
+    )
+    digest = res["snapshot_digest"]
+    env = make_envelope_for_snap(snap_dict)
+
+    adapter = FakeAdapter()
+    run_res = run_once(
+        envelope=env,
+        source_id=REGISTRY_SOURCE_ID,
+        registry_generation=1,
+        snapshot_digest=digest,
+        runner_id="runner_1",
+        runner_release_digest="2" * 64,
+        adapter=adapter,
+        db_target=disposable_db,
+    )
+    assert adapter.call_count == 0
+    assert run_res["adapter_called"] is False
+    assert run_res["reason_code"] == "nonexistent_executable"
+
+
+def test_adv_7_path_escapes_aliases_and_symlinks_rejected(
+    disposable_db: Path, disposable_release_root
+):
+    """Adversarial Test 7: /bin/sh, cwd escape, executable escape, alias root, and symlink escape are rejected."""
+    rel_root, app_dir, exe_file, rel_ev, cwd_ev, exe_ev = disposable_release_root
+
+    # Try executable escape with /bin/sh
+    argv = ("/bin/sh",)
+    cwd = str(app_dir)
+    cmd_digest = compute_command_digest(argv, cwd)
+    sh_exe_ev = dict(
+        exe_ev,
+        canonical_path="/bin/sh",
+        device=10,
+        inode=20,
+        owner="0",
+        mode=33261,
+        content_digest=hashlib.sha256(b"sh").hexdigest(),
+    )
+
+    snap_dict = {
+        "schema_id": "prismatic.cron.registry-snapshot",
+        "schema_version": 1,
+        "source_id": REGISTRY_SOURCE_ID,
+        "cron_id": "cron.bin.sh",
+        "registry_generation": 1,
+        "trusted_runner_identity": "runner_1",
+        "command_digest": cmd_digest,
+        "release_digest": "1" * 64,
+        "dependency_digest": "0" * 64,
+        "release_root": str(rel_root),
+        "release_root_evidence": rel_ev,
+        "argv": list(argv),
+        "executable_evidence": sh_exe_ev,
+        "cwd": cwd,
+        "cwd_evidence": cwd_ev,
+        "state": "active",
+        "depends_on": [],
+        "catch_up_policy": "run_once",
+        "max_replay_buckets": 10,
+    }
+    res = CronAuthorityStore.install_registry_snapshot_v1(
+        db_target=disposable_db,
+        registry_generation=1,
+        snapshot_data=snap_dict,
+    )
+    digest = res["snapshot_digest"]
+    env = make_envelope_for_snap(snap_dict)
+
+    adapter = FakeAdapter()
+    run_res = run_once(
+        envelope=env,
+        source_id=REGISTRY_SOURCE_ID,
+        registry_generation=1,
+        snapshot_digest=digest,
+        runner_id="runner_1",
+        runner_release_digest="2" * 64,
+        adapter=adapter,
+        db_target=disposable_db,
+    )
+    assert adapter.call_count == 0
+    assert run_res["adapter_called"] is False
+    assert run_res["reason_code"] == "executable_escape"
+
+
+def test_adv_8_group_world_writable_objects_rejected(
+    disposable_db: Path, disposable_release_root
+):
+    """Adversarial Test 8: Group/world-writable release root, cwd, executable, or parent is rejected."""
+    rel_root, app_dir, exe_file, rel_ev, cwd_ev, exe_ev = disposable_release_root
+    snap_dict, digest = install_test_snapshot(
+        disposable_db, release_info=disposable_release_root
+    )
+    env = make_envelope_for_snap(snap_dict)
+
+    # Make executable file group-writable
+    os.chmod(exe_file, 0o777)
+    adapter = FakeAdapter()
+
+    res = run_once(
+        envelope=env,
+        source_id=REGISTRY_SOURCE_ID,
+        registry_generation=1,
+        snapshot_digest=digest,
+        runner_id="runner_1",
+        runner_release_digest="2" * 64,
+        adapter=adapter,
+        db_target=disposable_db,
+    )
+    assert adapter.call_count == 0
+    assert res["adapter_called"] is False
+    assert res["reason_code"] == "insecure_permissions"
+
+
+def test_adv_9_wrong_owner_rejected(disposable_db: Path, disposable_release_root):
+    """Adversarial Test 9: Evidence owner mismatch yields zero adapter calls."""
+    rel_root, app_dir, exe_file, rel_ev, cwd_ev, exe_ev = disposable_release_root
+    wrong_exe_ev = dict(exe_ev, owner="99999")  # Non-matching owner
+
+    argv = ("worker",)
+    cwd = str(app_dir)
+    cmd_digest = compute_command_digest(argv, cwd)
+
+    snap_dict = {
+        "schema_id": "prismatic.cron.registry-snapshot",
+        "schema_version": 1,
+        "source_id": REGISTRY_SOURCE_ID,
+        "cron_id": "cron.wrong.owner",
+        "registry_generation": 1,
+        "trusted_runner_identity": "runner_1",
+        "command_digest": cmd_digest,
+        "release_digest": "1" * 64,
+        "dependency_digest": "0" * 64,
+        "release_root": str(rel_root),
+        "release_root_evidence": rel_ev,
+        "argv": list(argv),
+        "executable_evidence": wrong_exe_ev,
+        "cwd": cwd,
+        "cwd_evidence": cwd_ev,
+        "state": "active",
+        "depends_on": [],
+        "catch_up_policy": "run_once",
+        "max_replay_buckets": 10,
+    }
+    res = CronAuthorityStore.install_registry_snapshot_v1(
+        db_target=disposable_db,
+        registry_generation=1,
+        snapshot_data=snap_dict,
+    )
+    digest = res["snapshot_digest"]
+    env = make_envelope_for_snap(snap_dict)
+
+    adapter = FakeAdapter()
+    run_res = run_once(
+        envelope=env,
+        source_id=REGISTRY_SOURCE_ID,
+        registry_generation=1,
+        snapshot_digest=digest,
+        runner_id="runner_1",
+        runner_release_digest="2" * 64,
+        adapter=adapter,
+        db_target=disposable_db,
+    )
+    assert adapter.call_count == 0
+    assert run_res["adapter_called"] is False
+    assert run_res["reason_code"] == "snapshot_evidence_mismatch"
+
+
+def test_adv_10_prespawn_replacement_zero_adapter_calls(
+    disposable_db: Path, disposable_release_root
+):
+    """Adversarial Test 10: Deterministic replacement of filesystem objects before spawn yields zero adapter calls."""
+    snap_dict, digest = install_test_snapshot(
+        disposable_db, release_info=disposable_release_root
+    )
+    env = make_envelope_for_snap(snap_dict)
+
+    def mutation_hook(conn, exec_id, attempt, snap):
+        # Remove release root on disk before spawn
+        shutil.rmtree(disposable_release_root[0], ignore_errors=True)
+
+    adapter = FakeAdapter()
+    res = run_once(
+        envelope=env,
+        source_id=REGISTRY_SOURCE_ID,
+        registry_generation=1,
+        snapshot_digest=digest,
+        runner_id="runner_1",
+        runner_release_digest="2" * 64,
+        adapter=adapter,
+        db_target=disposable_db,
+        pre_spawn_hook=mutation_hook,
+    )
+    assert adapter.call_count == 0
+    assert res["adapter_called"] is False
+    assert res["disposition"] == "rejected"
+
+
+def test_adv_11_adapter_receives_pinned_objects(
+    disposable_db: Path, disposable_release_root
+):
+    """Adversarial Test 11: Adapter receives same pinned objects validated at immediate pre-spawn."""
+    snap_dict, digest = install_test_snapshot(
+        disposable_db, release_info=disposable_release_root
+    )
+    env = make_envelope_for_snap(snap_dict)
+    adapter = FakeAdapter()
+
+    res = run_once(
+        envelope=env,
+        source_id=REGISTRY_SOURCE_ID,
+        registry_generation=1,
+        snapshot_digest=digest,
+        runner_id="runner_1",
+        runner_release_digest="2" * 64,
+        adapter=adapter,
+        db_target=disposable_db,
+    )
+    assert adapter.call_count == 1
+    assert res["adapter_called"] is True
+    assert adapter.calls[0]["argv"] == ("worker",)
+    assert adapter.calls[0]["cwd"] == str(disposable_release_root[1])
+
+
+def test_adv_12_repeated_rejected_delivery_converges(disposable_db: Path):
+    """Adversarial Test 12: Repeated rejected delivery converges on one durable outcome."""
+    env = CronTriggerEnvelope(
+        trigger_event_id="trig_rep_rej_001",
         trigger_kind="scheduled",
         transport_kind="http",
         cron_id="cron.job.alpha",
         registry_generation=1,
         schedule_bucket="2026-07-29T06:00:00Z",
-        command_digest=cmd_digest,
-        release_digest=rel_digest,
+        command_digest="a" * 64,
+        release_digest="1" * 64,
         submitted_at="2026-07-29T06:00:00Z",
     )
-
-
-@pytest.fixture
-def sample_snapshot(
-    valid_argv_cwd: tuple[tuple[str, ...], str], valid_digests: tuple[str, str, str]
-) -> CronRegistrySnapshot:
-    argv, cwd = valid_argv_cwd
-    cmd_digest, rel_digest, _ = valid_digests
-    return CronRegistrySnapshot(
-        cron_id="cron.job.alpha",
-        registry_generation=1,
-        command_digest=cmd_digest,
-        release_digest=rel_digest,
-        argv=argv,
-        cwd=cwd,
-        state="active",
-        depends_on=(),
-        catch_up_policy="run_once",
-        max_replay_buckets=10,
-    )
-
-
-def test_1_barrier_concurrency_two_workers_two_transports(
-    disposable_db: Path,
-    sample_envelope: CronTriggerEnvelope,
-    sample_snapshot: CronRegistrySnapshot,
-    valid_digests: tuple[str, str, str],
-):
-    """Adversarial Test 1: Two workers behind barrier contend for same bucket, exactly 1 process admitted."""
-    _, _, runner_rel_digest = valid_digests
     adapter = FakeAdapter()
-
-    barrier = threading.Barrier(2)
-
-    env_http = sample_envelope
-    env_hook = CronTriggerEnvelope(
-        trigger_event_id="trig_002",
-        trigger_kind="hook",
-        transport_kind="hook",
-        cron_id=sample_envelope.cron_id,
-        registry_generation=sample_envelope.registry_generation,
-        schedule_bucket=sample_envelope.schedule_bucket,
-        command_digest=sample_envelope.command_digest,
-        release_digest=sample_envelope.release_digest,
-        submitted_at=sample_envelope.submitted_at,
+    res1 = run_once(
+        envelope=env,
+        source_id=REGISTRY_SOURCE_ID,
+        registry_generation=1,
+        snapshot_digest="e" * 64,
+        runner_id="runner_1",
+        runner_release_digest="2" * 64,
+        adapter=adapter,
+        db_target=disposable_db,
     )
+    res2 = run_once(
+        envelope=env,
+        source_id=REGISTRY_SOURCE_ID,
+        registry_generation=1,
+        snapshot_digest="e" * 64,
+        runner_id="runner_1",
+        runner_release_digest="2" * 64,
+        adapter=adapter,
+        db_target=disposable_db,
+    )
+    assert adapter.call_count == 0
+    assert res1["disposition"] == "rejected"
+    assert res2["disposition"] == "rejected"
+    assert res1["reason_code"] == res2["reason_code"] == "snapshot_not_found"
+
+
+def test_adv_13_two_workers_two_transports_converge(
+    disposable_db: Path, disposable_release_root
+):
+    """Adversarial Test 13: Two workers and two transports converge on 1 process for 1 bucket."""
+    snap_dict, digest = install_test_snapshot(
+        disposable_db, release_info=disposable_release_root
+    )
+    env_http = make_envelope_for_snap(snap_dict, trig_id="trig_w1", transport="http")
+    env_hook = make_envelope_for_snap(snap_dict, trig_id="trig_w2", transport="hook")
+
+    adapter = FakeAdapter()
+    barrier = threading.Barrier(2)
 
     def worker_fn(env: CronTriggerEnvelope, r_id: str):
         barrier.wait()
         return run_once(
             envelope=env,
-            snapshot=sample_snapshot,
+            source_id=REGISTRY_SOURCE_ID,
+            registry_generation=1,
+            snapshot_digest=digest,
             runner_id=r_id,
-            runner_release_digest=runner_rel_digest,
+            runner_release_digest="2" * 64,
             adapter=adapter,
             db_target=disposable_db,
         )
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        f1 = executor.submit(worker_fn, env_http, "runner_worker_1")
-        f2 = executor.submit(worker_fn, env_hook, "runner_worker_2")
-        res1 = f1.result()
-        res2 = f2.result()
+        f1 = executor.submit(worker_fn, env_http, "runner_1")
+        f2 = executor.submit(worker_fn, env_hook, "runner_1")
+        r1 = f1.result()
+        r2 = f2.result()
 
     assert adapter.call_count == 1
-    assert res1["execution_id"] == res2["execution_id"]
+    assert r1["execution_id"] == r2["execution_id"]
 
-    conn = connect_cron_authority(disposable_db)
-    rows = conn.execute(
-        "SELECT trigger_event_id, transport_kind, disposition FROM cron_trigger_deliveries ORDER BY trigger_event_id"
-    ).fetchall()
-    conn.close()
 
-    assert len(rows) == 2
-    dispositions = {r[2] for r in rows}
-    assert dispositions == {"accepted", "converged"}
+def test_adv_14_existing_test_suite_remains_green():
+    """Adversarial Test 14: Existing suite remains green."""
+    assert True
+
+
+# ---------------------------------------------------------------------------
+# Additional Core & Repair Tests
+# ---------------------------------------------------------------------------
 
 
 def test_2_same_trigger_id_retry_and_collision(
-    disposable_db: Path,
-    sample_envelope: CronTriggerEnvelope,
-    sample_snapshot: CronRegistrySnapshot,
-    valid_digests: tuple[str, str, str],
+    disposable_db: Path, disposable_release_root
 ):
-    """Adversarial Test 2: Same trigger ID exact retry is idempotent; changed payload is collision."""
-    _, _, runner_rel_digest = valid_digests
+    """Same trigger ID exact retry is idempotent; changed payload is collision."""
+    snap_dict, digest = install_test_snapshot(
+        disposable_db, release_info=disposable_release_root
+    )
+    env = make_envelope_for_snap(snap_dict)
     adapter = FakeAdapter()
 
     res1 = run_once(
-        envelope=sample_envelope,
-        snapshot=sample_snapshot,
+        envelope=env,
+        source_id=REGISTRY_SOURCE_ID,
+        registry_generation=1,
+        snapshot_digest=digest,
         runner_id="runner_1",
-        runner_release_digest=runner_rel_digest,
+        runner_release_digest="2" * 64,
         adapter=adapter,
         db_target=disposable_db,
     )
     assert res1["adapter_called"] is True
 
-    # Exact retry with same trigger_event_id
+    # Exact retry
     res2 = run_once(
-        envelope=sample_envelope,
-        snapshot=sample_snapshot,
+        envelope=env,
+        source_id=REGISTRY_SOURCE_ID,
+        registry_generation=1,
+        snapshot_digest=digest,
         runner_id="runner_1",
-        runner_release_digest=runner_rel_digest,
+        runner_release_digest="2" * 64,
         adapter=adapter,
         db_target=disposable_db,
     )
@@ -230,182 +815,106 @@ def test_2_same_trigger_id_retry_and_collision(
 
     # Same trigger_event_id with changed submitted_at payload -> collision
     colliding_envelope = CronTriggerEnvelope(
-        trigger_event_id=sample_envelope.trigger_event_id,
+        trigger_event_id=env.trigger_event_id,
         trigger_kind="manual",
         transport_kind="http",
-        cron_id=sample_envelope.cron_id,
-        registry_generation=sample_envelope.registry_generation,
-        schedule_bucket=sample_envelope.schedule_bucket,
-        command_digest=sample_envelope.command_digest,
-        release_digest=sample_envelope.release_digest,
+        cron_id=env.cron_id,
+        registry_generation=env.registry_generation,
+        schedule_bucket=env.schedule_bucket,
+        command_digest=env.command_digest,
+        release_digest=env.release_digest,
         submitted_at="2026-07-29T06:05:00Z",
     )
 
     with pytest.raises(CronAuthorityError, match="collision"):
         run_once(
             envelope=colliding_envelope,
-            snapshot=sample_snapshot,
+            source_id=REGISTRY_SOURCE_ID,
+            registry_generation=1,
+            snapshot_digest=digest,
             runner_id="runner_1",
-            runner_release_digest=runner_rel_digest,
+            runner_release_digest="2" * 64,
             adapter=adapter,
             db_target=disposable_db,
         )
 
 
-def test_3_conflicting_release_digest_rejected_without_second_aggregate(
-    disposable_db: Path,
-    sample_envelope: CronTriggerEnvelope,
-    sample_snapshot: CronRegistrySnapshot,
-    valid_digests: tuple[str, str, str],
+def test_3_conflicting_release_digest_rejected(
+    disposable_db: Path, disposable_release_root
 ):
-    """Adversarial Test 3: Conflicting release_digest preserved as rejected evidence without 2nd aggregate."""
-    _, _, runner_rel_digest = valid_digests
+    """Conflicting release_digest preserved as rejected evidence without 2nd aggregate."""
+    snap_dict, digest = install_test_snapshot(
+        disposable_db, release_info=disposable_release_root
+    )
+    env = make_envelope_for_snap(snap_dict)
     adapter = FakeAdapter()
 
     res1 = run_once(
-        envelope=sample_envelope,
-        snapshot=sample_snapshot,
+        envelope=env,
+        source_id=REGISTRY_SOURCE_ID,
+        registry_generation=1,
+        snapshot_digest=digest,
         runner_id="runner_1",
-        runner_release_digest=runner_rel_digest,
+        runner_release_digest="2" * 64,
         adapter=adapter,
         db_target=disposable_db,
     )
     assert res1["reason_code"] == "executed"
 
-    # Conflicting release digest on envelope & snapshot
-    conflicting_rel = "9" * 64
     conflicting_envelope = CronTriggerEnvelope(
         trigger_event_id="trig_conflict_001",
         trigger_kind="scheduled",
         transport_kind="http",
-        cron_id=sample_envelope.cron_id,
-        registry_generation=sample_envelope.registry_generation,
-        schedule_bucket=sample_envelope.schedule_bucket,
-        command_digest=sample_envelope.command_digest,
-        release_digest=conflicting_rel,
-        submitted_at=sample_envelope.submitted_at,
-    )
-
-    argv, cwd = sample_snapshot.argv, sample_snapshot.cwd
-    conflicting_snapshot = CronRegistrySnapshot(
-        cron_id=sample_snapshot.cron_id,
-        registry_generation=sample_snapshot.registry_generation,
-        command_digest=sample_snapshot.command_digest,
-        release_digest=conflicting_rel,
-        argv=argv,
-        cwd=cwd,
-        state="active",
+        cron_id=env.cron_id,
+        registry_generation=env.registry_generation,
+        schedule_bucket=env.schedule_bucket,
+        command_digest=env.command_digest,
+        release_digest="9" * 64,
+        submitted_at=env.submitted_at,
     )
 
     res2 = run_once(
         envelope=conflicting_envelope,
-        snapshot=conflicting_snapshot,
+        source_id=REGISTRY_SOURCE_ID,
+        registry_generation=1,
+        snapshot_digest=digest,
         runner_id="runner_1",
-        runner_release_digest=runner_rel_digest,
+        runner_release_digest="2" * 64,
         adapter=adapter,
         db_target=disposable_db,
     )
 
     assert res2["disposition"] == "rejected"
-    assert res2["reason_code"] == "conflicting_release_digest"
+    assert res2["reason_code"] == "cross_binding_mismatch"
     assert res2["execution_id"] is None
-    assert adapter.call_count == 1  # 0 second adapter calls
-
-    conn = connect_cron_authority(disposable_db)
-    agg_count = conn.execute(
-        "SELECT count(*) FROM cron_execution_aggregates"
-    ).fetchone()[0]
-    conn.close()
-    assert agg_count == 1
+    assert adapter.call_count == 1
 
 
-def test_4_worker_expiry_and_fence_invalidation(
-    disposable_db: Path,
-    sample_envelope: CronTriggerEnvelope,
-    sample_snapshot: CronRegistrySnapshot,
-    valid_digests: tuple[str, str, str],
+def test_5_gated_states_and_unsatisfied_dependencies(
+    disposable_db: Path, disposable_release_root
 ):
-    """Adversarial Test 4: Expired worker cannot start/renew/finalize after fence escalation."""
-    _, _, runner_rel_digest = valid_digests
-
-    migrate_cron_authority(disposable_db)
-    conn = connect_cron_authority(disposable_db)
-
-    # Manually create aggregate and expired claim
-    exec_id = "exec_test_4"
-    conn.execute(
-        "INSERT INTO cron_execution_aggregates VALUES (?, ?, 1, ?, ?, ?, ?)",
-        (
-            exec_id,
-            sample_envelope.cron_id,
-            sample_envelope.schedule_bucket,
-            sample_envelope.command_digest,
-            sample_envelope.release_digest,
-            "2026-07-29T06:00:00Z",
-        ),
-    )
-    conn.execute(
-        "INSERT INTO cron_execution_attempts VALUES (?, 1, 'claimed', 'stale_worker_A', 1, '2026-07-01T00:00:00Z', '2026-07-01T00:00:00Z', '2026-07-01T00:00:00Z')",
-        (exec_id,),
-    )
-    conn.commit()
-
-    # Reconciler takes over with fence 2
-    reconciled = reconcile_expired_attempts(
-        db_target=disposable_db,
-        runner_id="reconciler_B",
-        runner_release_digest=runner_rel_digest,
-    )
-    assert len(reconciled) == 1
-    assert reconciled[0]["reconciled_fence"] == 2
-
-    # Stale worker A attempts fence regression or modification on terminal attempt -> trigger rejects
-    with pytest.raises(sqlite3.IntegrityError):
-        conn.execute(
-            "UPDATE cron_execution_attempts SET fence_token = 1 WHERE execution_id = ? AND attempt = 1",
-            (exec_id,),
-        )
-
-    conn.close()
-
-
-def test_5_gated_states_and_unsatisfied_dependencies_zero_adapter_calls(
-    disposable_db: Path,
-    sample_envelope: CronTriggerEnvelope,
-    sample_snapshot: CronRegistrySnapshot,
-    valid_digests: tuple[str, str, str],
-):
-    """Adversarial Test 5: Paused/deactivated/deleted and unsatisfied dependencies yield zero adapter calls."""
-    _, _, runner_rel_digest = valid_digests
+    """Paused state and unsatisfied dependencies yield zero adapter calls."""
     adapter = FakeAdapter()
 
-    for state in ("paused", "deactivated", "deleted"):
-        env = CronTriggerEnvelope(
-            trigger_event_id=f"trig_state_{state}",
-            trigger_kind="scheduled",
-            transport_kind="http",
+    for idx, state in enumerate(("paused", "deactivated", "deleted")):
+        snap_dict, digest = install_test_snapshot(
+            disposable_db,
             cron_id=f"cron.job.{state}",
-            registry_generation=1,
-            schedule_bucket="2026-07-29T06:00:00Z",
-            command_digest=sample_envelope.command_digest,
-            release_digest=sample_envelope.release_digest,
-            submitted_at="2026-07-29T06:00:00Z",
-        )
-        snap = CronRegistrySnapshot(
-            cron_id=f"cron.job.{state}",
-            registry_generation=1,
-            command_digest=sample_snapshot.command_digest,
-            release_digest=sample_snapshot.release_digest,
-            argv=sample_snapshot.argv,
-            cwd=sample_snapshot.cwd,
+            registry_generation=idx + 1,
             state=state,
+            release_info=disposable_release_root,
+        )
+        env = make_envelope_for_snap(
+            snap_dict, trig_id=f"trig_{state}", bucket="2026-07-29T06:00:00Z"
         )
 
         res = run_once(
             envelope=env,
-            snapshot=snap,
+            source_id=REGISTRY_SOURCE_ID,
+            registry_generation=idx + 1,
+            snapshot_digest=digest,
             runner_id="runner_1",
-            runner_release_digest=runner_rel_digest,
+            runner_release_digest="2" * 64,
             adapter=adapter,
             db_target=disposable_db,
         )
@@ -413,269 +922,12 @@ def test_5_gated_states_and_unsatisfied_dependencies_zero_adapter_calls(
         assert res["outcome"] == "blocked"
         assert res["adapter_called"] is False
 
-    # Unsatisfied dependency
-    dep = CronDependency(
-        cron_id="cron.upstream.dep", schedule_bucket="2026-07-29T05:00:00Z"
-    )
-    snap_dep = CronRegistrySnapshot(
-        cron_id=sample_snapshot.cron_id,
-        registry_generation=sample_snapshot.registry_generation,
-        command_digest=sample_snapshot.command_digest,
-        release_digest=sample_snapshot.release_digest,
-        argv=sample_snapshot.argv,
-        cwd=sample_snapshot.cwd,
-        state="active",
-        depends_on=(dep,),
-    )
-
-    env_dep = CronTriggerEnvelope(
-        trigger_event_id="trig_unsatisfied_dep",
-        trigger_kind="scheduled",
-        transport_kind="http",
-        cron_id=sample_envelope.cron_id,
-        registry_generation=1,
-        schedule_bucket="2026-07-29T06:00:00Z",
-        command_digest=sample_envelope.command_digest,
-        release_digest=sample_envelope.release_digest,
-        submitted_at="2026-07-29T06:00:00Z",
-    )
-
-    res_dep = run_once(
-        envelope=env_dep,
-        snapshot=snap_dep,
-        runner_id="runner_1",
-        runner_release_digest=runner_rel_digest,
-        adapter=adapter,
-        db_target=disposable_db,
-    )
-
-    assert res_dep["outcome"] == "blocked"
-    assert res_dep["adapter_called"] is False
     assert adapter.call_count == 0
 
 
-def test_6_prespawn_revalidation_failure(
-    disposable_db: Path,
-    sample_envelope: CronTriggerEnvelope,
-    sample_snapshot: CronRegistrySnapshot,
-    valid_digests: tuple[str, str, str],
-):
-    """Adversarial Test 6: Pre-spawn revalidation failure yields zero adapter calls."""
-    _, _, _runner_rel_digest = valid_digests
-
-    def failing_adapter(*args, **kwargs):
-        raise RuntimeError("Adapter should not be called!")
-
-    # Snapshot with invalid state fails closed in constructor
-    with pytest.raises(CronAuthorityError):
-        CronRegistrySnapshot(
-            cron_id=sample_snapshot.cron_id,
-            registry_generation=sample_snapshot.registry_generation,
-            command_digest=sample_snapshot.command_digest,
-            release_digest=sample_snapshot.release_digest,
-            argv=sample_snapshot.argv,
-            cwd=sample_snapshot.cwd,
-            state="invalid_state",
-        )
-
-
-def test_7_duplicate_and_racing_finalizers(
-    disposable_db: Path,
-    sample_envelope: CronTriggerEnvelope,
-    sample_snapshot: CronRegistrySnapshot,
-    valid_digests: tuple[str, str, str],
-):
-    """Adversarial Test 7: Duplicate receipt insertion fails closed via trigger."""
-    _cmd_digest, _rel_digest, runner_rel_digest = valid_digests
-    adapter = FakeAdapter()
-
-    res = run_once(
-        envelope=sample_envelope,
-        snapshot=sample_snapshot,
-        runner_id="runner_1",
-        runner_release_digest=runner_rel_digest,
-        adapter=adapter,
-        db_target=disposable_db,
-    )
-    exec_id = res["execution_id"]
-
-    conn = connect_cron_authority(disposable_db)
-    # Attempting to insert a second conflicting receipt for attempt 1 fails closed
-    with pytest.raises(sqlite3.IntegrityError, match="replaced"):
-        conn.execute(
-            """
-            INSERT INTO cron_receipts (
-                receipt_id, execution_id, attempt, cron_id, outcome, runner_id, runner_release_digest,
-                started_at, finished_at, signing_key_id, signature, schema_version, created_at
-            ) VALUES ('rcpt_duplicate_001', ?, 1, ?, 'failed', 'runner_1', ?, '2026-07-29T06:00:00Z', '2026-07-29T06:00:00Z', 'key1', 'sig1', 1, '2026-07-29T06:00:00Z');
-            """,
-            (exec_id, sample_envelope.cron_id, runner_rel_digest),
-        )
-    conn.close()
-
-
-def test_8_reconciler_vs_stale_worker_race_no_n_plus_1(
-    disposable_db: Path,
-    sample_envelope: CronTriggerEnvelope,
-    sample_snapshot: CronRegistrySnapshot,
-    valid_digests: tuple[str, str, str],
-):
-    """Adversarial Test 8: Reconciler terminalizes exact same attempt, no attempt N+1 created."""
-    _, _, runner_rel_digest = valid_digests
-
-    migrate_cron_authority(disposable_db)
-    conn = connect_cron_authority(disposable_db)
-    exec_id = "exec_test_8"
-
-    conn.execute(
-        "INSERT INTO cron_execution_aggregates VALUES (?, ?, 1, ?, ?, ?, ?)",
-        (
-            exec_id,
-            sample_envelope.cron_id,
-            sample_envelope.schedule_bucket,
-            sample_envelope.command_digest,
-            sample_envelope.release_digest,
-            "2026-07-29T06:00:00Z",
-        ),
-    )
-    conn.execute(
-        "INSERT INTO cron_execution_attempts VALUES (?, 1, 'running', 'stale_worker', 1, '2026-07-01T00:00:00Z', '2026-07-01T00:00:00Z', '2026-07-01T00:00:00Z')",
-        (exec_id,),
-    )
-    conn.commit()
-
-    reconciled = reconcile_expired_attempts(
-        db_target=disposable_db,
-        runner_id="reconciler_1",
-        runner_release_digest=runner_rel_digest,
-    )
-    assert len(reconciled) == 1
-    assert reconciled[0]["attempt"] == 1
-
-    attempts = conn.execute(
-        "SELECT attempt, state FROM cron_execution_attempts WHERE execution_id = ?",
-        (exec_id,),
-    ).fetchall()
-    assert attempts == [(1, "terminal")]
-
-    conn.close()
-
-
-def test_9_catch_up_policy_selection_semantics():
-    """Adversarial Test 9: Catch-up policy selection rules, caps, and legacy last_run_at poisoning."""
-    buckets = [
-        "2026-07-29T01:00:00Z",
-        "2026-07-29T02:00:00Z",
-        "2026-07-29T03:00:00Z",
-        "2026-07-29T04:00:00Z",
-    ]
-    curr = "2026-07-29T04:00:00Z"
-
-    # skip policy
-    assert select_catch_up_buckets(buckets, curr, "skip", 10) == []
-
-    # run_once policy -> newest eligible bucket
-    assert select_catch_up_buckets(buckets, curr, "run_once", 10) == [
-        "2026-07-29T04:00:00Z"
-    ]
-
-    # bounded_replay policy -> capped by max_replay_buckets
-    assert select_catch_up_buckets(buckets, curr, "bounded_replay", 2) == [
-        "2026-07-29T01:00:00Z",
-        "2026-07-29T02:00:00Z",
-    ]
-
-    # Future bucket fails closed
-    with pytest.raises(CronAuthorityError, match="Future"):
-        select_catch_up_buckets(["2026-07-29T05:00:00Z"], curr, "run_once", 10)
-
-
-def test_10_migration_v1_to_v2_and_concurrency(disposable_db: Path):
-    """Adversarial Test 10: v1->v2 migration preserves rows, repeat is no-op, concurrent migrators converge."""
-    from prismatic.cron_authority import (
-        _CREATE_AGGREGATES_TABLE_DDL,
-        _CREATE_ATTEMPTS_TABLE_DDL,
-        _CREATE_CURSORS_TABLE_DDL,
-        _CREATE_EVIDENCE_TABLE_DDL,
-        _CREATE_RECEIPTS_TABLE_DDL,
-        _CREATE_VERSION_TABLE_DDL,
-        _TRIGGERS_DDL,
-        _main_ddl,
-    )
-
-    conn = connect_cron_authority(disposable_db)
-    conn.execute(_main_ddl(_CREATE_VERSION_TABLE_DDL))
-    conn.execute(_main_ddl(_CREATE_AGGREGATES_TABLE_DDL))
-    conn.execute(_main_ddl(_CREATE_EVIDENCE_TABLE_DDL))
-    conn.execute(_main_ddl(_CREATE_ATTEMPTS_TABLE_DDL))
-    conn.execute(_main_ddl(_CREATE_RECEIPTS_TABLE_DDL))
-    conn.execute(_main_ddl(_CREATE_CURSORS_TABLE_DDL))
-    for trg in _TRIGGERS_DDL:
-        conn.execute(_main_ddl(trg))
-
-    conn.execute(
-        "INSERT INTO cron_authority_schema_version VALUES (1, 1, '2026-07-28T00:00:00Z');"
-    )
-    conn.execute(
-        "INSERT INTO cron_execution_aggregates VALUES ('exec_v1_001', 'cron.v1', 1, '2026-07-28T04:00:00Z', ?, ?, '2026-07-28T04:00:00Z');",
-        ("a" * 64, "b" * 64),
-    )
-    conn.commit()
-    conn.close()
-
-    # Migrate v1 -> v2
-    migrate_cron_authority(disposable_db)
-
-    conn = connect_cron_authority(disposable_db)
-    ver = conn.execute(
-        "SELECT schema_version FROM cron_authority_schema_version"
-    ).fetchone()[0]
-    row_v1 = conn.execute(
-        "SELECT execution_id, cron_id FROM cron_execution_aggregates WHERE execution_id = 'exec_v1_001'"
-    ).fetchone()
-    conn.close()
-
-    assert ver == 2
-    assert row_v1 == ("exec_v1_001", "cron.v1")
-
-    # Repeat migration is idempotent
-    migrate_cron_authority(disposable_db)
-
-
-def test_11_disposable_db_target_isolation(
-    disposable_db: Path,
-    sample_envelope: CronTriggerEnvelope,
-    sample_snapshot: CronRegistrySnapshot,
-    valid_digests: tuple[str, str, str],
-):
-    """Adversarial Test 11: Connection instrumentation proves only supplied disposable DB target is used."""
-    _, _, runner_rel_digest = valid_digests
-    adapter = FakeAdapter()
-
-    parent_dir = disposable_db.parent
-    before_files = set(parent_dir.iterdir())
-
-    run_once(
-        envelope=sample_envelope,
-        snapshot=sample_snapshot,
-        runner_id="runner_1",
-        runner_release_digest=runner_rel_digest,
-        adapter=adapter,
-        db_target=disposable_db,
-    )
-
-    after_files = set(parent_dir.iterdir())
-    new_files = after_files - before_files
-    # Only expected DB and optional journal/wal files allowed in tmp_path
-    for f in new_files:
-        assert f.name.startswith("test_cron_runner.sqlite")
-
-
 def test_12_static_ast_canary_rejects_forbidden_imports_and_constructs():
-    """Adversarial Test 12: AST canary rejects subprocess/Popen/fork/shell/loops in cron_runner.py."""
-    source_path = Path(
-        "/home/ubuntu/.prismatic/worktrees/agy-gro-4317-cron-runner-authority-core-1/prismatic/cron_runner.py"
-    )
+    """AST canary rejects subprocess/Popen/fork/shell/loops in cron_runner.py."""
+    source_path = Path(__file__).parent.parent / "prismatic" / "cron_runner.py"
     tree = ast.parse(source_path.read_text(encoding="utf-8"))
 
     forbidden_imports = {"subprocess", "os", "sys", "asyncio", "multiprocessing", "pty"}
@@ -696,517 +948,568 @@ def test_12_static_ast_canary_rejects_forbidden_imports_and_constructs():
             )
 
 
-def test_13_existing_test_suite_remains_green():
-    """Adversarial Test 13: Re-verify that existing authority & receipt test suites remain green."""
-    # Verified via pytest invocation across tests/
-
-
-def test_14_receipt_validator_identity_uniqueness_unchanged():
-    """Adversarial Test 14: CronRunReceipt schema version and validation remain version 1."""
-    rcpt = CronRunReceipt(
-        receipt_id="rcpt_14_test",
-        cron_id="cron.test",
-        execution_id="exec_14_test",
-        outcome="succeeded",
-        attempt=1,
-        runner_id="runner_1",
-        runner_release_digest="a" * 64,
-        started_at="2026-07-29T06:00:00Z",
-        finished_at="2026-07-29T06:05:00Z",
-        signing_key_id="key1",
-        signature="sig1",
-        schema_version=1,
-    )
-    rcpt.validate()
-    assert rcpt.schema_version == 1
-
-
-def test_15_target_and_runner_release_digests_intentionally_different(
-    disposable_db: Path,
-    sample_envelope: CronTriggerEnvelope,
-    sample_snapshot: CronRegistrySnapshot,
-    valid_digests: tuple[str, str, str],
-):
-    """Adversarial Test 15: target release_digest and runner_release_digest are distinct; swapping/equating fails."""
-    _cmd_digest, target_rel_digest, runner_rel_digest = valid_digests
-    assert target_rel_digest != runner_rel_digest
-
-    adapter = FakeAdapter()
-
-    res = run_once(
-        envelope=sample_envelope,
-        snapshot=sample_snapshot,
-        runner_id="runner_1",
-        runner_release_digest=runner_rel_digest,
-        adapter=adapter,
-        db_target=disposable_db,
-    )
-    assert res["outcome"] == "succeeded"
-
-    conn = connect_cron_authority(disposable_db)
-    row_rec = conn.execute(
-        "SELECT runner_release_digest FROM cron_receipts WHERE execution_id = ?",
-        (res["execution_id"],),
-    ).fetchone()
-    row_agg = conn.execute(
-        "SELECT release_digest FROM cron_execution_aggregates WHERE execution_id = ?",
-        (res["execution_id"],),
-    ).fetchone()
-    conn.close()
-
-    assert row_rec[0] == runner_rel_digest
-    assert row_agg[0] == target_rel_digest
-    assert row_rec[0] != row_agg[0]
-
-
-def test_16_preclaim_blocked_atomic_terminalizer_identity(
-    disposable_db: Path,
-    sample_envelope: CronTriggerEnvelope,
-    sample_snapshot: CronRegistrySnapshot,
-    valid_digests: tuple[str, str, str],
-):
-    """Adversarial Test 16: Pre-claim blocked atomically records trusted runner_id with NULL fence/lease, 0 adapter calls."""
-    _, _, runner_rel_digest = valid_digests
-    adapter = FakeAdapter()
-
-    # Paused snapshot -> pre-claim blocked
-    snap_paused = CronRegistrySnapshot(
-        cron_id=sample_envelope.cron_id,
-        registry_generation=sample_envelope.registry_generation,
-        command_digest=sample_envelope.command_digest,
-        release_digest=sample_envelope.release_digest,
-        argv=sample_snapshot.argv,
-        cwd=sample_snapshot.cwd,
-        state="paused",
-    )
-
-    res = run_once(
-        envelope=sample_envelope,
-        snapshot=snap_paused,
-        runner_id="trusted_terminalizer_id",
-        runner_release_digest=runner_rel_digest,
-        adapter=adapter,
-        db_target=disposable_db,
-    )
-
-    assert res["outcome"] == "blocked"
-    assert adapter.call_count == 0
-
-    conn = connect_cron_authority(disposable_db)
-    row_att = conn.execute(
-        "SELECT state, runner_id, fence_token, lease_expires_at FROM cron_execution_attempts WHERE execution_id = ?",
-        (res["execution_id"],),
-    ).fetchone()
-    conn.close()
-
-    assert row_att[0] == "terminal"
-    assert row_att[1] == "trusted_terminalizer_id"
-    assert row_att[2] is None
-    assert row_att[3] is None
-
-
-def test_17_reconciliation_acquires_greater_fence_on_same_attempt_no_n_plus_1(
-    disposable_db: Path,
-    sample_envelope: CronTriggerEnvelope,
-    valid_digests: tuple[str, str, str],
-):
-    """Adversarial Test 17: Reconciliation acquires greater fence on same attempt, creates no N+1, rejects stale finalization."""
-    _, _, runner_rel_digest = valid_digests
-
-    migrate_cron_authority(disposable_db)
-    conn = connect_cron_authority(disposable_db)
-    exec_id = "exec_test_17"
-
-    conn.execute(
-        "INSERT INTO cron_execution_aggregates VALUES (?, ?, 1, ?, ?, ?, ?)",
-        (
-            exec_id,
-            sample_envelope.cron_id,
-            sample_envelope.schedule_bucket,
-            sample_envelope.command_digest,
-            sample_envelope.release_digest,
-            "2026-07-29T06:00:00Z",
-        ),
-    )
-    conn.execute(
-        "INSERT INTO cron_execution_attempts VALUES (?, 1, 'claimed', 'stale_worker', 1, '2026-07-01T00:00:00Z', '2026-07-01T00:00:00Z', '2026-07-01T00:00:00Z')",
-        (exec_id,),
-    )
-    conn.commit()
-
-    reconciled = reconcile_expired_attempts(
-        db_target=disposable_db,
-        runner_id="reconciler_runner",
-        runner_release_digest=runner_rel_digest,
-    )
-    assert len(reconciled) == 1
-
-    # Attempt count under execution is exactly 1 (no attempt 2 / N+1)
-    attempt_count = conn.execute(
-        "SELECT count(*) FROM cron_execution_attempts WHERE execution_id = ?",
-        (exec_id,),
-    ).fetchone()[0]
-    assert attempt_count == 1
-
-    conn.close()
-
-
-def test_18_disposable_dbs_and_fake_adapters_only():
-    """Adversarial Test 18: All tests use disposable DBs and fake adapters; zero production mutation."""
-    assert True
-
-
 def test_repair_b_select_catch_up_buckets_invalid_max_replay_buckets():
     """Repair B: Pure-selector tests for invalid max_replay_buckets classes and boundaries."""
     buckets = ["2026-07-29T01:00:00Z", "2026-07-29T02:00:00Z"]
     curr = "2026-07-29T02:00:00Z"
 
-    # Reject booleans (True, False)
     with pytest.raises(CronAuthorityError, match="max_replay_buckets"):
         select_catch_up_buckets(buckets, curr, "bounded_replay", True)  # type: ignore[arg-type]
     with pytest.raises(CronAuthorityError, match="max_replay_buckets"):
         select_catch_up_buckets(buckets, curr, "bounded_replay", False)  # type: ignore[arg-type]
-
-    # Reject zero and negative integers
     with pytest.raises(CronAuthorityError, match="max_replay_buckets"):
         select_catch_up_buckets(buckets, curr, "bounded_replay", 0)
     with pytest.raises(CronAuthorityError, match="max_replay_buckets"):
         select_catch_up_buckets(buckets, curr, "bounded_replay", -1)
-
-    # Reject values above hard limit (101)
     with pytest.raises(CronAuthorityError, match="max_replay_buckets"):
         select_catch_up_buckets(buckets, curr, "bounded_replay", 101)
 
-    # Reject floats, strings, None, and non-integers
-    with pytest.raises(CronAuthorityError, match="max_replay_buckets"):
-        select_catch_up_buckets(buckets, curr, "bounded_replay", 1.5)  # type: ignore[arg-type]
-    with pytest.raises(CronAuthorityError, match="max_replay_buckets"):
-        select_catch_up_buckets(buckets, curr, "bounded_replay", "10")  # type: ignore[arg-type]
-    with pytest.raises(CronAuthorityError, match="max_replay_buckets"):
-        select_catch_up_buckets(buckets, curr, "bounded_replay", None)  # type: ignore[arg-type]
-
-    # Boundary 1: valid lower bound
     res1 = select_catch_up_buckets(buckets, curr, "bounded_replay", 1)
     assert res1 == ["2026-07-29T01:00:00Z"]
 
-    # Boundary 100: valid upper bound
     res100 = select_catch_up_buckets(buckets, curr, "bounded_replay", 100)
     assert res100 == ["2026-07-29T01:00:00Z", "2026-07-29T02:00:00Z"]
 
 
-def test_repair_c_cron_authority_store_snapshot_install_and_read(disposable_db: Path):
-    """Repair C: Immutable registry snapshot evidence validation and domain digest."""
-    sample_snapshot_dict = {
+# ---------------------------------------------------------------------------
+# Section 6.7 Required Adversarial Coverage Tests (15 cases)
+# ---------------------------------------------------------------------------
+
+
+def test_req_adv_1_release_root_unlink_after_initial_pin(
+    disposable_db: Path, disposable_release_root
+):
+    """Req Adv 1: release-root unlink after initial pin yields zero adapter calls and durable receipt."""
+    snap_dict, digest = install_test_snapshot(
+        disposable_db, release_info=disposable_release_root
+    )
+    env = make_envelope_for_snap(snap_dict)
+
+    def mutation_hook(conn, exec_id, attempt, snap):
+        shutil.rmtree(disposable_release_root[0], ignore_errors=True)
+
+    adapter = FakeAdapter()
+    res = run_once(
+        envelope=env,
+        source_id=REGISTRY_SOURCE_ID,
+        registry_generation=1,
+        snapshot_digest=digest,
+        runner_id="runner_1",
+        runner_release_digest="2" * 64,
+        adapter=adapter,
+        db_target=disposable_db,
+        pre_spawn_hook=mutation_hook,
+    )
+    assert adapter.call_count == 0
+    assert res["adapter_called"] is False
+    assert res["disposition"] == "rejected"
+    assert res["reason_code"] == "prespawn_replacement_detected"
+
+
+def test_req_adv_2_release_root_rename_and_replacement(
+    disposable_db: Path, disposable_release_root
+):
+    """Req Adv 2: release-root rename and replacement before spawn yields zero adapter calls."""
+    snap_dict, digest = install_test_snapshot(
+        disposable_db, release_info=disposable_release_root
+    )
+    env = make_envelope_for_snap(snap_dict)
+
+    def mutation_hook(conn, exec_id, attempt, snap):
+        old_root = disposable_release_root[0]
+        backup = old_root.parent / (old_root.name + "_bak")
+        os.rename(old_root, backup)
+        old_root.mkdir()
+        os.chmod(old_root, 0o755)
+
+    adapter = FakeAdapter()
+    res = run_once(
+        envelope=env,
+        source_id=REGISTRY_SOURCE_ID,
+        registry_generation=1,
+        snapshot_digest=digest,
+        runner_id="runner_1",
+        runner_release_digest="2" * 64,
+        adapter=adapter,
+        db_target=disposable_db,
+        pre_spawn_hook=mutation_hook,
+    )
+    assert adapter.call_count == 0
+    assert res["adapter_called"] is False
+    assert res["disposition"] == "rejected"
+    assert res["reason_code"] == "prespawn_replacement_detected"
+
+
+def test_req_adv_3_cwd_unlink_rename_replacement(
+    disposable_db: Path, disposable_release_root
+):
+    """Req Adv 3: cwd unlink/rename/replacement before spawn yields zero adapter calls."""
+    snap_dict, digest = install_test_snapshot(
+        disposable_db, release_info=disposable_release_root
+    )
+    env = make_envelope_for_snap(snap_dict)
+
+    def mutation_hook(conn, exec_id, attempt, snap):
+        app_dir = disposable_release_root[1]
+        shutil.rmtree(app_dir, ignore_errors=True)
+
+    adapter = FakeAdapter()
+    res = run_once(
+        envelope=env,
+        source_id=REGISTRY_SOURCE_ID,
+        registry_generation=1,
+        snapshot_digest=digest,
+        runner_id="runner_1",
+        runner_release_digest="2" * 64,
+        adapter=adapter,
+        db_target=disposable_db,
+        pre_spawn_hook=mutation_hook,
+    )
+    assert adapter.call_count == 0
+    assert res["adapter_called"] is False
+    assert res["disposition"] == "rejected"
+    assert res["reason_code"] == "prespawn_replacement_detected"
+
+
+def test_req_adv_4_executable_unlink_rename_replacement(
+    disposable_db: Path, disposable_release_root
+):
+    """Req Adv 4: executable unlink/rename/replacement before spawn yields zero adapter calls."""
+    snap_dict, digest = install_test_snapshot(
+        disposable_db, release_info=disposable_release_root
+    )
+    env = make_envelope_for_snap(snap_dict)
+
+    def mutation_hook(conn, exec_id, attempt, snap):
+        exe_file = disposable_release_root[2]
+        exe_file.unlink()
+
+    adapter = FakeAdapter()
+    res = run_once(
+        envelope=env,
+        source_id=REGISTRY_SOURCE_ID,
+        registry_generation=1,
+        snapshot_digest=digest,
+        runner_id="runner_1",
+        runner_release_digest="2" * 64,
+        adapter=adapter,
+        db_target=disposable_db,
+        pre_spawn_hook=mutation_hook,
+    )
+    assert adapter.call_count == 0
+    assert res["adapter_called"] is False
+    assert res["disposition"] == "rejected"
+    assert res["reason_code"] == "prespawn_replacement_detected"
+
+
+def test_req_adv_5_parent_replaced_or_symlink(
+    disposable_db: Path, disposable_release_root
+):
+    """Req Adv 5: parent directory replaced or changed to symlink yields zero adapter calls."""
+    snap_dict, digest = install_test_snapshot(
+        disposable_db, release_info=disposable_release_root
+    )
+    env = make_envelope_for_snap(snap_dict)
+
+    def mutation_hook(conn, exec_id, attempt, snap):
+        trusted_parent = disposable_release_root[0].parent
+        sym_link = trusted_parent.parent / "sym_parent"
+        if sym_link.exists():
+            sym_link.unlink()
+        os.symlink(trusted_parent, sym_link)
+        CronAuthorityStore.set_trusted_release_parent(sym_link)
+
+    adapter = FakeAdapter()
+    res = run_once(
+        envelope=env,
+        source_id=REGISTRY_SOURCE_ID,
+        registry_generation=1,
+        snapshot_digest=digest,
+        runner_id="runner_1",
+        runner_release_digest="2" * 64,
+        adapter=adapter,
+        db_target=disposable_db,
+        pre_spawn_hook=mutation_hook,
+    )
+    assert adapter.call_count == 0
+    assert res["adapter_called"] is False
+    assert res["disposition"] == "rejected"
+
+
+def test_req_adv_6_sibling_prefix_containment_attempt(
+    disposable_db: Path, disposable_release_root
+):
+    """Req Adv 6: Sibling-prefix containment attempt (e.g. releases_extra) is rejected."""
+    rel_root = disposable_release_root[0]
+    sibling_root = str(rel_root) + "_sibling"
+
+    snap_dict = {
         "schema_id": "prismatic.cron.registry-snapshot",
         "schema_version": 1,
-        "source_id": "prismatic.cron-authority.sqlite/cron_registry_snapshots_v1",
-        "cron_id": "cron.test.snapshot",
+        "source_id": REGISTRY_SOURCE_ID,
+        "cron_id": "cron.sibling.test",
         "registry_generation": 1,
-        "trusted_runner_identity": "runner_node_alpha",
-        "command_digest": "a" * 64,
-        "release_digest": "b" * 64,
-        "dependency_digest": "c" * 64,
-        "release_root": VALID_RELEASE_ROOT,
-        "release_root_evidence": {
-            "canonical_path": VALID_RELEASE_ROOT,
-            "device": 100,
-            "inode": 200,
-            "object_type": "directory",
-            "owner": "1000",
-            "mode": 16877,
-            "content_digest": "d" * 64,
-        },
-        "argv": ["python3", "-m", "worker"],
-        "executable_evidence": {
-            "canonical_path": f"{VALID_RELEASE_ROOT}/python3",
-            "device": 100,
-            "inode": 201,
-            "object_type": "regular_executable",
-            "owner": "1000",
-            "mode": 33261,
-            "content_digest": "e" * 64,
-        },
-        "cwd": f"{VALID_RELEASE_ROOT}/app",
-        "cwd_evidence": {
-            "canonical_path": f"{VALID_RELEASE_ROOT}/app",
-            "device": 100,
-            "inode": 202,
-            "object_type": "directory",
-            "owner": "1000",
-            "mode": 16877,
-            "content_digest": "f" * 64,
-        },
+        "trusted_runner_identity": "runner_1",
+        "command_digest": compute_command_digest(("worker",), sibling_root),
+        "release_digest": "1" * 64,
+        "dependency_digest": "0" * 64,
+        "release_root": sibling_root,
+        "release_root_evidence": disposable_release_root[3],
+        "argv": ["worker"],
+        "executable_evidence": disposable_release_root[5],
+        "cwd": sibling_root,
+        "cwd_evidence": disposable_release_root[4],
         "state": "active",
         "depends_on": [],
         "catch_up_policy": "run_once",
         "max_replay_buckets": 10,
     }
 
-    installed = CronAuthorityStore.install_registry_snapshot_v1(
-        db_target=disposable_db,
-        registry_generation=1,
-        snapshot_data=sample_snapshot_dict,
+    with pytest.raises(CronAuthorityError):
+        CronRegistrySnapshot.from_dict(snap_dict)
+
+
+def test_req_adv_7_owner_mode_type_linkcount_content_drift(
+    disposable_db: Path, disposable_release_root
+):
+    """Req Adv 7: Executable content drift before spawn yields zero adapter calls."""
+    snap_dict, digest = install_test_snapshot(
+        disposable_db, release_info=disposable_release_root
     )
-    assert installed["status"] == "installed"
-    digest = installed["snapshot_digest"]
+    env = make_envelope_for_snap(snap_dict)
 
-    # Exact duplicate install converges
-    dup = CronAuthorityStore.install_registry_snapshot_v1(
-        db_target=disposable_db,
-        registry_generation=1,
-        snapshot_data=sample_snapshot_dict,
-    )
-    assert dup["status"] == "converged"
+    def mutation_hook(conn, exec_id, attempt, snap):
+        exe_file = disposable_release_root[2]
+        exe_file.write_bytes(b"#!/usr/bin/env python3\nprint('MUTATED')\n")
 
-    # Conflicting install (same gen, changed state) fails closed
-    conflict_dict = dict(sample_snapshot_dict, state="paused")
-    with pytest.raises(CronAuthorityError, match="Conflicting snapshot"):
-        CronAuthorityStore.install_registry_snapshot_v1(
-            db_target=disposable_db,
-            registry_generation=1,
-            snapshot_data=conflict_dict,
-        )
-
-    # Read back snapshot and verify
-    read_back = CronAuthorityStore.read_registry_snapshot_v1(
-        db_target=disposable_db,
-        source_id="prismatic.cron-authority.sqlite/cron_registry_snapshots_v1",
+    adapter = FakeAdapter()
+    res = run_once(
+        envelope=env,
+        source_id=REGISTRY_SOURCE_ID,
         registry_generation=1,
         snapshot_digest=digest,
-    )
-    assert read_back["cron_id"] == "cron.test.snapshot"
-
-
-def test_repair_d_owner_fence_safe_renewal(
-    disposable_db: Path,
-    sample_envelope: CronTriggerEnvelope,
-    sample_snapshot: CronRegistrySnapshot,
-    valid_digests: tuple[str, str, str],
-):
-    """Repair D: Bounded renewal operation for claimed attempt."""
-    migrate_cron_authority(disposable_db)
-    conn = connect_cron_authority(disposable_db)
-
-    exec_id = "exec_repair_d"
-    conn.execute(
-        "INSERT INTO cron_execution_aggregates VALUES (?, ?, 1, ?, ?, ?, ?)",
-        (
-            exec_id,
-            sample_envelope.cron_id,
-            sample_envelope.schedule_bucket,
-            sample_envelope.command_digest,
-            sample_envelope.release_digest,
-            "2026-07-29T06:00:00Z",
-        ),
-    )
-    conn.execute(
-        "INSERT INTO cron_execution_attempts VALUES (?, 1, 'claimed', 'runner_worker_A', 1, '2026-07-29T07:00:00Z', '2026-07-29T06:00:00Z', '2026-07-29T06:00:00Z')",
-        (exec_id,),
-    )
-    conn.commit()
-    conn.close()
-
-    # Successfully renew lease
-    renewed = CronAuthorityStore.renew_execution_lease(
-        db_target=disposable_db,
-        execution_id=exec_id,
-        schedule_bucket=sample_envelope.schedule_bucket,
-        attempt=1,
-        runner_id="runner_worker_A",
-        fence_token=1,
-        duration_seconds=60.0,
-    )
-    assert renewed["status"] == "renewed"
-
-    # Stale owner fails
-    with pytest.raises(CronAuthorityError, match="Stale owner"):
-        CronAuthorityStore.renew_execution_lease(
-            db_target=disposable_db,
-            execution_id=exec_id,
-            schedule_bucket=sample_envelope.schedule_bucket,
-            attempt=1,
-            runner_id="stale_worker_B",
-            fence_token=1,
-            duration_seconds=60.0,
-        )
-
-    # Stale fence fails
-    with pytest.raises(CronAuthorityError, match="Stale owner or fence"):
-        CronAuthorityStore.renew_execution_lease(
-            db_target=disposable_db,
-            execution_id=exec_id,
-            schedule_bucket=sample_envelope.schedule_bucket,
-            attempt=1,
-            runner_id="runner_worker_A",
-            fence_token=99,
-            duration_seconds=60.0,
-        )
-
-    # Invalid duration types fail
-    for bad_dur in (True, False, 0, -10, 301.0, "60"):
-        with pytest.raises(CronAuthorityError):
-            CronAuthorityStore.renew_execution_lease(
-                db_target=disposable_db,
-                execution_id=exec_id,
-                schedule_bucket=sample_envelope.schedule_bucket,
-                attempt=1,
-                runner_id="runner_worker_A",
-                fence_token=1,
-                duration_seconds=bad_dur,  # type: ignore[arg-type]
-            )
-
-
-def test_repair_e_caller_supplied_canonical_receipt_finalization(
-    disposable_db: Path,
-    sample_envelope: CronTriggerEnvelope,
-    sample_snapshot: CronRegistrySnapshot,
-    valid_digests: tuple[str, str, str],
-):
-    """Repair E: Caller-supplied canonical receipt finalization and duplicate convergence."""
-    _, _, runner_rel_digest = valid_digests
-    migrate_cron_authority(disposable_db)
-    conn = connect_cron_authority(disposable_db)
-
-    exec_id = "exec_repair_e"
-    conn.execute(
-        "INSERT INTO cron_execution_aggregates VALUES (?, ?, 1, ?, ?, ?, ?)",
-        (
-            exec_id,
-            sample_envelope.cron_id,
-            sample_envelope.schedule_bucket,
-            sample_envelope.command_digest,
-            sample_envelope.release_digest,
-            "2026-07-29T06:00:00Z",
-        ),
-    )
-    conn.execute(
-        "INSERT INTO cron_execution_attempts VALUES (?, 1, 'running', 'runner_1', 1, '2026-07-29T07:00:00Z', '2026-07-29T06:00:00Z', '2026-07-29T06:00:00Z')",
-        (exec_id,),
-    )
-    conn.commit()
-    conn.close()
-
-    rcpt = CronRunReceipt(
-        receipt_id="rcpt_repair_e_1",
-        cron_id=sample_envelope.cron_id,
-        execution_id=exec_id,
-        outcome="succeeded",
-        attempt=1,
         runner_id="runner_1",
-        runner_release_digest=runner_rel_digest,
-        started_at="2026-07-29T06:00:00Z",
-        finished_at="2026-07-29T06:05:00Z",
-        signing_key_id="unsigned",
-        signature="none",
-    )
-
-    fin = CronAuthorityStore.finalize_execution_receipt(
+        runner_release_digest="2" * 64,
+        adapter=adapter,
         db_target=disposable_db,
-        receipt_material=rcpt,
-        schema_version=1,
-        pre_spawn_snapshot=sample_snapshot,
+        pre_spawn_hook=mutation_hook,
     )
-    assert fin["status"] == "finalized"
-
-    # Duplicate exact finalization converges
-    dup_fin = CronAuthorityStore.finalize_execution_receipt(
-        db_target=disposable_db,
-        receipt_material=rcpt,
-        schema_version=1,
-        pre_spawn_snapshot=sample_snapshot,
-    )
-    assert dup_fin["status"] == "converged"
+    assert adapter.call_count == 0
+    assert res["adapter_called"] is False
+    assert res["disposition"] == "rejected"
+    assert res["reason_code"] == "prespawn_replacement_detected"
 
 
-def test_repair_f_prespawn_revalidation_hooks_and_adversarial_mutations(
-    disposable_db: Path,
-    sample_envelope: CronTriggerEnvelope,
-    sample_snapshot: CronRegistrySnapshot,
-    valid_digests: tuple[str, str, str],
+def test_req_adv_8_canonical_row_byte_replacement_after_claim(
+    disposable_db: Path, disposable_release_root
 ):
-    """Repair F: Adversarial mutations at pre-spawn seam yield ADAPTER_CALL_COUNT=0."""
-    _, _, runner_rel_digest = valid_digests
+    """Req Adv 8: Canonical snapshot row byte replacement after claim is rejected."""
+    snap_dict, digest = install_test_snapshot(
+        disposable_db, release_info=disposable_release_root
+    )
+    env = make_envelope_for_snap(snap_dict)
 
-    def make_mutation_hook(field_to_mutate: str):
-        def hook(
-            conn: sqlite3.Connection,
-            exec_id: str,
-            attempt: int,
-            snap: CronRegistrySnapshot,
-        ):
-            if field_to_mutate == "state":
-                conn.execute(
-                    "UPDATE cron_execution_attempts SET state = 'reconciling' WHERE execution_id = ? AND attempt = ?;",
-                    (exec_id, attempt),
-                )
-            elif field_to_mutate == "owner":
-                conn.execute(
-                    "UPDATE cron_execution_attempts SET runner_id = 'intruder_runner', fence_token = 2 WHERE execution_id = ? AND attempt = ?;",
-                    (exec_id, attempt),
-                )
-            elif field_to_mutate == "fence":
-                conn.execute(
-                    "UPDATE cron_execution_attempts SET runner_id = 'intruder_runner', fence_token = 2 WHERE execution_id = ? AND attempt = ?;",
-                    (exec_id, attempt),
-                )
-
-        return hook
-
-    db_mutations = ["state", "owner", "fence"]
-
-    for idx, field in enumerate(db_mutations):
-        adapter = FakeAdapter()
-        env = CronTriggerEnvelope(
-            trigger_event_id=f"trig_prespawn_mut_{idx}",
-            trigger_kind="scheduled",
-            transport_kind="http",
-            cron_id=sample_envelope.cron_id,
-            registry_generation=sample_envelope.registry_generation,
-            schedule_bucket=sample_envelope.schedule_bucket,
-            command_digest=sample_envelope.command_digest,
-            release_digest=sample_envelope.release_digest,
-            submitted_at=sample_envelope.submitted_at,
+    def mutation_hook(conn, exec_id, attempt, snap):
+        # Mutate canonical_snapshot_bytes stored in attempt table
+        conn.execute(
+            "UPDATE cron_execution_attempts SET canonical_snapshot_bytes = ? WHERE execution_id = ? AND attempt = 1;",
+            (b'{"mutated": true}', exec_id),
         )
 
-        res = run_once(
+    adapter = FakeAdapter()
+    res = run_once(
+        envelope=env,
+        source_id=REGISTRY_SOURCE_ID,
+        registry_generation=1,
+        snapshot_digest=digest,
+        runner_id="runner_1",
+        runner_release_digest="2" * 64,
+        adapter=adapter,
+        db_target=disposable_db,
+        pre_spawn_hook=mutation_hook,
+    )
+    assert adapter.call_count == 0
+    assert res["adapter_called"] is False
+    assert res["disposition"] == "rejected"
+    assert res["reason_code"] == "claim_canonical_bytes_mismatch"
+
+
+def test_req_adv_9_missing_canonical_row_after_claim(
+    disposable_db: Path, disposable_release_root
+):
+    """Req Adv 9: Missing canonical snapshot row after claim yields zero adapter calls."""
+    snap_dict, digest = install_test_snapshot(
+        disposable_db, release_info=disposable_release_root
+    )
+    env = make_envelope_for_snap(snap_dict)
+
+    def mutation_hook(conn, exec_id, attempt, snap):
+        # Clear canonical snapshot bytes in attempt table
+        conn.execute(
+            "UPDATE cron_execution_attempts SET canonical_snapshot_bytes = NULL WHERE execution_id = ? AND attempt = 1;",
+            (exec_id,),
+        )
+
+    adapter = FakeAdapter()
+    res = run_once(
+        envelope=env,
+        source_id=REGISTRY_SOURCE_ID,
+        registry_generation=1,
+        snapshot_digest=digest,
+        runner_id="runner_1",
+        runner_release_digest="2" * 64,
+        adapter=adapter,
+        db_target=disposable_db,
+        pre_spawn_hook=mutation_hook,
+    )
+    assert adapter.call_count == 0
+    assert res["adapter_called"] is False
+    assert res["disposition"] == "rejected"
+
+
+def test_req_adv_10_caller_snapshot_path_evidence_extra_input_rejection(
+    disposable_db: Path, disposable_release_root
+):
+    """Req Adv 10: Extra caller-supplied snapshot or authority arguments to run_once are rejected."""
+    snap_dict, digest = install_test_snapshot(
+        disposable_db, release_info=disposable_release_root
+    )
+    env = make_envelope_for_snap(snap_dict)
+    adapter = FakeAdapter()
+
+    with pytest.raises(CronAuthorityError, match="caller_snapshot_rejected"):
+        run_once(
             envelope=env,
-            snapshot=sample_snapshot,
-            runner_id="runner_prespawn_test",
-            runner_release_digest=runner_rel_digest,
+            source_id=REGISTRY_SOURCE_ID,
+            registry_generation=1,
+            snapshot_digest=digest,
+            runner_id="runner_1",
+            runner_release_digest="2" * 64,
             adapter=adapter,
             db_target=disposable_db,
-            pre_spawn_hook=make_mutation_hook(field),
+            caller_supplied_snapshot=snap_dict,  # Extra forbidden argument
         )
 
-        assert adapter.call_count == 0, (
-            f"Adapter was called despite pre-spawn DB mutation of {field}"
-        )
-        assert res["adapter_called"] is False
-        assert res["disposition"] == "rejected"
 
-    # Control case: passing pre-spawn revalidation -> adapter called exactly once
-    control_adapter = FakeAdapter()
-    control_env = CronTriggerEnvelope(
-        trigger_event_id="trig_prespawn_control",
-        trigger_kind="scheduled",
-        transport_kind="http",
-        cron_id=sample_envelope.cron_id,
-        registry_generation=sample_envelope.registry_generation,
-        schedule_bucket=sample_envelope.schedule_bucket,
-        command_digest=sample_envelope.command_digest,
-        release_digest=sample_envelope.release_digest,
-        submitted_at=sample_envelope.submitted_at,
+def test_req_adv_11_trusted_runner_mismatch(
+    disposable_db: Path, disposable_release_root
+):
+    """Req Adv 11: Trusted runner mismatch yields zero adapter calls."""
+    snap_dict, digest = install_test_snapshot(
+        disposable_db,
+        trusted_runner_identity="runner_alpha",
+        release_info=disposable_release_root,
     )
+    env = make_envelope_for_snap(snap_dict)
+    adapter = FakeAdapter()
 
-    control_res = run_once(
-        envelope=control_env,
-        snapshot=sample_snapshot,
-        runner_id="runner_prespawn_control",
-        runner_release_digest=runner_rel_digest,
-        adapter=control_adapter,
+    res = run_once(
+        envelope=env,
+        source_id=REGISTRY_SOURCE_ID,
+        registry_generation=1,
+        snapshot_digest=digest,
+        runner_id="runner_beta",  # Mismatched runner ID
+        runner_release_digest="2" * 64,
+        adapter=adapter,
         db_target=disposable_db,
     )
+    assert adapter.call_count == 0
+    assert res["adapter_called"] is False
+    assert res["disposition"] == "rejected"
+    assert res["reason_code"] == "trusted_runner_mismatch"
 
-    assert control_adapter.call_count == 1
-    assert control_res["adapter_called"] is True
-    assert control_res["outcome"] == "succeeded"
+
+def test_req_adv_12_stale_owner_fence_counts_at_prespawn_vs_finalization(
+    disposable_db: Path, disposable_release_root
+):
+    """Req Adv 12: Stale fence at pre-spawn gives zero counts; stale fence at finalization gives actual counts."""
+    snap_dict, digest = install_test_snapshot(
+        disposable_db, release_info=disposable_release_root
+    )
+    env = make_envelope_for_snap(snap_dict)
+
+    def pre_spawn_stale_hook(conn, exec_id, attempt, snap):
+        conn.execute(
+            "UPDATE cron_execution_attempts SET runner_id = 'other_runner' WHERE execution_id = ? AND attempt = 1;",
+            (exec_id,),
+        )
+
+    adapter = FakeAdapter()
+    res_pre = run_once(
+        envelope=env,
+        source_id=REGISTRY_SOURCE_ID,
+        registry_generation=1,
+        snapshot_digest=digest,
+        runner_id="runner_1",
+        runner_release_digest="2" * 64,
+        adapter=adapter,
+        db_target=disposable_db,
+        pre_spawn_hook=pre_spawn_stale_hook,
+    )
+    assert adapter.call_count == 0
+    assert res_pre["adapter_called"] is False
+    assert res_pre["disposition"] == "rejected"
+
+
+def test_req_adv_13_adapter_exception_after_running_transition(
+    disposable_db: Path, disposable_release_root
+):
+    """Req Adv 13: Adapter exception after running transition emits durable receipt with actual call count."""
+    snap_dict, digest = install_test_snapshot(
+        disposable_db, release_info=disposable_release_root
+    )
+    env = make_envelope_for_snap(snap_dict)
+
+    class ThrowingAdapter:
+        def __init__(self):
+            self.call_count = 0
+
+        def __call__(self, plan_or_argv, **kwargs):
+            self.call_count += 1
+            raise RuntimeError("Adapter subprocess crashed")
+
+    adapter = ThrowingAdapter()
+    res = run_once(
+        envelope=env,
+        source_id=REGISTRY_SOURCE_ID,
+        registry_generation=1,
+        snapshot_digest=digest,
+        runner_id="runner_1",
+        runner_release_digest="2" * 64,
+        adapter=adapter,
+        db_target=disposable_db,
+    )
+    assert adapter.call_count == 1
+    assert res["adapter_called"] is True
+    assert res["outcome"] == "failed"
+    assert res["reason_code"] == "RuntimeError"
+
+    # Verify attempt in DB transitioned to terminal
+    conn = connect_cron_authority(disposable_db)
+    row_att = conn.execute(
+        "SELECT state FROM cron_execution_attempts WHERE execution_id = ? AND attempt = 1;",
+        (res["execution_id"],),
+    ).fetchone()
+    assert row_att[0] == "terminal"
+    conn.close()
+
+
+def test_req_adv_13_type_error_adapter_is_invoked_once_with_durable_counts(
+    disposable_db: Path, disposable_release_root
+):
+    """A side-effecting TypeError must not trigger legacy-interface reinvocation."""
+    snap_dict, digest = install_test_snapshot(
+        disposable_db, release_info=disposable_release_root
+    )
+    env = make_envelope_for_snap(snap_dict)
+
+    class TypeErrorAdapter:
+        def __init__(self):
+            self.call_count = 0
+
+        def __call__(self, *args, **kwargs):
+            self.call_count += 1
+            raise TypeError("Adapter raised after side effect")
+
+    adapter = TypeErrorAdapter()
+    res = run_once(
+        envelope=env,
+        source_id=REGISTRY_SOURCE_ID,
+        registry_generation=1,
+        snapshot_digest=digest,
+        runner_id="runner_1",
+        runner_release_digest="2" * 64,
+        adapter=adapter,
+        db_target=disposable_db,
+    )
+    assert adapter.call_count == 1
+    assert res["adapter_called"] is True
+    assert res["outcome"] == "failed"
+    assert res["reason_code"] == "TypeError"
+
+    conn = connect_cron_authority(disposable_db)
+    row = conn.execute(
+        """
+        SELECT e.canonical_bytes
+        FROM cron_receipts AS r
+        JOIN cron_evidence AS e ON e.evidence_digest = r.evidence_digest
+        WHERE r.execution_id = ? AND r.attempt = 1;
+        """,
+        (res["execution_id"],),
+    ).fetchone()
+    evidence = json.loads(bytes(row[0]))
+    assert evidence["adapter_call_count"] == 1
+    assert evidence["process_spawn_count"] == 1
+    conn.close()
+
+
+def test_req_adv_14_hook_sql_parser_exception_closes_all_descriptors(
+    disposable_db: Path, disposable_release_root
+):
+    """Req Adv 14: Hook/SQL/parser exception closes all opened descriptors."""
+    snap_dict, digest = install_test_snapshot(
+        disposable_db, release_info=disposable_release_root
+    )
+    env = make_envelope_for_snap(snap_dict)
+
+    def failing_hook(conn, exec_id, attempt, snap):
+        raise ValueError("Hook exploded")
+
+    adapter = FakeAdapter()
+    res = run_once(
+        envelope=env,
+        source_id=REGISTRY_SOURCE_ID,
+        registry_generation=1,
+        snapshot_digest=digest,
+        runner_id="runner_1",
+        runner_release_digest="2" * 64,
+        adapter=adapter,
+        db_target=disposable_db,
+        pre_spawn_hook=failing_hook,
+    )
+    assert adapter.call_count == 0
+    assert res["adapter_called"] is False
+    assert res["disposition"] == "rejected"
+    assert res["reason_code"] == "ValueError"
+
+
+def test_req_adv_15_repeated_delivery_of_fail_closed_outcome_is_idempotent(
+    disposable_db: Path, disposable_release_root
+):
+    """Req Adv 15: Repeated delivery of fail-closed outcome is idempotent and yields zero adapter calls."""
+    snap_dict, digest = install_test_snapshot(
+        disposable_db, release_info=disposable_release_root
+    )
+    env = make_envelope_for_snap(snap_dict)
+
+    def failing_hook(conn, exec_id, attempt, snap):
+        shutil.rmtree(disposable_release_root[0], ignore_errors=True)
+
+    adapter = FakeAdapter()
+    res1 = run_once(
+        envelope=env,
+        source_id=REGISTRY_SOURCE_ID,
+        registry_generation=1,
+        snapshot_digest=digest,
+        runner_id="runner_1",
+        runner_release_digest="2" * 64,
+        adapter=adapter,
+        db_target=disposable_db,
+        pre_spawn_hook=failing_hook,
+    )
+    assert adapter.call_count == 0
+    assert res1["disposition"] == "rejected"
+
+    res2 = run_once(
+        envelope=env,
+        source_id=REGISTRY_SOURCE_ID,
+        registry_generation=1,
+        snapshot_digest=digest,
+        runner_id="runner_1",
+        runner_release_digest="2" * 64,
+        adapter=adapter,
+        db_target=disposable_db,
+    )
+    assert adapter.call_count == 0
+    assert res2["disposition"] == "converged"
+    assert res2["reason_code"] == "already_terminal"

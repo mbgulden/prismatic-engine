@@ -19,7 +19,9 @@ from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from prismatic.cron_authority import (
+    REGISTRY_SOURCE_ID,
     CronAuthorityError,
+    CronAuthorityStore,
     connect_cron_authority,
     migrate_cron_authority,
 )
@@ -248,10 +250,16 @@ class CronRegistrySnapshot:
                     "argv elements must be non-empty strings", code="invalid_snapshot"
                 )
 
-        m = _RELEASE_ROOT_PATTERN.fullmatch(self.cwd)
+        trusted_parent_str = str(
+            CronAuthorityStore.get_trusted_release_parent().resolve()
+        )
+        rel_pattern = re.compile(
+            r"^" + re.escape(trusted_parent_str) + r"/([0-9a-f]{40})(?:/.*)?$"
+        )
+        m = rel_pattern.fullmatch(self.cwd)
         if not m:
             raise CronAuthorityError(
-                f"cwd must be under verified immutable release root /home/ubuntu/.prismatic/releases/<40-hex>/: {self.cwd!r}",
+                f"cwd must be under verified immutable release root {trusted_parent_str}/<40-hex>/: {self.cwd!r}",
                 code="invalid_snapshot",
             )
         if ".." in self.cwd or "/latest" in self.cwd or "//" in self.cwd:
@@ -317,6 +325,63 @@ class CronRegistrySnapshot:
                 code="command_digest_mismatch",
             )
 
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> CronRegistrySnapshot:
+        deps = tuple(
+            CronDependency(
+                cron_id=dep["cron_id"],
+                schedule_bucket=dep["schedule_bucket"],
+                required_outcome=dep.get("required_outcome", "succeeded"),
+            )
+            if isinstance(dep, dict)
+            else dep
+            for dep in d.get("depends_on", ())
+        )
+        return cls(
+            cron_id=d["cron_id"],
+            registry_generation=d["registry_generation"],
+            command_digest=d["command_digest"],
+            release_digest=d["release_digest"],
+            argv=tuple(d["argv"]),
+            cwd=d["cwd"],
+            state=d["state"],
+            depends_on=deps,
+            catch_up_policy=d.get("catch_up_policy", "run_once"),
+            max_replay_buckets=d.get("max_replay_buckets", 10),
+            source_id=d.get(
+                "source_id",
+                "prismatic.cron-authority.sqlite/cron_registry_snapshots_v1",
+            ),
+            schema_id=d.get("schema_id", "prismatic.cron.registry-snapshot"),
+            schema_version=d.get("schema_version", 1),
+            trusted_runner_identity=d.get("trusted_runner_identity", "runner_default"),
+            dependency_digest=d.get("dependency_digest", "0" * 64),
+            release_root=d.get("release_root", ""),
+            release_root_evidence=d.get("release_root_evidence", {}),
+            executable_evidence=d.get("executable_evidence", {}),
+            cwd_evidence=d.get("cwd_evidence", {}),
+        )
+
+
+@dataclass(frozen=True)
+class PinnedExecutionPlan:
+    """Bounded immutable pinned execution plan owned by authority core."""
+
+    argv: tuple[str, ...]
+    cwd: str
+    execution_id: str
+    attempt: int
+    fence_token: int
+    runner_id: str
+    runner_release_digest: str
+    root_fd: int
+    cwd_fd: int
+    exe_fd: int
+    snapshot_digest: str
+    command_digest: str
+    release_digest: str
+    dependency_digest: str
+
 
 @dataclass(frozen=True)
 class AdapterResult:
@@ -334,13 +399,13 @@ class BoundedProcessAdapter(Protocol):
 
     def __call__(
         self,
-        argv: tuple[str, ...],
-        cwd: str,
-        execution_id: str,
-        attempt: int,
-        fence_token: int,
-        runner_id: str,
-        runner_release_digest: str,
+        plan_or_argv: PinnedExecutionPlan | tuple[str, ...],
+        cwd: str = ...,
+        execution_id: str = ...,
+        attempt: int = ...,
+        fence_token: int = ...,
+        runner_id: str = ...,
+        runner_release_digest: str = ...,
     ) -> AdapterResult: ...
 
 
@@ -466,34 +531,45 @@ def _are_dependencies_satisfied(
 def run_once(
     *,
     envelope: CronTriggerEnvelope,
-    snapshot: CronRegistrySnapshot,
+    source_id: str = REGISTRY_SOURCE_ID,
+    registry_generation: int,
+    snapshot_digest: str,
     runner_id: str,
     runner_release_digest: str,
     adapter: BoundedProcessAdapter,
     db_target: Any,
     timeout: float = 30.0,
     pre_spawn_hook: Any | None = None,
+    **kwargs: Any,
 ) -> dict[str, Any]:
     """Execute bounded run_once workflow against the cron authority."""
+    if kwargs:
+        raise CronAuthorityError(
+            f"caller_snapshot_rejected: caller-supplied snapshot or authority-bearing arguments rejected: {set(kwargs.keys())!r}",
+            code="caller_snapshot_rejected",
+        )
+
     _validate_runner_binding(runner_id, runner_release_digest)
 
-    if envelope.cron_id != snapshot.cron_id:
+    if source_id != REGISTRY_SOURCE_ID:
         raise CronAuthorityError(
-            "Envelope and snapshot cron_id mismatch", code="cross_binding_mismatch"
+            f"Invalid source_id: {source_id!r}", code="invalid_source_id"
         )
-    if envelope.registry_generation != snapshot.registry_generation:
+    if type(registry_generation) is not int or registry_generation < 1:
         raise CronAuthorityError(
-            "Envelope and snapshot registry_generation mismatch",
-            code="cross_binding_mismatch",
+            "registry_generation must be int >= 1", code="invalid_registry_generation"
         )
-    if envelope.command_digest != snapshot.command_digest:
+    if (
+        not isinstance(snapshot_digest, str)
+        or _HEX64_PATTERN.fullmatch(snapshot_digest) is None
+    ):
         raise CronAuthorityError(
-            "Envelope and snapshot command_digest mismatch",
-            code="cross_binding_mismatch",
+            "snapshot_digest must be 64 lowercase hex", code="invalid_snapshot_digest"
         )
-    if envelope.release_digest != snapshot.release_digest:
+
+    if envelope.registry_generation != registry_generation:
         raise CronAuthorityError(
-            "Envelope and snapshot release_digest mismatch",
+            "Envelope and locator registry_generation mismatch",
             code="cross_binding_mismatch",
         )
 
@@ -529,12 +605,199 @@ def run_once(
                     "disposition": "rejected",
                     "reason_code": reason,
                     "execution_id": None,
-                    "receipt": None,
+                    "receipt_id": None,
+                    "outcome": None,
                     "adapter_called": False,
                 }
             execution_id = existing_exec_id
+            if execution_id is not None:
+                terminal_attempt = cursor.execute(
+                    "SELECT state FROM main.cron_execution_attempts WHERE execution_id = ? AND attempt = 1;",
+                    (execution_id,),
+                ).fetchone()
+                if terminal_attempt is not None and terminal_attempt[0] == "terminal":
+                    terminal_receipt = cursor.execute(
+                        "SELECT receipt_id, outcome FROM main.cron_receipts WHERE execution_id = ? AND attempt = 1;",
+                        (execution_id,),
+                    ).fetchone()
+                    conn.commit()
+                    return {
+                        "disposition": "converged",
+                        "reason_code": "already_terminal",
+                        "execution_id": execution_id,
+                        "receipt_id": terminal_receipt[0] if terminal_receipt else None,
+                        "outcome": terminal_receipt[1] if terminal_receipt else None,
+                        "adapter_called": False,
+                    }
         else:
-            # Check existing aggregate by uniqueness tuple
+            execution_id = None
+
+        # Step 2: Retrieve canonical snapshot from DB
+        try:
+            parsed_snapshot = CronAuthorityStore.read_registry_snapshot_v1(
+                conn,
+                source_id,
+                registry_generation,
+                snapshot_digest,
+                timeout=timeout,
+            )
+            snapshot = CronRegistrySnapshot.from_dict(parsed_snapshot)
+        except CronAuthorityError as exc:
+            now_utc = _get_utc_now()
+            if execution_id is None:
+                cursor.execute(
+                    """
+                    INSERT INTO main.cron_trigger_deliveries (
+                        trigger_event_id, trigger_digest, canonical_bytes, trigger_kind, transport_kind,
+                        cron_id, registry_generation, schedule_bucket, command_digest, release_digest,
+                        execution_id, disposition, reason_code, submitted_at, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'rejected', ?, ?, ?);
+                    """,
+                    (
+                        envelope.trigger_event_id,
+                        trig_digest,
+                        trigger_bytes,
+                        envelope.trigger_kind,
+                        envelope.transport_kind,
+                        envelope.cron_id,
+                        envelope.registry_generation,
+                        envelope.schedule_bucket,
+                        envelope.command_digest,
+                        envelope.release_digest,
+                        exc.code,
+                        envelope.submitted_at,
+                        now_utc,
+                    ),
+                )
+            conn.commit()
+            return {
+                "disposition": "rejected",
+                "reason_code": exc.code,
+                "execution_id": None,
+                "receipt_id": None,
+                "outcome": None,
+                "adapter_called": False,
+            }
+
+        # Step 3: Verify Cross-Bindings and Trusted Runner Identity
+        if (
+            envelope.cron_id != snapshot.cron_id
+            or envelope.command_digest != snapshot.command_digest
+            or envelope.release_digest != snapshot.release_digest
+        ):
+            now_utc = _get_utc_now()
+            if execution_id is None:
+                cursor.execute(
+                    """
+                    INSERT INTO main.cron_trigger_deliveries (
+                        trigger_event_id, trigger_digest, canonical_bytes, trigger_kind, transport_kind,
+                        cron_id, registry_generation, schedule_bucket, command_digest, release_digest,
+                        execution_id, disposition, reason_code, submitted_at, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'rejected', 'cross_binding_mismatch', ?, ?);
+                    """,
+                    (
+                        envelope.trigger_event_id,
+                        trig_digest,
+                        trigger_bytes,
+                        envelope.trigger_kind,
+                        envelope.transport_kind,
+                        envelope.cron_id,
+                        envelope.registry_generation,
+                        envelope.schedule_bucket,
+                        envelope.command_digest,
+                        envelope.release_digest,
+                        envelope.submitted_at,
+                        now_utc,
+                    ),
+                )
+            conn.commit()
+            return {
+                "disposition": "rejected",
+                "reason_code": "cross_binding_mismatch",
+                "execution_id": None,
+                "receipt_id": None,
+                "outcome": None,
+                "adapter_called": False,
+            }
+
+        if runner_id != snapshot.trusted_runner_identity:
+            now_utc = _get_utc_now()
+            if execution_id is None:
+                cursor.execute(
+                    """
+                    INSERT INTO main.cron_trigger_deliveries (
+                        trigger_event_id, trigger_digest, canonical_bytes, trigger_kind, transport_kind,
+                        cron_id, registry_generation, schedule_bucket, command_digest, release_digest,
+                        execution_id, disposition, reason_code, submitted_at, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'rejected', 'trusted_runner_mismatch', ?, ?);
+                    """,
+                    (
+                        envelope.trigger_event_id,
+                        trig_digest,
+                        trigger_bytes,
+                        envelope.trigger_kind,
+                        envelope.transport_kind,
+                        envelope.cron_id,
+                        envelope.registry_generation,
+                        envelope.schedule_bucket,
+                        envelope.command_digest,
+                        envelope.release_digest,
+                        envelope.submitted_at,
+                        now_utc,
+                    ),
+                )
+            conn.commit()
+            return {
+                "disposition": "rejected",
+                "reason_code": "trusted_runner_mismatch",
+                "execution_id": None,
+                "receipt_id": None,
+                "outcome": None,
+                "adapter_called": False,
+            }
+
+        # Step 4: Validate Filesystem Execution Objects & Pin Descriptors
+        try:
+            pinned_fds = CronAuthorityStore.validate_and_pin_execution_objects(snapshot)
+        except CronAuthorityError as exc:
+            now_utc = _get_utc_now()
+            if execution_id is None:
+                cursor.execute(
+                    """
+                    INSERT INTO main.cron_trigger_deliveries (
+                        trigger_event_id, trigger_digest, canonical_bytes, trigger_kind, transport_kind,
+                        cron_id, registry_generation, schedule_bucket, command_digest, release_digest,
+                        execution_id, disposition, reason_code, submitted_at, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'rejected', ?, ?, ?);
+                    """,
+                    (
+                        envelope.trigger_event_id,
+                        trig_digest,
+                        trigger_bytes,
+                        envelope.trigger_kind,
+                        envelope.transport_kind,
+                        envelope.cron_id,
+                        envelope.registry_generation,
+                        envelope.schedule_bucket,
+                        envelope.command_digest,
+                        envelope.release_digest,
+                        exc.code,
+                        envelope.submitted_at,
+                        now_utc,
+                    ),
+                )
+            conn.commit()
+            return {
+                "disposition": "rejected",
+                "reason_code": exc.code,
+                "execution_id": None,
+                "receipt_id": None,
+                "outcome": None,
+                "adapter_called": False,
+            }
+
+        # Step 5: Check/Create Execution Aggregate
+        if execution_id is None:
             row_agg = cursor.execute(
                 """
                 SELECT execution_id, release_digest FROM main.cron_execution_aggregates
@@ -552,7 +815,6 @@ def run_once(
             if row_agg is not None:
                 agg_exec_id, agg_rel_digest = row_agg
                 if agg_rel_digest != envelope.release_digest:
-                    # Record rejected delivery evidence
                     cursor.execute(
                         """
                         INSERT INTO main.cron_trigger_deliveries (
@@ -577,11 +839,13 @@ def run_once(
                         ),
                     )
                     conn.commit()
+                    CronAuthorityStore.close_pinned_fds(pinned_fds)
                     return {
                         "disposition": "rejected",
                         "reason_code": "conflicting_release_digest",
                         "execution_id": None,
-                        "receipt": None,
+                        "receipt_id": None,
+                        "outcome": None,
                         "adapter_called": False,
                     }
 
@@ -611,7 +875,6 @@ def run_once(
                     ),
                 )
             else:
-                # Create aggregate and attempt 1
                 agg_hash = hashlib.sha256(
                     f"{envelope.cron_id}:{envelope.registry_generation}:{envelope.schedule_bucket}:{envelope.command_digest}".encode()
                 ).hexdigest()
@@ -666,17 +929,18 @@ def run_once(
                     ),
                 )
 
-        # Step 2: Check if attempt 1 is already terminal
+        # Step 6: Check if attempt 1 is already terminal
         row_att = cursor.execute(
             "SELECT state, runner_id, fence_token FROM main.cron_execution_attempts WHERE execution_id = ? AND attempt = 1;",
             (execution_id,),
         ).fetchone()
         if row_att is not None and row_att[0] == "terminal":
             row_rec = cursor.execute(
-                "SELECT receipt_id, outcome, runner_id, runner_release_digest FROM main.cron_receipts WHERE execution_id = ? AND attempt = 1;",
+                "SELECT receipt_id, outcome FROM main.cron_receipts WHERE execution_id = ? AND attempt = 1;",
                 (execution_id,),
             ).fetchone()
             conn.commit()
+            CronAuthorityStore.close_pinned_fds(pinned_fds)
             return {
                 "disposition": "converged" if row_del is not None else "accepted",
                 "reason_code": "already_terminal",
@@ -686,7 +950,7 @@ def run_once(
                 "adapter_called": False,
             }
 
-        # Step 3: Pre-claim Gating (§7.2, §9, §10)
+        # Step 7: Gating check
         deps_satisfied, dep_reason = _are_dependencies_satisfied(cursor, snapshot)
         gated = False
         gated_reason = None
@@ -708,7 +972,6 @@ def run_once(
                 "INSERT OR IGNORE INTO main.cron_evidence (evidence_digest, canonical_bytes, created_at) VALUES (?, ?, ?);",
                 (ev_digest, ev_data, now_utc),
             )
-            # Record trusted runner_id as terminalizer identity with NULL fence/lease
             cursor.execute(
                 """
                 UPDATE main.cron_execution_attempts
@@ -759,6 +1022,7 @@ def run_once(
                 ),
             )
             conn.commit()
+            CronAuthorityStore.close_pinned_fds(pinned_fds)
             return {
                 "disposition": "accepted",
                 "reason_code": gated_reason,
@@ -768,7 +1032,7 @@ def run_once(
                 "adapter_called": False,
             }
 
-        # Step 4: Claim attempt 1 (§7.3)
+        # Step 8: Claim attempt 1 and store claim-bound canonical snapshot bytes & identities
         now_dt = datetime.now(timezone.utc)
         now_utc = _get_utc_now()
         lease_expires_dt = datetime.fromtimestamp(
@@ -778,22 +1042,47 @@ def run_once(
         if lease_expires_at.endswith("+00:00"):
             lease_expires_at = lease_expires_at[:-6] + "Z"
 
+        canonical_snapshot_bytes = (
+            CronAuthorityStore._canonicalize_and_validate_snapshot(
+                parsed_snapshot, snapshot.registry_generation
+            )[0]
+        )
+
         fence_token = 1
         res_claim = cursor.execute(
             """
             UPDATE main.cron_execution_attempts
-            SET state = 'claimed', runner_id = ?, fence_token = ?, lease_expires_at = ?, updated_at = ?
+            SET state = 'claimed', runner_id = ?, fence_token = ?, lease_expires_at = ?, updated_at = ?,
+                source_id = ?, schema_id = ?, schema_version = ?, registry_generation = ?,
+                snapshot_digest = ?, canonical_snapshot_bytes = ?, trusted_runner_identity = ?,
+                command_digest = ?, release_digest = ?, dependency_digest = ?
             WHERE execution_id = ? AND attempt = 1 AND state = 'admitted';
             """,
-            (runner_id, fence_token, lease_expires_at, now_utc, execution_id),
+            (
+                runner_id,
+                fence_token,
+                lease_expires_at,
+                now_utc,
+                source_id,
+                snapshot.schema_id,
+                snapshot.schema_version,
+                snapshot.registry_generation,
+                snapshot_digest,
+                canonical_snapshot_bytes,
+                snapshot.trusted_runner_identity,
+                snapshot.command_digest,
+                snapshot.release_digest,
+                snapshot.dependency_digest,
+                execution_id,
+            ),
         )
         if res_claim.rowcount == 0:
-            # Race condition on claim
             row_rec = cursor.execute(
                 "SELECT receipt_id, outcome FROM main.cron_receipts WHERE execution_id = ? AND attempt = 1;",
                 (execution_id,),
             ).fetchone()
             conn.commit()
+            CronAuthorityStore.close_pinned_fds(pinned_fds)
             return {
                 "disposition": "converged",
                 "reason_code": "claim_contention",
@@ -803,11 +1092,110 @@ def run_once(
                 "adapter_called": False,
             }
 
-        # Step 5: Pre-spawn revalidation (§7.5)
-        if pre_spawn_hook is not None:
-            pre_spawn_hook(conn, execution_id, 1, snapshot)
+        def _emit_fail_closed_prespawn_receipt(reason_code: str) -> dict[str, Any]:
+            ev_data = json.dumps(
+                {
+                    "reason_code": reason_code,
+                    "adapter_call_count": 0,
+                    "process_spawn_count": 0,
+                }
+            ).encode("utf-8")
+            ev_digest = hashlib.sha256(ev_data).hexdigest()
+            cursor.execute(
+                "INSERT OR IGNORE INTO main.cron_evidence (evidence_digest, canonical_bytes, created_at) VALUES (?, ?, ?);",
+                (ev_digest, ev_data, _get_utc_now()),
+            )
+            receipt_id = f"rcpt_{execution_id}_1"
+            rcpt = CronRunReceipt(
+                receipt_id=receipt_id,
+                cron_id=envelope.cron_id,
+                execution_id=execution_id,
+                outcome="blocked",
+                attempt=1,
+                runner_id=runner_id,
+                runner_release_digest=runner_release_digest,
+                started_at=now_utc,
+                finished_at=now_utc,
+                error_classification=reason_code,
+                evidence_digest=ev_digest,
+                signing_key_id="unsigned",
+                signature="none",
+            )
+            cursor.execute(
+                """
+                INSERT INTO main.cron_receipts (
+                    receipt_id, execution_id, attempt, cron_id, outcome, runner_id, runner_release_digest,
+                    started_at, finished_at, error_classification, evidence_digest, signing_key_id, signature,
+                    schema_version, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?);
+                """,
+                (
+                    rcpt.receipt_id,
+                    rcpt.execution_id,
+                    rcpt.attempt,
+                    rcpt.cron_id,
+                    rcpt.outcome,
+                    rcpt.runner_id,
+                    rcpt.runner_release_digest,
+                    rcpt.started_at,
+                    rcpt.finished_at,
+                    rcpt.error_classification,
+                    rcpt.evidence_digest,
+                    rcpt.signing_key_id,
+                    rcpt.signature,
+                    _get_utc_now(),
+                ),
+            )
+            conn.commit()
+            CronAuthorityStore.close_pinned_fds(pinned_fds)
+            return {
+                "disposition": "rejected",
+                "reason_code": reason_code,
+                "execution_id": execution_id,
+                "receipt_id": receipt_id,
+                "outcome": "blocked",
+                "adapter_called": False,
+            }
 
-        # Revalidate state and ownership
+        # Step 9: Immediate Pre-Spawn Revalidation
+        if pre_spawn_hook is not None:
+            try:
+                pre_spawn_hook(conn, execution_id, 1, snapshot)
+            except Exception as exc:
+                err_code = getattr(exc, "code", type(exc).__name__)
+                return _emit_fail_closed_prespawn_receipt(err_code)
+
+        # Re-read canonical row from DB
+        try:
+            re_read_dict = CronAuthorityStore.read_registry_snapshot_v1(
+                conn, source_id, registry_generation, snapshot_digest, timeout=timeout
+            )
+            re_read_snapshot = CronRegistrySnapshot.from_dict(re_read_dict)
+            if re_read_snapshot != snapshot:
+                return _emit_fail_closed_prespawn_receipt("pre_spawn_snapshot_mismatch")
+        except CronAuthorityError as exc:
+            return _emit_fail_closed_prespawn_receipt(exc.code)
+
+        row_att_claim = cursor.execute(
+            """
+            SELECT source_id, schema_id, schema_version, registry_generation, snapshot_digest,
+                   canonical_snapshot_bytes, trusted_runner_identity, command_digest, release_digest, dependency_digest
+            FROM main.cron_execution_attempts WHERE execution_id = ? AND attempt = 1;
+            """,
+            (execution_id,),
+        ).fetchone()
+        if (
+            row_att_claim is None
+            or bytes(row_att_claim[5] or b"") != canonical_snapshot_bytes
+        ):
+            return _emit_fail_closed_prespawn_receipt("claim_canonical_bytes_mismatch")
+
+        # Re-verify pinned descriptors pre-spawn
+        try:
+            CronAuthorityStore.reverify_pinned_execution_objects(pinned_fds, snapshot)
+        except CronAuthorityError as exc:
+            return _emit_fail_closed_prespawn_receipt(exc.code)
+
         row_reval = cursor.execute(
             "SELECT state, runner_id, fence_token FROM main.cron_execution_attempts WHERE execution_id = ? AND attempt = 1;",
             (execution_id,),
@@ -818,24 +1206,12 @@ def run_once(
             or row_reval[1] != runner_id
             or row_reval[2] != fence_token
         ):
-            conn.rollback()
-            return {
-                "disposition": "rejected",
-                "reason_code": "pre_spawn_revalidation_failed",
-                "execution_id": execution_id,
-                "receipt": None,
-                "adapter_called": False,
-            }
+            return _emit_fail_closed_prespawn_receipt("pre_spawn_revalidation_failed")
 
         if snapshot.state != "active":
-            conn.rollback()
-            return {
-                "disposition": "rejected",
-                "reason_code": "pre_spawn_state_revalidation_failed",
-                "execution_id": execution_id,
-                "receipt": None,
-                "adapter_called": False,
-            }
+            return _emit_fail_closed_prespawn_receipt(
+                "pre_spawn_state_revalidation_failed"
+            )
 
         row_agg_reval = cursor.execute(
             "SELECT registry_generation, command_digest, release_digest FROM main.cron_execution_aggregates WHERE execution_id = ?;",
@@ -847,25 +1223,15 @@ def run_once(
             or row_agg_reval[1] != snapshot.command_digest
             or row_agg_reval[2] != snapshot.release_digest
         ):
-            conn.rollback()
-            return {
-                "disposition": "rejected",
-                "reason_code": "pre_spawn_aggregate_revalidation_failed",
-                "execution_id": execution_id,
-                "receipt": None,
-                "adapter_called": False,
-            }
+            return _emit_fail_closed_prespawn_receipt(
+                "pre_spawn_aggregate_revalidation_failed"
+            )
 
         deps_ok, _ = _are_dependencies_satisfied(cursor, snapshot)
         if not deps_ok:
-            conn.rollback()
-            return {
-                "disposition": "rejected",
-                "reason_code": "pre_spawn_dependency_revalidation_failed",
-                "execution_id": execution_id,
-                "receipt": None,
-                "adapter_called": False,
-            }
+            return _emit_fail_closed_prespawn_receipt(
+                "pre_spawn_dependency_revalidation_failed"
+            )
 
         cursor.execute(
             """
@@ -876,27 +1242,134 @@ def run_once(
             (_get_utc_now(), execution_id, runner_id, fence_token),
         )
 
-        # Commit claim & state transition before adapter invocation
         conn.commit()
 
-        # Step 6: Process adapter invocation (§8)
-        started_at = _get_utc_now()
-        adapter_res = adapter(
-            snapshot.argv,
-            snapshot.cwd,
-            execution_id,
-            1,
-            fence_token,
-            runner_id,
-            runner_release_digest,
+        # Step 10: Process adapter invocation
+        plan = PinnedExecutionPlan(
+            argv=snapshot.argv,
+            cwd=snapshot.cwd,
+            execution_id=execution_id,
+            attempt=1,
+            fence_token=fence_token,
+            runner_id=runner_id,
+            runner_release_digest=runner_release_digest,
+            root_fd=pinned_fds["root"],
+            cwd_fd=pinned_fds["cwd"],
+            exe_fd=pinned_fds["exe"],
+            snapshot_digest=snapshot_digest,
+            command_digest=snapshot.command_digest,
+            release_digest=snapshot.release_digest,
+            dependency_digest=snapshot.dependency_digest,
         )
+
+        started_at = _get_utc_now()
+        adapter_exc = None
+        adapter_res = None
+        try:
+            adapter_res = adapter(plan)
+        except Exception as exc:
+            adapter_exc = exc
+        finally:
+            CronAuthorityStore.close_pinned_fds(pinned_fds)
         finished_at = _get_utc_now()
 
-        # Step 7: Finalization (§7.7, §9)
+        # Step 11: Finalization
         conn.execute("BEGIN IMMEDIATE;")
         cursor = conn.cursor()
 
-        # Re-check attempt ownership before finalize
+        if (
+            adapter_exc is not None
+            or adapter_res is None
+            or not isinstance(adapter_res, AdapterResult)
+        ):
+            err_code = (
+                getattr(adapter_exc, "code", type(adapter_exc).__name__)
+                if adapter_exc
+                else "invalid_adapter_result"
+            )
+            ev_data = json.dumps(
+                {
+                    "adapter_call_count": 1,
+                    "process_spawn_count": 1,
+                    "error": str(adapter_exc)
+                    if adapter_exc
+                    else "Invalid adapter result",
+                    "error_classification": err_code,
+                }
+            ).encode("utf-8")
+            ev_digest = hashlib.sha256(ev_data).hexdigest()
+            cursor.execute(
+                "INSERT OR IGNORE INTO main.cron_evidence (evidence_digest, canonical_bytes, created_at) VALUES (?, ?, ?);",
+                (ev_digest, ev_data, _get_utc_now()),
+            )
+            receipt_id = f"rcpt_{execution_id}_1"
+            rcpt = CronRunReceipt(
+                receipt_id=receipt_id,
+                cron_id=envelope.cron_id,
+                execution_id=execution_id,
+                outcome="failed",
+                attempt=1,
+                runner_id=runner_id,
+                runner_release_digest=runner_release_digest,
+                started_at=started_at,
+                finished_at=finished_at,
+                error_classification=err_code,
+                evidence_digest=ev_digest,
+                signing_key_id="unsigned",
+                signature="none",
+            )
+            cursor.execute(
+                """
+                INSERT INTO main.cron_receipts (
+                    receipt_id, execution_id, attempt, cron_id, outcome, runner_id, runner_release_digest,
+                    started_at, finished_at, error_classification, evidence_digest, signing_key_id, signature,
+                    schema_version, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?);
+                """,
+                (
+                    rcpt.receipt_id,
+                    rcpt.execution_id,
+                    rcpt.attempt,
+                    rcpt.cron_id,
+                    rcpt.outcome,
+                    rcpt.runner_id,
+                    rcpt.runner_release_digest,
+                    rcpt.started_at,
+                    rcpt.finished_at,
+                    rcpt.error_classification,
+                    rcpt.evidence_digest,
+                    rcpt.signing_key_id,
+                    rcpt.signature,
+                    _get_utc_now(),
+                ),
+            )
+            conn.commit()
+            return {
+                "disposition": "accepted",
+                "reason_code": err_code,
+                "execution_id": execution_id,
+                "receipt_id": receipt_id,
+                "outcome": "failed",
+                "adapter_called": True,
+            }
+
+        # Step 11: Finalization with Snapshot Re-read
+        if conn.in_transaction:
+            conn.commit()
+        conn.execute("BEGIN IMMEDIATE;")
+        cursor = conn.cursor()
+
+        re_read_fin_dict = CronAuthorityStore.read_registry_snapshot_v1(
+            conn, source_id, registry_generation, snapshot_digest, timeout=timeout
+        )
+        re_read_fin_snapshot = CronRegistrySnapshot.from_dict(re_read_fin_dict)
+        if re_read_fin_snapshot != snapshot:
+            conn.rollback()
+            raise CronAuthorityError(
+                "Snapshot modified before finalization",
+                code="pre_spawn_snapshot_mismatch",
+            )
+
         row_fin_check = cursor.execute(
             "SELECT state, runner_id, fence_token FROM main.cron_execution_attempts WHERE execution_id = ? AND attempt = 1;",
             (execution_id,),
