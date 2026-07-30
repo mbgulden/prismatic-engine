@@ -27,6 +27,23 @@ def _html() -> str:
     return DASHBOARD.read_text(encoding="utf-8")
 
 
+def test_workspace_polling_does_not_rerender_initialized_navigation() -> None:
+    script = (
+        REPO_ROOT / "prismatic/gateway/dashboard_src/scripts/dashboard.js"
+    ).read_text(encoding="utf-8")
+    guard = (
+        "if (workspaceTreeState.initialized || workspaceTreeState.rendering) return;"
+    )
+    loading = (
+        'rootsEl.innerHTML = `<div class="text-slate-500 italic">'
+        "Loading workspace tree…</div>`;"
+    )
+    assert script.index(guard) < script.index(loading)
+    assert "workspaceTreeState.rendering = true;" in script
+    assert "workspaceTreeState.initialized = true;" in script
+    assert "finally {\n                workspaceTreeState.rendering = false;" in script
+
+
 def test_dashboard_fragments_rebuild_exact_generated_bytes_and_sha() -> None:
     builder = _builder_module()
     generated = DASHBOARD.read_bytes()
