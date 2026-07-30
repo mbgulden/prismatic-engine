@@ -314,6 +314,20 @@ def render_index(agg: dict, *, csrf_token: Optional[str] = None) -> str:
             flow_buttons = _site_row_buttons(s)
         except Exception:
             flow_buttons = ""
+        # Phase 4.4: Linear status pill (GRO-4364). Shown next to the
+        # buttons when the site has a prior submission with a Linear
+        # issue id. The lookup is cached on disk and subject to TTL.
+        try:
+            from .linear_status import (
+                get_status_for_site,
+                render_status_html,
+            )
+
+            status = get_status_for_site(s.get("slug", ""))
+            status_html = render_status_html(status) if status else ""
+        except Exception:
+            status_html = ""
+        flow_buttons = (flow_buttons or "") + status_html
         sections.append(
             f'<section class="pwp-kpi-site-row" id="site-{_esc(s["slug"])}">'
             f'<header class="pwp-kpi-site-header">'
