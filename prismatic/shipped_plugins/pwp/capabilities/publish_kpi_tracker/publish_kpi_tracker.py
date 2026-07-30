@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 HERE = Path(__file__).resolve().parent
 SCHEMA_PATH = HERE / "schemas" / "kpi-collection.schema.json"
@@ -235,7 +235,7 @@ def _format_value(value: Any, fmt: str = "number") -> str:
         return str(value)
 
 
-def render_index(agg: dict) -> str:
+def render_index(agg: dict, *, csrf_token: Optional[str] = None) -> str:
     """Multi-site index page.
 
     Layout: one **per-site row** (`<section class="pwp-kpi-site-row">`) per
@@ -246,6 +246,9 @@ def render_index(agg: dict) -> str:
       - a card grid: one card per front-of-card metric, with the metric
         label and a placeholder value (`—`) when `runtime_values` is not
         provided for that metric
+      - a "Configure website KPIs" / "Edit funnel" button (Phase 4.2)
+        that opens the contextual modal for dispatching a Linear task
+        without leaving the page
 
     This is the **smallest visual unit that closes the loop**: even when
     no runtime values are supplied (e.g., the dashboard is being rendered
@@ -257,7 +260,33 @@ def render_index(agg: dict) -> str:
     (produced by `aggregate()`) and produces deterministic HTML. The
     data shape + rendering function live in the same file
     (`publish_kpi_tracker.py`), so they cannot drift.
+
+    Args:
+        agg: the aggregated data shape from `aggregate()`.
+        csrf_token: optional CSRF nonce (Phase 4.2). When None, the
+            modal generates a fresh per-render token via `secrets.token_urlsafe`.
+            Tests should pass a stable token to verify the rest of the
+            HTML is byte-identical across renders.
     """
+    # Phase 4.2: per-site buttons (Configure / Edit funnel) depend on
+    # whether a prior submission log exists for the site. Import lazily
+    # so the dashboard module can keep working when funnel_form is not
+    # yet installed (e.g., during a partial upgrade).
+    modal_html = ""
+    wiring_js = ""
+    try:
+        from .funnel_form import (
+            render_modal_html,
+            render_button_wiring_js,
+        )
+
+        modal_html = render_modal_html(csrf_token=csrf_token)
+        wiring_js = render_button_wiring_js()
+    except Exception:
+        # Stay permissive: never let a missing modal break the dashboard.
+        modal_html = ""
+        wiring_js = ""
+
     sections = []
     for s in agg.get("sites", []):
         cards_html = "".join(
@@ -272,35 +301,42 @@ def render_index(agg: dict) -> str:
             + "</div>"
             for c in s.get("front_of_card", [])
         )
-        # Per-site row: header + card grid. Always rendered, even when no
-        # runtime values are present (cards_html may be empty if the site
-        # has no front_of_card metrics; we still want the row visible).
+        # Per-site row: header + card grid + funnel-config buttons. Always
+        # rendered, even when no runtime values are present (cards_html may
+        # be empty if the site has no front_of_card metrics; we still want
+        # the row visible).
         no_cards_msg = '<p class="muted">No front-of-card metrics registered.</p>'
+        # Per-site buttons (Phase 4.2). If the modal wasn't loadable,
+        # the helper returns "" and we omit the block.
+        try:
+            from .funnel_form import site_row_buttons as _site_row_buttons
+
+            flow_buttons = _site_row_buttons(s)
+        except Exception:
+            flow_buttons = ""
         sections.append(
             f'<section class="pwp-kpi-site-row" id="site-{_esc(s["slug"])}">'
             f'<header class="pwp-kpi-site-header">'
             f'<h3>{_esc(s["name"])} <span class="muted">({_esc(s["slug"])})</span></h3>'
             f'<p class="muted">'
-            f'{_esc(s["domain"])} · {_esc(s.get("owner") or "—")} · '
-            f'{s.get("metric_count", 0)} metrics'
-            + (
-                f' · extends {_esc(s["extends"])}'
-                if s.get("extends")
-                else ""
-            )
-            + '</p>'
+            f"{_esc(s['domain'])} · {_esc(s.get('owner') or '—')} · "
+            f"{s.get('metric_count', 0)} metrics"
+            + (f" · extends {_esc(s['extends'])}" if s.get("extends") else "")
+            + "</p>"
             f'<p><a href="/pwp/kpi/{_esc(s["slug"])}.html">Open detail page →</a></p>'
-            f'</header>'
+            f"</header>"
             f'<div class="pwp-kpi-card-grid">'
-            f'{cards_html or no_cards_msg}'
-            f'</div>'
-            f'</section>'
+            f"{cards_html or no_cards_msg}"
+            f"</div>"
+            f"{flow_buttons}"
+            f"</section>"
         )
     sections_html = "\n".join(sections)
 
     # Phase 3: pending changes panel (only renders when there ARE
     # outstanding items — empty list => empty panel).
     from .pending_changes import PendingChange, render_pending_changes_html
+
     pending = [
         PendingChange(**p) if isinstance(p, dict) else p
         for p in (agg.get("pending_changes") or [])
@@ -333,6 +369,8 @@ def render_index(agg: dict) -> str:
   </section>
 </main>
 <footer><p class="muted">Generated by <code>pwp.publish_kpi_tracker</code> · {len(agg.get("sites", []))} sites</p></footer>
+  {modal_html}
+  {wiring_js}
 </body>
 </html>
 """

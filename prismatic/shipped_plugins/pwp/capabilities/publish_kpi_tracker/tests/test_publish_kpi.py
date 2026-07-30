@@ -152,8 +152,7 @@ def test_render_index_uses_per_site_row_layout(monkeypatch):
     agg = aggregate(runtime_values={s: {} for s in slugs})
     html = render_index(agg)
     n_rows = html.count('class="pwp-kpi-site-row"')
-    assert n_rows == len(slugs), \
-        f"expected {len(slugs)} per-site rows, got {n_rows}"
+    assert n_rows == len(slugs), f"expected {len(slugs)} per-site rows, got {n_rows}"
     # Each row should contain a card grid (even if empty).
     n_grids = html.count('class="pwp-kpi-card-grid"')
     assert n_grids == len(slugs)
@@ -173,8 +172,9 @@ def test_render_index_card_grid_renders_em_dash_for_missing_values(monkeypatch):
     # registered."
     n_em_dash_placeholders = html.count('<div class="pwp-kpi-card-value">—</div>')
     n_no_metrics_msg = html.count("No front-of-card metrics registered")
-    assert n_em_dash_placeholders + n_no_metrics_msg > 0, \
+    assert n_em_dash_placeholders + n_no_metrics_msg > 0, (
         "expected at least one `—` placeholder or a no-metrics note"
+    )
 
 
 def test_render_index_is_self_rendering_and_deterministic(monkeypatch):
@@ -182,8 +182,10 @@ def test_render_index_is_self_rendering_and_deterministic(monkeypatch):
     _patch_sites(monkeypatch)
     slugs = list_sites()
     agg = aggregate(runtime_values={s: {"fake": 42} for s in slugs})
-    html_a = render_index(agg)
-    html_b = render_index(agg)
+    # Phase 4.2: render_index injects a CSRF nonce into the modal HTML.
+    # Tests pass a stable token so the rest of the HTML stays byte-identical.
+    html_a = render_index(agg, csrf_token="test-csrf-stable")
+    html_b = render_index(agg, csrf_token="test-csrf-stable")
     assert html_a == html_b, "render_index is not deterministic"
 
 
@@ -210,7 +212,10 @@ def test_format_value_percent_multiplies_by_100():
     0.0638 (fraction) → 6.38% (display). This is the contract used by the
     canonical active-oahu.kpi.json formula `booking_complete / booking_click`.
     """
-    from plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import _format_value
+    from plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import (
+        _format_value,
+    )
+
     assert _format_value(0.0638, "percent") == "6.38%"
     assert _format_value(0.0, "percent") == "0.00%"
     assert _format_value(1.0, "percent") == "100.00%"
@@ -223,7 +228,10 @@ def test_format_value_percent_is_audit_safe():
     back to 6.38, which divided by 100 gives the original 0.0638.
     A wrong implementation would either fail this round-trip or
     produce a number that's off by 100x."""
-    from plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import _format_value
+    from plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import (
+        _format_value,
+    )
+
     raw = 0.0638
     rendered = _format_value(raw, "percent")
     # Rendered must contain "%", must NOT contain "0.06%" (the old bug).
@@ -236,14 +244,20 @@ def test_format_value_percent_is_audit_safe():
 
 
 def test_format_value_handles_missing():
-    from plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import _format_value
+    from plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import (
+        _format_value,
+    )
+
     assert _format_value(None) == "—"
     assert _format_value(None, "percent") == "—"
     assert _format_value(None, "currency") == "—"
 
 
 def test_format_value_renders_deterministic_outputs():
-    from plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import _format_value
+    from plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import (
+        _format_value,
+    )
+
     # Same input -> same output (deterministic).
     a = _format_value(1234, "number")
     b = _format_value(1234, "number")
@@ -261,11 +275,16 @@ def test_format_value_renders_deterministic_outputs():
 
 
 def test_format_value_falls_back_to_str_on_typeerror():
-    from plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import _format_value
+    from plugins.pwp.capabilities.publish_kpi_tracker.publish_kpi_tracker import (
+        _format_value,
+    )
+
     # Strings pass through.
     assert _format_value("abc") == "abc"
+
     # Garbage that can't be coerced falls back to str(value).
     class Weird:
         def __repr__(self):
             return "<weird>"
+
     assert _format_value(Weird()) == "<weird>"
