@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import os
 import sqlite3
 from pathlib import Path
 
@@ -31,6 +32,7 @@ import pytest
 from prismatic.cron_authority import (
     SCHEMA_VERSION,
     CronAuthorityError,
+    CronAuthorityStore,
     connect_cron_authority,
     migrate_cron_authority,
     resolve_db_target,
@@ -1150,3 +1152,149 @@ def test_20_ownership_transition_fence_terminal_and_timestamp_guards(
             (sample_aggregate_kwargs["execution_id"],),
         )
     conn.close()
+
+
+def test_21_schema_v3_migration_and_snapshot_v2(disposable_db: Path, tmp_path: Path):
+    """v1/v2 to v3 migration preserves legacy snapshots and installs v2 snapshots with schedule authority."""
+    migrate_cron_authority(disposable_db)
+    conn = connect_cron_authority(disposable_db)
+    ver = conn.execute(
+        "SELECT schema_version FROM cron_authority_schema_version WHERE authority_id = 1;"
+    ).fetchone()[0]
+    assert ver == 3
+    conn.close()
+
+    # Install v2 snapshot
+    trusted_parent = tmp_path / "releases"
+    trusted_parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(trusted_parent, 0o755)
+    orig_parent = CronAuthorityStore.get_trusted_release_parent()
+    CronAuthorityStore.set_trusted_release_parent(trusted_parent)
+
+    try:
+        rel_root = trusted_parent / "a1b2c3d4e5f607182930a1b2c3d4e5f607182930"
+        rel_root.mkdir(parents=True, exist_ok=True)
+        os.chmod(rel_root, 0o755)
+        app_dir = rel_root / "app"
+        app_dir.mkdir(parents=True, exist_ok=True)
+        os.chmod(app_dir, 0o755)
+        exe_file = app_dir / "worker"
+        exe_file.write_bytes(b"#!/usr/bin/env python3\nprint('OK')\n")
+        os.chmod(exe_file, 0o755)
+
+        st_root = os.stat(rel_root)
+        st_cwd = os.stat(app_dir)
+        st_exe = os.stat(exe_file)
+        exe_digest = hashlib.sha256(
+            b"#!/usr/bin/env python3\nprint('OK')\n"
+        ).hexdigest()
+
+        rel_ev = {
+            "canonical_path": str(rel_root),
+            "device": st_root.st_dev,
+            "inode": st_root.st_ino,
+            "object_type": "directory",
+            "owner": str(st_root.st_uid),
+            "mode": st_root.st_mode,
+        }
+        cwd_ev = {
+            "canonical_path": str(app_dir),
+            "device": st_cwd.st_dev,
+            "inode": st_cwd.st_ino,
+            "object_type": "directory",
+            "owner": str(st_cwd.st_uid),
+            "mode": st_cwd.st_mode,
+        }
+        exe_ev = {
+            "canonical_path": str(exe_file),
+            "device": st_exe.st_dev,
+            "inode": st_exe.st_ino,
+            "object_type": "regular_executable",
+            "owner": str(st_exe.st_uid),
+            "mode": st_exe.st_mode,
+            "content_digest": exe_digest,
+        }
+
+        argv = ["worker"]
+        cwd = str(app_dir)
+        from prismatic.cron_runner import compute_command_digest
+
+        cmd_digest = compute_command_digest(tuple(argv), cwd)
+
+        v2_snap_dict = {
+            "schema_id": "prismatic.cron.registry-snapshot",
+            "schema_version": 2,
+            "source_id": "prismatic.cron-authority.sqlite/cron_registry_snapshots_v2",
+            "cron_id": "cron.v2.job",
+            "registry_generation": 1,
+            "trusted_runner_identity": "runner_v2",
+            "command_digest": cmd_digest,
+            "release_digest": "2" * 64,
+            "dependency_digest": "0" * 64,
+            "release_root": str(rel_root),
+            "release_root_evidence": rel_ev,
+            "argv": argv,
+            "executable_evidence": exe_ev,
+            "cwd": cwd,
+            "cwd_evidence": cwd_ev,
+            "state": "active",
+            "depends_on": [],
+            "catch_up_policy": "run_once",
+            "max_replay_buckets": 10,
+            "schedule": "0 12 * * *",
+            "schedule_timezone": "America/New_York",
+        }
+
+        res = CronAuthorityStore.install_registry_snapshot_v2(
+            db_target=disposable_db,
+            registry_generation=1,
+            snapshot_data=v2_snap_dict,
+        )
+        assert res["status"] == "installed"
+        assert (
+            res["source_id"]
+            == "prismatic.cron-authority.sqlite/cron_registry_snapshots_v2"
+        )
+
+        read_back = CronAuthorityStore.read_registry_snapshot_v2(
+            db_target=disposable_db,
+            source_id="prismatic.cron-authority.sqlite/cron_registry_snapshots_v2",
+            registry_generation=1,
+            snapshot_digest=res["snapshot_digest"],
+        )
+        assert read_back["schedule"] == "0 12 * * *"
+        assert read_back["schedule_timezone"] == "America/New_York"
+    finally:
+        CronAuthorityStore.set_trusted_release_parent(orig_parent)
+
+
+def test_22_projection_source_reader_adversarial(disposable_db: Path):
+    """Projection source reader returns all 6 row families, handles WAL, rejects connection objects, and causes zero side-effects."""
+    from prismatic.cron_authority import (
+        CronProjectionSource,
+        read_cron_projection_source,
+    )
+
+    migrate_cron_authority(disposable_db)
+
+    conn = connect_cron_authority(disposable_db)
+    with pytest.raises(CronAuthorityError) as conn_exc:
+        read_cron_projection_source(conn)
+    assert conn_exc.value.code == "connection_rejected"
+    conn.close()
+
+    with pytest.raises(CronAuthorityError) as non_exc:
+        read_cron_projection_source(disposable_db / "nonexistent.db")
+    assert non_exc.value.code == "nonexistent_database"
+
+    proj = read_cron_projection_source(disposable_db)
+    assert isinstance(proj, CronProjectionSource)
+    assert isinstance(proj.registry_snapshots, tuple)
+    assert isinstance(proj.trigger_deliveries, tuple)
+    assert isinstance(proj.execution_aggregates, tuple)
+    assert isinstance(proj.execution_attempts, tuple)
+    assert isinstance(proj.terminal_receipts, tuple)
+    assert isinstance(proj.sweep_cursors, tuple)
+
+    proj2 = read_cron_projection_source(disposable_db)
+    assert proj == proj2

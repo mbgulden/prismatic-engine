@@ -14,12 +14,16 @@ import hashlib
 import json
 import re
 import sqlite3
+import zoneinfo
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
+from croniter import croniter
+
 from prismatic.cron_authority import (
     REGISTRY_SOURCE_ID,
+    REGISTRY_SOURCE_ID_V2,
     CronAuthorityError,
     CronAuthorityStore,
     connect_cron_authority,
@@ -217,6 +221,10 @@ class CronRegistrySnapshot:
     release_root_evidence: dict[str, Any] = field(default_factory=dict)
     executable_evidence: dict[str, Any] = field(default_factory=dict)
     cwd_evidence: dict[str, Any] = field(default_factory=dict)
+    schedule: str | None = None
+    schedule_timezone: str | None = None
+    schedule_available: bool = False
+    schedule_unavailable_reason: str | None = "legacy_v1_schedule_unavailable"
 
     def __post_init__(self) -> None:
         if not isinstance(self.cron_id, str) or not (1 <= len(self.cron_id) <= 128):
@@ -325,6 +333,59 @@ class CronRegistrySnapshot:
                 code="command_digest_mismatch",
             )
 
+        # Versioned schedule contract validation
+        if self.schema_version == 1:
+            if self.source_id != REGISTRY_SOURCE_ID:
+                raise CronAuthorityError(
+                    f"Invalid source_id for v1 snapshot: {self.source_id!r}",
+                    code="invalid_snapshot_source_id",
+                )
+            object.__setattr__(self, "schedule", None)
+            object.__setattr__(self, "schedule_timezone", None)
+            object.__setattr__(self, "schedule_available", False)
+            object.__setattr__(
+                self, "schedule_unavailable_reason", "legacy_v1_schedule_unavailable"
+            )
+        elif self.schema_version == 2:
+            if self.source_id != REGISTRY_SOURCE_ID_V2:
+                raise CronAuthorityError(
+                    f"Invalid source_id for v2 snapshot: {self.source_id!r}",
+                    code="invalid_snapshot_source_id",
+                )
+            if not isinstance(self.schedule, str) or not isinstance(
+                self.schedule_timezone, str
+            ):
+                raise CronAuthorityError(
+                    "v2 snapshot requires non-empty schedule and schedule_timezone strings",
+                    code="invalid_snapshot_schedule",
+                )
+            parts = self.schedule.strip().split()
+            if len(parts) != 5:
+                raise CronAuthorityError(
+                    "Cron schedule must be exactly 5 space-separated fields",
+                    code="invalid_cron_schedule",
+                )
+            if not croniter.is_valid(self.schedule):
+                raise CronAuthorityError(
+                    f"Invalid cron expression: {self.schedule!r}",
+                    code="invalid_cron_schedule",
+                )
+            try:
+                zoneinfo.ZoneInfo(self.schedule_timezone)
+            except Exception as exc:
+                raise CronAuthorityError(
+                    f"Invalid IANA timezone: {self.schedule_timezone!r}",
+                    code="invalid_schedule_timezone",
+                ) from exc
+
+            object.__setattr__(self, "schedule_available", True)
+            object.__setattr__(self, "schedule_unavailable_reason", None)
+        else:
+            raise CronAuthorityError(
+                f"Unsupported schema_version: {self.schema_version}",
+                code="invalid_schema_version",
+            )
+
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> CronRegistrySnapshot:
         deps = tuple(
@@ -337,6 +398,8 @@ class CronRegistrySnapshot:
             else dep
             for dep in d.get("depends_on", ())
         )
+        ver = d.get("schema_version", 1)
+        default_src = REGISTRY_SOURCE_ID if ver == 1 else REGISTRY_SOURCE_ID_V2
         return cls(
             cron_id=d["cron_id"],
             registry_generation=d["registry_generation"],
@@ -348,19 +411,154 @@ class CronRegistrySnapshot:
             depends_on=deps,
             catch_up_policy=d.get("catch_up_policy", "run_once"),
             max_replay_buckets=d.get("max_replay_buckets", 10),
-            source_id=d.get(
-                "source_id",
-                "prismatic.cron-authority.sqlite/cron_registry_snapshots_v1",
-            ),
+            source_id=d.get("source_id", default_src),
             schema_id=d.get("schema_id", "prismatic.cron.registry-snapshot"),
-            schema_version=d.get("schema_version", 1),
+            schema_version=ver,
             trusted_runner_identity=d.get("trusted_runner_identity", "runner_default"),
             dependency_digest=d.get("dependency_digest", "0" * 64),
             release_root=d.get("release_root", ""),
             release_root_evidence=d.get("release_root_evidence", {}),
             executable_evidence=d.get("executable_evidence", {}),
             cwd_evidence=d.get("cwd_evidence", {}),
+            schedule=d.get("schedule"),
+            schedule_timezone=d.get("schedule_timezone"),
         )
+
+    def to_canonical_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {
+            "argv": list(self.argv),
+            "catch_up_policy": self.catch_up_policy,
+            "command_digest": self.command_digest,
+            "cron_id": self.cron_id,
+            "cwd": self.cwd,
+            "cwd_evidence": self.cwd_evidence,
+            "dependency_digest": self.dependency_digest,
+            "depends_on": [
+                {
+                    "cron_id": dep.cron_id,
+                    "required_outcome": dep.required_outcome,
+                    "schedule_bucket": dep.schedule_bucket,
+                }
+                for dep in self.depends_on
+            ],
+            "executable_evidence": self.executable_evidence,
+            "max_replay_buckets": self.max_replay_buckets,
+            "registry_generation": self.registry_generation,
+            "release_digest": self.release_digest,
+            "release_root": self.release_root,
+            "release_root_evidence": self.release_root_evidence,
+            "schema_id": self.schema_id,
+            "schema_version": self.schema_version,
+            "source_id": self.source_id,
+            "state": self.state,
+            "trusted_runner_identity": self.trusted_runner_identity,
+        }
+        if self.schema_version == 2:
+            d["schedule"] = self.schedule
+            d["schedule_timezone"] = self.schedule_timezone
+        return d
+
+    def to_canonical_bytes(self) -> bytes:
+        return json.dumps(
+            self.to_canonical_dict(),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+
+
+def next_schedule_bucket(schedule: str, schedule_timezone: str, after_utc: str) -> str:
+    """Pure canonical computation of the next RFC3339 UTC schedule bucket."""
+    if not isinstance(schedule, str) or not isinstance(schedule_timezone, str):
+        raise CronAuthorityError(
+            "schedule and schedule_timezone must be strings",
+            code="invalid_schedule_input",
+        )
+    parts = schedule.strip().split()
+    if len(parts) != 5:
+        raise CronAuthorityError(
+            "Cron schedule must be exactly 5 space-separated fields",
+            code="invalid_cron_schedule",
+        )
+    if not croniter.is_valid(schedule):
+        raise CronAuthorityError(
+            f"Invalid cron expression: {schedule!r}",
+            code="invalid_cron_schedule",
+        )
+    try:
+        tz = zoneinfo.ZoneInfo(schedule_timezone)
+    except Exception as exc:
+        raise CronAuthorityError(
+            f"Invalid IANA timezone: {schedule_timezone!r}",
+            code="invalid_schedule_timezone",
+        ) from exc
+
+    if not _is_valid_utc_timestamp(after_utc):
+        raise CronAuthorityError(
+            f"Invalid RFC3339 UTC after_utc timestamp: {after_utc!r}",
+            code="invalid_timestamp",
+        )
+
+    dt_after = datetime.fromisoformat(after_utc[:-1] + "+00:00")
+    dt_local = dt_after.astimezone(tz)
+    c = croniter(schedule, dt_local)
+    next_dt_local = c.get_next(datetime)
+    next_dt_utc = next_dt_local.astimezone(timezone.utc)
+    res = next_dt_utc.isoformat()
+    if res.endswith("+00:00"):
+        res = res[:-6] + "Z"
+    return res
+
+
+def schedule_buckets_between(
+    schedule: str,
+    schedule_timezone: str,
+    after_utc: str,
+    through_utc: str,
+    max_buckets: int,
+) -> list[str]:
+    """Pure canonical computation of schedule buckets strictly after after_utc through through_utc."""
+    if (
+        type(max_buckets) is not int
+        or isinstance(max_buckets, bool)
+        or max_buckets <= 0
+    ):
+        raise CronAuthorityError(
+            "max_buckets must be a positive non-boolean integer",
+            code="invalid_max_buckets",
+        )
+    if max_buckets > MAX_REPLAY_BUCKETS_LIMIT:
+        raise CronAuthorityError(
+            f"max_buckets cannot exceed {MAX_REPLAY_BUCKETS_LIMIT}",
+            code="invalid_max_buckets",
+        )
+
+    if not _is_valid_utc_timestamp(after_utc) or not _is_valid_utc_timestamp(
+        through_utc
+    ):
+        raise CronAuthorityError(
+            "after_utc and through_utc must be valid RFC3339 UTC timestamps ending in Z",
+            code="invalid_timestamp",
+        )
+
+    dt_after = datetime.fromisoformat(after_utc[:-1] + "+00:00")
+    dt_through = datetime.fromisoformat(through_utc[:-1] + "+00:00")
+    if dt_through < dt_after:
+        raise CronAuthorityError(
+            f"through_utc ({through_utc}) cannot be earlier than after_utc ({after_utc})",
+            code="invalid_timestamp_range",
+        )
+
+    buckets: list[str] = []
+    curr_utc = after_utc
+    while len(buckets) < max_buckets:
+        next_b = next_schedule_bucket(schedule, schedule_timezone, curr_utc)
+        dt_next = datetime.fromisoformat(next_b[:-1] + "+00:00")
+        if dt_next > dt_through:
+            break
+        buckets.append(next_b)
+        curr_utc = next_b
+    return buckets
 
 
 @dataclass(frozen=True)
@@ -551,7 +749,7 @@ def run_once(
 
     _validate_runner_binding(runner_id, runner_release_digest)
 
-    if source_id != REGISTRY_SOURCE_ID:
+    if source_id not in (REGISTRY_SOURCE_ID, REGISTRY_SOURCE_ID_V2):
         raise CronAuthorityError(
             f"Invalid source_id: {source_id!r}", code="invalid_source_id"
         )
@@ -634,13 +832,22 @@ def run_once(
 
         # Step 2: Retrieve canonical snapshot from DB
         try:
-            parsed_snapshot = CronAuthorityStore.read_registry_snapshot_v1(
-                conn,
-                source_id,
-                registry_generation,
-                snapshot_digest,
-                timeout=timeout,
-            )
+            if source_id == REGISTRY_SOURCE_ID_V2:
+                parsed_snapshot = CronAuthorityStore.read_registry_snapshot_v2(
+                    conn,
+                    source_id,
+                    registry_generation,
+                    snapshot_digest,
+                    timeout=timeout,
+                )
+            else:
+                parsed_snapshot = CronAuthorityStore.read_registry_snapshot_v1(
+                    conn,
+                    source_id,
+                    registry_generation,
+                    snapshot_digest,
+                    timeout=timeout,
+                )
             snapshot = CronRegistrySnapshot.from_dict(parsed_snapshot)
         except CronAuthorityError as exc:
             now_utc = _get_utc_now()
@@ -1161,7 +1368,7 @@ def run_once(
         if pre_spawn_hook is not None:
             try:
                 pre_spawn_hook(conn, execution_id, 1, snapshot)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 err_code = getattr(exc, "code", type(exc).__name__)
                 return _emit_fail_closed_prespawn_receipt(err_code)
 
@@ -1267,7 +1474,7 @@ def run_once(
         adapter_res = None
         try:
             adapter_res = adapter(plan)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             adapter_exc = exc
         finally:
             CronAuthorityStore.close_pinned_fds(pinned_fds)
