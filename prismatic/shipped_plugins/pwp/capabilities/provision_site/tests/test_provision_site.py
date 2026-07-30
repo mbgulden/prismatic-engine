@@ -13,10 +13,12 @@ Covers:
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import subprocess
 import sys
+import urllib.error
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -228,10 +230,14 @@ def test_orchestrator_stops_on_step_failure(tmp_path: Path) -> None:
             publish_root=tmp_path,
             resume=False,
         )
-    # verify_domain failed; subsequent steps should NOT have run.
+    # platform_detect ran first; verify_domain failed and stopped the run.
+    # Subsequent steps (cloudflare_zone, etc.) must NOT have run.
     assert run.overall_status == "failed"
-    assert call_count["n"] == 1
-    assert run.steps[0].status == "failed"
+    assert call_count["n"] == 2
+    assert run.steps[0].name == "platform_detect"
+    assert run.steps[0].status == "complete"
+    assert run.steps[1].name == "verify_domain"
+    assert run.steps[1].status == "failed"
 
 
 def test_orchestrator_resume_skips_completed_steps(tmp_path: Path) -> None:
@@ -262,8 +268,11 @@ def test_orchestrator_resume_skips_completed_steps(tmp_path: Path) -> None:
             publish_root=tmp_path,
             resume=True,
         )
-    # verify_domain was skipped (came from prior state); the remaining 6 ran.
-    assert call_count["n"] == 6
+    # verify_domain was skipped (came from prior state); the remaining
+    # 8 steps (platform_detect + cloudflare_zone + vercel_project +
+    # gsc_verify + ga4_property + gtm_container + register_in_registry
+    # + migrate_kpi) ran.
+    assert call_count["n"] == 8
     # verify_domain is still in run.steps but its status was preserved
     # from the prior state (complete).
     verify_step = next(s for s in run.steps if s.name == "verify_domain")
@@ -808,13 +817,16 @@ def test_step_gsc_verify_reuses_prior_output(tmp_path, base_run_state):
     assert result.output["reused_prior_output"] is True
 
 
-# -- end-to-end STEP_NAMES now 7 entries -----------------------------------
+# -- end-to-end STEP_NAMES now 9 entries (Phase 3) -------------------------
 
-def test_step_names_phase_2_includes_new_steps():
-    """Phase 2 adds gsc_verify (real), ga4_property, gtm_container."""
+def test_step_names_phase_3_includes_new_steps():
+    """Phase 3 adds platform_detect + vercel_project; the canonical
+    STEP_NAMES now has 9 entries in the platform-aware order."""
     expected = [
+        "platform_detect",
         "verify_domain",
         "cloudflare_zone",
+        "vercel_project",
         "gsc_verify",
         "ga4_property",
         "gtm_container",
@@ -833,3 +845,397 @@ def base_run_state():
         owner="me@example.com",
         started_at="2026-01-01T00:00:00+00:00",
     )
+
+
+# ============================================================================
+# Phase 3 tests — VercelClient + platform_detect + vercel_project
+# ============================================================================
+
+
+# -- VercelClient ----------------------------------------------------------
+
+def test_vercel_client_from_env_missing() -> None:
+    """from_env must surface a helpful error when neither VERCEL_TOKEN
+    nor VERCEL_API_TOKEN is set."""
+    with patch.dict(os.environ, {}, clear=True):
+        from plugins.pwp.capabilities.provision_site.vercel_client import VercelClient
+        with pytest.raises(ValueError) as excinfo:
+            VercelClient.from_env()
+        msg = str(excinfo.value)
+        assert "VERCEL_TOKEN" in msg
+        assert "VERCEL_API_TOKEN" in msg
+
+
+def test_vercel_client_from_env_precedence() -> None:
+    """VERCEL_TOKEN takes precedence over VERCEL_API_TOKEN."""
+    from plugins.pwp.capabilities.provision_site.vercel_client import VercelClient
+    with patch.dict(os.environ,
+                    {"VERCEL_TOKEN": "primary",
+                     "VERCEL_API_TOKEN": "secondary"}, clear=True):
+        vc = VercelClient.from_env()
+    assert vc.token_source == "VERCEL_TOKEN"
+
+
+def test_vercel_client_from_env_team_id() -> None:
+    """VERCEL_TEAM_ID env var is captured into team_id."""
+    from plugins.pwp.capabilities.provision_site.vercel_client import VercelClient
+    with patch.dict(os.environ,
+                    {"VERCEL_TOKEN": "test-token",
+                     "VERCEL_TEAM_ID": "team_abc"}, clear=True):
+        vc = VercelClient.from_env()
+    assert vc.team_id == "team_abc"
+
+
+def test_vercel_client_construct_requires_token() -> None:
+    """Direct construction must reject an empty token."""
+    from plugins.pwp.capabilities.provision_site.vercel_client import VercelClient
+    with pytest.raises(ValueError):
+        VercelClient(token="")
+    with pytest.raises(ValueError):
+        VercelClient(token="   ")
+
+
+def test_vercel_client_request_shape_and_bearer_auth() -> None:
+    """A GET request must hit api.vercel.com with Bearer token in the
+    Authorization header and the teamId query param when set."""
+    from plugins.pwp.capabilities.provision_site.vercel_client import VercelClient
+    captured = {}
+
+    def fake_urlopen(req, timeout=None):
+        captured["url"] = req.full_url
+        captured["headers"] = dict(req.headers)
+        captured["method"] = req.method
+        # Return a JSON body
+        return MagicMock(
+            __enter__=lambda s: s,
+            __exit__=lambda *a: None,
+            read=lambda: b'{"id":"prj_123","name":"foo","framework":"nextjs","accountId":"acc_1"}',
+        )
+
+    vc = VercelClient(token="test-token", team_id="team_xyz", max_retries=0)
+    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        result = vc.project_lookup("foo")
+
+    assert captured["method"] == "GET"
+    assert captured["url"].startswith("https://api.vercel.com/v9/projects/foo")
+    assert "teamId=team_xyz" in captured["url"]
+    assert captured["headers"]["Authorization"] == "Bearer test-token"
+    assert result.id == "prj_123"
+    assert result.name == "foo"
+    assert result.framework == "nextjs"
+
+
+def test_vercel_client_404_returns_none_for_project_lookup() -> None:
+    """A 404 on project_lookup must return None (not raise)."""
+    from plugins.pwp.capabilities.provision_site.vercel_client import VercelClient, VercelError
+    import http.client
+    hdrs = http.client.HTTPMessage()
+    err = urllib.error.HTTPError(
+        "https://api.vercel.com/v9/projects/foo", 404, "Not Found",
+        hdrs,
+        io.BytesIO(b'{"error":{"code":"not_found","message":"not found"}}'),
+    )
+    vc = VercelClient(token="test-token", max_retries=0)
+    with patch("urllib.request.urlopen", side_effect=err):
+        result = vc.project_lookup("foo")
+    assert result is None
+
+
+def test_vercel_client_500_raises_vercel_error() -> None:
+    """A 500 on project_lookup must raise VercelError (not return None)."""
+    from plugins.pwp.capabilities.provision_site.vercel_client import VercelClient, VercelError
+    import http.client
+    hdrs = http.client.HTTPMessage()
+    err = urllib.error.HTTPError(
+        "https://api.vercel.com/v9/projects/foo", 500, "Internal Server Error",
+        hdrs,
+        io.BytesIO(b'{"error":{"code":"internal","message":"boom"}}'),
+    )
+    vc = VercelClient(token="test-token", max_retries=0)
+    with patch("urllib.request.urlopen", side_effect=err):
+        with pytest.raises(VercelError) as excinfo:
+            vc.project_lookup("foo")
+    assert excinfo.value.status == 500
+
+
+# -- platform_detect ------------------------------------------------------
+
+def test_platform_detect_cloudflare_active_zone() -> None:
+    """If cloudflare_zone completed with status=active, platform_detect
+    must short-circuit to platform=cloudflare_pages."""
+    from plugins.pwp.capabilities.provision_site.steps import platform_detect
+    prior = {"cloudflare_zone": {"zone_id": "z-1", "status": "active"}}
+
+    def fake_doh(_):
+        return None
+
+    def fake_probe(_, timeout=5.0):
+        return {}
+
+    with patch.object(platform_detect, "_doh_cname", side_effect=fake_doh), \
+         patch.object(platform_detect, "_http_probe", side_effect=fake_probe):
+        result = platform_detect.step_platform_detect(
+            domain="example.com", owner="me@example.com",
+            run=prov_types.ProvisionRun(domain="example.com", owner="me@example.com",
+                                        started_at="2026-01-01T00:00:00+00:00"),
+            publish_root=None, prior_outputs=prior,
+        )
+    assert result.status == "complete"
+    assert result.output["platform"] == "cloudflare_pages"
+    assert result.output["cloudflare_zone_id"] == "z-1"
+    assert "cf-zone=z-1" in result.output["evidence"]
+
+
+def test_platform_detect_vercel_via_x_vercel_id() -> None:
+    """An HTTP probe that returns X-Vercel-Id header should classify as
+    'vercel' with project_name derived from the domain."""
+    from plugins.pwp.capabilities.provision_site.steps import platform_detect
+    fake_headers = {"x-vercel-id": "cdg1::abc123"}
+
+    def fake_probe(host, timeout=5.0):
+        return fake_headers
+
+    with patch.object(platform_detect, "_http_probe", side_effect=fake_probe):
+        result = platform_detect.step_platform_detect(
+            domain="ezshare.systems", owner="me@example.com",
+            run=prov_types.ProvisionRun(domain="ezshare.systems",
+                                        owner="me@example.com",
+                                        started_at="2026-01-01T00:00:00+00:00"),
+            publish_root=None, prior_outputs={},
+        )
+    assert result.status == "complete"
+    assert result.output["platform"] == "vercel"
+    assert result.output["vercel_project_name"] == "ezshare"
+
+
+def test_platform_detect_unknown_when_no_signals() -> None:
+    """If the domain doesn't resolve and there are no Cloudflare / Vercel
+    signals, the step returns platform='unknown'."""
+    from plugins.pwp.capabilities.provision_site.steps import platform_detect
+
+    def fake_doh(_):
+        return None
+
+    def fake_probe(host, timeout=5.0):
+        return {}
+
+    with patch.object(platform_detect, "_doh_cname", side_effect=fake_doh), \
+         patch.object(platform_detect, "_http_probe", side_effect=fake_probe):
+        result = platform_detect.step_platform_detect(
+            domain="nope.invalid", owner="me@example.com",
+            run=prov_types.ProvisionRun(domain="nope.invalid",
+                                        owner="me@example.com",
+                                        started_at="2026-01-01T00:00:00+00:00"),
+            publish_root=None, prior_outputs={},
+        )
+    assert result.status == "complete"
+    assert result.output["platform"] == "unknown"
+
+
+# -- vercel_project -------------------------------------------------------
+
+def test_vercel_project_skips_when_platform_not_vercel() -> None:
+    """When platform_detect found a non-Vercel platform, vercel_project
+    must skip itself cleanly."""
+    from plugins.pwp.capabilities.provision_site.steps import vercel_project
+    prior = {"platform_detect": {"platform": "cloudflare_pages"}}
+    result = vercel_project.step_vercel_project(
+        domain="example.com", owner="me@example.com",
+        run=prov_types.ProvisionRun(domain="example.com", owner="me@example.com",
+                                    started_at="2026-01-01T00:00:00+00:00"),
+        publish_root=None, prior_outputs=prior,
+    )
+    assert result.status == "skipped"
+    assert "cloudflare_pages" in result.output["reason"]
+
+
+def test_vercel_project_skips_when_no_platform_detect() -> None:
+    """When platform_detect wasn't run (no prior_outputs), vercel_project
+    must skip itself (we don't know the platform yet)."""
+    from plugins.pwp.capabilities.provision_site.steps import vercel_project
+    result = vercel_project.step_vercel_project(
+        domain="example.com", owner="me@example.com",
+        run=prov_types.ProvisionRun(domain="example.com", owner="me@example.com",
+                                    started_at="2026-01-01T00:00:00+00:00"),
+        publish_root=None, prior_outputs={},
+    )
+    assert result.status == "skipped"
+    assert "None" in result.output["reason"] or "platform=None" in result.output["reason"]
+
+
+def test_vercel_project_no_token_fails_cleanly() -> None:
+    """Without VERCEL_TOKEN, the step returns a clean error (not raise)."""
+    from plugins.pwp.capabilities.provision_site.steps import vercel_project
+    prior = {"platform_detect": {"platform": "vercel", "vercel_project_name": "ezshare"}}
+    with patch.dict(os.environ, {}, clear=True):
+        result = vercel_project.step_vercel_project(
+            domain="ezshare.systems", owner="me@example.com",
+            run=prov_types.ProvisionRun(domain="ezshare.systems",
+                                        owner="me@example.com",
+                                        started_at="2026-01-01T00:00:00+00:00"),
+            publish_root=None, prior_outputs=prior,
+        )
+    assert result.status == "failed"
+    assert "VERCEL_TOKEN" in result.error
+
+
+def test_vercel_project_lookup_existing() -> None:
+    """When VERCEL_TOKEN is set and project_lookup finds the project,
+    the step returns action='lookup' with the project metadata."""
+    from plugins.pwp.capabilities.provision_site.steps import vercel_project
+    prior = {"platform_detect": {"platform": "vercel", "vercel_project_name": "ezshare"}}
+    fake_project = MagicMock()
+    fake_project.id = "prj_existing"
+    fake_project.name = "ezshare"
+    fake_project.framework = "nextjs"
+    fake_project.account_id = "acc_xyz"
+
+    with patch.dict(os.environ, {"VERCEL_TOKEN": "fake"}, clear=True), \
+         patch("plugins.pwp.capabilities.provision_site.vercel_client.VercelClient.from_env") as MockCF:
+        MockCF.return_value.project_lookup.return_value = fake_project
+        result = vercel_project.step_vercel_project(
+            domain="ezshare.systems", owner="me@example.com",
+            run=prov_types.ProvisionRun(domain="ezshare.systems",
+                                        owner="me@example.com",
+                                        started_at="2026-01-01T00:00:00+00:00"),
+            publish_root=None, prior_outputs=prior,
+        )
+    assert result.status == "complete"
+    assert result.output["action"] == "lookup"
+    assert result.output["project_id"] == "prj_existing"
+
+
+# -- cloudflare_zone conditional skip -------------------------------------
+
+def test_cloudflare_zone_skips_when_platform_is_vercel() -> None:
+    """When platform_detect found platform='vercel', cloudflare_zone must
+    skip (the vercel_project step is responsible for Vercel sites)."""
+    from plugins.pwp.capabilities.provision_site.steps import step_cloudflare_zone
+    prior = {"platform_detect": {"platform": "vercel"}}
+    result = step_cloudflare_zone(
+        domain="ezshare.systems", owner="me@example.com",
+        run=prov_types.ProvisionRun(domain="ezshare.systems",
+                                    owner="me@example.com",
+                                    started_at="2026-01-01T00:00:00+00:00"),
+        publish_root=tmp_path_fixture(),
+        prior_outputs=prior,
+    )
+    assert result.status == "skipped"
+    assert "vercel" in result.output["reason"].lower()
+
+
+def test_cloudflare_zone_runs_when_platform_is_cloudflare() -> None:
+    """When platform_detect found platform='cloudflare_pages', cloudflare_zone
+    must NOT skip — it proceeds to the normal zone lookup/create path."""
+    from plugins.pwp.capabilities.provision_site.steps import step_cloudflare_zone
+    prior = {"platform_detect": {"platform": "cloudflare_pages"}}
+
+    fake_zone = MagicMock()
+    fake_zone.id = "z-9876"
+    fake_zone.nameservers = ["ns1.cloudflare.com", "ns2.cloudflare.com"]
+    fake_zone.status = "active"
+
+    with patch.dict(os.environ, {"CF_API_TOKEN": "fake"}, clear=True), \
+         patch("plugins.pwp.capabilities.provision_site.cloudflare_client.CloudflareClient") as MockCF:
+        MockCF.from_env.return_value.zone_lookup.return_value = fake_zone
+        result = step_cloudflare_zone(
+            domain="example.com", owner="me@example.com",
+            run=prov_types.ProvisionRun(domain="example.com",
+                                        owner="me@example.com",
+                                        started_at="2026-01-01T00:00:00+00:00"),
+            publish_root=tmp_path_fixture(),
+            prior_outputs=prior,
+        )
+    assert result.status == "complete"
+    assert result.output["zone_id"] == "z-9876"
+
+
+def tmp_path_fixture():
+    """Return a fresh tmp path for tests that don't pass tmp_path."""
+    import tempfile
+    return Path(tempfile.mkdtemp())
+
+
+# -- platform_detect: cf_tunnel classification -----------------------------
+
+def test_platform_detect_cf_tunnel_via_cname() -> None:
+    """If the apex CNAME ends in .cfargotunnel.com, the platform is
+    classified as 'cf_tunnel' even without an active Cloudflare zone."""
+    from plugins.pwp.capabilities.provision_site.steps import platform_detect
+
+    with patch.object(
+        platform_detect, "_doh_cname",
+        return_value="abcd1234-5678-90ab-cdef-1234567890ab.cfargotunnel.com",
+    ), patch.object(platform_detect, "_http_probe", return_value={}):
+        result = platform_detect.step_platform_detect(
+            domain="selfhosted.example.com", owner="me@example.com",
+            run=prov_types.ProvisionRun(domain="selfhosted.example.com",
+                                        owner="me@example.com",
+                                        started_at="2026-01-01T00:00:00+00:00"),
+            publish_root=None, prior_outputs={},
+        )
+    assert result.status == "complete"
+    assert result.output["platform"] == "cf_tunnel"
+    assert result.output["apex_cname"].endswith(".cfargotunnel.com")
+    assert "cname=" in result.output["evidence"]
+
+
+def test_platform_detect_vercel_cname_takes_precedence_over_zone() -> None:
+    """If a CF zone exists but the CNAME points to vercel, the platform
+    is 'vercel' (Vercel wins over CF zone)."""
+    from plugins.pwp.capabilities.provision_site.steps import platform_detect
+    prior = {"cloudflare_zone": {"zone_id": "z-1", "status": "active"}}
+    with patch.object(
+        platform_detect, "_doh_cname",
+        return_value="cname.vercel-dns.com",
+    ), patch.object(platform_detect, "_http_probe", return_value={}):
+        result = platform_detect.step_platform_detect(
+            domain="hybrid.example.com", owner="me@example.com",
+            run=prov_types.ProvisionRun(domain="hybrid.example.com",
+                                        owner="me@example.com",
+                                        started_at="2026-01-01T00:00:00+00:00"),
+            publish_root=None, prior_outputs=prior,
+        )
+    assert result.status == "complete"
+    assert result.output["platform"] == "vercel"
+    assert result.output["vercel_project_name"] == "hybrid"
+
+
+def test_platform_detect_live_ezshare_classifies_as_vercel() -> None:
+    """Real-world test: ezshare.systems currently CNAMEs to cname.vercel-dns.com.
+    platform_detect should classify it as 'vercel' against the live DNS."""
+    from plugins.pwp.capabilities.provision_site.steps import platform_detect
+
+    # Don't mock — let it actually call DoH and HTTP.
+    result = platform_detect.step_platform_detect(
+        domain="ezshare.systems", owner="ned@example.com",
+        run=prov_types.ProvisionRun(domain="ezshare.systems",
+                                    owner="ned@example.com",
+                                    started_at="2026-01-01T00:00:00+00:00"),
+        publish_root=None, prior_outputs={},
+    )
+    assert result.status == "complete"
+    # We expect either 'vercel' (CNAME) or 'unknown' (network failure) —
+    # anything else would indicate a misclassification bug.
+    assert result.output["platform"] in ("vercel", "unknown"), (
+        f"Unexpected classification: {result.output}"
+    )
+
+
+# -- gsc_verify: Vercel skip ------------------------------------------------
+
+def test_gsc_verify_skips_when_platform_is_vercel(tmp_path) -> None:
+    """When platform_detect found platform='vercel', gsc_verify must
+    skip cleanly (Vercel sites have no CF zone to write TXT records to)."""
+    from plugins.pwp.capabilities.provision_site.steps import gsc as gsc_mod
+    prior = {"platform_detect": {"platform": "vercel"}}
+    result = gsc_mod.step_gsc_verify(
+        domain="ezshare.systems", owner="me@example.com",
+        run=prov_types.ProvisionRun(domain="ezshare.systems",
+                                    owner="me@example.com",
+                                    started_at="2026-01-01T00:00:00+00:00"),
+        publish_root=tmp_path, prior_outputs=prior,
+    )
+    assert result.status == "skipped"
+    assert "vercel" in result.output["reason"].lower()
+    assert result.output["platform"] == "vercel"

@@ -27,3 +27,15 @@
 .pwp-kpi-card-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: #5C625E; margin-bottom: 6px; }
 .pwp-kpi-card-value { font-size: 22px; font-variant-numeric: tabular-nums; font-weight: 600; color: #2F3631; }
 .pwp-kpi-card-delta { font-size: 12px; color: #8C8275; margin-top: 4px; }
+
+/* Pending Changes panel — surfaces outstanding provisioning tasks
+   (soft-failed steps, unmerged runs, failed runs) at the top of the
+   dashboard index so the operator sees what's waiting for them. */
+.pwp-pending-changes { border: 1px solid rgba(196, 144, 70, 0.32); border-radius: 6px; margin: 0 0 24px 0; padding: 16px 20px; background: rgba(252, 244, 220, 0.88); }
+.pwp-pending-changes h2 { margin: 0 0 8px 0; font-size: 16px; color: #6B4F1F; }
+.pwp-pending-changes ul { list-style: none; padding: 0; margin: 8px 0 0 0; }
+.pwp-pending-changes li { padding: 10px 12px; background: rgba(255, 255, 255, 0.85); border-radius: 4px; margin-bottom: 8px; border-left: 4px solid #C49046; }
+.pwp-pending-changes li:last-child { margin-bottom: 0; }
+.pwp-pending-changes .pwp-pending-kind { display: inline-block; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; padding: 2px 8px; border-radius: 3px; background: #C49046; color: #fff; margin-left: 8px; }
+.pwp-pending-changes .pwp-pending-detail { font-size: 12px; background: rgba(0, 0, 0, 0.04); padding: 6px 10px; border-radius: 4px; margin: 6px 0; white-space: pre-wrap; word-break: break-word; }
+.pwp-pending-changes .pwp-pending-action { font-size: 12px; color: #2F3631; margin: 4px 0 0 0; font-family: ui-monospace, "SF Mono", monospace; }

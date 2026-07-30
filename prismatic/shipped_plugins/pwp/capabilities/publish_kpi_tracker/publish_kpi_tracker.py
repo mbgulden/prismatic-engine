@@ -297,6 +297,16 @@ def render_index(agg: dict) -> str:
             f'</section>'
         )
     sections_html = "\n".join(sections)
+
+    # Phase 3: pending changes panel (only renders when there ARE
+    # outstanding items — empty list => empty panel).
+    from .pending_changes import PendingChange, render_pending_changes_html
+    pending = [
+        PendingChange(**p) if isinstance(p, dict) else p
+        for p in (agg.get("pending_changes") or [])
+    ]
+    pending_html = render_pending_changes_html(pending)
+
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -312,6 +322,7 @@ def render_index(agg: dict) -> str:
   <p class="muted">Window: {_esc(agg.get("window"))} · Sites tracked: {len(agg.get("sites", []))}</p>
 </header>
 <main>
+  {pending_html}
   <section class="pwp-section">
     <h2>Multi-site index</h2>
     {sections_html}

@@ -25,11 +25,17 @@ from typing import Any, Dict, Optional
 # Per-step category:
 #   blocking (default): failure stops the run.
 #   soft:                failure is recorded but doesn't stop the run;
-#                        used for credential-gated steps (GA4/GTM)
+#                        used for credential-gated steps (GA4/GTM/Vercel)
 #                        that the user can configure later.
+#   conditional:         step is gated on `prior_outputs[platform_detect]`;
+#                        the step itself decides skip-vs-run (cloudflare_zone
+#                        runs only when platform=cloudflare_pages;
+#                        vercel_project runs only when platform=vercel).
 STEP_CATEGORIES: Dict[str, str] = {
+    "platform_detect": "blocking",
     "verify_domain": "blocking",
-    "cloudflare_zone": "blocking",
+    "cloudflare_zone": "conditional",
+    "vercel_project": "conditional",
     "gsc_verify": "blocking",
     "ga4_property": "soft",
     "gtm_container": "soft",
@@ -41,6 +47,8 @@ STEP_CATEGORIES: Dict[str, str] = {
 from .gsc import step_gsc_verify
 from .ga4 import step_ga4_property  # noqa: F401  (re-exported for orchestrator)
 from .gtm import step_gtm_container  # noqa: F401
+from .platform_detect import step_platform_detect
+from .vercel_project import step_vercel_project
 from ..domain_verifier import (
     VERIFY_PREFIX,
     generate_challenge_token,
@@ -95,9 +103,33 @@ def step_verify_domain(
 
 
 def step_cloudflare_zone(
-    *, domain: str, owner: str, run, publish_root: Path, **_: Any
+    *, domain: str, owner: str, run, publish_root: Path,
+    prior_outputs: Optional[Dict[str, Dict[str, Any]]] = None,
+    **_: Any
 ) -> StepResult:
-    """Create or look up the Cloudflare zone for `domain`."""
+    """Create or look up the Cloudflare zone for `domain`.
+
+    Conditional on `platform_detect`:
+      - platform == 'cloudflare_pages' -> run as normal
+      - platform == 'vercel' -> skip (the vercel_project step handles it)
+      - platform == 'unknown' or missing -> run anyway (the zone might
+        still be on Cloudflare even if the live site isn't)
+    """
+    prior = prior_outputs or {}
+    platform = (prior.get("platform_detect") or {}).get("platform")
+    if platform == "vercel":
+        return StepResult(
+            name="cloudflare_zone",
+            status="skipped",
+            output={
+                "reason": (
+                    "platform_detect found platform='vercel'; "
+                    "cloudflare_zone does not run for Vercel sites"
+                ),
+                "platform": platform,
+            },
+        )
+
     # Lazy import — Cloudflare client requires `requests` and is
     # optional for tests that mock it.
     from ..cloudflare_client import CloudflareClient, CloudflareError

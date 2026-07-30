@@ -107,6 +107,21 @@ def build_dashboard(*, publish_root, runtime_values=None, window="last24h",
     # Aggregate once; render all four surfaces from the same in-memory snapshot.
     agg = aggregate(runtime_values=runtime_values)
     agg["window"] = window
+
+    # Phase 3: scan the provision_state directory for outstanding tasks
+    # (soft-failed steps, unmerged runs, failed runs) and surface them
+    # on the dashboard index so the user sees what's waiting for them.
+    try:
+        from .pending_changes import scan_provision_state
+        agg["pending_changes"] = [
+            c.to_dict()
+            for c in scan_provision_state()
+        ]
+    except Exception:
+        # Never let the dashboard render fail because of a pending-changes
+        # scan error (e.g., a corrupted state file).
+        agg["pending_changes"] = []
+
     (publish_root / "index.html").write_text(render_index(agg), encoding="utf-8")
     (publish_root / "accordion.html").write_text(render_index(agg), encoding="utf-8")
 

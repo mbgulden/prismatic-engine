@@ -81,6 +81,24 @@ def step_gsc_verify(
             output={**prior["gsc_verify"], "reused_prior_output": True},
         )
 
+    # Platform-aware: Vercel sites don't have a Cloudflare zone to write
+    # to. The site owner needs to verify GSC via Vercel's DNS UI or by
+    # adding the TXT record at their registrar. Skip cleanly.
+    platform = (prior.get("platform_detect") or {}).get("platform")
+    if platform == "vercel":
+        return StepResult(
+            name="gsc_verify",
+            status="skipped",
+            output={
+                "reason": (
+                    "platform_detect found platform='vercel'; gsc_verify "
+                    "via Cloudflare DNS is not applicable. Verify GSC via "
+                    "Vercel's domain DNS configuration or registrar."
+                ),
+                "platform": platform,
+            },
+        )
+
     # 1. Find the existing Cloudflare zone (skip if absent — we run after cloudflare_zone).
     if not prior.get("cloudflare_zone", {}).get("zone_id"):
         return StepResult(
