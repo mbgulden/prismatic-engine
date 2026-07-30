@@ -59,8 +59,14 @@ def publish_publish_kpi_dashboard(publish_root, runtime_values=None) -> dict:
     return build_dashboard(publish_root=publish_root, runtime_values=runtime_values)
 
 
-def build_dashboard(*, publish_root, runtime_values=None, window="last24h",
-                    write_snapshot=True, sites_dir=None) -> dict:
+def build_dashboard(
+    *,
+    publish_root,
+    runtime_values=None,
+    window="last24h",
+    write_snapshot=True,
+    sites_dir=None,
+) -> dict:
     """Single entry point used by both the FastAPI endpoint and ad-hoc CLI runs.
 
     Args:
@@ -93,6 +99,7 @@ def build_dashboard(*, publish_root, runtime_values=None, window="last24h",
     # data produce no row.
     if runtime_values is None:
         from . import runtime_values as rv
+
         runtime_values = rv.build_runtime_values(sites_dir=sites_dir)
         runtime_values_path = None  # auto-built; not from a file
     else:
@@ -113,10 +120,8 @@ def build_dashboard(*, publish_root, runtime_values=None, window="last24h",
     # on the dashboard index so the user sees what's waiting for them.
     try:
         from .pending_changes import scan_provision_state
-        agg["pending_changes"] = [
-            c.to_dict()
-            for c in scan_provision_state()
-        ]
+
+        agg["pending_changes"] = [c.to_dict() for c in scan_provision_state()]
     except Exception:
         # Never let the dashboard render fail because of a pending-changes
         # scan error (e.g., a corrupted state file).
@@ -125,12 +130,26 @@ def build_dashboard(*, publish_root, runtime_values=None, window="last24h",
     (publish_root / "index.html").write_text(render_index(agg), encoding="utf-8")
     (publish_root / "accordion.html").write_text(render_index(agg), encoding="utf-8")
 
+    # Phase 4.3 (F4 Edit funnel UI pre-fill): write one <slug>.prior.json
+    # per site that has a prior submission log, so the modal's refinement
+    # flow can fetch them from the same origin without a backend. Skip
+    # silently if funnel_form is not installed (the JSON files are only
+    # consumed by the modal, which is gated on the same import).
+    prior_json_files: list = []
+    try:
+        from .funnel_form import write_prior_submission_json
+
+        prior_json_files = write_prior_submission_json(publish_root)
+    except Exception:
+        prior_json_files = []
+
     manifest = {
         "sites": [],
         "window": window,
         "output_dir": str(publish_root),
         "snapshot_path": None,
         "runtime_values_path": runtime_values_path,
+        "prior_submission_files": [str(p) for p in prior_json_files],
     }
     for site in agg["sites"]:
         slug = site["slug"]
@@ -158,9 +177,7 @@ def build_site_collection(slug: str, **overrides) -> dict:
     site = load_site(slug)
     errs = validate(site)
     if errs:
-        raise ValueError(
-            f"site {slug!r} failed validation: " + "; ".join(errs)
-        )
+        raise ValueError(f"site {slug!r} failed validation: " + "; ".join(errs))
     out = dict(site)
     out["_runtime_overrides"] = dict(overrides)
     return out
@@ -187,17 +204,21 @@ def build_all_site_summaries(runtime_values=None) -> list:
             headline_id = next(iter(flat["metrics"]))
         rv = (runtime_values or {}).get(slug, {})
         headline_value = rv.get(headline_id) if headline_id else None
-        summaries.append({
-            "slug": slug,
-            "name": site.get("name"),
-            "domain": site.get("domain"),
-            "extends": site.get("extends"),
-            "tracking_property": site.get("tracking_property"),
-            "metric_count": len(flat["metrics"]),
-            "headline_metric_id": headline_id,
-            "headline_metric_label": flat["metrics"][headline_id]["label"] if headline_id else None,
-            "headline_value": headline_value,
-        })
+        summaries.append(
+            {
+                "slug": slug,
+                "name": site.get("name"),
+                "domain": site.get("domain"),
+                "extends": site.get("extends"),
+                "tracking_property": site.get("tracking_property"),
+                "metric_count": len(flat["metrics"]),
+                "headline_metric_id": headline_id,
+                "headline_metric_label": flat["metrics"][headline_id]["label"]
+                if headline_id
+                else None,
+                "headline_value": headline_value,
+            }
+        )
     return summaries
 
 

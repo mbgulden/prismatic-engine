@@ -24,6 +24,7 @@ from plugins.pwp.capabilities.publish_kpi_tracker.funnel_form import (  # noqa: 
     render_modal_css,
     render_modal_html,
     site_row_buttons,
+    write_prior_submission_json,
 )
 from plugins.pwp.capabilities.publish_kpi_tracker.funnel_form import (  # noqa: E402,E501
     load_prior_submission,
@@ -405,6 +406,202 @@ class TestRenderIndexIntegration:
         out = render_index(agg)
         assert "Edit funnel" in out
         assert "Re-submit refinement" in out
+
+
+# ── Phase 4.3: write_prior_submission_json (static prior-submission files) ──
+class TestWritePriorSubmissionJson:
+    def test_writes_one_file_per_prior_submission(self, tmp_path, monkeypatch):
+        # Drop a fake SUBMISSION_LOG_DIR with two site entries.
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        (log_dir / "ezshare.json").write_text(
+            """{"form": {"primary_goal": "g"}, "linear_issue_identifier": "GRO-1"}""",
+            encoding="utf-8",
+        )
+        (log_dir / "active-oahu.json").write_text(
+            """{"form": {"primary_goal": "ao"}}""",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            "plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
+            log_dir,
+        )
+        # Publish root is a separate dir.
+        pub = tmp_path / "publish"
+        pub.mkdir()
+        written = write_prior_submission_json(pub)
+        names = sorted(w.name for w in written)
+        assert names == ["active-oahu.prior.json", "ezshare.prior.json"]
+        # File contents.
+        ezshare_data = (pub / "ezshare.prior.json").read_text()
+        assert "GRO-1" in ezshare_data
+        assert "primary_goal" in ezshare_data
+
+    def test_skips_corrupt_json(self, tmp_path, monkeypatch):
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        (log_dir / "broken.json").write_text("not json", encoding="utf-8")
+        (log_dir / "good.json").write_text(
+            """{"form": {"primary_goal": "g"}}""", encoding="utf-8"
+        )
+        monkeypatch.setattr(
+            "plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
+            log_dir,
+        )
+        pub = tmp_path / "publish"
+        pub.mkdir()
+        written = write_prior_submission_json(pub)
+        names = [w.name for w in written]
+        assert "good.prior.json" in names
+        assert "broken.prior.json" not in names
+
+    def test_skips_when_log_dir_missing(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
+            tmp_path / "does-not-exist",
+        )
+        pub = tmp_path / "publish"
+        pub.mkdir()
+        written = write_prior_submission_json(pub)
+        assert written == []
+
+    def test_skips_when_no_priors(self, tmp_path, monkeypatch):
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        monkeypatch.setattr(
+            "plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
+            log_dir,
+        )
+        pub = tmp_path / "publish"
+        pub.mkdir()
+        written = write_prior_submission_json(pub)
+        assert written == []
+
+    def test_skips_non_dict_or_formless_files(self, tmp_path, monkeypatch):
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        (log_dir / "x.json").write_text("""{"form": "not a dict"}""")
+        (log_dir / "y.json").write_text("""{"no_form": true}""")
+        monkeypatch.setattr(
+            "plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
+            log_dir,
+        )
+        pub = tmp_path / "publish"
+        pub.mkdir()
+        written = write_prior_submission_json(pub)
+        assert written == []
+
+    def test_prior_json_is_loadable(self, tmp_path, monkeypatch):
+        import json
+
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        (log_dir / "ezshare.json").write_text(
+            json.dumps(
+                {
+                    "form": {"primary_goal": "g", "context": {"primary_goal": "g2"}},
+                    "linear_issue_identifier": "GRO-99",
+                    "linear_issue_url": "https://linear.app/x/issue/GRO-99",
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            "plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
+            log_dir,
+        )
+        pub = tmp_path / "publish"
+        pub.mkdir()
+        written = write_prior_submission_json(pub)
+        assert len(written) == 1
+        # Re-load and verify shape.
+        loaded = json.loads(written[0].read_text())
+        assert loaded["form"]["primary_goal"] == "g"
+        assert loaded["linear_issue_identifier"] == "GRO-99"
+        assert loaded["linear_issue_url"].startswith("https://")
+
+
+# ── Phase 4.3: modal JS fallback to <slug>.prior.json ─────────────────────
+class TestModalJsStaticPriorFallback:
+    def test_modal_js_includes_prior_json_urls(self):
+        out = render_modal_html()
+        # The Phase 4.3 fallback URLs.
+        assert "/pwp/kpi/' + encodeURIComponent(slug) + '.prior.json" in out
+        assert "/pwp/' + encodeURIComponent(slug) + '.prior.json" in out
+        assert "encodeURIComponent(slug) + '.prior.json" in out
+
+    def test_modal_js_includes_tryFetchSequence_helper(self):
+        out = render_modal_html()
+        assert "tryFetchSequence" in out
+
+    def test_modal_js_preserves_endpoint_first(self):
+        # When an endpoint is configured, the API endpoint is tried first.
+        out = render_modal_html(submit_endpoint="/pwp/api/funnel-config")
+        assert "urls.push(endpoint + '/' + encodeURIComponent(slug) + '/prior')" in out
+
+    def test_modal_js_falls_back_when_no_endpoint(self):
+        out = render_modal_html(submit_endpoint="")
+        # The endpoint is empty, so the static URLs are the only options.
+        # We assert that the static URLs are still listed.
+        assert "'/pwp/kpi/' + encodeURIComponent(slug) + '.prior.json'" in out
+
+
+# ── Phase 4.3: build_dashboard integration ────────────────────────────────
+class TestBuildDashboardPriorSubmissions:
+    def test_build_dashboard_writes_prior_json_files(self, tmp_path, monkeypatch):
+        # Set up a submission log dir.
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        (log_dir / "ezshare.json").write_text(
+            """{"form": {"primary_goal": "g"}, "linear_issue_identifier": "GRO-1"}""",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            "plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
+            log_dir,
+        )
+
+        from plugins.pwp.capabilities.publish_kpi_tracker import build_dashboard
+
+        out_dir = tmp_path / "publish"
+        manifest = build_dashboard(publish_root=str(out_dir))
+        # ezshare.prior.json should now exist in the publish root.
+        prior = out_dir / "ezshare.prior.json"
+        assert prior.exists()
+        # Manifest should list it.
+        assert "ezshare.prior.json" in manifest["prior_submission_files"][0]
+
+    def test_build_dashboard_manifest_includes_prior_files_list(
+        self, tmp_path, monkeypatch
+    ):
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        (log_dir / "ezshare.json").write_text(
+            """{"form": {"primary_goal": "g"}}""", encoding="utf-8"
+        )
+        monkeypatch.setattr(
+            "plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
+            log_dir,
+        )
+        from plugins.pwp.capabilities.publish_kpi_tracker import build_dashboard
+
+        out_dir = tmp_path / "publish"
+        manifest = build_dashboard(publish_root=str(out_dir))
+        assert "prior_submission_files" in manifest
+        assert isinstance(manifest["prior_submission_files"], list)
+        assert len(manifest["prior_submission_files"]) == 1
+
+    def test_build_dashboard_no_priors(self, tmp_path, monkeypatch):
+        # Empty log dir.
+        monkeypatch.setattr(
+            "plugins.pwp.capabilities.publish_kpi_tracker.funnel_form.SUBMISSION_LOG_DIR",
+            tmp_path / "missing",
+        )
+        from plugins.pwp.capabilities.publish_kpi_tracker import build_dashboard
+
+        out_dir = tmp_path / "publish"
+        manifest = build_dashboard(publish_root=str(out_dir))
+        assert manifest["prior_submission_files"] == []
 
     def test_render_index_works_when_funnel_form_missing(self, monkeypatch):
         # Simulate funnel_form being uninstalled (the lazy import inside

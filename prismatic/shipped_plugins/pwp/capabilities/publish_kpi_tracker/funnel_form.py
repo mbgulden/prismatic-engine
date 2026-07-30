@@ -237,12 +237,26 @@ def render_modal_html(
         "  }\n"
         "\n"
         "  function prefillFromSubmission(slug) {\n"
-        "    // Reads the prior submission log from /pwp/api/funnel-config/<slug>/prior\n"
-        "    // (a small endpoint the server can expose). Falls back to leaving\n"
-        "    // fields blank if the request fails.\n"
-        "    var url = (form.dataset.endpoint || '/pwp/api/funnel-config') + '/' + encodeURIComponent(slug) + '/prior';\n"
-        "    return fetch(url, { credentials: 'same-origin' }).then(function (resp) {\n"
-        "      if (!resp.ok) return null;\n"
+        "    // Reads the prior submission log. Phase 4.3 (F4 Edit funnel UI):\n"
+        "    // try the API endpoint first (when a backend is configured), then\n"
+        "    // fall back to the static <slug>.prior.json file written by\n"
+        "    // build_dashboard — this is the no-backend path that lets the modal\n"
+        "    // pre-fill without a server. The shape is the same in both cases.\n"
+        "    var endpoint = form.dataset.endpoint || '';\n"
+        "    var urls = [];\n"
+        "    if (endpoint) {\n"
+        "      urls.push(endpoint + '/' + encodeURIComponent(slug) + '/prior');\n"
+        "    }\n"
+        "    urls.push('/pwp/kpi/' + encodeURIComponent(slug) + '.prior.json');\n"
+        "    urls.push('/pwp/' + encodeURIComponent(slug) + '.prior.json');\n"
+        "    urls.push(encodeURIComponent(slug) + '.prior.json');\n"
+        "    return tryFetchSequence(urls, 0);\n"
+        "  }\n"
+        "\n"
+        "  function tryFetchSequence(urls, idx) {\n"
+        "    if (idx >= urls.length) return Promise.resolve(null);\n"
+        "    return fetch(urls[idx], { credentials: 'same-origin' }).then(function (resp) {\n"
+        "      if (!resp.ok) return tryFetchSequence(urls, idx + 1);\n"
         "      return resp.json();\n"
         "    }).then(function (data) {\n"
         "      if (!data || !data.form) return null;\n"
@@ -684,8 +698,53 @@ __all__ = [
     "render_button_wiring_js",
     "site_row_buttons",
     "load_prior_submission",
+    "write_prior_submission_json",
     "SUBMISSION_LOG_DIR",
     "DEFAULT_SUBMIT_ENDPOINT",
     "FORM_VERSION",
     "DATA_SOURCE_OPTIONS",
 ]
+
+
+# ── Static prior-submission JSON (Phase 4.3) ────────────────────────────
+def write_prior_submission_json(publish_root: Path) -> List[Path]:
+    """Write one `<slug>.prior.json` file per site that has a prior submission.
+
+    Phase 4.3 (F4 Edit funnel UI pre-fill): the modal's refinement flow
+    pre-fills the form from `load_prior_submission(slug)`. The JS fetches
+    `<form.dataset.endpoint>/<slug>/prior` — but the dashboard is static.
+    So `build_dashboard` writes one prior-submission JSON per site into
+    the publish root, and the modal's fetch picks the right one up from
+    the same origin.
+
+    Layout in publish_root::
+
+        <publish_root>/<slug>.prior.json
+            {"form": {...}, "linear_issue_identifier": "...", ...}
+
+    Returns the list of files written (abs paths). Sites without a prior
+    submission log are skipped silently.
+    """
+    publish_root = Path(publish_root)
+    written: List[Path] = []
+    if not SUBMISSION_LOG_DIR.exists():
+        return written
+    for log_path in SUBMISSION_LOG_DIR.glob("*.json"):
+        slug = log_path.stem
+        try:
+            data = json.loads(log_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if (
+            not isinstance(data, dict)
+            or "form" not in data
+            or not isinstance(data["form"], dict)
+        ):
+            continue
+        out_path = publish_root / f"{slug}.prior.json"
+        out_path.write_text(
+            json.dumps(data, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        written.append(out_path)
+    return written
