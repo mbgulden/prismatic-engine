@@ -9,8 +9,9 @@ import json
 import os
 import shutil
 import threading
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 import pytest
 
@@ -346,7 +347,7 @@ def test_adv_3_missing_or_mismatched_snapshot_row_zero_adapter_calls(
     disposable_db: Path, disposable_release_root
 ):
     """Adversarial Test 3: Missing snapshot row or generation mismatch yields zero adapter calls."""
-    snap_dict, digest = install_test_snapshot(
+    snap_dict, _digest = install_test_snapshot(
         disposable_db, release_info=disposable_release_root
     )
     env = make_envelope_for_snap(snap_dict)
@@ -434,7 +435,7 @@ def test_adv_6_nonexistent_release_root_cwd_executable_rejected(
     disposable_db: Path, disposable_release_root
 ):
     """Adversarial Test 6: Nonexistent release root, cwd, or executable yields zero adapter calls."""
-    rel_root, app_dir, exe_file, rel_ev, cwd_ev, exe_ev = disposable_release_root
+    rel_root, app_dir, _exe_file, rel_ev, cwd_ev, exe_ev = disposable_release_root
     nonexistent_exe = app_dir / "nonexistent_worker"
     wrong_exe_ev = dict(exe_ev, canonical_path=str(nonexistent_exe))
 
@@ -491,7 +492,7 @@ def test_adv_7_path_escapes_aliases_and_symlinks_rejected(
     disposable_db: Path, disposable_release_root
 ):
     """Adversarial Test 7: /bin/sh, cwd escape, executable escape, alias root, and symlink escape are rejected."""
-    rel_root, app_dir, exe_file, rel_ev, cwd_ev, exe_ev = disposable_release_root
+    rel_root, app_dir, _exe_file, rel_ev, cwd_ev, exe_ev = disposable_release_root
 
     # Try executable escape with /bin/sh
     argv = ("/bin/sh",)
@@ -556,7 +557,7 @@ def test_adv_8_group_world_writable_objects_rejected(
     disposable_db: Path, disposable_release_root
 ):
     """Adversarial Test 8: Group/world-writable release root, cwd, executable, or parent is rejected."""
-    rel_root, app_dir, exe_file, rel_ev, cwd_ev, exe_ev = disposable_release_root
+    _rel_root, _app_dir, exe_file, _rel_ev, _cwd_ev, _exe_ev = disposable_release_root
     snap_dict, digest = install_test_snapshot(
         disposable_db, release_info=disposable_release_root
     )
@@ -583,7 +584,7 @@ def test_adv_8_group_world_writable_objects_rejected(
 
 def test_adv_9_wrong_owner_rejected(disposable_db: Path, disposable_release_root):
     """Adversarial Test 9: Evidence owner mismatch yields zero adapter calls."""
-    rel_root, app_dir, exe_file, rel_ev, cwd_ev, exe_ev = disposable_release_root
+    rel_root, app_dir, _exe_file, rel_ev, cwd_ev, exe_ev = disposable_release_root
     wrong_exe_ev = dict(exe_ev, owner="99999")  # Non-matching owner
 
     argv = ("worker",)
@@ -1513,3 +1514,76 @@ def test_req_adv_15_repeated_delivery_of_fail_closed_outcome_is_idempotent(
     assert adapter.call_count == 0
     assert res2["disposition"] == "converged"
     assert res2["reason_code"] == "already_terminal"
+
+
+def test_schedule_bucket_calculators():
+    """Pure canonical computation of next schedule bucket in UTC and non-UTC timezones, handling DST."""
+    from prismatic.cron_runner import next_schedule_bucket
+
+    # Hourly job at 00 minutes
+    # UTC
+    b_utc = next_schedule_bucket("0 * * * *", "UTC", "2026-03-08T01:15:00Z")
+    assert b_utc == "2026-03-08T02:00:00Z"
+
+    # NY (Spring forward is March 8, 2026 2am -> 3am)
+    b_ny = next_schedule_bucket(
+        "0 * * * *", "America/New_York", "2026-03-08T06:15:00Z"
+    )  # 06:15 UTC = 01:15 EST
+    assert b_ny == "2026-03-08T07:00:00Z"  # 07:00 UTC = 03:00 EDT
+
+    # Rejects malformed
+    with pytest.raises(CronAuthorityError):
+        next_schedule_bucket("0 * * * * *", "UTC", "2026-03-08T01:15:00Z")  # 6 parts
+    with pytest.raises(CronAuthorityError):
+        next_schedule_bucket("@hourly", "UTC", "2026-03-08T01:15:00Z")  # alias
+    with pytest.raises(CronAuthorityError):
+        next_schedule_bucket("0 * * * *", "Invalid/TZ", "2026-03-08T01:15:00Z")
+
+
+def test_schedule_range_calculators():
+    """Schedule buckets between is exclusive after_utc, inclusive through_utc, bounded, and deterministic."""
+    from prismatic.cron_runner import schedule_buckets_between
+
+    # 15-minute cron expression
+    buckets = schedule_buckets_between(
+        "*/15 * * * *",
+        "UTC",
+        after_utc="2026-07-28T00:00:00Z",
+        through_utc="2026-07-28T01:00:00Z",
+        max_buckets=10,
+    )
+    assert buckets == [
+        "2026-07-28T00:15:00Z",
+        "2026-07-28T00:30:00Z",
+        "2026-07-28T00:45:00Z",
+        "2026-07-28T01:00:00Z",
+    ]
+
+    # Rejects reversed timestamps
+    with pytest.raises(CronAuthorityError):
+        schedule_buckets_between(
+            "*/15 * * * *",
+            "UTC",
+            after_utc="2026-07-28T02:00:00Z",
+            through_utc="2026-07-28T01:00:00Z",
+            max_buckets=10,
+        )
+
+    # Historical and future dates produce identical deterministic output
+    hist = schedule_buckets_between(
+        "0 0 * * *",
+        "UTC",
+        after_utc="2020-01-01T00:00:00Z",
+        through_utc="2020-01-03T00:00:00Z",
+        max_buckets=5,
+    )
+    assert hist == ["2020-01-02T00:00:00Z", "2020-01-03T00:00:00Z"]
+
+    fut = schedule_buckets_between(
+        "0 0 * * *",
+        "UTC",
+        after_utc="2030-01-01T00:00:00Z",
+        through_utc="2030-01-03T00:00:00Z",
+        max_buckets=5,
+    )
+    assert fut == ["2030-01-02T00:00:00Z", "2030-01-03T00:00:00Z"]
