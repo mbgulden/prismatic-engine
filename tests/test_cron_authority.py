@@ -23,8 +23,9 @@ from __future__ import annotations
 
 import hashlib
 import inspect
-from pathlib import Path
 import sqlite3
+from pathlib import Path
+
 import pytest
 
 from prismatic.cron_authority import (
@@ -392,7 +393,7 @@ def test_8_duplicate_receipt_id_and_second_receipt_for_attempt_rejected(
         tuple(sample_aggregate_kwargs.values()),
     )
     conn.execute(
-        "INSERT INTO cron_execution_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
+        "INSERT INTO cron_execution_attempts (execution_id, attempt, state, runner_id, fence_token, lease_expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
         tuple(sample_attempt_kwargs.values()),
     )
     conn.execute(
@@ -419,7 +420,7 @@ def test_8_duplicate_receipt_id_and_second_receipt_for_attempt_rejected(
         tuple(aggregate_2.values()),
     )
     conn.execute(
-        "INSERT INTO cron_execution_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
+        "INSERT INTO cron_execution_attempts (execution_id, attempt, state, runner_id, fence_token, lease_expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
         tuple(attempt_2.values()),
     )
 
@@ -462,7 +463,7 @@ def test_9_rejections_for_invalid_types_states_digests_and_evidence(
     attempt_zero = dict(sample_attempt_kwargs, attempt=0)
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(
-            "INSERT INTO cron_execution_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
+            "INSERT INTO cron_execution_attempts (execution_id, attempt, state, runner_id, fence_token, lease_expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
             tuple(attempt_zero.values()),
         )
 
@@ -470,7 +471,7 @@ def test_9_rejections_for_invalid_types_states_digests_and_evidence(
     attempt_text = dict(sample_attempt_kwargs, attempt="not-an-integer")
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(
-            "INSERT INTO cron_execution_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
+            "INSERT INTO cron_execution_attempts (execution_id, attempt, state, runner_id, fence_token, lease_expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
             tuple(attempt_text.values()),
         )
 
@@ -478,12 +479,12 @@ def test_9_rejections_for_invalid_types_states_digests_and_evidence(
     illegal_state = dict(sample_attempt_kwargs, state="illegal_state")
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(
-            "INSERT INTO cron_execution_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
+            "INSERT INTO cron_execution_attempts (execution_id, attempt, state, runner_id, fence_token, lease_expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
             tuple(illegal_state.values()),
         )
 
     conn.execute(
-        "INSERT INTO cron_execution_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
+        "INSERT INTO cron_execution_attempts (execution_id, attempt, state, runner_id, fence_token, lease_expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
         tuple(sample_attempt_kwargs.values()),
     )
 
@@ -538,7 +539,7 @@ def test_10_missing_evidence_foreign_key_rejected(
         tuple(sample_aggregate_kwargs.values()),
     )
     conn.execute(
-        "INSERT INTO cron_execution_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
+        "INSERT INTO cron_execution_attempts (execution_id, attempt, state, runner_id, fence_token, lease_expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
         tuple(sample_attempt_kwargs.values()),
     )
 
@@ -568,7 +569,7 @@ def test_11_receipt_and_evidence_immutability_triggers(
         tuple(sample_aggregate_kwargs.values()),
     )
     conn.execute(
-        "INSERT INTO cron_execution_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
+        "INSERT INTO cron_execution_attempts (execution_id, attempt, state, runner_id, fence_token, lease_expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
         tuple(sample_attempt_kwargs.values()),
     )
     conn.execute(
@@ -658,7 +659,7 @@ def test_12_attempts_coexist_without_forced_reconciliation_to_next(
         tuple(sample_aggregate_kwargs.values()),
     )
     conn.execute(
-        "INSERT INTO cron_execution_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
+        "INSERT INTO cron_execution_attempts (execution_id, attempt, state, runner_id, fence_token, lease_expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
         tuple(sample_attempt_kwargs.values()),
     )
     conn.execute(
@@ -680,7 +681,7 @@ def test_12_attempts_coexist_without_forced_reconciliation_to_next(
     )
 
     conn.execute(
-        "INSERT INTO cron_execution_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
+        "INSERT INTO cron_execution_attempts (execution_id, attempt, state, runner_id, fence_token, lease_expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
         tuple(attempt_2.values()),
     )
     conn.execute(
@@ -724,14 +725,14 @@ def test_13_fence_and_lease_timestamp_constraints(
     bad_fence = dict(sample_attempt_kwargs, fence_token=0)
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(
-            "INSERT INTO cron_execution_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
+            "INSERT INTO cron_execution_attempts (execution_id, attempt, state, runner_id, fence_token, lease_expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
             tuple(bad_fence.values()),
         )
 
     bad_fence_type = dict(sample_attempt_kwargs, fence_token="not-an-integer")
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(
-            "INSERT INTO cron_execution_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
+            "INSERT INTO cron_execution_attempts (execution_id, attempt, state, runner_id, fence_token, lease_expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
             tuple(bad_fence_type.values()),
         )
 
@@ -739,7 +740,7 @@ def test_13_fence_and_lease_timestamp_constraints(
     bad_timestamp = dict(sample_attempt_kwargs, lease_expires_at="2026-07-28T04:10:00")
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(
-            "INSERT INTO cron_execution_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
+            "INSERT INTO cron_execution_attempts (execution_id, attempt, state, runner_id, fence_token, lease_expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
             tuple(bad_timestamp.values()),
         )
 
@@ -965,7 +966,7 @@ def test_19_release_evidence_and_receipt_identity_constraints(
         tuple(sample_aggregate_kwargs.values()),
     )
     conn.execute(
-        "INSERT INTO cron_execution_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO cron_execution_attempts (execution_id, attempt, state, runner_id, fence_token, lease_expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         tuple(sample_attempt_kwargs.values()),
     )
 
@@ -1062,7 +1063,7 @@ def test_20_ownership_transition_fence_terminal_and_timestamp_guards(
     )
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(
-            "INSERT INTO cron_execution_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO cron_execution_attempts (execution_id, attempt, state, runner_id, fence_token, lease_expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             tuple(claimed_without_owner.values()),
         )
 
@@ -1076,7 +1077,7 @@ def test_20_ownership_transition_fence_terminal_and_timestamp_guards(
     )
     with pytest.raises(sqlite3.IntegrityError, match="start at 1"):
         conn.execute(
-            "INSERT INTO cron_execution_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO cron_execution_attempts (execution_id, attempt, state, runner_id, fence_token, lease_expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             tuple(skipped_first_attempt.values()),
         )
 
@@ -1089,7 +1090,7 @@ def test_20_ownership_transition_fence_terminal_and_timestamp_guards(
         lease_expires_at=None,
     )
     conn.execute(
-        "INSERT INTO cron_execution_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO cron_execution_attempts (execution_id, attempt, state, runner_id, fence_token, lease_expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         tuple(admitted.values()),
     )
     with pytest.raises(sqlite3.IntegrityError, match="cannot be deleted"):
