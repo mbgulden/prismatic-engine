@@ -1423,6 +1423,8 @@
             workspaces: [],
             selectedWorkspaceId: null,
             selectedRelativePath: null,
+            initialized: false,
+            rendering: false,
         };
 
         function workspaceNodeIcon(node) {
@@ -1548,6 +1550,8 @@
             const rootsEl = document.getElementById("workspace-tree-roots");
             const statusEl = document.getElementById("workspace-tree-status");
             if (!rootsEl) return;
+            if (workspaceTreeState.initialized || workspaceTreeState.rendering) return;
+            workspaceTreeState.rendering = true;
             rootsEl.innerHTML = `<div class="text-slate-500 italic">Loading workspace tree…</div>`;
             try {
                 const res = await fetch("/api/workspaces");
@@ -1584,9 +1588,12 @@
                     }
                     await previewWorkspaceFile(requestedWorkspace, requestedPath);
                 }
+                workspaceTreeState.initialized = true;
             } catch (err) {
                 rootsEl.innerHTML = `<div class="text-rose-400">Workspace Tree unavailable: ${escapeHTML(err.message)}</div>`;
                 if (statusEl) statusEl.textContent = "Workspace Tree failed to load.";
+            } finally {
+                workspaceTreeState.rendering = false;
             }
         }
 
