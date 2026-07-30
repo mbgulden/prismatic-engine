@@ -311,3 +311,82 @@ def test_list_known_includes_stripe() -> None:
     assert "vercel_token" in names
     assert "linear_api_key" in names
     assert "cloudflare_token" in names
+
+
+
+# --- Layout B (HERMES_HOME points at a profile root) --------------------
+
+def test_resolve_profiles_dir_layout_a_hermes_root() -> None:
+    """Layout A: HERMES_HOME = ~/.hermes → PROFILES_DIR = ~/.hermes/profiles."""
+    from pathlib import Path
+    profiles_dir, profile = auth_loader._resolve_profiles_dir(
+        Path("/home/test/.hermes")
+    )
+    assert profiles_dir == Path("/home/test/.hermes/profiles")
+    assert profile is None
+
+
+def test_resolve_profiles_dir_layout_b_profile_root() -> None:
+    """Layout B: HERMES_HOME = ~/.hermes/profiles/<name> →
+    PROFILES_DIR = ~/.hermes/profiles (parent IS the profiles dir)."""
+    from pathlib import Path
+    profiles_dir, profile = auth_loader._resolve_profiles_dir(
+        Path("/home/test/.hermes/profiles/ned")
+    )
+    assert profiles_dir == Path("/home/test/.hermes/profiles")
+    assert profile == "ned"
+
+
+def test_resolve_profiles_dir_no_false_positive() -> None:
+    """A path that contains '/profiles/' mid-string but not at the end
+    must NOT be misclassified as Layout B."""
+    from pathlib import Path
+    # '/profiles/' in the middle, no profile name at end
+    profiles_dir, profile = auth_loader._resolve_profiles_dir(
+        Path("/srv/profiles/data")
+    )
+    assert profiles_dir == Path("/srv/profiles/data/profiles")
+    assert profile is None
+
+
+# --- AuthResult.__repr__ / __str__ redaction ----------------------------
+
+def test_auth_result_repr_does_not_leak_value(monkeypatch) -> None:
+    """__repr__ and __str__ must never include the raw secret value,
+    even though the dataclass field is named `value`."""
+    import dataclasses
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_supersecret_xxxxxxxxxxxxxxxxxxxxxxxxxx")
+    r = auth_loader.get_secret("github_token")
+    secret = "ghp_supersecret_xxxxxxxxxxxxxxxxxxxxxxxxxx"
+    # repr/str are safe
+    assert secret not in repr(r)
+    assert secret not in str(r)
+    # .to_dict() also safe (the secret-bearing field is excluded)
+    assert secret not in str(r.to_dict())
+    # but .value (explicit access) still has it
+    assert r.value == secret
+    # also confirm `value` is in __repr__ field list but never inlined
+    repr_str = repr(r)
+    assert "ghp_super" not in repr_str
+    assert "redaction=" in repr_str
+    assert r.redaction in repr_str
+
+
+def test_auth_result_repr_does_not_leak_value_in_dataclass_repr() -> None:
+    """Make sure even direct dataclass repr (bypassing our __repr__) is
+    safe to log via to_dict(), which is the canonical export path."""
+    from dataclasses import asdict
+    r = auth_loader.AuthResult(
+        value="ghp_supersecret",
+        source="env",
+        env_var="GITHUB_TOKEN",
+        hint="...",
+        redaction="ghp_supe...len=16",
+    )
+    d = asdict(r)
+    # Confirm field shape (so reviewers see what's in the dict)
+    assert "value" in d
+    assert d["value"] == "ghp_supersecret"  # .value contains the secret
+    # But the safe-export method must NOT include it
+    safe = r.to_dict()
+    assert "value" not in safe or safe.get("value") != "ghp_supersecret"

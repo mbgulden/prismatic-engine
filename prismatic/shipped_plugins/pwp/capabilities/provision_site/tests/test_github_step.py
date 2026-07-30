@@ -108,7 +108,16 @@ def test_domain_to_slug_strips_tld() -> None:
 
 
 def test_domain_to_slug_handles_multi_part() -> None:
-    assert _domain_to_slug("www.example.com") == "www"
+    # 'www.' prefix is stripped before extracting the first label,
+    # so 'www.example.com' resolves to 'example' (matches user-typed
+    # site name, not the www. subdomain alias).
+    assert _domain_to_slug("www.example.com") == "example"
+
+
+def test_domain_to_slug_strips_www_prefix() -> None:
+    """`www.` is a subdomain alias, not part of the site name."""
+    assert _domain_to_slug("www.active-oahu.com") == "active-oahu"
+    assert _domain_to_slug("WWW.EZShare.Systems") == "ezshare"
 
 
 # -- missing credentials --------------------------------------------------

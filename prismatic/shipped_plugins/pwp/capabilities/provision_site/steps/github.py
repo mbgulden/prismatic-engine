@@ -46,8 +46,15 @@ SLUG_FROM_DOMAIN_RE = re.compile(r"[^a-z0-9]+")
 
 
 def _domain_to_slug(domain: str) -> str:
-    """Convert 'ezshare.systems' → 'ezshare' (strip TLD)."""
-    parts = domain.lower().split(".")
+    """Convert 'ezshare.systems' → 'ezshare' (strip TLD).
+
+    Strips a leading 'www.' prefix before extracting the first label
+    so 'www.active-oahu.com' → 'active-oahu'.
+    """
+    d = domain.lower().strip()
+    if d.startswith("www."):
+        d = d[4:]
+    parts = d.split(".")
     return parts[0] if parts else domain
 
 

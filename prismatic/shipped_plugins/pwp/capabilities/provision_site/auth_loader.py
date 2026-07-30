@@ -51,22 +51,57 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 # dev / staging / prod. Defaults are bare, OS-agnostic values; callers
 # should always export HERMES_HOME, WORK_DIR, and HERMES_PROFILE before
 # importing this module.
+#
+# Two layouts are supported, detected automatically:
+#
+#   Layout A (hermes root):  HERMES_HOME = ~/.hermes
+#                            PROFILES_DIR = HERMES_HOME/profiles
+#                            Per-profile .env = PROFILES_DIR/<name>/.env
+#
+#   Layout B (profile root): HERMES_HOME = ~/.hermes/profiles/<name>
+#                            PROFILES_DIR = HERMES_HOME.parent (which IS
+#                                          the profiles directory)
+#                            Per-profile .env = HERMES_HOME/.env
+#                            (HERMES_HOME itself is the profile root)
+#
+# This auto-detection makes the module work both when invoked from
+# outside Hermes (HERMES_HOME points to the canonical root) and from
+# inside a Hermes profile session (HERMES_HOME points to the profile).
 
 HERMES_HOME = Path(
     os.environ.get("HERMES_HOME", "~/.hermes")
 ).expanduser()
-PROFILES_DIR = HERMES_HOME / "profiles"
+
+# Pattern: HERMES_HOME = <root>/.hermes/profiles/<name>
+_PROFILE_ROOT_RE = re.compile(
+    r"/\.hermes/profiles/([^/]+)/?$"
+)
+
+
+def _resolve_profiles_dir(hermes_home: Path) -> Tuple[Path, Optional[str]]:
+    """Return (profiles_dir, profile_from_path).
+
+    If `hermes_home` ends in `/profiles/<name>`, the caller is inside
+    a Hermes profile session and PROFILES_DIR is the parent (which
+    IS the profiles directory — no further `/profiles` suffix needed).
+    Otherwise, PROFILES_DIR = hermes_home/profiles.
+
+    profile_from_path is the profile name if HERMES_HOME points at a
+    profile root (Layout B), else None.
+    """
+    m = _PROFILE_ROOT_RE.search(str(hermes_home))
+    if m:
+        profile = m.group(1)
+        # The parent of ~/.hermes/profiles/<name> is ~/.hermes/profiles
+        # which IS the profiles directory itself.
+        return hermes_home.parent, profile
+    return hermes_home / "profiles", None
+
+
+PROFILES_DIR, _HERMES_HOME_PROFILE = _resolve_profiles_dir(HERMES_HOME)
 WORK_DIR = Path(
     os.environ.get("WORK_DIR", "~/work")
 ).expanduser()
-
-# Pattern for matching /home/<user>/.hermes/profiles/<name> OR any OS's
-# equivalent (the regex is anchored to the user's actual home).
-_USER_HOME = str(Path("~").expanduser())
-_PROFILE_FROM_HOMEDIR_RE = re.compile(
-    r"^" + re.escape(_USER_HOME) + r"/\.hermes/profiles/([^/]+)/?$"
-)
-
 
 # --- Active profile resolution ------------------------------------------
 
@@ -75,9 +110,10 @@ def _resolve_active_profile() -> str:
 
     Precedence:
       1. HERMES_PROFILE (when set to a bare profile name like 'ned')
-      2. HERMES_PROFILE (full path like <HERMES_HOME>/profiles/<name>) —
-         extract <name>
-      3. HERMES_HOME (if it points to <HERMES_HOME>/profiles/<name>)
+      2. HERMES_PROFILE (full path like <hermes_root>/.hermes/profiles/<name>)
+         — extract <name>
+      3. HERMES_HOME (if it points to <hermes_root>/.hermes/profiles/<name>)
+         — extract <name>
       4. Default 'ned'
     """
     raw = os.environ.get("HERMES_PROFILE", "") or ""
@@ -85,8 +121,12 @@ def _resolve_active_profile() -> str:
         if "/" in raw:
             return Path(raw).name
         return raw
+    # If HERMES_HOME was detected at import time as a profile root,
+    # trust that detection (Layout B).
+    if _HERMES_HOME_PROFILE:
+        return _HERMES_HOME_PROFILE
     hh = os.environ.get("HERMES_HOME", "")
-    m = _PROFILE_FROM_HOMEDIR_RE.match(hh)
+    m = _PROFILE_ROOT_RE.search(hh)
     if m:
         return m.group(1)
     return "ned"
@@ -140,6 +180,19 @@ class AuthResult:
     hint: str
     redaction: str
     env: Dict[str, str] = field(default_factory=dict)
+
+    def __repr__(self) -> str:
+        """Redact the value in repr to prevent accidental logging of
+        raw secrets. Callers who need the value should use `result.value`
+        explicitly; everything else (logs, errors, tracebacks) should
+        only ever see `redaction`."""
+        return (
+            f"AuthResult(found={self.found}, source={self.source!r}, "
+            f"env_var={self.env_var!r}, redaction={self.redaction!r})"
+        )
+
+    def __str__(self) -> str:
+        return self.__repr__()
 
     @property
     def found(self) -> bool:
