@@ -1914,22 +1914,1231 @@ CREATE TABLE IF NOT EXISTS main.cron_registry_snapshots_v1 (
         ).fetchall()
 
     schema_sql = conn.execute(
-        "SELECT type, name, sql FROM main.sqlite_master WHERE name LIKE 'cron_%' ORDER BY name ASC;"
+        """
+        SELECT type, name, tbl_name, sql
+        FROM main.sqlite_master
+        WHERE (tbl_name LIKE 'cron\\_%' ESCAPE '\\'
+               OR name LIKE 'cron\\_%' ESCAPE '\\')
+        ORDER BY type ASC, name ASC;
+        """
     ).fetchall()
+    index_names = {
+        table: tuple(
+            row[1]
+            for row in conn.execute(f"PRAGMA main.index_list({table});").fetchall()
+        )
+        for table in tables[:-1]
+    }
+    trigger_names = tuple(
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM main.sqlite_master WHERE type='trigger' "
+            "AND tbl_name LIKE 'cron\\_%' ESCAPE '\\' ORDER BY name ASC;"
+        ).fetchall()
+    )
+    foreign_keys = {
+        table: conn.execute(f"PRAGMA main.foreign_key_list({table});").fetchall()
+        for table in tables[:-1]
+    }
+    relationships = {
+        "receipt_chain": conn.execute(
+            """
+            SELECT r.receipt_id, r.execution_id, r.attempt, a.state,
+                   a.execution_id, g.execution_id, r.evidence_digest, e.evidence_digest
+            FROM main.cron_receipts AS r
+            JOIN main.cron_execution_attempts AS a
+              ON a.execution_id = r.execution_id AND a.attempt = r.attempt
+            JOIN main.cron_execution_aggregates AS g
+              ON g.execution_id = a.execution_id
+            JOIN main.cron_evidence AS e
+              ON e.evidence_digest = r.evidence_digest
+            ORDER BY r.receipt_id ASC;
+            """
+        ).fetchall(),
+        "trigger_delivery_chain": conn.execute(
+            """
+            SELECT d.trigger_event_id, d.execution_id, g.execution_id
+            FROM main.cron_trigger_deliveries AS d
+            JOIN main.cron_execution_aggregates AS g
+              ON g.execution_id = d.execution_id
+            ORDER BY d.trigger_event_id ASC;
+            """
+        ).fetchall(),
+    }
 
     conn.close()
     return {
+        "tables": tuple(tables),
         "projections": projections,
         "schema_sql": schema_sql,
+        "index_names": index_names,
+        "trigger_names": trigger_names,
+        "foreign_keys": foreign_keys,
+        "relationships": relationships,
         "ev_digest_1": ev_digest_1,
         "trig_digest": trig_digest,
         "snap_digest": snap_digest,
     }
 
 
+_V3_ATTEMPT_COLUMNS = (
+    "execution_id",
+    "attempt",
+    "state",
+    "runner_id",
+    "fence_token",
+    "lease_expires_at",
+    "source_id",
+    "schema_id",
+    "schema_version",
+    "registry_generation",
+    "snapshot_digest",
+    "canonical_snapshot_bytes",
+    "trusted_runner_identity",
+    "command_digest",
+    "release_digest",
+    "dependency_digest",
+    "created_at",
+    "updated_at",
+)
+_V3_TABLE_NAMES = {
+    "cron_authority_schema_version",
+    "cron_evidence",
+    "cron_execution_aggregates",
+    "cron_execution_attempts",
+    "cron_receipts",
+    "cron_registry_snapshots_v1",
+    "cron_registry_snapshots_v2",
+    "cron_sweep_cursors",
+    "cron_trigger_deliveries",
+}
+_V3_TRIGGER_NAMES = {
+    "trg_cron_aggregate_insert_collision",
+    "trg_cron_aggregates_no_delete",
+    "trg_cron_aggregates_no_update",
+    "trg_cron_attempt_fence_guard",
+    "trg_cron_attempt_insert_guard",
+    "trg_cron_attempt_transition_guard",
+    "trg_cron_attempts_no_delete",
+    "trg_cron_cursor_insert_collision",
+    "trg_cron_evidence_insert_collision",
+    "trg_cron_evidence_no_delete",
+    "trg_cron_evidence_no_update",
+    "trg_cron_receipt_finalizes_attempt",
+    "trg_cron_receipt_identity_guard",
+    "trg_cron_receipt_insert_collision",
+    "trg_cron_receipts_no_delete",
+    "trg_cron_receipts_no_update",
+    "trg_cron_registry_snapshots_insert_collision",
+    "trg_cron_registry_snapshots_no_delete",
+    "trg_cron_registry_snapshots_no_update",
+    "trg_cron_registry_snapshots_v2_insert_collision",
+    "trg_cron_registry_snapshots_v2_no_delete",
+    "trg_cron_registry_snapshots_v2_no_update",
+    "trg_cron_sweep_cursors_no_delete",
+    "trg_cron_sweep_cursors_prevent_regression",
+    "trg_cron_sweep_scope_immutable",
+    "trg_cron_terminal_attempt_immutable",
+    "trg_cron_terminal_requires_receipt",
+    "trg_cron_trigger_deliveries_insert_collision",
+    "trg_cron_trigger_deliveries_no_delete",
+    "trg_cron_trigger_deliveries_no_update",
+}
+_V3_SNAPSHOT_V2_INDEXES = (
+    "sqlite_autoindex_cron_registry_snapshots_v2_2",
+    "sqlite_autoindex_cron_registry_snapshots_v2_1",
+)
+
+
+_FROZEN_V3_SCHEMA_SQL = (
+    ("index", "sqlite_autoindex_cron_evidence_1", "cron_evidence", None),
+    (
+        "index",
+        "sqlite_autoindex_cron_execution_aggregates_1",
+        "cron_execution_aggregates",
+        None,
+    ),
+    (
+        "index",
+        "sqlite_autoindex_cron_execution_aggregates_2",
+        "cron_execution_aggregates",
+        None,
+    ),
+    (
+        "index",
+        "sqlite_autoindex_cron_execution_attempts_1",
+        "cron_execution_attempts",
+        None,
+    ),
+    ("index", "sqlite_autoindex_cron_receipts_1", "cron_receipts", None),
+    ("index", "sqlite_autoindex_cron_receipts_2", "cron_receipts", None),
+    (
+        "index",
+        "sqlite_autoindex_cron_registry_snapshots_v1_1",
+        "cron_registry_snapshots_v1",
+        None,
+    ),
+    (
+        "index",
+        "sqlite_autoindex_cron_registry_snapshots_v1_2",
+        "cron_registry_snapshots_v1",
+        None,
+    ),
+    (
+        "index",
+        "sqlite_autoindex_cron_registry_snapshots_v2_1",
+        "cron_registry_snapshots_v2",
+        None,
+    ),
+    (
+        "index",
+        "sqlite_autoindex_cron_registry_snapshots_v2_2",
+        "cron_registry_snapshots_v2",
+        None,
+    ),
+    ("index", "sqlite_autoindex_cron_sweep_cursors_1", "cron_sweep_cursors", None),
+    ("index", "sqlite_autoindex_cron_sweep_cursors_2", "cron_sweep_cursors", None),
+    (
+        "index",
+        "sqlite_autoindex_cron_trigger_deliveries_1",
+        "cron_trigger_deliveries",
+        None,
+    ),
+    (
+        "table",
+        "cron_authority_schema_version",
+        "cron_authority_schema_version",
+        "CREATE TABLE cron_authority_schema_version (\n"
+        "    authority_id INTEGER PRIMARY KEY CHECK (authority_id = 1),\n"
+        "    schema_version INTEGER NOT NULL CHECK (typeof(schema_version) = 'integer' AND "
+        "schema_version >= 1),\n"
+        "    installed_at TEXT NOT NULL CHECK (is_utc_timestamp(installed_at) = 1)\n"
+        ")",
+    ),
+    (
+        "table",
+        "cron_evidence",
+        "cron_evidence",
+        "CREATE TABLE cron_evidence (\n"
+        "    evidence_digest TEXT PRIMARY KEY CHECK (length(evidence_digest) = 64 AND evidence_digest "
+        "NOT GLOB '*[^0-9a-f]*'),\n"
+        "    canonical_bytes BLOB NOT NULL CHECK (typeof(canonical_bytes) = 'blob' AND "
+        "length(canonical_bytes) <= 4000),\n"
+        "    created_at TEXT NOT NULL CHECK (is_utc_timestamp(created_at) = 1),\n"
+        "    CONSTRAINT ck_evidence_content_address CHECK (evidence_digest = "
+        "sha256_hex(canonical_bytes))\n"
+        ")",
+    ),
+    (
+        "table",
+        "cron_execution_aggregates",
+        "cron_execution_aggregates",
+        "CREATE TABLE cron_execution_aggregates (\n"
+        "    execution_id TEXT PRIMARY KEY CHECK (length(execution_id) >= 1 AND length(execution_id) <= "
+        "128),\n"
+        "    cron_id TEXT NOT NULL CHECK (length(cron_id) >= 1 AND length(cron_id) <= 128),\n"
+        "    registry_generation INTEGER NOT NULL CHECK (typeof(registry_generation) = 'integer' AND "
+        "registry_generation >= 1),\n"
+        "    schedule_bucket TEXT NOT NULL CHECK (is_utc_timestamp(schedule_bucket) = 1),\n"
+        "    command_digest TEXT NOT NULL CHECK (length(command_digest) = 64 AND command_digest NOT GLOB "
+        "'*[^0-9a-f]*'),\n"
+        "    release_digest TEXT NOT NULL CHECK (length(release_digest) = 64 AND release_digest NOT GLOB "
+        "'*[^0-9a-f]*'),\n"
+        "    created_at TEXT NOT NULL CHECK (is_utc_timestamp(created_at) = 1),\n"
+        "    CONSTRAINT uq_cron_aggregate UNIQUE (cron_id, registry_generation, schedule_bucket, "
+        "command_digest)\n"
+        ")",
+    ),
+    (
+        "table",
+        "cron_execution_attempts",
+        "cron_execution_attempts",
+        "CREATE TABLE cron_execution_attempts (\n"
+        "    execution_id TEXT NOT NULL REFERENCES cron_execution_aggregates(execution_id) ON DELETE "
+        "RESTRICT,\n"
+        "    attempt INTEGER NOT NULL CHECK (typeof(attempt) = 'integer' AND attempt >= 1),\n"
+        "    state TEXT NOT NULL CHECK (state IN ('admitted', 'claimed', 'running', 'reconciling', "
+        "'terminal')),\n"
+        "    runner_id TEXT CHECK (runner_id IS NULL OR (length(runner_id) >= 1 AND length(runner_id) <= "
+        "128)),\n"
+        "    fence_token INTEGER CHECK (fence_token IS NULL OR (typeof(fence_token) = 'integer' AND "
+        "fence_token > 0)),\n"
+        "    lease_expires_at TEXT CHECK (lease_expires_at IS NULL OR is_utc_timestamp(lease_expires_at) "
+        "= 1),\n"
+        "    source_id TEXT CHECK (source_id IS NULL OR source_id IN "
+        "('prismatic.cron-authority.sqlite/cron_registry_snapshots_v1', "
+        "'prismatic.cron-authority.sqlite/cron_registry_snapshots_v2')),\n"
+        "    schema_id TEXT CHECK (schema_id IS NULL OR schema_id = "
+        "'prismatic.cron.registry-snapshot'),\n"
+        "    schema_version INTEGER CHECK (schema_version IS NULL OR schema_version IN (1, 2)),\n"
+        "    registry_generation INTEGER CHECK (registry_generation IS NULL OR registry_generation >= "
+        "1),\n"
+        "    snapshot_digest TEXT CHECK (snapshot_digest IS NULL OR (length(snapshot_digest) = 64 AND "
+        "snapshot_digest NOT GLOB '*[^0-9a-f]*')),\n"
+        "    canonical_snapshot_bytes BLOB CHECK (canonical_snapshot_bytes IS NULL OR "
+        "typeof(canonical_snapshot_bytes) = 'blob'),\n"
+        "    trusted_runner_identity TEXT CHECK (trusted_runner_identity IS NULL OR "
+        "length(trusted_runner_identity) >= 1),\n"
+        "    command_digest TEXT CHECK (command_digest IS NULL OR (length(command_digest) = 64 AND "
+        "command_digest NOT GLOB '*[^0-9a-f]*')),\n"
+        "    release_digest TEXT CHECK (release_digest IS NULL OR (length(release_digest) = 64 AND "
+        "release_digest NOT GLOB '*[^0-9a-f]*')),\n"
+        "    dependency_digest TEXT CHECK (dependency_digest IS NULL OR (length(dependency_digest) = 64 "
+        "AND dependency_digest NOT GLOB '*[^0-9a-f]*')),\n"
+        "    created_at TEXT NOT NULL CHECK (is_utc_timestamp(created_at) = 1),\n"
+        "    updated_at TEXT NOT NULL CHECK (is_utc_timestamp(updated_at) = 1),\n"
+        "    CONSTRAINT ck_attempt_ownership CHECK (\n"
+        "        state IN ('admitted', 'terminal')\n"
+        "        OR (runner_id IS NOT NULL AND fence_token IS NOT NULL AND lease_expires_at IS NOT "
+        "NULL)\n"
+        "    ),\n"
+        "    CONSTRAINT ck_attempt_coherent_snapshot CHECK (\n"
+        "        (source_id IS NULL AND schema_version IS NULL AND snapshot_digest IS NULL AND "
+        "canonical_snapshot_bytes IS NULL AND registry_generation IS NULL AND schema_id IS NULL)\n"
+        "        OR (source_id = 'prismatic.cron-authority.sqlite/cron_registry_snapshots_v1' AND "
+        "schema_version = 1 AND schema_id = 'prismatic.cron.registry-snapshot' AND snapshot_digest IS "
+        "NOT NULL AND canonical_snapshot_bytes IS NOT NULL AND registry_generation IS NOT NULL)\n"
+        "        OR (source_id = 'prismatic.cron-authority.sqlite/cron_registry_snapshots_v2' AND "
+        "schema_version = 2 AND schema_id = 'prismatic.cron.registry-snapshot' AND snapshot_digest IS "
+        "NOT NULL AND canonical_snapshot_bytes IS NOT NULL AND registry_generation IS NOT NULL)\n"
+        "    ),\n"
+        "    PRIMARY KEY (execution_id, attempt)\n"
+        ")",
+    ),
+    (
+        "table",
+        "cron_receipts",
+        "cron_receipts",
+        "CREATE TABLE cron_receipts (\n"
+        "    receipt_id TEXT PRIMARY KEY CHECK (length(receipt_id) >= 1 AND length(receipt_id) <= 128),\n"
+        "    execution_id TEXT NOT NULL,\n"
+        "    attempt INTEGER NOT NULL CHECK (typeof(attempt) = 'integer' AND attempt >= 1),\n"
+        "    cron_id TEXT NOT NULL CHECK (length(cron_id) >= 1 AND length(cron_id) <= 128),\n"
+        "    outcome TEXT NOT NULL CHECK (outcome IN ('succeeded', 'failed', 'timed_out', 'cancelled', "
+        "'blocked', 'missed_during_offline', 'awaiting_operator_approval', 'orphaned', 'reconciled')),\n"
+        "    runner_id TEXT NOT NULL CHECK (length(runner_id) >= 1 AND length(runner_id) <= 128),\n"
+        "    runner_release_digest TEXT NOT NULL CHECK (length(runner_release_digest) = 64 AND "
+        "runner_release_digest NOT GLOB '*[^0-9a-f]*'),\n"
+        "    started_at TEXT NOT NULL CHECK (is_utc_timestamp(started_at) = 1),\n"
+        "    finished_at TEXT NOT NULL CHECK (is_utc_timestamp(finished_at) = 1),\n"
+        "    error_classification TEXT CHECK (error_classification IS NULL OR "
+        "length(error_classification) <= 128),\n"
+        "    evidence_digest TEXT REFERENCES cron_evidence(evidence_digest) ON DELETE RESTRICT CHECK "
+        "(evidence_digest IS NULL OR (length(evidence_digest) = 64 AND evidence_digest NOT GLOB "
+        "'*[^0-9a-f]*')),\n"
+        "    signing_key_id TEXT NOT NULL CHECK (length(signing_key_id) >= 1 AND length(signing_key_id) "
+        "<= 128),\n"
+        "    signature TEXT NOT NULL CHECK (length(signature) >= 1 AND length(signature) <= 512),\n"
+        "    schema_version INTEGER NOT NULL CHECK (typeof(schema_version) = 'integer' AND "
+        "schema_version = 1),\n"
+        "    created_at TEXT NOT NULL CHECK (is_utc_timestamp(created_at) = 1),\n"
+        "    CONSTRAINT ck_required_outcome_evidence CHECK (\n"
+        "        outcome NOT IN ('failed', 'timed_out', 'blocked', 'missed_during_offline', "
+        "'awaiting_operator_approval', 'orphaned', 'reconciled')\n"
+        "        OR evidence_digest IS NOT NULL\n"
+        "    ),\n"
+        "    CONSTRAINT uq_receipt_execution_attempt UNIQUE (execution_id, attempt),\n"
+        "    CONSTRAINT fk_receipt_execution_attempt FOREIGN KEY (execution_id, attempt) REFERENCES "
+        "cron_execution_attempts(execution_id, attempt) ON DELETE RESTRICT\n"
+        ")",
+    ),
+    (
+        "table",
+        "cron_registry_snapshots_v1",
+        "cron_registry_snapshots_v1",
+        "CREATE TABLE cron_registry_snapshots_v1 (\n"
+        "    source_id TEXT NOT NULL CHECK (source_id = "
+        "'prismatic.cron-authority.sqlite/cron_registry_snapshots_v1'),\n"
+        "    schema_id TEXT NOT NULL CHECK (schema_id = 'prismatic.cron.registry-snapshot'),\n"
+        "    schema_version INTEGER NOT NULL CHECK (typeof(schema_version) = 'integer' AND "
+        "schema_version = 1),\n"
+        "    registry_generation INTEGER NOT NULL CHECK (typeof(registry_generation) = 'integer' AND "
+        "registry_generation >= 1),\n"
+        "    snapshot_digest TEXT NOT NULL CHECK (length(snapshot_digest) = 64 AND snapshot_digest NOT "
+        "GLOB '*[^0-9a-f]*'),\n"
+        "    canonical_bytes BLOB NOT NULL CHECK (typeof(canonical_bytes) = 'blob' AND "
+        "length(canonical_bytes) <= 1048576),\n"
+        "    created_at TEXT NOT NULL CHECK (is_utc_timestamp(created_at) = 1),\n"
+        "    PRIMARY KEY (source_id, registry_generation),\n"
+        "    CONSTRAINT uq_snapshot_digest UNIQUE (source_id, snapshot_digest)\n"
+        ")",
+    ),
+    (
+        "table",
+        "cron_registry_snapshots_v2",
+        "cron_registry_snapshots_v2",
+        "CREATE TABLE cron_registry_snapshots_v2 (\n"
+        "    source_id TEXT NOT NULL CHECK (source_id = "
+        "'prismatic.cron-authority.sqlite/cron_registry_snapshots_v2'),\n"
+        "    schema_id TEXT NOT NULL CHECK (schema_id = 'prismatic.cron.registry-snapshot'),\n"
+        "    schema_version INTEGER NOT NULL CHECK (typeof(schema_version) = 'integer' AND "
+        "schema_version = 2),\n"
+        "    registry_generation INTEGER NOT NULL CHECK (typeof(registry_generation) = 'integer' AND "
+        "registry_generation >= 1),\n"
+        "    snapshot_digest TEXT NOT NULL CHECK (length(snapshot_digest) = 64 AND snapshot_digest NOT "
+        "GLOB '*[^0-9a-f]*'),\n"
+        "    canonical_bytes BLOB NOT NULL CHECK (typeof(canonical_bytes) = 'blob' AND "
+        "length(canonical_bytes) <= 1048576),\n"
+        "    created_at TEXT NOT NULL CHECK (is_utc_timestamp(created_at) = 1),\n"
+        "    PRIMARY KEY (source_id, registry_generation),\n"
+        "    CONSTRAINT uq_snapshot_v2_digest UNIQUE (source_id, snapshot_digest)\n"
+        ")",
+    ),
+    (
+        "table",
+        "cron_sweep_cursors",
+        "cron_sweep_cursors",
+        "CREATE TABLE cron_sweep_cursors (\n"
+        "    scope_key TEXT PRIMARY KEY CHECK (length(scope_key) >= 1 AND length(scope_key) <= 256),\n"
+        "    cron_id TEXT NOT NULL CHECK (length(cron_id) >= 1 AND length(cron_id) <= 128),\n"
+        "    registry_generation INTEGER NOT NULL CHECK (typeof(registry_generation) = 'integer' AND "
+        "registry_generation >= 1),\n"
+        "    command_digest TEXT NOT NULL CHECK (length(command_digest) = 64 AND command_digest NOT GLOB "
+        "'*[^0-9a-f]*'),\n"
+        "    catch_up_policy_version INTEGER NOT NULL CHECK (typeof(catch_up_policy_version) = 'integer' "
+        "AND catch_up_policy_version >= 1),\n"
+        "    cursor_value INTEGER NOT NULL CHECK (typeof(cursor_value) = 'integer' AND cursor_value >= "
+        "0),\n"
+        "    updated_at TEXT NOT NULL CHECK (is_utc_timestamp(updated_at) = 1),\n"
+        "    CONSTRAINT uq_cron_sweep_scope UNIQUE (cron_id, registry_generation, command_digest, "
+        "catch_up_policy_version)\n"
+        ")",
+    ),
+    (
+        "table",
+        "cron_trigger_deliveries",
+        "cron_trigger_deliveries",
+        "CREATE TABLE cron_trigger_deliveries (\n"
+        "    trigger_event_id TEXT PRIMARY KEY CHECK (length(trigger_event_id) >= 1 AND "
+        "length(trigger_event_id) <= 128),\n"
+        "    trigger_digest TEXT NOT NULL CHECK (length(trigger_digest) = 64 AND trigger_digest NOT GLOB "
+        "'*[^0-9a-f]*'),\n"
+        "    canonical_bytes BLOB NOT NULL CHECK (typeof(canonical_bytes) = 'blob' AND "
+        "length(canonical_bytes) <= 4000),\n"
+        "    trigger_kind TEXT NOT NULL CHECK (trigger_kind IN ('scheduled', 'manual', 'retry', 'hook', "
+        "'recovery')),\n"
+        "    transport_kind TEXT NOT NULL CHECK (transport_kind IN ('http', 'hook', 'recovery', "
+        "'internal')),\n"
+        "    cron_id TEXT NOT NULL CHECK (length(cron_id) >= 1 AND length(cron_id) <= 128),\n"
+        "    registry_generation INTEGER NOT NULL CHECK (typeof(registry_generation) = 'integer' AND "
+        "registry_generation >= 1),\n"
+        "    schedule_bucket TEXT NOT NULL CHECK (is_utc_timestamp(schedule_bucket) = 1),\n"
+        "    command_digest TEXT NOT NULL CHECK (length(command_digest) = 64 AND command_digest NOT GLOB "
+        "'*[^0-9a-f]*'),\n"
+        "    release_digest TEXT NOT NULL CHECK (length(release_digest) = 64 AND release_digest NOT GLOB "
+        "'*[^0-9a-f]*'),\n"
+        "    execution_id TEXT REFERENCES cron_execution_aggregates(execution_id) ON DELETE RESTRICT,\n"
+        "    disposition TEXT NOT NULL CHECK (disposition IN ('accepted', 'rejected', 'converged')),\n"
+        "    reason_code TEXT NOT NULL CHECK (length(reason_code) >= 1 AND length(reason_code) <= 128),\n"
+        "    submitted_at TEXT NOT NULL CHECK (is_utc_timestamp(submitted_at) = 1),\n"
+        "    created_at TEXT NOT NULL CHECK (is_utc_timestamp(created_at) = 1),\n"
+        "    CONSTRAINT ck_trigger_delivery_content_address CHECK (trigger_digest = "
+        "sha256_hex(canonical_bytes))\n"
+        ")",
+    ),
+    (
+        "trigger",
+        "trg_cron_aggregate_insert_collision",
+        "cron_execution_aggregates",
+        "CREATE TRIGGER trg_cron_aggregate_insert_collision\n"
+        "    BEFORE INSERT ON cron_execution_aggregates\n"
+        "    FOR EACH ROW\n"
+        "    WHEN EXISTS (\n"
+        "        SELECT 1 FROM cron_execution_aggregates\n"
+        "        WHERE execution_id = NEW.execution_id\n"
+        "           OR (\n"
+        "               cron_id = NEW.cron_id\n"
+        "               AND registry_generation = NEW.registry_generation\n"
+        "               AND schedule_bucket = NEW.schedule_bucket\n"
+        "               AND command_digest = NEW.command_digest\n"
+        "           )\n"
+        "    )\n"
+        "    BEGIN\n"
+        "        SELECT RAISE(ABORT, 'cron execution aggregates cannot be replaced');\n"
+        "    END",
+    ),
+    (
+        "trigger",
+        "trg_cron_aggregates_no_delete",
+        "cron_execution_aggregates",
+        "CREATE TRIGGER trg_cron_aggregates_no_delete\n"
+        "    BEFORE DELETE ON cron_execution_aggregates\n"
+        "    FOR EACH ROW\n"
+        "    BEGIN\n"
+        "        SELECT RAISE(ABORT, 'cron execution aggregates are immutable');\n"
+        "    END",
+    ),
+    (
+        "trigger",
+        "trg_cron_aggregates_no_update",
+        "cron_execution_aggregates",
+        "CREATE TRIGGER trg_cron_aggregates_no_update\n"
+        "    BEFORE UPDATE ON cron_execution_aggregates\n"
+        "    FOR EACH ROW\n"
+        "    BEGIN\n"
+        "        SELECT RAISE(ABORT, 'cron execution aggregates are immutable');\n"
+        "    END",
+    ),
+    (
+        "trigger",
+        "trg_cron_attempt_fence_guard",
+        "cron_execution_attempts",
+        "CREATE TRIGGER trg_cron_attempt_fence_guard\n"
+        "    BEFORE UPDATE ON cron_execution_attempts\n"
+        "    FOR EACH ROW\n"
+        "    WHEN OLD.fence_token IS NOT NULL AND (\n"
+        "        NEW.fence_token IS NULL\n"
+        "        OR NEW.fence_token < OLD.fence_token\n"
+        "        OR (NEW.runner_id IS OLD.runner_id AND NEW.fence_token != OLD.fence_token)\n"
+        "        OR (NEW.runner_id IS NOT OLD.runner_id AND NEW.fence_token <= OLD.fence_token)\n"
+        "    )\n"
+        "    BEGIN\n"
+        "        SELECT RAISE(ABORT, 'attempt fence regression or invalid renewal');\n"
+        "    END",
+    ),
+    (
+        "trigger",
+        "trg_cron_attempt_insert_guard",
+        "cron_execution_attempts",
+        "CREATE TRIGGER trg_cron_attempt_insert_guard\n"
+        "    BEFORE INSERT ON cron_execution_attempts\n"
+        "    FOR EACH ROW\n"
+        "    WHEN NEW.state = 'terminal'\n"
+        "      OR NEW.attempt != COALESCE(\n"
+        "          (SELECT MAX(attempt) + 1\n"
+        "           FROM cron_execution_attempts\n"
+        "           WHERE execution_id = NEW.execution_id),\n"
+        "          1\n"
+        "      )\n"
+        "    BEGIN\n"
+        "        SELECT RAISE(ABORT, 'attempts must start at 1, increment by 1, and cannot insert "
+        "terminal');\n"
+        "    END",
+    ),
+    (
+        "trigger",
+        "trg_cron_attempt_transition_guard",
+        "cron_execution_attempts",
+        "CREATE TRIGGER trg_cron_attempt_transition_guard\n"
+        "    BEFORE UPDATE ON cron_execution_attempts\n"
+        "    FOR EACH ROW\n"
+        "    WHEN NEW.state != OLD.state AND NOT (\n"
+        "        (OLD.state = 'admitted' AND NEW.state IN ('claimed', 'terminal'))\n"
+        "        OR (OLD.state = 'claimed' AND NEW.state IN ('running', 'reconciling', 'terminal'))\n"
+        "        OR (OLD.state = 'running' AND NEW.state IN ('reconciling', 'terminal'))\n"
+        "        OR (OLD.state = 'reconciling' AND NEW.state = 'terminal')\n"
+        "    )\n"
+        "    BEGIN\n"
+        "        SELECT RAISE(ABORT, 'illegal attempt state transition');\n"
+        "    END",
+    ),
+    (
+        "trigger",
+        "trg_cron_attempts_no_delete",
+        "cron_execution_attempts",
+        "CREATE TRIGGER trg_cron_attempts_no_delete\n"
+        "    BEFORE DELETE ON cron_execution_attempts\n"
+        "    FOR EACH ROW\n"
+        "    BEGIN\n"
+        "        SELECT RAISE(ABORT, 'attempt rows cannot be deleted');\n"
+        "    END",
+    ),
+    (
+        "trigger",
+        "trg_cron_cursor_insert_collision",
+        "cron_sweep_cursors",
+        "CREATE TRIGGER trg_cron_cursor_insert_collision\n"
+        "    BEFORE INSERT ON cron_sweep_cursors\n"
+        "    FOR EACH ROW\n"
+        "    WHEN EXISTS (\n"
+        "        SELECT 1 FROM cron_sweep_cursors\n"
+        "        WHERE scope_key = NEW.scope_key\n"
+        "           OR (\n"
+        "               cron_id = NEW.cron_id\n"
+        "               AND registry_generation = NEW.registry_generation\n"
+        "               AND command_digest = NEW.command_digest\n"
+        "               AND catch_up_policy_version = NEW.catch_up_policy_version\n"
+        "           )\n"
+        "    )\n"
+        "    BEGIN\n"
+        "        SELECT RAISE(ABORT, 'cursor rows cannot be replaced');\n"
+        "    END",
+    ),
+    (
+        "trigger",
+        "trg_cron_evidence_insert_collision",
+        "cron_evidence",
+        "CREATE TRIGGER trg_cron_evidence_insert_collision\n"
+        "    BEFORE INSERT ON cron_evidence\n"
+        "    FOR EACH ROW\n"
+        "    WHEN EXISTS (\n"
+        "        SELECT 1 FROM cron_evidence WHERE evidence_digest = NEW.evidence_digest\n"
+        "    )\n"
+        "    BEGIN\n"
+        "        SELECT RAISE(ABORT, 'cron_evidence rows cannot be replaced');\n"
+        "    END",
+    ),
+    (
+        "trigger",
+        "trg_cron_evidence_no_delete",
+        "cron_evidence",
+        "CREATE TRIGGER trg_cron_evidence_no_delete\n"
+        "    BEFORE DELETE ON cron_evidence\n"
+        "    FOR EACH ROW\n"
+        "    BEGIN\n"
+        "        SELECT RAISE(ABORT, 'cron_evidence rows are immutable');\n"
+        "    END",
+    ),
+    (
+        "trigger",
+        "trg_cron_evidence_no_update",
+        "cron_evidence",
+        "CREATE TRIGGER trg_cron_evidence_no_update\n"
+        "    BEFORE UPDATE ON cron_evidence\n"
+        "    FOR EACH ROW\n"
+        "    BEGIN\n"
+        "        SELECT RAISE(ABORT, 'cron_evidence rows are immutable');\n"
+        "    END",
+    ),
+    (
+        "trigger",
+        "trg_cron_receipt_finalizes_attempt",
+        "cron_receipts",
+        "CREATE TRIGGER trg_cron_receipt_finalizes_attempt\n"
+        "    AFTER INSERT ON cron_receipts\n"
+        "    FOR EACH ROW\n"
+        "    BEGIN\n"
+        "        UPDATE cron_execution_attempts\n"
+        "        SET state = 'terminal', updated_at = NEW.created_at\n"
+        "        WHERE execution_id = NEW.execution_id AND attempt = NEW.attempt;\n"
+        "    END",
+    ),
+    (
+        "trigger",
+        "trg_cron_receipt_identity_guard",
+        "cron_receipts",
+        "CREATE TRIGGER trg_cron_receipt_identity_guard\n"
+        "    BEFORE INSERT ON cron_receipts\n"
+        "    FOR EACH ROW\n"
+        "    WHEN NOT EXISTS (\n"
+        "        SELECT 1\n"
+        "        FROM cron_execution_attempts AS attempt\n"
+        "        JOIN cron_execution_aggregates AS aggregate\n"
+        "          ON aggregate.execution_id = attempt.execution_id\n"
+        "        WHERE attempt.execution_id = NEW.execution_id\n"
+        "          AND attempt.attempt = NEW.attempt\n"
+        "          AND aggregate.cron_id = NEW.cron_id\n"
+        "    )\n"
+        "    BEGIN\n"
+        "        SELECT RAISE(ABORT, 'receipt identity or terminal attempt mismatch');\n"
+        "    END",
+    ),
+    (
+        "trigger",
+        "trg_cron_receipt_insert_collision",
+        "cron_receipts",
+        "CREATE TRIGGER trg_cron_receipt_insert_collision\n"
+        "    BEFORE INSERT ON cron_receipts\n"
+        "    FOR EACH ROW\n"
+        "    WHEN EXISTS (\n"
+        "        SELECT 1 FROM cron_receipts\n"
+        "        WHERE receipt_id = NEW.receipt_id\n"
+        "           OR (execution_id = NEW.execution_id AND attempt = NEW.attempt)\n"
+        "    )\n"
+        "    BEGIN\n"
+        "        SELECT RAISE(ABORT, 'cron_receipts rows cannot be replaced');\n"
+        "    END",
+    ),
+    (
+        "trigger",
+        "trg_cron_receipts_no_delete",
+        "cron_receipts",
+        "CREATE TRIGGER trg_cron_receipts_no_delete\n"
+        "    BEFORE DELETE ON cron_receipts\n"
+        "    FOR EACH ROW\n"
+        "    BEGIN\n"
+        "        SELECT RAISE(ABORT, 'cron_receipts rows are immutable');\n"
+        "    END",
+    ),
+    (
+        "trigger",
+        "trg_cron_receipts_no_update",
+        "cron_receipts",
+        "CREATE TRIGGER trg_cron_receipts_no_update\n"
+        "    BEFORE UPDATE ON cron_receipts\n"
+        "    FOR EACH ROW\n"
+        "    BEGIN\n"
+        "        SELECT RAISE(ABORT, 'cron_receipts rows are immutable');\n"
+        "    END",
+    ),
+    (
+        "trigger",
+        "trg_cron_registry_snapshots_insert_collision",
+        "cron_registry_snapshots_v1",
+        "CREATE TRIGGER trg_cron_registry_snapshots_insert_collision\n"
+        "    BEFORE INSERT ON cron_registry_snapshots_v1\n"
+        "    FOR EACH ROW\n"
+        "    WHEN EXISTS (\n"
+        "        SELECT 1 FROM cron_registry_snapshots_v1\n"
+        "        WHERE (source_id = NEW.source_id AND registry_generation = NEW.registry_generation AND "
+        "(snapshot_digest != NEW.snapshot_digest OR canonical_bytes != NEW.canonical_bytes))\n"
+        "           OR (source_id = NEW.source_id AND snapshot_digest = NEW.snapshot_digest AND "
+        "(registry_generation != NEW.registry_generation OR canonical_bytes != NEW.canonical_bytes))\n"
+        "    )\n"
+        "    BEGIN\n"
+        "        SELECT RAISE(ABORT, 'cron_registry_snapshots_v1 duplicate insertion conflict');\n"
+        "    END",
+    ),
+    (
+        "trigger",
+        "trg_cron_registry_snapshots_no_delete",
+        "cron_registry_snapshots_v1",
+        "CREATE TRIGGER trg_cron_registry_snapshots_no_delete\n"
+        "    BEFORE DELETE ON cron_registry_snapshots_v1\n"
+        "    FOR EACH ROW\n"
+        "    BEGIN\n"
+        "        SELECT RAISE(ABORT, 'cron_registry_snapshots_v1 rows cannot be deleted');\n"
+        "    END",
+    ),
+    (
+        "trigger",
+        "trg_cron_registry_snapshots_no_update",
+        "cron_registry_snapshots_v1",
+        "CREATE TRIGGER trg_cron_registry_snapshots_no_update\n"
+        "    BEFORE UPDATE ON cron_registry_snapshots_v1\n"
+        "    FOR EACH ROW\n"
+        "    BEGIN\n"
+        "        SELECT RAISE(ABORT, 'cron_registry_snapshots_v1 rows are immutable');\n"
+        "    END",
+    ),
+    (
+        "trigger",
+        "trg_cron_registry_snapshots_v2_insert_collision",
+        "cron_registry_snapshots_v2",
+        "CREATE TRIGGER trg_cron_registry_snapshots_v2_insert_collision\n"
+        "    BEFORE INSERT ON cron_registry_snapshots_v2\n"
+        "    FOR EACH ROW\n"
+        "    WHEN EXISTS (\n"
+        "        SELECT 1 FROM cron_registry_snapshots_v2\n"
+        "        WHERE (source_id = NEW.source_id AND registry_generation = NEW.registry_generation AND "
+        "(snapshot_digest != NEW.snapshot_digest OR canonical_bytes != NEW.canonical_bytes))\n"
+        "           OR (source_id = NEW.source_id AND snapshot_digest = NEW.snapshot_digest AND "
+        "(registry_generation != NEW.registry_generation OR canonical_bytes != NEW.canonical_bytes))\n"
+        "    )\n"
+        "    BEGIN\n"
+        "        SELECT RAISE(ABORT, 'cron_registry_snapshots_v2 duplicate insertion conflict');\n"
+        "    END",
+    ),
+    (
+        "trigger",
+        "trg_cron_registry_snapshots_v2_no_delete",
+        "cron_registry_snapshots_v2",
+        "CREATE TRIGGER trg_cron_registry_snapshots_v2_no_delete\n"
+        "    BEFORE DELETE ON cron_registry_snapshots_v2\n"
+        "    FOR EACH ROW\n"
+        "    BEGIN\n"
+        "        SELECT RAISE(ABORT, 'cron_registry_snapshots_v2 rows cannot be deleted');\n"
+        "    END",
+    ),
+    (
+        "trigger",
+        "trg_cron_registry_snapshots_v2_no_update",
+        "cron_registry_snapshots_v2",
+        "CREATE TRIGGER trg_cron_registry_snapshots_v2_no_update\n"
+        "    BEFORE UPDATE ON cron_registry_snapshots_v2\n"
+        "    FOR EACH ROW\n"
+        "    BEGIN\n"
+        "        SELECT RAISE(ABORT, 'cron_registry_snapshots_v2 rows are immutable');\n"
+        "    END",
+    ),
+    (
+        "trigger",
+        "trg_cron_sweep_cursors_no_delete",
+        "cron_sweep_cursors",
+        "CREATE TRIGGER trg_cron_sweep_cursors_no_delete\n"
+        "    BEFORE DELETE ON cron_sweep_cursors\n"
+        "    FOR EACH ROW\n"
+        "    BEGIN\n"
+        "        SELECT RAISE(ABORT, 'cursor rows cannot be deleted');\n"
+        "    END",
+    ),
+    (
+        "trigger",
+        "trg_cron_sweep_cursors_prevent_regression",
+        "cron_sweep_cursors",
+        "CREATE TRIGGER trg_cron_sweep_cursors_prevent_regression\n"
+        "    BEFORE UPDATE ON cron_sweep_cursors\n"
+        "    FOR EACH ROW\n"
+        "    BEGIN\n"
+        "        SELECT CASE\n"
+        "            WHEN NEW.cursor_value < OLD.cursor_value THEN\n"
+        "                RAISE(ABORT, 'cursor_value regression rejected')\n"
+        "        END;\n"
+        "    END",
+    ),
+    (
+        "trigger",
+        "trg_cron_sweep_scope_immutable",
+        "cron_sweep_cursors",
+        "CREATE TRIGGER trg_cron_sweep_scope_immutable\n"
+        "    BEFORE UPDATE ON cron_sweep_cursors\n"
+        "    FOR EACH ROW\n"
+        "    WHEN NEW.scope_key IS NOT OLD.scope_key\n"
+        "      OR NEW.cron_id IS NOT OLD.cron_id\n"
+        "      OR NEW.registry_generation IS NOT OLD.registry_generation\n"
+        "      OR NEW.command_digest IS NOT OLD.command_digest\n"
+        "      OR NEW.catch_up_policy_version IS NOT OLD.catch_up_policy_version\n"
+        "    BEGIN\n"
+        "        SELECT RAISE(ABORT, 'cursor scope is immutable');\n"
+        "    END",
+    ),
+    (
+        "trigger",
+        "trg_cron_terminal_attempt_immutable",
+        "cron_execution_attempts",
+        "CREATE TRIGGER trg_cron_terminal_attempt_immutable\n"
+        "    BEFORE UPDATE ON cron_execution_attempts\n"
+        "    FOR EACH ROW\n"
+        "    WHEN OLD.state = 'terminal'\n"
+        "    BEGIN\n"
+        "        SELECT RAISE(ABORT, 'terminal attempts are immutable');\n"
+        "    END",
+    ),
+    (
+        "trigger",
+        "trg_cron_terminal_requires_receipt",
+        "cron_execution_attempts",
+        "CREATE TRIGGER trg_cron_terminal_requires_receipt\n"
+        "    BEFORE UPDATE OF state ON cron_execution_attempts\n"
+        "    FOR EACH ROW\n"
+        "    WHEN NEW.state = 'terminal'\n"
+        "      AND OLD.state != 'terminal'\n"
+        "      AND NOT EXISTS (\n"
+        "          SELECT 1 FROM cron_receipts\n"
+        "          WHERE execution_id = NEW.execution_id AND attempt = NEW.attempt\n"
+        "      )\n"
+        "    BEGIN\n"
+        "        SELECT RAISE(ABORT, 'terminal transition requires matching receipt');\n"
+        "    END",
+    ),
+    (
+        "trigger",
+        "trg_cron_trigger_deliveries_insert_collision",
+        "cron_trigger_deliveries",
+        "CREATE TRIGGER trg_cron_trigger_deliveries_insert_collision\n"
+        "    BEFORE INSERT ON cron_trigger_deliveries\n"
+        "    FOR EACH ROW\n"
+        "    WHEN EXISTS (\n"
+        "        SELECT 1 FROM cron_trigger_deliveries WHERE trigger_event_id = NEW.trigger_event_id\n"
+        "    )\n"
+        "    BEGIN\n"
+        "        SELECT RAISE(ABORT, 'cron_trigger_deliveries rows cannot be replaced');\n"
+        "    END",
+    ),
+    (
+        "trigger",
+        "trg_cron_trigger_deliveries_no_delete",
+        "cron_trigger_deliveries",
+        "CREATE TRIGGER trg_cron_trigger_deliveries_no_delete\n"
+        "    BEFORE DELETE ON cron_trigger_deliveries\n"
+        "    FOR EACH ROW\n"
+        "    BEGIN\n"
+        "        SELECT RAISE(ABORT, 'cron_trigger_deliveries rows are immutable');\n"
+        "    END",
+    ),
+    (
+        "trigger",
+        "trg_cron_trigger_deliveries_no_update",
+        "cron_trigger_deliveries",
+        "CREATE TRIGGER trg_cron_trigger_deliveries_no_update\n"
+        "    BEFORE UPDATE ON cron_trigger_deliveries\n"
+        "    FOR EACH ROW\n"
+        "    BEGIN\n"
+        "        SELECT RAISE(ABORT, 'cron_trigger_deliveries rows are immutable');\n"
+        "    END",
+    ),
+)
+
+_FROZEN_V3_TABLE_INFO = {
+    "cron_authority_schema_version": (
+        (0, "authority_id", "INTEGER", 0, None, 1),
+        (1, "schema_version", "INTEGER", 1, None, 0),
+        (2, "installed_at", "TEXT", 1, None, 0),
+    ),
+    "cron_evidence": (
+        (0, "evidence_digest", "TEXT", 0, None, 1),
+        (1, "canonical_bytes", "BLOB", 1, None, 0),
+        (2, "created_at", "TEXT", 1, None, 0),
+    ),
+    "cron_execution_aggregates": (
+        (0, "execution_id", "TEXT", 0, None, 1),
+        (1, "cron_id", "TEXT", 1, None, 0),
+        (2, "registry_generation", "INTEGER", 1, None, 0),
+        (3, "schedule_bucket", "TEXT", 1, None, 0),
+        (4, "command_digest", "TEXT", 1, None, 0),
+        (5, "release_digest", "TEXT", 1, None, 0),
+        (6, "created_at", "TEXT", 1, None, 0),
+    ),
+    "cron_execution_attempts": (
+        (0, "execution_id", "TEXT", 1, None, 1),
+        (1, "attempt", "INTEGER", 1, None, 2),
+        (2, "state", "TEXT", 1, None, 0),
+        (3, "runner_id", "TEXT", 0, None, 0),
+        (4, "fence_token", "INTEGER", 0, None, 0),
+        (5, "lease_expires_at", "TEXT", 0, None, 0),
+        (6, "source_id", "TEXT", 0, None, 0),
+        (7, "schema_id", "TEXT", 0, None, 0),
+        (8, "schema_version", "INTEGER", 0, None, 0),
+        (9, "registry_generation", "INTEGER", 0, None, 0),
+        (10, "snapshot_digest", "TEXT", 0, None, 0),
+        (11, "canonical_snapshot_bytes", "BLOB", 0, None, 0),
+        (12, "trusted_runner_identity", "TEXT", 0, None, 0),
+        (13, "command_digest", "TEXT", 0, None, 0),
+        (14, "release_digest", "TEXT", 0, None, 0),
+        (15, "dependency_digest", "TEXT", 0, None, 0),
+        (16, "created_at", "TEXT", 1, None, 0),
+        (17, "updated_at", "TEXT", 1, None, 0),
+    ),
+    "cron_receipts": (
+        (0, "receipt_id", "TEXT", 0, None, 1),
+        (1, "execution_id", "TEXT", 1, None, 0),
+        (2, "attempt", "INTEGER", 1, None, 0),
+        (3, "cron_id", "TEXT", 1, None, 0),
+        (4, "outcome", "TEXT", 1, None, 0),
+        (5, "runner_id", "TEXT", 1, None, 0),
+        (6, "runner_release_digest", "TEXT", 1, None, 0),
+        (7, "started_at", "TEXT", 1, None, 0),
+        (8, "finished_at", "TEXT", 1, None, 0),
+        (9, "error_classification", "TEXT", 0, None, 0),
+        (10, "evidence_digest", "TEXT", 0, None, 0),
+        (11, "signing_key_id", "TEXT", 1, None, 0),
+        (12, "signature", "TEXT", 1, None, 0),
+        (13, "schema_version", "INTEGER", 1, None, 0),
+        (14, "created_at", "TEXT", 1, None, 0),
+    ),
+    "cron_registry_snapshots_v1": (
+        (0, "source_id", "TEXT", 1, None, 1),
+        (1, "schema_id", "TEXT", 1, None, 0),
+        (2, "schema_version", "INTEGER", 1, None, 0),
+        (3, "registry_generation", "INTEGER", 1, None, 2),
+        (4, "snapshot_digest", "TEXT", 1, None, 0),
+        (5, "canonical_bytes", "BLOB", 1, None, 0),
+        (6, "created_at", "TEXT", 1, None, 0),
+    ),
+    "cron_registry_snapshots_v2": (
+        (0, "source_id", "TEXT", 1, None, 1),
+        (1, "schema_id", "TEXT", 1, None, 0),
+        (2, "schema_version", "INTEGER", 1, None, 0),
+        (3, "registry_generation", "INTEGER", 1, None, 2),
+        (4, "snapshot_digest", "TEXT", 1, None, 0),
+        (5, "canonical_bytes", "BLOB", 1, None, 0),
+        (6, "created_at", "TEXT", 1, None, 0),
+    ),
+    "cron_sweep_cursors": (
+        (0, "scope_key", "TEXT", 0, None, 1),
+        (1, "cron_id", "TEXT", 1, None, 0),
+        (2, "registry_generation", "INTEGER", 1, None, 0),
+        (3, "command_digest", "TEXT", 1, None, 0),
+        (4, "catch_up_policy_version", "INTEGER", 1, None, 0),
+        (5, "cursor_value", "INTEGER", 1, None, 0),
+        (6, "updated_at", "TEXT", 1, None, 0),
+    ),
+    "cron_trigger_deliveries": (
+        (0, "trigger_event_id", "TEXT", 0, None, 1),
+        (1, "trigger_digest", "TEXT", 1, None, 0),
+        (2, "canonical_bytes", "BLOB", 1, None, 0),
+        (3, "trigger_kind", "TEXT", 1, None, 0),
+        (4, "transport_kind", "TEXT", 1, None, 0),
+        (5, "cron_id", "TEXT", 1, None, 0),
+        (6, "registry_generation", "INTEGER", 1, None, 0),
+        (7, "schedule_bucket", "TEXT", 1, None, 0),
+        (8, "command_digest", "TEXT", 1, None, 0),
+        (9, "release_digest", "TEXT", 1, None, 0),
+        (10, "execution_id", "TEXT", 0, None, 0),
+        (11, "disposition", "TEXT", 1, None, 0),
+        (12, "reason_code", "TEXT", 1, None, 0),
+        (13, "submitted_at", "TEXT", 1, None, 0),
+        (14, "created_at", "TEXT", 1, None, 0),
+    ),
+}
+
+_FROZEN_V3_INDEX_LIST = {
+    "cron_authority_schema_version": (),
+    "cron_evidence": ((0, "sqlite_autoindex_cron_evidence_1", 1, "pk", 0),),
+    "cron_execution_aggregates": (
+        (0, "sqlite_autoindex_cron_execution_aggregates_2", 1, "u", 0),
+        (1, "sqlite_autoindex_cron_execution_aggregates_1", 1, "pk", 0),
+    ),
+    "cron_execution_attempts": (
+        (0, "sqlite_autoindex_cron_execution_attempts_1", 1, "pk", 0),
+    ),
+    "cron_receipts": (
+        (0, "sqlite_autoindex_cron_receipts_2", 1, "u", 0),
+        (1, "sqlite_autoindex_cron_receipts_1", 1, "pk", 0),
+    ),
+    "cron_registry_snapshots_v1": (
+        (0, "sqlite_autoindex_cron_registry_snapshots_v1_2", 1, "u", 0),
+        (1, "sqlite_autoindex_cron_registry_snapshots_v1_1", 1, "pk", 0),
+    ),
+    "cron_registry_snapshots_v2": (
+        (0, "sqlite_autoindex_cron_registry_snapshots_v2_2", 1, "u", 0),
+        (1, "sqlite_autoindex_cron_registry_snapshots_v2_1", 1, "pk", 0),
+    ),
+    "cron_sweep_cursors": (
+        (0, "sqlite_autoindex_cron_sweep_cursors_2", 1, "u", 0),
+        (1, "sqlite_autoindex_cron_sweep_cursors_1", 1, "pk", 0),
+    ),
+    "cron_trigger_deliveries": (
+        (0, "sqlite_autoindex_cron_trigger_deliveries_1", 1, "pk", 0),
+    ),
+}
+
+_FROZEN_V3_FOREIGN_KEYS = {
+    "cron_authority_schema_version": (),
+    "cron_evidence": (),
+    "cron_execution_aggregates": (),
+    "cron_execution_attempts": (
+        (
+            0,
+            0,
+            "cron_execution_aggregates",
+            "execution_id",
+            "execution_id",
+            "NO ACTION",
+            "RESTRICT",
+            "NONE",
+        ),
+    ),
+    "cron_receipts": (
+        (
+            0,
+            0,
+            "cron_execution_attempts",
+            "execution_id",
+            "execution_id",
+            "NO ACTION",
+            "RESTRICT",
+            "NONE",
+        ),
+        (
+            0,
+            1,
+            "cron_execution_attempts",
+            "attempt",
+            "attempt",
+            "NO ACTION",
+            "RESTRICT",
+            "NONE",
+        ),
+        (
+            1,
+            0,
+            "cron_evidence",
+            "evidence_digest",
+            "evidence_digest",
+            "NO ACTION",
+            "RESTRICT",
+            "NONE",
+        ),
+    ),
+    "cron_registry_snapshots_v1": (),
+    "cron_registry_snapshots_v2": (),
+    "cron_sweep_cursors": (),
+    "cron_trigger_deliveries": (
+        (
+            0,
+            0,
+            "cron_execution_aggregates",
+            "execution_id",
+            "execution_id",
+            "NO ACTION",
+            "RESTRICT",
+            "NONE",
+        ),
+    ),
+}
+
+_FROZEN_V3_NEW_TABLE_ROWS = {"cron_registry_snapshots_v2": ()}
+
+_FROZEN_V3_ORACLE_SHA256 = (
+    "927d7abcedcb9c77957d1493d67c140cba3686976072639a1f49ab2afbeb80a5"
+)
+
+
+def _authority_schema_sql(conn: sqlite3.Connection):
+    return conn.execute(
+        """
+        SELECT type, name, tbl_name, sql
+        FROM main.sqlite_master
+        WHERE (tbl_name LIKE 'cron\\_%' ESCAPE '\\'
+               OR name LIKE 'cron\\_%' ESCAPE '\\')
+        ORDER BY type ASC, name ASC;
+        """
+    ).fetchall()
+
+
+def _relationship_projection(conn: sqlite3.Connection):
+    return {
+        "receipt_chain": conn.execute(
+            """
+            SELECT r.receipt_id, r.execution_id, r.attempt, a.state,
+                   a.execution_id, g.execution_id, r.evidence_digest, e.evidence_digest
+            FROM main.cron_receipts AS r
+            JOIN main.cron_execution_attempts AS a
+              ON a.execution_id = r.execution_id AND a.attempt = r.attempt
+            JOIN main.cron_execution_aggregates AS g
+              ON g.execution_id = a.execution_id
+            JOIN main.cron_evidence AS e
+              ON e.evidence_digest = r.evidence_digest
+            ORDER BY r.receipt_id ASC;
+            """
+        ).fetchall(),
+        "trigger_delivery_chain": conn.execute(
+            """
+            SELECT d.trigger_event_id, d.execution_id, g.execution_id
+            FROM main.cron_trigger_deliveries AS d
+            JOIN main.cron_execution_aggregates AS g
+              ON g.execution_id = d.execution_id
+            ORDER BY d.trigger_event_id ASC;
+            """
+        ).fetchall(),
+    }
+
+
+def _canonical_state(conn: sqlite3.Connection):
+    tables = tuple(
+        row[0]
+        for row in conn.execute(
+            "SELECT name FROM main.sqlite_master WHERE type='table' "
+            "AND (name LIKE 'cron\\_%' ESCAPE '\\' "
+            "OR name='unrelated_caller_table') ORDER BY name ASC;"
+        ).fetchall()
+    )
+    return {
+        "rows": {
+            table: conn.execute(
+                f"SELECT * FROM main.{table} ORDER BY 1 ASC;"
+            ).fetchall()
+            for table in tables
+        },
+        "schema_sql": _authority_schema_sql(conn),
+        "indexes": {
+            table: tuple(
+                row[1]
+                for row in conn.execute(f"PRAGMA main.index_list({table});").fetchall()
+            )
+            for table in tables
+            if table != "unrelated_caller_table"
+        },
+        "foreign_keys": {
+            table: conn.execute(f"PRAGMA main.foreign_key_list({table});").fetchall()
+            for table in tables
+            if table != "unrelated_caller_table"
+        },
+        "relationships": _relationship_projection(conn),
+    }
+
+
+def _assert_exact_v2_state(conn: sqlite3.Connection, oracle: dict) -> None:
+    for table in oracle["tables"]:
+        assert (
+            conn.execute(f"SELECT * FROM main.{table} ORDER BY 1 ASC;").fetchall()
+            == oracle["projections"][table]
+        )
+    assert _authority_schema_sql(conn) == oracle["schema_sql"]
+    for table, expected in oracle["index_names"].items():
+        assert (
+            tuple(
+                row[1]
+                for row in conn.execute(f"PRAGMA main.index_list({table});").fetchall()
+            )
+            == expected
+        )
+    assert (
+        tuple(
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM main.sqlite_master WHERE type='trigger' "
+                "AND tbl_name LIKE 'cron\\_%' ESCAPE '\\' ORDER BY name ASC;"
+            ).fetchall()
+        )
+        == oracle["trigger_names"]
+    )
+    for table, expected in oracle["foreign_keys"].items():
+        assert (
+            conn.execute(f"PRAGMA main.foreign_key_list({table});").fetchall()
+            == expected
+        )
+    assert _relationship_projection(conn) == oracle["relationships"]
+    assert conn.execute("PRAGMA main.foreign_key_check;").fetchall() == []
+    assert conn.execute("PRAGMA main.integrity_check;").fetchall() == [("ok",)]
+    assert conn.execute("PRAGMA foreign_keys;").fetchone() == (1,)
+
+
+def _assert_exact_v3_state(conn: sqlite3.Connection, oracle: dict) -> None:
+    expected_rows = {
+        table: tuple(rows) for table, rows in oracle["projections"].items()
+    }
+    expected_rows["cron_authority_schema_version"] = tuple(
+        (authority_id, 3, installed_at)
+        for authority_id, _old_version, installed_at in oracle["projections"][
+            "cron_authority_schema_version"
+        ]
+    )
+    expected_rows["cron_execution_attempts"] = tuple(
+        row[:6] + (None,) * 10 + row[6:]
+        for row in oracle["projections"]["cron_execution_attempts"]
+    )
+    unrelated_rows = tuple(expected_rows.pop("unrelated_caller_table"))
+    expected_rows.update(_FROZEN_V3_NEW_TABLE_ROWS)
+    assert set(expected_rows) == _V3_TABLE_NAMES
+    assert (
+        tuple(
+            conn.execute(
+                "SELECT * FROM main.unrelated_caller_table ORDER BY 1 ASC;"
+            ).fetchall()
+        )
+        == unrelated_rows
+    )
+
+    for table in sorted(_V3_TABLE_NAMES):
+        actual_rows = tuple(
+            conn.execute(f"SELECT * FROM main.{table} ORDER BY 1 ASC;").fetchall()
+        )
+        assert actual_rows == expected_rows[table]
+        assert (
+            tuple(conn.execute(f"PRAGMA main.table_info({table});").fetchall())
+            == _FROZEN_V3_TABLE_INFO[table]
+        )
+        assert (
+            tuple(conn.execute(f"PRAGMA main.index_list({table});").fetchall())
+            == _FROZEN_V3_INDEX_LIST[table]
+        )
+        assert (
+            tuple(conn.execute(f"PRAGMA main.foreign_key_list({table});").fetchall())
+            == _FROZEN_V3_FOREIGN_KEYS[table]
+        )
+
+    assert tuple(_authority_schema_sql(conn)) == _FROZEN_V3_SCHEMA_SQL
+    objects = tuple((kind, name) for kind, name, _table, _sql in _FROZEN_V3_SCHEMA_SQL)
+    assert len(objects) == len(set(objects))
+    assert {name for kind, name in objects if kind == "table"} == _V3_TABLE_NAMES
+    assert {name for kind, name in objects if kind == "trigger"} == _V3_TRIGGER_NAMES
+    assert not conn.execute(
+        "SELECT 1 FROM main.sqlite_master WHERE name='cron_execution_attempts_old';"
+    ).fetchall()
+    assert not conn.execute(
+        "SELECT 1 FROM temp.sqlite_master WHERE name GLOB 'cron_*';"
+    ).fetchall()
+    assert _relationship_projection(conn) == oracle["relationships"]
+    assert conn.execute("PRAGMA main.foreign_key_check;").fetchall() == []
+    assert conn.execute("PRAGMA main.integrity_check;").fetchall() == [("ok",)]
+    assert conn.execute("PRAGMA foreign_keys;").fetchone() == (1,)
+
+
 def test_23_true_v2_migration_success(disposable_db: Path):
     """Test 23: True populated v2 database migrates to v3 preserving rows, relationships, and FK/integrity."""
-    _create_true_v2_db(disposable_db)
+    oracle = _create_true_v2_db(disposable_db)
     migrate_cron_authority(disposable_db)
 
     conn = connect_cron_authority(disposable_db)
@@ -1979,24 +3188,26 @@ def test_23_true_v2_migration_success(disposable_db: Path):
     assert cursor.execute("PRAGMA foreign_key_check;").fetchall() == []
     assert cursor.execute("PRAGMA integrity_check;").fetchall() == [("ok",)]
     assert cursor.execute("PRAGMA foreign_keys;").fetchone() == (1,)
+    _assert_exact_v3_state(conn, oracle)
     conn.close()
 
 
 def test_24_second_migration_idempotent_v2_to_v3(disposable_db: Path):
-    """Test 24: Second migration call on migrated DB is idempotent."""
-    _create_true_v2_db(disposable_db)
-    migrate_cron_authority(disposable_db)
+    """Test 24: Second migration preserves the complete canonical v3 state."""
+    oracle = _create_true_v2_db(disposable_db)
     migrate_cron_authority(disposable_db)
 
-    conn = connect_cron_authority(disposable_db)
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT authority_id, schema_version FROM cron_authority_schema_version;"
-    )
-    assert cursor.fetchone() == (1, 3)
-    assert cursor.execute("PRAGMA foreign_key_check;").fetchall() == []
-    assert cursor.execute("PRAGMA integrity_check;").fetchall() == [("ok",)]
-    conn.close()
+    first = connect_cron_authority(disposable_db)
+    _assert_exact_v3_state(first, oracle)
+    first_state = _canonical_state(first)
+    first.close()
+
+    migrate_cron_authority(disposable_db)
+
+    second = connect_cron_authority(disposable_db)
+    _assert_exact_v3_state(second, oracle)
+    assert _canonical_state(second) == first_state
+    second.close()
 
 
 class WrapperCursor:
@@ -2051,7 +3262,7 @@ class InjectedFailureConnectionWrapper:
 
 def test_25_injected_failure_before_rename(disposable_db: Path):
     """Test 25: Injected failure before rename rolls back, restoring v2 state and FK mode."""
-    _create_true_v2_db(disposable_db)
+    oracle = _create_true_v2_db(disposable_db)
     raw_conn = connect_cron_authority(disposable_db)
     wrapper = InjectedFailureConnectionWrapper(
         raw_conn, "RENAME TO cron_execution_attempts_old"
@@ -2064,12 +3275,13 @@ def test_25_injected_failure_before_rename(disposable_db: Path):
     cursor.execute("SELECT schema_version FROM cron_authority_schema_version;")
     assert cursor.fetchone() == (2,)
     assert raw_conn.execute("PRAGMA foreign_keys;").fetchone() == (1,)
+    _assert_exact_v2_state(raw_conn, oracle)
     raw_conn.close()
 
 
 def test_26_injected_failure_after_rename(disposable_db: Path):
     """Test 26: Injected failure after rename/before copy completion rolls back without temporary table leak."""
-    _create_true_v2_db(disposable_db)
+    oracle = _create_true_v2_db(disposable_db)
     raw_conn = connect_cron_authority(disposable_db)
     wrapper = InjectedFailureConnectionWrapper(
         raw_conn, "DROP TABLE cron_execution_attempts_old"
@@ -2089,6 +3301,7 @@ def test_26_injected_failure_after_rename(disposable_db: Path):
     ]
     assert "cron_execution_attempts_old" not in tables
     assert raw_conn.execute("PRAGMA foreign_keys;").fetchone() == (1,)
+    _assert_exact_v2_state(raw_conn, oracle)
     raw_conn.close()
 
 
@@ -2257,7 +3470,7 @@ class CommitFailureWrapper:
 
 def test_31_commit_failure_handling(disposable_db: Path):
     """Test 31: Commit failure triggers conditional rollback, restores FK mode, and preserves primary error."""
-    _create_true_v2_db(disposable_db)
+    oracle = _create_true_v2_db(disposable_db)
     raw_conn = connect_cron_authority(disposable_db)
     wrapper = CommitFailureWrapper(raw_conn)
 
@@ -2270,6 +3483,7 @@ def test_31_commit_failure_handling(disposable_db: Path):
     cursor = raw_conn.cursor()
     cursor.execute("SELECT schema_version FROM cron_authority_schema_version;")
     assert cursor.fetchone() == (2,)
+    _assert_exact_v2_state(raw_conn, oracle)
     raw_conn.close()
 
 
@@ -2359,7 +3573,7 @@ class RollbackRealThenFailWrapper:
 
 def test_33_rollback_failure_after_real_rollback(disposable_db: Path):
     """Test 33: Rollback failure after underlying real rollback closed transaction restores FK mode and reports primary error."""
-    _create_true_v2_db(disposable_db)
+    oracle = _create_true_v2_db(disposable_db)
     raw_conn = connect_cron_authority(disposable_db)
     wrapper = RollbackRealThenFailWrapper(raw_conn)
 
@@ -2374,6 +3588,7 @@ def test_33_rollback_failure_after_real_rollback(disposable_db: Path):
     assert wrapper.rollback_calls == 1
     assert raw_conn.in_transaction is False
     assert raw_conn.execute("PRAGMA foreign_keys;").fetchone() == (1,)
+    _assert_exact_v2_state(raw_conn, oracle)
     raw_conn.close()
 
 
@@ -2635,3 +3850,205 @@ def test_39_post_commit_restore_readback_exception_invalidates(disposable_db: Pa
     assert isinstance(exc_info.value.__cause__, sqlite3.OperationalError)
     assert str(exc_info.value.__cause__) == "post_commit_restore_readback_error"
     _assert_post_commit_restore_failure(wrapper, raw_conn, exc_info.value)
+
+
+class RowCopyBindingMismatchCursor(WrapperCursor):
+    def execute(self, sql: str, *args, **kwargs):
+        if "INSERT INTO main.cron_execution_attempts" in sql:
+            return self.real_cursor.execute(sql, ("unexpected-binding",))
+        return self.real_cursor.execute(sql, *args, **kwargs)
+
+
+class RowCopyBindingMismatchWrapper:
+    def __init__(self, real_conn: sqlite3.Connection):
+        self.real_conn = real_conn
+        self.rollback_calls = 0
+
+    @property
+    def in_transaction(self):
+        return self.real_conn.in_transaction
+
+    def cursor(self):
+        return RowCopyBindingMismatchCursor(self.real_conn.cursor())
+
+    def create_function(self, *args, **kwargs):
+        return self.real_conn.create_function(*args, **kwargs)
+
+    def execute(self, sql: str, *args, **kwargs):
+        return self.real_conn.execute(sql, *args, **kwargs)
+
+    def commit(self):
+        return self.real_conn.commit()
+
+    def rollback(self):
+        self.rollback_calls += 1
+        return self.real_conn.rollback()
+
+    def close(self):
+        return self.real_conn.close()
+
+
+class InjectedValidationCursor:
+    def __init__(self, real_cursor: sqlite3.Cursor, failure_kind: str):
+        self.real_cursor = real_cursor
+        self.failure_kind = failure_kind
+        self.fake_rows = None
+
+    def execute(self, sql: str, *args, **kwargs):
+        if (
+            self.failure_kind == "foreign_key"
+            and "PRAGMA main.foreign_key_check" in sql
+        ):
+            self.fake_rows = [("cron_receipts", 1, "cron_execution_attempts", 0)]
+            return self
+        if self.failure_kind == "integrity" and "PRAGMA main.integrity_check" in sql:
+            self.fake_rows = [("injected_integrity_failure",)]
+            return self
+        self.fake_rows = None
+        return self.real_cursor.execute(sql, *args, **kwargs)
+
+    def fetchall(self):
+        if self.fake_rows is not None:
+            rows = self.fake_rows
+            self.fake_rows = None
+            return rows
+        return self.real_cursor.fetchall()
+
+    def fetchone(self):
+        return self.real_cursor.fetchone()
+
+
+class InjectedValidationFailureWrapper:
+    def __init__(self, real_conn: sqlite3.Connection, failure_kind: str):
+        self.real_conn = real_conn
+        self.failure_kind = failure_kind
+        self.rollback_calls = 0
+
+    @property
+    def in_transaction(self):
+        return self.real_conn.in_transaction
+
+    def cursor(self):
+        return InjectedValidationCursor(self.real_conn.cursor(), self.failure_kind)
+
+    def create_function(self, *args, **kwargs):
+        return self.real_conn.create_function(*args, **kwargs)
+
+    def execute(self, sql: str, *args, **kwargs):
+        return self.real_conn.execute(sql, *args, **kwargs)
+
+    def commit(self):
+        return self.real_conn.commit()
+
+    def rollback(self):
+        self.rollback_calls += 1
+        return self.real_conn.rollback()
+
+    def close(self):
+        return self.real_conn.close()
+
+
+def test_40_row_copy_binding_mismatch_rolls_back_exactly(disposable_db: Path):
+    """Test 40: A real binding mismatch during row copy restores exact v2 state."""
+    oracle = _create_true_v2_db(disposable_db)
+    raw_conn = connect_cron_authority(disposable_db)
+    wrapper = RowCopyBindingMismatchWrapper(raw_conn)
+
+    with pytest.raises(sqlite3.ProgrammingError, match="bindings"):
+        migrate_cron_authority(wrapper)
+
+    assert wrapper.rollback_calls == 1
+    assert raw_conn.in_transaction is False
+    _assert_exact_v2_state(raw_conn, oracle)
+    raw_conn.close()
+
+
+@pytest.mark.parametrize(
+    ("failure_kind", "expected_code"),
+    [
+        ("foreign_key", "foreign_key_violation"),
+        ("integrity", "integrity_check_failure"),
+    ],
+)
+def test_41_injected_validation_failure_rolls_back_exactly(
+    disposable_db: Path, failure_kind: str, expected_code: str
+):
+    """Test 41: Injected FK/integrity failures block commit and restore exact v2 state."""
+    oracle = _create_true_v2_db(disposable_db)
+    raw_conn = connect_cron_authority(disposable_db)
+    wrapper = InjectedValidationFailureWrapper(raw_conn, failure_kind)
+
+    with pytest.raises(CronAuthorityError) as exc_info:
+        migrate_cron_authority(wrapper)
+
+    assert exc_info.value.code == expected_code
+    assert wrapper.rollback_calls == 1
+    assert raw_conn.in_transaction is False
+    _assert_exact_v2_state(raw_conn, oracle)
+    raw_conn.close()
+
+
+def _mutate_v2_schema(conn: sqlite3.Connection, mutation: str) -> None:
+    if mutation == "missing_trigger":
+        conn.execute("DROP TRIGGER main.trg_cron_attempt_fence_guard;")
+    elif mutation == "malformed_trigger":
+        conn.execute("DROP TRIGGER main.trg_cron_attempt_fence_guard;")
+        conn.execute(
+            """
+            CREATE TRIGGER main.trg_cron_attempt_fence_guard
+            BEFORE UPDATE ON cron_execution_attempts
+            BEGIN
+                SELECT 1;
+            END;
+            """
+        )
+    elif mutation == "renamed_column":
+        conn.execute(
+            "ALTER TABLE main.cron_execution_attempts "
+            "RENAME COLUMN lease_expires_at TO lease_expires_bad;"
+        )
+    elif mutation == "extra_index":
+        conn.execute(
+            "CREATE INDEX main.cron_extra_attempt_state "
+            "ON cron_execution_attempts(state);"
+        )
+    elif mutation == "temp_collision":
+        conn.execute("CREATE TEMP TABLE cron_execution_attempts (id INTEGER);")
+    else:  # pragma: no cover - test parameter is closed
+        raise AssertionError(mutation)
+    conn.commit()
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_code"),
+    [
+        ("missing_trigger", "schema_object_mismatch"),
+        ("malformed_trigger", "schema_object_mismatch"),
+        ("renamed_column", "schema_object_mismatch"),
+        ("extra_index", "schema_object_mismatch"),
+        ("temp_collision", "schema_object_mismatch"),
+    ],
+)
+def test_42_malformed_v2_schema_fails_before_destructive_ddl(
+    disposable_db: Path, mutation: str, expected_code: str
+):
+    """Test 42: Malformed/missing/extra/TEMP v2 objects fail before destructive DDL."""
+    _create_true_v2_db(disposable_db)
+    conn = connect_cron_authority(disposable_db)
+    _mutate_v2_schema(conn, mutation)
+
+    with pytest.raises(CronAuthorityError) as exc_info:
+        migrate_cron_authority(conn)
+
+    assert exc_info.value.code == expected_code
+    assert conn.execute(
+        "SELECT schema_version FROM main.cron_authority_schema_version;"
+    ).fetchone() == (2,)
+    assert not conn.execute(
+        "SELECT 1 FROM main.sqlite_master WHERE name='cron_execution_attempts_old';"
+    ).fetchall()
+    assert not conn.execute(
+        "SELECT 1 FROM main.sqlite_master WHERE name='cron_registry_snapshots_v2';"
+    ).fetchall()
+    assert conn.execute("PRAGMA foreign_keys;").fetchone() == (1,)
+    conn.close()
