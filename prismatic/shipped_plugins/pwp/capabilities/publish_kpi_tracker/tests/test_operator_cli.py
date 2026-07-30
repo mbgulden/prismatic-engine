@@ -34,11 +34,20 @@ def _run(*args, expect_rc=0):
 
 
 def test_list_sites_returns_both_registered_sites():
+    """The list-sites CLI must include every site that has a
+    `sites/<slug>.kpi.json` file. Test asserts at least the two
+    production sites are present (does not assert exact N because new
+    sites are added over time via the provision_site capability)."""
     out = _run("list-sites")
     assert out.returncode == 0, out.stderr
     arr = json.loads(out.stdout)
     slugs = {s["slug"] for s in arr}
-    assert slugs == {"hd-engine", "active-oahu"}
+    # Both production sites must be present.
+    assert "hd-engine" in slugs
+    assert "active-oahu" in slugs
+    # Sites may include additional slugs from prior live tests; this
+    # list should never be empty.
+    assert slugs
 
 
 def test_list_sites_populates_headline_value_via_pipeline():
@@ -49,6 +58,11 @@ def test_list_sites_populates_headline_value_via_pipeline():
     sites_dir = Path(__file__).resolve().parents[1] / "sites"
     runtime_path = sites_dir / "hd-engine.runtime.json"
     sentinel = {"funnel_top.free_chart_generated_total": 999.0}
+    # Preserve any existing file content; restore in finally so this
+    # test does NOT delete production data.
+    backup = None
+    if runtime_path.exists():
+        backup = runtime_path.read_text(encoding="utf-8")
     runtime_path.write_text(json.dumps(sentinel), encoding="utf-8")
     try:
         out = _run("list-sites")
@@ -58,7 +72,9 @@ def test_list_sites_populates_headline_value_via_pipeline():
         assert hd["headline_value"] == 999.0, \
             f"headline_value not populated: {hd}"
     finally:
-        if runtime_path.exists():
+        if backup is not None:
+            runtime_path.write_text(backup, encoding="utf-8")
+        elif runtime_path.exists():
             runtime_path.unlink()
 
 
@@ -67,6 +83,9 @@ def test_list_sites_no_runtime_values_skips_pipeline():
     when a runtime snapshot is present."""
     sites_dir = Path(__file__).resolve().parents[1] / "sites"
     runtime_path = sites_dir / "hd-engine.runtime.json"
+    backup = None
+    if runtime_path.exists():
+        backup = runtime_path.read_text(encoding="utf-8")
     runtime_path.write_text(
         json.dumps({"funnel_top.free_chart_generated_total": 999.0}),
         encoding="utf-8",
@@ -79,7 +98,9 @@ def test_list_sites_no_runtime_values_skips_pipeline():
         assert hd["headline_value"] is None, \
             f"--no-runtime-values did not skip pipeline: {hd}"
     finally:
-        if runtime_path.exists():
+        if backup is not None:
+            runtime_path.write_text(backup, encoding="utf-8")
+        elif runtime_path.exists():
             runtime_path.unlink()
 
 
@@ -118,7 +139,11 @@ def test_build_dashboard_writes_full_layout(tmp_path):
     assert expected.issubset(written), f"missing: {expected - written}"
     snap = json.loads((publish / "dashboard_data.json").read_text())
     assert snap["window"] == "last24h"
-    assert {s["slug"] for s in snap["sites"]} == {"hd-engine", "active-oahu"}
+    slugs = {s["slug"] for s in snap["sites"]}
+    # Both production sites must be present; additional slugs from
+    # live provision_site tests may also appear.
+    assert "hd-engine" in slugs
+    assert "active-oahu" in slugs
 
 
 def test_build_dashboard_with_runtime_values(tmp_path):

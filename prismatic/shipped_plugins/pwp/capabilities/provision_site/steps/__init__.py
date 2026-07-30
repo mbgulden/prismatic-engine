@@ -22,6 +22,22 @@ import secrets
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+# Per-step category:
+#   blocking (default): failure stops the run.
+#   soft:                failure is recorded but doesn't stop the run;
+#                        used for credential-gated steps (GA4/GTM)
+#                        that the user can configure later.
+STEP_CATEGORIES: Dict[str, str] = {
+    "verify_domain": "blocking",
+    "cloudflare_zone": "blocking",
+    "gsc_verify": "blocking",
+    "ga4_property": "soft",
+    "gtm_container": "soft",
+    "register_in_registry": "blocking",
+    "migrate_kpi": "blocking",
+}
+
+
 from .gsc import step_gsc_verify
 from .ga4 import step_ga4_property  # noqa: F401  (re-exported for orchestrator)
 from .gtm import step_gtm_container  # noqa: F401

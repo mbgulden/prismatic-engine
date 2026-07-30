@@ -302,6 +302,37 @@ def test_orchestrator_passes_prior_outputs_to_step(tmp_path: Path) -> None:
     assert captured["prior_outputs"].get("verify_domain", {}).get("challenge_token") == "pwp-verify-fixed-token"
 
 
+def test_orchestrator_prior_outputs_include_complete_steps(tmp_path: Path) -> None:
+    """Regression for #CRITICAL: prior_outputs must include output from
+    COMPLETE upstream steps (not just failed ones). gsc_verify depends on
+    cloudflare_zone.zone_id; if complete steps are excluded from
+    prior_outputs, downstream steps can't see them."""
+    captured = {}
+
+    def fake_step(step_name, domain, owner, run, *, publish_root, prior_outputs=None):
+        captured["prior_outputs"] = prior_outputs
+        return prov_types.StepResult(name=step_name, status="complete")
+
+    state_path = tmp_path / "example.com.json"
+    state_path.write_text(json.dumps({
+        "domain": "example.com", "owner": "me@example.com",
+        "started_at": "2026-01-01T00:00:00+00:00",
+        "overall_status": "in_progress",
+        "steps": [
+            {"name": "cloudflare_zone", "status": "complete",
+             "started_at": "x", "finished_at": "y",
+             "output": {"zone_id": "abc-123", "action": "lookup"}},
+        ],
+    }))
+    with patch.object(orchestrator, "_run_step", side_effect=fake_step):
+        orchestrator.run(
+            domain="example.com", owner="me@example.com",
+            publish_root=tmp_path, resume=True,
+        )
+    # Verify the COMPLETE cloudflare_zone output made it into prior_outputs.
+    assert captured["prior_outputs"].get("cloudflare_zone", {}).get("zone_id") == "abc-123"
+
+
 def test_orchestrator_status_returns_none_for_unknown_domain(tmp_path: Path) -> None:
     """status() returns None if no run exists for the domain."""
     assert orchestrator.status("nope.example.com", publish_root=tmp_path) is None

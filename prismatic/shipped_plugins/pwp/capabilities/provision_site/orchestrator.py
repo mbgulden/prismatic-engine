@@ -152,12 +152,20 @@ def run(
 
     # Build prior_outputs: a dict mapping step_name -> last output dict
     # from the prior persisted run (if any). Steps use this to recover
-    # state between attempts (e.g. reuse a challenge token across
-    # attempts while the user creates the TXT record).
+    # state between attempts OR to read output from upstream steps:
+    #   - verify_domain reuses its challenge_token across retries
+    #     (the prior attempt is failed)
+    #   - gsc_verify reads cloudflare_zone.zone_id to write the GSC
+    #     TXT record to the right zone (the prior attempt is complete)
+    # So we include BOTH complete and failed prior steps here. We
+    # deliberately exclude `skipped` (no output to forward) and
+    # `pending` (no output yet).
     prior_outputs: Dict[str, Dict[str, Any]] = {}
     for prior_step in prior.get("steps", []):
-        if prior_step.get("status") != "complete" and prior_step.get("output"):
-            prior_outputs[prior_step["name"]] = prior_step["output"]
+        st = prior_step.get("status")
+        out = prior_step.get("output")
+        if st in ("complete", "failed") and out:
+            prior_outputs[prior_step["name"]] = out
 
     # Run the remaining steps.
     for sname in STEP_NAMES:
@@ -177,15 +185,27 @@ def run(
             json.dumps(run_state.to_dict(), indent=2, sort_keys=True),
             encoding="utf-8",
         )
-        # If a step fails, mark the overall run as failed and stop.
+        # If a step fails, mark the overall run as failed and stop —
+        # UNLESS the step is marked "soft" (Phase 2 convention: GA4/GTM
+        # steps without credentials are non-blocking; the run still
+        # completes with the registry + KPI bootstrap having run).
+        step_category = getattr(step_module, "STEP_CATEGORIES", {}).get(sname, "blocking")
         if result.status == "failed":
-            run_state.overall_status = "failed"
-            run_state.finished_at = dt.datetime.now(dt.timezone.utc).isoformat()
-            state_path.write_text(
-                json.dumps(run_state.to_dict(), indent=2, sort_keys=True),
-                encoding="utf-8",
-            )
-            return run_state
+            if step_category == "soft":
+                # Soft failure: keep going so downstream steps (registry,
+                # migrate) still run. Tag the step's output to make this
+                # explicit in the state JSON.
+                if not result.output:
+                    result.output = {}
+                result.output["_soft_failure"] = True
+            else:
+                run_state.overall_status = "failed"
+                run_state.finished_at = dt.datetime.now(dt.timezone.utc).isoformat()
+                state_path.write_text(
+                    json.dumps(run_state.to_dict(), indent=2, sort_keys=True),
+                    encoding="utf-8",
+                )
+                return run_state
 
     # Domain verification is a precondition that must succeed.
     # If we got past verify_domain, we are at least ok.
