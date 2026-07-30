@@ -1298,3 +1298,1340 @@ def test_22_projection_source_reader_adversarial(disposable_db: Path):
 
     proj2 = read_cron_projection_source(disposable_db)
     assert proj == proj2
+
+
+def _create_true_v2_db(db_path: Path) -> dict:
+    """Private test helper building a true schema version 2 SQLite database directly from frozen v2 DDL/objects."""
+    # Independent oracle frozen from the accepted legacy-v2 object identity.
+    # Runtime migration code must never import or consume this test-local DDL.
+    frozen_v2_ddl = (
+        """
+CREATE TABLE IF NOT EXISTS main.cron_authority_schema_version (
+    authority_id INTEGER PRIMARY KEY CHECK (authority_id = 1),
+    schema_version INTEGER NOT NULL CHECK (typeof(schema_version) = 'integer' AND schema_version >= 1),
+    installed_at TEXT NOT NULL CHECK (is_utc_timestamp(installed_at) = 1)
+);
+""",
+        """
+CREATE TABLE IF NOT EXISTS main.cron_execution_aggregates (
+    execution_id TEXT PRIMARY KEY CHECK (length(execution_id) >= 1 AND length(execution_id) <= 128),
+    cron_id TEXT NOT NULL CHECK (length(cron_id) >= 1 AND length(cron_id) <= 128),
+    registry_generation INTEGER NOT NULL CHECK (typeof(registry_generation) = 'integer' AND registry_generation >= 1),
+    schedule_bucket TEXT NOT NULL CHECK (is_utc_timestamp(schedule_bucket) = 1),
+    command_digest TEXT NOT NULL CHECK (length(command_digest) = 64 AND command_digest NOT GLOB '*[^0-9a-f]*'),
+    release_digest TEXT NOT NULL CHECK (length(release_digest) = 64 AND release_digest NOT GLOB '*[^0-9a-f]*'),
+    created_at TEXT NOT NULL CHECK (is_utc_timestamp(created_at) = 1),
+    CONSTRAINT uq_cron_aggregate UNIQUE (cron_id, registry_generation, schedule_bucket, command_digest)
+);
+""",
+        """
+CREATE TABLE IF NOT EXISTS main.cron_evidence (
+    evidence_digest TEXT PRIMARY KEY CHECK (length(evidence_digest) = 64 AND evidence_digest NOT GLOB '*[^0-9a-f]*'),
+    canonical_bytes BLOB NOT NULL CHECK (typeof(canonical_bytes) = 'blob' AND length(canonical_bytes) <= 4000),
+    created_at TEXT NOT NULL CHECK (is_utc_timestamp(created_at) = 1),
+    CONSTRAINT ck_evidence_content_address CHECK (evidence_digest = sha256_hex(canonical_bytes))
+);
+""",
+        """
+CREATE TABLE IF NOT EXISTS main.cron_execution_attempts (
+    execution_id TEXT NOT NULL REFERENCES cron_execution_aggregates(execution_id) ON DELETE RESTRICT,
+    attempt INTEGER NOT NULL CHECK (typeof(attempt) = 'integer' AND attempt >= 1),
+    state TEXT NOT NULL CHECK (state IN ('admitted', 'claimed', 'running', 'reconciling', 'terminal')),
+    runner_id TEXT CHECK (runner_id IS NULL OR (length(runner_id) >= 1 AND length(runner_id) <= 128)),
+    fence_token INTEGER CHECK (fence_token IS NULL OR (typeof(fence_token) = 'integer' AND fence_token > 0)),
+    lease_expires_at TEXT CHECK (lease_expires_at IS NULL OR is_utc_timestamp(lease_expires_at) = 1),
+    created_at TEXT NOT NULL CHECK (is_utc_timestamp(created_at) = 1),
+    updated_at TEXT NOT NULL CHECK (is_utc_timestamp(updated_at) = 1),
+    CONSTRAINT ck_attempt_ownership CHECK (
+        state IN ('admitted', 'terminal')
+        OR (runner_id IS NOT NULL AND fence_token IS NOT NULL AND lease_expires_at IS NOT NULL)
+    ),
+    PRIMARY KEY (execution_id, attempt)
+);
+""",
+        """
+CREATE TABLE IF NOT EXISTS main.cron_receipts (
+    receipt_id TEXT PRIMARY KEY CHECK (length(receipt_id) >= 1 AND length(receipt_id) <= 128),
+    execution_id TEXT NOT NULL,
+    attempt INTEGER NOT NULL CHECK (typeof(attempt) = 'integer' AND attempt >= 1),
+    cron_id TEXT NOT NULL CHECK (length(cron_id) >= 1 AND length(cron_id) <= 128),
+    outcome TEXT NOT NULL CHECK (outcome IN ('succeeded', 'failed', 'timed_out', 'cancelled', 'blocked', 'missed_during_offline', 'awaiting_operator_approval', 'orphaned', 'reconciled')),
+    runner_id TEXT NOT NULL CHECK (length(runner_id) >= 1 AND length(runner_id) <= 128),
+    runner_release_digest TEXT NOT NULL CHECK (length(runner_release_digest) = 64 AND runner_release_digest NOT GLOB '*[^0-9a-f]*'),
+    started_at TEXT NOT NULL CHECK (is_utc_timestamp(started_at) = 1),
+    finished_at TEXT NOT NULL CHECK (is_utc_timestamp(finished_at) = 1),
+    error_classification TEXT CHECK (error_classification IS NULL OR length(error_classification) <= 128),
+    evidence_digest TEXT REFERENCES cron_evidence(evidence_digest) ON DELETE RESTRICT CHECK (evidence_digest IS NULL OR (length(evidence_digest) = 64 AND evidence_digest NOT GLOB '*[^0-9a-f]*')),
+    signing_key_id TEXT NOT NULL CHECK (length(signing_key_id) >= 1 AND length(signing_key_id) <= 128),
+    signature TEXT NOT NULL CHECK (length(signature) >= 1 AND length(signature) <= 512),
+    schema_version INTEGER NOT NULL CHECK (typeof(schema_version) = 'integer' AND schema_version = 1),
+    created_at TEXT NOT NULL CHECK (is_utc_timestamp(created_at) = 1),
+    CONSTRAINT ck_required_outcome_evidence CHECK (
+        outcome NOT IN ('failed', 'timed_out', 'blocked', 'missed_during_offline', 'awaiting_operator_approval', 'orphaned', 'reconciled')
+        OR evidence_digest IS NOT NULL
+    ),
+    CONSTRAINT uq_receipt_execution_attempt UNIQUE (execution_id, attempt),
+    CONSTRAINT fk_receipt_execution_attempt FOREIGN KEY (execution_id, attempt) REFERENCES cron_execution_attempts(execution_id, attempt) ON DELETE RESTRICT
+);
+""",
+        """
+CREATE TABLE IF NOT EXISTS main.cron_sweep_cursors (
+    scope_key TEXT PRIMARY KEY CHECK (length(scope_key) >= 1 AND length(scope_key) <= 256),
+    cron_id TEXT NOT NULL CHECK (length(cron_id) >= 1 AND length(cron_id) <= 128),
+    registry_generation INTEGER NOT NULL CHECK (typeof(registry_generation) = 'integer' AND registry_generation >= 1),
+    command_digest TEXT NOT NULL CHECK (length(command_digest) = 64 AND command_digest NOT GLOB '*[^0-9a-f]*'),
+    catch_up_policy_version INTEGER NOT NULL CHECK (typeof(catch_up_policy_version) = 'integer' AND catch_up_policy_version >= 1),
+    cursor_value INTEGER NOT NULL CHECK (typeof(cursor_value) = 'integer' AND cursor_value >= 0),
+    updated_at TEXT NOT NULL CHECK (is_utc_timestamp(updated_at) = 1),
+    CONSTRAINT uq_cron_sweep_scope UNIQUE (cron_id, registry_generation, command_digest, catch_up_policy_version)
+);
+""",
+        """
+CREATE TABLE IF NOT EXISTS main.cron_trigger_deliveries (
+    trigger_event_id TEXT PRIMARY KEY CHECK (length(trigger_event_id) >= 1 AND length(trigger_event_id) <= 128),
+    trigger_digest TEXT NOT NULL CHECK (length(trigger_digest) = 64 AND trigger_digest NOT GLOB '*[^0-9a-f]*'),
+    canonical_bytes BLOB NOT NULL CHECK (typeof(canonical_bytes) = 'blob' AND length(canonical_bytes) <= 4000),
+    trigger_kind TEXT NOT NULL CHECK (trigger_kind IN ('scheduled', 'manual', 'retry', 'hook', 'recovery')),
+    transport_kind TEXT NOT NULL CHECK (transport_kind IN ('http', 'hook', 'recovery', 'internal')),
+    cron_id TEXT NOT NULL CHECK (length(cron_id) >= 1 AND length(cron_id) <= 128),
+    registry_generation INTEGER NOT NULL CHECK (typeof(registry_generation) = 'integer' AND registry_generation >= 1),
+    schedule_bucket TEXT NOT NULL CHECK (is_utc_timestamp(schedule_bucket) = 1),
+    command_digest TEXT NOT NULL CHECK (length(command_digest) = 64 AND command_digest NOT GLOB '*[^0-9a-f]*'),
+    release_digest TEXT NOT NULL CHECK (length(release_digest) = 64 AND release_digest NOT GLOB '*[^0-9a-f]*'),
+    execution_id TEXT REFERENCES cron_execution_aggregates(execution_id) ON DELETE RESTRICT,
+    disposition TEXT NOT NULL CHECK (disposition IN ('accepted', 'rejected', 'converged')),
+    reason_code TEXT NOT NULL CHECK (length(reason_code) >= 1 AND length(reason_code) <= 128),
+    submitted_at TEXT NOT NULL CHECK (is_utc_timestamp(submitted_at) = 1),
+    created_at TEXT NOT NULL CHECK (is_utc_timestamp(created_at) = 1),
+    CONSTRAINT ck_trigger_delivery_content_address CHECK (trigger_digest = sha256_hex(canonical_bytes))
+);
+""",
+        """
+CREATE TABLE IF NOT EXISTS main.cron_registry_snapshots_v1 (
+    source_id TEXT NOT NULL CHECK (source_id = 'prismatic.cron-authority.sqlite/cron_registry_snapshots_v1'),
+    schema_id TEXT NOT NULL CHECK (schema_id = 'prismatic.cron.registry-snapshot'),
+    schema_version INTEGER NOT NULL CHECK (typeof(schema_version) = 'integer' AND schema_version = 1),
+    registry_generation INTEGER NOT NULL CHECK (typeof(registry_generation) = 'integer' AND registry_generation >= 1),
+    snapshot_digest TEXT NOT NULL CHECK (length(snapshot_digest) = 64 AND snapshot_digest NOT GLOB '*[^0-9a-f]*'),
+    canonical_bytes BLOB NOT NULL CHECK (typeof(canonical_bytes) = 'blob' AND length(canonical_bytes) <= 1048576),
+    created_at TEXT NOT NULL CHECK (is_utc_timestamp(created_at) = 1),
+    PRIMARY KEY (source_id, registry_generation),
+    CONSTRAINT uq_snapshot_digest UNIQUE (source_id, snapshot_digest)
+);
+""",
+        """
+    CREATE TRIGGER IF NOT EXISTS main.trg_cron_aggregate_insert_collision
+    BEFORE INSERT ON cron_execution_aggregates
+    FOR EACH ROW
+    WHEN EXISTS (
+        SELECT 1 FROM cron_execution_aggregates
+        WHERE execution_id = NEW.execution_id
+           OR (
+               cron_id = NEW.cron_id
+               AND registry_generation = NEW.registry_generation
+               AND schedule_bucket = NEW.schedule_bucket
+               AND command_digest = NEW.command_digest
+           )
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'cron execution aggregates cannot be replaced');
+    END;
+    """,
+        """
+    CREATE TRIGGER IF NOT EXISTS main.trg_cron_aggregates_no_update
+    BEFORE UPDATE ON cron_execution_aggregates
+    FOR EACH ROW
+    BEGIN
+        SELECT RAISE(ABORT, 'cron execution aggregates are immutable');
+    END;
+    """,
+        """
+    CREATE TRIGGER IF NOT EXISTS main.trg_cron_aggregates_no_delete
+    BEFORE DELETE ON cron_execution_aggregates
+    FOR EACH ROW
+    BEGIN
+        SELECT RAISE(ABORT, 'cron execution aggregates are immutable');
+    END;
+    """,
+        """
+    CREATE TRIGGER IF NOT EXISTS main.trg_cron_evidence_insert_collision
+    BEFORE INSERT ON cron_evidence
+    FOR EACH ROW
+    WHEN EXISTS (
+        SELECT 1 FROM cron_evidence WHERE evidence_digest = NEW.evidence_digest
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'cron_evidence rows cannot be replaced');
+    END;
+    """,
+        """
+    CREATE TRIGGER IF NOT EXISTS main.trg_cron_receipt_insert_collision
+    BEFORE INSERT ON cron_receipts
+    FOR EACH ROW
+    WHEN EXISTS (
+        SELECT 1 FROM cron_receipts
+        WHERE receipt_id = NEW.receipt_id
+           OR (execution_id = NEW.execution_id AND attempt = NEW.attempt)
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'cron_receipts rows cannot be replaced');
+    END;
+    """,
+        """
+    CREATE TRIGGER IF NOT EXISTS main.trg_cron_cursor_insert_collision
+    BEFORE INSERT ON cron_sweep_cursors
+    FOR EACH ROW
+    WHEN EXISTS (
+        SELECT 1 FROM cron_sweep_cursors
+        WHERE scope_key = NEW.scope_key
+           OR (
+               cron_id = NEW.cron_id
+               AND registry_generation = NEW.registry_generation
+               AND command_digest = NEW.command_digest
+               AND catch_up_policy_version = NEW.catch_up_policy_version
+           )
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'cursor rows cannot be replaced');
+    END;
+    """,
+        """
+    CREATE TRIGGER IF NOT EXISTS main.trg_cron_evidence_no_update
+    BEFORE UPDATE ON cron_evidence
+    FOR EACH ROW
+    BEGIN
+        SELECT RAISE(ABORT, 'cron_evidence rows are immutable');
+    END;
+    """,
+        """
+    CREATE TRIGGER IF NOT EXISTS main.trg_cron_evidence_no_delete
+    BEFORE DELETE ON cron_evidence
+    FOR EACH ROW
+    BEGIN
+        SELECT RAISE(ABORT, 'cron_evidence rows are immutable');
+    END;
+    """,
+        """
+    CREATE TRIGGER IF NOT EXISTS main.trg_cron_receipts_no_update
+    BEFORE UPDATE ON cron_receipts
+    FOR EACH ROW
+    BEGIN
+        SELECT RAISE(ABORT, 'cron_receipts rows are immutable');
+    END;
+    """,
+        """
+    CREATE TRIGGER IF NOT EXISTS main.trg_cron_receipts_no_delete
+    BEFORE DELETE ON cron_receipts
+    FOR EACH ROW
+    BEGIN
+        SELECT RAISE(ABORT, 'cron_receipts rows are immutable');
+    END;
+    """,
+        """
+    CREATE TRIGGER IF NOT EXISTS main.trg_cron_sweep_cursors_prevent_regression
+    BEFORE UPDATE ON cron_sweep_cursors
+    FOR EACH ROW
+    BEGIN
+        SELECT CASE
+            WHEN NEW.cursor_value < OLD.cursor_value THEN
+                RAISE(ABORT, 'cursor_value regression rejected')
+        END;
+    END;
+    """,
+        """
+    CREATE TRIGGER IF NOT EXISTS main.trg_cron_sweep_scope_immutable
+    BEFORE UPDATE ON cron_sweep_cursors
+    FOR EACH ROW
+    WHEN NEW.scope_key IS NOT OLD.scope_key
+      OR NEW.cron_id IS NOT OLD.cron_id
+      OR NEW.registry_generation IS NOT OLD.registry_generation
+      OR NEW.command_digest IS NOT OLD.command_digest
+      OR NEW.catch_up_policy_version IS NOT OLD.catch_up_policy_version
+    BEGIN
+        SELECT RAISE(ABORT, 'cursor scope is immutable');
+    END;
+    """,
+        """
+    CREATE TRIGGER IF NOT EXISTS main.trg_cron_attempt_transition_guard
+    BEFORE UPDATE ON cron_execution_attempts
+    FOR EACH ROW
+    WHEN NEW.state != OLD.state AND NOT (
+        (OLD.state = 'admitted' AND NEW.state IN ('claimed', 'terminal'))
+        OR (OLD.state = 'claimed' AND NEW.state IN ('running', 'reconciling', 'terminal'))
+        OR (OLD.state = 'running' AND NEW.state IN ('reconciling', 'terminal'))
+        OR (OLD.state = 'reconciling' AND NEW.state = 'terminal')
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'illegal attempt state transition');
+    END;
+    """,
+        """
+    CREATE TRIGGER IF NOT EXISTS main.trg_cron_attempt_fence_guard
+    BEFORE UPDATE ON cron_execution_attempts
+    FOR EACH ROW
+    WHEN OLD.fence_token IS NOT NULL AND (
+        NEW.fence_token IS NULL
+        OR NEW.fence_token < OLD.fence_token
+        OR (NEW.runner_id IS OLD.runner_id AND NEW.fence_token != OLD.fence_token)
+        OR (NEW.runner_id IS NOT OLD.runner_id AND NEW.fence_token <= OLD.fence_token)
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'attempt fence regression or invalid renewal');
+    END;
+    """,
+        """
+    CREATE TRIGGER IF NOT EXISTS main.trg_cron_terminal_attempt_immutable
+    BEFORE UPDATE ON cron_execution_attempts
+    FOR EACH ROW
+    WHEN OLD.state = 'terminal'
+    BEGIN
+        SELECT RAISE(ABORT, 'terminal attempts are immutable');
+    END;
+    """,
+        """
+    CREATE TRIGGER IF NOT EXISTS main.trg_cron_receipt_identity_guard
+    BEFORE INSERT ON cron_receipts
+    FOR EACH ROW
+    WHEN NOT EXISTS (
+        SELECT 1
+        FROM cron_execution_attempts AS attempt
+        JOIN cron_execution_aggregates AS aggregate
+          ON aggregate.execution_id = attempt.execution_id
+        WHERE attempt.execution_id = NEW.execution_id
+          AND attempt.attempt = NEW.attempt
+          AND aggregate.cron_id = NEW.cron_id
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'receipt identity or terminal attempt mismatch');
+    END;
+    """,
+        """
+    CREATE TRIGGER IF NOT EXISTS main.trg_cron_sweep_cursors_no_delete
+    BEFORE DELETE ON cron_sweep_cursors
+    FOR EACH ROW
+    BEGIN
+        SELECT RAISE(ABORT, 'cursor rows cannot be deleted');
+    END;
+    """,
+        """
+    CREATE TRIGGER IF NOT EXISTS main.trg_cron_attempt_insert_guard
+    BEFORE INSERT ON cron_execution_attempts
+    FOR EACH ROW
+    WHEN NEW.state = 'terminal'
+      OR NEW.attempt != COALESCE(
+          (SELECT MAX(attempt) + 1
+           FROM cron_execution_attempts
+           WHERE execution_id = NEW.execution_id),
+          1
+      )
+    BEGIN
+        SELECT RAISE(ABORT, 'attempts must start at 1, increment by 1, and cannot insert terminal');
+    END;
+    """,
+        """
+    CREATE TRIGGER IF NOT EXISTS main.trg_cron_attempts_no_delete
+    BEFORE DELETE ON cron_execution_attempts
+    FOR EACH ROW
+    BEGIN
+        SELECT RAISE(ABORT, 'attempt rows cannot be deleted');
+    END;
+    """,
+        """
+    CREATE TRIGGER IF NOT EXISTS main.trg_cron_terminal_requires_receipt
+    BEFORE UPDATE OF state ON cron_execution_attempts
+    FOR EACH ROW
+    WHEN NEW.state = 'terminal'
+      AND OLD.state != 'terminal'
+      AND NOT EXISTS (
+          SELECT 1 FROM cron_receipts
+          WHERE execution_id = NEW.execution_id AND attempt = NEW.attempt
+      )
+    BEGIN
+        SELECT RAISE(ABORT, 'terminal transition requires matching receipt');
+    END;
+    """,
+        """
+    CREATE TRIGGER IF NOT EXISTS main.trg_cron_receipt_finalizes_attempt
+    AFTER INSERT ON cron_receipts
+    FOR EACH ROW
+    BEGIN
+        UPDATE cron_execution_attempts
+        SET state = 'terminal', updated_at = NEW.created_at
+        WHERE execution_id = NEW.execution_id AND attempt = NEW.attempt;
+    END;
+    """,
+        """
+    CREATE TRIGGER IF NOT EXISTS main.trg_cron_trigger_deliveries_insert_collision
+    BEFORE INSERT ON cron_trigger_deliveries
+    FOR EACH ROW
+    WHEN EXISTS (
+        SELECT 1 FROM cron_trigger_deliveries WHERE trigger_event_id = NEW.trigger_event_id
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'cron_trigger_deliveries rows cannot be replaced');
+    END;
+    """,
+        """
+    CREATE TRIGGER IF NOT EXISTS main.trg_cron_trigger_deliveries_no_update
+    BEFORE UPDATE ON cron_trigger_deliveries
+    FOR EACH ROW
+    BEGIN
+        SELECT RAISE(ABORT, 'cron_trigger_deliveries rows are immutable');
+    END;
+    """,
+        """
+    CREATE TRIGGER IF NOT EXISTS main.trg_cron_trigger_deliveries_no_delete
+    BEFORE DELETE ON cron_trigger_deliveries
+    FOR EACH ROW
+    BEGIN
+        SELECT RAISE(ABORT, 'cron_trigger_deliveries rows are immutable');
+    END;
+    """,
+        """
+    CREATE TRIGGER IF NOT EXISTS main.trg_cron_registry_snapshots_insert_collision
+    BEFORE INSERT ON cron_registry_snapshots_v1
+    FOR EACH ROW
+    WHEN EXISTS (
+        SELECT 1 FROM cron_registry_snapshots_v1
+        WHERE (source_id = NEW.source_id AND registry_generation = NEW.registry_generation AND (snapshot_digest != NEW.snapshot_digest OR canonical_bytes != NEW.canonical_bytes))
+           OR (source_id = NEW.source_id AND snapshot_digest = NEW.snapshot_digest AND (registry_generation != NEW.registry_generation OR canonical_bytes != NEW.canonical_bytes))
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'cron_registry_snapshots_v1 duplicate insertion conflict');
+    END;
+    """,
+        """
+    CREATE TRIGGER IF NOT EXISTS main.trg_cron_registry_snapshots_no_update
+    BEFORE UPDATE ON cron_registry_snapshots_v1
+    FOR EACH ROW
+    BEGIN
+        SELECT RAISE(ABORT, 'cron_registry_snapshots_v1 rows are immutable');
+    END;
+    """,
+        """
+    CREATE TRIGGER IF NOT EXISTS main.trg_cron_registry_snapshots_no_delete
+    BEFORE DELETE ON cron_registry_snapshots_v1
+    FOR EACH ROW
+    BEGIN
+        SELECT RAISE(ABORT, 'cron_registry_snapshots_v1 rows cannot be deleted');
+    END;
+    """,
+    )
+    assert hashlib.sha256("\0".join(frozen_v2_ddl).encode()).hexdigest() == (
+        "5f33be838c133be02e3a7b6165f650dd451062c78ae3713a3fd5c857a1d46765"
+    )
+
+    conn = connect_cron_authority(db_path)
+
+    # 1. Create tables and triggers directly from test-local frozen v2 DDL.
+    for ddl in frozen_v2_ddl:
+        conn.execute(ddl)
+
+    conn.execute(
+        "CREATE TABLE main.unrelated_caller_table (id INTEGER PRIMARY KEY, caller_data TEXT);"
+    )
+
+    # 2. Populate rows
+    conn.execute(
+        "INSERT INTO main.cron_authority_schema_version VALUES (1, 2, '2026-07-28T00:00:00Z');"
+    )
+
+    agg1 = (
+        "exec-v2-001",
+        "cron.job-a",
+        1,
+        "2026-07-28T04:00:00Z",
+        "a" * 64,
+        "b" * 64,
+        "2026-07-28T04:00:00Z",
+    )
+    agg2 = (
+        "exec-v2-002",
+        "cron.job-b",
+        1,
+        "2026-07-28T05:00:00Z",
+        "c" * 64,
+        "d" * 64,
+        "2026-07-28T05:00:00Z",
+    )
+    conn.execute(
+        "INSERT INTO main.cron_execution_aggregates VALUES (?, ?, ?, ?, ?, ?, ?);", agg1
+    )
+    conn.execute(
+        "INSERT INTO main.cron_execution_aggregates VALUES (?, ?, ?, ?, ?, ?, ?);", agg2
+    )
+
+    att1_1 = (
+        "exec-v2-001",
+        1,
+        "claimed",
+        "runner-node-01",
+        1,
+        "2026-07-28T04:10:00Z",
+        "2026-07-28T04:00:00Z",
+        "2026-07-28T04:00:00Z",
+    )
+    att1_2 = (
+        "exec-v2-001",
+        2,
+        "running",
+        "runner-node-01",
+        2,
+        "2026-07-28T04:20:00Z",
+        "2026-07-28T04:10:00Z",
+        "2026-07-28T04:15:00Z",
+    )
+    att2_1 = (
+        "exec-v2-002",
+        1,
+        "admitted",
+        None,
+        None,
+        None,
+        "2026-07-28T05:00:00Z",
+        "2026-07-28T05:00:00Z",
+    )
+    conn.execute(
+        "INSERT INTO main.cron_execution_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
+        att1_1,
+    )
+    conn.execute(
+        "INSERT INTO main.cron_execution_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
+        att1_2,
+    )
+    conn.execute(
+        "INSERT INTO main.cron_execution_attempts VALUES (?, ?, ?, ?, ?, ?, ?, ?);",
+        att2_1,
+    )
+
+    ev_bytes_1 = b'{"status":"succeeded","log":"ok"}'
+    ev_digest_1 = hashlib.sha256(ev_bytes_1).hexdigest()
+    ev1 = (ev_digest_1, ev_bytes_1, "2026-07-28T04:05:00Z")
+    conn.execute("INSERT INTO main.cron_evidence VALUES (?, ?, ?);", ev1)
+
+    rcpt1 = (
+        "rcpt-v2-001",
+        "exec-v2-001",
+        1,
+        "cron.job-a",
+        "succeeded",
+        "runner-node-01",
+        "f" * 64,
+        "2026-07-28T04:00:00Z",
+        "2026-07-28T04:05:00Z",
+        None,
+        ev_digest_1,
+        "key-v1",
+        "sig-test-v2",
+        1,
+        "2026-07-28T04:05:00Z",
+    )
+    conn.execute(
+        "INSERT INTO main.cron_receipts VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+        rcpt1,
+    )
+
+    cur1 = (
+        "scope-job-a-gen-1",
+        "cron.job-a",
+        1,
+        "a" * 64,
+        1,
+        42,
+        "2026-07-28T04:00:00Z",
+    )
+    conn.execute(
+        "INSERT INTO main.cron_sweep_cursors VALUES (?, ?, ?, ?, ?, ?, ?);", cur1
+    )
+
+    trig_bytes = b'{"trigger":"scheduled"}'
+    trig_digest = hashlib.sha256(trig_bytes).hexdigest()
+    trig1 = (
+        "trig-evt-001",
+        trig_digest,
+        trig_bytes,
+        "scheduled",
+        "http",
+        "cron.job-a",
+        1,
+        "2026-07-28T04:00:00Z",
+        "a" * 64,
+        "b" * 64,
+        "exec-v2-001",
+        "accepted",
+        "reason-ok",
+        "2026-07-28T04:00:00Z",
+        "2026-07-28T04:00:00Z",
+    )
+    conn.execute(
+        "INSERT INTO main.cron_trigger_deliveries VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+        trig1,
+    )
+
+    snap_bytes = b'{"cron_id":"cron.job-a","generation":1}'
+    snap_digest = hashlib.sha256(
+        b"prismatic.cron.registry-snapshot.v1\x00" + snap_bytes
+    ).hexdigest()
+    snap1 = (
+        "prismatic.cron-authority.sqlite/cron_registry_snapshots_v1",
+        "prismatic.cron.registry-snapshot",
+        1,
+        1,
+        snap_digest,
+        snap_bytes,
+        "2026-07-28T04:00:00Z",
+    )
+    conn.execute(
+        "INSERT INTO main.cron_registry_snapshots_v1 VALUES (?, ?, ?, ?, ?, ?, ?);",
+        snap1,
+    )
+
+    conn.execute(
+        "INSERT INTO main.unrelated_caller_table VALUES (999, 'unrelated_data_v2');"
+    )
+
+    conn.commit()
+
+    assert conn.execute("PRAGMA foreign_key_check;").fetchall() == []
+    assert conn.execute("PRAGMA integrity_check;").fetchall() == [("ok",)]
+    assert conn.execute("PRAGMA foreign_keys;").fetchone() == (1,)
+
+    tables = [
+        "cron_authority_schema_version",
+        "cron_execution_aggregates",
+        "cron_evidence",
+        "cron_execution_attempts",
+        "cron_receipts",
+        "cron_sweep_cursors",
+        "cron_trigger_deliveries",
+        "cron_registry_snapshots_v1",
+        "unrelated_caller_table",
+    ]
+    projections = {}
+    for tbl in tables:
+        projections[tbl] = conn.execute(
+            f"SELECT * FROM main.{tbl} ORDER BY 1 ASC;"
+        ).fetchall()
+
+    schema_sql = conn.execute(
+        "SELECT type, name, sql FROM main.sqlite_master WHERE name LIKE 'cron_%' ORDER BY name ASC;"
+    ).fetchall()
+
+    conn.close()
+    return {
+        "projections": projections,
+        "schema_sql": schema_sql,
+        "ev_digest_1": ev_digest_1,
+        "trig_digest": trig_digest,
+        "snap_digest": snap_digest,
+    }
+
+
+def test_23_true_v2_migration_success(disposable_db: Path):
+    """Test 23: True populated v2 database migrates to v3 preserving rows, relationships, and FK/integrity."""
+    _create_true_v2_db(disposable_db)
+    migrate_cron_authority(disposable_db)
+
+    conn = connect_cron_authority(disposable_db)
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT authority_id, schema_version FROM cron_authority_schema_version;"
+    )
+    assert cursor.fetchone() == (1, 3)
+
+    cursor.execute(
+        "SELECT execution_id, attempt, state, runner_id, fence_token, lease_expires_at, source_id, schema_version FROM cron_execution_attempts ORDER BY execution_id ASC, attempt ASC;"
+    )
+    attempts = cursor.fetchall()
+    assert len(attempts) == 3
+    assert attempts[0][0:6] == (
+        "exec-v2-001",
+        1,
+        "terminal",
+        "runner-node-01",
+        1,
+        "2026-07-28T04:10:00Z",
+    )
+    assert attempts[0][6] is None
+    assert attempts[0][7] is None
+
+    assert attempts[1][0:6] == (
+        "exec-v2-001",
+        2,
+        "running",
+        "runner-node-01",
+        2,
+        "2026-07-28T04:20:00Z",
+    )
+    assert attempts[2][0:6] == (
+        "exec-v2-002",
+        1,
+        "admitted",
+        None,
+        None,
+        None,
+    )
+
+    cursor.execute("SELECT id, caller_data FROM unrelated_caller_table;")
+    assert cursor.fetchone() == (999, "unrelated_data_v2")
+
+    assert cursor.execute("PRAGMA foreign_key_check;").fetchall() == []
+    assert cursor.execute("PRAGMA integrity_check;").fetchall() == [("ok",)]
+    assert cursor.execute("PRAGMA foreign_keys;").fetchone() == (1,)
+    conn.close()
+
+
+def test_24_second_migration_idempotent_v2_to_v3(disposable_db: Path):
+    """Test 24: Second migration call on migrated DB is idempotent."""
+    _create_true_v2_db(disposable_db)
+    migrate_cron_authority(disposable_db)
+    migrate_cron_authority(disposable_db)
+
+    conn = connect_cron_authority(disposable_db)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT authority_id, schema_version FROM cron_authority_schema_version;"
+    )
+    assert cursor.fetchone() == (1, 3)
+    assert cursor.execute("PRAGMA foreign_key_check;").fetchall() == []
+    assert cursor.execute("PRAGMA integrity_check;").fetchall() == [("ok",)]
+    conn.close()
+
+
+class WrapperCursor:
+    def __init__(self, real_cursor: sqlite3.Cursor, check_sql_fn=None):
+        self.real_cursor = real_cursor
+        self.check_sql_fn = check_sql_fn
+
+    def execute(self, sql: str, *args, **kwargs):
+        if self.check_sql_fn:
+            self.check_sql_fn(sql)
+        return self.real_cursor.execute(sql, *args, **kwargs)
+
+    def fetchone(self):
+        return self.real_cursor.fetchone()
+
+    def fetchall(self):
+        return self.real_cursor.fetchall()
+
+
+class InjectedFailureConnectionWrapper:
+    def __init__(self, real_conn: sqlite3.Connection, fail_pattern: str):
+        self.real_conn = real_conn
+        self.fail_pattern = fail_pattern
+
+    def check_sql(self, sql: str):
+        if self.fail_pattern in sql:
+            raise sqlite3.OperationalError(f"injected_failure_{self.fail_pattern}")
+
+    def cursor(self):
+        return WrapperCursor(self.real_conn.cursor(), self.check_sql)
+
+    @property
+    def in_transaction(self):
+        return self.real_conn.in_transaction
+
+    def create_function(self, *args, **kwargs):
+        return self.real_conn.create_function(*args, **kwargs)
+
+    def execute(self, sql: str, *args, **kwargs):
+        self.check_sql(sql)
+        return self.real_conn.execute(sql, *args, **kwargs)
+
+    def commit(self):
+        return self.real_conn.commit()
+
+    def rollback(self):
+        return self.real_conn.rollback()
+
+    def close(self):
+        return self.real_conn.close()
+
+
+def test_25_injected_failure_before_rename(disposable_db: Path):
+    """Test 25: Injected failure before rename rolls back, restoring v2 state and FK mode."""
+    _create_true_v2_db(disposable_db)
+    raw_conn = connect_cron_authority(disposable_db)
+    wrapper = InjectedFailureConnectionWrapper(
+        raw_conn, "RENAME TO cron_execution_attempts_old"
+    )
+
+    with pytest.raises(sqlite3.OperationalError, match="injected_failure"):
+        migrate_cron_authority(wrapper)
+
+    cursor = raw_conn.cursor()
+    cursor.execute("SELECT schema_version FROM cron_authority_schema_version;")
+    assert cursor.fetchone() == (2,)
+    assert raw_conn.execute("PRAGMA foreign_keys;").fetchone() == (1,)
+    raw_conn.close()
+
+
+def test_26_injected_failure_after_rename(disposable_db: Path):
+    """Test 26: Injected failure after rename/before copy completion rolls back without temporary table leak."""
+    _create_true_v2_db(disposable_db)
+    raw_conn = connect_cron_authority(disposable_db)
+    wrapper = InjectedFailureConnectionWrapper(
+        raw_conn, "DROP TABLE cron_execution_attempts_old"
+    )
+
+    with pytest.raises(sqlite3.OperationalError, match="injected_failure"):
+        migrate_cron_authority(wrapper)
+
+    cursor = raw_conn.cursor()
+    cursor.execute("SELECT schema_version FROM cron_authority_schema_version;")
+    assert cursor.fetchone() == (2,)
+    tables = [
+        r[0]
+        for r in cursor.execute(
+            "SELECT name FROM sqlite_master WHERE type='table';"
+        ).fetchall()
+    ]
+    assert "cron_execution_attempts_old" not in tables
+    assert raw_conn.execute("PRAGMA foreign_keys;").fetchone() == (1,)
+    raw_conn.close()
+
+
+def test_27_schema_object_validation_failures(disposable_db: Path):
+    """Test 27: Malformed/extra/TEMP schema objects fail validation before destructive DDL."""
+    _create_true_v2_db(disposable_db)
+    conn = connect_cron_authority(disposable_db)
+
+    conn.execute("CREATE TABLE main.cron_extra_unauthorized (id INT);")
+    conn.commit()
+
+    with pytest.raises(CronAuthorityError) as exc_info:
+        migrate_cron_authority(conn)
+    assert exc_info.value.code == "schema_object_mismatch"
+    conn.close()
+
+
+def test_28_active_caller_transaction_rejected(disposable_db: Path):
+    """Test 28: Active transaction on caller connection is rejected without commit/rollback ownership theft."""
+    _create_true_v2_db(disposable_db)
+    conn = connect_cron_authority(disposable_db)
+
+    conn.execute("BEGIN;")
+    assert conn.in_transaction is True
+
+    with pytest.raises(CronAuthorityError) as exc_info:
+        migrate_cron_authority(conn)
+    assert exc_info.value.code == "active_caller_transaction"
+    assert conn.in_transaction is True
+    conn.rollback()
+    conn.close()
+
+
+class BeginFailureNoTxWrapper:
+    def __init__(self, real_conn: sqlite3.Connection):
+        self.real_conn = real_conn
+        self.rollback_calls = 0
+
+    def check_sql(self, sql: str):
+        if "BEGIN IMMEDIATE" in sql:
+            raise sqlite3.OperationalError("begin_failed_no_tx")
+
+    def cursor(self):
+        return WrapperCursor(self.real_conn.cursor(), self.check_sql)
+
+    @property
+    def in_transaction(self):
+        return self.real_conn.in_transaction
+
+    def create_function(self, *args, **kwargs):
+        return self.real_conn.create_function(*args, **kwargs)
+
+    def execute(self, sql: str, *args, **kwargs):
+        self.check_sql(sql)
+        return self.real_conn.execute(sql, *args, **kwargs)
+
+    def commit(self):
+        return self.real_conn.commit()
+
+    def rollback(self):
+        self.rollback_calls += 1
+        return self.real_conn.rollback()
+
+    def close(self):
+        return self.real_conn.close()
+
+
+def test_29_begin_failure_handling_outside_tx(disposable_db: Path):
+    """Test 29: BEGIN failure with in_transaction=False performs 0 rollbacks, restores FK, and retains connection usability."""
+    _create_true_v2_db(disposable_db)
+    raw_conn = connect_cron_authority(disposable_db)
+    wrapper = BeginFailureNoTxWrapper(raw_conn)
+
+    with pytest.raises(sqlite3.OperationalError, match="begin_failed_no_tx"):
+        migrate_cron_authority(wrapper)
+
+    assert wrapper.rollback_calls == 0
+    assert raw_conn.in_transaction is False
+    assert raw_conn.execute("PRAGMA foreign_keys;").fetchone() == (1,)
+    res = raw_conn.execute("SELECT 1;").fetchone()
+    assert res == (1,)
+    raw_conn.close()
+
+
+class BeginFailureWithTxWrapper:
+    def __init__(self, real_conn: sqlite3.Connection):
+        self.real_conn = real_conn
+        self.rollback_calls = 0
+
+    def check_sql(self, sql: str):
+        if "BEGIN IMMEDIATE" in sql:
+            self.real_conn.execute(sql)
+            raise sqlite3.OperationalError("begin_failed_with_tx")
+
+    def cursor(self):
+        return WrapperCursor(self.real_conn.cursor(), self.check_sql)
+
+    @property
+    def in_transaction(self):
+        return self.real_conn.in_transaction
+
+    def create_function(self, *args, **kwargs):
+        return self.real_conn.create_function(*args, **kwargs)
+
+    def execute(self, sql: str, *args, **kwargs):
+        self.check_sql(sql)
+        return self.real_conn.execute(sql, *args, **kwargs)
+
+    def commit(self):
+        return self.real_conn.commit()
+
+    def rollback(self):
+        self.rollback_calls += 1
+        return self.real_conn.rollback()
+
+    def close(self):
+        return self.real_conn.close()
+
+
+def test_30_begin_failure_handling_inside_tx(disposable_db: Path):
+    """Test 30: BEGIN failure with in_transaction=True closes connection without rollback attempts."""
+    _create_true_v2_db(disposable_db)
+    raw_conn = connect_cron_authority(disposable_db)
+    wrapper = BeginFailureWithTxWrapper(raw_conn)
+
+    with pytest.raises(CronAuthorityError) as exc_info:
+        migrate_cron_authority(wrapper)
+
+    assert exc_info.value.code == "begin_failed_active_transaction"
+    assert str(exc_info.value) == "BEGIN failed after transaction state became active"
+    assert isinstance(exc_info.value.__cause__, sqlite3.OperationalError)
+    assert str(exc_info.value.__cause__) == "begin_failed_with_tx"
+    assert wrapper.rollback_calls == 0
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        raw_conn.execute("SELECT 1;")
+
+
+class CommitFailureWrapper:
+    def __init__(self, real_conn: sqlite3.Connection):
+        self.real_conn = real_conn
+        self.rollback_calls = 0
+
+    def cursor(self):
+        return WrapperCursor(self.real_conn.cursor())
+
+    @property
+    def in_transaction(self):
+        return self.real_conn.in_transaction
+
+    def create_function(self, *args, **kwargs):
+        return self.real_conn.create_function(*args, **kwargs)
+
+    def execute(self, sql: str, *args, **kwargs):
+        return self.real_conn.execute(sql, *args, **kwargs)
+
+    def commit(self):
+        raise sqlite3.OperationalError("commit_failed_injected")
+
+    def rollback(self):
+        self.rollback_calls += 1
+        return self.real_conn.rollback()
+
+    def close(self):
+        return self.real_conn.close()
+
+
+def test_31_commit_failure_handling(disposable_db: Path):
+    """Test 31: Commit failure triggers conditional rollback, restores FK mode, and preserves primary error."""
+    _create_true_v2_db(disposable_db)
+    raw_conn = connect_cron_authority(disposable_db)
+    wrapper = CommitFailureWrapper(raw_conn)
+
+    with pytest.raises(sqlite3.OperationalError, match="commit_failed_injected"):
+        migrate_cron_authority(wrapper)
+
+    assert wrapper.rollback_calls == 1
+    assert raw_conn.in_transaction is False
+    assert raw_conn.execute("PRAGMA foreign_keys;").fetchone() == (1,)
+    cursor = raw_conn.cursor()
+    cursor.execute("SELECT schema_version FROM cron_authority_schema_version;")
+    assert cursor.fetchone() == (2,)
+    raw_conn.close()
+
+
+class RollbackFailureWrapper:
+    def __init__(self, real_conn: sqlite3.Connection):
+        self.real_conn = real_conn
+
+    def check_sql(self, sql: str):
+        if "cron_authority_schema_version SET schema_version = 3" in sql:
+            raise sqlite3.OperationalError("post_begin_error")
+
+    def cursor(self):
+        return WrapperCursor(self.real_conn.cursor(), self.check_sql)
+
+    @property
+    def in_transaction(self):
+        return self.real_conn.in_transaction
+
+    def create_function(self, *args, **kwargs):
+        return self.real_conn.create_function(*args, **kwargs)
+
+    def execute(self, sql: str, *args, **kwargs):
+        self.check_sql(sql)
+        return self.real_conn.execute(sql, *args, **kwargs)
+
+    def commit(self):
+        return self.real_conn.commit()
+
+    def rollback(self):
+        raise sqlite3.OperationalError("rollback_failed_injected")
+
+    def close(self):
+        return self.real_conn.close()
+
+
+def test_32_rollback_failure_handling(disposable_db: Path):
+    """Test 32: Rollback failure invalidates connection and raises transaction_closure_failed chained error."""
+    _create_true_v2_db(disposable_db)
+    raw_conn = connect_cron_authority(disposable_db)
+    wrapper = RollbackFailureWrapper(raw_conn)
+
+    with pytest.raises(CronAuthorityError) as exc_info:
+        migrate_cron_authority(wrapper)
+
+    assert exc_info.value.code == "transaction_closure_failed"
+    assert exc_info.value.context == {"rollback_error_type": "OperationalError"}
+    assert isinstance(exc_info.value.__cause__, sqlite3.OperationalError)
+    assert exc_info.value.__cause__.args[0] == "post_begin_error"
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        raw_conn.execute("SELECT 1;")
+
+
+class RollbackRealThenFailWrapper:
+    def __init__(self, real_conn: sqlite3.Connection):
+        self.real_conn = real_conn
+        self.rollback_calls = 0
+
+    def check_sql(self, sql: str):
+        if "cron_authority_schema_version SET schema_version = 3" in sql:
+            raise sqlite3.OperationalError("post_begin_error")
+
+    def cursor(self):
+        return WrapperCursor(self.real_conn.cursor(), self.check_sql)
+
+    @property
+    def in_transaction(self):
+        return self.real_conn.in_transaction
+
+    def create_function(self, *args, **kwargs):
+        return self.real_conn.create_function(*args, **kwargs)
+
+    def execute(self, sql: str, *args, **kwargs):
+        self.check_sql(sql)
+        return self.real_conn.execute(sql, *args, **kwargs)
+
+    def commit(self):
+        return self.real_conn.commit()
+
+    def rollback(self):
+        self.rollback_calls += 1
+        self.real_conn.rollback()
+        raise sqlite3.OperationalError("rollback_wrapper_error")
+
+    def close(self):
+        return self.real_conn.close()
+
+
+def test_33_rollback_failure_after_real_rollback(disposable_db: Path):
+    """Test 33: Rollback failure after underlying real rollback closed transaction restores FK mode and reports primary error."""
+    _create_true_v2_db(disposable_db)
+    raw_conn = connect_cron_authority(disposable_db)
+    wrapper = RollbackRealThenFailWrapper(raw_conn)
+
+    with pytest.raises(CronAuthorityError) as exc_info:
+        migrate_cron_authority(wrapper)
+
+    assert exc_info.value.code == "migration_failed_with_rollback_error"
+    assert str(exc_info.value) == "Migration failed after rollback reported an error"
+    assert exc_info.value.context == {"rollback_error_type": "OperationalError"}
+    assert isinstance(exc_info.value.__cause__, sqlite3.OperationalError)
+    assert str(exc_info.value.__cause__) == "post_begin_error"
+    assert wrapper.rollback_calls == 1
+    assert raw_conn.in_transaction is False
+    assert raw_conn.execute("PRAGMA foreign_keys;").fetchone() == (1,)
+    raw_conn.close()
+
+
+def test_34_fresh_db_and_v3_paths_remain_green(disposable_db: Path):
+    """Test 34: Fresh DB and already-v3 DB migration paths remain green and keep FK enforcement enabled."""
+    migrate_cron_authority(disposable_db)
+    conn = connect_cron_authority(disposable_db)
+    assert conn.execute("PRAGMA foreign_keys;").fetchone() == (1,)
+    assert conn.execute(
+        "SELECT authority_id, schema_version FROM cron_authority_schema_version;"
+    ).fetchone() == (1, 3)
+    conn.close()
+
+    migrate_cron_authority(disposable_db)
+    conn2 = connect_cron_authority(disposable_db)
+    assert conn2.execute("PRAGMA foreign_keys;").fetchone() == (1,)
+    conn2.close()
+
+
+def test_35_production_db_isolation():
+    """Test 35: Proves no test touches /home/ubuntu/.prismatic/bus/event_log.sqlite or production paths."""
+    prod_path = Path("/home/ubuntu/.prismatic/bus/event_log.sqlite")
+    with pytest.raises(AssertionError):
+        sqlite3.connect(str(prod_path))
+
+
+class _SingleRowResult:
+    def __init__(self, row):
+        self.row = row
+
+    def fetchone(self):
+        return self.row
+
+
+class ForeignKeyDisableReadbackFailureWrapper:
+    def __init__(self, real_conn: sqlite3.Connection):
+        self.real_conn = real_conn
+        self.off_calls = 0
+        self.readback_calls = 0
+        self.post_off_readback_calls = 0
+        self.off_issued = False
+        self.close_calls = 0
+
+    @property
+    def in_transaction(self):
+        return self.real_conn.in_transaction
+
+    def cursor(self):
+        return self.real_conn.cursor()
+
+    def create_function(self, *args, **kwargs):
+        return self.real_conn.create_function(*args, **kwargs)
+
+    def execute(self, sql: str, *args, **kwargs):
+        if sql == "PRAGMA foreign_keys = OFF;":
+            self.off_calls += 1
+            self.off_issued = True
+            return self.real_conn.execute(sql, *args, **kwargs)
+        if sql == "PRAGMA main.foreign_keys;":
+            self.readback_calls += 1
+            if self.off_issued:
+                self.post_off_readback_calls += 1
+            return _SingleRowResult((1,))
+        return self.real_conn.execute(sql, *args, **kwargs)
+
+    def commit(self):
+        return self.real_conn.commit()
+
+    def rollback(self):
+        return self.real_conn.rollback()
+
+    def close(self):
+        self.close_calls += 1
+        return self.real_conn.close()
+
+
+class ForeignKeyRestoreReadbackFailureWrapper:
+    def __init__(self, real_conn: sqlite3.Connection):
+        self.real_conn = real_conn
+        self.off_calls = 0
+        self.on_calls = 0
+        self.post_off_on_calls = 0
+        self.off_issued = False
+        self.readback_calls = 0
+        self.rollback_calls = 0
+        self.close_calls = 0
+
+    def check_sql(self, sql: str):
+        if "cron_authority_schema_version SET schema_version = 3" in sql:
+            raise sqlite3.OperationalError("post_begin_error")
+
+    @property
+    def in_transaction(self):
+        return self.real_conn.in_transaction
+
+    def cursor(self):
+        return WrapperCursor(self.real_conn.cursor(), self.check_sql)
+
+    def create_function(self, *args, **kwargs):
+        return self.real_conn.create_function(*args, **kwargs)
+
+    def execute(self, sql: str, *args, **kwargs):
+        self.check_sql(sql)
+        if sql == "PRAGMA foreign_keys = OFF;":
+            self.off_calls += 1
+            self.off_issued = True
+        elif sql == "PRAGMA foreign_keys = ON;":
+            self.on_calls += 1
+            if self.off_issued:
+                self.post_off_on_calls += 1
+        result = self.real_conn.execute(sql, *args, **kwargs)
+        if sql == "PRAGMA main.foreign_keys;":
+            self.readback_calls += 1
+            if self.readback_calls == 3:
+                return _SingleRowResult((0,))
+        return result
+
+    def commit(self):
+        return self.real_conn.commit()
+
+    def rollback(self):
+        self.rollback_calls += 1
+        return self.real_conn.rollback()
+
+    def close(self):
+        self.close_calls += 1
+        return self.real_conn.close()
+
+
+def test_36_fk_disable_readback_failure_invalidates(disposable_db: Path):
+    """Test 36: A failed FK-disable readback closes the caller connection without retry."""
+    _create_true_v2_db(disposable_db)
+    raw_conn = connect_cron_authority(disposable_db)
+    wrapper = ForeignKeyDisableReadbackFailureWrapper(raw_conn)
+
+    with pytest.raises(CronAuthorityError) as exc_info:
+        migrate_cron_authority(wrapper)
+
+    assert exc_info.value.code == "foreign_keys_disable_failed"
+    assert str(exc_info.value) == "Failed to disable foreign keys before migration"
+    assert wrapper.off_calls == 1
+    assert wrapper.readback_calls == 2
+    assert wrapper.post_off_readback_calls == 1
+    assert wrapper.close_calls >= 1
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        raw_conn.execute("SELECT 1;")
+
+
+def test_37_fk_restore_readback_failure_invalidates(disposable_db: Path):
+    """Test 37: A failed FK-restore readback closes the caller connection without retry."""
+    _create_true_v2_db(disposable_db)
+    raw_conn = connect_cron_authority(disposable_db)
+    wrapper = ForeignKeyRestoreReadbackFailureWrapper(raw_conn)
+
+    with pytest.raises(CronAuthorityError) as exc_info:
+        migrate_cron_authority(wrapper)
+
+    assert exc_info.value.code == "foreign_keys_restore_failed"
+    assert str(exc_info.value) == "Foreign key restoration failed after migration error"
+    assert isinstance(exc_info.value.__cause__, sqlite3.OperationalError)
+    assert str(exc_info.value.__cause__) == "post_begin_error"
+    assert wrapper.off_calls == 1
+    assert wrapper.on_calls == 2
+    assert wrapper.post_off_on_calls == 1
+    assert wrapper.readback_calls == 3
+    assert wrapper.rollback_calls == 1
+    assert wrapper.close_calls >= 1
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        raw_conn.execute("SELECT 1;")
+
+
+class PostCommitRestoreReadbackFailureWrapper:
+    def __init__(self, real_conn: sqlite3.Connection, *, raise_on_readback: bool):
+        self.real_conn = real_conn
+        self.raise_on_readback = raise_on_readback
+        self.off_calls = 0
+        self.on_calls = 0
+        self.post_off_on_calls = 0
+        self.off_issued = False
+        self.readback_calls = 0
+        self.close_calls = 0
+
+    @property
+    def in_transaction(self):
+        return self.real_conn.in_transaction
+
+    def cursor(self):
+        return self.real_conn.cursor()
+
+    def create_function(self, *args, **kwargs):
+        return self.real_conn.create_function(*args, **kwargs)
+
+    def execute(self, sql: str, *args, **kwargs):
+        if sql == "PRAGMA foreign_keys = OFF;":
+            self.off_calls += 1
+            self.off_issued = True
+        elif sql == "PRAGMA foreign_keys = ON;":
+            self.on_calls += 1
+            if self.off_issued:
+                self.post_off_on_calls += 1
+        result = self.real_conn.execute(sql, *args, **kwargs)
+        if sql == "PRAGMA main.foreign_keys;":
+            self.readback_calls += 1
+            if self.readback_calls == 3:
+                if self.raise_on_readback:
+                    raise sqlite3.OperationalError("post_commit_restore_readback_error")
+                return _SingleRowResult((0,))
+        return result
+
+    def commit(self):
+        return self.real_conn.commit()
+
+    def rollback(self):
+        return self.real_conn.rollback()
+
+    def close(self):
+        self.close_calls += 1
+        return self.real_conn.close()
+
+
+def _assert_post_commit_restore_failure(
+    wrapper: PostCommitRestoreReadbackFailureWrapper,
+    raw_conn: sqlite3.Connection,
+    exc: CronAuthorityError,
+) -> None:
+    assert exc.code == "foreign_keys_restore_failed"
+    assert str(exc) == "Failed to restore foreign keys after migration"
+    assert wrapper.off_calls == 1
+    assert wrapper.on_calls == 2
+    assert wrapper.post_off_on_calls == 1
+    assert wrapper.readback_calls == 3
+    assert wrapper.close_calls >= 1
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        raw_conn.execute("SELECT 1;")
+
+
+def test_38_post_commit_restore_nonzero_readback_invalidates(disposable_db: Path):
+    """Test 38: Nonzero post-commit restore readback invalidates without retry."""
+    _create_true_v2_db(disposable_db)
+    raw_conn = connect_cron_authority(disposable_db)
+    wrapper = PostCommitRestoreReadbackFailureWrapper(raw_conn, raise_on_readback=False)
+
+    with pytest.raises(CronAuthorityError) as exc_info:
+        migrate_cron_authority(wrapper)
+
+    assert exc_info.value.__cause__ is None
+    _assert_post_commit_restore_failure(wrapper, raw_conn, exc_info.value)
+
+
+def test_39_post_commit_restore_readback_exception_invalidates(disposable_db: Path):
+    """Test 39: Exceptional post-commit restore readback invalidates without retry."""
+    _create_true_v2_db(disposable_db)
+    raw_conn = connect_cron_authority(disposable_db)
+    wrapper = PostCommitRestoreReadbackFailureWrapper(raw_conn, raise_on_readback=True)
+
+    with pytest.raises(CronAuthorityError) as exc_info:
+        migrate_cron_authority(wrapper)
+
+    assert isinstance(exc_info.value.__cause__, sqlite3.OperationalError)
+    assert str(exc_info.value.__cause__) == "post_commit_restore_readback_error"
+    _assert_post_commit_restore_failure(wrapper, raw_conn, exc_info.value)

@@ -98,10 +98,16 @@ VALID_DISPOSITIONS: frozenset[str] = frozenset({"accepted", "rejected", "converg
 class CronAuthorityError(ValueError):
     """Exception raised for cron authority schema and invariant violations."""
 
-    def __init__(self, message: str, code: str = "cron_authority_error") -> None:
+    def __init__(
+        self,
+        message: str,
+        code: str = "cron_authority_error",
+        context: dict[str, str] | None = None,
+    ) -> None:
         super().__init__(message)
         self.message = message
         self.code = code
+        self.context = context or {}
 
 
 def resolve_db_target(target: Any) -> Any:
@@ -231,6 +237,24 @@ CREATE TABLE IF NOT EXISTS cron_execution_attempts (
         (source_id IS NULL AND schema_version IS NULL AND snapshot_digest IS NULL AND canonical_snapshot_bytes IS NULL AND registry_generation IS NULL AND schema_id IS NULL)
         OR (source_id = 'prismatic.cron-authority.sqlite/cron_registry_snapshots_v1' AND schema_version = 1 AND schema_id = 'prismatic.cron.registry-snapshot' AND snapshot_digest IS NOT NULL AND canonical_snapshot_bytes IS NOT NULL AND registry_generation IS NOT NULL)
         OR (source_id = 'prismatic.cron-authority.sqlite/cron_registry_snapshots_v2' AND schema_version = 2 AND schema_id = 'prismatic.cron.registry-snapshot' AND snapshot_digest IS NOT NULL AND canonical_snapshot_bytes IS NOT NULL AND registry_generation IS NOT NULL)
+    ),
+    PRIMARY KEY (execution_id, attempt)
+);
+"""
+
+_CREATE_V1_ATTEMPTS_TABLE_DDL = """
+CREATE TABLE IF NOT EXISTS cron_execution_attempts (
+    execution_id TEXT NOT NULL REFERENCES cron_execution_aggregates(execution_id) ON DELETE RESTRICT,
+    attempt INTEGER NOT NULL CHECK (typeof(attempt) = 'integer' AND attempt >= 1),
+    state TEXT NOT NULL CHECK (state IN ('admitted', 'claimed', 'running', 'reconciling', 'terminal')),
+    runner_id TEXT CHECK (runner_id IS NULL OR (length(runner_id) >= 1 AND length(runner_id) <= 128)),
+    fence_token INTEGER CHECK (fence_token IS NULL OR (typeof(fence_token) = 'integer' AND fence_token > 0)),
+    lease_expires_at TEXT CHECK (lease_expires_at IS NULL OR is_utc_timestamp(lease_expires_at) = 1),
+    created_at TEXT NOT NULL CHECK (is_utc_timestamp(created_at) = 1),
+    updated_at TEXT NOT NULL CHECK (is_utc_timestamp(updated_at) = 1),
+    CONSTRAINT ck_attempt_ownership CHECK (
+        state IN ('admitted', 'terminal')
+        OR (runner_id IS NOT NULL AND fence_token IS NOT NULL AND lease_expires_at IS NOT NULL)
     ),
     PRIMARY KEY (execution_id, attempt)
 );
@@ -743,15 +767,25 @@ def _reject_temp_schema_collisions(cursor: sqlite3.Cursor) -> None:
 
 def _normalize_ddl(sql: str) -> str:
     """Normalize SQLite-preserved DDL for exact object validation."""
-    return "".join(sql.lower().replace("if not exists", "").replace(";", "").split())
+    lowered = sql.lower().replace("if not exists", "").replace(";", "")
+    lowered = lowered.replace("table main.", "table ").replace(
+        "trigger main.", "trigger "
+    )
+    return "".join(lowered.split())
 
 
 def _validate_schema_objects(cursor: sqlite3.Cursor, target_version: int = 3) -> None:
+    _reject_temp_schema_collisions(cursor)
+
     expected = {
         ("table", "cron_authority_schema_version"): _CREATE_VERSION_TABLE_DDL,
         ("table", "cron_execution_aggregates"): _CREATE_AGGREGATES_TABLE_DDL,
         ("table", "cron_evidence"): _CREATE_EVIDENCE_TABLE_DDL,
-        ("table", "cron_execution_attempts"): _CREATE_ATTEMPTS_TABLE_DDL,
+        ("table", "cron_execution_attempts"): (
+            _CREATE_ATTEMPTS_TABLE_DDL
+            if target_version >= 3
+            else _CREATE_V1_ATTEMPTS_TABLE_DDL
+        ),
         ("table", "cron_receipts"): _CREATE_RECEIPTS_TABLE_DDL,
         ("table", "cron_sweep_cursors"): _CREATE_CURSORS_TABLE_DDL,
     }
@@ -798,6 +832,40 @@ def _validate_schema_objects(cursor: sqlite3.Cursor, target_version: int = 3) ->
                 code="schema_object_mismatch",
             )
 
+    expected_names = {name for _, name in expected}
+    rows_all = cursor.execute(
+        "SELECT type, name FROM main.sqlite_master WHERE name LIKE 'cron_%';"
+    ).fetchall()
+    for obj_type, obj_name in rows_all:
+        if obj_name not in expected_names:
+            raise CronAuthorityError(
+                f"Unexpected cron authority schema object: {obj_type} {obj_name}",
+                code="schema_object_mismatch",
+            )
+
+    if target_version < 3:
+        cols = [
+            r[1]
+            for r in cursor.execute(
+                "PRAGMA main.table_info(cron_execution_attempts);"
+            ).fetchall()
+        ]
+        expected_cols = [
+            "execution_id",
+            "attempt",
+            "state",
+            "runner_id",
+            "fence_token",
+            "lease_expires_at",
+            "created_at",
+            "updated_at",
+        ]
+        if cols != expected_cols:
+            raise CronAuthorityError(
+                "Cron authority attempts table column mismatch for version 2",
+                code="schema_object_mismatch",
+            )
+
 
 def _ensure_attempt_claim_columns(cursor: sqlite3.Cursor) -> None:
     cols = {
@@ -826,12 +894,10 @@ def _ensure_attempt_claim_columns(cursor: sqlite3.Cursor) -> None:
 
 
 def _rebuild_execution_attempts_table(cursor: sqlite3.Cursor) -> None:
-    count_before = cursor.execute(
-        "SELECT COUNT(*) FROM main.cron_execution_attempts;"
-    ).fetchone()[0]
     rows_before = cursor.execute(
-        "SELECT * FROM main.cron_execution_attempts ORDER BY execution_id ASC, attempt ASC;"
+        "SELECT execution_id, attempt, state, runner_id, fence_token, lease_expires_at, created_at, updated_at FROM cron_execution_attempts ORDER BY execution_id ASC, attempt ASC;"
     ).fetchall()
+    count_before = len(rows_before)
     digest_before = hashlib.sha256(
         json.dumps(
             [
@@ -841,8 +907,6 @@ def _rebuild_execution_attempts_table(cursor: sqlite3.Cursor) -> None:
             sort_keys=True,
         ).encode("utf-8")
     ).hexdigest()
-
-    cursor.execute("PRAGMA foreign_keys = OFF;")
 
     attempt_triggers = (
         "trg_cron_attempt_transition_guard",
@@ -856,41 +920,41 @@ def _rebuild_execution_attempts_table(cursor: sqlite3.Cursor) -> None:
     for trg_name in attempt_triggers:
         cursor.execute(f"DROP TRIGGER IF EXISTS main.{trg_name};")
 
-    cursor.execute(
-        "ALTER TABLE main.cron_execution_attempts RENAME TO cron_execution_attempts_old;"
-    )
-    cursor.execute(_main_ddl(_CREATE_ATTEMPTS_TABLE_DDL))
-
-    cursor.execute(
-        """
-        INSERT INTO main.cron_execution_attempts (
-            execution_id, attempt, state, runner_id, fence_token, lease_expires_at,
-            source_id, schema_id, schema_version, registry_generation, snapshot_digest,
-            canonical_snapshot_bytes, trusted_runner_identity, command_digest, release_digest,
-            dependency_digest, created_at, updated_at
+    cursor.execute("PRAGMA legacy_alter_table = ON;")
+    try:
+        cursor.execute(
+            "ALTER TABLE cron_execution_attempts RENAME TO cron_execution_attempts_old;"
         )
-        SELECT
-            execution_id, attempt, state, runner_id, fence_token, lease_expires_at,
-            source_id, schema_id, schema_version, registry_generation, snapshot_digest,
-            canonical_snapshot_bytes, trusted_runner_identity, command_digest, release_digest,
-            dependency_digest, created_at, updated_at
-        FROM main.cron_execution_attempts_old;
-        """
-    )
-    cursor.execute("DROP TABLE main.cron_execution_attempts_old;")
+        cursor.execute(_main_ddl(_CREATE_ATTEMPTS_TABLE_DDL))
+
+        cursor.execute(
+            """
+            INSERT INTO main.cron_execution_attempts (
+                execution_id, attempt, state, runner_id, fence_token, lease_expires_at,
+                source_id, schema_id, schema_version, registry_generation, snapshot_digest,
+                canonical_snapshot_bytes, trusted_runner_identity, command_digest, release_digest,
+                dependency_digest, created_at, updated_at
+            )
+            SELECT
+                execution_id, attempt, state, runner_id, fence_token, lease_expires_at,
+                NULL, NULL, NULL, NULL, NULL,
+                NULL, NULL, NULL, NULL,
+                NULL, created_at, updated_at
+            FROM cron_execution_attempts_old;
+            """
+        )
+        cursor.execute("DROP TABLE cron_execution_attempts_old;")
+    finally:
+        cursor.execute("PRAGMA legacy_alter_table = OFF;")
 
     for trg_name, trg_ddl in zip(_V1_TRIGGER_NAMES, _TRIGGERS_DDL, strict=True):
         if trg_name in attempt_triggers:
             cursor.execute(_main_ddl(trg_ddl))
 
-    cursor.execute("PRAGMA foreign_keys = ON;")
-
-    count_after = cursor.execute(
-        "SELECT COUNT(*) FROM main.cron_execution_attempts;"
-    ).fetchone()[0]
     rows_after = cursor.execute(
-        "SELECT * FROM main.cron_execution_attempts ORDER BY execution_id ASC, attempt ASC;"
+        "SELECT execution_id, attempt, state, runner_id, fence_token, lease_expires_at, created_at, updated_at FROM cron_execution_attempts ORDER BY execution_id ASC, attempt ASC;"
     ).fetchall()
+    count_after = len(rows_after)
     digest_after = hashlib.sha256(
         json.dumps(
             [
@@ -907,20 +971,6 @@ def _rebuild_execution_attempts_table(cursor: sqlite3.Cursor) -> None:
             code="migration_integrity_failure",
         )
 
-    fk_check = cursor.execute("PRAGMA main.foreign_key_check;").fetchall()
-    if fk_check:
-        raise CronAuthorityError(
-            f"Foreign key integrity check failed after rebuild: {fk_check!r}",
-            code="foreign_key_violation",
-        )
-
-    integrity = cursor.execute("PRAGMA main.integrity_check;").fetchall()
-    if integrity != [("ok",)]:
-        raise CronAuthorityError(
-            f"Database integrity check failed after rebuild: {integrity!r}",
-            code="integrity_check_failure",
-        )
-
 
 def migrate_cron_authority(target: Any, timeout: float = 30.0) -> None:
     """Migrate SQLite database to cron authority schema v3 atomically and idempotently."""
@@ -929,9 +979,17 @@ def migrate_cron_authority(target: Any, timeout: float = 30.0) -> None:
     )
     conn = connect_cron_authority(target, timeout=timeout)
 
+    fk_disabled = False
+    begin_succeeded = False
+    transaction_closed = False
+    post_commit_restore_failed = False
+
     try:
-        # Atomic write lock
-        conn.execute("BEGIN IMMEDIATE;")
+        if conn.in_transaction:
+            raise CronAuthorityError(
+                "Caller connection has an active transaction",
+                code="active_caller_transaction",
+            )
 
         cursor = conn.cursor()
         _reject_temp_schema_collisions(cursor)
@@ -952,21 +1010,96 @@ def migrate_cron_authority(target: Any, timeout: float = 30.0) -> None:
                 ) from exc
             rows = cursor.fetchall()
             if rows == [(1, 3)]:
+                try:
+                    conn.execute("BEGIN IMMEDIATE;")
+                    begin_succeeded = True
+                except (sqlite3.DatabaseError, sqlite3.OperationalError) as begin_exc:
+                    if not conn.in_transaction:
+                        if close_connection_on_exit:
+                            with contextlib.suppress(Exception):
+                                conn.close()
+                        raise
+                    else:
+                        with contextlib.suppress(Exception):
+                            conn.close()
+                        raise CronAuthorityError(
+                            f"BEGIN failed with active transaction: {begin_exc}",
+                            code="begin_failed_active_transaction",
+                        ) from begin_exc
+
                 _ensure_attempt_claim_columns(cursor)
                 _validate_schema_objects(cursor, target_version=3)
                 conn.commit()
+                transaction_closed = not conn.in_transaction
                 return
             elif rows in ([(1, 1)], [(1, 2)]):
                 cur_ver = rows[0][1]
+                fk_mode = conn.execute("PRAGMA main.foreign_keys;").fetchone()
+                if fk_mode != (1,):
+                    raise CronAuthorityError(
+                        "SQLite foreign keys must be enabled before migration",
+                        code="foreign_keys_disabled",
+                    )
+
+                conn.execute("PRAGMA foreign_keys = OFF;")
+                fk_disabled = True
+                try:
+                    fk_disable_readback = conn.execute(
+                        "PRAGMA main.foreign_keys;"
+                    ).fetchone()
+                except Exception as fk_disable_exc:
+                    with contextlib.suppress(Exception):
+                        conn.close()
+                    raise CronAuthorityError(
+                        "Failed to disable foreign keys before migration",
+                        code="foreign_keys_disable_failed",
+                    ) from fk_disable_exc
+                if fk_disable_readback != (0,):
+                    with contextlib.suppress(Exception):
+                        conn.close()
+                    raise CronAuthorityError(
+                        "Failed to disable foreign keys before migration",
+                        code="foreign_keys_disable_failed",
+                    )
+
+                try:
+                    conn.execute("BEGIN IMMEDIATE;")
+                    begin_succeeded = True
+                except Exception as begin_exc:
+                    if not conn.in_transaction:
+                        if fk_disabled:
+                            with contextlib.suppress(Exception):
+                                conn.execute("PRAGMA foreign_keys = ON;")
+                                if conn.execute(
+                                    "PRAGMA main.foreign_keys;"
+                                ).fetchone() == (1,):
+                                    fk_disabled = False
+                        if fk_disabled:
+                            with contextlib.suppress(Exception):
+                                conn.close()
+                            raise CronAuthorityError(
+                                "Foreign key restoration failed after BEGIN failure",
+                                code="foreign_keys_restore_failed",
+                            ) from begin_exc
+                        if close_connection_on_exit:
+                            with contextlib.suppress(Exception):
+                                conn.close()
+                        raise
+                    else:
+                        with contextlib.suppress(Exception):
+                            conn.close()
+                        raise CronAuthorityError(
+                            "BEGIN failed after transaction state became active",
+                            code="begin_failed_active_transaction",
+                        ) from begin_exc
+
                 if cur_ver == 1:
                     _validate_schema_objects(cursor, target_version=1)
                     cursor.execute(_main_ddl(_CREATE_TRIGGER_DELIVERIES_TABLE_DDL))
                     cursor.execute(_main_ddl(_CREATE_SNAPSHOTS_TABLE_DDL))
                     for trigger_sql in _V2_TRIGGERS_DDL:
                         cursor.execute(_main_ddl(trigger_sql))
-                    _ensure_attempt_claim_columns(cursor)
 
-                _ensure_attempt_claim_columns(cursor)
                 _validate_schema_objects(cursor, target_version=2)
                 cursor.execute(_main_ddl(_CREATE_SNAPSHOTS_V2_TABLE_DDL))
                 for trigger_sql in _V3_TRIGGERS_DDL:
@@ -978,7 +1111,46 @@ def migrate_cron_authority(target: Any, timeout: float = 30.0) -> None:
                     "UPDATE main.cron_authority_schema_version SET schema_version = 3 WHERE authority_id = 1;"
                 )
                 _validate_schema_objects(cursor, target_version=3)
+
+                fk_check = cursor.execute("PRAGMA main.foreign_key_check;").fetchall()
+                if fk_check:
+                    raise CronAuthorityError(
+                        f"Foreign key integrity check failed after rebuild: {fk_check!r}",
+                        code="foreign_key_violation",
+                    )
+
+                integrity = cursor.execute("PRAGMA main.integrity_check;").fetchall()
+                if integrity != [("ok",)]:
+                    raise CronAuthorityError(
+                        f"Database integrity check failed after rebuild: {integrity!r}",
+                        code="integrity_check_failure",
+                    )
+
                 conn.commit()
+                transaction_closed = not conn.in_transaction
+
+                try:
+                    conn.execute("PRAGMA foreign_keys = ON;")
+                    fk_restore_readback = conn.execute(
+                        "PRAGMA main.foreign_keys;"
+                    ).fetchone()
+                except Exception as fk_restore_exc:
+                    post_commit_restore_failed = True
+                    with contextlib.suppress(Exception):
+                        conn.close()
+                    raise CronAuthorityError(
+                        "Failed to restore foreign keys after migration",
+                        code="foreign_keys_restore_failed",
+                    ) from fk_restore_exc
+                if fk_restore_readback != (1,):
+                    post_commit_restore_failed = True
+                    with contextlib.suppress(Exception):
+                        conn.close()
+                    raise CronAuthorityError(
+                        "Failed to restore foreign keys after migration",
+                        code="foreign_keys_restore_failed",
+                    )
+                fk_disabled = False
                 return
             else:
                 raise CronAuthorityError(
@@ -987,6 +1159,20 @@ def migrate_cron_authority(target: Any, timeout: float = 30.0) -> None:
                 )
 
         # Fresh DB migration directly to v3
+        try:
+            conn.execute("BEGIN IMMEDIATE;")
+            begin_succeeded = True
+        except Exception:
+            if not conn.in_transaction:
+                if close_connection_on_exit:
+                    with contextlib.suppress(Exception):
+                        conn.close()
+                raise
+            else:
+                with contextlib.suppress(Exception):
+                    conn.close()
+                raise
+
         cursor.execute(_main_ddl(_CREATE_VERSION_TABLE_DDL))
         cursor.execute(_main_ddl(_CREATE_AGGREGATES_TABLE_DDL))
         cursor.execute(_main_ddl(_CREATE_EVIDENCE_TABLE_DDL))
@@ -1006,7 +1192,6 @@ def migrate_cron_authority(target: Any, timeout: float = 30.0) -> None:
 
         _validate_schema_objects(cursor, target_version=3)
 
-        # Record schema version
         now_utc = datetime.now(timezone.utc).isoformat()
         if now_utc.endswith("+00:00"):
             now_utc = now_utc[:-6] + "Z"
@@ -1017,12 +1202,98 @@ def migrate_cron_authority(target: Any, timeout: float = 30.0) -> None:
         )
 
         conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
+        transaction_closed = not conn.in_transaction
+    except Exception as primary_exc:
+        if post_commit_restore_failed:
+            raise
+        conn_is_closed = False
+        try:
+            in_tx = conn.in_transaction
+        except (sqlite3.ProgrammingError, sqlite3.OperationalError):
+            conn_is_closed = True
+            in_tx = False
+
+        if not begin_succeeded:
+            if not in_tx and not conn_is_closed:
+                if fk_disabled:
+                    with contextlib.suppress(Exception):
+                        conn.execute("PRAGMA foreign_keys = ON;")
+                        if conn.execute("PRAGMA main.foreign_keys;").fetchone() == (1,):
+                            fk_disabled = False
+                if fk_disabled:
+                    with contextlib.suppress(Exception):
+                        conn.close()
+                    raise CronAuthorityError(
+                        "Foreign key restoration failed after BEGIN failure",
+                        code="foreign_keys_restore_failed",
+                    ) from primary_exc
+                if close_connection_on_exit:
+                    with contextlib.suppress(Exception):
+                        conn.close()
+                raise
+            else:
+                with contextlib.suppress(Exception):
+                    conn.close()
+                raise
+        else:
+            rollback_exc: Exception | None = None
+            if not transaction_closed and not conn_is_closed:
+                if in_tx:
+                    try:
+                        conn.rollback()
+                    except Exception as exc:
+                        rollback_exc = exc
+                try:
+                    transaction_closed = not conn.in_transaction
+                except (
+                    sqlite3.ProgrammingError,
+                    sqlite3.OperationalError,
+                    AttributeError,
+                ):
+                    transaction_closed = False
+
+            if transaction_closed and fk_disabled and not conn_is_closed:
+                with contextlib.suppress(Exception):
+                    conn.execute("PRAGMA foreign_keys = ON;")
+                    if conn.execute("PRAGMA main.foreign_keys;").fetchone() == (1,):
+                        fk_disabled = False
+
+            if not transaction_closed or fk_disabled or conn_is_closed:
+                with contextlib.suppress(Exception):
+                    conn.close()
+                rollback_context = (
+                    {"rollback_error_type": type(rollback_exc).__name__}
+                    if rollback_exc is not None
+                    else None
+                )
+                if not transaction_closed:
+                    raise CronAuthorityError(
+                        "Transaction closure could not be proven after migration error",
+                        code="transaction_closure_failed",
+                        context=rollback_context,
+                    ) from primary_exc
+                else:
+                    raise CronAuthorityError(
+                        "Foreign key restoration failed after migration error",
+                        code="foreign_keys_restore_failed",
+                        context=rollback_context,
+                    ) from primary_exc
+
+            if rollback_exc is not None:
+                raise CronAuthorityError(
+                    "Migration failed after rollback reported an error",
+                    code="migration_failed_with_rollback_error",
+                    context={"rollback_error_type": type(rollback_exc).__name__},
+                ) from primary_exc
+
+            if close_connection_on_exit:
+                with contextlib.suppress(Exception):
+                    conn.close()
+            raise
     finally:
         if close_connection_on_exit:
-            conn.close()
+            with contextlib.suppress(Exception):
+                conn.close()
 
 
 class CronAuthorityStore:
