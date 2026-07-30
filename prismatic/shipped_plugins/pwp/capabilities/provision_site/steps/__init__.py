@@ -41,6 +41,7 @@ STEP_CATEGORIES: Dict[str, str] = {
     "gtm_container": "soft",
     "register_stripe": "soft",
     "github_checkout": "soft",
+    "register_zapier_webhook": "soft",
     "register_in_registry": "blocking",
     "migrate_kpi": "blocking",
 }
@@ -53,6 +54,7 @@ from .platform_detect import step_platform_detect
 from .vercel_project import step_vercel_project
 from .stripe import step_register_stripe  # noqa: F401
 from .github import step_github_checkout  # noqa: F401
+from .zapier import step_register_zapier_webhook  # noqa: F401
 from ..domain_verifier import (
     VERIFY_PREFIX,
     generate_challenge_token,
@@ -64,9 +66,13 @@ from .migrate import trigger_migrate
 
 
 def step_verify_domain(
-    *, domain: str, owner: str, run, publish_root: Path,
+    *,
+    domain: str,
+    owner: str,
+    run,
+    publish_root: Path,
     prior_outputs: Optional[Dict[str, Dict[str, Any]]] = None,
-    **_: Any
+    **_: Any,
 ) -> StepResult:
     """Verify the domain via DNS TXT challenge.
 
@@ -107,9 +113,13 @@ def step_verify_domain(
 
 
 def step_cloudflare_zone(
-    *, domain: str, owner: str, run, publish_root: Path,
+    *,
+    domain: str,
+    owner: str,
+    run,
+    publish_root: Path,
     prior_outputs: Optional[Dict[str, Dict[str, Any]]] = None,
-    **_: Any
+    **_: Any,
 ) -> StepResult:
     """Create or look up the Cloudflare zone for `domain`.
 
@@ -237,6 +247,7 @@ def step_migrate_kpi(
     if not slug:
         # Fall back: derive it ourselves.
         from .register_in_registry import slug_from_domain
+
         slug = slug_from_domain(domain)
 
     try:

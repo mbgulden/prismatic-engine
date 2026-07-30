@@ -16,8 +16,6 @@ from __future__ import annotations
 import io
 import json
 import os
-import subprocess
-import sys
 import urllib.error
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -29,7 +27,6 @@ from plugins.pwp.capabilities.provision_site import (
     orchestrator,
 )
 from plugins.pwp.capabilities.provision_site.domain_verifier import (
-    VERIFY_PREFIX,
     generate_challenge_token,
     expected_record_name,
     verify,
@@ -47,18 +44,21 @@ HERE = Path(__file__).resolve().parent
 
 # --- Domain verifier ----------------------------------------------------
 
+
 def test_generate_challenge_token_format() -> None:
     """The challenge token must be `pwp-verify-<16 hex chars>` so DNS
     propagation is reliable and the value is readable in the zone file."""
     tok = generate_challenge_token()
     assert tok.startswith("pwp-verify-")
     assert len(tok) == len("pwp-verify-") + 16
-    assert all(c in "0123456789abcdef" for c in tok[len("pwp-verify-"):])
+    assert all(c in "0123456789abcdef" for c in tok[len("pwp-verify-") :])
 
 
 def test_expected_record_name() -> None:
     assert expected_record_name("example.com") == "_pwp-verify.example.com"
-    assert expected_record_name("foo.bar.example.com") == "_pwp-verify.foo.bar.example.com"
+    assert (
+        expected_record_name("foo.bar.example.com") == "_pwp-verify.foo.bar.example.com"
+    )
 
 
 def test_verify_with_observed_values_match() -> None:
@@ -106,10 +106,12 @@ def test_generate_challenge_tokens_are_unique() -> None:
 
 # --- Cloudflare client --------------------------------------------------
 
+
 def test_cloudflare_client_requires_token() -> None:
     """A CloudflareClient constructed without a token must raise ValueError."""
     with pytest.raises(ValueError, match="Cloudflare token is empty"):
         from plugins.pwp.capabilities.provision_site import CloudflareClient
+
         CloudflareClient(token="")
 
 
@@ -118,6 +120,7 @@ def test_cloudflare_client_from_env_missing() -> None:
     with patch.dict(os.environ, {}, clear=True):
         with pytest.raises(ValueError) as excinfo:
             from plugins.pwp.capabilities.provision_site import CloudflareClient
+
             CloudflareClient.from_env()
     msg = str(excinfo.value)
     # The error should list every env var the user could set.
@@ -129,25 +132,36 @@ def test_cloudflare_client_from_env_precedence() -> None:
     """When multiple token env vars are set, CF_API_TOKEN wins; if absent,
     CLOUDFLARE_API_TOKEN; if absent, CLOUDFLARE_PAGES_API_TOKEN."""
     from plugins.pwp.capabilities.provision_site import CloudflareClient
+
     # Only CLOUDFLARE_PAGES_API_TOKEN set
-    with patch.dict(os.environ, {"CLOUDFLARE_PAGES_API_TOKEN": "pages-tok"}, clear=True):
+    with patch.dict(
+        os.environ, {"CLOUDFLARE_PAGES_API_TOKEN": "pages-tok"}, clear=True
+    ):
         cf = CloudflareClient.from_env()
         assert cf._token == "pages-tok"
         assert cf._token_source == "CLOUDFLARE_PAGES_API_TOKEN"
     # CLOUDFLARE_API_TOKEN takes precedence over CLOUDFLARE_PAGES_API_TOKEN
-    with patch.dict(os.environ, {
-        "CLOUDFLARE_API_TOKEN": "general-tok",
-        "CLOUDFLARE_PAGES_API_TOKEN": "pages-tok",
-    }, clear=True):
+    with patch.dict(
+        os.environ,
+        {
+            "CLOUDFLARE_API_TOKEN": "general-tok",
+            "CLOUDFLARE_PAGES_API_TOKEN": "pages-tok",
+        },
+        clear=True,
+    ):
         cf = CloudflareClient.from_env()
         assert cf._token == "general-tok"
         assert cf._token_source == "CLOUDFLARE_API_TOKEN"
     # CF_API_TOKEN wins over everything
-    with patch.dict(os.environ, {
-        "CF_API_TOKEN": "canonical-tok",
-        "CLOUDFLARE_API_TOKEN": "general-tok",
-        "CLOUDFLARE_PAGES_API_TOKEN": "pages-tok",
-    }, clear=True):
+    with patch.dict(
+        os.environ,
+        {
+            "CF_API_TOKEN": "canonical-tok",
+            "CLOUDFLARE_API_TOKEN": "general-tok",
+            "CLOUDFLARE_PAGES_API_TOKEN": "pages-tok",
+        },
+        clear=True,
+    ):
         cf = CloudflareClient.from_env()
         assert cf._token == "canonical-tok"
         assert cf._token_source == "CF_API_TOKEN"
@@ -155,9 +169,17 @@ def test_cloudflare_client_from_env_precedence() -> None:
 
 def test_cloudflare_client_parses_errors() -> None:
     """Cloudflare API errors must surface the CF error code + message."""
-    cf = _mk_client_with_mock([_mock_response(400, success=False, errors=[
-        {"code": 1004, "message": "Invalid zone name"},
-    ])])
+    cf = _mk_client_with_mock(
+        [
+            _mock_response(
+                400,
+                success=False,
+                errors=[
+                    {"code": 1004, "message": "Invalid zone name"},
+                ],
+            )
+        ]
+    )
     with pytest.raises(CloudflareError) as excinfo:
         cf.zone_list()
     err = excinfo.value
@@ -168,13 +190,24 @@ def test_cloudflare_client_parses_errors() -> None:
 
 def test_cloudflare_client_zones_endpoint_shape() -> None:
     """zone_list() must hit /zones and parse the `result` array."""
-    cf = _mk_client_with_mock([
-        _mock_response(200, success=True, result=[{
-            "id": "abc123", "name": "example.com",
-            "status": "active", "name_servers": ["ns1.cf", "ns2.cf"],
-            "plan": {"name": "free"}, "paused": False,
-        }]),
-    ])
+    cf = _mk_client_with_mock(
+        [
+            _mock_response(
+                200,
+                success=True,
+                result=[
+                    {
+                        "id": "abc123",
+                        "name": "example.com",
+                        "status": "active",
+                        "name_servers": ["ns1.cf", "ns2.cf"],
+                        "plan": {"name": "free"},
+                        "paused": False,
+                    }
+                ],
+            ),
+        ]
+    )
     zones = cf.zone_list()
     assert len(zones) == 1
     z = zones[0]
@@ -186,6 +219,7 @@ def test_cloudflare_client_zones_endpoint_shape() -> None:
 
 
 # --- Orchestrator -------------------------------------------------------
+
 
 def test_orchestrator_runs_steps_in_order(tmp_path: Path) -> None:
     """The orchestrator should run steps in STEP_NAMES order and write
@@ -218,7 +252,8 @@ def test_orchestrator_stops_on_step_failure(tmp_path: Path) -> None:
         call_count["n"] += 1
         if step_name == "verify_domain":
             return prov_types.StepResult(
-                name=step_name, status="failed",
+                name=step_name,
+                status="failed",
                 error="verification pending",
             )
         return prov_types.StepResult(name=step_name, status="complete")
@@ -245,16 +280,25 @@ def test_orchestrator_resume_skips_completed_steps(tmp_path: Path) -> None:
     prior state must be skipped."""
     # Pre-populate state with verify_domain complete.
     state_path = tmp_path / "example.com.json"
-    state_path.write_text(json.dumps({
-        "domain": "example.com",
-        "owner": "me@example.com",
-        "started_at": "2026-01-01T00:00:00+00:00",
-        "overall_status": "in_progress",
-        "steps": [
-            {"name": "verify_domain", "status": "complete",
-             "started_at": "x", "finished_at": "y", "output": {}},
-        ],
-    }))
+    state_path.write_text(
+        json.dumps(
+            {
+                "domain": "example.com",
+                "owner": "me@example.com",
+                "started_at": "2026-01-01T00:00:00+00:00",
+                "overall_status": "in_progress",
+                "steps": [
+                    {
+                        "name": "verify_domain",
+                        "status": "complete",
+                        "started_at": "x",
+                        "finished_at": "y",
+                        "output": {},
+                    },
+                ],
+            }
+        )
+    )
     call_count = {"n": 0}
 
     def fake_step(step_name, domain, owner, run, *, publish_root, prior_outputs=None):
@@ -269,10 +313,11 @@ def test_orchestrator_resume_skips_completed_steps(tmp_path: Path) -> None:
             resume=True,
         )
     # verify_domain was skipped (came from prior state); the remaining
-    # 10 steps (platform_detect + cloudflare_zone + vercel_project +
+    # 11 steps (platform_detect + cloudflare_zone + vercel_project +
     # gsc_verify + ga4_property + gtm_container + register_stripe +
-    # github_checkout + register_in_registry + migrate_kpi) ran.
-    assert call_count["n"] == 10
+    # github_checkout + register_zapier_webhook + register_in_registry
+    # + migrate_kpi) ran.
+    assert call_count["n"] == 11
     # verify_domain is still in run.steps but its status was preserved
     # from the prior state (complete).
     verify_step = next(s for s in run.steps if s.name == "verify_domain")
@@ -291,24 +336,40 @@ def test_orchestrator_passes_prior_outputs_to_step(tmp_path: Path) -> None:
 
     # Pre-populate state with verify_domain FAILED with a challenge_token.
     state_path = tmp_path / "example.com.json"
-    state_path.write_text(json.dumps({
-        "domain": "example.com", "owner": "me@example.com",
-        "started_at": "2026-01-01T00:00:00+00:00",
-        "overall_status": "in_progress",
-        "steps": [
-            {"name": "verify_domain", "status": "failed",
-             "started_at": "x", "finished_at": "y",
-             "output": {"challenge_token": "pwp-verify-fixed-token",
-                        "record_name": "_pwp-verify.example.com"}},
-        ],
-    }))
+    state_path.write_text(
+        json.dumps(
+            {
+                "domain": "example.com",
+                "owner": "me@example.com",
+                "started_at": "2026-01-01T00:00:00+00:00",
+                "overall_status": "in_progress",
+                "steps": [
+                    {
+                        "name": "verify_domain",
+                        "status": "failed",
+                        "started_at": "x",
+                        "finished_at": "y",
+                        "output": {
+                            "challenge_token": "pwp-verify-fixed-token",
+                            "record_name": "_pwp-verify.example.com",
+                        },
+                    },
+                ],
+            }
+        )
+    )
     with patch.object(orchestrator, "_run_step", side_effect=fake_step):
         orchestrator.run(
-            domain="example.com", owner="me@example.com",
-            publish_root=tmp_path, resume=True,
+            domain="example.com",
+            owner="me@example.com",
+            publish_root=tmp_path,
+            resume=True,
         )
     # The step received prior_outputs containing the prior challenge_token.
-    assert captured["prior_outputs"].get("verify_domain", {}).get("challenge_token") == "pwp-verify-fixed-token"
+    assert (
+        captured["prior_outputs"].get("verify_domain", {}).get("challenge_token")
+        == "pwp-verify-fixed-token"
+    )
 
 
 def test_orchestrator_prior_outputs_include_complete_steps(tmp_path: Path) -> None:
@@ -323,23 +384,36 @@ def test_orchestrator_prior_outputs_include_complete_steps(tmp_path: Path) -> No
         return prov_types.StepResult(name=step_name, status="complete")
 
     state_path = tmp_path / "example.com.json"
-    state_path.write_text(json.dumps({
-        "domain": "example.com", "owner": "me@example.com",
-        "started_at": "2026-01-01T00:00:00+00:00",
-        "overall_status": "in_progress",
-        "steps": [
-            {"name": "cloudflare_zone", "status": "complete",
-             "started_at": "x", "finished_at": "y",
-             "output": {"zone_id": "abc-123", "action": "lookup"}},
-        ],
-    }))
+    state_path.write_text(
+        json.dumps(
+            {
+                "domain": "example.com",
+                "owner": "me@example.com",
+                "started_at": "2026-01-01T00:00:00+00:00",
+                "overall_status": "in_progress",
+                "steps": [
+                    {
+                        "name": "cloudflare_zone",
+                        "status": "complete",
+                        "started_at": "x",
+                        "finished_at": "y",
+                        "output": {"zone_id": "abc-123", "action": "lookup"},
+                    },
+                ],
+            }
+        )
+    )
     with patch.object(orchestrator, "_run_step", side_effect=fake_step):
         orchestrator.run(
-            domain="example.com", owner="me@example.com",
-            publish_root=tmp_path, resume=True,
+            domain="example.com",
+            owner="me@example.com",
+            publish_root=tmp_path,
+            resume=True,
         )
     # Verify the COMPLETE cloudflare_zone output made it into prior_outputs.
-    assert captured["prior_outputs"].get("cloudflare_zone", {}).get("zone_id") == "abc-123"
+    assert (
+        captured["prior_outputs"].get("cloudflare_zone", {}).get("zone_id") == "abc-123"
+    )
 
 
 def test_orchestrator_status_returns_none_for_unknown_domain(tmp_path: Path) -> None:
@@ -348,6 +422,7 @@ def test_orchestrator_status_returns_none_for_unknown_domain(tmp_path: Path) -> 
 
 
 # --- Steps --------------------------------------------------------------
+
 
 def test_step_verify_domain_issues_token_and_pending(tmp_path: Path) -> None:
     """verify_domain on first run: issues a token, returns failed
@@ -435,6 +510,7 @@ def test_step_register_in_registry_writes_appendix(tmp_path: Path) -> None:
     from plugins.pwp.capabilities.provision_site.steps import (
         step_register_in_registry,
     )
+
     result = step_register_in_registry(
         domain="newco.com",
         owner="founder@newco.com",
@@ -461,23 +537,28 @@ def test_slug_from_domain() -> None:
 
 # --- Helpers ------------------------------------------------------------
 
+
 def _mk_verify_result(*, verified: bool, expected: str):
     """Build a VerifyResult for tests without going through DNS."""
     from plugins.pwp.capabilities.provision_site.domain_verifier import (
         VerifyResult,
     )
+
     return VerifyResult(
         verified=verified,
-        record_name=f"_pwp-verify.example.com",
+        record_name="_pwp-verify.example.com",
         expected_value=expected,
         observed_values=[expected] if verified else [],
-        error=None if verified else "no TXT record at _pwp-verify.example.com matches expected value",
+        error=None
+        if verified
+        else "no TXT record at _pwp-verify.example.com matches expected value",
     )
 
 
 def _mock_response(status_code: int, *, success: bool, **payload):
     """Build a fake requests.Response."""
     import requests
+
     resp = MagicMock(spec=requests.Response)
     resp.status_code = status_code
     resp.text = json.dumps({"success": success, **payload})
@@ -490,9 +571,12 @@ def _mk_client_with_mock(responses):
     """Build a CloudflareClient whose `requests.Session.request` returns
     the given responses in order."""
     from plugins.pwp.capabilities.provision_site import CloudflareClient
+
     cf = CloudflareClient(token="fake-token-for-tests", max_retries=0)
     cf._session.request = MagicMock(side_effect=responses)
     return cf
+
+
 """Phase 2 tests to append to test_provision_site.py.
 
 Tests:
@@ -505,28 +589,25 @@ Tests:
   - End-to-end: full STEP_NAMES now 7 entries
 """
 
-import json
-import os
-import textwrap
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
-import pytest
 
 # Sentinel imports (these are loaded once via the main test file's imports)
-from plugins.pwp.capabilities.provision_site import orchestrator, types as prov_types
 from plugins.pwp.capabilities.provision_site.steps import (
-    ga4, gtm, gsc,
-    step_verify_domain,
+    ga4,
+    gtm,
+    gsc,
 )
 
 
 # -- GoogleClient: JWT signing & from_env ----------------------------------
 
+
 def _gen_test_sa(tmp_path):
     """Generate a real test service-account JSON (returns sa_path, sa_dict)."""
     from cryptography.hazmat.primitives.asymmetric import rsa
     from cryptography.hazmat.primitives import serialization
+
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     pem = key.private_bytes(
         encoding=serialization.Encoding.PEM,
@@ -549,15 +630,20 @@ def test_google_client_from_env_missing(tmp_path, monkeypatch):
     monkeypatch.delenv("GOOGLE_SA_JSON", raising=False)
     monkeypatch.delenv("GOOGLE_SA_INLINE", raising=False)
     from plugins.pwp.capabilities.provision_site.google_client import (
-        GoogleClient, GoogleAuthError,
+        GoogleClient,
+        GoogleAuthError,
     )
     from plugins.pwp.capabilities.provision_site import auth_loader
+
     # Block the auth_loader fallback so this test is hermetic
     with patch(
         "plugins.pwp.capabilities.provision_site.auth_loader.get_secret",
         return_value=auth_loader.AuthResult(
-            value=None, source="none", env_var="",
-            hint="(test stub)", redaction="<missing>",
+            value=None,
+            source="none",
+            env_var="",
+            hint="(test stub)",
+            redaction="<missing>",
         ),
     ):
         with pytest.raises(GoogleAuthError) as excinfo:
@@ -569,6 +655,7 @@ def test_google_client_from_env_missing(tmp_path, monkeypatch):
 def test_google_client_from_env_json_file(tmp_path):
     """from_env with GOOGLE_SA_JSON pointing at a valid file should succeed."""
     from plugins.pwp.capabilities.provision_site.google_client import GoogleClient
+
     sa_path, _ = _gen_test_sa(tmp_path)
     with patch.dict(os.environ, {"GOOGLE_SA_JSON": str(sa_path)}):
         gc = GoogleClient.from_env()
@@ -578,6 +665,7 @@ def test_google_client_from_env_json_file(tmp_path):
 def test_google_client_from_env_inline(tmp_path):
     """from_env with GOOGLE_SA_INLINE should succeed."""
     from plugins.pwp.capabilities.provision_site.google_client import GoogleClient
+
     _, sa = _gen_test_sa(tmp_path)
     with patch.dict(os.environ, {"GOOGLE_SA_INLINE": json.dumps(sa)}, clear=True):
         gc = GoogleClient.from_env()
@@ -587,9 +675,16 @@ def test_google_client_from_env_inline(tmp_path):
 def test_google_client_ga4_account_id_env():
     """ga4_account_id property uses GA4_ACCOUNT_ID env var (or constructor arg)."""
     from plugins.pwp.capabilities.provision_site.google_client import (
-        GoogleClient, GoogleError,
+        GoogleClient,
+        GoogleError,
     )
-    sa = {"type": "service_account", "client_email": "x@x", "private_key": "k", "token_uri": "u"}
+
+    sa = {
+        "type": "service_account",
+        "client_email": "x@x",
+        "private_key": "k",
+        "token_uri": "u",
+    }
     # No env var at all: property must raise.
     with patch.dict(os.environ, {}, clear=True):
         gc = GoogleClient(service_account=sa)
@@ -603,13 +698,19 @@ def test_google_client_ga4_account_id_env():
 
 def test_google_client_jwt_signing_is_three_part_rs256(tmp_path):
     """_make_jwt returns a 3-part dot-separated RS256 token."""
-    from plugins.pwp.capabilities.provision_site.google_client import _make_jwt, _b64url
+    from plugins.pwp.capabilities.provision_site.google_client import _make_jwt
+
     _, sa = _gen_test_sa(tmp_path)
-    jwt = _make_jwt(sa, scope="https://www.googleapis.com/auth/analytics.edit", aud="https://oauth2.googleapis.com/token")
+    jwt = _make_jwt(
+        sa,
+        scope="https://www.googleapis.com/auth/analytics.edit",
+        aud="https://oauth2.googleapis.com/token",
+    )
     parts = jwt.split(".")
     assert len(parts) == 3
     # Decode header (b64url) to verify alg.
     import base64
+
     pad = lambda s: s + "=" * (-len(s) % 4)
     header = json.loads(base64.urlsafe_b64decode(pad(parts[0])))
     assert header["alg"] == "RS256"
@@ -621,23 +722,31 @@ def test_google_client_jwt_signing_is_three_part_rs256(tmp_path):
 
 # -- step_ga4_property -----------------------------------------------------
 
+
 def test_step_ga4_property_missing_creds(tmp_path, monkeypatch, base_run_state):
     """step_ga4_property returns a clean failure when GOOGLE_SA_JSON is unset."""
     monkeypatch.delenv("GOOGLE_SA_JSON", raising=False)
     monkeypatch.delenv("GOOGLE_SA_INLINE", raising=False)
     monkeypatch.delenv("GA4_ACCOUNT_ID", raising=False)
     from plugins.pwp.capabilities.provision_site.google_client import GoogleAuthError
+
     # Block the auth_loader fallback so this test is hermetic
     with patch(
         "plugins.pwp.capabilities.provision_site.google_client.GoogleClient.from_env",
         side_effect=GoogleAuthError("No Google credentials found"),
     ):
         result = ga4.step_ga4_property(
-            domain="example.com", owner="me@example.com",
-            run=base_run_state, publish_root=tmp_path,
+            domain="example.com",
+            owner="me@example.com",
+            run=base_run_state,
+            publish_root=tmp_path,
         )
     assert result.status == "failed"
-    assert result.output.get("_soft_failure") is True or "GA4 service-account" in (result.error or "") or "GOOGLE_SA_JSON" in (result.error or "")
+    assert (
+        result.output.get("_soft_failure") is True
+        or "GA4 service-account" in (result.error or "")
+        or "GOOGLE_SA_JSON" in (result.error or "")
+    )
 
 
 def test_step_ga4_property_success(tmp_path, base_run_state):
@@ -654,16 +763,21 @@ def test_step_ga4_property_success(tmp_path, base_run_state):
         "webStreamData": {"measurementId": "G-TEST1234"},
     }
     fake_token = {"access_token": "fake-access-token", "expires_in": 3600}
-    with patch.dict(os.environ, {
-        "GOOGLE_SA_JSON": str(sa_path),
-        "GA4_ACCOUNT_ID": "12345",
-    }):
+    with patch.dict(
+        os.environ,
+        {
+            "GOOGLE_SA_JSON": str(sa_path),
+            "GA4_ACCOUNT_ID": "12345",
+        },
+    ):
         # Mock the JWT exchange (return fake token immediately).
         # Then mock the property + stream API calls.
         from plugins.pwp.capabilities.provision_site import google_client as gc_mod
         from plugins.pwp.capabilities.provision_site.google_client import GoogleClient
-        with patch.object(gc_mod, "_exchange_jwt_for_access_token",
-                          return_value="fake-access-token"):
+
+        with patch.object(
+            gc_mod, "_exchange_jwt_for_access_token", return_value="fake-access-token"
+        ):
             # Mock the two API requests.
             def fake_request(method, url, *, scope, json_body=None, params=None):
                 if method == "POST" and url.endswith("/v1beta/properties"):
@@ -671,6 +785,7 @@ def test_step_ga4_property_success(tmp_path, base_run_state):
                 if method == "POST" and url.endswith("/dataStreams"):
                     return fake_stream
                 raise AssertionError(f"unexpected request: {method} {url}")
+
             with patch.object(GoogleClient, "_request", side_effect=fake_request):
                 result = ga4.step_ga4_property(
                     domain="example.com",
@@ -686,13 +801,17 @@ def test_step_ga4_property_success(tmp_path, base_run_state):
 
 def test_step_ga4_property_reuses_prior_output(tmp_path, base_run_state):
     """When prior_outputs contains ga4_property, the step returns it without API call."""
-    prior = {"ga4_property": {
-        "measurement_id": "G-CACHED",
-        "property_id": "999",
-    }}
+    prior = {
+        "ga4_property": {
+            "measurement_id": "G-CACHED",
+            "property_id": "999",
+        }
+    }
     result = ga4.step_ga4_property(
-        domain="example.com", owner="me@example.com",
-        run=base_run_state, publish_root=tmp_path,
+        domain="example.com",
+        owner="me@example.com",
+        run=base_run_state,
+        publish_root=tmp_path,
         prior_outputs=prior,
     )
     assert result.status == "complete"
@@ -702,20 +821,24 @@ def test_step_ga4_property_reuses_prior_output(tmp_path, base_run_state):
 
 # -- step_gtm_container ----------------------------------------------------
 
+
 def test_step_gtm_container_missing_creds(tmp_path, monkeypatch, base_run_state):
     """step_gtm_container fails cleanly without credentials."""
     monkeypatch.delenv("GOOGLE_SA_JSON", raising=False)
     monkeypatch.delenv("GOOGLE_SA_INLINE", raising=False)
     monkeypatch.delenv("GTM_ACCOUNT_ID", raising=False)
     from plugins.pwp.capabilities.provision_site.google_client import GoogleAuthError
+
     with patch(
         "plugins.pwp.capabilities.provision_site.google_client.GoogleClient.from_env",
         side_effect=GoogleAuthError("No Google credentials found"),
     ):
         result = gtm.step_gtm_container(
-        domain="example.com", owner="me@example.com",
-        run=base_run_state, publish_root=tmp_path,
-    )
+            domain="example.com",
+            owner="me@example.com",
+            run=base_run_state,
+            publish_root=tmp_path,
+        )
     assert result.status == "failed"
     assert "GOOGLE_SA_JSON" in result.error
 
@@ -729,20 +852,29 @@ def test_step_gtm_container_success(tmp_path, base_run_state):
         "name": "Example",
         "domains": ["example.com"],
     }
-    with patch.dict(os.environ, {
-        "GOOGLE_SA_JSON": str(sa_path),
-        "GTM_ACCOUNT_ID": "55555",
-    }):
+    with patch.dict(
+        os.environ,
+        {
+            "GOOGLE_SA_JSON": str(sa_path),
+            "GTM_ACCOUNT_ID": "55555",
+        },
+    ):
         from plugins.pwp.capabilities.provision_site import google_client as gc_mod
         from plugins.pwp.capabilities.provision_site.google_client import GoogleClient
-        with patch.object(gc_mod, "_exchange_jwt_for_access_token",
-                          return_value="fake-access-token"):
+
+        with patch.object(
+            gc_mod, "_exchange_jwt_for_access_token", return_value="fake-access-token"
+        ):
+
             def fake_request(method, url, *, scope, json_body=None, params=None):
                 return fake_container
+
             with patch.object(GoogleClient, "_request", side_effect=fake_request):
                 result = gtm.step_gtm_container(
-                    domain="example.com", owner="me@example.com",
-                    run=base_run_state, publish_root=tmp_path,
+                    domain="example.com",
+                    owner="me@example.com",
+                    run=base_run_state,
+                    publish_root=tmp_path,
                 )
     assert result.status == "complete", result.error
     assert result.output["public_id"] == "GTM-P5H2XK8"
@@ -751,11 +883,14 @@ def test_step_gtm_container_success(tmp_path, base_run_state):
 
 # -- step_gsc_verify (real, Cloudflare-managed TXT) -----------------------
 
+
 def test_step_gsc_verify_no_zone_id(tmp_path, base_run_state):
     """gsc_verify fails with a clear error if cloudflare_zone has not completed."""
     result = gsc.step_gsc_verify(
-        domain="example.com", owner="me@example.com",
-        run=base_run_state, publish_root=tmp_path,
+        domain="example.com",
+        owner="me@example.com",
+        run=base_run_state,
+        publish_root=tmp_path,
         prior_outputs={},
     )
     assert result.status == "failed"
@@ -766,8 +901,8 @@ def test_step_gsc_verify_placeholder_mode(tmp_path, base_run_state):
     """gsc_verify writes a placeholder TXT record via mocked Cloudflare."""
     prior = {"cloudflare_zone": {"zone_id": "fake-zone-123"}}
     # Mock Cloudflare.from_env + dns_list (empty) + dns_create.
-    from plugins.pwp.capabilities.provision_site import cloudflare_client
     from plugins.pwp.capabilities.provision_site.steps import gsc as gsc_module
+
     with patch.object(gsc_module, "CloudflareClient") as MockCF:
         mock_cf_instance = MockCF.from_env.return_value
         mock_cf_instance.dns_list.return_value = []
@@ -775,8 +910,10 @@ def test_step_gsc_verify_placeholder_mode(tmp_path, base_run_state):
         fake_dns_record.id = "dns-record-456"
         mock_cf_instance.dns_create.return_value = fake_dns_record
         result = gsc.step_gsc_verify(
-            domain="example.com", owner="me@example.com",
-            run=base_run_state, publish_root=tmp_path,
+            domain="example.com",
+            owner="me@example.com",
+            run=base_run_state,
+            publish_root=tmp_path,
             prior_outputs=prior,
         )
     assert result.status == "complete", result.error
@@ -794,8 +931,8 @@ def test_step_gsc_verify_placeholder_mode(tmp_path, base_run_state):
 def test_step_gsc_verify_google_issued_mode(tmp_path, base_run_state):
     """If GSC_VERIFICATION_TOKEN env var is set, use it verbatim instead of minting."""
     prior = {"cloudflare_zone": {"zone_id": "fake-zone-123"}}
-    from plugins.pwp.capabilities.provision_site import cloudflare_client
     from plugins.pwp.capabilities.provision_site.steps import gsc as gsc_module
+
     with patch.dict(os.environ, {"GSC_VERIFICATION_TOKEN": "google-issued-real-token"}):
         with patch.object(gsc_module, "CloudflareClient") as MockCF:
             mock_cf_instance = MockCF.from_env.return_value
@@ -804,8 +941,10 @@ def test_step_gsc_verify_google_issued_mode(tmp_path, base_run_state):
             fake_dns_record.id = "dns-record-789"
             mock_cf_instance.dns_create.return_value = fake_dns_record
             result = gsc.step_gsc_verify(
-                domain="example.com", owner="me@example.com",
-                run=base_run_state, publish_root=tmp_path,
+                domain="example.com",
+                owner="me@example.com",
+                run=base_run_state,
+                publish_root=tmp_path,
                 prior_outputs=prior,
             )
     assert result.status == "complete"
@@ -819,14 +958,19 @@ def test_step_gsc_verify_reuses_prior_output(tmp_path, base_run_state):
     """If a prior gsc_verify attempt succeeded, skip the API call."""
     prior = {
         "cloudflare_zone": {"zone_id": "fake-zone-123"},
-        "gsc_verify": {"record_id": "prior-record-abc", "verification_mode": "google-issued"},
+        "gsc_verify": {
+            "record_id": "prior-record-abc",
+            "verification_mode": "google-issued",
+        },
     }
-    from plugins.pwp.capabilities.provision_site import cloudflare_client
     from plugins.pwp.capabilities.provision_site.steps import gsc as gsc_module
+
     with patch.object(gsc_module, "CloudflareClient") as MockCF:
         result = gsc.step_gsc_verify(
-            domain="example.com", owner="me@example.com",
-            run=base_run_state, publish_root=tmp_path,
+            domain="example.com",
+            owner="me@example.com",
+            run=base_run_state,
+            publish_root=tmp_path,
             prior_outputs=prior,
         )
     # Cloudflare should NOT be called (we reused prior).
@@ -837,6 +981,7 @@ def test_step_gsc_verify_reuses_prior_output(tmp_path, base_run_state):
 
 
 # -- end-to-end STEP_NAMES now 10 entries (Phase 3 + Phase 4) -------------
+
 
 def test_step_names_phase_3_includes_new_steps():
     """Phase 3 adds platform_detect + vercel_project;
@@ -854,6 +999,7 @@ def test_step_names_phase_3_includes_new_steps():
         "gtm_container",
         "register_stripe",
         "github_checkout",
+        "register_zapier_webhook",  # Phase 4.6 (F6)
         "register_in_registry",
         "migrate_kpi",
     ]
@@ -861,6 +1007,7 @@ def test_step_names_phase_3_includes_new_steps():
 
 
 # -- fixture ----------------------------------------------------------------
+
 
 @pytest.fixture
 def base_run_state():
@@ -878,11 +1025,13 @@ def base_run_state():
 
 # -- VercelClient ----------------------------------------------------------
 
+
 def test_vercel_client_from_env_missing() -> None:
     """from_env must surface a helpful error when neither VERCEL_TOKEN
     nor VERCEL_API_TOKEN is set."""
     with patch.dict(os.environ, {}, clear=True):
         from plugins.pwp.capabilities.provision_site.vercel_client import VercelClient
+
         with pytest.raises(ValueError) as excinfo:
             VercelClient.from_env()
         msg = str(excinfo.value)
@@ -893,9 +1042,12 @@ def test_vercel_client_from_env_missing() -> None:
 def test_vercel_client_from_env_precedence() -> None:
     """VERCEL_TOKEN takes precedence over VERCEL_API_TOKEN."""
     from plugins.pwp.capabilities.provision_site.vercel_client import VercelClient
-    with patch.dict(os.environ,
-                    {"VERCEL_TOKEN": "primary",
-                     "VERCEL_API_TOKEN": "secondary"}, clear=True):
+
+    with patch.dict(
+        os.environ,
+        {"VERCEL_TOKEN": "primary", "VERCEL_API_TOKEN": "secondary"},
+        clear=True,
+    ):
         vc = VercelClient.from_env()
     assert vc.token_source == "VERCEL_TOKEN"
 
@@ -903,9 +1055,12 @@ def test_vercel_client_from_env_precedence() -> None:
 def test_vercel_client_from_env_team_id() -> None:
     """VERCEL_TEAM_ID env var is captured into team_id."""
     from plugins.pwp.capabilities.provision_site.vercel_client import VercelClient
-    with patch.dict(os.environ,
-                    {"VERCEL_TOKEN": "test-token",
-                     "VERCEL_TEAM_ID": "team_abc"}, clear=True):
+
+    with patch.dict(
+        os.environ,
+        {"VERCEL_TOKEN": "test-token", "VERCEL_TEAM_ID": "team_abc"},
+        clear=True,
+    ):
         vc = VercelClient.from_env()
     assert vc.team_id == "team_abc"
 
@@ -913,6 +1068,7 @@ def test_vercel_client_from_env_team_id() -> None:
 def test_vercel_client_construct_requires_token() -> None:
     """Direct construction must reject an empty token."""
     from plugins.pwp.capabilities.provision_site.vercel_client import VercelClient
+
     with pytest.raises(ValueError):
         VercelClient(token="")
     with pytest.raises(ValueError):
@@ -923,6 +1079,7 @@ def test_vercel_client_request_shape_and_bearer_auth() -> None:
     """A GET request must hit api.vercel.com with Bearer token in the
     Authorization header and the teamId query param when set."""
     from plugins.pwp.capabilities.provision_site.vercel_client import VercelClient
+
     captured = {}
 
     def fake_urlopen(req, timeout=None):
@@ -933,7 +1090,9 @@ def test_vercel_client_request_shape_and_bearer_auth() -> None:
         return MagicMock(
             __enter__=lambda s: s,
             __exit__=lambda *a: None,
-            read=lambda: b'{"id":"prj_123","name":"foo","framework":"nextjs","accountId":"acc_1"}',
+            read=lambda: (
+                b'{"id":"prj_123","name":"foo","framework":"nextjs","accountId":"acc_1"}'
+            ),
         )
 
     vc = VercelClient(token="test-token", team_id="team_xyz", max_retries=0)
@@ -951,11 +1110,14 @@ def test_vercel_client_request_shape_and_bearer_auth() -> None:
 
 def test_vercel_client_404_returns_none_for_project_lookup() -> None:
     """A 404 on project_lookup must return None (not raise)."""
-    from plugins.pwp.capabilities.provision_site.vercel_client import VercelClient, VercelError
+    from plugins.pwp.capabilities.provision_site.vercel_client import VercelClient
     import http.client
+
     hdrs = http.client.HTTPMessage()
     err = urllib.error.HTTPError(
-        "https://api.vercel.com/v9/projects/foo", 404, "Not Found",
+        "https://api.vercel.com/v9/projects/foo",
+        404,
+        "Not Found",
         hdrs,
         io.BytesIO(b'{"error":{"code":"not_found","message":"not found"}}'),
     )
@@ -967,11 +1129,17 @@ def test_vercel_client_404_returns_none_for_project_lookup() -> None:
 
 def test_vercel_client_500_raises_vercel_error() -> None:
     """A 500 on project_lookup must raise VercelError (not return None)."""
-    from plugins.pwp.capabilities.provision_site.vercel_client import VercelClient, VercelError
+    from plugins.pwp.capabilities.provision_site.vercel_client import (
+        VercelClient,
+        VercelError,
+    )
     import http.client
+
     hdrs = http.client.HTTPMessage()
     err = urllib.error.HTTPError(
-        "https://api.vercel.com/v9/projects/foo", 500, "Internal Server Error",
+        "https://api.vercel.com/v9/projects/foo",
+        500,
+        "Internal Server Error",
         hdrs,
         io.BytesIO(b'{"error":{"code":"internal","message":"boom"}}'),
     )
@@ -984,10 +1152,12 @@ def test_vercel_client_500_raises_vercel_error() -> None:
 
 # -- platform_detect ------------------------------------------------------
 
+
 def test_platform_detect_cloudflare_active_zone() -> None:
     """If cloudflare_zone completed with status=active, platform_detect
     must short-circuit to platform=cloudflare_pages."""
     from plugins.pwp.capabilities.provision_site.steps import platform_detect
+
     prior = {"cloudflare_zone": {"zone_id": "z-1", "status": "active"}}
 
     def fake_doh(_):
@@ -996,13 +1166,20 @@ def test_platform_detect_cloudflare_active_zone() -> None:
     def fake_probe(_, timeout=5.0):
         return {}
 
-    with patch.object(platform_detect, "_doh_cname", side_effect=fake_doh), \
-         patch.object(platform_detect, "_http_probe", side_effect=fake_probe):
+    with (
+        patch.object(platform_detect, "_doh_cname", side_effect=fake_doh),
+        patch.object(platform_detect, "_http_probe", side_effect=fake_probe),
+    ):
         result = platform_detect.step_platform_detect(
-            domain="example.com", owner="me@example.com",
-            run=prov_types.ProvisionRun(domain="example.com", owner="me@example.com",
-                                        started_at="2026-01-01T00:00:00+00:00"),
-            publish_root=None, prior_outputs=prior,
+            domain="example.com",
+            owner="me@example.com",
+            run=prov_types.ProvisionRun(
+                domain="example.com",
+                owner="me@example.com",
+                started_at="2026-01-01T00:00:00+00:00",
+            ),
+            publish_root=None,
+            prior_outputs=prior,
         )
     assert result.status == "complete"
     assert result.output["platform"] == "cloudflare_pages"
@@ -1014,6 +1191,7 @@ def test_platform_detect_vercel_via_x_vercel_id() -> None:
     """An HTTP probe that returns X-Vercel-Id header should classify as
     'vercel' with project_name derived from the domain."""
     from plugins.pwp.capabilities.provision_site.steps import platform_detect
+
     fake_headers = {"x-vercel-id": "cdg1::abc123"}
 
     def fake_probe(host, timeout=5.0):
@@ -1021,11 +1199,15 @@ def test_platform_detect_vercel_via_x_vercel_id() -> None:
 
     with patch.object(platform_detect, "_http_probe", side_effect=fake_probe):
         result = platform_detect.step_platform_detect(
-            domain="ezshare.systems", owner="me@example.com",
-            run=prov_types.ProvisionRun(domain="ezshare.systems",
-                                        owner="me@example.com",
-                                        started_at="2026-01-01T00:00:00+00:00"),
-            publish_root=None, prior_outputs={},
+            domain="ezshare.systems",
+            owner="me@example.com",
+            run=prov_types.ProvisionRun(
+                domain="ezshare.systems",
+                owner="me@example.com",
+                started_at="2026-01-01T00:00:00+00:00",
+            ),
+            publish_root=None,
+            prior_outputs={},
         )
     assert result.status == "complete"
     assert result.output["platform"] == "vercel"
@@ -1043,14 +1225,20 @@ def test_platform_detect_unknown_when_no_signals() -> None:
     def fake_probe(host, timeout=5.0):
         return {}
 
-    with patch.object(platform_detect, "_doh_cname", side_effect=fake_doh), \
-         patch.object(platform_detect, "_http_probe", side_effect=fake_probe):
+    with (
+        patch.object(platform_detect, "_doh_cname", side_effect=fake_doh),
+        patch.object(platform_detect, "_http_probe", side_effect=fake_probe),
+    ):
         result = platform_detect.step_platform_detect(
-            domain="nope.invalid", owner="me@example.com",
-            run=prov_types.ProvisionRun(domain="nope.invalid",
-                                        owner="me@example.com",
-                                        started_at="2026-01-01T00:00:00+00:00"),
-            publish_root=None, prior_outputs={},
+            domain="nope.invalid",
+            owner="me@example.com",
+            run=prov_types.ProvisionRun(
+                domain="nope.invalid",
+                owner="me@example.com",
+                started_at="2026-01-01T00:00:00+00:00",
+            ),
+            publish_root=None,
+            prior_outputs={},
         )
     assert result.status == "complete"
     assert result.output["platform"] == "unknown"
@@ -1058,16 +1246,23 @@ def test_platform_detect_unknown_when_no_signals() -> None:
 
 # -- vercel_project -------------------------------------------------------
 
+
 def test_vercel_project_skips_when_platform_not_vercel() -> None:
     """When platform_detect found a non-Vercel platform, vercel_project
     must skip itself cleanly."""
     from plugins.pwp.capabilities.provision_site.steps import vercel_project
+
     prior = {"platform_detect": {"platform": "cloudflare_pages"}}
     result = vercel_project.step_vercel_project(
-        domain="example.com", owner="me@example.com",
-        run=prov_types.ProvisionRun(domain="example.com", owner="me@example.com",
-                                    started_at="2026-01-01T00:00:00+00:00"),
-        publish_root=None, prior_outputs=prior,
+        domain="example.com",
+        owner="me@example.com",
+        run=prov_types.ProvisionRun(
+            domain="example.com",
+            owner="me@example.com",
+            started_at="2026-01-01T00:00:00+00:00",
+        ),
+        publish_root=None,
+        prior_outputs=prior,
     )
     assert result.status == "skipped"
     assert "cloudflare_pages" in result.output["reason"]
@@ -1077,27 +1272,42 @@ def test_vercel_project_skips_when_no_platform_detect() -> None:
     """When platform_detect wasn't run (no prior_outputs), vercel_project
     must skip itself (we don't know the platform yet)."""
     from plugins.pwp.capabilities.provision_site.steps import vercel_project
+
     result = vercel_project.step_vercel_project(
-        domain="example.com", owner="me@example.com",
-        run=prov_types.ProvisionRun(domain="example.com", owner="me@example.com",
-                                    started_at="2026-01-01T00:00:00+00:00"),
-        publish_root=None, prior_outputs={},
+        domain="example.com",
+        owner="me@example.com",
+        run=prov_types.ProvisionRun(
+            domain="example.com",
+            owner="me@example.com",
+            started_at="2026-01-01T00:00:00+00:00",
+        ),
+        publish_root=None,
+        prior_outputs={},
     )
     assert result.status == "skipped"
-    assert "None" in result.output["reason"] or "platform=None" in result.output["reason"]
+    assert (
+        "None" in result.output["reason"] or "platform=None" in result.output["reason"]
+    )
 
 
 def test_vercel_project_no_token_fails_cleanly() -> None:
     """Without VERCEL_TOKEN, the step returns a clean error (not raise)."""
     from plugins.pwp.capabilities.provision_site.steps import vercel_project
-    prior = {"platform_detect": {"platform": "vercel", "vercel_project_name": "ezshare"}}
+
+    prior = {
+        "platform_detect": {"platform": "vercel", "vercel_project_name": "ezshare"}
+    }
     with patch.dict(os.environ, {}, clear=True):
         result = vercel_project.step_vercel_project(
-            domain="ezshare.systems", owner="me@example.com",
-            run=prov_types.ProvisionRun(domain="ezshare.systems",
-                                        owner="me@example.com",
-                                        started_at="2026-01-01T00:00:00+00:00"),
-            publish_root=None, prior_outputs=prior,
+            domain="ezshare.systems",
+            owner="me@example.com",
+            run=prov_types.ProvisionRun(
+                domain="ezshare.systems",
+                owner="me@example.com",
+                started_at="2026-01-01T00:00:00+00:00",
+            ),
+            publish_root=None,
+            prior_outputs=prior,
         )
     assert result.status == "failed"
     assert "VERCEL_TOKEN" in result.error
@@ -1107,22 +1317,33 @@ def test_vercel_project_lookup_existing() -> None:
     """When VERCEL_TOKEN is set and project_lookup finds the project,
     the step returns action='lookup' with the project metadata."""
     from plugins.pwp.capabilities.provision_site.steps import vercel_project
-    prior = {"platform_detect": {"platform": "vercel", "vercel_project_name": "ezshare"}}
+
+    prior = {
+        "platform_detect": {"platform": "vercel", "vercel_project_name": "ezshare"}
+    }
     fake_project = MagicMock()
     fake_project.id = "prj_existing"
     fake_project.name = "ezshare"
     fake_project.framework = "nextjs"
     fake_project.account_id = "acc_xyz"
 
-    with patch.dict(os.environ, {"VERCEL_TOKEN": "fake"}, clear=True), \
-         patch("plugins.pwp.capabilities.provision_site.vercel_client.VercelClient.from_env") as MockCF:
+    with (
+        patch.dict(os.environ, {"VERCEL_TOKEN": "fake"}, clear=True),
+        patch(
+            "plugins.pwp.capabilities.provision_site.vercel_client.VercelClient.from_env"
+        ) as MockCF,
+    ):
         MockCF.return_value.project_lookup.return_value = fake_project
         result = vercel_project.step_vercel_project(
-            domain="ezshare.systems", owner="me@example.com",
-            run=prov_types.ProvisionRun(domain="ezshare.systems",
-                                        owner="me@example.com",
-                                        started_at="2026-01-01T00:00:00+00:00"),
-            publish_root=None, prior_outputs=prior,
+            domain="ezshare.systems",
+            owner="me@example.com",
+            run=prov_types.ProvisionRun(
+                domain="ezshare.systems",
+                owner="me@example.com",
+                started_at="2026-01-01T00:00:00+00:00",
+            ),
+            publish_root=None,
+            prior_outputs=prior,
         )
     assert result.status == "complete"
     assert result.output["action"] == "lookup"
@@ -1131,16 +1352,19 @@ def test_vercel_project_lookup_existing() -> None:
 
 # -- cloudflare_zone conditional skip -------------------------------------
 
+
 def test_cloudflare_zone_skips_when_platform_is_vercel() -> None:
     """When platform_detect found platform='vercel', cloudflare_zone must
     skip (the vercel_project step is responsible for Vercel sites)."""
-    from plugins.pwp.capabilities.provision_site.steps import step_cloudflare_zone
     prior = {"platform_detect": {"platform": "vercel"}}
     result = step_cloudflare_zone(
-        domain="ezshare.systems", owner="me@example.com",
-        run=prov_types.ProvisionRun(domain="ezshare.systems",
-                                    owner="me@example.com",
-                                    started_at="2026-01-01T00:00:00+00:00"),
+        domain="ezshare.systems",
+        owner="me@example.com",
+        run=prov_types.ProvisionRun(
+            domain="ezshare.systems",
+            owner="me@example.com",
+            started_at="2026-01-01T00:00:00+00:00",
+        ),
         publish_root=tmp_path_fixture(),
         prior_outputs=prior,
     )
@@ -1151,7 +1375,6 @@ def test_cloudflare_zone_skips_when_platform_is_vercel() -> None:
 def test_cloudflare_zone_runs_when_platform_is_cloudflare() -> None:
     """When platform_detect found platform='cloudflare_pages', cloudflare_zone
     must NOT skip — it proceeds to the normal zone lookup/create path."""
-    from plugins.pwp.capabilities.provision_site.steps import step_cloudflare_zone
     prior = {"platform_detect": {"platform": "cloudflare_pages"}}
 
     fake_zone = MagicMock()
@@ -1159,14 +1382,21 @@ def test_cloudflare_zone_runs_when_platform_is_cloudflare() -> None:
     fake_zone.nameservers = ["ns1.cloudflare.com", "ns2.cloudflare.com"]
     fake_zone.status = "active"
 
-    with patch.dict(os.environ, {"CF_API_TOKEN": "fake"}, clear=True), \
-         patch("plugins.pwp.capabilities.provision_site.cloudflare_client.CloudflareClient") as MockCF:
+    with (
+        patch.dict(os.environ, {"CF_API_TOKEN": "fake"}, clear=True),
+        patch(
+            "plugins.pwp.capabilities.provision_site.cloudflare_client.CloudflareClient"
+        ) as MockCF,
+    ):
         MockCF.from_env.return_value.zone_lookup.return_value = fake_zone
         result = step_cloudflare_zone(
-            domain="example.com", owner="me@example.com",
-            run=prov_types.ProvisionRun(domain="example.com",
-                                        owner="me@example.com",
-                                        started_at="2026-01-01T00:00:00+00:00"),
+            domain="example.com",
+            owner="me@example.com",
+            run=prov_types.ProvisionRun(
+                domain="example.com",
+                owner="me@example.com",
+                started_at="2026-01-01T00:00:00+00:00",
+            ),
             publish_root=tmp_path_fixture(),
             prior_outputs=prior,
         )
@@ -1177,26 +1407,36 @@ def test_cloudflare_zone_runs_when_platform_is_cloudflare() -> None:
 def tmp_path_fixture():
     """Return a fresh tmp path for tests that don't pass tmp_path."""
     import tempfile
+
     return Path(tempfile.mkdtemp())
 
 
 # -- platform_detect: cf_tunnel classification -----------------------------
+
 
 def test_platform_detect_cf_tunnel_via_cname() -> None:
     """If the apex CNAME ends in .cfargotunnel.com, the platform is
     classified as 'cf_tunnel' even without an active Cloudflare zone."""
     from plugins.pwp.capabilities.provision_site.steps import platform_detect
 
-    with patch.object(
-        platform_detect, "_doh_cname",
-        return_value="abcd1234-5678-90ab-cdef-1234567890ab.cfargotunnel.com",
-    ), patch.object(platform_detect, "_http_probe", return_value={}):
+    with (
+        patch.object(
+            platform_detect,
+            "_doh_cname",
+            return_value="abcd1234-5678-90ab-cdef-1234567890ab.cfargotunnel.com",
+        ),
+        patch.object(platform_detect, "_http_probe", return_value={}),
+    ):
         result = platform_detect.step_platform_detect(
-            domain="selfhosted.example.com", owner="me@example.com",
-            run=prov_types.ProvisionRun(domain="selfhosted.example.com",
-                                        owner="me@example.com",
-                                        started_at="2026-01-01T00:00:00+00:00"),
-            publish_root=None, prior_outputs={},
+            domain="selfhosted.example.com",
+            owner="me@example.com",
+            run=prov_types.ProvisionRun(
+                domain="selfhosted.example.com",
+                owner="me@example.com",
+                started_at="2026-01-01T00:00:00+00:00",
+            ),
+            publish_root=None,
+            prior_outputs={},
         )
     assert result.status == "complete"
     assert result.output["platform"] == "cf_tunnel"
@@ -1208,17 +1448,26 @@ def test_platform_detect_vercel_cname_takes_precedence_over_zone() -> None:
     """If a CF zone exists but the CNAME points to vercel, the platform
     is 'vercel' (Vercel wins over CF zone)."""
     from plugins.pwp.capabilities.provision_site.steps import platform_detect
+
     prior = {"cloudflare_zone": {"zone_id": "z-1", "status": "active"}}
-    with patch.object(
-        platform_detect, "_doh_cname",
-        return_value="cname.vercel-dns.com",
-    ), patch.object(platform_detect, "_http_probe", return_value={}):
+    with (
+        patch.object(
+            platform_detect,
+            "_doh_cname",
+            return_value="cname.vercel-dns.com",
+        ),
+        patch.object(platform_detect, "_http_probe", return_value={}),
+    ):
         result = platform_detect.step_platform_detect(
-            domain="hybrid.example.com", owner="me@example.com",
-            run=prov_types.ProvisionRun(domain="hybrid.example.com",
-                                        owner="me@example.com",
-                                        started_at="2026-01-01T00:00:00+00:00"),
-            publish_root=None, prior_outputs=prior,
+            domain="hybrid.example.com",
+            owner="me@example.com",
+            run=prov_types.ProvisionRun(
+                domain="hybrid.example.com",
+                owner="me@example.com",
+                started_at="2026-01-01T00:00:00+00:00",
+            ),
+            publish_root=None,
+            prior_outputs=prior,
         )
     assert result.status == "complete"
     assert result.output["platform"] == "vercel"
@@ -1232,11 +1481,15 @@ def test_platform_detect_live_ezshare_classifies_as_vercel() -> None:
 
     # Don't mock — let it actually call DoH and HTTP.
     result = platform_detect.step_platform_detect(
-        domain="ezshare.systems", owner="ned@example.com",
-        run=prov_types.ProvisionRun(domain="ezshare.systems",
-                                    owner="ned@example.com",
-                                    started_at="2026-01-01T00:00:00+00:00"),
-        publish_root=None, prior_outputs={},
+        domain="ezshare.systems",
+        owner="ned@example.com",
+        run=prov_types.ProvisionRun(
+            domain="ezshare.systems",
+            owner="ned@example.com",
+            started_at="2026-01-01T00:00:00+00:00",
+        ),
+        publish_root=None,
+        prior_outputs={},
     )
     assert result.status == "complete"
     # We expect either 'vercel' (CNAME) or 'unknown' (network failure) —
@@ -1248,17 +1501,23 @@ def test_platform_detect_live_ezshare_classifies_as_vercel() -> None:
 
 # -- gsc_verify: Vercel skip ------------------------------------------------
 
+
 def test_gsc_verify_skips_when_platform_is_vercel(tmp_path) -> None:
     """When platform_detect found platform='vercel', gsc_verify must
     skip cleanly (Vercel sites have no CF zone to write TXT records to)."""
     from plugins.pwp.capabilities.provision_site.steps import gsc as gsc_mod
+
     prior = {"platform_detect": {"platform": "vercel"}}
     result = gsc_mod.step_gsc_verify(
-        domain="ezshare.systems", owner="me@example.com",
-        run=prov_types.ProvisionRun(domain="ezshare.systems",
-                                    owner="me@example.com",
-                                    started_at="2026-01-01T00:00:00+00:00"),
-        publish_root=tmp_path, prior_outputs=prior,
+        domain="ezshare.systems",
+        owner="me@example.com",
+        run=prov_types.ProvisionRun(
+            domain="ezshare.systems",
+            owner="me@example.com",
+            started_at="2026-01-01T00:00:00+00:00",
+        ),
+        publish_root=tmp_path,
+        prior_outputs=prior,
     )
     assert result.status == "skipped"
     assert "vercel" in result.output["reason"].lower()

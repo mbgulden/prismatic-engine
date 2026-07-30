@@ -23,7 +23,6 @@ import json
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from . import domain_verifier
 from . import steps as step_module
 from .types import ProvisionRun, StepResult
 
@@ -31,17 +30,18 @@ from .types import ProvisionRun, StepResult
 # Phase 1 step order. Each step is a function (run, run_state) -> StepResult.
 # Steps must NOT raise — they return StepResult with status="failed" + error.
 STEP_NAMES: List[str] = [
-    "platform_detect",     # Identify CF Pages / Vercel / Railway / unknown.
-    "verify_domain",       # TXT challenge proves domain control.
-    "cloudflare_zone",     # Skip when platform=vercel; otherwise find or create.
-    "vercel_project",      # Skip unless platform=vercel; find or create project.
-    "gsc_verify",          # Write the Google Search Console DNS-TXT record.
-    "ga4_property",        # Create the GA4 property + measurement ID.
-    "gtm_container",       # Create the GTM container for site scripts.
-    "register_stripe",     # Validate Stripe creds + persist external_sources.stripe.
-    "github_checkout",     # Resolve repo, fetch default branch + HEAD.
+    "platform_detect",  # Identify CF Pages / Vercel / Railway / unknown.
+    "verify_domain",  # TXT challenge proves domain control.
+    "cloudflare_zone",  # Skip when platform=vercel; otherwise find or create.
+    "vercel_project",  # Skip unless platform=vercel; find or create project.
+    "gsc_verify",  # Write the Google Search Console DNS-TXT record.
+    "ga4_property",  # Create the GA4 property + measurement ID.
+    "gtm_container",  # Create the GTM container for site scripts.
+    "register_stripe",  # Validate Stripe creds + persist external_sources.stripe.
+    "github_checkout",  # Resolve repo, fetch default branch + HEAD.
+    "register_zapier_webhook",  # Validate Zapier webhook URL + persist external_sources.zapier.
     "register_in_registry",  # Add the domain to the local sites.json appendix.
-    "migrate_kpi",         # Bootstrap the per-site <slug>.kpi.json.
+    "migrate_kpi",  # Bootstrap the per-site <slug>.kpi.json.
 ]
 # Phase 3 added platform_detect + vercel_project.
 # Phase 4 added register_stripe (between gtm and register_in_registry).
@@ -76,7 +76,9 @@ def _run_step(
     (e.g. a challenge token issued before the user created the TXT
     record).
     """
-    fn: Optional[Callable[..., StepResult]] = getattr(step_module, f"step_{step_name}", None)
+    fn: Optional[Callable[..., StepResult]] = getattr(
+        step_module, f"step_{step_name}", None
+    )
     if fn is None:
         return StepResult(
             name=step_name,
@@ -182,7 +184,10 @@ def run(
         if any(s.name == sname and s.status == "complete" for s in run_state.steps):
             continue
         result = _run_step(
-            sname, domain, owner, run_state,
+            sname,
+            domain,
+            owner,
+            run_state,
             publish_root=publish_root,
             prior_outputs=prior_outputs,
         )
@@ -196,7 +201,9 @@ def run(
         # UNLESS the step is marked "soft" (Phase 2 convention: GA4/GTM
         # steps without credentials are non-blocking; the run still
         # completes with the registry + KPI bootstrap having run).
-        step_category = getattr(step_module, "STEP_CATEGORIES", {}).get(sname, "blocking")
+        step_category = getattr(step_module, "STEP_CATEGORIES", {}).get(
+            sname, "blocking"
+        )
         if result.status == "failed":
             if step_category == "soft":
                 # Soft failure: keep going so downstream steps (registry,
@@ -225,7 +232,9 @@ def run(
     return run_state
 
 
-def status(domain: str, publish_root: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+def status(
+    domain: str, publish_root: Optional[Path] = None
+) -> Optional[Dict[str, Any]]:
     """Read the current run state for `domain`. Returns None if no run exists."""
     publish_root = _resolve_publish_root(publish_root)
     state_path = _state_path_for(domain, publish_root)
