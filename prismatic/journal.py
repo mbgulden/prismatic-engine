@@ -15,6 +15,8 @@ import hashlib
 import json
 import os
 import re
+import shutil
+import stat
 import subprocess
 import tempfile
 import urllib.error
@@ -37,7 +39,7 @@ DEFAULT_LABELS = {
     "type:docs": "d24a4a88-00d8-40e7-9e58-6fdfc8a1a6b6",
 }
 SECRET_PATTERNS = [
-    (re.compile(r"(?i)\b(api[_-]?key|token|password|secret|oauth code)\b\s*[:=]\s*[^\s'\"]+"), r"\1: [REDACTED]"),
+    (re.compile(r'''(?i)\b(api[_-]?key|token|password|secret|oauth code)\b\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s'\"]+)'''), r"\1: [REDACTED]"),
     (re.compile(r"(?i)bearer\s+[A-Za-z0-9._~-]+"), "Bearer [REDACTED]"),
     (re.compile(r"(?i)ghp_[A-Za-z0-9]+|github_pat_[A-Za-z0-9_]+|xox[a-z]-[A-Za-z0-9-]+"), "[REDACTED]"),
 ]
@@ -768,50 +770,50 @@ def _write_bytes(path: Path, payload: bytes) -> None:
 
 
 def _replace_artifact_pair(target: Path, target_payload: bytes, manifest: Path, manifest_payload: bytes) -> None:
-    """Replace both artifacts with rollback if a staged write or rename fails."""
-    target_dir = target.parent
-    staged_target_fd, staged_target_name = tempfile.mkstemp(prefix=f".{target.name}.stage-", dir=target_dir)
-    staged_manifest_fd, staged_manifest_name = tempfile.mkstemp(prefix=f".{manifest.name}.stage-", dir=target_dir)
-    backup_target_fd, backup_target_name = tempfile.mkstemp(prefix=f".{target.name}.backup-", dir=target_dir)
-    backup_manifest_fd, backup_manifest_name = tempfile.mkstemp(prefix=f".{manifest.name}.backup-", dir=target_dir)
-    for descriptor in (staged_target_fd, staged_manifest_fd, backup_target_fd, backup_manifest_fd):
-        os.close(descriptor)
-    staged_target = Path(staged_target_name)
-    staged_manifest = Path(staged_manifest_name)
-    backup_target = Path(backup_target_name)
-    backup_manifest = Path(backup_manifest_name)
+    """Replace both artifacts; preserve recoverable backups if rollback fails."""
+    transaction_dir = Path(tempfile.mkdtemp(prefix=".recap-transaction-", dir=target.parent))
+    staged_target = transaction_dir / "recap.stage"
+    staged_manifest = transaction_dir / "manifest.stage"
+    backup_target = transaction_dir / "recap.backup"
+    backup_manifest = transaction_dir / "manifest.backup"
     target_backed_up = manifest_backed_up = False
     target_installed = manifest_installed = False
+    preserve_transaction = False
     try:
         _write_bytes(staged_target, target_payload)
         _write_bytes(staged_manifest, manifest_payload)
         if target.exists():
             os.replace(target, backup_target)
             target_backed_up = True
-        else:
-            backup_target.unlink()
         if manifest.exists():
             os.replace(manifest, backup_manifest)
             manifest_backed_up = True
-        else:
-            backup_manifest.unlink()
         os.replace(staged_target, target)
         target_installed = True
         os.replace(staged_manifest, manifest)
         manifest_installed = True
-    except BaseException:
-        if target_installed:
-            target.unlink(missing_ok=True)
-        if manifest_installed:
-            manifest.unlink(missing_ok=True)
-        if target_backed_up:
-            os.replace(backup_target, target)
-        if manifest_backed_up:
-            os.replace(backup_manifest, manifest)
+    except BaseException as original_error:
+        rollback_errors: list[BaseException] = []
+        for destination, backup, backed_up, installed in (
+            (target, backup_target, target_backed_up, target_installed),
+            (manifest, backup_manifest, manifest_backed_up, manifest_installed),
+        ):
+            try:
+                if backed_up:
+                    os.replace(backup, destination)
+                elif installed:
+                    destination.unlink(missing_ok=True)
+            except BaseException as rollback_error:
+                rollback_errors.append(rollback_error)
+        if rollback_errors:
+            preserve_transaction = True
+            raise RuntimeError(
+                f"artifact replacement failed and rollback is incomplete; recoverable files are preserved in {transaction_dir.name}"
+            ) from original_error
         raise
     finally:
-        for path in (staged_target, staged_manifest, backup_target, backup_manifest):
-            path.unlink(missing_ok=True)
+        if not preserve_transaction:
+            shutil.rmtree(transaction_dir, ignore_errors=True)
 
 
 def build_evidence_recap(events: list[dict[str, Any]], period: str, start: dt.datetime, end: dt.datetime, cron_health: list[dict[str, Any]], max_events: int = MAX_RECAP_EVENTS) -> tuple[str, list[str]]:
@@ -856,10 +858,22 @@ def generate_recap(period: str, config: JournalConfig | None = None, now: dt.dat
         raise ValueError(f"citation manifest exceeds {MAX_RECAP_MANIFEST_BYTES} byte operational bound")
     target_dir = config.journal_root / "recaps"
     target_dir.mkdir(parents=True, exist_ok=True)
-    stem = f"{period}-{start.date().isoformat()}"
-    target = target_dir / f"{stem}.md"
-    manifest = target_dir / f"{stem}.citations.json"
-    _replace_artifact_pair(target, encoded, manifest, manifest_payload)
+    try:
+        target_dir_fd = os.open(target_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError as exc:
+        raise ValueError("recap output directory must be a real directory, not a symlink") from exc
+    try:
+        opened = os.fstat(target_dir_fd)
+        resolved = os.stat(target_dir, follow_symlinks=False)
+        if not stat.S_ISDIR(resolved.st_mode) or (opened.st_dev, opened.st_ino) != (resolved.st_dev, resolved.st_ino):
+            raise ValueError("recap output directory identity changed during validation")
+        stem = f"{period}-{start.date().isoformat()}"
+        target = target_dir / f"{stem}.md"
+        manifest = target_dir / f"{stem}.citations.json"
+        bound_dir = Path(f"/proc/self/fd/{target_dir_fd}")
+        _replace_artifact_pair(bound_dir / target.name, encoded, bound_dir / manifest.name, manifest_payload)
+    finally:
+        os.close(target_dir_fd)
     return {"period": period, "path": str(target), "citation_manifest_path": str(manifest), "source_event_count": len(events), "rendered_claim_count": len(cited_ids), "artifact_bytes": len(encoded), "citation_manifest_bytes": len(manifest_payload), "quiet": not events}
 
 

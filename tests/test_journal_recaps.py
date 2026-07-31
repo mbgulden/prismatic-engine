@@ -245,11 +245,11 @@ def test_all_dynamic_rendered_fields_are_redacted_and_bounded() -> None:
     start = datetime(2026, 7, 23, tzinfo=timezone.utc)
     end = datetime(2026, 7, 23, 1, tzinfo=timezone.utc)
     rendered, _ = build_evidence_recap(
-        [{"type": "password: type-leak", "snippet": "token: detail-leak", "idempotency_key": "a" * 64}],
+        [{"type": 'password: "type-leak"', "snippet": "token: 'detail-leak'", "idempotency_key": "a" * 64}],
         "daily",
         start,
         end,
-        [{"name": "token: health-leak", "enabled": True, "last_status": "password: status-leak"}],
+        [{"name": "secret: 'health-leak'", "enabled": True, "last_status": 'password: "status-leak"'}],
     )
 
     assert "type-leak" not in rendered
@@ -275,7 +275,7 @@ def test_pair_replace_failure_restores_previous_artifacts(tmp_path: Path, monkey
     real_replace = os.replace
 
     def fail_manifest_install(src, dst) -> None:
-        if Path(dst) == manifest and ".stage-" in Path(src).name:
+        if Path(dst).name == manifest.name and Path(src).name == "manifest.stage":
             raise OSError("injected manifest install failure")
         real_replace(src, dst)
 
@@ -285,5 +285,64 @@ def test_pair_replace_failure_restores_previous_artifacts(tmp_path: Path, monkey
 
     assert target.read_bytes() == old_target
     assert manifest.read_bytes() == old_manifest
-    assert not list(target.parent.glob(".*.stage-*"))
-    assert not list(target.parent.glob(".*.backup-*"))
+    assert not list(target.parent.glob(".recap-transaction-*"))
+
+
+def test_transaction_does_not_use_descriptor_allocating_mkstemp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config = config_for(tmp_path)
+    monkeypatch.setattr(
+        "prismatic.journal.tempfile.mkstemp",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("mkstemp must not be used")),
+    )
+
+    result = generate_recap("daily", config, datetime(2026, 7, 23, 12, tzinfo=timezone.utc))
+
+    assert Path(result["path"]).is_file()
+    assert Path(result["citation_manifest_path"]).is_file()
+
+
+def test_rollback_failure_preserves_recoverable_backup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config = config_for(tmp_path)
+    index = config.journal_root / ".index"
+    index.mkdir(parents=True)
+    source = index / "events-2026-07-23.json"
+    source.write_text(json.dumps([{"type": "decision", "snippet": "old", "idempotency_key": "a" * 64, "_timestamp": "2026-07-23T05:00:00Z"}]))
+    now = datetime(2026, 7, 23, 12, tzinfo=timezone.utc)
+    initial = generate_recap("daily", config, now)
+    target = Path(initial["path"])
+    manifest = Path(initial["citation_manifest_path"])
+    old_target = target.read_bytes()
+    old_manifest = manifest.read_bytes()
+    source.write_text(json.dumps([{"type": "decision", "snippet": "new", "idempotency_key": "b" * 64, "_timestamp": "2026-07-23T06:00:00Z"}]))
+    real_replace = os.replace
+
+    def fail_install_and_target_restore(src, dst) -> None:
+        source_name = Path(src).name
+        destination_name = Path(dst).name
+        if source_name == "manifest.stage" and destination_name == manifest.name:
+            raise OSError("injected manifest install failure")
+        if source_name == "recap.backup" and destination_name == target.name:
+            raise OSError("injected target rollback failure")
+        real_replace(src, dst)
+
+    monkeypatch.setattr("prismatic.journal.os.replace", fail_install_and_target_restore)
+    with pytest.raises(RuntimeError, match="recoverable files are preserved"):
+        generate_recap("daily", config, now)
+
+    transactions = list(target.parent.glob(".recap-transaction-*"))
+    assert len(transactions) == 1
+    assert (transactions[0] / "recap.backup").read_bytes() == old_target
+    assert manifest.read_bytes() == old_manifest
+
+
+def test_recap_output_directory_symlink_is_rejected(tmp_path: Path) -> None:
+    config = config_for(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    config.journal_root.mkdir(parents=True)
+    (config.journal_root / "recaps").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="real directory"):
+        generate_recap("daily", config, datetime(2026, 7, 23, 12, tzinfo=timezone.utc))
+
+    assert not list(outside.iterdir())
