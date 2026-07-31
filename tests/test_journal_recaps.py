@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -77,7 +78,7 @@ def test_daily_recap_cites_events_and_uses_current_cron_state(tmp_path: Path) ->
     assert "cited_event_ids" not in result
     manifest = json.loads(Path(result["citation_manifest_path"]).read_text())
     assert manifest["cited_event_ids"] == ["a" * 64]
-    assert "[E:aaaaaaaaaaaa]" in rendered
+    assert "[E:" + "a" * 64 + "]" in rendered
     assert "current `ok`" in rendered
     assert "secret-value" not in rendered
     assert "[REDACTED]" in rendered
@@ -180,10 +181,109 @@ def test_oversized_recap_fails_before_writing_artifacts(tmp_path: Path, monkeypa
         "prismatic.journal.live_cron_health",
         lambda _config: [
             {"name": "job-" + "x" * 500, "enabled": True, "last_status": "ok"}
-            for _ in range(100)
+            for _ in range(300)
         ],
     )
 
     with pytest.raises(ValueError, match="recap exceeds"):
         generate_recap("daily", config, datetime(2026, 7, 23, 12, tzinfo=timezone.utc))
     assert not (config.journal_root / "recaps").exists()
+
+
+def test_recap_window_rejects_naive_now() -> None:
+    with pytest.raises(ValueError, match="timezone-aware"):
+        recap_window("daily", datetime(2026, 7, 23, 0, 30))
+
+
+def test_generate_recap_sorts_latest_claims_by_utc_timestamp(tmp_path: Path) -> None:
+    config = config_for(tmp_path)
+    index = config.journal_root / ".index"
+    index.mkdir(parents=True)
+
+    def event(number: int) -> dict:
+        return {
+            "type": "decision",
+            "snippet": f"event {number}",
+            "idempotency_key": f"{number:064x}",
+            "_timestamp": f"2026-07-23T00:{number:02d}:00Z",
+        }
+
+    index.joinpath("events-2026-07-23.json").write_text(
+        json.dumps([event(59), *[event(number) for number in range(59)]])
+    )
+    result = generate_recap("daily", config, datetime(2026, 7, 23, 1, tzinfo=timezone.utc))
+    rendered = Path(result["path"]).read_text()
+
+    assert f"[E:{10:064x}]" in rendered
+    assert f"[E:{59:064x}]" in rendered
+    assert f"[E:{9:064x}]" not in rendered
+
+
+def test_distinct_colliding_prefixes_render_unambiguous_full_ids() -> None:
+    start = datetime(2026, 7, 23, tzinfo=timezone.utc)
+    end = datetime(2026, 7, 23, 1, tzinfo=timezone.utc)
+    first = "a" * 12 + "1" * 52
+    second = "a" * 12 + "2" * 52
+    rendered, cited = build_evidence_recap(
+        [
+            {"type": "decision", "snippet": "first", "idempotency_key": first},
+            {"type": "decision", "snippet": "second", "idempotency_key": second},
+        ],
+        "daily",
+        start,
+        end,
+        [],
+    )
+
+    assert cited == [first, second]
+    assert f"[E:{first}]" in rendered
+    assert f"[E:{second}]" in rendered
+    assert "[E:aaaaaaaaaaaa]" not in rendered
+
+
+def test_all_dynamic_rendered_fields_are_redacted_and_bounded() -> None:
+    start = datetime(2026, 7, 23, tzinfo=timezone.utc)
+    end = datetime(2026, 7, 23, 1, tzinfo=timezone.utc)
+    rendered, _ = build_evidence_recap(
+        [{"type": "password: type-leak", "snippet": "token: detail-leak", "idempotency_key": "a" * 64}],
+        "daily",
+        start,
+        end,
+        [{"name": "token: health-leak", "enabled": True, "last_status": "password: status-leak"}],
+    )
+
+    assert "type-leak" not in rendered
+    assert "detail-leak" not in rendered
+    assert "health-leak" not in rendered
+    assert "status-leak" not in rendered
+    assert rendered.count("[REDACTED]") == 4
+
+
+def test_pair_replace_failure_restores_previous_artifacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config = config_for(tmp_path)
+    index = config.journal_root / ".index"
+    index.mkdir(parents=True)
+    source = index / "events-2026-07-23.json"
+    source.write_text(json.dumps([{"type": "decision", "snippet": "old", "idempotency_key": "a" * 64, "_timestamp": "2026-07-23T05:00:00Z"}]))
+    now = datetime(2026, 7, 23, 12, tzinfo=timezone.utc)
+    initial = generate_recap("daily", config, now)
+    target = Path(initial["path"])
+    manifest = Path(initial["citation_manifest_path"])
+    old_target = target.read_bytes()
+    old_manifest = manifest.read_bytes()
+    source.write_text(json.dumps([{"type": "decision", "snippet": "new", "idempotency_key": "b" * 64, "_timestamp": "2026-07-23T06:00:00Z"}]))
+    real_replace = os.replace
+
+    def fail_manifest_install(src, dst) -> None:
+        if Path(dst) == manifest and ".stage-" in Path(src).name:
+            raise OSError("injected manifest install failure")
+        real_replace(src, dst)
+
+    monkeypatch.setattr("prismatic.journal.os.replace", fail_manifest_install)
+    with pytest.raises(OSError, match="injected"):
+        generate_recap("daily", config, now)
+
+    assert target.read_bytes() == old_target
+    assert manifest.read_bytes() == old_manifest
+    assert not list(target.parent.glob(".*.stage-*"))
+    assert not list(target.parent.glob(".*.backup-*"))

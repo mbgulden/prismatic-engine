@@ -10,12 +10,12 @@ Daily and weekly recaps are bounded operational-memory artifacts. They are not a
 
 ## Rendering contract
 
-- Recaps use the requested deterministic daily or weekly UTC window.
-- At most the latest 50 accepted events are rendered as claims.
-- Every rendered event claim includes an `[E:<12-character-prefix>]` citation.
-- The full bounded citation IDs are written to the adjacent `.citations.json` manifest.
+- Recaps require a timezone-aware `now` and use the requested deterministic daily or weekly UTC window. Naive datetimes fail closed.
+- Accepted events are sorted by normalized UTC `_timestamp`, full citation ID, and canonical event content before at most the latest 50 are rendered.
+- Every rendered event claim includes its unambiguous full `[E:<64-character-ID>]` citation.
+- The same ordered full citation IDs are written to the adjacent `.citations.json` manifest.
 - A valid stored citation ID is 64 lowercase hexadecimal characters. Missing or malformed IDs are replaced with a deterministic SHA-256 ID derived from normalized event content.
-- Event details are redacted before rendering and truncated to 180 characters.
+- Every dynamic rendered field is redacted and bounded: event type to 80 characters, event detail to 180, scheduler name to 120, and scheduler status to 80. Newlines are flattened before interpolation.
 - Current scheduler health is rendered in a separate section and is not inferred from historical cron events.
 - Quiet windows explicitly report that no normalized events were accepted.
 
@@ -37,6 +37,8 @@ For `<period>-<window-start>` the generator writes:
 - `recaps/<stem>.citations.json` — period, source-event count, rendered-claim count, and full citation IDs.
 
 The compact return object contains paths, source/rendered counts, recap bytes, citation-manifest bytes, period, and quiet-window state. Full citation lists are intentionally excluded from the return object and remain in the manifest.
+
+Both payloads are staged before installation. Existing recap/manifest pairs are backed up during replacement; if either staged write or rename fails, the previous pair is restored and staging/backup files are removed. This is exception rollback within one process, not a claim of crash-atomic multi-file filesystem transactions.
 
 ## Synthesis boundary
 

@@ -16,6 +16,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import urllib.error
 import urllib.request
 from collections import defaultdict
@@ -688,7 +689,10 @@ def write_quarantine(records: list[dict[str, Any]], config: JournalConfig, today
 
 
 def recap_window(period: str, now: dt.datetime | None = None) -> tuple[dt.datetime, dt.datetime]:
-    now = now or dt.datetime.now(dt.timezone.utc)
+    if now is None:
+        now = dt.datetime.now(dt.timezone.utc)
+    elif now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("now must be timezone-aware")
     now = now.astimezone(dt.timezone.utc)
     if period == "daily":
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -710,15 +714,19 @@ def _recap_events(config: JournalConfig, start: dt.datetime, end: dt.datetime) -
             except (json.JSONDecodeError, OSError):
                 pass
         day += dt.timedelta(days=1)
-    accepted: list[dict[str, Any]] = []
+    accepted: list[tuple[dt.datetime, str, str, dict[str, Any]]] = []
     for event in events:
         try:
             observed = dt.datetime.fromisoformat(str(event.get("_timestamp", "")).replace("Z", "+00:00"))
         except ValueError:
             continue
-        if start <= observed.astimezone(dt.timezone.utc) <= end:
-            accepted.append(event)
-    return accepted
+        if observed.tzinfo is None or observed.utcoffset() is None:
+            continue
+        observed_utc = observed.astimezone(dt.timezone.utc)
+        if start <= observed_utc <= end:
+            accepted.append((observed_utc, _bounded_citation_id(event), json.dumps(event, sort_keys=True, default=str, separators=(",", ":")), event))
+    accepted.sort(key=lambda item: (item[0], item[1], item[2]))
+    return [item[3] for item in accepted]
 
 
 def live_cron_health(config: JournalConfig) -> list[dict[str, Any]]:
@@ -748,6 +756,64 @@ def _bounded_citation_id(event: dict[str, Any]) -> str:
     return signal_idempotency_key(event)
 
 
+def _rendered_field(value: Any, limit: int) -> str:
+    return redact(str(value)).replace("\r", " ").replace("\n", " ")[:limit]
+
+
+def _write_bytes(path: Path, payload: bytes) -> None:
+    with path.open("wb") as handle:
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _replace_artifact_pair(target: Path, target_payload: bytes, manifest: Path, manifest_payload: bytes) -> None:
+    """Replace both artifacts with rollback if a staged write or rename fails."""
+    target_dir = target.parent
+    staged_target_fd, staged_target_name = tempfile.mkstemp(prefix=f".{target.name}.stage-", dir=target_dir)
+    staged_manifest_fd, staged_manifest_name = tempfile.mkstemp(prefix=f".{manifest.name}.stage-", dir=target_dir)
+    backup_target_fd, backup_target_name = tempfile.mkstemp(prefix=f".{target.name}.backup-", dir=target_dir)
+    backup_manifest_fd, backup_manifest_name = tempfile.mkstemp(prefix=f".{manifest.name}.backup-", dir=target_dir)
+    for descriptor in (staged_target_fd, staged_manifest_fd, backup_target_fd, backup_manifest_fd):
+        os.close(descriptor)
+    staged_target = Path(staged_target_name)
+    staged_manifest = Path(staged_manifest_name)
+    backup_target = Path(backup_target_name)
+    backup_manifest = Path(backup_manifest_name)
+    target_backed_up = manifest_backed_up = False
+    target_installed = manifest_installed = False
+    try:
+        _write_bytes(staged_target, target_payload)
+        _write_bytes(staged_manifest, manifest_payload)
+        if target.exists():
+            os.replace(target, backup_target)
+            target_backed_up = True
+        else:
+            backup_target.unlink()
+        if manifest.exists():
+            os.replace(manifest, backup_manifest)
+            manifest_backed_up = True
+        else:
+            backup_manifest.unlink()
+        os.replace(staged_target, target)
+        target_installed = True
+        os.replace(staged_manifest, manifest)
+        manifest_installed = True
+    except BaseException:
+        if target_installed:
+            target.unlink(missing_ok=True)
+        if manifest_installed:
+            manifest.unlink(missing_ok=True)
+        if target_backed_up:
+            os.replace(backup_target, target)
+        if manifest_backed_up:
+            os.replace(backup_manifest, manifest)
+        raise
+    finally:
+        for path in (staged_target, staged_manifest, backup_target, backup_manifest):
+            path.unlink(missing_ok=True)
+
+
 def build_evidence_recap(events: list[dict[str, Any]], period: str, start: dt.datetime, end: dt.datetime, cron_health: list[dict[str, Any]], max_events: int = MAX_RECAP_EVENTS) -> tuple[str, list[str]]:
     """Render a bounded deterministic draft; every displayed claim has an evidence ID."""
     if isinstance(max_events, bool) or not isinstance(max_events, int):
@@ -765,13 +831,13 @@ def build_evidence_recap(events: list[dict[str, Any]], period: str, start: dt.da
         event_id = _bounded_citation_id(event)
         cited_ids.append(event_id)
         detail = event.get("snippet") or event.get("summary") or event.get("latest") or event.get("source") or event.get("type", "event")
-        lines.append(f"- [E:{event_id[:12]}] **{event.get('type', 'event')}** — {redact(str(detail))[:180]}")
+        lines.append(f"- [E:{event_id}] **{_rendered_field(event.get('type', 'event'), 80)}** — {_rendered_field(detail, 180)}")
     lines += ["", "### Live scheduler health", ""]
     if not cron_health:
         lines.append("- No current scheduler state available.")
     for job in cron_health:
         state = "enabled" if job["enabled"] else "disabled"
-        lines.append(f"- **{job['name']}** — current `{job['last_status']}` ({state})")
+        lines.append(f"- **{_rendered_field(job['name'], 120)}** — current `{_rendered_field(job['last_status'], 80)}` ({state})")
     lines += ["", "---", "*Deterministic draft. Optional synthesis must only use the cited E: IDs above; historical cron events are not current-health claims.*", ""]
     return "\n".join(lines), cited_ids
 
@@ -793,8 +859,7 @@ def generate_recap(period: str, config: JournalConfig | None = None, now: dt.dat
     stem = f"{period}-{start.date().isoformat()}"
     target = target_dir / f"{stem}.md"
     manifest = target_dir / f"{stem}.citations.json"
-    target.write_bytes(encoded)
-    manifest.write_bytes(manifest_payload)
+    _replace_artifact_pair(target, encoded, manifest, manifest_payload)
     return {"period": period, "path": str(target), "citation_manifest_path": str(manifest), "source_event_count": len(events), "rendered_claim_count": len(cited_ids), "artifact_bytes": len(encoded), "citation_manifest_bytes": len(manifest_payload), "quiet": not events}
 
 
