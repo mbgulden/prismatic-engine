@@ -225,6 +225,11 @@ def build_supervisor_cmd(
     supervisor, and release-root provenance instead of compatibility fallbacks.
     """
     del lane
+    if not isinstance(issue_id, str) or not issue_id or issue_id.startswith("-") or "\x00" in issue_id:
+        raise ValueError("issue_id must be a nonempty non-option string without NUL bytes")
+    if not isinstance(model, str) or not model or model.startswith("-") or "\x00" in model:
+        raise ValueError("model must be a nonempty non-option string without NUL bytes")
+
     configured_path = supervisor_path or os.environ.get("PRISMATIC_SUPERVISOR_PATH")
     configured_python = python_executable or os.environ.get("PRISMATIC_SUPERVISOR_PYTHON")
     release_root = expected_release_root or os.environ.get("PRISMATIC_RELEASE_ROOT")
@@ -245,12 +250,44 @@ def build_supervisor_cmd(
         configured_python = "python3"
 
     if release_root:
-        root = Path(release_root).expanduser().resolve()
-        supervisor = Path(configured_path).expanduser().resolve()
+        root_path = Path(release_root).expanduser()
+        supervisor_path_obj = Path(configured_path).expanduser()
+        if require_pinned and not root_path.is_absolute():
+            raise RuntimeError("pinned release root must be an absolute path")
+        if require_pinned and not supervisor_path_obj.is_absolute():
+            raise RuntimeError("pinned supervisor path must be an absolute path")
+        try:
+            root = root_path.resolve(strict=require_pinned)
+        except FileNotFoundError as exc:
+            raise RuntimeError(f"pinned release root does not exist: {root_path}") from exc
+        if require_pinned and not root.is_dir():
+            raise RuntimeError(f"pinned release root is not a directory: {root}")
+        supervisor = supervisor_path_obj.resolve()
         if not supervisor.is_relative_to(root):
             raise RuntimeError(
                 f"supervisor path {supervisor} is outside expected release root {root}"
             )
+        if require_pinned and not supervisor.is_file():
+            raise RuntimeError(
+                f"pinned supervisor path is not an existing regular file: {supervisor}"
+            )
+        configured_path = str(supervisor)
+
+    if require_pinned:
+        interpreter_path = Path(configured_python).expanduser()
+        if not interpreter_path.is_absolute():
+            raise RuntimeError("pinned interpreter must be an absolute path")
+        try:
+            interpreter = interpreter_path.resolve(strict=True)
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                f"pinned interpreter does not exist: {interpreter_path}"
+            ) from exc
+        if not interpreter.is_file() or not os.access(interpreter, os.X_OK):
+            raise RuntimeError(
+                f"pinned interpreter is not an executable regular file: {interpreter}"
+            )
+        configured_python = str(interpreter)
 
     return [
         configured_python,
