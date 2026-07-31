@@ -150,33 +150,21 @@ def test_generated_recap_uses_compact_result_and_bounded_artifact(
 def test_recap_limit_cannot_disable_or_exceed_the_global_cap(invalid_limit) -> None:
     now = datetime(2026, 7, 23, 12, tzinfo=timezone.utc)
     with pytest.raises((TypeError, ValueError)):
-        build_evidence_recap(
-            [], "daily", now.replace(hour=0), now, [], max_events=invalid_limit
-        )
+        build_evidence_recap([], "daily", now.replace(hour=0), now, [], max_events=invalid_limit)
 
 
-def test_malformed_unbounded_event_id_is_replaced_by_bounded_digest(
-    tmp_path: Path,
-) -> None:
+def test_malformed_unbounded_event_id_is_replaced_by_bounded_digest(tmp_path: Path) -> None:
     config = config_for(tmp_path)
     index = config.journal_root / ".index"
     index.mkdir(parents=True)
-    index.joinpath("events-2026-07-23.json").write_text(
-        json.dumps(
-            [
-                {
-                    "type": "decision",
-                    "snippet": "bounded citation",
-                    "idempotency_key": "x" * 100_000,
-                    "_timestamp": "2026-07-23T05:00:00Z",
-                }
-            ]
-        )
-    )
+    index.joinpath("events-2026-07-23.json").write_text(json.dumps([{
+        "type": "decision",
+        "snippet": "bounded citation",
+        "idempotency_key": "x" * 100_000,
+        "_timestamp": "2026-07-23T05:00:00Z",
+    }]))
 
-    result = generate_recap(
-        "daily", config, datetime(2026, 7, 23, 12, tzinfo=timezone.utc)
-    )
+    result = generate_recap("daily", config, datetime(2026, 7, 23, 12, tzinfo=timezone.utc))
     manifest = json.loads(Path(result["citation_manifest_path"]).read_text())
 
     assert len(manifest["cited_event_ids"]) == 1
@@ -186,9 +174,7 @@ def test_malformed_unbounded_event_id_is_replaced_by_bounded_digest(
     assert result["citation_manifest_bytes"] < MAX_RECAP_MANIFEST_BYTES
 
 
-def test_oversized_recap_fails_before_writing_artifacts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_oversized_recap_fails_before_writing_artifacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     config = config_for(tmp_path)
     monkeypatch.setattr(
         "prismatic.journal.live_cron_health",

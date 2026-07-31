@@ -92,10 +92,7 @@ def test_clean_room_installed_wheel_plugin_contract(tmp_path: Path) -> None:
     venv_py = venv_dir / "bin" / "python"
     venv_pip = venv_dir / "bin" / "pip"
 
-    subprocess.run(
-        [str(venv_pip), "install", "--force-reinstall", f"{wheel_path}[all]"],
-        check=True,
-    )
+    subprocess.run([str(venv_pip), "install", "--force-reinstall", f"{wheel_path}[all]"], check=True)
 
     empty_cwd = tmp_path / "empty_cwd"
     empty_cwd.mkdir()
