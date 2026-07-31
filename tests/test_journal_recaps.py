@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 from datetime import datetime, timezone
@@ -9,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+import prismatic.journal as journal_module
 from prismatic.journal import (
     JournalConfig,
     MAX_RECAP_BYTES,
@@ -274,10 +276,10 @@ def test_pair_replace_failure_restores_previous_artifacts(tmp_path: Path, monkey
     source.write_text(json.dumps([{"type": "decision", "snippet": "new", "idempotency_key": "b" * 64, "_timestamp": "2026-07-23T06:00:00Z"}]))
     real_replace = os.replace
 
-    def fail_manifest_install(src, dst) -> None:
+    def fail_manifest_install(src, dst, **kwargs) -> None:
         if Path(dst).name == manifest.name and Path(src).name == "manifest.stage":
             raise OSError("injected manifest install failure")
-        real_replace(src, dst)
+        real_replace(src, dst, **kwargs)
 
     monkeypatch.setattr("prismatic.journal.os.replace", fail_manifest_install)
     with pytest.raises(OSError, match="injected"):
@@ -288,12 +290,13 @@ def test_pair_replace_failure_restores_previous_artifacts(tmp_path: Path, monkey
     assert not list(target.parent.glob(".recap-transaction-*"))
 
 
-def test_transaction_does_not_use_descriptor_allocating_mkstemp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_transaction_uses_portable_descriptor_relative_operations(tmp_path: Path) -> None:
     config = config_for(tmp_path)
-    monkeypatch.setattr(
-        "prismatic.journal.tempfile.mkstemp",
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("mkstemp must not be used")),
-    )
+    implementation = inspect.getsource(journal_module._replace_artifact_pair)
+    assert "mkstemp" not in implementation
+    assert "/proc" not in implementation
+    assert "src_dir_fd" in implementation
+    assert "dst_dir_fd" in implementation
 
     result = generate_recap("daily", config, datetime(2026, 7, 23, 12, tzinfo=timezone.utc))
 
@@ -316,14 +319,14 @@ def test_rollback_failure_preserves_recoverable_backup(tmp_path: Path, monkeypat
     source.write_text(json.dumps([{"type": "decision", "snippet": "new", "idempotency_key": "b" * 64, "_timestamp": "2026-07-23T06:00:00Z"}]))
     real_replace = os.replace
 
-    def fail_install_and_target_restore(src, dst) -> None:
+    def fail_install_and_target_restore(src, dst, **kwargs) -> None:
         source_name = Path(src).name
         destination_name = Path(dst).name
         if source_name == "manifest.stage" and destination_name == manifest.name:
             raise OSError("injected manifest install failure")
         if source_name == "recap.backup" and destination_name == target.name:
             raise OSError("injected target rollback failure")
-        real_replace(src, dst)
+        real_replace(src, dst, **kwargs)
 
     monkeypatch.setattr("prismatic.journal.os.replace", fail_install_and_target_restore)
     with pytest.raises(RuntimeError, match="recoverable files are preserved"):

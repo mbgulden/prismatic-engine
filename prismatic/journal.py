@@ -15,10 +15,9 @@ import hashlib
 import json
 import os
 import re
-import shutil
+import secrets
 import stat
 import subprocess
-import tempfile
 import urllib.error
 import urllib.request
 from collections import defaultdict
@@ -762,58 +761,88 @@ def _rendered_field(value: Any, limit: int) -> str:
     return redact(str(value)).replace("\r", " ").replace("\n", " ")[:limit]
 
 
-def _write_bytes(path: Path, payload: bytes) -> None:
-    with path.open("wb") as handle:
+def _write_bytes_at(directory_fd: int, name: str, payload: bytes) -> None:
+    descriptor = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory_fd)
+    with os.fdopen(descriptor, "wb") as handle:
         handle.write(payload)
         handle.flush()
         os.fsync(handle.fileno())
 
 
-def _replace_artifact_pair(target: Path, target_payload: bytes, manifest: Path, manifest_payload: bytes) -> None:
-    """Replace both artifacts; preserve recoverable backups if rollback fails."""
-    transaction_dir = Path(tempfile.mkdtemp(prefix=".recap-transaction-", dir=target.parent))
-    staged_target = transaction_dir / "recap.stage"
-    staged_manifest = transaction_dir / "manifest.stage"
-    backup_target = transaction_dir / "recap.backup"
-    backup_manifest = transaction_dir / "manifest.backup"
+def _create_transaction_directory(directory_fd: int) -> tuple[str, int]:
+    for _ in range(16):
+        name = f".recap-transaction-{secrets.token_hex(12)}"
+        try:
+            os.mkdir(name, 0o700, dir_fd=directory_fd)
+        except FileExistsError:
+            continue
+        try:
+            descriptor = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory_fd)
+        except BaseException:
+            os.rmdir(name, dir_fd=directory_fd)
+            raise
+        return name, descriptor
+    raise FileExistsError("unable to allocate unique recap transaction directory")
+
+
+def _replace_artifact_pair(directory_fd: int, target_name: str, target_payload: bytes, manifest_name: str, manifest_payload: bytes) -> None:
+    """Replace both artifacts using portable descriptor-relative recovery."""
+    transaction_name, transaction_fd = _create_transaction_directory(directory_fd)
+    staged_target = "recap.stage"
+    staged_manifest = "manifest.stage"
+    backup_target = "recap.backup"
+    backup_manifest = "manifest.backup"
     target_backed_up = manifest_backed_up = False
     target_installed = manifest_installed = False
     preserve_transaction = False
     try:
-        _write_bytes(staged_target, target_payload)
-        _write_bytes(staged_manifest, manifest_payload)
-        if target.exists():
-            os.replace(target, backup_target)
+        _write_bytes_at(transaction_fd, staged_target, target_payload)
+        _write_bytes_at(transaction_fd, staged_manifest, manifest_payload)
+        try:
+            os.replace(target_name, backup_target, src_dir_fd=directory_fd, dst_dir_fd=transaction_fd)
             target_backed_up = True
-        if manifest.exists():
-            os.replace(manifest, backup_manifest)
+        except FileNotFoundError:
+            pass
+        try:
+            os.replace(manifest_name, backup_manifest, src_dir_fd=directory_fd, dst_dir_fd=transaction_fd)
             manifest_backed_up = True
-        os.replace(staged_target, target)
+        except FileNotFoundError:
+            pass
+        os.replace(staged_target, target_name, src_dir_fd=transaction_fd, dst_dir_fd=directory_fd)
         target_installed = True
-        os.replace(staged_manifest, manifest)
+        os.replace(staged_manifest, manifest_name, src_dir_fd=transaction_fd, dst_dir_fd=directory_fd)
         manifest_installed = True
     except BaseException as original_error:
         rollback_errors: list[BaseException] = []
         for destination, backup, backed_up, installed in (
-            (target, backup_target, target_backed_up, target_installed),
-            (manifest, backup_manifest, manifest_backed_up, manifest_installed),
+            (target_name, backup_target, target_backed_up, target_installed),
+            (manifest_name, backup_manifest, manifest_backed_up, manifest_installed),
         ):
             try:
                 if backed_up:
-                    os.replace(backup, destination)
+                    os.replace(backup, destination, src_dir_fd=transaction_fd, dst_dir_fd=directory_fd)
                 elif installed:
-                    destination.unlink(missing_ok=True)
+                    os.unlink(destination, dir_fd=directory_fd)
             except BaseException as rollback_error:
                 rollback_errors.append(rollback_error)
         if rollback_errors:
             preserve_transaction = True
             raise RuntimeError(
-                f"artifact replacement failed and rollback is incomplete; recoverable files are preserved in {transaction_dir.name}"
+                f"artifact replacement failed and rollback is incomplete; recoverable files are preserved in {transaction_name}"
             ) from original_error
         raise
     finally:
+        try:
+            if not preserve_transaction:
+                for name in (staged_target, staged_manifest, backup_target, backup_manifest):
+                    try:
+                        os.unlink(name, dir_fd=transaction_fd)
+                    except FileNotFoundError:
+                        pass
+        finally:
+            os.close(transaction_fd)
         if not preserve_transaction:
-            shutil.rmtree(transaction_dir, ignore_errors=True)
+            os.rmdir(transaction_name, dir_fd=directory_fd)
 
 
 def build_evidence_recap(events: list[dict[str, Any]], period: str, start: dt.datetime, end: dt.datetime, cron_health: list[dict[str, Any]], max_events: int = MAX_RECAP_EVENTS) -> tuple[str, list[str]]:
@@ -870,8 +899,7 @@ def generate_recap(period: str, config: JournalConfig | None = None, now: dt.dat
         stem = f"{period}-{start.date().isoformat()}"
         target = target_dir / f"{stem}.md"
         manifest = target_dir / f"{stem}.citations.json"
-        bound_dir = Path(f"/proc/self/fd/{target_dir_fd}")
-        _replace_artifact_pair(bound_dir / target.name, encoded, bound_dir / manifest.name, manifest_payload)
+        _replace_artifact_pair(target_dir_fd, target.name, encoded, manifest.name, manifest_payload)
     finally:
         os.close(target_dir_fd)
     return {"period": period, "path": str(target), "citation_manifest_path": str(manifest), "source_event_count": len(events), "rendered_claim_count": len(cited_ids), "artifact_bytes": len(encoded), "citation_manifest_bytes": len(manifest_payload), "quiet": not events}
