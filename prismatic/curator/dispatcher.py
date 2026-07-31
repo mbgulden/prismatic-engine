@@ -208,29 +208,63 @@ def decide_dispatch(lane_hint: str | None, budget_tracker: LaneBudgetTracker | N
     )
 
 
-def build_supervisor_cmd(issue_id: str, lane: str, model: str,
-                         supervisor_path: str | None = None) -> list[str]:
-    """Build the argv for spawning a supervisor that uses the given model.
+def build_supervisor_cmd(
+    issue_id: str,
+    lane: str,
+    model: str,
+    supervisor_path: str | None = None,
+    python_executable: str | None = None,
+    expected_release_root: str | None = None,
+) -> list[str]:
+    """Build an exact single-issue supervisor command.
 
-    `supervisor_path` defaults to $PRISMATIC_SUPERVISOR_PATH if set.
-    Tests can pass a tmp path.
+    ``lane`` remains part of the curator's durable dispatch decision, but it is
+    intentionally not forwarded: curator agent lanes and supervisor scheduler
+    lanes are different contracts. Production can set
+    ``PRISMATIC_REQUIRE_PINNED_SUPERVISOR=1`` to require explicit interpreter,
+    supervisor, and release-root provenance instead of compatibility fallbacks.
     """
-    path = supervisor_path or os.environ.get("PRISMATIC_SUPERVISOR_PATH")
-    if not path:
-        # Final fallback: relative to PRISMATIC_HOME (defaults to ~).
+    del lane
+    configured_path = supervisor_path or os.environ.get("PRISMATIC_SUPERVISOR_PATH")
+    configured_python = python_executable or os.environ.get("PRISMATIC_SUPERVISOR_PYTHON")
+    release_root = expected_release_root or os.environ.get("PRISMATIC_RELEASE_ROOT")
+    require_pinned = os.environ.get("PRISMATIC_REQUIRE_PINNED_SUPERVISOR") == "1"
+
+    if require_pinned and not (configured_path and configured_python and release_root):
+        raise RuntimeError(
+            "pinned supervisor dispatch requires path, interpreter, and release root"
+        )
+
+    if not configured_path:
         home = os.environ.get("PRISMATIC_HOME") or os.path.expanduser("~")
-        path = os.path.join(home, ".hermes/profiles/orchestrator/scripts/agy_sandbox_event_supervisor.py")
+        configured_path = os.path.join(
+            home,
+            ".hermes/profiles/orchestrator/scripts/agy_sandbox_event_supervisor.py",
+        )
+    if not configured_python:
+        configured_python = "python3"
+
+    if release_root:
+        root = Path(release_root).expanduser().resolve()
+        supervisor = Path(configured_path).expanduser().resolve()
+        if not supervisor.is_relative_to(root):
+            raise RuntimeError(
+                f"supervisor path {supervisor} is outside expected release root {root}"
+            )
+
     return [
-        "python3",
-        path,
-        "--issue", issue_id,
-        "--from-linear",
-        "--lane-mode", "auto",
-        "--active-project", "pwp",
-        "--backlog-age-days", "30",
-        "--jitter", "5-10",
-        "--backoff", "3-8",
-        "--max-concurrent", "2",
-        "--model", model,
-        "--lane", lane,
+        configured_python,
+        configured_path,
+        "--issue",
+        issue_id,
+        "--lane-mode",
+        "auto",
+        "--jitter",
+        "5-10",
+        "--backoff",
+        "3-8",
+        "--max-concurrent",
+        "2",
+        "--model",
+        model,
     ]

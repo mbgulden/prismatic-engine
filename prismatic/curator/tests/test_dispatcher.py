@@ -137,15 +137,52 @@ def test_decide_dispatch_blocks_when_over_cap(fresh_tracker):
 
 # === build_supervisor_cmd tests ===
 
-def test_build_supervisor_cmd_includes_lane_and_model():
+def test_build_supervisor_cmd_is_exact_issue_and_preserves_model():
     cmd = build_supervisor_cmd("GRO-1234", lane="codex", model="sonnet")
     assert "python3" in cmd[0] or cmd[0] == "python3"
-    assert "--issue" in cmd
-    assert "GRO-1234" in cmd
-    assert "--model" in cmd
-    assert "sonnet" in cmd
-    assert "--lane" in cmd
-    assert "codex" in cmd
+    assert cmd.count("--issue") == 1
+    assert cmd[cmd.index("--issue") + 1] == "GRO-1234"
+    assert "--from-linear" not in cmd
+    assert "--lane" not in cmd
+    assert "codex" not in cmd
+    assert cmd[cmd.index("--model") + 1] == "sonnet"
+
+
+def test_build_supervisor_cmd_uses_explicit_runtime_paths(tmp_path):
+    release = tmp_path / "release"
+    supervisor = release / "scripts" / "agy_sandbox_event_supervisor.py"
+    supervisor.parent.mkdir(parents=True)
+    supervisor.write_text("# fixture\n")
+    cmd = build_supervisor_cmd(
+        "GRO-1234",
+        lane="codex",
+        model="sonnet",
+        supervisor_path=str(supervisor),
+        python_executable="/opt/prismatic/bin/python",
+        expected_release_root=str(release),
+    )
+    assert cmd[:2] == ["/opt/prismatic/bin/python", str(supervisor)]
+
+
+def test_build_supervisor_cmd_rejects_path_outside_release(tmp_path):
+    with pytest.raises(RuntimeError, match="outside expected release root"):
+        build_supervisor_cmd(
+            "GRO-1234",
+            lane="codex",
+            model="sonnet",
+            supervisor_path=str(tmp_path / "outside.py"),
+            python_executable="/opt/prismatic/bin/python",
+            expected_release_root=str(tmp_path / "release"),
+        )
+
+
+def test_build_supervisor_cmd_strict_mode_requires_pins(monkeypatch):
+    monkeypatch.setenv("PRISMATIC_REQUIRE_PINNED_SUPERVISOR", "1")
+    monkeypatch.delenv("PRISMATIC_SUPERVISOR_PATH", raising=False)
+    monkeypatch.delenv("PRISMATIC_SUPERVISOR_PYTHON", raising=False)
+    monkeypatch.delenv("PRISMATIC_RELEASE_ROOT", raising=False)
+    with pytest.raises(RuntimeError, match="requires path, interpreter, and release root"):
+        build_supervisor_cmd("GRO-1234", lane="codex", model="sonnet")
 
 
 def test_build_supervisor_cmd_opus():

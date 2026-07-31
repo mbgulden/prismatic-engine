@@ -3546,18 +3546,8 @@ def linear_watchdog_loop(supervisor: EventDrivenSupervisor, stop_event: threadin
 
 
 # ── Main ─────────────────────────────────────────────────
-def main():
-    # Single-instance lock: prevent watchdog cascade. (Jul 1 2026)
-    # The event_driven_watchdog.sh respawns this script every 5 min if it
-    # dies, and previously 13 zombie supervisors piled up. The lock ensures
-    # only one supervisor runs at a time.
-    if not acquire_supervisor_lock():
-        print(f"  [lock] another supervisor holds {SUPERVISOR_LOCK_PATH} — exiting", flush=True)
-        sys.exit(0)
-    atexit.register(release_supervisor_lock)
-    # Note: --issue and --issues modes (one-shot dispatches) bypass the lock
-    # so multiple ad-hoc invocations can still run in parallel.
-
+def build_argument_parser() -> argparse.ArgumentParser:
+    """Build the supervisor CLI parser without acquiring locks or touching runtime state."""
     parser = argparse.ArgumentParser(description="AGY Sandbox Event-Driven Supervisor")
     parser.add_argument("--issue", help="Single issue ID (e.g., GRO-1928)")
     parser.add_argument("--issues", help="Comma-separated issue IDs")
@@ -3616,6 +3606,22 @@ def main():
                         help="Run continuously: idle_timeout becomes infinite, "
                              "supervisor stays alive forever until SIGTERM. "
                              "Replaces the cron-cycle exit pattern (Jun 30 fix).")
+    return parser
+
+
+def main():
+    # Single-instance lock: prevent watchdog cascade. (Jul 1 2026)
+    # The event_driven_watchdog.sh respawns this script every 5 min if it
+    # dies, and previously 13 zombie supervisors piled up. The lock ensures
+    # only one supervisor runs at a time.
+    if not acquire_supervisor_lock():
+        print(f"  [lock] another supervisor holds {SUPERVISOR_LOCK_PATH} — exiting", flush=True)
+        sys.exit(0)
+    atexit.register(release_supervisor_lock)
+    # Note: --issue and --issues modes (one-shot dispatches) bypass the lock
+    # so multiple ad-hoc invocations can still run in parallel.
+
+    parser = build_argument_parser()
     args = parser.parse_args()
     if args.task_file is not None and (
         not args.issue or args.issues or args.from_linear
