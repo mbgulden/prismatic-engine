@@ -4,7 +4,7 @@
 **Owner:** Prismatic Engine maintainers
 **Machine-readable registry:** `okf/index.yaml`
 
-The registry is the validation input; this document is the operator-readable explanation. If they conflict, validation fails and the discrepancy must be resolved rather than silently choosing one.
+The registry is the validation input; this document is the operator-readable explanation. The validator fails on objective-ID or system-of-record drift in the canonical parity table; other semantic discrepancies must be resolved through independent review rather than silently choosing one.
 
 ## Purpose
 
@@ -17,6 +17,22 @@ Objective → Key Result → Function → Evidence
 ```
 
 The goal is to make every real workflow visible, auditable, and eventually operable from the dashboard.
+
+## Canonical registry parity
+
+The validator requires this table to contain every machine-readable objective ID exactly once with a byte-exact matching system of record. Other explanatory tables remain human guidance and require semantic review.
+
+<!-- OKF_REGISTRY_PARITY_BEGIN -->
+| Objective ID | System of record |
+|---|---|
+| `verified-agent-output` | Git object identity + versioned verification receipts + Merge Factory attestations |
+| `provider-neutral-verification` | versioned verification receipts + Merge Factory attestations + Git object identity |
+| `systemic-orchestration-correctness` | durable state stores and event/lease records |
+| `canonical-knowledge` | docs/index.md + okf/index.yaml + accepted ADRs |
+| `sustainable-maintainability` | versioned quality, incident, rollback, and evidence metrics |
+| `canonical-agy-execution` | canonical AGY manifest + launch/process receipts + exact task and executable digests |
+| `authoritative-operator-view` | plugin/job/artifact/audit and orchestration stores |
+<!-- OKF_REGISTRY_PARITY_END -->
 
 ## Documentation rule
 
@@ -34,10 +50,20 @@ If a workflow exists in PE Core, it should have:
 
 | Objective | Key result | Function/workflow | Evidence | System of record | Current surface |
 |---|---|---|---|---|---|
-| Agent output is accepted only with independent evidence | Reviewed SHA equals PR head; required proof classes pass | Merge Factory admission, lease, lock, and judge attestation | exact-SHA review, canonical CI, installed-artifact and post-merge proof | Git/GitHub + Merge Factory attestations | CLI/API/CI |
+| Agent output is accepted only with independent evidence | Reviewed SHA equals candidate head; required proof classes pass | Merge Factory admission, lease, lock, and judge attestation | exact-SHA review, validated clean-room receipt, installed-artifact and post-merge proof | Git object identity + receipt store + Merge Factory attestations | CLI/API/provider adapters |
+| Merge evidence is portable across Git providers | One approved independent clean-room backend emits a valid exact-head receipt; provider status cannot override it | provider-neutral policy runner, receipt validator, merge judge, and thin provider adapters | versioned receipt, clean-checkout identity, command/log/artifact digests, verifier identity, freshness/revocation decision | receipt store + Git object identity + Merge Factory attestation | canonical policy; Linear epic GRO-4203; runner pending |
 | Orchestration remains correct under replay and contention | cap is never exceeded; stale holders cannot mutate | atomic leases, fencing, idempotent cohort, recovery drills | barrier/race/adversarial tests and retained recovery evidence | durable orchestration stores | CLI/API |
 | Verification remains effective | planted faults are detected and stale policies are surfaced | meta-verification maintenance loop | seeded-fault detection and verifier-drift reports | verification evidence ledger | CI/operations |
 | Agent speed remains sustainable | accepted value rises without hidden debt | quality/debt maintenance loop | escaped defects, rollback, rework, evidence latency, 30/90/180-day burden | versioned quality/incident metrics | reports/dashboard target |
+
+## Canonical AGY execution OKF map
+
+| Objective | Key result | Function/workflow | Evidence | System of record | Current surface |
+|---|---|---|---|---|---|
+| Unattended AGY work follows one durable workflow | Every PE launch uses `/goal`, a hash-bound binary/task, and a unique tmux anchor | `prismatic agy contract|render|launch|wait` | manifest, launch receipt, process receipt, plan/result/log artifacts | canonical AGY manifest + launch/process receipts + exact task and executable digests | CLI/harness/contract |
+| Long AGY work remains observable without arbitrary termination | No wall-clock deadline; exact process-tree CPU/I/O/log/artifact activity is classified as working/quiet/suspect without auto-kill | `prismatic.agy_activity` + `/api/gateway/agy/activity` | activity receipts, API tests, dashboard source/generated markers | canonical AGY activity receipts | Dashboard AGY Exact-Run Activity panel |
+| AGY failure is contained and attributable | Explicit cancellation and terminal cleanup use child-subreaper adoption and exact PID/start-tick verification for the full descendant tree before session teardown or slot release; stdout/stderr/diagnostics remain separate; drift fails closed | `launch_tmux()` / `wait_tmux()` / `AGYCLIHarness.cancel()` | normal-exit and cancellation tests with detached SIGTERM-ignoring `setsid()` descendants plus retained receipts | launch/process/cancel receipt store | CLI/harness/dashboard |
+| Producer completion does not authorize acceptance | Every result remains pending independent exact-artifact verification | canonical result marker + downstream verifier/merge judge | result digest, reviewed commit/tree, independent receipt | result artifact + verification receipt + Git identity | contract; event binding pending |
 
 ## Public-launch OKF map
 
@@ -138,3 +164,4 @@ Fallback CLI/API command
 | Media blueprint structured governance | next slice |
 | Business plugin blueprint pack | following slice |
 | Dashboard OKF/evidence board implementation | future implementation |
+| Provider-neutral verification policy | accepted in ADR-0002; implementation tracked by GRO-4203 |

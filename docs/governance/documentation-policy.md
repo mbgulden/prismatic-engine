@@ -33,7 +33,7 @@ Every material change must identify:
 
 ## Prohibited ambiguity
 
-Do not call a dashboard, chat message, producer result, mutable log, branch name, or unpinned external path the source of truth. They may be operator views or evidence references only.
+Do not call a dashboard, chat message, producer result, mutable log, branch name, provider check/status icon, or unpinned external path the source of truth. They may be operator views or evidence references only. Source adapters bind source identity and acquisition but cannot authorize a merge. GitHub Actions and other CI execution environments are verifier backends only when explicitly approved, and their output is trusted only through the accepted provider-neutral receipt contract.
 
 ## Supersession
 

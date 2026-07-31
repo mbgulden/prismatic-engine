@@ -1,0 +1,8 @@
+{
+  "base_commit": "e0069a70801840b931057997e344184797ff6f91",
+  "base_tree": "4a771ff26ee504a73a719e4108628894adb5138e",
+  "upstream_contract": "docs/contracts/cron-runtime-authority-v1.md",
+  "upstream_contract_sha256": "4d8994cb6c54d2f47912a144dc759285a80841328ee56fb8823ffadb0c62d024",
+  "absent_hook_path": "/home/ubuntu/.prismatic/releases/e63d621a26a944a66cd4af2c6b5ab3084fc92b55/bin/pe-cron-trigger",
+  "hook_exists": false
+}

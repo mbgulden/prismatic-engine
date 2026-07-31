@@ -26,8 +26,14 @@ When sources disagree, fail closed and open a decision/update rather than choosi
 - [OKF evidence map](okf-evidence-map.md)
 - [Verification Engine architecture](architecture/verification-engine.md)
 - [Verification contract](contracts/verification-contract.md)
+- [Canonical AGY CLI workflow](contracts/canonical-agy-cli-workflow.md)
+- [Portable Antigravity customizations](contracts/antigravity-customizations.md)
+- [Antigravity customization audit](research/antigravity-customization-audit.md)
+- [AGY workflow deep dive](research/agentic-swarm-ops-agy-workflow-deep-dive.md)
 - [Evidence retention](contracts/evidence-retention.md)
 - [Decision index](decisions/index.md)
+- [ADR-0002: Provider-neutral verification receipts](decisions/ADR-0002-provider-neutral-verification-receipts.md)
+- [ADR-0003: Canonical AGY CLI workflow](decisions/ADR-0003-canonical-agy-cli-workflow.md)
 - [Verifiers Are King evidence review](research/verifiers-are-king-evidence-review.md)
 - Machine-readable OKF registry: `okf/index.yaml`
 

@@ -41,35 +41,76 @@
                 </div>
             </section>
 
-            <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-emerald-500/80 shadow-lg shadow-emerald-950/10" data-proof-marker="agy-completed-work-ingestion-card" data-golden-marker="ONE_AGENT_COMPLETED_WORK_TO_VERIFIED_PR_DRY_RUN_OK">
+            <section id="admission-panel" class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-amber-500/80 shadow-lg shadow-amber-950/10" data-proof-marker="dashboard-admission-v1">
+                <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <h2 class="text-sm font-bold text-slate-200 uppercase tracking-[0.18em]">Task Admission</h2>
+                            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-amber-500/20 bg-amber-500/10 text-amber-300">Operator / Durable Intent</span>
+                        </div>
+                        <p class="mt-1 text-xs text-slate-400"><strong>Records durable intent only; does not launch a producer.</strong></p>
+                    </div>
+                    <button type="button" onclick="loadTaskAdmissions()" class="px-3 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider bg-slate-800 text-slate-200 border border-slate-700/50 hover:bg-slate-700/70 min-h-[36px]">Refresh readback</button>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 mt-4 text-xs">
+                    <label class="space-y-1"><span class="text-slate-400">Task ID</span><input id="admission-task-id" autocomplete="off" placeholder="GRO-4210" class="w-full bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                    <label class="space-y-1"><span class="text-slate-400">Producer identity</span><input id="admission-producer" autocomplete="off" placeholder="agy-pnv6" class="w-full bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                    <label class="space-y-1"><span class="text-slate-400">Writer cap</span><input id="admission-writer-cap" value="1" readonly class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-slate-400"></label>
+                    <label class="space-y-1"><span class="text-slate-400">Base commit</span><input id="admission-base-commit" autocomplete="off" maxlength="40" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                    <label class="space-y-1"><span class="text-slate-400">Base tree</span><input id="admission-base-tree" autocomplete="off" maxlength="40" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                    <label class="space-y-1"><span class="text-slate-400">Task-file SHA-256</span><input id="admission-task-sha" autocomplete="off" maxlength="64" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                    <label class="space-y-1"><span class="text-slate-400">Canonical worktree</span><input id="admission-worktree" autocomplete="off" placeholder="/absolute/allowlisted/worktree" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                    <label class="space-y-1"><span class="text-slate-400">Relative task file</span><input id="admission-task-file" autocomplete="off" placeholder="tasks/GRO-4210/TASK.md" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                    <label class="space-y-1"><span class="text-slate-400">Created at (UTC RFC3339)</span><input id="admission-created-at" autocomplete="off" placeholder="2026-07-24T20:45:00Z" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                    <label class="space-y-1"><span class="text-slate-400">Idempotency key</span><input id="admission-idempotency" autocomplete="off" minlength="32" maxlength="128" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                    <label class="space-y-1 md:col-span-2"><span class="text-slate-400">Transient operator bearer</span><input id="admission-token" type="password" autocomplete="off" aria-describedby="admission-token-note" class="w-full bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"><span id="admission-token-note" class="block text-[10px] text-slate-500">Used once and cleared. Never stored or rendered.</span></label>
+                </div>
+                <div class="flex flex-wrap items-center gap-3 mt-4">
+                    <button type="button" id="admission-submit" onclick="submitTaskAdmission()" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider bg-amber-500/15 text-amber-200 border border-amber-500/30 hover:bg-amber-500/25 min-h-[40px]">Admit exact task</button>
+                    <span id="admission-status" role="status" class="text-xs text-slate-400">No admission submitted.</span>
+                </div>
+                <pre id="admission-proof" class="mt-3 hidden overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-300 whitespace-pre-wrap"></pre>
+                <div id="admission-history" class="mt-3 text-xs text-slate-500">Authenticated readback not loaded.</div>
+            </section>
+
+            <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-emerald-500/80 shadow-lg shadow-emerald-950/10" data-proof-marker="provider-neutral-verification-receipt-card" data-golden-marker="PROVIDER_NEUTRAL_VERIFICATION_RECEIPT_OK">
                 <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                     <div class="space-y-1">
                         <div class="flex items-center gap-2 flex-wrap">
-                            <h2 class="text-sm font-bold text-slate-200 uppercase tracking-[0.18em]">AGY Completed Work Gate</h2>
+                            <h2 class="text-sm font-bold text-slate-200 uppercase tracking-[0.18em]">Provider-Neutral Verification</h2>
                             <span id="completed-work-gate-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-slate-700 bg-slate-800 text-slate-300">Checking</span>
                         </div>
-                        <p class="text-xs text-slate-500">Persisted AGY handoff rows run through dashboard, Linear, and verified PR dry-run gates before Fred merge review. No real PR, no auto-merge.</p>
+                        <p class="text-xs text-slate-500">Native immutable receipts are the acceptance authority. GitHub and hosted CI are optional transport signals and never decide acceptance.</p>
                     </div>
-                    <div class="text-[11px] text-slate-400 font-mono" id="completed-work-gate-marker">AGY_COMPLETED_WORK_INGESTION_OK</div>
+                    <div class="text-[11px] text-slate-400 font-mono" id="completed-work-gate-marker">PROVIDER_NEUTRAL_VERIFICATION_RECEIPT_OK</div>
                 </div>
-                <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mt-4 text-xs">
+                <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-3 mt-4 text-xs">
                     <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
-                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Classification</div>
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Decision</div>
                         <div id="completed-work-classification" class="mt-1 font-semibold text-slate-100">—</div>
                     </div>
                     <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
-                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Eligible</div>
-                        <div id="completed-work-eligible" class="mt-1 font-semibold text-slate-100">—</div>
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Exact artifact</div>
+                        <div id="completed-work-artifact" class="mt-1 text-[11px] font-mono text-slate-300 break-all">—</div>
                     </div>
                     <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
-                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Linear state</div>
-                        <div id="completed-work-linear" class="mt-1 text-[11px] text-slate-300">Awaiting gate proof</div>
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Proof classes</div>
+                        <div id="completed-work-proof-classes" class="mt-1 text-[11px] text-slate-300">—</div>
                     </div>
                     <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
-                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Reason</div>
-                        <div id="completed-work-reason" class="mt-1 text-[11px] text-slate-400">No packet evaluated yet</div>
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Verifier / isolation</div>
+                        <div id="completed-work-verifier" class="mt-1 text-[11px] text-slate-300 break-all">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Freshness / revocation</div>
+                        <div id="completed-work-freshness" class="mt-1 text-[11px] text-slate-300">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Hosted signal</div>
+                        <div id="completed-work-hosted-signal" class="mt-1 text-[11px] text-slate-300">Optional / none</div>
                     </div>
                 </div>
+                <pre id="completed-work-receipt-proof" class="mt-3 overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-300 whitespace-pre-wrap">No native receipts persisted yet</pre>
             </section>
 
             <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-cyan-500/80 shadow-lg shadow-cyan-950/10" data-proof-marker="one-agent-promotion-decision-ledger-card" data-golden-marker="ONE_AGENT_PROMOTION_DECISION_LEDGER_OK">
@@ -735,6 +776,16 @@
                             </tbody>
                         </table>
                     </div>
+                </div>
+                <!-- Canonical AGY Activity -->
+                <div id="agy-activity-panel" class="glass-panel p-5 rounded-xl space-y-4 lg:col-span-2">
+                    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-2">
+                        <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider">AGY Exact-Run Activity</h3>
+                        <span id="agy-activity-policy" class="px-2 py-1 rounded-full text-[10px] font-bold border border-cyan-500/30 bg-cyan-500/10 text-cyan-200">No wall-clock cap · monitor only</span>
+                    </div>
+                    <p class="text-xs text-slate-500">Durable process-tree, CPU, I/O, log, and artifact activity receipts. Quiet or suspect is a review signal—not an automatic kill.</p>
+                    <div id="agy-activity-summary" class="text-xs text-slate-400">Loading canonical AGY activity…</div>
+                    <div id="agy-activity-runs" class="grid grid-cols-1 xl:grid-cols-2 gap-3"></div>
                 </div>
             </div>
         </div>

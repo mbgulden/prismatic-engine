@@ -203,35 +203,76 @@
                 </div>
             </section>
 
-            <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-emerald-500/80 shadow-lg shadow-emerald-950/10" data-proof-marker="agy-completed-work-ingestion-card" data-golden-marker="ONE_AGENT_COMPLETED_WORK_TO_VERIFIED_PR_DRY_RUN_OK">
+            <section id="admission-panel" class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-amber-500/80 shadow-lg shadow-amber-950/10" data-proof-marker="dashboard-admission-v1">
+                <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <h2 class="text-sm font-bold text-slate-200 uppercase tracking-[0.18em]">Task Admission</h2>
+                            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-amber-500/20 bg-amber-500/10 text-amber-300">Operator / Durable Intent</span>
+                        </div>
+                        <p class="mt-1 text-xs text-slate-400"><strong>Records durable intent only; does not launch a producer.</strong></p>
+                    </div>
+                    <button type="button" onclick="loadTaskAdmissions()" class="px-3 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider bg-slate-800 text-slate-200 border border-slate-700/50 hover:bg-slate-700/70 min-h-[36px]">Refresh readback</button>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 mt-4 text-xs">
+                    <label class="space-y-1"><span class="text-slate-400">Task ID</span><input id="admission-task-id" autocomplete="off" placeholder="GRO-4210" class="w-full bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                    <label class="space-y-1"><span class="text-slate-400">Producer identity</span><input id="admission-producer" autocomplete="off" placeholder="agy-pnv6" class="w-full bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                    <label class="space-y-1"><span class="text-slate-400">Writer cap</span><input id="admission-writer-cap" value="1" readonly class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-slate-400"></label>
+                    <label class="space-y-1"><span class="text-slate-400">Base commit</span><input id="admission-base-commit" autocomplete="off" maxlength="40" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                    <label class="space-y-1"><span class="text-slate-400">Base tree</span><input id="admission-base-tree" autocomplete="off" maxlength="40" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                    <label class="space-y-1"><span class="text-slate-400">Task-file SHA-256</span><input id="admission-task-sha" autocomplete="off" maxlength="64" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                    <label class="space-y-1"><span class="text-slate-400">Canonical worktree</span><input id="admission-worktree" autocomplete="off" placeholder="/absolute/allowlisted/worktree" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                    <label class="space-y-1"><span class="text-slate-400">Relative task file</span><input id="admission-task-file" autocomplete="off" placeholder="tasks/GRO-4210/TASK.md" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                    <label class="space-y-1"><span class="text-slate-400">Created at (UTC RFC3339)</span><input id="admission-created-at" autocomplete="off" placeholder="2026-07-24T20:45:00Z" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                    <label class="space-y-1"><span class="text-slate-400">Idempotency key</span><input id="admission-idempotency" autocomplete="off" minlength="32" maxlength="128" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                    <label class="space-y-1 md:col-span-2"><span class="text-slate-400">Transient operator bearer</span><input id="admission-token" type="password" autocomplete="off" aria-describedby="admission-token-note" class="w-full bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"><span id="admission-token-note" class="block text-[10px] text-slate-500">Used once and cleared. Never stored or rendered.</span></label>
+                </div>
+                <div class="flex flex-wrap items-center gap-3 mt-4">
+                    <button type="button" id="admission-submit" onclick="submitTaskAdmission()" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider bg-amber-500/15 text-amber-200 border border-amber-500/30 hover:bg-amber-500/25 min-h-[40px]">Admit exact task</button>
+                    <span id="admission-status" role="status" class="text-xs text-slate-400">No admission submitted.</span>
+                </div>
+                <pre id="admission-proof" class="mt-3 hidden overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-300 whitespace-pre-wrap"></pre>
+                <div id="admission-history" class="mt-3 text-xs text-slate-500">Authenticated readback not loaded.</div>
+            </section>
+
+            <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-emerald-500/80 shadow-lg shadow-emerald-950/10" data-proof-marker="provider-neutral-verification-receipt-card" data-golden-marker="PROVIDER_NEUTRAL_VERIFICATION_RECEIPT_OK">
                 <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                     <div class="space-y-1">
                         <div class="flex items-center gap-2 flex-wrap">
-                            <h2 class="text-sm font-bold text-slate-200 uppercase tracking-[0.18em]">AGY Completed Work Gate</h2>
+                            <h2 class="text-sm font-bold text-slate-200 uppercase tracking-[0.18em]">Provider-Neutral Verification</h2>
                             <span id="completed-work-gate-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-slate-700 bg-slate-800 text-slate-300">Checking</span>
                         </div>
-                        <p class="text-xs text-slate-500">Persisted AGY handoff rows run through dashboard, Linear, and verified PR dry-run gates before Fred merge review. No real PR, no auto-merge.</p>
+                        <p class="text-xs text-slate-500">Native immutable receipts are the acceptance authority. GitHub and hosted CI are optional transport signals and never decide acceptance.</p>
                     </div>
-                    <div class="text-[11px] text-slate-400 font-mono" id="completed-work-gate-marker">AGY_COMPLETED_WORK_INGESTION_OK</div>
+                    <div class="text-[11px] text-slate-400 font-mono" id="completed-work-gate-marker">PROVIDER_NEUTRAL_VERIFICATION_RECEIPT_OK</div>
                 </div>
-                <div class="grid grid-cols-1 md:grid-cols-4 gap-3 mt-4 text-xs">
+                <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-3 mt-4 text-xs">
                     <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
-                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Classification</div>
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Decision</div>
                         <div id="completed-work-classification" class="mt-1 font-semibold text-slate-100">—</div>
                     </div>
                     <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
-                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Eligible</div>
-                        <div id="completed-work-eligible" class="mt-1 font-semibold text-slate-100">—</div>
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Exact artifact</div>
+                        <div id="completed-work-artifact" class="mt-1 text-[11px] font-mono text-slate-300 break-all">—</div>
                     </div>
                     <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
-                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Linear state</div>
-                        <div id="completed-work-linear" class="mt-1 text-[11px] text-slate-300">Awaiting gate proof</div>
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Proof classes</div>
+                        <div id="completed-work-proof-classes" class="mt-1 text-[11px] text-slate-300">—</div>
                     </div>
                     <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
-                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Reason</div>
-                        <div id="completed-work-reason" class="mt-1 text-[11px] text-slate-400">No packet evaluated yet</div>
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Verifier / isolation</div>
+                        <div id="completed-work-verifier" class="mt-1 text-[11px] text-slate-300 break-all">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Freshness / revocation</div>
+                        <div id="completed-work-freshness" class="mt-1 text-[11px] text-slate-300">—</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Hosted signal</div>
+                        <div id="completed-work-hosted-signal" class="mt-1 text-[11px] text-slate-300">Optional / none</div>
                     </div>
                 </div>
+                <pre id="completed-work-receipt-proof" class="mt-3 overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-300 whitespace-pre-wrap">No native receipts persisted yet</pre>
             </section>
 
             <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-cyan-500/80 shadow-lg shadow-cyan-950/10" data-proof-marker="one-agent-promotion-decision-ledger-card" data-golden-marker="ONE_AGENT_PROMOTION_DECISION_LEDGER_OK">
@@ -898,6 +939,16 @@
                         </table>
                     </div>
                 </div>
+                <!-- Canonical AGY Activity -->
+                <div id="agy-activity-panel" class="glass-panel p-5 rounded-xl space-y-4 lg:col-span-2">
+                    <div class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-2">
+                        <h3 class="text-sm font-bold text-slate-300 uppercase tracking-wider">AGY Exact-Run Activity</h3>
+                        <span id="agy-activity-policy" class="px-2 py-1 rounded-full text-[10px] font-bold border border-cyan-500/30 bg-cyan-500/10 text-cyan-200">No wall-clock cap · monitor only</span>
+                    </div>
+                    <p class="text-xs text-slate-500">Durable process-tree, CPU, I/O, log, and artifact activity receipts. Quiet or suspect is a review signal—not an automatic kill.</p>
+                    <div id="agy-activity-summary" class="text-xs text-slate-400">Loading canonical AGY activity…</div>
+                    <div id="agy-activity-runs" class="grid grid-cols-1 xl:grid-cols-2 gap-3"></div>
+                </div>
             </div>
         </div>
 
@@ -1133,7 +1184,7 @@
                     <div class="glass-panel p-5 rounded-xl space-y-4">
                         <div class="flex items-center justify-between gap-3 border-b border-slate-800 pb-2">
                             <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Canonical Merge Map</h2>
-                            <a class="text-[10px] font-bold uppercase tracking-wider text-cyan-400 hover:text-cyan-300" href="https://prismatic.growthwebdev.com/workspace-tree?file=okf/audits/canonical-merge-winner-map-2026-07-06.md" target="_blank" rel="noreferrer">Open audit</a>
+                            <a class="text-[10px] font-bold uppercase tracking-wider text-cyan-400 hover:text-cyan-300" href="/dashboard#workspaces">Open Workspaces</a>
                         </div>
                         <div class="space-y-2 text-xs text-slate-300">
                             <div class="flex items-start justify-between gap-3">
@@ -2719,6 +2770,62 @@
             document.getElementById("foundation-console").textContent = "Console cleared.\n";
         }
 
+        async function loadCanonicalAgyActivity() {
+            const summary = document.getElementById('agy-activity-summary');
+            const runsEl = document.getElementById('agy-activity-runs');
+            if (!summary || !runsEl) return;
+            try {
+                const res = await fetch('/api/gateway/agy/activity?limit=20');
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const payload = await res.json();
+                if (payload.status !== 'ok') {
+                    summary.textContent = payload.reason || 'Canonical AGY activity is not configured.';
+                    runsEl.innerHTML = '';
+                    return;
+                }
+                const runs = payload.runs || [];
+                const counts = payload.activity_counts || {};
+                summary.textContent = `${runs.length} retained run(s) · working ${counts.working || 0} · quiet ${counts.quiet || 0} · suspect ${counts.suspect || 0} · no automatic runtime kill`;
+                if (!runs.length) {
+                    runsEl.innerHTML = '<div class="text-xs text-slate-500 italic">No canonical AGY run receipts yet.</div>';
+                    return;
+                }
+                const tones = {
+                    working: 'border-emerald-500/30 bg-emerald-500/5 text-emerald-200',
+                    quiet: 'border-amber-500/30 bg-amber-500/5 text-amber-200',
+                    suspect: 'border-rose-500/30 bg-rose-500/5 text-rose-200',
+                    terminal: 'border-slate-700 bg-slate-900/60 text-slate-300',
+                    starting: 'border-cyan-500/30 bg-cyan-500/5 text-cyan-200'
+                };
+                runsEl.innerHTML = runs.map(run => {
+                    const activity = run.activity || {};
+                    const metrics = activity.metrics || {};
+                    const classification = activity.classification || 'unknown';
+                    const tone = tones[classification] || tones.terminal;
+                    const seen = activity.receipt_age_seconds == null ? 'no receipt' : `${Math.round(activity.receipt_age_seconds)}s ago`;
+                    return `<div class="rounded-lg border p-3 ${tone}" data-agy-run="${escapeHtml(run.run_id)}">
+                        <div class="flex items-center justify-between gap-2">
+                            <span class="font-mono text-xs font-bold">${escapeHtml(run.run_id)}</span>
+                            <span class="uppercase text-[10px] font-bold">${escapeHtml(classification)}</span>
+                        </div>
+                        <div class="mt-2 grid grid-cols-2 md:grid-cols-4 gap-2 text-[10px] text-slate-400">
+                            <span>state ${escapeHtml(run.state)}</span>
+                            <span>seen ${escapeHtml(seen)}</span>
+                            <span>processes ${escapeHtml(metrics.process_count ?? 0)}</span>
+                            <span>CPU ticks ${escapeHtml(metrics.cpu_ticks ?? 0)}</span>
+                            <span>writes ${escapeHtml(metrics.write_bytes ?? 0)} B</span>
+                            <span>artifacts ${escapeHtml(metrics.artifact_file_count ?? 0)}</span>
+                            <span>quiet ${escapeHtml(Math.round(activity.quiet_seconds || 0))}s</span>
+                            <span>verification ${escapeHtml(run.verification_status || 'pending')}</span>
+                        </div>
+                    </div>`;
+                }).join('');
+            } catch (err) {
+                summary.textContent = `AGY activity unavailable: ${err.message}`;
+                runsEl.innerHTML = '';
+            }
+        }
+
         // Fetch API States
         async function fetchData() {
             // Global telemetry poll
@@ -3032,21 +3139,23 @@
             return String(value ?? "").replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[ch]));
         }
 
-        let workspaceTreeState = { workspaces: [], selectedFile: null };
+        let workspaceTreeState = {
+            workspaces: [],
+            selectedWorkspaceId: null,
+            selectedRelativePath: null,
+            initialized: false,
+            rendering: false,
+        };
 
         function workspaceNodeIcon(node) {
             return node.type === "directory" ? "▸" : "•";
         }
 
-        function workspaceNodePath(node) {
-            return node.path || node.relative_path || node.name || "";
-        }
-
-        function renderWorkspaceNode(node, depth = 0) {
-            const path = workspaceNodePath(node);
-            const label = node.name || node.relative_path || path || "workspace";
+        function renderWorkspaceNode(workspaceId, node, depth = 0) {
+            const relativePath = node.relative_path || "";
+            const label = node.name || relativePath || "workspace";
             const isDir = node.type === "directory";
-            const previewable = node.previewable !== false;
+            const previewable = node.previewable === true;
             const children = Array.isArray(node.children) ? node.children : [];
             const indent = Math.min(depth * 14, 72);
             const buttonClass = isDir
@@ -3054,16 +3163,13 @@
                 : previewable
                     ? "text-slate-300 hover:text-white hover:bg-slate-800/70"
                     : "text-slate-500 cursor-not-allowed";
-            const action = isDir
-                ? `onclick="toggleWorkspaceDirectory('${encodeURIComponent(path)}', this)"`
-                : previewable
-                    ? `onclick="previewWorkspaceFile('${encodeURIComponent(path)}')"`
-                    : "disabled";
+            const action = isDir ? "expand" : "preview";
+            const disabled = !isDir && !previewable ? "disabled" : "";
             const childHtml = children.length
-                ? `<div class="workspace-node-children ml-3 border-l border-slate-800/80 pl-2">${children.map(child => renderWorkspaceNode(child, depth + 1)).join("")}</div>`
+                ? `<div class="workspace-node-children ml-3 border-l border-slate-800/80 pl-2">${children.map(child => renderWorkspaceNode(workspaceId, child, depth + 1)).join("")}</div>`
                 : `<div class="workspace-node-children ml-3 border-l border-slate-800/80 pl-2 hidden"></div>`;
-            return `<div class="workspace-node" data-path="${escapeHTML(path)}" style="margin-left:${indent}px">
-                <button type="button" class="w-full text-left px-2 py-1.5 rounded ${buttonClass}" ${action}>
+            return `<div class="workspace-node" data-workspace-id="${escapeHTML(workspaceId)}" data-relative-path="${escapeHTML(relativePath)}" style="margin-left:${indent}px">
+                <button type="button" data-workspace-action="${action}" class="w-full text-left px-2 py-1.5 rounded ${buttonClass}" ${disabled}>
                     <span class="inline-block w-4 text-slate-500">${workspaceNodeIcon(node)}</span><span>${escapeHTML(label)}</span>
                     ${node.size ? `<span class="float-right text-[10px] text-slate-600">${node.size}b</span>` : ""}
                 </button>
@@ -3071,9 +3177,10 @@
             </div>`;
         }
 
-        async function toggleWorkspaceDirectory(encodedPath, button) {
-            const path = decodeURIComponent(encodedPath);
+        async function toggleWorkspaceDirectory(button) {
             const wrapper = button.closest(".workspace-node");
+            const workspaceId = wrapper?.dataset.workspaceId || "";
+            const relativePath = wrapper?.dataset.relativePath || "";
             const childrenEl = wrapper?.querySelector(":scope > .workspace-node-children");
             if (!childrenEl) return;
             if (childrenEl.dataset.loaded === "true") {
@@ -3084,14 +3191,15 @@
             childrenEl.classList.remove("hidden");
             childrenEl.innerHTML = `<div class="px-2 py-1 text-slate-500 italic">Loading…</div>`;
             try {
-                const res = await fetch(`/api/workspace-tree/node?file=${encodeURIComponent(path)}&depth=1`);
+                const query = new URLSearchParams({ workspace_id: workspaceId, path: relativePath, depth: "1" });
+                const res = await fetch(`/api/workspace-tree/node?${query.toString()}`);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
                 const node = data.tree || {};
                 const children = Array.isArray(node.children) ? node.children : [];
                 childrenEl.dataset.loaded = "true";
                 childrenEl.innerHTML = children.length
-                    ? children.map(child => renderWorkspaceNode(child, 0)).join("")
+                    ? children.map(child => renderWorkspaceNode(workspaceId, child, 0)).join("")
                     : `<div class="px-2 py-1 text-slate-500 italic">Empty folder.</div>`;
                 button.querySelector("span").textContent = "▾";
             } catch (err) {
@@ -3099,34 +3207,41 @@
             }
         }
 
-        async function previewWorkspaceFile(encodedPath) {
-            const path = decodeURIComponent(encodedPath);
+        async function previewWorkspaceFile(workspaceId, relativePath) {
             const nameEl = document.getElementById("workspace-preview-name");
             const previewEl = document.getElementById("workspace-file-preview");
             const legacyLink = document.getElementById("workspace-legacy-link");
             if (!previewEl || !nameEl) return;
-            workspaceTreeState.selectedFile = path;
-            nameEl.textContent = path;
+            workspaceTreeState.selectedWorkspaceId = workspaceId;
+            workspaceTreeState.selectedRelativePath = relativePath;
+            nameEl.textContent = relativePath;
             previewEl.textContent = "Loading file preview…";
-            if (legacyLink) legacyLink.href = `/workspace-tree?file=${encodeURIComponent(path)}`;
+            const legacyQuery = new URLSearchParams({ workspace_id: workspaceId, path: relativePath });
+            if (legacyLink) legacyLink.href = `/workspace-tree?${legacyQuery.toString()}`;
             const url = new URL(window.location.href);
-            url.searchParams.set("file", path);
+            url.searchParams.set("workspace_id", workspaceId);
+            url.searchParams.set("path", relativePath);
+            url.hash = "workspaces";
             window.history.replaceState({}, "", url.toString());
             try {
-                const res = await fetch(`/api/workspace-tree/preview?file=${encodeURIComponent(path)}`);
+                const query = new URLSearchParams({ workspace_id: workspaceId, path: relativePath });
+                const res = await fetch(`/api/workspace-tree/preview?${query.toString()}`);
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
                 previewEl.textContent = data.content || "";
-                nameEl.textContent = `${data.root_label || "workspace"} / ${data.relative_path || path}`;
+                nameEl.textContent = `${data.workspace_name || "workspace"} / ${data.relative_path || relativePath}`;
             } catch (err) {
                 previewEl.textContent = `Preview unavailable: ${err.message}`;
             }
         }
 
         function copyWorkspaceDeepLink() {
-            const path = workspaceTreeState.selectedFile;
+            const workspaceId = workspaceTreeState.selectedWorkspaceId;
+            const relativePath = workspaceTreeState.selectedRelativePath;
             const url = new URL(window.location.origin + "/dashboard");
-            if (path) url.searchParams.set("file", path);
+            if (workspaceId) url.searchParams.set("workspace_id", workspaceId);
+            if (relativePath) url.searchParams.set("path", relativePath);
+            url.hash = "workspaces";
             navigator.clipboard?.writeText(url.toString());
         }
 
@@ -3139,14 +3254,11 @@
                 const data = await res.json();
                 const workspaces = (data.workspaces || []).slice(0, 6);
                 wsSummary.innerHTML = workspaces.map(ws => {
-                    const tree = ws.tree || {};
-                    const childCount = Array.isArray(tree.children) ? tree.children.length : 0;
-                    const status = ws.exists ? "connected" : "missing";
                     return `<tr class="border-b border-slate-800/40 hover:bg-slate-900/10 transition">
                         <td class="py-2.5 px-3 font-semibold text-slate-200">${escapeHTML(ws.name)}</td>
-                        <td class="py-2.5 px-3 text-slate-400 font-mono">${escapeHTML(ws.path)}</td>
-                        <td class="py-2.5 px-3 text-[10px] uppercase font-bold ${ws.exists ? 'text-emerald-400' : 'text-rose-400'}">${status}</td>
-                        <td class="py-2.5 px-3 text-slate-500">${childCount} entries</td>
+                        <td class="py-2.5 px-3 text-slate-400 font-mono">${escapeHTML(ws.workspace_id)}</td>
+                        <td class="py-2.5 px-3 text-[10px] uppercase font-bold text-emerald-400">registered</td>
+                        <td class="py-2.5 px-3 text-slate-500">Lazy tree</td>
                     </tr>`;
                 }).join("") || `<tr><td colspan="4" class="py-4 text-center text-slate-500 italic">No workspace roots returned.</td></tr>`;
             } catch (err) {
@@ -3158,27 +3270,50 @@
             const rootsEl = document.getElementById("workspace-tree-roots");
             const statusEl = document.getElementById("workspace-tree-status");
             if (!rootsEl) return;
+            if (workspaceTreeState.initialized || workspaceTreeState.rendering) return;
+            workspaceTreeState.rendering = true;
             rootsEl.innerHTML = `<div class="text-slate-500 italic">Loading workspace tree…</div>`;
             try {
                 const res = await fetch("/api/workspaces");
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
                 workspaceTreeState.workspaces = data.workspaces || [];
-                if (statusEl) statusEl.textContent = `${data.workspace_count || workspaceTreeState.workspaces.length} roots · click folders to expand · click files to preview`;
+                if (statusEl) statusEl.textContent = `${data.workspace_count || workspaceTreeState.workspaces.length} workspaces · trees load only when expanded`;
                 rootsEl.innerHTML = workspaceTreeState.workspaces.map(ws => {
-                    const rootNode = ws.tree || { name: ws.name, type: "directory", path: ws.path, children: [] };
-                    rootNode.name = ws.name || rootNode.name;
-                    rootNode.path = ws.path || rootNode.path;
+                    const rootNode = { name: ws.name, type: "directory", relative_path: "", previewable: false, children: [] };
                     return `<div class="rounded-lg border border-slate-800/70 bg-slate-950/50 p-2">
-                        <div class="text-[10px] uppercase tracking-wider text-slate-500 mb-1">${escapeHTML(ws.path || "")}</div>
-                        ${renderWorkspaceNode(rootNode, 0)}
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500 mb-1">${escapeHTML(ws.workspace_id)}</div>
+                        ${renderWorkspaceNode(ws.workspace_id, rootNode, 0)}
                     </div>`;
                 }).join("") || `<div class="text-slate-500 italic">No workspace roots configured.</div>`;
-                const requested = new URLSearchParams(window.location.search).get("file");
-                if (requested) await previewWorkspaceFile(encodeURIComponent(requested));
+                if (rootsEl.dataset.workspaceEventsBound !== "true") {
+                    rootsEl.dataset.workspaceEventsBound = "true";
+                    rootsEl.addEventListener("click", event => {
+                        const button = event.target.closest("button[data-workspace-action]");
+                        if (!button || !rootsEl.contains(button)) return;
+                        const node = button.closest(".workspace-node");
+                        if (button.dataset.workspaceAction === "expand") {
+                            void toggleWorkspaceDirectory(button);
+                        } else if (node) {
+                            void previewWorkspaceFile(node.dataset.workspaceId || "", node.dataset.relativePath || "");
+                        }
+                    });
+                }
+                const params = new URLSearchParams(window.location.search);
+                const requestedWorkspace = params.get("workspace_id");
+                const requestedPath = params.get("path");
+                if (requestedWorkspace || requestedPath) {
+                    if (!/^ws-[0-9a-f]{32}$/.test(requestedWorkspace || "") || !requestedPath) {
+                        throw new Error("Malformed workspace deep link.");
+                    }
+                    await previewWorkspaceFile(requestedWorkspace, requestedPath);
+                }
+                workspaceTreeState.initialized = true;
             } catch (err) {
                 rootsEl.innerHTML = `<div class="text-rose-400">Workspace Tree unavailable: ${escapeHTML(err.message)}</div>`;
                 if (statusEl) statusEl.textContent = "Workspace Tree failed to load.";
+            } finally {
+                workspaceTreeState.rendering = false;
             }
         }
 
@@ -3337,42 +3472,83 @@
         async function fetchCompletedWorkGate() {
             const badge = document.getElementById("completed-work-gate-badge");
             const classification = document.getElementById("completed-work-classification");
-            const eligible = document.getElementById("completed-work-eligible");
-            const linear = document.getElementById("completed-work-linear");
-            const reason = document.getElementById("completed-work-reason");
+            const artifact = document.getElementById("completed-work-artifact");
+            const proofClasses = document.getElementById("completed-work-proof-classes");
+            const verifier = document.getElementById("completed-work-verifier");
+            const freshness = document.getElementById("completed-work-freshness");
+            const hostedSignal = document.getElementById("completed-work-hosted-signal");
+            const proof = document.getElementById("completed-work-receipt-proof");
+            const marker = document.getElementById("completed-work-gate-marker");
             try {
-                const res = await fetch(`${API_PREFIX}/agy/completed-work/verified-pr-dry-run/latest`);
+                const res = await fetch(`${API_PREFIX}/verification/receipts?limit=1`);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
-                const latest = data.completed_work;
-                const dashboard = data.dashboard || {};
-                const linearWriteback = data.linear_writeback || {};
-                const sideEffects = data.side_effects || {};
-                const hasRow = Boolean(latest);
-                const ready = dashboard.status === "ready";
+                const latest = (data.receipts || [])[0];
+                const accepted = latest?.classification === "accepted" && latest?.merge_eligible === true;
                 if (badge) {
-                    badge.textContent = hasRow ? (ready ? "Verified PR Dry Run" : "Needs Attention") : "No Rows";
-                    badge.className = `px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${hasRow ? (ready ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300' : 'border-amber-500/20 bg-amber-500/10 text-amber-300') : 'border-slate-700 bg-slate-800 text-slate-300'}`;
+                    badge.textContent = latest ? (accepted ? "Native Accepted" : "Native Blocked") : "No Receipts";
+                    badge.className = `px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${latest ? (accepted ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300' : 'border-amber-500/20 bg-amber-500/10 text-amber-300') : 'border-slate-700 bg-slate-800 text-slate-300'}`;
                 }
-                if (classification) classification.textContent = dashboard.integration_classification || latest?.integration_classification || "no_rows";
-                if (eligible) eligible.textContent = ready ? "verified PR dry-run" : "no";
-                if (linear) {
-                    const posted = linearWriteback.posted === true || sideEffects.linear_comment_posted === true;
-                    const dryRun = linearWriteback.dry_run !== false;
-                    linear.textContent = posted ? "posted" : (dryRun ? "dry-run only" : "disabled");
+                if (marker) marker.textContent = data.marker || "PROVIDER_NEUTRAL_VERIFICATION_RECEIPT_OK";
+                if (classification) classification.textContent = latest ? `${latest.classification} / ${latest.merge_eligible ? "eligible" : "ineligible"}` : "no_receipts";
+                if (artifact) artifact.textContent = latest ? `${(latest.candidate_sha || "").slice(0, 12)} / tree ${(latest.tree_sha || "").slice(0, 12)}` : "—";
+                if (proofClasses) {
+                    const scopes = latest?.proof_scope_status || {};
+                    proofClasses.textContent = latest
+                        ? Object.entries(scopes).map(([name, state]) => `${name}:${state.status}`).join(", ") || "none"
+                        : "—";
                 }
-                if (reason) {
-                    reason.textContent = hasRow
-                        ? `${dashboard.marker || data.marker}: ${dashboard.issue_identifier || latest?.id || "latest"}`
-                        : "No completed AGY rows persisted yet";
+                if (verifier) {
+                    const isolation = latest?.verifier_isolation || {};
+                    verifier.textContent = latest
+                        ? `${latest.verifier_id || "unknown"} / ${latest.backend_class || "unknown"}; independent=${isolation.independent === true}; network=${isolation.network_isolated === true}; filesystem=${isolation.filesystem_isolated === true}`
+                        : "—";
+                }
+                if (freshness) freshness.textContent = latest ? `expires ${latest.expires_at || "unknown"}; revocation ${latest.revocation_status || "unknown"}` : "—";
+                if (hostedSignal) {
+                    const signals = latest?.hosted_signals || [];
+                    hostedSignal.textContent = signals.length
+                        ? signals.map(item => `OPTIONAL ${item.provider}: ${item.status}${item.reason_code ? ` (${item.reason_code})` : ""}`).join("; ")
+                        : "Optional / none required";
+                }
+                if (proof) {
+                    proof.textContent = latest ? JSON.stringify({
+                        receipt_id: latest.receipt_id,
+                        receipt_sha256: latest.receipt_sha256,
+                        policy_sha256: latest.policy_sha256,
+                        base_sha: latest.base_sha,
+                        base_tree_sha: latest.base_tree_sha,
+                        candidate_sha: latest.candidate_sha,
+                        tree_sha: latest.tree_sha,
+                        canonical_repository_root: latest.canonical_repository_root,
+                        checkout_clean_state: latest.checkout_clean_state,
+                        changed_path_containment: latest.changed_path_containment,
+                        verifier_isolation: latest.verifier_isolation,
+                        proof_scope_status: latest.proof_scope_status,
+                        repository_id: latest.repository_id,
+                        source_kind: latest.source_kind,
+                        source_provider: latest.source_provider,
+                        source_locator: latest.source_locator,
+                        clean_checkout_id: latest.clean_checkout_id,
+                        source_acquisition_digest: latest.source_acquisition_digest,
+                        environment_digest: latest.environment_digest,
+                        changed_paths: latest.changed_paths,
+                        commands: latest.commands_and_exit_states,
+                        logs: latest.logs_and_digests,
+                        artifacts: latest.artifacts_and_digests,
+                        decision_reason: latest.decision_reason,
+                        non_claims: latest.non_claims,
+                        acceptance_authority: data.acceptance_authority,
+                        hosted_signals_required: data.hosted_signals_required,
+                    }, null, 2) : "No native receipts persisted yet";
                 }
             } catch (err) {
-                console.error("Error loading completed-work dashboard/Linear dry-run:", err);
+                console.error("Error loading provider-neutral verification receipts:", err);
                 if (badge) {
                     badge.textContent = "Unavailable";
                     badge.className = "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-rose-500/20 bg-rose-500/10 text-rose-300";
                 }
-                if (reason) reason.textContent = String(err.message || err);
+                if (proof) proof.textContent = String(err.message || err);
             }
         }
 
@@ -4023,6 +4199,32 @@
             }
         }
 
+        function renderMorningBriefingError(reason) {
+            const timestampEl = document.getElementById("briefing-timestamp");
+            if (timestampEl) timestampEl.textContent = reason;
+
+            const fallbackBadge = document.getElementById("briefing-fallback-badge");
+            if (fallbackBadge) {
+                fallbackBadge.textContent = (reason.includes("404") || reason.includes("unavailable")) ? "Report Unavailable" : "Report Error";
+                fallbackBadge.className = "px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider border border-rose-500/20 bg-rose-500/10 text-rose-300";
+            }
+
+            const kpis = ["briefing-total-runs", "briefing-completed", "briefing-failed", "briefing-success-rate", "briefing-credits"];
+            kpis.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = "—";
+            });
+
+            const escContainer = document.getElementById("briefing-escalations");
+            if (escContainer) escContainer.innerHTML = `<div class="text-rose-400/80 italic">${reason}</div>`;
+
+            const commitsContainer = document.getElementById("briefing-commits");
+            if (commitsContainer) commitsContainer.innerHTML = `<div class="text-rose-400/80 italic">${reason}</div>`;
+
+            const runsTbody = document.getElementById("briefing-runs-tbody");
+            if (runsTbody) runsTbody.innerHTML = `<tr><td colspan="3" class="py-4 text-center text-rose-400/80 italic">${reason}</td></tr>`;
+        }
+
         async function fetchMorningBriefing() {
             try {
                 const res = await fetch("/api/gateway/overnight-report/latest");
@@ -4034,7 +4236,8 @@
                     
                     const fallbackBadge = document.getElementById("briefing-fallback-badge");
                     if (data.period && data.period.fallback_used) {
-                        fallbackBadge.classList.remove("hidden");
+                        fallbackBadge.textContent = "Fallback Lookback Mode";
+                        fallbackBadge.className = "px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider border border-amber-500/20 bg-amber-500/10 text-amber-300";
                     } else {
                         fallbackBadge.classList.add("hidden");
                     }
@@ -4092,9 +4295,12 @@
                     } else {
                         runsTbody.innerHTML = `<tr><td colspan="3" class="py-4 text-center text-slate-500 italic">No runs recorded.</td></tr>`;
                     }
+                } else {
+                    renderMorningBriefingError(res.status === 404 ? "Report unavailable (404)" : `Report error (${res.status})`);
                 }
             } catch (err) {
                 console.error("Error loading morning briefing:", err);
+                renderMorningBriefingError("Network error loading report");
             }
         }
 
@@ -4255,6 +4461,128 @@
             }
         }
 
+        function taskAdmissionValue(id) {
+            const element = document.getElementById(id);
+            return element ? element.value.trim() : "";
+        }
+
+        function boundedAdmissionError(payload, status) {
+            const code = payload && typeof payload.error === "string" ? payload.error : `http_${status}`;
+            return /^[a-z0-9_]{1,64}$/.test(code) ? code : "bounded_request_failed";
+        }
+
+        function taskAdmissionHeaders(token, idempotencyKey, includeJson = false) {
+            const headers = { "Authorization": `Bearer ${token}` };
+            if (includeJson) {
+                headers["Content-Type"] = "application/json";
+                headers["Idempotency-Key"] = idempotencyKey;
+            }
+            return headers;
+        }
+
+        function renderTaskAdmissionProof(record, replayed) {
+            const proof = document.getElementById("admission-proof");
+            if (!proof) return;
+            const compact = {
+                task_id: record.task_id,
+                status: record.status,
+                replayed: Boolean(replayed),
+                base_commit: String(record.base_commit || "").slice(0, 12),
+                base_tree: String(record.base_tree || "").slice(0, 12),
+                task_file_sha256: String(record.task_file_sha256 || "").slice(0, 16),
+                producer_identity: record.producer_identity,
+                writer_cap: record.writer_cap,
+                worktree: record.worktree,
+                actor: record.actor,
+                event_id: record.event_id,
+                received_at: record.received_at,
+                launch_performed: false
+            };
+            proof.textContent = JSON.stringify(compact, null, 2);
+            proof.classList.remove("hidden");
+        }
+
+        async function fetchTaskAdmissionHistory(token) {
+            const response = await fetch(`/api/dashboard/task-admissions?limit=10`, {
+                headers: taskAdmissionHeaders(token, "")
+            });
+            let payload = {};
+            try { payload = await response.json(); } catch (_) {}
+            if (!response.ok) throw new Error(boundedAdmissionError(payload, response.status));
+            const history = document.getElementById("admission-history");
+            if (!history) return;
+            const records = Array.isArray(payload.records) ? payload.records : [];
+            history.textContent = records.length
+                ? records.map((record) => `${record.task_id} · ${record.status} · ${record.producer_identity} · ${record.received_at}`).join(" | ")
+                : "No durable task admissions recorded.";
+        }
+
+        async function loadTaskAdmissions() {
+            const tokenInput = document.getElementById("admission-token");
+            const status = document.getElementById("admission-status");
+            const token = tokenInput ? tokenInput.value : "";
+            if (!token) {
+                if (status) status.textContent = "Operator bearer required for protected readback.";
+                return;
+            }
+            try {
+                await fetchTaskAdmissionHistory(token);
+                if (status) status.textContent = "Durable admission readback refreshed.";
+            } catch (error) {
+                if (status) status.textContent = `Readback failed: ${error.message}`;
+            } finally {
+                if (tokenInput) tokenInput.value = "";
+            }
+        }
+
+        async function submitTaskAdmission() {
+            const tokenInput = document.getElementById("admission-token");
+            const status = document.getElementById("admission-status");
+            const button = document.getElementById("admission-submit");
+            const token = tokenInput ? tokenInput.value : "";
+            const idempotencyKey = taskAdmissionValue("admission-idempotency");
+            if (!token) {
+                if (status) status.textContent = "Operator bearer required.";
+                return;
+            }
+            const payload = {
+                version: 1,
+                task_id: taskAdmissionValue("admission-task-id"),
+                base_commit: taskAdmissionValue("admission-base-commit"),
+                base_tree: taskAdmissionValue("admission-base-tree"),
+                task_file: taskAdmissionValue("admission-task-file"),
+                task_file_sha256: taskAdmissionValue("admission-task-sha"),
+                producer_identity: taskAdmissionValue("admission-producer"),
+                worktree: taskAdmissionValue("admission-worktree"),
+                writer_cap: 1,
+                idempotency_key: idempotencyKey,
+                created_at: taskAdmissionValue("admission-created-at"),
+                status: "admitted"
+            };
+            if (button) button.disabled = true;
+            if (status) status.textContent = "Recording durable intent…";
+            try {
+                const response = await fetch(`/api/dashboard/task-admissions`, {
+                    method: "POST",
+                    headers: taskAdmissionHeaders(token, idempotencyKey, true),
+                    body: JSON.stringify(payload)
+                });
+                let result = {};
+                try { result = await response.json(); } catch (_) {}
+                if (!response.ok) throw new Error(boundedAdmissionError(result, response.status));
+                renderTaskAdmissionProof(result.record || {}, result.replayed);
+                await fetchTaskAdmissionHistory(token);
+                if (status) status.textContent = result.replayed
+                    ? "Exact admission replay confirmed; no duplicate event created."
+                    : "Durable admission recorded. Producer was not launched.";
+            } catch (error) {
+                if (status) status.textContent = `Admission failed: ${error.message}`;
+            } finally {
+                if (tokenInput) tokenInput.value = "";
+                if (button) button.disabled = false;
+            }
+        }
+
         // WebSockets
         function connectWS() {
             let ws;
@@ -4300,7 +4628,11 @@
         document.addEventListener("DOMContentLoaded", () => {
             applyTheme();
             const initialParams = new URLSearchParams(window.location.search);
-            const initialTab = (window.location.hash === "#workspaces" || initialParams.has("file")) ? "workspaces" : "dashboard";
+            const initialTab = (
+                window.location.hash === "#workspaces"
+                || initialParams.has("workspace_id")
+                || initialParams.has("path")
+            ) ? "workspaces" : "dashboard";
             if (initialTab === "workspaces") {
                 switchTab("workspaces");
             } else {
@@ -4308,8 +4640,12 @@
             }
             loadPluginGovernance();
             loadPWPStatus();
+            loadCanonicalAgyActivity();
             connectWS();
-            pollingInterval = setInterval(fetchData, 4000);
+            pollingInterval = setInterval(() => {
+                fetchData();
+                loadCanonicalAgyActivity();
+            }, 4000);
             
             // Close modal on click outside
             window.onclick = function(event) {

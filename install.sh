@@ -108,6 +108,15 @@ else
     warn "prismatic-engine command not found in PATH — skipping 'optimize-workspace'"
 fi
 
+# ── Validate portable Antigravity customizations ────────────
+if command -v prismatic &> /dev/null; then
+    info "Validating packaged Antigravity customizations..."
+    prismatic agy customizations validate > /dev/null
+    ok "Portable Antigravity customizations available"
+else
+    warn "prismatic command not found in PATH — skipping AGY bundle validation"
+fi
+
 # ── Systemd Service Generation ──────────────────────────────
 if [ "$PLATFORM" = "linux" ] && [ -d "/etc/systemd/system" ]; then
     echo ""
@@ -158,7 +167,11 @@ echo ""
 echo "  3. Initialize default config:"
 echo "     prismatic-engine init"
 echo ""
-echo "  4. Start the coordinator:"
+echo "  4. Preview/install Prismatic's managed AGY workspace bundle:"
+echo "     prismatic agy customizations install --workspace /path/to/project --dry-run"
+echo "     prismatic agy customizations install --workspace /path/to/project"
+echo ""
+echo "  5. Start the coordinator:"
 echo "     prismatic-engine serve"
 echo ""
 echo "  Config directory: $CONFIG_DIR"

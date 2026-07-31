@@ -8,7 +8,7 @@
       "id": "verified-agent-output",
       "objective": "Agent proposals become accepted work only through exact-artifact independent evidence.",
       "owner": "merge judge",
-      "system_of_record": "Merge Factory attestations + Git/GitHub",
+      "system_of_record": "Git object identity + versioned verification receipts + Merge Factory attestations",
       "key_results": [
         "reviewed SHA equals PR head at merge",
         "all required proof classes report scope and non-claims",
@@ -22,8 +22,31 @@
         "tests/test_merge_factory.py",
         "docs/contracts/verification-contract.md"
       ],
-      "current_surface": "API/CLI/CI",
+      "current_surface": "API/CLI/provider status projections; provider-neutral receipt runtime pending",
       "review_after": "2026-10-21"
+    },
+    {
+      "id": "provider-neutral-verification",
+      "objective": "Merge evidence remains exact, independent, and portable across hosted, self-hosted, local, and offline Git workflows.",
+      "owner": "merge judge and verification maintainers",
+      "system_of_record": "versioned verification receipts + Merge Factory attestations + Git object identity",
+      "key_results": [
+        "at least one approved clean-room backend emits a valid exact-head receipt for every merge",
+        "provider status projections never override receipt validation",
+        "GitHub, Bitbucket, GitLab, Forgejo/Gitea, local Git, and bundle inputs pass one conformance contract",
+        "head change, expiry, revocation, digest mismatch, or producer-only evidence fails closed"
+      ],
+      "functions": [
+        "prismatic/core/merge_factory.py",
+        "prismatic/providers/github.py"
+      ],
+      "evidence": [
+        "docs/decisions/ADR-0002-provider-neutral-verification-receipts.md",
+        "docs/contracts/verification-contract.md",
+        "tests/test_okf_docs.py"
+      ],
+      "current_surface": "canonical policy and Linear epic GRO-4203; provider-neutral runner pending",
+      "review_after": "2026-10-23"
     },
     {
       "id": "systemic-orchestration-correctness",
@@ -84,6 +107,35 @@
       ],
       "current_surface": "documentation; instrumentation pending",
       "review_after": "2026-10-21"
+    },
+    {
+      "id": "canonical-agy-execution",
+      "objective": "Every unattended AGY producer uses one durable, hash-bound, evidence-first execution workflow.",
+      "owner": "Prismatic Engine orchestration maintainers",
+      "system_of_record": "canonical AGY manifest + launch/process receipts + exact task and executable digests",
+      "key_results": [
+        "all PE AGY CLI launches begin with /goal and use the tmux durable anchor",
+        "task, executable, manifest, session, and process identity are retained and fail closed on drift",
+        "plan/result/log artifacts are durable and producer output never self-authorizes acceptance",
+        "long AGY runs have no wall-clock cap and expose durable exact-run activity to the dashboard without automatic inactivity kills"
+      ],
+      "functions": [
+        "prismatic/agy_cli.py",
+        "prismatic/agy_activity.py",
+        "prismatic/harnesses/agy_cli.py",
+        "prismatic/gateway/server.py",
+        "prismatic/cli/__init__.py"
+      ],
+      "evidence": [
+        "tests/test_agy_cli_canonical_workflow.py",
+        "tests/test_agy_cli_harness.py",
+        "tests/test_agy_activity_dashboard.py",
+        "tests/test_agy_process_containment.py",
+        "docs/contracts/canonical-agy-cli-workflow.md",
+        "docs/decisions/ADR-0003-canonical-agy-cli-workflow.md"
+      ],
+      "current_surface": "canonical CLI/harness/contract plus dashboard activity projection; legacy launcher delegation pending",
+      "review_after": "2026-10-25"
     },
     {
       "id": "authoritative-operator-view",

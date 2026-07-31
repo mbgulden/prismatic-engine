@@ -213,12 +213,17 @@ def _executor_route(path: str) -> bool:
 async def required_role(request: Request) -> str | None:
     """Classify a request, parsing native-cron JSON without consuming it."""
 
-    if request.method.upper() in _READ_ONLY_METHODS or _is_webhook_boundary(
-        request.url.path
+    path = request.url.path
+    # Task-admission rows expose producer/worktree control-plane coordinates.
+    # Protect readback as operator data before the broad read-only exemption.
+    if path == "/api/dashboard/task-admissions" or path.startswith(
+        "/api/dashboard/task-admissions/"
     ):
+        return "operator"
+
+    if request.method.upper() in _READ_ONLY_METHODS or _is_webhook_boundary(path):
         return None
 
-    path = request.url.path
     if path.startswith("/native-crons/") and path.endswith("/action"):
         try:
             payload = json.loads(await request.body())

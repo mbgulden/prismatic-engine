@@ -100,9 +100,16 @@ def main() -> int:
         assert policy["decision"] == "allow"
 
     def cli_help() -> None:
+        from prismatic.agy_cli import canonical_contract
         from prismatic.cli import run as cli_run
 
         assert cli_run([]) == 0
+        contract = canonical_contract()
+        assert contract["transport"] == "tmux-durable-anchor"
+        assert contract["prompt_prefix"] == "/goal "
+        assert contract["maximum_attempts"] == 3
+        assert contract["runtime_deadline"] is None
+        assert contract["runtime_policy"] == "no-wall-clock-cap-progress-supervised"
 
     def catalog() -> dict[str, Any]:
         out = run([sys.executable, "scripts/plugin_architecture", "catalog"], cwd=repo)
