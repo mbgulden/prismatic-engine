@@ -968,7 +968,7 @@ def test_fixtures_secret_scanned_and_bounded_size() -> None:
     secret_patterns = [
         r"sk-[a-zA-Z0-9]{20,}",  # OpenAI secret key format
         r"bearer\s+[a-zA-Z0-9_\-\.]{20,}",  # Bearer token
-        r"-----BEGIN PRIVATE KEY-----",  # PEM private key
+        r"-----BEGIN " r"PRIVATE KEY-----",  # PEM private key
         r"ghp_[a-zA-Z0-9]{36}",  # GitHub personal access token
     ]
 

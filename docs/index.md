@@ -31,6 +31,7 @@ When sources disagree, fail closed and open a decision/update rather than choosi
 - [Antigravity customization audit](research/antigravity-customization-audit.md)
 - [AGY workflow deep dive](research/agentic-swarm-ops-agy-workflow-deep-dive.md)
 - [Evidence retention](contracts/evidence-retention.md)
+- [Evidence-cited journal recaps](contracts/evidence-cited-journal-recaps.md)
 - [Decision index](decisions/index.md)
 - [ADR-0002: Provider-neutral verification receipts](decisions/ADR-0002-provider-neutral-verification-receipts.md)
 - [ADR-0003: Canonical AGY CLI workflow](decisions/ADR-0003-canonical-agy-cli-workflow.md)

@@ -6,8 +6,13 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from prismatic.journal import (
     JournalConfig,
+    MAX_RECAP_BYTES,
+    MAX_RECAP_EVENTS,
+    MAX_RECAP_MANIFEST_BYTES,
     build_evidence_recap,
     generate_recap,
     recap_window,
@@ -67,7 +72,8 @@ def test_daily_recap_cites_events_and_uses_current_cron_state(tmp_path: Path) ->
 
     assert result["source_event_count"] == 1
     assert result["rendered_claim_count"] == 1
-    assert result["artifact_bytes"] < 32_768
+    assert result["artifact_bytes"] < MAX_RECAP_BYTES
+    assert result["citation_manifest_bytes"] < MAX_RECAP_MANIFEST_BYTES
     assert "cited_event_ids" not in result
     manifest = json.loads(Path(result["citation_manifest_path"]).read_text())
     assert manifest["cited_event_ids"] == ["a" * 64]
@@ -138,3 +144,60 @@ def test_generated_recap_uses_compact_result_and_bounded_artifact(
     assert result["artifact_bytes"] == len(rendered.encode()) < 32_768
     assert "cited_event_ids" not in result
     assert rendered.count("[E:") == 50
+
+
+@pytest.mark.parametrize("invalid_limit", [0, -1, 51, True, 1.5])
+def test_recap_limit_cannot_disable_or_exceed_the_global_cap(invalid_limit) -> None:
+    now = datetime(2026, 7, 23, 12, tzinfo=timezone.utc)
+    with pytest.raises((TypeError, ValueError)):
+        build_evidence_recap(
+            [], "daily", now.replace(hour=0), now, [], max_events=invalid_limit
+        )
+
+
+def test_malformed_unbounded_event_id_is_replaced_by_bounded_digest(
+    tmp_path: Path,
+) -> None:
+    config = config_for(tmp_path)
+    index = config.journal_root / ".index"
+    index.mkdir(parents=True)
+    index.joinpath("events-2026-07-23.json").write_text(
+        json.dumps(
+            [
+                {
+                    "type": "decision",
+                    "snippet": "bounded citation",
+                    "idempotency_key": "x" * 100_000,
+                    "_timestamp": "2026-07-23T05:00:00Z",
+                }
+            ]
+        )
+    )
+
+    result = generate_recap(
+        "daily", config, datetime(2026, 7, 23, 12, tzinfo=timezone.utc)
+    )
+    manifest = json.loads(Path(result["citation_manifest_path"]).read_text())
+
+    assert len(manifest["cited_event_ids"]) == 1
+    assert len(manifest["cited_event_ids"][0]) == 64
+    assert manifest["cited_event_ids"][0] != "x" * 64
+    assert result["rendered_claim_count"] <= MAX_RECAP_EVENTS
+    assert result["citation_manifest_bytes"] < MAX_RECAP_MANIFEST_BYTES
+
+
+def test_oversized_recap_fails_before_writing_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = config_for(tmp_path)
+    monkeypatch.setattr(
+        "prismatic.journal.live_cron_health",
+        lambda _config: [
+            {"name": "job-" + "x" * 500, "enabled": True, "last_status": "ok"}
+            for _ in range(100)
+        ],
+    )
+
+    with pytest.raises(ValueError, match="recap exceeds"):
+        generate_recap("daily", config, datetime(2026, 7, 23, 12, tzinfo=timezone.utc))
+    assert not (config.journal_root / "recaps").exists()
