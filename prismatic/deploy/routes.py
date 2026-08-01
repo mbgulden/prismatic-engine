@@ -15,6 +15,15 @@ try:
 except ImportError:
     _HAS_FASTAPI = False
 
+import os
+import sys
+from pathlib import Path
+
+# Ensure repository root is on sys.path so 'pe' package resolves cleanly
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent.parent)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 from pe.deploy.manifest import DeployManifestStore, DeployRecord
 from pe.deploy.receiver import DeployReceiverPipeline
 

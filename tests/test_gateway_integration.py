@@ -17,3 +17,8 @@ def test_gateway_workspace_and_deploy_endpoints():
     assert r2.status_code == 200, f"Deploy recent endpoint returned {r2.status_code}"
     data2 = r2.json()
     assert "deploys" in data2
+
+    # Test /workspaces file route matching user rule markdown links
+    r3 = client.get("/workspaces?file=prismatic/gateway/server.py")
+    assert r3.status_code == 200, f"/workspaces file route returned {r3.status_code}"
+    assert "Prismatic Engine Gateway Server" in r3.text

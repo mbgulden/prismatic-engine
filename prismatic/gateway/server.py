@@ -40,6 +40,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 
@@ -4522,6 +4523,38 @@ async def workspace_tree_page(
     workspace_id: str = Query(""), path: str = Query("")
 ) -> HTMLResponse:
     return HTMLResponse(_workspace_tree_html(workspace_id, path))
+
+
+@app.get("/workspaces")
+async def serve_workspace_file_link(file: str = Query("")) -> Response:
+    """Serve repository files and media requested via markdown workspace link (https://prismatic.growthwebdev.com/workspaces?file=PATH)."""
+    if not file:
+        return _serve_governance_dashboard_html()
+
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    target_path = (repo_root / file).resolve()
+
+    # Safety check: keep path within repository bounds or deployed releases
+    try:
+        target_path.relative_to(repo_root)
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Forbidden file path")
+
+    if not target_path.exists() or not target_path.is_file():
+        # Fallback to deployed release docs
+        release_docs = Path("~/.prismatic/releases/prismatic-engine/docs").expanduser().resolve()
+        alt_path = (release_docs / file).resolve() if file else None
+        if alt_path and alt_path.exists() and alt_path.is_file():
+            target_path = alt_path
+        else:
+            raise HTTPException(status_code=404, detail=f"File '{file}' not found in workspace")
+
+    import mimetypes
+    media_type, _ = mimetypes.guess_type(str(target_path))
+    if target_path.suffix in (".md", ".py", ".yml", ".yaml", ".txt"):
+        media_type = "text/plain; charset=utf-8"
+
+    return FileResponse(target_path, media_type=media_type)
 
 
 def get_linear_secrets():
