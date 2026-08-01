@@ -8,7 +8,6 @@ Uses dry_run=True since we can't run ``integrate_pipeline_run()``
 in a test without a real git repository.
 """
 
-import json
 import subprocess
 
 import pytest

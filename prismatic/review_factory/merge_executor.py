@@ -214,7 +214,7 @@ class MergeExecutor:
             principal=principal,
         )
 
-        lock = self.mf_store.acquire_lock(
+        self.mf_store.acquire_lock(
             repository=job.repository,
             target=target_branch,
             issue_id=job.task_id,
