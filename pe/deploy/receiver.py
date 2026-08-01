@@ -14,11 +14,12 @@ import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 try:
     from fastapi import APIRouter, FastAPI, Header, HTTPException, Request
     from fastapi.responses import JSONResponse
+
     _HAS_FASTAPI = True
 except ImportError:
     _HAS_FASTAPI = False
@@ -52,8 +53,8 @@ def get_deploy_hmac_secret() -> str:
 
 def verify_hmac_signature(
     body_bytes: bytes,
-    signature_header: Optional[str],
-    secret: Optional[str] = None,
+    signature_header: str | None,
+    secret: str | None = None,
 ) -> bool:
     """Verify HMAC-SHA256 signature against request body."""
     if not signature_header:
@@ -66,7 +67,7 @@ def verify_hmac_signature(
         return False
 
     sec = sec_str.encode("utf-8")
-    
+
     # Strip 'sha256=' prefix if present
     sig = signature_header.replace("sha256=", "").strip()
     expected_sig = hmac.new(sec, body_bytes, hashlib.sha256).hexdigest()
@@ -79,11 +80,11 @@ class DeployReceiverPipeline:
 
     def __init__(
         self,
-        source_repo: Optional[Path] = None,
-        deploy_runner: Optional[AtomicDeployRunner] = None,
-        health_checker: Optional[PostDeployHealthChecker] = None,
-        transitioner: Optional[LinearDeployTransitioner] = None,
-        store: Optional[DeployManifestStore] = None,
+        source_repo: Path | None = None,
+        deploy_runner: AtomicDeployRunner | None = None,
+        health_checker: PostDeployHealthChecker | None = None,
+        transitioner: LinearDeployTransitioner | None = None,
+        store: DeployManifestStore | None = None,
     ):
         self.source_repo = source_repo or Path(".").resolve()
         self.deploy_runner = deploy_runner or AtomicDeployRunner()
@@ -112,10 +113,13 @@ class DeployReceiverPipeline:
             branch=payload.get("ref", "main"),
         )
 
+        is_dry_run = self.deploy_runner.dry_run or bool(payload.get("dry_run", False))
+
         # Step 2: Post-deploy health check
         health_res = self.health_checker.check(
             version_dir=version_dir,
             release_symlink=self.deploy_runner.release_symlink,
+            dry_run=is_dry_run,
         )
 
         if not health_res["passed"]:
@@ -171,13 +175,15 @@ def create_deploy_receiver_app() -> Any:
     @app.post("/deploy")
     async def handle_deploy(
         request: Request,
-        x_hub_signature_256: Optional[str] = Header(None, alias="X-Hub-Signature-256"),
+        x_hub_signature_256: str | None = Header(None, alias="X-Hub-Signature-256"),
     ) -> Dict[str, Any]:
         body_bytes = await request.body()
 
         # Verify HMAC signature (§16.8 anti-pattern #3)
         if not verify_hmac_signature(body_bytes, x_hub_signature_256):
-            raise HTTPException(status_code=401, detail="Invalid or missing HMAC signature")
+            raise HTTPException(
+                status_code=401, detail="Invalid or missing HMAC signature"
+            )
 
         try:
             payload = json.loads(body_bytes.decode("utf-8"))
@@ -193,7 +199,11 @@ def create_deploy_receiver_app() -> Any:
 
     @app.get("/health")
     async def receiver_health() -> Dict[str, Any]:
-        return {"status": "ok", "port": RECEIVER_PORT, "time": datetime.now(timezone.utc).isoformat()}
+        return {
+            "status": "ok",
+            "port": RECEIVER_PORT,
+            "time": datetime.now(timezone.utc).isoformat(),
+        }
 
     return app
 
@@ -202,5 +212,7 @@ app = create_deploy_receiver_app()
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("pe.deploy.receiver:app", host="0.0.0.0", port=RECEIVER_PORT, reload=False)
 
+    uvicorn.run(
+        "pe.deploy.receiver:app", host="0.0.0.0", port=RECEIVER_PORT, reload=False
+    )

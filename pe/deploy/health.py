@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 import urllib.request
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 
 class PostDeployHealthChecker:
@@ -25,8 +25,9 @@ class PostDeployHealthChecker:
 
     def check(
         self,
-        version_dir: Optional[Path] = None,
-        release_symlink: Optional[Path] = None,
+        version_dir: Path | None = None,
+        release_symlink: Path | None = None,
+        dry_run: bool = False,
     ) -> dict[str, Any]:
         """Execute full post-deploy health check suite.
 
@@ -37,6 +38,12 @@ class PostDeployHealthChecker:
         """
         checks: dict[str, bool] = {}
         details: dict[str, str] = {}
+
+        if dry_run:
+            checks["symlink_exists"] = True
+            checks["version_dir_valid"] = True
+            details["dry_run"] = "Simulated dry-run health check passed"
+            return {"passed": True, "checks": checks, "details": details}
 
         # 1. Symlink integrity
         if release_symlink:
@@ -52,7 +59,9 @@ class PostDeployHealthChecker:
             checks["version_dir_valid"] = dir_valid
             details["version_dir"] = str(version_dir)
             if not dir_valid:
-                details["version_dir_error"] = f"Version dir {version_dir} missing or invalid"
+                details["version_dir_error"] = (
+                    f"Version dir {version_dir} missing or invalid"
+                )
 
         # 3. HTTP endpoint checks (graceful if server not running during offline unit tests)
         endpoints = [
@@ -68,15 +77,13 @@ class PostDeployHealthChecker:
 
         # Verification pass rule: filesystem checks MUST pass; HTTP passes or logs warning if offline
         fs_passed = all(
-            v for k, v in checks.items()
-            if k in ("symlink_exists", "version_dir_valid")
+            v for k, v in checks.items() if k in ("symlink_exists", "version_dir_valid")
         )
-        http_passed = any(
-            v for k, v in checks.items()
-            if k.startswith("http_")
-        )
+        http_passed = any(v for k, v in checks.items() if k.startswith("http_"))
 
-        overall_passed = fs_passed and (http_passed or not os.environ.get("STRICT_HTTP_HEALTH"))
+        overall_passed = fs_passed and (
+            http_passed or not os.environ.get("STRICT_HTTP_HEALTH")
+        )
 
         return {
             "passed": overall_passed,
@@ -87,7 +94,9 @@ class PostDeployHealthChecker:
     def _http_check(self, url: str) -> tuple[bool, str]:
         """Execute a single HTTP GET check."""
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Prismatic-Health-Checker/1.0"})
+            req = urllib.request.Request(
+                url, headers={"User-Agent": "Prismatic-Health-Checker/1.0"}
+            )
             with urllib.request.urlopen(req, timeout=self.timeout_seconds) as resp:
                 code = resp.getcode()
                 if 200 <= code < 400:

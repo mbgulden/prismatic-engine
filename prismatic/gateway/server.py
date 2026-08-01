@@ -4817,8 +4817,18 @@ async def pwp_kpi_publish_dashboard(request: Request) -> dict[str, Any]:
 
 
 from prismatic.review_factory.routes import router as review_factory_router
+from prismatic.workspace.routes import create_workspace_router
+from prismatic.deploy.routes import create_deploy_router
 
 app.include_router(review_factory_router, prefix="/api/review-factory")
+
+_ws_router = create_workspace_router()
+if _ws_router:
+    app.include_router(_ws_router, prefix="/api")
+
+_dep_router = create_deploy_router()
+if _dep_router:
+    app.include_router(_dep_router, prefix="/api")
 
 
 @app.get("/api/workspace/tree")
@@ -4832,7 +4842,30 @@ async def gateway_workspace_tree(
                 workspaces = list_workspaces()
             except Exception:
                 workspaces = []
-            return {"workspaces": workspaces}
+
+            by_category: dict[str, list[dict[str, Any]]] = {}
+            total_entries = 0
+            try:
+                from prismatic.workspace.routes import (
+                    WorkspaceTreeWalker,
+                    default_deployed_docs_root,
+                )
+
+                walker = WorkspaceTreeWalker(docs_root=default_deployed_docs_root())
+                entries = walker.walk()
+                total_entries = len(entries)
+                for entry in entries:
+                    cat = entry.category
+                    by_category.setdefault(cat, []).append(entry.to_dict())
+            except Exception:
+                pass
+
+            return {
+                "workspaces": workspaces,
+                "total_entries": total_entries,
+                "by_category": by_category,
+                "timestamp": time.time(),
+            }
         return get_node(workspace_id=workspace_id, rel_path=path or "")
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
