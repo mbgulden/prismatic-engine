@@ -128,11 +128,33 @@ def create_workspace_router(docs_root: Optional[Path] = None) -> Any:
             "content": content,
         }
 
+    @router.post("/acceptance/override")
+    async def override_acceptance(
+        path: str = Query(..., description="Relative doc path"),
+        reason: str = Query(..., description="Manual operator override reason"),
+    ) -> Dict[str, Any]:
+        """Manually mark a document as accepted, overriding failed checks."""
+        full_path = root / path
+        if not full_path.exists():
+            raise HTTPException(status_code=404, detail=f"File '{path}' not found")
+
+        result = acceptance.validate(full_path)
+        result["passed"] = True
+        result["status"] = "accepted_manual_override"
+        result["override_reason"] = reason
+        return {"path": path, "result": result}
+
     @router.post("/share/revoke")
     async def revoke_share_link(token: str = Query(..., description="Share token")) -> Dict[str, Any]:
         """Revoke a share token."""
         share_mgr.revoke_token(token)
         return {"status": "revoked", "token": token}
+
+    @router.delete("/share/{token}")
+    async def delete_share_token(token: str) -> Dict[str, Any]:
+        """DELETE endpoint to revoke a share link token (Item 13)."""
+        share_mgr.revoke_token(token)
+        return {"status": "deleted", "token": token}
 
     return router
 
