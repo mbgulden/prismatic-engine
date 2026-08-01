@@ -172,6 +172,24 @@ class ReviewerCapability:
         Returns:
             (decision, updated_manifest, repair_packet_or_None)
         """
+        # Validate 5-point composite lineage
+        if receipt.review_job_id and receipt.review_job_id != job.review_job_id:
+            raise ValueError(
+                f"Cross-job receipt mismatch: receipt review_job_id ({receipt.review_job_id}) != job review_job_id ({job.review_job_id})"
+            )
+        if receipt.candidate_commit and job.candidate_commit and receipt.candidate_commit != job.candidate_commit:
+            raise ValueError(
+                f"Cross-candidate receipt commit mismatch: receipt commit ({receipt.candidate_commit}) != job commit ({job.candidate_commit})"
+            )
+        if receipt.candidate_tree and job.candidate_tree and receipt.candidate_tree != job.candidate_tree:
+            raise ValueError(
+                f"Cross-candidate receipt tree mismatch: receipt tree ({receipt.candidate_tree}) != job tree ({job.candidate_tree})"
+            )
+        if manifest.candidate_sha and job.candidate_commit and manifest.candidate_sha != job.candidate_commit:
+            raise ValueError(
+                f"Cross-candidate manifest SHA mismatch: manifest SHA ({manifest.candidate_sha}) != job commit ({job.candidate_commit})"
+            )
+
         if pr_url is None:
             pr_url = self._derive_pr_url(job)
 

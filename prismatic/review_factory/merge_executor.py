@@ -175,9 +175,13 @@ class MergeExecutor:
             manifest = manifest.mark_merge_eligible()
 
         # Step 3: Acquire Merge Lock and Record Attestation via MergeFactoryStore
-        principal = Principal(
-            identity=auth.actor, scopes=["merge-judge", "merge-factory-admin"]
-        )
+        allowed_scopes = ("merge-judge", "merge-factory-admin", "tier-0-auto", "human-override")
+        if not auth.scope or auth.scope not in allowed_scopes:
+            raise PermissionError(
+                f"Authorization actor '{auth.actor}' scope '{auth.scope}' lacks required merge privileges"
+            )
+        scopes = list({auth.scope, "merge-judge"})
+        principal = Principal(identity=auth.actor, scopes=scopes)
         manifest_digest = manifest.digest()
 
         attestation = self.mf_store.submit_attestation(
@@ -256,6 +260,12 @@ class MergeExecutor:
                 integration_manifest=integration_manifest,
                 final_manifest_state=manifest.state.value,
             )
+        except Exception as exc:
+            logger.error("Integration merge execution failed: %s", exc)
+            self.queue.db.update_review_job_state(
+                job.review_job_id, ReviewJobState.MERGE_VERIFICATION_FAILED
+            )
+            raise
         finally:
             self.mf_store.release_lock(
                 repository=job.repository,
@@ -274,19 +284,14 @@ class MergeExecutor:
     def _build_ci_checks(
         self, job: ReviewJob, manifest: MergeCandidateManifest
     ) -> tuple:
-        from prismatic.merge_candidate_manifest import CICheck
-
-        return tuple(
-            CICheck(
-                name=name,
-                head_sha=job.candidate_commit,
-                status="completed",
-                conclusion="success",
-                run_id=f"run-{name}-1",
-                url=f"https://github.com/{job.repository}/actions/runs/1",
-            )
-            for name in manifest.required_ci_checks
-        )
+        # Require real verified CI checks on manifest; fail closed if missing or red
+        existing_checks = {c.name: c for c in manifest.ci_checks}
+        for name in manifest.required_ci_checks:
+            if name not in existing_checks or existing_checks[name].conclusion.lower() != "success":
+                raise ValueError(
+                    f"Required CI check '{name}' missing or not green for candidate {job.candidate_commit}"
+                )
+        return manifest.ci_checks
 
 
 def _cli_approve(job_id: str, actor: str, operator_key: Optional[str] = None) -> None:

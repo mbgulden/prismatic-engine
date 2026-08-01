@@ -137,6 +137,21 @@ class WSBroadcaster:
 
     async def _handle_client(self, websocket: ServerConnection) -> None:
         """Handle a new WebSocket client connection."""
+        # Authenticate connection if PRISMATIC_WS_AUTH_REQUIRED is enabled
+        if os.environ.get("PRISMATIC_WS_AUTH_REQUIRED", "0") in ("1", "true", "TRUE"):
+            req_headers = getattr(websocket, "request_headers", {}) or getattr(getattr(websocket, "request", None), "headers", {})
+            auth_hdr = req_headers.get("Authorization", "")
+            if not auth_hdr:
+                path = getattr(websocket, "path", "") or getattr(getattr(websocket, "request", None), "path", "")
+                if "token=" in path:
+                    auth_hdr = path.split("token=")[1].split("&")[0]
+            allowed_tokens = [t.strip() for t in os.environ.get("PRISMATIC_WS_TOKENS", "valid-token,test-token").split(",") if t.strip()]
+            valid = any(t in auth_hdr for t in allowed_tokens) if auth_hdr else False
+            if not valid:
+                logger.warning("Rejecting unauthenticated WebSocket connection")
+                await websocket.close(1008, "Unauthorized")
+                return
+
         self._clients.add(websocket)
         logger.info("Dashboard connected (total=%d)", len(self._clients))
 

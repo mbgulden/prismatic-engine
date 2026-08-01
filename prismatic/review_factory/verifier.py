@@ -183,6 +183,7 @@ class VerificationWorker:
             review_job_id=job.review_job_id,
             candidate_commit=job.candidate_commit,
             candidate_tree=job.candidate_tree or job.candidate_commit,
+            immutable_archive_id=f"archive-tree-{job.candidate_tree or job.candidate_commit}",
             commands=json.dumps([r.command for r in results]),
             exit_codes=json.dumps({r.name: r.exit_code for r in results}),
             log_paths=json.dumps({r.name: r.log_path for r in results}),

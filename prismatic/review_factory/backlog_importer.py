@@ -125,8 +125,16 @@ class BacklogImporter:
             or packet.get("scope", "")
         )
         repository = packet.get("repository", "mbgulden/prismatic-engine")
-        base_commit = packet.get("base_commit") or row.base_branch or "main"
-        candidate_commit = packet.get("candidate_commit") or row.source_branch or ""
+        base_commit = packet.get("base_commit") or row.base_branch
+        candidate_commit = packet.get("candidate_commit") or row.source_branch
+
+        if not base_commit or not candidate_commit:
+            result.skipped_ineligible += 1
+            result.errors.append(
+                f"Row {completed_work_id} missing explicit base_commit or candidate_commit — fail closed"
+            )
+            return
+
         changed_paths = list(packet.get("changed_files", []))
 
         # Optional: result_packet_path for manifest loading

@@ -517,28 +517,15 @@ class ReviewQueue:
     ) -> bool:
         """Re-enqueue a repaired candidate after a repair cycle.
 
-        Consumes outstanding repair packets and transitions the job
-        back to ``queued`` for re-verification.
+        Atomically consumes outstanding repair packets, updates candidate
+        commit/tree/paths, invalidates stale evidence, and transitions the
+        job back to ``queued`` for re-verification in a single SQL transaction.
         """
-        job = self.db.get_review_job(review_job_id)
-        if job is None or job.state != ReviewJobState.REPAIR_REQUIRED.value:
-            return False
-
-        # Consume repair packets
-        packets = self.db.get_unconsumed_repairs(job.candidate_tree)
-        for packet in packets:
-            packet.consume()
-            packet.increment_attempt()
-            # Update in DB (we'd need an update method — for now, mark consumed)
-
-        # Update the job with new candidate info
-        # Note: we need to update candidate fields + re-classify
-        # For now, transition back to queued
-        return self.db.update_review_job_state(
-            review_job_id,
-            ReviewJobState.QUEUED,
-            lease_owner="",
-            lease_expires_at="",
+        return self.db.consume_repair_and_requeue_job(
+            review_job_id=review_job_id,
+            new_candidate_commit=new_candidate_commit,
+            new_candidate_tree=new_candidate_tree,
+            new_changed_paths=new_changed_paths,
         )
 
     # ── Janitor ──────────────────────────────────────────────────────

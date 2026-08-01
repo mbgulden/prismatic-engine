@@ -85,7 +85,7 @@ def default_db_path() -> Path:
 # Schema DDL
 # ─────────────────────────────────────────────────────────────────────
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _CREATE_TABLES = """
 -- Schema version tracking
@@ -265,17 +265,35 @@ class ReviewFactoryDB:
     # ── Schema management ────────────────────────────────────────────
 
     def ensure_tables(self) -> None:
-        """Create all tables if they don't exist.  Idempotent."""
+        """Create all tables if they don't exist and run migrations.  Idempotent."""
         self.conn.executescript(_CREATE_TABLES)
         # Record schema version if not already present
         cur = self.conn.execute(
             "SELECT version FROM rf_schema_version ORDER BY version DESC LIMIT 1"
         )
         row = cur.fetchone()
-        if row is None or row["version"] < SCHEMA_VERSION:
+        current_ver = row["version"] if row else 0
+
+        if current_ver < 2:
+            # Preflight check: fail closed if duplicate non-empty completed_work_id exist
+            dup_cur = self.conn.execute(
+                "SELECT completed_work_id, COUNT(*) as cnt FROM review_jobs WHERE completed_work_id != '' GROUP BY completed_work_id HAVING cnt > 1"
+            )
+            dups = dup_cur.fetchall()
+            if dups:
+                dup_ids = [d["completed_work_id"] for d in dups]
+                raise RuntimeError(
+                    f"Schema v2 migration aborted: duplicate completed_work_id values found: {dup_ids}"
+                )
+
+            # Apply UNIQUE index
+            self.conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_review_jobs_cw_id ON review_jobs(completed_work_id) WHERE completed_work_id != ''"
+            )
+
             self.conn.execute(
                 "INSERT INTO rf_schema_version (version, applied_at) VALUES (?, ?)",
-                (SCHEMA_VERSION, datetime.now(timezone.utc).isoformat()),
+                (2, datetime.now(timezone.utc).isoformat()),
             )
 
     # ── review_jobs CRUD ─────────────────────────────────────────────
@@ -598,6 +616,62 @@ class ReviewFactoryDB:
             (candidate_tree,),
         )
         return [self._row_to_repair_packet(r) for r in cur.fetchall()]
+
+    def consume_repair_and_requeue_job(
+        self,
+        review_job_id: str,
+        new_candidate_commit: str,
+        new_candidate_tree: str = "",
+        new_changed_paths: Optional[list[str]] = None,
+    ) -> bool:
+        """Atomically consume repair packets and update candidate info to re-queue.
+
+        In a single SQL transaction:
+        1. Verifies job is in REPAIR_REQUIRED state.
+        2. Marks unconsumed repair_packets for the candidate as consumed.
+        3. Updates review_job: candidate_commit, candidate_tree, changed_paths_json,
+           resets state to QUEUED, clears lease fields, resets completed_witnesses to 0.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        with self.transaction() as cur:
+            cur.execute(
+                "SELECT * FROM review_jobs WHERE review_job_id = ? AND state = ?",
+                (review_job_id, ReviewJobState.REPAIR_REQUIRED.value),
+            )
+            row = cur.fetchone()
+            if not row:
+                return False
+
+            old_cand_tree = row["candidate_tree"]
+            cur.execute(
+                """UPDATE repair_packets
+                   SET consumed_at = ?, resolution_attempt_n = resolution_attempt_n + 1
+                   WHERE candidate_tree = ? AND consumed_at = ''""",
+                (now, old_cand_tree),
+            )
+
+            cand_tree = new_candidate_tree or new_candidate_commit
+            changed_json = (
+                json.dumps(new_changed_paths)
+                if new_changed_paths is not None
+                else row["changed_paths_json"]
+            )
+
+            cur.execute(
+                """UPDATE review_jobs
+                   SET candidate_commit = ?, candidate_tree = ?, changed_paths_json = ?,
+                       state = ?, lease_owner = '', lease_expires_at = '', completed_witnesses = 0
+                   WHERE review_job_id = ? AND state = ?""",
+                (
+                    new_candidate_commit,
+                    cand_tree,
+                    changed_json,
+                    ReviewJobState.QUEUED.value,
+                    review_job_id,
+                    ReviewJobState.REPAIR_REQUIRED.value,
+                ),
+            )
+            return cur.rowcount > 0
 
     # ── Janitor / recovery ───────────────────────────────────────────
 
