@@ -72,6 +72,21 @@ app.include_router(jobs.router, prefix=API_PREFIX, tags=["jobs"])
 app.include_router(worktrees.router, prefix=API_PREFIX, tags=["worktrees"])
 app.include_router(merge_factory.router, prefix=API_PREFIX)
 
+try:
+    from prismatic.workspace.routes import workspace_router
+    if workspace_router:
+        app.include_router(workspace_router, prefix="/api")
+except Exception as exc:
+    logger.warning("Could not mount workspace_router: %s", exc)
+
+try:
+    from prismatic.deploy.routes import deploy_router
+    if deploy_router:
+        app.include_router(deploy_router, prefix="/api")
+except Exception as exc:
+    logger.warning("Could not mount deploy_router: %s", exc)
+
+
 
 # ── CLI ───────────────────────────────────────────────────
 

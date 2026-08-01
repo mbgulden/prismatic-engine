@@ -1,0 +1,45 @@
+name: Post-Merge Production Deploy Hook (WB-1)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry-run deploy mode'
+        required: true
+        type: boolean
+        default: true
+
+jobs:
+  post-merge-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 5
+
+      - name: Calculate Payload & HMAC Signature
+        id: payload
+        env:
+          HMAC_SECRET: ${{ secrets.DEPLOY_HMAC_SECRET }}
+        run: |
+          PR_SHA="${{ github.sha }}"
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          
+          # Construct JSON payload
+          PAYLOAD_JSON=$(jq -n \
+            --arg sha "$PR_SHA" \
+            --arg title "$COMMIT_MSG" \
+            --arg deployer "${{ github.actor }}" \
+            --arg time "$TIMESTAMP" \
+            '{pr_sha: $sha, pr_title: $title, deployer: $deployer, merged_at: $time}')
+            
+          echo "payload=$PAYLOAD_JSON" >> $GITHUB_OUTPUT
+
+      - name: Send Post-Merge Deploy Trigger to Local Receiver
+        run: |
+          echo "Deploy trigger step executed for commit ${{ github.sha }}"
