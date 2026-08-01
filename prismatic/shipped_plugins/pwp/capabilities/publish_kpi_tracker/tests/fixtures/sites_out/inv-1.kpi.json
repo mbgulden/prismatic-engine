@@ -1,0 +1,57 @@
+{
+  "delivery_cadence": {
+    "daily": {
+      "kind": "daily"
+    },
+    "monthly": {
+      "kind": "monthly"
+    },
+    "weekly": {
+      "kind": "weekly"
+    }
+  },
+  "domain": "i1.test",
+  "expected_data_layer_events": [
+    "a"
+  ],
+  "ga4_recommended_events": [
+    "a"
+  ],
+  "globally_required": {
+    "expected_data_layer_events": [
+      "a"
+    ],
+    "expected_loader_on_every_page": true,
+    "ga4_recommended_events": [
+      "a"
+    ],
+    "tracking_property": "G-INV1"
+  },
+  "metrics": {
+    "a": {
+      "event": "a",
+      "front_of_card": true,
+      "id": "a",
+      "label": "A",
+      "source": "ga4"
+    }
+  },
+  "name": "i1-funnel",
+  "owner": "ned",
+  "schema_version": "1.0",
+  "share_targets": {
+    "credential_file_env": "INV_1_GOOGLE_SERVICE_ACCOUNT_JSON",
+    "dashboard_route": "/pwp/kpi/",
+    "email_to_default": "mbgulden@gmail.com",
+    "email_to_env": "INV_1_KPI_EMAIL_TO",
+    "google_sheet_id_env": "INV_1_KPI_SHEET_ID"
+  },
+  "site": {
+    "expected_dataLayer_events": [
+      "a"
+    ],
+    "title": "i1-funnel"
+  },
+  "site_slug": "inv-1",
+  "tracking_property": "G-INV1"
+}

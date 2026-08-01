@@ -1,0 +1,45 @@
+{
+  "delivery_cadence": {
+    "daily": {
+      "kind": "daily"
+    },
+    "monthly": {
+      "kind": "monthly"
+    },
+    "weekly": {
+      "kind": "weekly"
+    }
+  },
+  "domain": "ezshare.systems",
+  "globally_required": {
+    "expected_data_layer_events": [],
+    "expected_loader_on_every_page": true,
+    "ga4_recommended_events": []
+  },
+  "metrics": {},
+  "name": "ezshare",
+  "owner": "ned",
+  "schema_version": "1.0",
+  "share_targets": {
+    "credential_file_env": "HDE_GOOGLE_SERVICE_ACCOUNT_JSON",
+    "dashboard_route": "/pwp/kpi/",
+    "email_to_default": "mbgulden@gmail.com",
+    "email_to_env": "HDE_KPI_EMAIL_TO",
+    "google_sheet_id_env": "HDE_KPI_SHEET_ID"
+  },
+  "site": {
+    "expected_dataLayer_events": [],
+    "title": "ezshare"
+  },
+  "site_slug": "ezshare",
+  "external_sources": {
+    "stripe": {
+      "account_id": "",
+      "key_type": "standard",
+      "registered_at": "2026-07-30T04:34:05.104062+00:00",
+      "validated": true,
+      "currency": "usd",
+      "available_cents": 0
+    }
+  }
+}
