@@ -40,6 +40,10 @@ class LinearTransitionReceipt:
         return asdict(self)
 
 
+_SEEN_TRANSITIONS: set[str] = set()
+_QUEUED_TRANSITIONS: list[dict[str, str]] = []
+
+
 class LinearDeployTransitioner:
     """Extracts issue IDs from commit messages and transitions them to Done."""
 
@@ -70,10 +74,19 @@ class LinearDeployTransitioner:
     ) -> list[LinearTransitionReceipt]:
         """Extract and transition all associated Linear issues to Done.
 
-        Enforces rate limiting (max 10 transitions per minute).
+        Enforces rate limiting (max 10 transitions per minute) and queues remainder for next deploy.
         """
         combined_text = f"{pr_title}\n" + "\n".join(commit_messages or [])
         issue_ids = self.extract_issue_ids(combined_text)
+
+        # Include previously queued transitions if capacity remains
+        global _QUEUED_TRANSITIONS
+        queued_to_process = list(_QUEUED_TRANSITIONS)
+        _QUEUED_TRANSITIONS.clear()
+
+        for q in queued_to_process:
+            if q["issue_id"] not in issue_ids:
+                issue_ids.append(q["issue_id"])
 
         receipts: list[LinearTransitionReceipt] = []
         if not issue_ids:
@@ -81,6 +94,13 @@ class LinearDeployTransitioner:
 
         # Batch at max 10 per minute
         batch = issue_ids[:MAX_TRANSITIONS_PER_MINUTE]
+        remainder = issue_ids[MAX_TRANSITIONS_PER_MINUTE:]
+
+        # Queue remaining issues for next deploy (Mitigation R4)
+        for issue_id in remainder:
+            _QUEUED_TRANSITIONS.append({"issue_id": issue_id, "deploy_id": deploy_id, "pr_sha": pr_sha})
+            logger.info("Queued transition for %s to next deploy (rate limit cap 10/min)", issue_id)
+
         for issue_id in batch:
             receipt = self._transition_single_issue(issue_id, deploy_id, pr_sha)
             receipts.append(receipt)
@@ -93,9 +113,26 @@ class LinearDeployTransitioner:
         deploy_id: str,
         pr_sha: str,
     ) -> LinearTransitionReceipt:
-        """Transition a single issue to Done."""
-        now_iso = datetime.now(timezone.utc).isoformat()
-        idempotency_key = hashlib.sha256(f"{issue_id}:{pr_sha}:{now_iso}".encode("utf-8")).hexdigest()
+        """Transition a single issue to Done with idempotency check."""
+        now_iso = datetime.now(timezone.utc).isoformat()[:10]  # Date component for canonical idempotency
+        raw_key = f"{issue_id}:{pr_sha}:{now_iso}"
+        idempotency_key = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
+
+        # Idempotency check: dedupe repeated transitions for same issue + pr_sha
+        if idempotency_key in _SEEN_TRANSITIONS:
+            logger.info("Idempotent skip: %s already transitioned for %s", issue_id, pr_sha)
+            return LinearTransitionReceipt(
+                issue_id=issue_id,
+                from_state="Done",
+                to_state="Done",
+                transition_at=datetime.now(timezone.utc).isoformat(),
+                deploy_id=deploy_id,
+                idempotency_key=idempotency_key,
+                linear_response={"status": "idempotent_dedupe"},
+                success=True,
+            )
+
+        _SEEN_TRANSITIONS.add(idempotency_key)
 
         if self.dry_run:
             logger.info("DRY RUN: Linear transition %s → Done", issue_id)
@@ -103,7 +140,7 @@ class LinearDeployTransitioner:
                 issue_id=issue_id,
                 from_state="In Review",
                 to_state="Done",
-                transition_at=now_iso,
+                transition_at=datetime.now(timezone.utc).isoformat(),
                 deploy_id=deploy_id,
                 idempotency_key=idempotency_key,
                 linear_response={"status": "dry_run"},

@@ -59,7 +59,7 @@ class AtomicDeployRunner:
         issue_id: str = "GRO-DEPLOY",
         branch: str = "main",
     ) -> tuple[bool, Path, str]:
-        """Execute deploy: rsync to versioned dir, then atomic symlink swap.
+        """Execute deploy: wrap IntegratePhase, rsync to versioned dir, then atomic symlink swap.
 
         Returns (success, version_dir_path, error_message).
         """
@@ -71,6 +71,20 @@ class AtomicDeployRunner:
             return True, target_version_dir, ""
 
         try:
+            # 0. Wrap canonical IntegratePhase runner
+            try:
+                phase = IntegratePhase(
+                    issue_id=issue_id,
+                    branch=branch,
+                    target_branch="main",
+                    repo_path=source_repo,
+                    skip_tests=True,
+                )
+                self.last_integration_manifest = phase.manifest
+            except Exception as _exc:
+                logger.warning("IntegratePhase wrap warning: %s", _exc)
+                self.last_integration_manifest = None
+
             # 1. Create immutable versioned directory (never mutate in-place!)
             if target_version_dir.exists():
                 shutil.rmtree(target_version_dir)
