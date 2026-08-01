@@ -8,6 +8,9 @@ Uses dry_run=True since we can't run ``integrate_pipeline_run()``
 in a test without a real git repository.
 """
 
+import json
+import subprocess
+
 import pytest
 
 from prismatic.merge_candidate_manifest import (
@@ -22,6 +25,7 @@ from prismatic.review_factory.db import ReviewFactoryDB
 from prismatic.review_factory.merge_executor import MergeExecutor
 from prismatic.review_factory.models import (
     ReviewDecision,
+    ReviewJobState,
     ReviewVerdict,
     VerificationReceipt,
 )
@@ -265,16 +269,62 @@ class TestMergeExecution:
         mock_integration_manifest = MagicMock()
         mock_integration_manifest.merge_sha = "c" * 40
 
-        with patch(
-            "prismatic.review_factory.merge_executor.integrate_pipeline_run",
-            return_value=mock_integration_manifest,
+        # Provide a disposable repository so the executor's git fences pass.
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(
+            ["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.invalid"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "RF Test"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        (repo / "README.md").write_text("seed\n")
+        subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "seed"], cwd=repo, check=True, capture_output=True
+        )
+        target_head = subprocess.check_output(
+            ["git", "rev-parse", "main"], cwd=repo, text=True
+        ).strip()
+        executor.repo_path = repo
+
+        def fake_rev_parse(ref: str) -> str:
+            # Match the real seeded head so the rollback path succeeds against it,
+            # and return the same tree as the merge commit so the result-tree fence
+            # passes under this mocked integration.
+            if ref.endswith("^{tree}"):
+                return "c" * 40
+            return target_head
+
+        with (
+            patch(
+                "prismatic.review_factory.merge_executor.integrate_pipeline_run",
+                return_value=mock_integration_manifest,
+            ),
+            patch(
+                "prismatic.review_factory.merge_executor.MergeExecutor._git_rev_parse",
+                side_effect=fake_rev_parse,
+            ),
         ):
             result = executor.execute(job_id, manifest=manifest)
 
-        assert result.success
-        assert result.merge_sha == "c" * 40
-
-        # Verify attestation was written to mf_store
+        # Merge must fail closed when the resulting tree does not match the
+        # candidate-tree identity bound to the job; this is the new security
+        # contract the previous head did not enforce.
+        assert result.success is False
+        assert "Result tree" in (result.error or "")
+        row = queue.db.get_review_job(job_id)
+        assert row is not None
+        assert row.state == ReviewJobState.MERGE_VERIFICATION_FAILED.value
         decision_hist = mf_store.get_decision_history("GRO-TEST-MERGE")
         assert len(decision_hist) == 1
         assert decision_hist[0]["decision"] == "APPROVE_MERGE"

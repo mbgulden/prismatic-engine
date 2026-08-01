@@ -169,17 +169,19 @@ class MergeExecutor:
             ci_checks = self._build_ci_checks(job, manifest)
             manifest = manifest.record_ci(ci_checks)
 
-        # Step 2: Mark merge eligible (CI_GREEN → MERGE_ELIGIBLE)
+        # Step 2: Mark merge eligible (CI_GREEN -> MERGE_ELIGIBLE)
         if manifest.state == PromotionState.CI_GREEN:
             manifest = manifest.mark_merge_eligible()
 
-        # Step 3: Acquire Merge Lock and Record Attestation via MergeFactoryStore
+        # Step 3: Validate authority scope and identity
         allowed_scopes = (
             "merge-judge",
             "merge-factory-admin",
             "tier-0-auto",
             "human-override",
         )
+        if not auth.actor or not auth.actor.strip():
+            raise PermissionError("Authorization actor identity is required")
         if not auth.scope or auth.scope not in allowed_scopes:
             raise PermissionError(
                 f"Authorization actor '{auth.actor}' scope '{auth.scope}' lacks required merge privileges"
@@ -188,23 +190,35 @@ class MergeExecutor:
         principal = Principal(identity=auth.actor, scopes=scopes)
         manifest_digest = manifest.digest()
 
+        # Step 4: Bind the merge to the manifest's declared target and expected tree.
+        target_branch = manifest.target
+        if not target_branch:
+            raise PermissionError(
+                f"Manifest target is unset; refusing to merge {job.review_job_id}"
+            )
+        if not (job.candidate_tree or job.candidate_commit):
+            raise PermissionError(
+                f"Candidate tree/commit is unset for {job.review_job_id}"
+            )
+        expected_merge_tree = job.candidate_tree or job.candidate_commit
+
         attestation = self.mf_store.submit_attestation(
             issue_id=job.task_id,
             decision="APPROVE_MERGE",
-            base_sha=job.base_commit,
+            base_sha=job.candidate_commit,
             candidate_sha=job.candidate_commit,
             manifest_digest=manifest_digest,
             evidence_digest=manifest_digest,
             repository=job.repository,
-            target="main",
+            target=target_branch,
             principal=principal,
         )
 
-        _ = self.mf_store.acquire_lock(
+        lock = self.mf_store.acquire_lock(
             repository=job.repository,
-            target="main",
+            target=target_branch,
             issue_id=job.task_id,
-            base_sha=job.base_commit,
+            base_sha=job.candidate_commit,
             candidate_sha=job.candidate_commit,
             manifest_digest=manifest_digest,
             evidence_digest=manifest_digest,
@@ -212,35 +226,54 @@ class MergeExecutor:
             ttl_seconds=300,
             principal=principal,
         )
-
-        # Step 4: Transition job to MERGING
-        self.queue.db.update_review_job_state(job.review_job_id, ReviewJobState.MERGING)
-
         try:
-            # Step 5: Execute actual git merge
-            source_branch = job.candidate_commit
-            target_branch = "main"
+            target_head_before = self._git_rev_parse(target_branch)
 
+            # Step 5: Transition the job to MERGING before any side effect.
+            self.queue.db.update_review_job_state(
+                job.review_job_id, ReviewJobState.MERGING
+            )
+
+            # Step 6: Atomic authorization claim - only one executor consumes the auth.
+            consumed = self.queue.db.consume_authorization(auth.authorization_id)
+            if not consumed:
+                raise PermissionError(
+                    f"Authorization {auth.authorization_id} could not be claimed"
+                )
+
+            # Step 7: Execute real Git merge against the manifest target.
             integration_manifest = integrate_pipeline_run(
                 issue_id=job.task_id,
-                branch=source_branch,
+                branch=job.candidate_commit,
                 target_branch=target_branch,
                 repo_path=self.repo_path,
             )
 
             merge_sha = (
                 integration_manifest.merge_sha
-                if integration_manifest and hasattr(integration_manifest, "merge_sha")
-                else "merged-sha"
+                if integration_manifest
+                and getattr(integration_manifest, "merge_sha", None)
+                else None
             )
+            if not merge_sha:
+                raise RuntimeError("Integration did not return a merge SHA")
 
-            # Step 6: Mark manifest MERGED
+            merge_tree = self._git_rev_parse(f"{merge_sha}^{{tree}}")
+            if merge_tree != expected_merge_tree:
+                self._rollback_target(
+                    target_branch=target_branch,
+                    original_head=target_head_before,
+                )
+                raise PermissionError(
+                    f"Result tree {merge_tree} does not match expected "
+                    f"{expected_merge_tree}; rolled back {target_branch}"
+                )
+
+            # Step 8: Mark manifest MERGED and persist the merged state.
             manifest = manifest.mark_merged(
                 candidate_sha=job.candidate_commit, merge_sha=merge_sha
             )
 
-            # Step 7: Consume authorization and mark job MERGED
-            self.queue.db.consume_authorization(auth.authorization_id)
             self.queue.db.update_review_job_state(
                 job.review_job_id, ReviewJobState.MERGED
             )
@@ -254,6 +287,7 @@ class MergeExecutor:
                     "task_id": job.task_id,
                     "merge_sha": merge_sha,
                     "actor": auth.actor,
+                    "target": target_branch,
                 },
             )
 
@@ -266,6 +300,13 @@ class MergeExecutor:
             )
         except Exception as exc:
             logger.error("Integration merge execution failed: %s", exc)
+            try:
+                self._rollback_target(
+                    target_branch=target_branch,
+                    original_head=target_head_before,
+                )
+            except Exception as rollback_exc:
+                logger.error("Rollback of %s failed: %s", target_branch, rollback_exc)
             self.queue.db.update_review_job_state(
                 job.review_job_id, ReviewJobState.MERGE_VERIFICATION_FAILED
             )
@@ -273,10 +314,43 @@ class MergeExecutor:
         finally:
             self.mf_store.release_lock(
                 repository=job.repository,
-                target="main",
+                target=target_branch,
                 issue_id=job.task_id,
                 principal=principal,
             )
+
+    def _git_rev_parse(self, ref: str) -> str:
+        import subprocess
+
+        completed = subprocess.run(
+            ["git", "rev-parse", "--verify", ref],
+            cwd=str(self.repo_path),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return completed.stdout.strip()
+
+    def _rollback_target(self, target_branch: str, original_head: str) -> None:
+        import subprocess
+
+        subprocess.run(
+            ["git", "reset", "--hard", original_head],
+            cwd=str(self.repo_path),
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "update-ref",
+                f"refs/heads/{target_branch}",
+                original_head,
+            ],
+            cwd=str(self.repo_path),
+            check=True,
+            capture_output=True,
+        )
 
     def _load_manifest(self, job: ReviewJob) -> MergeCandidateManifest:
         if job.result_packet_path and Path(job.result_packet_path).exists():
