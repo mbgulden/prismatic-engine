@@ -100,7 +100,7 @@ def _create_merge_ready_job(queue: ReviewQueue, tier: int = 0) -> str:
         candidate_commit="b" * 40,
         candidate_tree="b" * 40,
     )
-    queue.complete_verification(job_id, receipt)
+    queue.complete_verification(job_id, receipt, worker_id="verifier-1")
 
     # Review (multi-witness for high tiers)
     job_obj = queue.db.get_review_job(job_id)
@@ -116,7 +116,7 @@ def _create_merge_ready_job(queue: ReviewQueue, tier: int = 0) -> str:
                 receipt_id=receipt.receipt_id,
                 verdict=ReviewVerdict.CLEAN.value,
             )
-            queue.submit_verdict(job_id, decision)
+            queue.submit_verdict(job_id, decision, reviewer_id=f"reviewer-{witness_n}")
 
     return job_id
 
