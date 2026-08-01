@@ -26,10 +26,14 @@ jobs:
         env:
           HMAC_SECRET: ${{ secrets.DEPLOY_HMAC_SECRET }}
         run: |
+          if [ -z "$HMAC_SECRET" ]; then
+            echo "::error::DEPLOY_HMAC_SECRET repository secret is missing!"
+            exit 1
+          fi
+
           PR_SHA="${{ github.sha }}"
           COMMIT_MSG=$(git log -1 --pretty=%B | head -n 1)
           TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          SECRET="${HMAC_SECRET:-prismatic-deploy-hmac-secret-v1}"
           
           # Construct JSON payload
           PAYLOAD_JSON=$(jq -n \
@@ -39,7 +43,7 @@ jobs:
             --arg time "$TIMESTAMP" \
             '{pr_sha: $sha, pr_title: $title, deployer: $deployer, merged_at: $time}')
             
-          HMAC_SIG=$(echo -n "$PAYLOAD_JSON" | openssl dgst -sha256 -hmac "$SECRET" | sed 's/^.*= //')
+          HMAC_SIG=$(echo -n "$PAYLOAD_JSON" | openssl dgst -sha256 -hmac "$HMAC_SECRET" | sed 's/^.*= //')
           
           echo "payload=$PAYLOAD_JSON" >> $GITHUB_OUTPUT
           echo "sig=$HMAC_SIG" >> $GITHUB_OUTPUT

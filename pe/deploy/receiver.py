@@ -30,8 +30,24 @@ from pe.deploy.manifest import DeployManifestStore, DeployRecord
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_HMAC_SECRET = os.environ.get("DEPLOY_HMAC_SECRET", "prismatic-deploy-hmac-secret-v1")
 RECEIVER_PORT = 9460
+
+
+def get_deploy_hmac_secret() -> str:
+    """Retrieve DEPLOY_HMAC_SECRET from environment.
+
+    Raises RuntimeError if unset to prevent silent default bypass (Blocker #2).
+    """
+    secret = os.environ.get("DEPLOY_HMAC_SECRET")
+    if not secret:
+        # Fall back only in explicitly permitted test mode
+        if os.environ.get("PRISMATIC_ALLOW_DEFAULT_HMAC") == "1":
+            return "prismatic-deploy-hmac-secret-v1"
+        raise RuntimeError(
+            "DEPLOY_HMAC_SECRET environment variable is missing! "
+            "Refusing to launch deploy receiver with default fallback."
+        )
+    return secret
 
 
 def verify_hmac_signature(
@@ -43,7 +59,13 @@ def verify_hmac_signature(
     if not signature_header:
         return False
 
-    sec = (secret or os.environ.get("DEPLOY_HMAC_SECRET", DEFAULT_HMAC_SECRET)).encode("utf-8")
+    try:
+        sec_str = secret or get_deploy_hmac_secret()
+    except RuntimeError:
+        logger.error("HMAC verification failed: DEPLOY_HMAC_SECRET not set")
+        return False
+
+    sec = sec_str.encode("utf-8")
     
     # Strip 'sha256=' prefix if present
     sig = signature_header.replace("sha256=", "").strip()

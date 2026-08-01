@@ -20,11 +20,35 @@ This specification documents the post-merge production deployment pipeline and L
 6. **Linear Issue Transition**: `pe/deploy/linear_transition.py` extracts `GRO-XXXX` identifiers and moves them to `Done` (batched $\le 10/\text{min}$).
 7. **Manifest Record**: `pe/deploy/manifest.py` records `DeployRecord` in `~/.prismatic/db/deploy_records.json`.
 
-## Invariants & Guardrails (§16.8)
+## Operator Runbook & Emergency Rollback Procedure (§7.4)
 
-- **No In-Place Mutation**: Always rsync fresh copies to a new versioned release directory.
-- **Atomic Symlink Swap**: Never write directly to release directory without atomic symlink indirection.
-- **HMAC Verification**: Signature is validated on every request.
-- **Health Gate**: Linear issue transitions ONLY fire after successful post-deploy health check.
-- **Rate Limit Control**: Linear transitions are batched at max 10/minute.
-- **Dry-Run Mode**: Manual deploys support `--dry-run` flag.
+### Instant Emergency Rollback (Atomic Symlink Revert)
+
+If a deployment causes a runtime regression or fails post-deploy smoke checks:
+
+1. **List Deployed Versions**:
+   ```bash
+   ls -la ~/.prismatic/versions/
+   ```
+2. **Repoint Release Symlink to Previous Version**:
+   ```bash
+   ln -sfn ~/.prismatic/versions/prismatic-engine-<PREVIOUS_SHA> ~/.prismatic/releases/prismatic-engine.tmp
+   mv -Tf ~/.prismatic/releases/prismatic-engine.tmp ~/.prismatic/releases/prismatic-engine
+   ```
+3. **Verify Active Version**:
+   ```bash
+   readlink ~/.prismatic/releases/prismatic-engine
+   ```
+
+### Troubleshooting Receiver & HMAC Errors
+
+- **401 Unauthorized / Invalid HMAC**:
+  Ensure `DEPLOY_HMAC_SECRET` is set in both GitHub repository secrets and the daemon environment on port 9460.
+- **Linear Issue Transition Failures**:
+  Linear transitions are stored durably in `~/.prismatic/db/linear_transitions.json`. Queued items automatically retry on the next deployment cycle.
+
+## API & CLI Reference
+
+- Run Receiver Standalone: `python -m pe.deploy.receiver`
+- History Endpoint: `GET /api/deploy/recent`
+- Manual Trigger Endpoint: `POST /api/deploy/trigger?pr_sha=<SHA>&dry_run=true`
