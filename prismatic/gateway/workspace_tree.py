@@ -15,8 +15,9 @@ import platform
 import re
 import stat
 import unicodedata
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Any, Iterator
+from typing import Any
 
 REGISTRY_ENV = "PRISMATIC_WORKSPACE_REGISTRY_FILE"
 REGISTRY_MAX_BYTES = 128 * 1024

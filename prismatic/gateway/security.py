@@ -18,8 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
-from pathlib import Path
-from typing import Callable
+from collections.abc import Callable
 
 logger = logging.getLogger("prismatic.gateway.security")
 

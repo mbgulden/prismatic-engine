@@ -47,7 +47,6 @@ import fcntl
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import sqlite3
 import stat
@@ -59,6 +58,7 @@ import urllib.error
 import urllib.request
 import uuid
 from collections import defaultdict
+from pathlib import Path
 
 if sys.version_info < (3, 11):
     try:
@@ -1816,9 +1816,7 @@ def inspect_cursor(
             status_code == "LEGACY"
             and cursor_rowid is not None
             and cursor_rowid <= max_rowid
-        ):
-            proposed_rowid = cursor_rowid
-        elif (
+        ) or (
             status_code == "VALID"
             and cursor_rowid is not None
             and cursor_rowid <= max_rowid
@@ -2077,9 +2075,7 @@ def repair_dry_run(
         c_gen = inspection["cursor_db_generation"]
         c_path = inspection["cursor_db_path"]
 
-        if status_code == "LEGACY" and c_rowid is not None and c_rowid <= max_rowid:
-            proposed_rowid = c_rowid
-        elif (
+        if status_code == "LEGACY" and c_rowid is not None and c_rowid <= max_rowid or (
             status_code == "VALID"
             and c_rowid is not None
             and c_rowid <= max_rowid

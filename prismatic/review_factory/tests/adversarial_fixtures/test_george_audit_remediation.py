@@ -244,6 +244,7 @@ def test_merge_executor_rejects_mismatched_ci_candidate_sha():
 def test_websocket_rejects_unauthenticated_connection(monkeypatch):
     from fastapi.testclient import TestClient
     from fastapi.websockets import WebSocketDisconnect
+
     from prismatic.gateway.server import app
 
     monkeypatch.setenv("PRISMATIC_WS_AUTH_REQUIRED", "1")

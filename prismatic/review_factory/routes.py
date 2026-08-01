@@ -20,7 +20,7 @@ from __future__ import annotations
 import time
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any
 
 try:
     from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -47,7 +47,7 @@ def _get_queue() -> ReviewQueue:
 
 
 async def get_rf_principal(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme),
+    credentials: HTTPAuthorizationCredentials | None = Depends(security_scheme),
 ) -> Principal:
     """Dependency to retrieve the authenticated principal or raise 401."""
     if credentials is None:
@@ -98,7 +98,7 @@ def _attach_routes(router: Any) -> None:
         return
 
     @router.get("/queue", dependencies=[Depends(get_rf_principal)])
-    async def get_queue_depth() -> Dict[str, Any]:
+    async def get_queue_depth() -> dict[str, Any]:
         """Queue depth breakdown by state."""
         q = _get_queue()
         stats = q.queue_depth()
@@ -111,10 +111,10 @@ def _attach_routes(router: Any) -> None:
 
     @router.get("/jobs", dependencies=[Depends(get_rf_principal)])
     async def list_jobs(
-        state: Optional[str] = Query(None, description="Filter by state"),
-        tier: Optional[int] = Query(None, description="Filter by risk tier"),
+        state: str | None = Query(None, description="Filter by state"),
+        tier: int | None = Query(None, description="Filter by risk tier"),
         limit: int = Query(50, ge=1, le=500),
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """List review jobs, optionally filtered by state or tier."""
         q = _get_queue()
         state_filter = None
@@ -151,7 +151,7 @@ def _attach_routes(router: Any) -> None:
         }
 
     @router.get("/job/{job_id}", dependencies=[Depends(get_rf_principal)])
-    async def get_job_detail(job_id: str) -> Dict[str, Any]:
+    async def get_job_detail(job_id: str) -> dict[str, Any]:
         """Get full detail for a specific review job."""
         q = _get_queue()
         job = q.db.get_review_job(job_id)
@@ -230,9 +230,9 @@ def _attach_routes(router: Any) -> None:
     )
     async def authorize_job_merge(
         job_id: str,
-        body: Dict[str, Any],
+        body: dict[str, Any],
         principal: Principal = Depends(require_admin_principal),
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Authorize a merge-ready job for merge."""
         actor = principal.identity
         q = _get_queue()
@@ -261,7 +261,7 @@ def _attach_routes(router: Any) -> None:
     async def force_release_job_lease(
         job_id: str,
         principal: Principal = Depends(require_admin_principal),
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Force-release a stuck lease on a review job."""
         q = _get_queue()
         actor = principal.identity
@@ -279,9 +279,9 @@ def _attach_routes(router: Any) -> None:
 
     @router.get("/authorizations", dependencies=[Depends(get_rf_principal)])
     async def list_authorizations(
-        consumed: Optional[bool] = Query(None, description="Filter by consumed status"),
+        consumed: bool | None = Query(None, description="Filter by consumed status"),
         limit: int = Query(50, ge=1, le=500),
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """List merge authorizations."""
         q = _get_queue()
         query = "SELECT * FROM merge_authorizations"
@@ -325,7 +325,7 @@ def _attach_routes(router: Any) -> None:
     )
     async def run_janitor(
         principal: Principal = Depends(require_admin_principal),
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Trigger the stale lease janitor to reset expired leases."""
         q = _get_queue()
         actor = principal.identity
@@ -336,7 +336,7 @@ def _attach_routes(router: Any) -> None:
         }
 
     @router.get("/stats", dependencies=[Depends(get_rf_principal)])
-    async def get_stats() -> Dict[str, Any]:
+    async def get_stats() -> dict[str, Any]:
         """Aggregate review factory statistics."""
         q = _get_queue()
         stats = q.queue_depth()
@@ -386,12 +386,12 @@ def _attach_routes(router: Any) -> None:
         )
 
     @router.get("/healthz")
-    async def healthz() -> Dict[str, str]:
+    async def healthz() -> dict[str, str]:
         """Liveness probe."""
         return {"status": "ok", "service": "review-factory"}
 
     @router.get("/readyz")
-    async def readyz() -> Dict[str, Any]:
+    async def readyz() -> dict[str, Any]:
         """Readiness probe checking database connectivity and table integrity."""
         try:
             q = _get_queue()
@@ -403,7 +403,7 @@ def _attach_routes(router: Any) -> None:
             )
 
     @router.get("/audit-log", dependencies=[Depends(require_admin_principal)])
-    async def get_audit_log(limit: int = Query(50, ge=1, le=500)) -> Dict[str, Any]:
+    async def get_audit_log(limit: int = Query(50, ge=1, le=500)) -> dict[str, Any]:
         """List append-only operator audit log entries."""
         q = _get_queue()
         entries = q.db.list_audit_entries(limit=limit)
