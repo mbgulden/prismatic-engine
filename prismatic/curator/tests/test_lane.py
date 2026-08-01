@@ -15,15 +15,20 @@ from __future__ import annotations
 import json
 import sqlite3
 import sys
+import tempfile
 import time
 from pathlib import Path
+
+import pytest
 
 # Ensure parent dir is on path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from prismatic.curator.lane import (
-    BusEvent,
-    tag_event,
+from prismatic.curator.lane import (  # noqa: E402
+    BusEvent, TagResult, tag_event, init_curator_db, persist_tag,
+    already_tagged, get_last_processed_rowid, update_lane_stats,
+    fetch_bus_events_after, render_digest, write_digest, record_digest_run,
+    CURATOR_DB, CuratorLane,
 )
 
 
@@ -182,7 +187,7 @@ def test_nested_payload_extraction():
 
 
 def test_schema_migration_and_dispatched_state(tmp_path: Path, monkeypatch):
-    from prismatic.curator import lane
+    import prismatic.curator.lane as lane
 
     db_path = tmp_path / "curator.sqlite"
     monkeypatch.setattr(lane, "CURATOR_DB", db_path)
@@ -204,7 +209,7 @@ def test_schema_migration_and_dispatched_state(tmp_path: Path, monkeypatch):
 
 
 def test_tick_tagging_does_not_dispatch_until_dispatch_stream(tmp_path: Path, monkeypatch):
-    from prismatic.curator import lane
+    import prismatic.curator.lane as lane
 
     curator_db = tmp_path / "curator.sqlite"
     bus_db = tmp_path / "bus.sqlite"
@@ -242,7 +247,7 @@ def test_tick_tagging_does_not_dispatch_until_dispatch_stream(tmp_path: Path, mo
 
 
 def test_failed_dispatch_remains_pending(tmp_path: Path, monkeypatch):
-    from prismatic.curator import lane
+    import prismatic.curator.lane as lane
 
     curator_db = tmp_path / "curator.sqlite"
     bus_db = tmp_path / "bus.sqlite"
@@ -272,7 +277,7 @@ def test_failed_dispatch_remains_pending(tmp_path: Path, monkeypatch):
 
 
 def test_tick_dispatch_uses_github_pr_handoff_identifier(tmp_path: Path, monkeypatch):
-    from prismatic.curator import lane
+    import prismatic.curator.lane as lane
 
     curator_db = tmp_path / "curator.sqlite"
     bus_db = tmp_path / "bus.sqlite"
@@ -317,8 +322,7 @@ def test_tick_dispatch_uses_github_pr_handoff_identifier(tmp_path: Path, monkeyp
 def test_github_webhook_publishes_header_event_type(monkeypatch):
     import asyncio
     import json as json_module
-
-    from prismatic.gateway import event_bus
+    import prismatic.gateway.event_bus as event_bus
     from prismatic.gateway.server import github_webhook
 
     published = []
@@ -350,8 +354,7 @@ def test_ipc_bridge_accepts_webhook_control_events():
 
 def test_gateway_auth_failed_publish_is_redacted(monkeypatch):
     import asyncio
-
-    from prismatic.gateway import event_bus
+    import prismatic.gateway.event_bus as event_bus
     from prismatic.gateway.server import _publish_webhook_auth_failed
 
     published = []

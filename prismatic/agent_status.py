@@ -12,6 +12,7 @@ from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+
 SOURCE = "run_records+agent_registry+queue_state+timeline+health_context"
 DEFAULT_AGENTS: dict[str, dict[str, str]] = {
     "agy": {"name": "AGY", "role": "Vision & Research CLI Specialist"},

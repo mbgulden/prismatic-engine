@@ -27,12 +27,15 @@ auth is a Phase 3 concern.
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 import requests
+
 
 CF_API_BASE = "https://api.cloudflare.com/client/v4"
 
@@ -43,7 +46,7 @@ class CloudflareError(Exception):
     status_code: int
     code: int  # Cloudflare's error code (10000-range)
     message: str
-    errors: list[dict[str, Any]] = field(default_factory=list)
+    errors: List[Dict[str, Any]] = field(default_factory=list)
 
     def __str__(self) -> str:
         return f"Cloudflare API error {self.status_code}/{self.code}: {self.message}"
@@ -55,13 +58,13 @@ class Zone:
     id: str
     name: str
     status: str  # "active", "pending", "initializing", "moved", "deleted", "deactivated"
-    nameservers: list[str] = field(default_factory=list)
+    nameservers: List[str] = field(default_factory=list)
     plan: str = "free"
     paused: bool = False
-    raw: dict[str, Any] = field(default_factory=dict)
+    raw: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_api(cls, payload: dict[str, Any]) -> Zone:
+    def from_api(cls, payload: Dict[str, Any]) -> "Zone":
         return cls(
             id=payload["id"],
             name=payload["name"],
@@ -85,7 +88,7 @@ class DNSRecord:
     comment: str = ""
 
     @classmethod
-    def from_api(cls, payload: dict[str, Any]) -> DNSRecord:
+    def from_api(cls, payload: Dict[str, Any]) -> "DNSRecord":
         return cls(
             id=payload["id"],
             type=payload["type"],
@@ -141,7 +144,7 @@ class CloudflareClient:
         )
 
     @classmethod
-    def from_env(cls) -> CloudflareClient:
+    def from_env(cls) -> "CloudflareClient":
         """Construct from a Cloudflare API token env var.
 
         Accepts any of (in order of precedence):
@@ -179,9 +182,9 @@ class CloudflareClient:
         method: str,
         path: str,
         *,
-        params: dict[str, Any] | None = None,
-        json_body: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+        params: Optional[Dict[str, Any]] = None,
+        json_body: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """Make a Cloudflare API request with retries.
 
         Cloudflare rate-limits aggressively (especially for free plans).
@@ -190,7 +193,7 @@ class CloudflareClient:
         surfaced immediately (no retry — they signal a client bug).
         """
         url = f"{CF_API_BASE}{path}"
-        last_exc: CloudflareError | None = None
+        last_exc: Optional[CloudflareError] = None
         for attempt in range(self._max_retries + 1):
             try:
                 resp = self._session.request(
@@ -247,16 +250,16 @@ class CloudflareClient:
 
     # -- Zone operations ----------------------------------------------
 
-    def zone_list(self, name: str | None = None) -> list[Zone]:
+    def zone_list(self, name: Optional[str] = None) -> List[Zone]:
         """List zones, optionally filtered by exact domain name.
 
         Cloudflare's zone list endpoint paginates at ~50 zones per
         page. For Phase 1 we expect < 100 zones, so we walk pages.
         """
-        zones: list[Zone] = []
+        zones: List[Zone] = []
         page = 1
         while True:
-            params: dict[str, Any] = {"page": page, "per_page": 50}
+            params: Dict[str, Any] = {"page": page, "per_page": 50}
             if name is not None:
                 params["name"] = name
             payload = self._request("GET", "/zones", params=params)
@@ -268,7 +271,7 @@ class CloudflareClient:
             page += 1
         return zones
 
-    def zone_lookup(self, name: str) -> Zone | None:
+    def zone_lookup(self, name: str) -> Optional[Zone]:
         """Find a zone by exact domain name. Returns None if not present."""
         for z in self.zone_list(name=name):
             if z.name == name:
@@ -279,7 +282,7 @@ class CloudflareClient:
         self,
         name: str,
         *,
-        account_id: str | None = None,
+        account_id: Optional[str] = None,
         jump_start: bool = True,
         type_: str = "full",
     ) -> Zone:
@@ -289,7 +292,7 @@ class CloudflareClient:
         records (recommended). `type_` is "full" (Cloudflare manages
         DNS) or "partial" (CNAME setup).
         """
-        body: dict[str, Any] = {"name": name, "type": type_, "jump_start": jump_start}
+        body: Dict[str, Any] = {"name": name, "type": type_, "jump_start": jump_start}
         if account_id:
             body["account"] = {"id": account_id}
         payload = self._request("POST", "/zones", json_body=body)
@@ -306,14 +309,14 @@ class CloudflareClient:
         self,
         zone_id: str,
         *,
-        type_: str | None = None,
-        name: str | None = None,
-    ) -> list[DNSRecord]:
+        type_: Optional[str] = None,
+        name: Optional[str] = None,
+    ) -> List[DNSRecord]:
         """List DNS records for a zone, optionally filtered."""
-        records: list[DNSRecord] = []
+        records: List[DNSRecord] = []
         page = 1
         while True:
-            params: dict[str, Any] = {"page": page, "per_page": 100}
+            params: Dict[str, Any] = {"page": page, "per_page": 100}
             if type_:
                 params["type"] = type_
             if name:
@@ -338,7 +341,7 @@ class CloudflareClient:
         comment: str = "",
     ) -> DNSRecord:
         """Create a DNS record on a zone."""
-        body: dict[str, Any] = {
+        body: Dict[str, Any] = {
             "type": type_,
             "name": name,
             "content": content,
@@ -355,15 +358,15 @@ class CloudflareClient:
         zone_id: str,
         record_id: str,
         *,
-        type_: str | None = None,
-        name: str | None = None,
-        content: str | None = None,
-        ttl: int | None = None,
-        proxied: bool | None = None,
-        comment: str | None = None,
+        type_: Optional[str] = None,
+        name: Optional[str] = None,
+        content: Optional[str] = None,
+        ttl: Optional[int] = None,
+        proxied: Optional[bool] = None,
+        comment: Optional[str] = None,
     ) -> DNSRecord:
         """Update an existing DNS record."""
-        body: dict[str, Any] = {}
+        body: Dict[str, Any] = {}
         if type_ is not None:
             body["type"] = type_
         if name is not None:

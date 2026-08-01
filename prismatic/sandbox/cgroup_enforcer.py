@@ -17,11 +17,13 @@ enforced by the sandbox runtime itself, preventing escape via resource abuse.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Dict, Optional
 
 logger = logging.getLogger("prismatic.sandbox.cgroup")
 
@@ -115,7 +117,7 @@ class CgroupEnforcer:
         self._available = self._detect_available()
 
         # Tracked cgroups
-        self._cgroups: dict[str, CgroupLimits] = {}
+        self._cgroups: Dict[str, CgroupLimits] = {}
         self._lock = threading.Lock()
 
         if self._available:
@@ -335,7 +337,7 @@ class CgroupEnforcer:
 
         return stats
 
-    def get_current_limits(self, plugin_name: str) -> CgroupLimits | None:
+    def get_current_limits(self, plugin_name: str) -> Optional[CgroupLimits]:
         """Return the currently tracked limits for a plugin.
 
         Returns:

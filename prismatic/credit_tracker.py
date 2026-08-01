@@ -13,9 +13,10 @@ import json
 import os
 import sqlite3
 import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 # ── Defaults and Thresholds ──────────────────────────────────
 DEFAULT_DB_PATH = os.path.join(
@@ -129,7 +130,7 @@ class AIUltraCreditTracker:
         finally:
             conn.close()
 
-    def parse_media_artifacts(self, scan_dir: str, run_id_prefix: str = "media") -> list[dict[str, Any]]:
+    def parse_media_artifacts(self, scan_dir: str, run_id_prefix: str = "media") -> List[Dict[str, Any]]:
         """Scan a directory for new media artifacts from Omni/Veo 3.1 calls.
 
         If new artifacts are found:
@@ -235,7 +236,7 @@ class AIUltraCreditTracker:
 
         return new_artifacts
 
-    def evaluate_exhaustion_warning(self, lookback_hours: float = 1.0) -> dict[str, Any] | None:
+    def evaluate_exhaustion_warning(self, lookback_hours: float = 1.0) -> Optional[Dict[str, Any]]:
         """Evaluate if the current burn velocity predicts exhaustion within 24 hours.
 
         Returns a dictionary with alert details if triggered, or None.
@@ -268,7 +269,7 @@ class AIUltraCreditTracker:
 
         return None
 
-    def post_linear_comment(self, alert: dict[str, Any], issue_id: str, api_key: str | None = None) -> bool:
+    def post_linear_comment(self, alert: Dict[str, Any], issue_id: str, api_key: str | None = None) -> bool:
         """Post alert comment to Linear. 
 
         Since we do not have API access by default, this prints to stdout/stderr 
@@ -314,7 +315,7 @@ class AIUltraCreditTracker:
 
     # ── Helpers ──────────────────────────────────────────────
 
-    def _resolve_metadata(self, file_path: Path) -> dict[str, Any]:
+    def _resolve_metadata(self, file_path: Path) -> Dict[str, Any]:
         """Infer basic media attributes from file path."""
         ext = file_path.suffix.lower()
         if ext == ".mp4":
@@ -364,7 +365,7 @@ class AIUltraCreditTracker:
         except Exception:
             return file_path.name  # fallback to name
 
-    def _log_to_dashboard(self, alert: dict[str, Any]) -> None:
+    def _log_to_dashboard(self, alert: Dict[str, Any]) -> None:
         """Append the alert to the overview file and print log."""
         state_dir = os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state")
         overview_txt = os.path.join(state_dir, "overview.txt")

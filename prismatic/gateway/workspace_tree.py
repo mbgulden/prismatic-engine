@@ -216,10 +216,7 @@ class _Statx(ctypes.Structure):
     ]
 
 
-try:
-    _LIBC = ctypes.CDLL(None, use_errno=True)
-except (TypeError, OSError):
-    _LIBC = None
+_LIBC = ctypes.CDLL(None, use_errno=True)
 _ARCH_SYSCALLS = {
     "x86_64": (437, 332),
     "amd64": (437, 332),

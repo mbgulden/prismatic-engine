@@ -3,17 +3,17 @@
 
 import hashlib
 import hmac
+import json
+import tempfile
+from pathlib import Path
+
 import os
-
 import pytest
-
 os.environ["PRISMATIC_ALLOW_DEFAULT_HMAC"] = "1"
 
 from pe.deploy.health import PostDeployHealthChecker
 from pe.deploy.integrate import AtomicDeployRunner
-from pe.deploy.linear_transition import (
-    LinearDeployTransitioner,
-)
+from pe.deploy.linear_transition import LinearDeployTransitioner, LinearTransitionReceipt
 from pe.deploy.manifest import DeployManifestStore, DeployRecord
 from pe.deploy.receiver import DeployReceiverPipeline, verify_hmac_signature
 

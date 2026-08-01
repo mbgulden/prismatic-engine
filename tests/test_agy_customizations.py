@@ -10,6 +10,7 @@ import pytest
 from prismatic import agy_customizations as customizations
 from prismatic.agy_cli import cli as agy_cli
 
+
 EXPECTED_SKILLS = {
     "prismatic-engine-operations",
     "prismatic-agy-execution",

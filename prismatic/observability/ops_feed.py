@@ -87,7 +87,7 @@ def post_review_event_to_linear(
         # Override the api_key in case the env var differs from the
         # caller-supplied key (e.g., in tests or multi-tenant configs).
         if linear_api_key:
-            provider._api_key = linear_api_key
+            provider._api_key = linear_api_key  # noqa: SLF001
 
         success = provider.add_comment(issue_id, body)
         if not success:

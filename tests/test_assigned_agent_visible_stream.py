@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import importlib
 import gc
 import hashlib
-import importlib
 import json
+from pathlib import Path
 import sqlite3
 import subprocess
-from pathlib import Path
 from types import SimpleNamespace
 
 
@@ -188,7 +188,9 @@ def test_george_visible_packet_parser_status_lines(tmp_path: Path, monkeypatch):
             "launched",
             999999,
             "2026-07-18T10:00:00Z",
-            f'["/usr/bin/hermes", "--profile", "george", "-z", "prompt", "--log-file", "{log_path}"]',
+            '["/usr/bin/hermes", "--profile", "george", "-z", "prompt", "--log-file", "{}"]'.format(
+                log_path
+            ),
         ),
     )
     con.commit()
@@ -266,7 +268,7 @@ def test_visible_reconcile_captures_raw_text_before_compact_packet(
             "launched",
             999999,
             "2026-07-18T10:00:00Z",
-            f'["agy", "--log-file", "{log_path}"]',
+            '["agy", "--log-file", "{}"]'.format(log_path),
         ),
     )
     con.commit()
@@ -397,7 +399,7 @@ def test_raw_capture_failure_blocks_ingest_and_side_effects(
             "launched",
             999999,
             "2026-07-18T10:00:00Z",
-            f'["agy", "--log-file", "{log_path}"]',
+            '["agy", "--log-file", "{}"]'.format(log_path),
         ),
     )
     con.commit()
@@ -467,7 +469,7 @@ def test_agent_or_issue_mismatch_fails_closed(tmp_path: Path, monkeypatch):
             "launched",
             999999,
             "2026-07-18T10:00:00Z",
-            f'["agy", "--log-file", "{log_path}"]',
+            '["agy", "--log-file", "{}"]'.format(log_path),
         ),
     )
     con.commit()
@@ -527,7 +529,7 @@ def test_persistence_failure_prevents_terminal_completion(tmp_path: Path, monkey
             "launched",
             999999,
             "2026-07-18T10:00:00Z",
-            f'["agy", "--log-file", "{log_path}"]',
+            '["agy", "--log-file", "{}"]'.format(log_path),
         ),
     )
     con.commit()
@@ -593,7 +595,7 @@ def test_repeated_reconciliation_duplicates_no_comment_event_or_status_mutation(
             "launched",
             999999,
             "2026-07-18T10:00:00Z",
-            f'["agy", "--log-file", "{log_path}"]',
+            '["agy", "--log-file", "{}"]'.format(log_path),
         ),
     )
     con.commit()
@@ -797,7 +799,6 @@ def test_compact_only_and_invalid_raw_identity_fail_closed(tmp_path: Path, monke
 
 def test_persisted_rejected_pass_cannot_complete(tmp_path: Path, monkeypatch):
     import sqlite3
-
     import scripts.assigned_agent_result_writeback as mod
 
     log_path = tmp_path / "agy.log"

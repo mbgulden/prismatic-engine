@@ -9,9 +9,8 @@ chosen harness.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, Iterable, Mapping, Sequence
 
 
 @dataclass(frozen=True)
@@ -27,7 +26,7 @@ class TaskRequest:
     priority: int = 3
 
     @classmethod
-    def from_issue(cls, issue: Mapping[str, Any]) -> TaskRequest:
+    def from_issue(cls, issue: Mapping[str, Any]) -> "TaskRequest":
         """Build a request from a Linear-like issue dict.
 
         The issue may contain labels as strings or ``{"name": ...}`` dicts.
@@ -139,7 +138,7 @@ class CapabilityRegistry:
     def list(self) -> list[AgentCapability]:
         return sorted(self._agents.values(), key=lambda a: (a.priority, a.name))
 
-    def with_loads(self, loads: Mapping[str, int]) -> CapabilityRegistry:
+    def with_loads(self, loads: Mapping[str, int]) -> "CapabilityRegistry":
         cloned = CapabilityRegistry(self.list())
         for name, load in loads.items():
             if name in cloned._agents:

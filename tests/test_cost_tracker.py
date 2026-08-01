@@ -69,8 +69,12 @@ def test_api_cost_endpoint_returns_summary(tmp_path: Path, monkeypatch) -> None:
     # Existing gateway module imports an optional escalations module that is not
     # present in this branch; stub it so this focused test can exercise /api/cost.
     fake_escalations = types.ModuleType("prismatic.escalations")
-    fake_escalations.EscalationStore = object
-    fake_escalations.get_telegram_deeplink = lambda escalation_id: f"telegram://{escalation_id}"
+    setattr(fake_escalations, "EscalationStore", object)
+    setattr(
+        fake_escalations,
+        "get_telegram_deeplink",
+        lambda escalation_id: f"telegram://{escalation_id}",
+    )
     monkeypatch.setitem(sys.modules, "prismatic.escalations", fake_escalations)
 
     from prismatic.gateway.server import app

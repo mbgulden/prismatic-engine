@@ -4,11 +4,10 @@ import json
 import os
 import sqlite3
 import uuid
-from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Callable, Mapping, Sequence, cast
 
 from prismatic.agy_limited_overnight_runner import (
     AGY_LIMITED_OVERNIGHT_DRY_RUN_MARKER,
@@ -19,6 +18,7 @@ from prismatic.agy_limited_overnight_runner import (
 )
 from prismatic.agy_overnight_guard import (
     AGY_OVERNIGHT_READINESS_GUARD_MARKER,
+    AgyOvernightGuardStore,
     evaluate_overnight_readiness,
 )
 from prismatic.ingestion_queue import queue_status_payload
@@ -58,7 +58,7 @@ class UnattendedWindowRequest:
     model: str = DEFAULT_MODEL
 
     @classmethod
-    def from_mapping(cls, data: Mapping[str, Any] | None = None) -> UnattendedWindowRequest:
+    def from_mapping(cls, data: Mapping[str, Any] | None = None) -> "UnattendedWindowRequest":
         payload = dict(data or {})
         agents = payload.get("allowed_agents") or payload.get("agents") or [payload.get("agent") or "agy"]
         if not isinstance(agents, Sequence) or isinstance(agents, (str, bytes)):

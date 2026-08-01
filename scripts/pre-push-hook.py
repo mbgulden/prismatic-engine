@@ -25,7 +25,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
 # ── Constants ──────────────────────────────────────────
 def _default_prismatic_home() -> Path:
     return Path(os.path.expandvars(os.environ.get("PRISMATIC_HOME", "~"))).expanduser()
@@ -268,7 +267,7 @@ def main() -> int:
     locks = _read_locks(config)
     blocked = _check_file_locks(all_files, agent_id, locks, repo_root)
     if blocked:
-        print("❌ [Prismatic Engine] Locked files detected:")
+        print(f"❌ [Prismatic Engine] Locked files detected:")
         for f in blocked:
             # Find who holds the lock
             for lock in locks:

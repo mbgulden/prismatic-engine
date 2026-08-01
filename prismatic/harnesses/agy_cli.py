@@ -14,6 +14,7 @@ import re
 import signal
 import stat
 import subprocess
+
 import time
 import uuid
 from pathlib import Path
@@ -393,7 +394,12 @@ class AGYCLIHarness(AgentHarness):
         launch_dir = self._launch_dir(run_id)
         cancel_receipt = launch_dir / "cancel-receipt.json"
         process_result = launch_dir / "process-result.json"
-        if cancel_receipt.is_file() or process_result.is_file():
+        if cancel_receipt.is_file():
+            record = reconcile_terminal_run(launch_dir)
+            status = HarnessStatus(record["status"])
+            error = record.get("error")
+            completed_at = record.get("completed_at")
+        elif process_result.is_file():
             record = reconcile_terminal_run(launch_dir)
             status = HarnessStatus(record["status"])
             error = record.get("error")

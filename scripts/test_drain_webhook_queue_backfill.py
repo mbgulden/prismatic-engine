@@ -6,8 +6,8 @@ new tests/ writes.
 
 from __future__ import annotations
 
-import argparse
 import json
+import argparse
 import sqlite3
 import sys
 import time

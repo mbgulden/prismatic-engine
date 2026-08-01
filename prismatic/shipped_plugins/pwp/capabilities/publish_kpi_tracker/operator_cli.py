@@ -82,7 +82,7 @@ for root in candidates:
             sys.path.insert(0, p)
             inserted.add(p)
 
-from plugins.pwp.capabilities import publish_kpi_tracker as kpi
+from plugins.pwp.capabilities import publish_kpi_tracker as kpi  # noqa: E402
 
 
 def _resolve_publish_root(args) -> Path:

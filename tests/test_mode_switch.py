@@ -1,7 +1,5 @@
 import unittest
-
-from prismatic.mode_switch import ModeSwitch, OrchestrationMode
-
+from prismatic.mode_switch import ModeSwitch, OrchestrationMode, STATES
 
 class TestModeSwitchTransitions(unittest.TestCase):
     """

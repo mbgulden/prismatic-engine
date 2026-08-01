@@ -1,15 +1,15 @@
+from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 import json
+from pathlib import Path
 import sqlite3
 import subprocess
 import sys
 import threading
-from concurrent.futures import ThreadPoolExecutor
-from copy import deepcopy
-from pathlib import Path
 
 import pytest
-
 import prismatic.agy_completed_work as completed_work_module
+
 from prismatic.agy_completed_work import (
     AGY_COMPLETED_WORK_INGESTION_MARKER,
     AGY_COMPLETED_WORK_INTEGRATION_GATE_MARKER,
@@ -18,7 +18,6 @@ from prismatic.agy_completed_work import (
     AgyCompletedWorkConflictError,
     AgyCompletedWorkStore,
     completed_work_id,
-    get_packet_record,
     ingest_completed_work_file,
     ingest_completed_work_text,
     normalize_agy_result_packet,
@@ -26,8 +25,8 @@ from prismatic.agy_completed_work import (
     packet_record_from_text,
     parse_completed_work_packet_text,
     persist_packet_record,
+    get_packet_record,
 )
-from prismatic.agy_result_packet import ResultPacketValidationError
 from prismatic.completed_work_gate import (
     AGY_COMPLETED_WORK_MARKER,
     GateClassification,
@@ -35,6 +34,7 @@ from prismatic.completed_work_gate import (
     demo_completed_work_packet,
     normalize_non_claims,
 )
+from prismatic.agy_result_packet import ResultPacketValidationError
 
 
 def packet():

@@ -17,15 +17,16 @@ stall-tracker awareness. The tests below harmonize to the new gate
 stack without modifying engine code.
 """
 
-import sys
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch, MagicMock
+import os
+import sys
 
 # Mock external dependencies before importing the dispatcher
 sys.modules['prismatic.providers.signals'] = MagicMock()
 sys.modules['prismatic.credit_policy_engine'] = MagicMock()
 
-from prismatic import dispatcher
+import prismatic.dispatcher as dispatcher
 from prismatic.mode_switch import OrchestrationMode
 
 

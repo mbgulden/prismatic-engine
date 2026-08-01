@@ -73,7 +73,7 @@ def test_delete_marks_deleted_and_default_list_hides_it(tmp_path: Path) -> None:
 
     assert deleted["state"] == CRON_STATE_DELETED
     assert deleted["queue_state"] == "out_of_queue"
-    assert deleted.get("deleted_at")
+    assert "deleted_at" in deleted and deleted["deleted_at"]
     assert "seo.aot-competitor-velocity" not in {c["id"] for c in list_native_crons(store=store)}
     assert "seo.aot-competitor-velocity" in {c["id"] for c in list_native_crons(include_deleted=True, store=store)}
 

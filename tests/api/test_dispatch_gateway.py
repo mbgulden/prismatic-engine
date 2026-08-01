@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 # Point auth/telemetry at deterministic test-only values BEFORE importing the app
@@ -17,8 +18,8 @@ os.environ.setdefault("PRISMATIC_API_KEY", AUTH_VALUE)
 os.environ.setdefault("PRISMATIC_STATE_DIR", "/tmp/prismatic-api-test-state")
 os.makedirs(os.environ["PRISMATIC_STATE_DIR"], exist_ok=True)
 
-from prismatic.api import auth as auth_module
-from prismatic.api.server import app
+from prismatic.api import auth as auth_module  # noqa: E402
+from prismatic.api.server import app  # noqa: E402
 
 client = TestClient(app)
 

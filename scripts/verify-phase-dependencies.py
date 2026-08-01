@@ -12,9 +12,9 @@ Exits:
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
-
 
 def main():
     parser = argparse.ArgumentParser(description="Verify phase dependencies.")

@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-import concurrent.futures
 import os
-from pathlib import Path
-
+import concurrent.futures
 import pytest
+from pathlib import Path
 
 from prismatic.core.merge_factory import (
     MergeFactoryStore,
     Principal,
     get_authenticated_principal,
 )
+
 
 # Setup test tokens in environment for tests
 os.environ["PRISMATIC_MERGE_FACTORY_KEYS"] = (
@@ -598,7 +598,6 @@ def test_installed_package_api_import_and_runtime(monkeypatch, tmp_path):
 
     # Import the FastAPI test client and server app
     from fastapi.testclient import TestClient
-
     from prismatic.api.server import app
 
     client = TestClient(app)
@@ -876,7 +875,7 @@ def test_lease_fencing_and_row_count(store):
 
 
 def test_stale_same_principal_fencing(store):
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timezone, timedelta
 
     store.add_to_cohort("GRO-A", stage=1, sequence=1, principal=admin_principal)
 
@@ -917,7 +916,7 @@ def test_stale_same_principal_fencing(store):
 
 
 def test_repeated_acquire_regression_proof(store):
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timezone, timedelta
 
     store.add_to_cohort("GRO-A", stage=1, sequence=1, principal=admin_principal)
 
@@ -966,10 +965,9 @@ def test_repeated_acquire_regression_proof(store):
 
 
 def test_cli_token_authentication(monkeypatch, tmp_path):
-    import io
-    from contextlib import redirect_stderr, redirect_stdout
-
     from prismatic.cli.merge_factory import main as cli_main
+    import io
+    from contextlib import redirect_stdout, redirect_stderr
 
     # 1. Help/argv tests must prove no raw-token option exists
     f = io.StringIO()
@@ -1008,13 +1006,12 @@ def test_cli_token_authentication(monkeypatch, tmp_path):
     rc = cli_main(["cohort", "add", "GRO-CLI-FILE", "1", "11"])
     assert rc == 0
 
-    # 4. Test authentication fails if token file has open permissions (e.g. 0644) on POSIX
-    if os.name != "nt":
-        os.chmod(token_file, 0o644)
-        f_err = io.StringIO()
-        with redirect_stderr(f_err), redirect_stdout(io.StringIO()):
-            rc = cli_main(["cohort", "add", "GRO-CLI-FILE-BAD", "1", "12"])
-        assert rc != 0
-        assert (
-            "permissions are too open" in f_err.getvalue() or "Error:" in f_err.getvalue()
-        )
+    # 4. Test authentication fails if token file has open permissions (e.g. 0644)
+    os.chmod(token_file, 0o644)
+    f_err = io.StringIO()
+    with redirect_stderr(f_err), redirect_stdout(io.StringIO()):
+        rc = cli_main(["cohort", "add", "GRO-CLI-FILE-BAD", "1", "12"])
+    assert rc != 0
+    assert (
+        "permissions are too open" in f_err.getvalue() or "Error:" in f_err.getvalue()
+    )

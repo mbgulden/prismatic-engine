@@ -9,11 +9,11 @@ emit when actionable work actually changes.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable, Mapping
+
 
 COMPLETED_STATE_TYPES = frozenset({"completed", "canceled", "cancelled"})
 COMPLETED_STATE_NAMES = frozenset({"done", "completed", "cancelled", "canceled"})
@@ -33,7 +33,7 @@ class IssueSnapshot:
     url: str = ""
 
     @classmethod
-    def from_issue(cls, issue: Mapping[str, Any]) -> IssueSnapshot:
+    def from_issue(cls, issue: Mapping[str, Any]) -> "IssueSnapshot":
         """Normalize a Linear-like issue mapping.
 
         Accepts labels as strings, ``{"name": ...}`` dicts, or Linear's

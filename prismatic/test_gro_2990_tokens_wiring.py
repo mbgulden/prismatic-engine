@@ -22,6 +22,7 @@ import pytest
 
 from prismatic.telemetry import TelemetryCollector
 
+
 # ── Fixtures ────────────────────────────────────────────────────────────────
 
 
@@ -41,7 +42,7 @@ def _wait_drain(db_path: str, table: str, timeout: float = 3.0) -> list[dict]:
     conn.row_factory = sqlite3.Row
     try:
         while time.monotonic() < deadline:
-            rows = conn.execute(f"SELECT * FROM {table}").fetchall()
+            rows = conn.execute(f"SELECT * FROM {table}").fetchall()  # noqa: S608
             if rows:
                 return [dict(r) for r in rows]
             time.sleep(0.05)
@@ -75,8 +76,8 @@ class TestAgyLiveParserWiring:
         )
 
         # Simulate main() loop directly (avoids subprocess / sys.stdin coupling)
-        import prismatic.telemetry as _tel
         from prismatic.agy_live_parser import parse_status_line
+        import prismatic.telemetry as _tel
 
         # Reset the singleton so it points at our temp DB
         _tel._collector = c

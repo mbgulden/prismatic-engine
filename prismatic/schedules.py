@@ -7,16 +7,16 @@ and remote (AGY/Jules) providers, and owner-aware mutation policies.
 
 from __future__ import annotations
 
-import json
-import logging
 import os
+import json
+import uuid
 import urllib.error
 import urllib.request
-import uuid
-from dataclasses import asdict, dataclass, field
+import logging
+from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("prismatic.schedules")
 
@@ -44,11 +44,11 @@ STATUS_CANCELLED = "cancelled"
 class LastRunInfo:
     fired_at: str
     status: str
-    run_id: str | None = None
-    duration_sec: float | None = None
-    error_message: str | None = None
+    run_id: Optional[str] = None
+    duration_sec: Optional[float] = None
+    error_message: Optional[str] = None
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> Dict[str, Any]:
         return {k: v for k, v in asdict(self).items() if v is not None}
 
 
@@ -60,12 +60,12 @@ class ScheduleRecord:
     schedule_type: str  # cron | systemd-timer | one-shot | interval | remote-managed
     schedule_expr: str
     enabled: bool
-    next_run_at: str | None = None
-    last_run: LastRunInfo | None = None
-    deep_link: str | None = None
-    metadata: dict[str, str] = field(default_factory=dict)
+    next_run_at: Optional[str] = None
+    last_run: Optional[LastRunInfo] = None
+    deep_link: Optional[str] = None
+    metadata: Dict[str, str] = field(default_factory=dict)
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> Dict[str, Any]:
         res = {
             "id": self.id,
             "name": self.name,
@@ -84,7 +84,7 @@ class ScheduleRecord:
         return res
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ScheduleRecord:
+    def from_dict(cls, data: Dict[str, Any]) -> ScheduleRecord:
         last_run_data = data.get("last_run")
         last_run = None
         if last_run_data:
@@ -116,15 +116,15 @@ class ScheduleEvent:
     schedule_id: str
     owner: str
     timestamp: str
-    payload: dict[str, Any] = field(default_factory=dict)
+    payload: Dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
 
 # ── Adapters ──────────────────────────────────────────────────────────
 
-def get_prismatic_cron_jobs(cron_jobs_path: Path | None = None) -> list[ScheduleRecord]:
+def get_prismatic_cron_jobs(cron_jobs_path: Optional[Path] = None) -> List[ScheduleRecord]:
     """Inventory Prismatic cron jobs from the configured jobs.json."""
     if not cron_jobs_path:
         # Resolve path similarly to journal.py
@@ -176,7 +176,7 @@ def get_prismatic_cron_jobs(cron_jobs_path: Path | None = None) -> list[Schedule
     return records
 
 
-def get_systemd_timer_schedules() -> list[ScheduleRecord]:
+def get_systemd_timer_schedules() -> List[ScheduleRecord]:
     """Inventory systemd timers by looking at configured service units or mock data."""
     # systemd timers run locally. Let's return local timers.
     # In production, we'd query systemctl list-timers --all
@@ -199,7 +199,7 @@ def get_systemd_timer_schedules() -> list[ScheduleRecord]:
     return [watchdog_timer]
 
 
-def get_agy_schedules() -> list[ScheduleRecord]:
+def get_agy_schedules() -> List[ScheduleRecord]:
     """Inventory AGY `/schedule` events and jobs.
 
     Reads from the local AGY schedule index at
@@ -217,7 +217,7 @@ def get_agy_schedules() -> list[ScheduleRecord]:
     if schedules_dir.exists() and schedules_dir.is_dir():
         try:
             json_files = sorted(schedules_dir.glob("*.json"))
-            records: list[ScheduleRecord] = []
+            records: List[ScheduleRecord] = []
             for path in json_files:
                 try:
                     data = json.loads(path.read_text())
@@ -301,7 +301,7 @@ def get_agy_schedules() -> list[ScheduleRecord]:
     return [s1, s2]
 
 
-def get_jules_schedules() -> list[ScheduleRecord]:
+def get_jules_schedules() -> List[ScheduleRecord]:
     """Inventory Jules schedules.
 
     Three-tier read path:
@@ -322,7 +322,7 @@ def get_jules_schedules() -> list[ScheduleRecord]:
         try:
             data = json.loads(local_path.read_text())
             entries = data if isinstance(data, list) else [data]
-            records: list[ScheduleRecord] = []
+            records: List[ScheduleRecord] = []
             for entry in entries:
                 if not isinstance(entry, dict):
                     continue
@@ -368,7 +368,7 @@ def get_jules_schedules() -> list[ScheduleRecord]:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 payload = json.loads(resp.read().decode("utf-8"))
             entries = payload if isinstance(payload, list) else payload.get("schedules", [])
-            records: list[ScheduleRecord] = []
+            records: List[ScheduleRecord] = []
             for entry in entries:
                 if not isinstance(entry, dict):
                     continue
@@ -424,7 +424,7 @@ def get_jules_schedules() -> list[ScheduleRecord]:
     return [j1]
 
 
-def get_all_schedules(cron_jobs_path: Path | None = None) -> list[ScheduleRecord]:
+def get_all_schedules(cron_jobs_path: Optional[Path] = None) -> List[ScheduleRecord]:
     """Get unified list of all scheduled jobs across providers."""
     schedules = []
     schedules.extend(get_prismatic_cron_jobs(cron_jobs_path))
@@ -442,10 +442,10 @@ class UnauthorizedMutationError(PermissionError):
 
 def request_schedule_mutation(
     schedule_id: str,
-    enabled: bool | None = None,
-    schedule_expr: str | None = None,
-    config_path: Path | None = None,
-) -> dict[str, Any]:
+    enabled: Optional[bool] = None,
+    schedule_expr: Optional[str] = None,
+    config_path: Optional[Path] = None,
+) -> Dict[str, Any]:
     """
     Mutate a schedule safely using owner-aware policy gates.
     
@@ -497,10 +497,10 @@ def request_schedule_mutation(
 
 def _mutate_local_cron_job(
     full_id: str,
-    enabled: bool | None = None,
-    schedule_expr: str | None = None,
-    cron_jobs_path: Path | None = None,
-) -> dict[str, Any]:
+    enabled: Optional[bool] = None,
+    schedule_expr: Optional[str] = None,
+    cron_jobs_path: Optional[Path] = None,
+) -> Dict[str, Any]:
     """Directly updates local cron configuration file for prismatic-owned schedules."""
     job_id = full_id.split(":")[-1]
     
@@ -545,7 +545,7 @@ def _mutate_local_cron_job(
 
 # ── Chat Command Ingestion ───────────────────────────────────────────
 
-def process_chat_schedule_request(message: str) -> dict[str, Any]:
+def process_chat_schedule_request(message: str) -> Dict[str, Any]:
     """
     Parses conversational chat messages requesting schedule changes.
     E.g., "ask AGY to update that schedule agy:schedule:daily-repo-sync to disabled"

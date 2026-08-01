@@ -11,9 +11,9 @@ from __future__ import annotations
 import os
 import tarfile
 import tempfile
-from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Iterable
 
 DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PRISMATIC_HOME = Path(os.environ.get("PRISMATIC_HOME") or Path.home())

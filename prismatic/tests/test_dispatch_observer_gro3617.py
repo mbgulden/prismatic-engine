@@ -21,6 +21,7 @@ import time
 
 import pytest
 
+
 # ---------------------------------------------------------------------------
 # Test scaffolding: isolated DB per test
 # ---------------------------------------------------------------------------
@@ -70,7 +71,7 @@ def test_count_dispatches_unknown_issue(isolated_dedup_db):
 
 def test_dispatch_cap_false_under_threshold(isolated_dedup_db):
     """Below the cap → not stuck."""
-    from prismatic.dedup import MAX_DISPATCH_COUNT_PER_ISSUE, EventRouterDedup
+    from prismatic.dedup import EventRouterDedup, MAX_DISPATCH_COUNT_PER_ISSUE
 
     dedup = EventRouterDedup(db_path=isolated_dedup_db)
     for _ in range(MAX_DISPATCH_COUNT_PER_ISSUE - 1):
@@ -80,7 +81,7 @@ def test_dispatch_cap_false_under_threshold(isolated_dedup_db):
 
 def test_dispatch_cap_true_at_threshold(isolated_dedup_db):
     """At-or-above the cap → stuck."""
-    from prismatic.dedup import MAX_DISPATCH_COUNT_PER_ISSUE, EventRouterDedup
+    from prismatic.dedup import EventRouterDedup, MAX_DISPATCH_COUNT_PER_ISSUE
 
     dedup = EventRouterDedup(db_path=isolated_dedup_db)
     for _ in range(MAX_DISPATCH_COUNT_PER_ISSUE):
@@ -94,7 +95,7 @@ def test_dispatch_cap_window_past(isolated_dedup_db, monkeypatch):
     Simulates "an issue that was spamming 6 months ago is now quiet" by
     back-dating last_dispatched_at beyond the window.
     """
-    from prismatic.dedup import MAX_DISPATCH_COUNT_PER_ISSUE, EventRouterDedup
+    from prismatic.dedup import EventRouterDedup, MAX_DISPATCH_COUNT_PER_ISSUE
 
     dedup = EventRouterDedup(db_path=isolated_dedup_db)
     for _ in range(MAX_DISPATCH_COUNT_PER_ISSUE):
@@ -117,7 +118,6 @@ def test_dispatch_cap_env_override(isolated_dedup_db, monkeypatch):
     monkeypatch.setenv("PRISMATIC_MAX_DISPATCH_PER_ISSUE", "3")
     # Reload module so the module-level constant picks up env
     import importlib
-
     import prismatic.dedup as dedup_mod
 
     importlib.reload(dedup_mod)
@@ -153,8 +153,8 @@ def test_observer_drains_completed_proc(monkeypatch):
     """
     from prismatic.dispatcher import (
         _PENDING_PROCS,
-        _ensure_observer_started,
         register_proc_for_observation,
+        _ensure_observer_started,
     )
 
     # Track calls to get_collector() / update_agent_run()
@@ -215,8 +215,8 @@ def test_observer_drains_failed_proc(monkeypatch):
             calls.append(kwargs)
 
     fake = FakeCollector()
-    import prismatic.telemetry as tel_mod
     from prismatic import dispatcher as disp
+    import prismatic.telemetry as tel_mod
 
     monkeypatch.setattr(tel_mod, "get_collector", lambda: fake)
 
@@ -253,8 +253,8 @@ def test_observer_idempotent_registration(monkeypatch):
             calls.append(kwargs)
 
     fake = FakeCollector()
-    import prismatic.telemetry as tel_mod
     from prismatic import dispatcher as disp
+    import prismatic.telemetry as tel_mod
 
     monkeypatch.setattr(tel_mod, "get_collector", lambda: fake)
 
@@ -290,10 +290,10 @@ def test_observer_writes_end_time_to_sqlite(monkeypatch, tmp_path):
     """Integration smoke: a real Popen produces a non-null SQLite end_time."""
     db_path = tmp_path / "event_router.db"
 
-    import prismatic.telemetry as tel_mod
     from prismatic import dispatcher as disp
     from prismatic.dispatcher import _PENDING_PROCS, register_proc_for_observation
     from prismatic.telemetry import TelemetryCollector
+    import prismatic.telemetry as tel_mod
 
     collector = TelemetryCollector(db_path=str(db_path))
     monkeypatch.setattr(tel_mod, "get_collector", lambda: collector)
@@ -332,7 +332,7 @@ def test_observer_writes_end_time_to_sqlite(monkeypatch, tmp_path):
 
 def test_register_none_proc_is_noop():
     """register_proc_for_observation(None) is harmless."""
-    from prismatic.dispatcher import _PENDING_PROCS, register_proc_for_observation
+    from prismatic.dispatcher import register_proc_for_observation, _PENDING_PROCS
 
     register_proc_for_observation("test-noop", None)
     assert "test-noop" not in _PENDING_PROCS

@@ -19,6 +19,7 @@ import sys
 import time
 from unittest.mock import MagicMock, patch
 
+
 # ── Test 1: per-provider parsing ────────────────────────────────────────────
 
 
@@ -232,7 +233,7 @@ class TestDispatchOnceWiring:
         """Mock the launchers — one returns a Popen, one returns True.
         Only the Popen-returning launcher should trigger the drain."""
         # We import the dispatcher module lazily and patch its globals
-        from prismatic import dispatcher
+        import prismatic.dispatcher as dispatcher
 
         # A fake Popen-ish object — just enough to satisfy isinstance check
         # (no need to spawn a real subprocess; _drain_and_record_tokens is

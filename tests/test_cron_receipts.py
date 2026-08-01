@@ -13,20 +13,20 @@ Proves:
 from __future__ import annotations
 
 import builtins
+from dataclasses import fields
+from datetime import datetime, timedelta, timezone
 import importlib.resources
 import json
 import os
+from pathlib import Path
 import socket
 import subprocess
 import time
-from dataclasses import fields
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
-
-import jsonschema
 import pytest
+import jsonschema
 
 from prismatic.cron_receipts import (
+    SCHEMA_VERSION,
     VALID_TERMINAL_OUTCOMES,
     CronRunReceipt,
     load_cron_receipt_schema,

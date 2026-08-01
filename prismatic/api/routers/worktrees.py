@@ -6,11 +6,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from prismatic.api.auth import verify_api_key
-from prismatic.worktree_janitor import (
-    list_worktrees,
-    run_janitor,
-    worktree_proof_template,
-)
+from prismatic.worktree_janitor import list_worktrees, run_janitor, worktree_proof_template
 
 router = APIRouter()
 

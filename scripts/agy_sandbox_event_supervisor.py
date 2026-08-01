@@ -18,26 +18,27 @@ Usage:
   python3 agy_sandbox_event_supervisor.py --random-concurrency
   python3 agy_sandbox_event_supervisor.py --max-concurrent 2 --jitter 5-15 --backoff 8-15
 """
-import argparse
-import atexit
-import hashlib
-import json
 import os
 import pwd
-import random
-import re
-import shutil
-import sqlite3
-import stat
-import subprocess
 import sys
-import threading
+import json
 import time
+import random
+import shutil
+import argparse
+import atexit
+import subprocess
+import threading
+import re
 import urllib.error
 import urllib.request
+import sqlite3
+import hashlib
+import stat
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from queue import Queue, Empty
+from datetime import datetime, timezone, timedelta
 
 # Lock for event bus SQLite WAL writes
 _bus_sqlite_lock = threading.Lock()
@@ -366,10 +367,7 @@ def _reconcile_agy_claim(
             raise ValueError
     except Exception:
         return _terminal_reconciliation(store, claim, "raw_json_invalid", "malformed", now)
-    from prismatic.agy_result_packet import (
-        is_raw_agy_result_packet,
-        require_valid_packet,
-    )
+    from prismatic.agy_result_packet import is_raw_agy_result_packet, require_valid_packet
     if not is_raw_agy_result_packet(packet):
         return _terminal_reconciliation(store, claim, "raw_dialect_invalid", "malformed", now)
     try:
@@ -802,7 +800,7 @@ def publish_agent_recovered(issue_id: str, payload: dict) -> None:
 # Add script directory to sys.path and import Linear helpers
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
-    from linear_helpers import linear_comment, linear_update_issue
+    from linear_helpers import linear_update_issue, linear_comment
 except ImportError:
     def linear_update_issue(identifier, state): return False
     def linear_comment(identifier, body): return False
@@ -1380,6 +1378,7 @@ def heartbeat_watcher(issue_id, sandbox, proc_pid,
                     # and using CPU. If alive but no I/O, it may be in a long reasoning loop
                     # (Gemini / Claude can take 3-5min on a hard reasoning pass without output).
                     try:
+                        import resource  # not used yet, placeholder for future CPU check
                         proc_alive = True
                         try:
                             os.kill(proc_pid, 0)
@@ -2056,8 +2055,9 @@ LABEL_TO_MODEL = {
     "agent:agy-gpt-oss":      "gemini-3.5-flash",
     "agent:antigravity-cli":  "gemini-3.5-flash",
 }
-import os
 import sys
+import os
+from pathlib import Path
 
 # Add active workspace (sandbox or main work dir) to sys.path
 # v7 fix (Jul 2 2026): The system has a PEP 660 editable install of
@@ -2069,8 +2069,6 @@ import sys
 # sys.path with a half-broken tree). And remove the editable install from
 # sys.path so the cwd path wins.
 import sys as _sys
-from pathlib import Path
-
 # Strip the editable install hook
 _sys.path = [p for p in _sys.path if "__editable__" not in p and "prismatic_engine" not in p]
 
@@ -2092,11 +2090,17 @@ for path_candidate in [
         break
 
 from prismatic.curator.issue_to_task import (
+    BLOCK_LABELS,
+    BACKLOG_READY_LABELS,
+    PRIORITY_LABELS,
+    PROJECT_PWP_LABELS,
     REVIEW_ONLY_LABELS,
+    _parse_linear_datetime,
+    issue_labels,
+    is_review_only_issue,
+    task_priority_score,
     assign_lane,
     build_task_content_from_issue,
-    is_review_only_issue,
-    issue_labels,
     issue_to_task,
 )
 
@@ -2854,7 +2858,7 @@ class EventDrivenSupervisor:
             long_run=self.long_run,
         )
         if registered:
-            print("  [registry] Registered prismatic.supervisor in service registry", flush=True)
+            print(f"  [registry] Registered prismatic.supervisor in service registry", flush=True)
 
             # Start a heartbeat thread (30s interval)
             def _heartbeat_loop():
@@ -3177,7 +3181,7 @@ class EventDrivenSupervisor:
                         # Downgrade state back to Todo
                         self.linear_client.update_issue(issue_id, state="Todo")
                         self.linear_client.add_comment(issue_id,
-                            "🛑 StartTimeout: STARTED.md was not written within 30s of launch. Terminated AGY and reverted to Todo.")
+                            f"🛑 StartTimeout: STARTED.md was not written within 30s of launch. Terminated AGY and reverted to Todo.")
                     elif result.get("has_error"):
                         # Downgrade state back to Todo
                         self.linear_client.update_issue(issue_id, state="Todo")
@@ -3211,7 +3215,7 @@ class EventDrivenSupervisor:
                             start_new_session=True,
                         )
                         print(f"  [{issue_id}] ✅ quality-gate fired", flush=True)
-                except Exception:
+                except Exception as e:
                     # Quality gate fail is non-fatal
                     pass
 
@@ -3329,18 +3333,18 @@ class EventDrivenSupervisor:
                 # mechanism and can wake us via idle_event when a new bus
                 # event arrives). The only clean exit is shutdown_event.
                 if long_run:
-                    print("  🔁 long_run: idle but staying alive. "
-                          "Waiting for new bus events or SIGTERM...", flush=True)
+                    print(f"  🔁 long_run: idle but staying alive. "
+                          f"Waiting for new bus events or SIGTERM...", flush=True)
                     # Block until either shutdown is requested or new work arrives
                     while not self.shutdown_event.is_set():
                         # Wait with periodic check (1min granularity for log heartbeat)
                         woke = self.idle_event.wait(timeout=60.0)
                         if woke:
                             # New work arrived — go back to the top of the loop
-                            print("  ⚡ New work arrived during long-run idle wait", flush=True)
+                            print(f"  ⚡ New work arrived during long-run idle wait", flush=True)
                             break
                     if self.shutdown_event.is_set():
-                        print("  🛑 Shutdown requested during long-run idle", flush=True)
+                        print(f"  🛑 Shutdown requested during long-run idle", flush=True)
                         return
                     continue
                 # Non-long-run: exit after idle_timeout
@@ -3475,6 +3479,7 @@ def acquire_supervisor_lock() -> bool:
     treated as dead and overwritten — this handles the case where a
     supervisor crashed without releasing the lock.
     """
+    import fcntl
     lock_path = SUPERVISOR_LOCK_PATH
     os.makedirs(os.path.dirname(lock_path), exist_ok=True)
     try:
@@ -3822,9 +3827,9 @@ def main():
     pool_stats = token_pool.stats()
     print(f"  Token pool: {pool_stats['pool_size']} token(s) [{', '.join(pool_stats['tokens'])}]")
     if pool_stats["pool_size"] == 1:
-        print("  ℹ️  Single-account mode: target concurrency = 3 (1-account ceiling)")
-        print("     (Google-account-level cap, NOT a hardware limit. Event-driven swap-in"
-              " handles the ~1 timeout/cycle by retrying via watchdog.)")
+        print(f"  ℹ️  Single-account mode: target concurrency = 3 (1-account ceiling)")
+        print(f"     (Google-account-level cap, NOT a hardware limit. Event-driven swap-in"
+              f" handles the ~1 timeout/cycle by retrying via watchdog.)")
     print()
 
     # Initialize supervisor
@@ -3939,7 +3944,7 @@ def main():
     if watchdog_thread:
         watchdog_stop.set()
     if bus_subscriber_thread:
-        # daemon thread, dies with the process
+        pass  # daemon thread, dies with the process
         watchdog_thread.join(timeout=5)
 
     # Summary

@@ -13,11 +13,10 @@ import json
 import os
 import re
 import sqlite3
-from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 from prismatic.agy_completed_work import list_completed_work
 from prismatic.agy_merge_backlog import list_merge_backlog, verify_merge_backlog_item

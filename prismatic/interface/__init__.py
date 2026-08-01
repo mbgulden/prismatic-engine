@@ -11,13 +11,8 @@ Contents
 * **hooks.py**   — canonical hook-name constants + typing
 """
 
-__all__ = [
-           "HOOK_NAMES",
-           "AgentContract",
-           "PluginContext",
-           "PluginValidationError",
-           "PrismaticPlugin",
-]
+__all__ = ["PrismaticPlugin", "PluginContext", "AgentContract", "PluginValidationError",
+           "HOOK_NAMES"]
 
+from .plugin import PrismaticPlugin, PluginContext, AgentContract, PluginValidationError
 from .hooks import HOOK_NAMES
-from .plugin import AgentContract, PluginContext, PluginValidationError, PrismaticPlugin

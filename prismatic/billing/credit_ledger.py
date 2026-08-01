@@ -13,8 +13,9 @@ import os
 import sqlite3
 import threading
 from abc import ABC, abstractmethod
-from collections.abc import Generator
 from contextlib import contextmanager
+from datetime import datetime, timezone
+from typing import Generator, Optional
 
 # ── Defaults ────────────────────────────────────────────────
 DEFAULT_SQLITE_PATH = os.path.join(
@@ -417,13 +418,14 @@ class PostgresCreditLedger(CreditLedger):
             conn.close()
 
     def ensure_tenant(self, tenant_id: str) -> None:
-        with self._transaction() as conn, conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO tenant_balance (tenant_id, balance, state) "
-                "VALUES (%s, 0, 'active') "
-                "ON CONFLICT (tenant_id) DO NOTHING",
-                (tenant_id,),
-            )
+        with self._transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO tenant_balance (tenant_id, balance, state) "
+                    "VALUES (%s, 0, 'active') "
+                    "ON CONFLICT (tenant_id) DO NOTHING",
+                    (tenant_id,),
+                )
 
     def get_balance(self, tenant_id: str) -> int:
         conn = self._get_conn()
@@ -452,12 +454,13 @@ class PostgresCreditLedger(CreditLedger):
             conn.close()
 
     def set_state(self, tenant_id: str, state: str) -> None:
-        with self._transaction() as conn, conn.cursor() as cur:
-            cur.execute(
-                "UPDATE tenant_balance SET state = %s, updated_at = NOW() "
-                "WHERE tenant_id = %s",
-                (state, tenant_id),
-            )
+        with self._transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE tenant_balance SET state = %s, updated_at = NOW() "
+                    "WHERE tenant_id = %s",
+                    (state, tenant_id),
+                )
 
     def add_credits(
         self, tenant_id: str, amount: int, reason: str = ""
@@ -465,34 +468,35 @@ class PostgresCreditLedger(CreditLedger):
         if amount <= 0:
             raise ValueError(f"Credit amount must be positive: {amount}")
 
-        with self._transaction() as conn, conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO tenant_balance (tenant_id, balance, state) "
-                "VALUES (%s, 0, 'active') "
-                "ON CONFLICT (tenant_id) DO NOTHING",
-                (tenant_id,),
-            )
+        with self._transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO tenant_balance (tenant_id, balance, state) "
+                    "VALUES (%s, 0, 'active') "
+                    "ON CONFLICT (tenant_id) DO NOTHING",
+                    (tenant_id,),
+                )
 
-            # SELECT FOR UPDATE — lock this row
-            cur.execute(
-                "SELECT balance FROM tenant_balance "
-                "WHERE tenant_id = %s FOR UPDATE",
-                (tenant_id,),
-            )
-            row = cur.fetchone()
-            new_balance = (row[0] if row else 0) + amount
+                # SELECT FOR UPDATE — lock this row
+                cur.execute(
+                    "SELECT balance FROM tenant_balance "
+                    "WHERE tenant_id = %s FOR UPDATE",
+                    (tenant_id,),
+                )
+                row = cur.fetchone()
+                new_balance = (row[0] if row else 0) + amount
 
-            cur.execute(
-                "UPDATE tenant_balance SET balance = %s, "
-                "updated_at = NOW() WHERE tenant_id = %s",
-                (new_balance, tenant_id),
-            )
-            cur.execute(
-                "INSERT INTO credit_transactions "
-                "(tenant_id, delta, balance_after, reason) "
-                "VALUES (%s, %s, %s, %s)",
-                (tenant_id, amount, new_balance, reason or "credit_add"),
-            )
+                cur.execute(
+                    "UPDATE tenant_balance SET balance = %s, "
+                    "updated_at = NOW() WHERE tenant_id = %s",
+                    (new_balance, tenant_id),
+                )
+                cur.execute(
+                    "INSERT INTO credit_transactions "
+                    "(tenant_id, delta, balance_after, reason) "
+                    "VALUES (%s, %s, %s, %s)",
+                    (tenant_id, amount, new_balance, reason or "credit_add"),
+                )
 
         return new_balance
 
@@ -502,41 +506,42 @@ class PostgresCreditLedger(CreditLedger):
         if amount <= 0:
             raise ValueError(f"Deduction amount must be positive: {amount}")
 
-        with self._transaction() as conn, conn.cursor() as cur:
-            cur.execute(
-                "SELECT balance, state FROM tenant_balance "
-                "WHERE tenant_id = %s FOR UPDATE",
-                (tenant_id,),
-            )
-            row = cur.fetchone()
-            if not row:
-                raise CreditError(
-                    f"Tenant {tenant_id} not found. Call ensure_tenant first."
+        with self._transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT balance, state FROM tenant_balance "
+                    "WHERE tenant_id = %s FOR UPDATE",
+                    (tenant_id,),
                 )
+                row = cur.fetchone()
+                if not row:
+                    raise CreditError(
+                        f"Tenant {tenant_id} not found. Call ensure_tenant first."
+                    )
 
-            balance, state = row
-            if state != TenantState.ACTIVE:
-                raise CreditError(
-                    f"Tenant {tenant_id} is {state} — cannot deduct."
-                )
-            if balance < amount:
-                raise CreditError(
-                    f"Tenant {tenant_id} insufficient credits: "
-                    f"{balance} < {amount}"
-                )
+                balance, state = row
+                if state != TenantState.ACTIVE:
+                    raise CreditError(
+                        f"Tenant {tenant_id} is {state} — cannot deduct."
+                    )
+                if balance < amount:
+                    raise CreditError(
+                        f"Tenant {tenant_id} insufficient credits: "
+                        f"{balance} < {amount}"
+                    )
 
-            new_balance = balance - amount
-            cur.execute(
-                "UPDATE tenant_balance SET balance = %s, "
-                "updated_at = NOW() WHERE tenant_id = %s",
-                (new_balance, tenant_id),
-            )
-            cur.execute(
-                "INSERT INTO credit_transactions "
-                "(tenant_id, delta, balance_after, reason) "
-                "VALUES (%s, %s, %s, %s)",
-                (tenant_id, -amount, new_balance, reason or "credit_deduct"),
-            )
+                new_balance = balance - amount
+                cur.execute(
+                    "UPDATE tenant_balance SET balance = %s, "
+                    "updated_at = NOW() WHERE tenant_id = %s",
+                    (new_balance, tenant_id),
+                )
+                cur.execute(
+                    "INSERT INTO credit_transactions "
+                    "(tenant_id, delta, balance_after, reason) "
+                    "VALUES (%s, %s, %s, %s)",
+                    (tenant_id, -amount, new_balance, reason or "credit_deduct"),
+                )
 
         return new_balance
 

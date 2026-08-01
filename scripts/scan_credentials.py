@@ -62,7 +62,7 @@ def scan_file(file_path: Path) -> list:
                 if token in line:
                     # Non-guessable fingerprint (hash of location rather than value)
                     fingerprint = hashlib.sha256(
-                        f"{rel_path}:{idx}".encode()
+                        f"{rel_path}:{idx}".encode("utf-8")
                     ).hexdigest()[:16]
                     issues.append(
                         {
@@ -82,7 +82,7 @@ def scan_file(file_path: Path) -> list:
             line_no = content[:start_pos].count("\n") + 1
             # Non-guessable fingerprint (hash of location)
             fingerprint = hashlib.sha256(
-                f"{rel_path}:{line_no}".encode()
+                f"{rel_path}:{line_no}".encode("utf-8")
             ).hexdigest()[:16]
             issues.append(
                 {

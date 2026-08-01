@@ -8,11 +8,10 @@ operators do not mistake dry-run or pending artifacts for deployed truth.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable, Mapping, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
 MARKER = "AGENT_GOVERNANCE_CORE_STATE_MODEL_OK"

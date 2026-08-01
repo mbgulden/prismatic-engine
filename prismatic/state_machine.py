@@ -32,10 +32,12 @@ from __future__ import annotations
 import json
 import os
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 from typing import Any
+
 
 # ═══════════════════════════════════════════════════════════════
 # Step Enumeration
@@ -102,7 +104,7 @@ class OrchestrationMode(Enum):
         return self.value
 
     @classmethod
-    def from_string(cls, s: str) -> OrchestrationMode:
+    def from_string(cls, s: str) -> "OrchestrationMode":
         """Parse from string, defaulting to COLLABORATIVE."""
         try:
             return cls(s.lower())
@@ -427,7 +429,7 @@ class PipelineStateMachine:
             data = self.snapshot()
             with open(self._store_path, "w") as f:
                 json.dump(data, f, indent=2)
-        except OSError as exc:
+        except (OSError, IOError) as exc:
             # Best-effort persistence — log but don't crash
             print(f"[state_machine] Failed to persist {self.issue_id}: {exc}")
 

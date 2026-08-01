@@ -85,7 +85,7 @@ def _write(records: list[dict[str, Any]], path: str | Path | None = None) -> Non
 
 def _approval_id(promotion_decision_id: str, operator_decision: str) -> str:
     digest = hashlib.sha256(
-        f"{promotion_decision_id}:{operator_decision}".encode()
+        f"{promotion_decision_id}:{operator_decision}".encode("utf-8")
     ).hexdigest()[:16]
     return f"operator-approval-{digest}"
 

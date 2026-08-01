@@ -13,9 +13,9 @@ dependency-free.
 from __future__ import annotations
 
 import json
-import urllib.error
 import urllib.request
-from typing import Any
+import urllib.error
+from typing import Any, Optional
 
 
 class OllamaClient:

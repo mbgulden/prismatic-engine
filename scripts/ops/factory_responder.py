@@ -49,6 +49,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+
 # === Paths ===
 
 PRISMATIC_DATA = Path(os.path.expanduser("~")) / ".prismatic"
@@ -201,7 +202,7 @@ def restart_service(name: str) -> tuple[bool, str]:
                 capture_output=True, text=True, timeout=10
             )
             if check.stdout.strip() == "active":
-                return True, "restarted and active"
+                return True, f"restarted and active"
             return False, f"restarted but not active: {check.stdout.strip()}"
         return False, f"systemctl returned {r.returncode}: {r.stderr.strip()}"
     except Exception as e:
@@ -580,7 +581,7 @@ Investigate, fix, and resolve when done."""
                 state["last_sent"][alert_key] = time.time()
             else:
                 action_desc = "tried to create Linear issue but API call failed"
-                summary["actions_skipped"].append("linear: create failed")
+                summary["actions_skipped"].append(f"linear: create failed")
             planned_actions.append((alert, "linear", issue_id, action_desc))
 
         elif action == ACTION_AGY:
@@ -665,7 +666,7 @@ Be terse. Report only the fix you applied or the reason you couldn't."""
 **Alert count:** {len(alerts)}
 
 **Alerts:**
-{chr(10).join('- {a}' for a in alerts)}
+{chr(10).join(f'- {{a}}' for a in alerts)}
 
 **Full monitor snapshot:**
 ```json

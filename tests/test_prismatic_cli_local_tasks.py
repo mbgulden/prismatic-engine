@@ -7,6 +7,7 @@ These encode the first-user journey slice: a bare-metal user can run
 
 from __future__ import annotations
 
+import argparse
 import sqlite3
 import tempfile
 import unittest

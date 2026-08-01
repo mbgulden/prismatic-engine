@@ -36,8 +36,8 @@ import json
 import os
 import sys
 import time
-from collections import Counter
 from datetime import datetime, timezone
+from collections import Counter
 from pathlib import Path
 
 METRICS_PATHS = [

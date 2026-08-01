@@ -11,17 +11,14 @@ locking semantics.
 
 from __future__ import annotations
 
-try:
-    import fcntl
-except ImportError:
-    fcntl = None  # type: ignore
+import fcntl
 import json
 import logging
 import os
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("prismatic.core.locking")
 
@@ -39,7 +36,7 @@ class SwarmLockManager:
     multi-agent collaboration.
     """
 
-    def __init__(self, lock_file: str | Path | None = None, stale_ttl_ms: int = DEFAULT_STALE_TTL_MS) -> None:
+    def __init__(self, lock_file: Optional[str | Path] = None, stale_ttl_ms: int = DEFAULT_STALE_TTL_MS) -> None:
         self._lock_file_path = Path(lock_file) if lock_file else DEFAULT_LOCK_FILE
         self._lock_mutex_path = self._lock_file_path.with_suffix(".lock")
         self._stale_ttl_ms = stale_ttl_ms
@@ -58,7 +55,7 @@ class SwarmLockManager:
             finally:
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
-    def _read_locks(self) -> list[dict[str, Any]]:
+    def _read_locks(self) -> List[Dict[str, Any]]:
         if not self._lock_file_path.exists():
             return []
         try:
@@ -68,13 +65,13 @@ class SwarmLockManager:
         except (json.JSONDecodeError, OSError):
             return []
 
-    def _write_locks(self, locks: list[dict[str, Any]]) -> None:
+    def _write_locks(self, locks: List[Dict[str, Any]]) -> None:
         tmp = self._lock_file_path.with_suffix(".tmp")
         with open(tmp, "w") as f:
             json.dump(locks, f, indent=2)
         os.replace(tmp, self._lock_file_path)
 
-    def _prune_stale(self, locks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _prune_stale(self, locks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         now_ms = int(time.time() * 1000)
         kept = []
         for lock in locks:
@@ -166,7 +163,7 @@ class SwarmLockManager:
                     return True
             return False
 
-    def get_status(self) -> list[dict[str, Any]]:
+    def get_status(self) -> List[Dict[str, Any]]:
         """Returns all active (non-stale) locks."""
         with self._lock_registry():
             locks = self._read_locks()

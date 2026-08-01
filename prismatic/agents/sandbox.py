@@ -19,8 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from prismatic.providers.tasks.base import Issue
-
-from .base import AgentConfig, BaseAgent
+from .base import BaseAgent, AgentConfig
 
 logger = logging.getLogger("prismatic.agents.sandbox")
 

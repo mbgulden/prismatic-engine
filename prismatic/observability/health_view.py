@@ -9,11 +9,10 @@ object and an optional Markdown report.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Any
+from typing import Any, Iterable
 
 
 class HealthStatus(StrEnum):

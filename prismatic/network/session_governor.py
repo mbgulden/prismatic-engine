@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Callable
+
 
 DEFAULT_LANE_LIMITS = {
     "L4": 2,
@@ -23,11 +24,11 @@ DEFAULT_LANE_LIMITS = {
 class SessionLease:
     """Context manager returned by SessionGovernor.acquire."""
 
-    governor: SessionGovernor
+    governor: "SessionGovernor"
     lane_id: str
     acquired: bool = False
 
-    def __enter__(self) -> SessionLease:
+    def __enter__(self) -> "SessionLease":
         if not self.acquired:
             self.governor._acquire(self.lane_id)
             self.acquired = True

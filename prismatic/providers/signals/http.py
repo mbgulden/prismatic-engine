@@ -22,10 +22,11 @@ Production notes:
 from __future__ import annotations
 
 import json
-import urllib.error
 import urllib.request
+import urllib.error
+from typing import Optional
 
-from .base import SignalPayload, SignalProvider
+from .base import SignalProvider, SignalPayload
 
 
 class HTTPSignalProvider(SignalProvider):

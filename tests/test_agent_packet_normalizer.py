@@ -10,6 +10,7 @@ from prismatic.agent_packet_normalizer import (
     repair_preview,
 )
 
+
 _GATE_ACCEPTED_SOURCE_PATH = str(Path.home() / "work" / "agy-gro-3952-proof")
 
 

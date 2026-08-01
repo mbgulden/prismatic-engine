@@ -19,6 +19,7 @@ sys.path.insert(0, SCRIPT_DIR)
 from universal_asset_indexer import (
     AssetNode,
     Catalog,
+    IntegrityReport,
     adjacency_matrix_exponentiation,
     build_catalog,
     build_closure_index,
@@ -29,6 +30,7 @@ from universal_asset_indexer import (
     load_catalog_from_json,
     verify_integrity,
 )
+
 
 # ── Fixtures ─────────────────────────────────────────────────
 

@@ -5,25 +5,27 @@ sandbox pod integration, forced-stop recovery, and orphan cleanup.
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import tempfile
+import time
 import unittest
-from unittest.mock import patch
-
-from prismatic.plugins.lifecycle_manager import (
-    _ALLOWED_TRANSITIONS,
-    PluginLifecycleRecord,
-    PluginLifecycleSandboxManager,
-    PluginState,
-    StateTransitionError,
-)
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 # Import the module under test
 from prismatic.plugins.sandbox_pod_manager import (
-    PodManagerError,
     PodState,
+    PodManagerError,
     SandboxPodManager,
+)
+from prismatic.plugins.lifecycle_manager import (
+    PluginState,
+    StateTransitionError,
+    PluginLifecycleSandboxManager,
+    PluginLifecycleRecord,
+    _ALLOWED_TRANSITIONS,
 )
 
 

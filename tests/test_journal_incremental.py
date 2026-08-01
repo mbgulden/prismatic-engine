@@ -12,6 +12,7 @@ from prismatic.journal import (
     run_snapshot,
 )
 
+
 OBSERVED_AT = "2026-07-23T06:20:00Z"
 
 

@@ -28,7 +28,6 @@ import asyncio
 import json
 import logging
 import os
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -146,11 +145,6 @@ class UnixSocketListener:
                 sock_path.unlink()
             except OSError:
                 pass
-
-        if not hasattr(asyncio, "start_unix_server") or os.name == "nt":
-            logger.info("Unix socket server disabled on non-Unix platform (%s)", sys.platform)
-            self._server = None
-            return
 
         try:
             sock_path.parent.mkdir(parents=True, exist_ok=True)

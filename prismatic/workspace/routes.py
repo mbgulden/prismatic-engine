@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, Optional
 
 try:
     from fastapi import APIRouter, Depends, HTTPException, Query
@@ -36,7 +36,7 @@ def _get_tree_cached(walker: WorkspaceTreeWalker) -> list[WorkspaceManifestEntry
     return entries
 
 
-def create_workspace_router(docs_root: Path | None = None) -> Any:
+def create_workspace_router(docs_root: Optional[Path] = None) -> Any:
     """Create FastAPI router for workspace plugin."""
     if not _HAS_FASTAPI:
         return None
@@ -49,7 +49,7 @@ def create_workspace_router(docs_root: Path | None = None) -> Any:
     router = APIRouter(prefix="/workspace", tags=["workspace"])
 
     @router.get("/tree")
-    async def get_workspace_tree() -> dict[str, Any]:
+    async def get_workspace_tree() -> Dict[str, Any]:
         """Return curated list of entries grouped by category."""
         entries = _get_tree_cached(walker)
         by_category: dict[str, list[dict[str, Any]]] = {}
@@ -65,7 +65,7 @@ def create_workspace_router(docs_root: Path | None = None) -> Any:
         }
 
     @router.get("/entry/{doc_id}")
-    async def get_entry_detail(doc_id: str) -> dict[str, Any]:
+    async def get_entry_detail(doc_id: str) -> Dict[str, Any]:
         """Get detail and content for a single document."""
         entries = _get_tree_cached(walker)
         target = next((e for e in entries if e.id == doc_id), None)
@@ -86,7 +86,7 @@ def create_workspace_router(docs_root: Path | None = None) -> Any:
         }
 
     @router.post("/acceptance")
-    async def run_acceptance(path: str = Query(..., description="Relative doc path")) -> dict[str, Any]:
+    async def run_acceptance(path: str = Query(..., description="Relative doc path")) -> Dict[str, Any]:
         """Run acceptance protocol on a specific doc path."""
         full_path = root / path
         if not full_path.exists():
@@ -99,7 +99,7 @@ def create_workspace_router(docs_root: Path | None = None) -> Any:
     async def create_share_link(
         doc_id: str = Query(..., description="Document ID"),
         ttl_seconds: int = Query(86400, description="TTL in seconds (default 24h)"),
-    ) -> dict[str, Any]:
+    ) -> Dict[str, Any]:
         """Generate a signed share link for a document."""
         entries = _get_tree_cached(walker)
         target = next((e for e in entries if e.id == doc_id), None)
@@ -109,7 +109,7 @@ def create_workspace_router(docs_root: Path | None = None) -> Any:
         return share_mgr.generate_token(doc_id=doc_id, ttl_seconds=ttl_seconds)
 
     @router.get("/share/{token}")
-    async def view_shared_entry(token: str) -> dict[str, Any]:
+    async def view_shared_entry(token: str) -> Dict[str, Any]:
         """View a document via signed share token."""
         valid, doc_id, err = share_mgr.validate_token(token)
         if not valid:
@@ -132,7 +132,7 @@ def create_workspace_router(docs_root: Path | None = None) -> Any:
     async def override_acceptance(
         path: str = Query(..., description="Relative doc path"),
         reason: str = Query(..., description="Manual operator override reason"),
-    ) -> dict[str, Any]:
+    ) -> Dict[str, Any]:
         """Manually mark a document as accepted, overriding failed checks."""
         full_path = root / path
         if not full_path.exists():
@@ -145,13 +145,13 @@ def create_workspace_router(docs_root: Path | None = None) -> Any:
         return {"path": path, "result": result}
 
     @router.post("/share/revoke")
-    async def revoke_share_link(token: str = Query(..., description="Share token")) -> dict[str, Any]:
+    async def revoke_share_link(token: str = Query(..., description="Share token")) -> Dict[str, Any]:
         """Revoke a share token."""
         share_mgr.revoke_token(token)
         return {"status": "revoked", "token": token}
 
     @router.delete("/share/{token}")
-    async def delete_share_token(token: str) -> dict[str, Any]:
+    async def delete_share_token(token: str) -> Dict[str, Any]:
         """DELETE endpoint to revoke a share link token (Item 13)."""
         share_mgr.revoke_token(token)
         return {"status": "deleted", "token": token}

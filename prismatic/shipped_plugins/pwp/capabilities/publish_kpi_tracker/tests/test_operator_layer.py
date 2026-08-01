@@ -13,10 +13,13 @@ Run with:  pytest plugins/pwp/capabilities/publish_kpi_tracker/tests/test_operat
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
-from plugins.pwp.capabilities.publish_kpi_tracker import (
+
+import plugins.pwp.capabilities.publish_kpi_tracker as kpi  # noqa: E402
+from plugins.pwp.capabilities.publish_kpi_tracker import (  # noqa: E402
     build_all_site_summaries,
     build_dashboard,
     build_site_collection,

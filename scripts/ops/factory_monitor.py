@@ -20,9 +20,11 @@ import re
 import sqlite3
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
 
 # === Config ===
 
@@ -375,7 +377,7 @@ def main():
         print(f"SEVERITY: {severity}")
         print("=" * 70)
 
-        print("\n[Services]")
+        print(f"\n[Services]")
         for svc, info in checks["services"].items():
             flag = "OK" if info["active"] else "DOWN"
             restart = " (recently restarted)" if info["recent_restart"] else ""
@@ -388,14 +390,14 @@ def main():
 
         print(f"\n[Zombie processes] {checks['zombies']['count']}")
 
-        print("\n[HTTP endpoints]")
+        print(f"\n[HTTP endpoints]")
         for ep, info in checks["endpoints"].items():
             flag = "OK" if info["ok"] else "FAIL"
             print(f"  [{flag:4s}] {ep:25s} HTTP {info['status']} (expected {info['expected']})")
 
         if checks.get("curator", {}).get("ok"):
             cur = checks["curator"]
-            print("\n[Curator]")
+            print(f"\n[Curator]")
             print(f"  total_tagged:    {cur['total_tagged']}")
             print(f"  tag_counts:      {cur['tag_counts']}")
             print(f"  escalations:     {cur['escalations_recent']} recent")
@@ -406,16 +408,16 @@ def main():
 
         if checks.get("bus", {}).get("exists"):
             bus = checks["bus"]
-            print("\n[Bus]")
+            print(f"\n[Bus]")
             print(f"  total/processed/pending: {bus['total']}/{bus['processed']}/{bus['pending']}")
             if bus.get("last_event_age_sec") is not None:
                 print(f"  last event: {bus['last_event_age_sec']:.0f}s ago")
         else:
-            print("\n[Bus] MISSING")
+            print(f"\n[Bus] MISSING")
 
         pool = checks.get("supervisor_pool", {})
         if "error" not in pool:
-            print("\n[Supervisor pool]")
+            print(f"\n[Supervisor pool]")
             print(f"  live: {pool.get('live_count', 0)}/{pool.get('max_concurrent', '?')}")
             print(f"  spawned: {pool.get('total_spawned', 0)}, reaped: {pool.get('total_reaped', 0)}")
             print(f"  skipped_cap: {pool.get('total_skipped_cap', 0)}, skipped_dlq: {pool.get('total_skipped_dlq', 0)}")
@@ -434,7 +436,7 @@ def main():
             print(f"\n[Vault] {list(v['files'].keys())}")
 
         if checks.get("log_errors"):
-            print("\n[Log errors]")
+            print(f"\n[Log errors]")
             for logname, info in checks["log_errors"].items():
                 if "error" in info:
                     print(f"  {logname}: {info['error']}")
@@ -446,7 +448,7 @@ def main():
             for a in alerts:
                 print(f"  - {a}")
         else:
-            print("\n[ALERTS] none")
+            print(f"\n[ALERTS] none")
 
         print("=" * 70)
 

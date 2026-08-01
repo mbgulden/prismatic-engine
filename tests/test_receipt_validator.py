@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import copy
 import hashlib
 import json
@@ -10,16 +9,17 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-import pytest
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import ed25519
 
-from prismatic.verification.attestation import canonicalize_receipt
 from prismatic.verification.receipt_validator import (
     check_revocation,
     determine_merge_eligibility,
     validate_receipt_freshness,
 )
+
+import base64
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
+from prismatic.verification.attestation import canonicalize_receipt
 
 SHA_A = "a" * 40
 SHA_B = "b" * 40
@@ -592,10 +592,7 @@ def test_adversarial_evidence_symlink_rejection(tmp_path: Path) -> None:
     target = tmp_path / "real_file.log"
     target.write_text("content", encoding="utf-8")
     symlink_file = tmp_path / "sym_link.log"
-    try:
-        symlink_file.symlink_to(target)
-    except OSError:
-        pytest.skip("Symlink creation requires elevated privileges on Windows")
+    symlink_file.symlink_to(target)
 
     receipt = valid_receipt()
     receipt["logs_and_digests"] = [
@@ -635,10 +632,7 @@ def test_adversarial_revocation_store_symlink_rejection(
     real_store = tmp_path / "real_revocation.json"
     real_store.write_text("[]", encoding="utf-8")
     sym_store = tmp_path / "sym_revocation.json"
-    try:
-        sym_store.symlink_to(real_store)
-    except OSError:
-        pytest.skip("Symlink creation requires elevated privileges on Windows")
+    sym_store.symlink_to(real_store)
 
     receipt = valid_receipt()
     not_revoked, reason = check_revocation(receipt, revocation_store=sym_store)

@@ -1,6 +1,7 @@
 """Unit tests for pe.deploy.health PostDeployHealthChecker (WB-5).
 """
 
+from pathlib import Path
 from pe.deploy.health import PostDeployHealthChecker
 
 

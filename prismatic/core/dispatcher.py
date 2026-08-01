@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import Any, Dict, List, Optional
 
-from prismatic.core.git import GitManager
-from prismatic.core.lifecycle import LifecycleManager, OrchestrationMode, TaskState
-from prismatic.core.locking import SwarmLockManager
 from prismatic.core.registry import PluginLoader
-from prismatic.interface.plugin import AgentContract
+from prismatic.core.lifecycle import LifecycleManager, TaskState, OrchestrationMode
+from prismatic.core.locking import SwarmLockManager
+from prismatic.core.git import GitManager
+from prismatic.interface.plugin import PluginContext, AgentContract
 
 logger = logging.getLogger("prismatic.core.dispatcher")
 

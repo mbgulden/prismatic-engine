@@ -11,11 +11,10 @@ PLUGIN_ROOT = ROOT / "plugins" / "visual-verifier"
 if str(PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(PLUGIN_ROOT))
 
-from visual_verifier.cli import main as visual_verify_main
-from visual_verifier.core import VisualVerifier, parse_viewport
-from visual_verifier.plugin import VisualVerifierPlugin
-
-from prismatic.interface.plugin import PluginContext
+from prismatic.interface.plugin import PluginContext  # noqa: E402
+from visual_verifier.cli import main as visual_verify_main  # noqa: E402
+from visual_verifier.core import VisualVerifier, parse_viewport  # noqa: E402
+from visual_verifier.plugin import VisualVerifierPlugin  # noqa: E402
 
 
 def png_bytes(width: int = 640, height: int = 480) -> bytes:

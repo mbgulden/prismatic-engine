@@ -6,9 +6,8 @@ and fail-closed validation semantics for Prismatic Web Plugin theme generation.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterable, Sequence
 
 from prismatic.capability_router import (
     AgentCapability,

@@ -101,7 +101,7 @@ def test_canonicalization_stability_ordering_nested_none_unicode() -> None:
     assert bytes1 == bytes2
     assert b"exclude_me" not in bytes1
     assert b"different_value" not in bytes1
-    assert "ñ_🚀".encode() in bytes1
+    assert "ñ_🚀".encode("utf-8") in bytes1
 
 
 def test_canonicalization_does_not_mutate_input() -> None:

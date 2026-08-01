@@ -1,21 +1,20 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
-
 import pytest
-
+from pathlib import Path
 from prismatic.schedules import (
-    OWNER_AGY,
-    OWNER_JULES,
-    OWNER_PRISMATIC,
-    UnauthorizedMutationError,
-    get_agy_schedules,
-    get_jules_schedules,
     get_prismatic_cron_jobs,
     get_systemd_timer_schedules,
-    process_chat_schedule_request,
+    get_agy_schedules,
+    get_jules_schedules,
+    get_all_schedules,
     request_schedule_mutation,
+    process_chat_schedule_request,
+    UnauthorizedMutationError,
+    OWNER_PRISMATIC,
+    OWNER_AGY,
+    OWNER_JULES,
 )
 
 
@@ -130,7 +129,6 @@ def test_process_chat_command() -> None:
 
 def test_gateway_endpoints() -> None:
     from fastapi.testclient import TestClient
-
     from prismatic.gateway.server import app
     
     client = TestClient(app)

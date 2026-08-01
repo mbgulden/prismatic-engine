@@ -15,13 +15,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from .base import Issue, TaskProvider
+from .base import TaskProvider, Issue
 from .linear import LinearTaskProvider
 
 __all__ = [
+    "TaskProvider",
     "Issue",
     "LinearTaskProvider",
-    "TaskProvider",
     "create_task_provider",
 ]
 

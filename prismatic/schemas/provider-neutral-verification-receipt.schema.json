@@ -387,7 +387,7 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 4096,
-      "pattern": "^(?:/|[A-Za-z]:[\\\\/])"
+      "pattern": "^/"
     },
     "checkout_clean_state": {
       "type": "object",

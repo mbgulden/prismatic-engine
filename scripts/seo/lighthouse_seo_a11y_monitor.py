@@ -7,14 +7,7 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-from seo_cron_common import (
-    parse_html_file,
-    resolve_site_dir,
-    stamp,
-    state_dir,
-    write_json,
-    write_text,
-)
+from seo_cron_common import AOT_ORIGIN, parse_html_file, resolve_site_dir, route_for_file, stamp, state_dir, write_json, write_text
 
 URLS = [
     "https://activeoahutours.com/",

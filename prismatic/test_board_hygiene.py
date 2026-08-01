@@ -8,6 +8,7 @@ from prismatic.board_hygiene import (
     classify_noise,
 )
 
+
 NOW = datetime(2026, 7, 7, tzinfo=UTC)
 CONFIG = BoardHygieneConfig(now=NOW, stale_after_days=7)
 

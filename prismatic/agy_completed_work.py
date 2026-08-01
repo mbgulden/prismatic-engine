@@ -13,11 +13,10 @@ import os
 import re
 import sqlite3
 import tempfile
-from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 from prismatic.agy_result_packet import is_raw_agy_result_packet, require_valid_packet
 from prismatic.completed_work_gate import (
@@ -906,7 +905,7 @@ def packet_record_from_file(
     )
 
 
-def _linear_writeback_body(row: CompletedWorkRow) -> str:
+def _linear_writeback_body(row: "CompletedWorkRow") -> str:
     return "\n".join(
         [
             "## AGY completed-work integration gate",

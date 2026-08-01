@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Dict, List, Optional
 
 import yaml
 
@@ -60,8 +61,8 @@ class HardwareProfile:
     cpu_cores: int = 2
     memory_gb_min: int = 4
     gpu_required: bool = False
-    gpu_type: str | None = None
-    aliases: list[str] = field(default_factory=list)
+    gpu_type: Optional[str] = None
+    aliases: List[str] = field(default_factory=list)
 
 
 # ── Registry ────────────────────────────────────────────────────────────
@@ -83,16 +84,16 @@ class HardwareProfileRegistry:
     """
 
     def __init__(
-        self, yaml_path: str | Path | None = None
+        self, yaml_path: Optional[str | Path] = None
     ) -> None:
         self._yaml_path = Path(yaml_path or _DEFAULT_PROFILES_PATH)
-        self._profiles: dict[str, HardwareProfile] = {}
-        self._alias_map: dict[str, str] = {}
+        self._profiles: Dict[str, HardwareProfile] = {}
+        self._alias_map: Dict[str, str] = {}
 
     # ── public API ──────────────────────────────────────────────────────
 
     @property
-    def profile_names(self) -> list[str]:
+    def profile_names(self) -> List[str]:
         """Return all canonical profile names."""
         return sorted(self._profiles.keys())
 

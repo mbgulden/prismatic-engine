@@ -10,12 +10,11 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, Iterable, List, Optional
 
-DEFAULT_VIEWPORTS: list[dict[str, int | str]] = [
+DEFAULT_VIEWPORTS: List[Dict[str, int | str]] = [
     {"name": "desktop", "width": 1200, "height": 800},
     {"name": "tablet", "width": 768, "height": 1024},
     {"name": "mobile", "width": 375, "height": 667},
@@ -33,7 +32,7 @@ DEFAULT_CHECKS = [
 @dataclass
 class CacheEntry:
     expires_at: float
-    value: dict[str, Any]
+    value: Dict[str, Any]
 
 
 class VisualVerifierError(RuntimeError):
@@ -64,23 +63,23 @@ class VisualVerifier:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.cache_ttl_seconds = cache_ttl_seconds
         self.require_browsermcp = require_browsermcp
-        self._cache: dict[str, CacheEntry] = {}
+        self._cache: Dict[str, CacheEntry] = {}
 
     def verify_url(
         self,
         url: str,
-        viewports: list[dict[str, Any]] | None = None,
-        checks: list[str] | None = None,
-    ) -> dict[str, Any]:
+        viewports: Optional[List[Dict[str, Any]]] = None,
+        checks: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
         target = self._normalize_url(url)
         return self._verify_target(target, viewports=viewports, checks=checks)
 
     def verify_file(
         self,
         path: str,
-        viewports: list[dict[str, Any]] | None = None,
-        checks: list[str] | None = None,
-    ) -> dict[str, Any]:
+        viewports: Optional[List[Dict[str, Any]]] = None,
+        checks: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
         file_path = Path(path).expanduser().resolve()
         if not file_path.exists():
             return self._error_report(f"Local HTML file not found: {file_path}")
@@ -89,8 +88,8 @@ class VisualVerifier:
         )
 
     def compare_images(
-        self, image_a: str, image_b: str, criteria: list[str] | str | None = None
-    ) -> dict[str, Any]:
+        self, image_a: str, image_b: str, criteria: Optional[List[str] | str] = None
+    ) -> Dict[str, Any]:
         bytes_a = self._read_image_input(image_a)
         bytes_b = self._read_image_input(image_b)
         hash_a = hashlib.sha256(bytes_a).hexdigest()
@@ -117,8 +116,8 @@ class VisualVerifier:
         return diff
 
     def grade_screenshot(
-        self, screenshot_b64: str, checks: list[str] | None = None
-    ) -> dict[str, Any]:
+        self, screenshot_b64: str, checks: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
         checks = checks or DEFAULT_CHECKS
         image_bytes = base64.b64decode(
             self._strip_data_url(screenshot_b64), validate=False
@@ -149,9 +148,9 @@ class VisualVerifier:
     def _verify_target(
         self,
         target: str,
-        viewports: list[dict[str, Any]] | None = None,
-        checks: list[str] | None = None,
-    ) -> dict[str, Any]:
+        viewports: Optional[List[Dict[str, Any]]] = None,
+        checks: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
         checks = checks or DEFAULT_CHECKS
         try:
             screenshots = self.capture_viewports(target, viewports=viewports)
@@ -162,7 +161,7 @@ class VisualVerifier:
                 f"Visual capture failed gracefully ({exc.__class__.__name__})."
             )
 
-        viewport_results: list[dict[str, Any]] = []
+        viewport_results: List[Dict[str, Any]] = []
         for shot in screenshots:
             data = Path(str(shot["path"])).read_bytes()
             grade = self.grade_screenshot(
@@ -190,8 +189,8 @@ class VisualVerifier:
         return {"viewport_results": viewport_results, "overall_pass": overall_pass}
 
     def capture_viewports(
-        self, target: str, viewports: list[dict[str, Any]] | None = None
-    ) -> list[dict[str, Any]]:
+        self, target: str, viewports: Optional[List[Dict[str, Any]]] = None
+    ) -> List[Dict[str, Any]]:
         browsermcp_status = self._probe_browsermcp()
         if self.require_browsermcp and not browsermcp_status["available"]:
             raise VisualVerifierError(browsermcp_status["message"])
@@ -235,7 +234,7 @@ class VisualVerifier:
             raise VisualVerifierError("Browser capture returned no screenshots.")
         return result["screenshots"]
 
-    def _probe_browsermcp(self) -> dict[str, Any]:
+    def _probe_browsermcp(self) -> Dict[str, Any]:
         if shutil.which("npx") is None:
             return {
                 "available": False,
@@ -250,8 +249,8 @@ class VisualVerifier:
         }
 
     def _grade_with_nano_banana(
-        self, image_bytes: bytes, checks: list[str]
-    ) -> dict[str, Any]:
+        self, image_bytes: bytes, checks: List[str]
+    ) -> Dict[str, Any]:
         api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
         if not api_key:
             raise VisualVerifierError(
@@ -317,10 +316,10 @@ class VisualVerifier:
         return parsed
 
     def _grade_with_heuristics(
-        self, image_bytes: bytes, checks: list[str], fallback_reason: str
-    ) -> dict[str, Any]:
+        self, image_bytes: bytes, checks: List[str], fallback_reason: str
+    ) -> Dict[str, Any]:
         dims = self._png_dimensions(image_bytes)
-        failures: list[str] = []
+        failures: List[str] = []
         grades = {check: 75 for check in checks}
         if not dims:
             failures.append(
@@ -376,8 +375,8 @@ process.stdin.on('end', async () => {
 """
 
     def _normalize_viewports(
-        self, viewports: list[dict[str, Any]] | None
-    ) -> list[dict[str, Any]]:
+        self, viewports: Optional[List[Dict[str, Any]]]
+    ) -> List[Dict[str, Any]]:
         raw = viewports or DEFAULT_VIEWPORTS
         normalized = []
         for vp in raw:
@@ -398,7 +397,7 @@ process.stdin.on('end', async () => {
             "Target must be an http(s) URL or local file path via verify_file()."
         )
 
-    def _error_report(self, message: str) -> dict[str, Any]:
+    def _error_report(self, message: str) -> Dict[str, Any]:
         return {"viewport_results": [], "overall_pass": False, "error": message}
 
     def _cache_key(self, image_bytes: bytes, checks: Iterable[str]) -> str:
@@ -407,7 +406,7 @@ process.stdin.on('end', async () => {
         h.update(json.dumps(list(checks), sort_keys=True).encode("utf-8"))
         return h.hexdigest()
 
-    def _cache_get(self, key: str) -> dict[str, Any] | None:
+    def _cache_get(self, key: str) -> Optional[Dict[str, Any]]:
         item = self._cache.get(key)
         if not item:
             return None
@@ -416,7 +415,7 @@ process.stdin.on('end', async () => {
             return None
         return item.value
 
-    def _cache_set(self, key: str, value: dict[str, Any]) -> None:
+    def _cache_set(self, key: str, value: Dict[str, Any]) -> None:
         self._cache[key] = CacheEntry(
             expires_at=time.time() + self.cache_ttl_seconds, value=value
         )
@@ -432,7 +431,7 @@ process.stdin.on('end', async () => {
             return maybe_path.read_bytes()
         return base64.b64decode(self._strip_data_url(value), validate=False)
 
-    def _png_dimensions(self, data: bytes) -> list[int] | None:
+    def _png_dimensions(self, data: bytes) -> Optional[List[int]]:
         if len(data) < 24 or data[:8] != b"\x89PNG\r\n\x1a\n":
             return None
         width = int.from_bytes(data[16:20], "big")
@@ -440,7 +439,7 @@ process.stdin.on('end', async () => {
         return [width, height]
 
 
-def parse_viewport(value: str) -> dict[str, Any]:
+def parse_viewport(value: str) -> Dict[str, Any]:
     name, _, dims = value.partition(":")
     width, _, height = dims.lower().partition("x")
     if not name or not width or not height:

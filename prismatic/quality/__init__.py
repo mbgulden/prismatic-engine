@@ -15,62 +15,62 @@ Reference: ``okf/operations/prismatic-quality-gates-comprehensive-plan.md``
 
 from __future__ import annotations
 
-from .failure import (
-    COUNTER_PATH,
-    FAILURE_PATTERNS,
-    OUTPUT_REQUIRES_ATTENTION,
-    POLICIES,
-    ClassificationResult,
-    # Failure classification (Gap 7)
-    FailureMode,
-    RetryPolicy,
-    apply_failure_classification,
-    classify_failure,
-    classify_with_policy,
-    get_failure_count,
-    increment_failure,
-    reset_after_success,
-    reset_failure,
-    should_retry,
-    wait_for_retry,
-)
 from .gates import (
-    ARCHIVED_NEEDS_HUMAN_REVIEW,
-    MAX_FILES_CHANGED,
-    OUTPUT_REQUIRES_VERIFICATION,
-    # Constants
-    TASK_SHAPE_VIOLATION,
-    # Drift
-    DriftReport,
-    LayerResult,
-    # Routing
-    RoutingDecision,
     # Verdict
     VerificationVerdict,
-    check_basic_syntax,
-    check_diff_meaningful,
-    check_drift,
-    check_files_changed,
-    check_goal_match,
-    check_linked_pr,
+    LayerResult,
+    run_verification,
+    save_verdict,
     # Individual layers (re-exported for unit testing)
     check_shape,
     check_workdir,
-    route_nhr_task,
-    run_verification,
+    check_files_changed,
+    check_diff_meaningful,
+    check_linked_pr,
+    check_basic_syntax,
+    check_goal_match,
+    # Drift
+    DriftReport,
+    check_drift,
     save_drift_report,
-    save_verdict,
+    # Routing
+    RoutingDecision,
+    route_nhr_task,
+    # Constants
+    TASK_SHAPE_VIOLATION,
+    OUTPUT_REQUIRES_VERIFICATION,
+    ARCHIVED_NEEDS_HUMAN_REVIEW,
+    MAX_FILES_CHANGED,
+)
+from .failure import (
+    # Failure classification (Gap 7)
+    FailureMode,
+    RetryPolicy,
+    POLICIES,
+    FAILURE_PATTERNS,
+    ClassificationResult,
+    classify_failure,
+    classify_with_policy,
+    apply_failure_classification,
+    should_retry,
+    wait_for_retry,
+    increment_failure,
+    reset_failure,
+    reset_after_success,
+    get_failure_count,
+    OUTPUT_REQUIRES_ATTENTION,
+    COUNTER_PATH,
 )
 from .smoke import (
-    Finding,
     # Smoke test (Gap 5)
     SmokeFinding,
     SmokeTestResult,
     extract_claimed_paths,
+    is_path_traversal,
     file_exists,
     file_has_substantive_content,
-    is_path_traversal,
     smoke_test,
+    Finding,
     verify_files_exist,
     verify_files_nonempty,
     verify_files_substantive,

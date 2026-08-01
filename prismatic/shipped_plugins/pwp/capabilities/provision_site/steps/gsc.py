@@ -50,10 +50,12 @@ from __future__ import annotations
 
 import os
 import secrets
-from typing import Any
+from typing import Any, Dict, Optional
 
 from ..cloudflare_client import CloudflareClient, CloudflareError
+from ..domain_verifier import _query_txt_via_doh
 from ..types import StepResult
+
 
 GSC_VERIFICATION_PREFIX = "google-site-verification"
 GSC_PLACEHOLDER_PREFIX = "pwp-gsc-"  # our synthetic marker

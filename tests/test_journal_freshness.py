@@ -11,7 +11,7 @@ from prismatic.journal import extract_log_signals, git
 def test_extract_log_signals_uses_recent_tail_and_excludes_stale_head(
     monkeypatch, tmp_path: Path
 ) -> None:
-    from prismatic import journal
+    import prismatic.journal as journal
 
     frozen_now = datetime(2026, 7, 23, 6, 20, tzinfo=timezone.utc)
 
@@ -38,7 +38,7 @@ def test_extract_log_signals_uses_recent_tail_and_excludes_stale_head(
 def test_extract_log_signals_excludes_out_of_window_timestamp(
     monkeypatch, tmp_path: Path
 ) -> None:
-    from prismatic import journal
+    import prismatic.journal as journal
 
     log = tmp_path / "gateway.log"
     log.write_text("2026-07-20 06:20:00 ERROR historical failure\n")

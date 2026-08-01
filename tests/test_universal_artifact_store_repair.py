@@ -3,12 +3,11 @@ import json
 import multiprocessing
 import shutil
 import tempfile
-
 import pytest
 
 from prismatic.universal_artifact_store import (
-    ArtifactIngestionError,
     UniversalArtifactStore,
+    ArtifactIngestionError,
     compute_receipt_integrity_digest,
 )
 
@@ -591,7 +590,7 @@ def test_gc_malformed_durable_rows_resilience(temp_store):
 def _ingest_worker(root_dir, idx, queue):
     store = UniversalArtifactStore(root_dir)
     try:
-        data = f"Multiprocess content {idx}".encode()
+        data = f"Multiprocess content {idx}".encode("utf-8")
         meta = {
             "source_commit": "4548ade4322b8ab8aa483a2d3e28dacb595bedcf",
             "command_env": {"command": f"cmd_{idx}", "environment": {}},

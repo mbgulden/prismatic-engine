@@ -4,13 +4,9 @@ Active Oahu Tours — Weekly KPI Tracking Script
 Runs autonomously via cron. Tracks rankings changes, competitor landscape, and traffic trends.
 Saves to reports directory and outputs a summary for delivery.
 """
-import asyncio
-import json
-import os
-import sys
+import asyncio, json, os, sys
 from datetime import datetime
 from pathlib import Path
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 OUTDIR = str(Path(os.environ.get("PRISMATIC_STATE_DIR", REPO_ROOT / "prismatic_state")).expanduser() / "seo" / "kpi-tracking")
@@ -142,7 +138,7 @@ async def main():
             if kw not in our_kws:
                 lost.append((kw, info["pos"], info.get("vol", 0)))
         
-        print("\n--- Rankings Changes ---")
+        print(f"\n--- Rankings Changes ---")
         print(f"Gained: {len(gained)} new keywords")
         for kw, pos, vol in sorted(gained, key=lambda x: -x[2])[:5]:
             print(f"  + {kw} (pos {pos}, vol {vol})")
@@ -172,7 +168,7 @@ async def main():
         json.dump(snapshot, f, indent=2)
     
     print(f"\n✓ Snapshot saved to {OUTDIR}/")
-    print("=== RUN COMPLETE ===")
+    print(f"=== RUN COMPLETE ===")
 
 if __name__ == "__main__":
     asyncio.run(main())

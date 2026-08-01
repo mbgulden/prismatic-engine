@@ -43,12 +43,14 @@ Output (on success):
 from __future__ import annotations
 
 import json
+import socket
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any
+from typing import Any, Dict, Optional
 
 from ..types import StepResult
+
 
 # CF DoH endpoint (free, no auth)
 DOH_ENDPOINT = "https://cloudflare-dns.com/dns-query"
@@ -67,7 +69,7 @@ RAILWAY_CNAME_SUFFIXES = (
 )
 
 
-def _doh_cname(host: str, timeout: float = 5.0) -> str | None:
+def _doh_cname(host: str, timeout: float = 5.0) -> Optional[str]:
     """Return the apex CNAME for `host` via Cloudflare DoH, or None.
 
     Uses HTTPS GET to https://cloudflare-dns.com/dns-query?name=<host>&type=CNAME
@@ -90,7 +92,7 @@ def _doh_cname(host: str, timeout: float = 5.0) -> str | None:
         return None
 
 
-def _http_probe(host: str, timeout: float = 5.0) -> dict[str, str]:
+def _http_probe(host: str, timeout: float = 5.0) -> Dict[str, str]:
     """GET the apex and return response headers (no body)."""
     try:
         req = urllib.request.Request(
@@ -106,7 +108,7 @@ def _http_probe(host: str, timeout: float = 5.0) -> dict[str, str]:
         return {}
 
 
-def _classify_cname(cname: str | None) -> str | None:
+def _classify_cname(cname: Optional[str]) -> Optional[str]:
     """Return the platform name inferred from the CNAME target, or None."""
     if not cname:
         return None
@@ -125,7 +127,7 @@ def _classify_cname(cname: str | None) -> str | None:
     return None
 
 
-def _classify_headers(headers: dict[str, str]) -> str | None:
+def _classify_headers(headers: Dict[str, str]) -> Optional[str]:
     """Return the platform inferred from HTTP response headers, or None."""
     if not headers:
         return None

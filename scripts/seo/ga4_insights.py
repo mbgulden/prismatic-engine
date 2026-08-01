@@ -2,18 +2,13 @@
 from __future__ import annotations
 
 import json
+import sys
+from collections import defaultdict
 from datetime import datetime, timezone
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from seo_cron_common import (
-    date_window,
-    get_adc_token,
-    stamp,
-    state_dir,
-    write_json,
-    write_text,
-)
+from seo_cron_common import date_window, get_adc_token, stamp, state_dir, write_json, write_text
 from site_registry import ManagedSite, load_managed_sites
 
 GA_SCOPE = "https://www.googleapis.com/auth/analytics.readonly"

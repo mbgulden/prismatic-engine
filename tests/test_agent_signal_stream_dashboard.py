@@ -58,7 +58,6 @@ def test_gateway_signals_api_uses_durable_stream(tmp_path: Path, monkeypatch):
     )
 
     from fastapi.testclient import TestClient
-
     from prismatic.gateway.server import app
 
     response = TestClient(app).get("/api/gateway/signals?limit=10")

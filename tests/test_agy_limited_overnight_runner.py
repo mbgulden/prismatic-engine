@@ -11,8 +11,8 @@ import pytest
 from prismatic.agy_limited_overnight_runner import (
     AGY_LIMITED_OVERNIGHT_DRY_RUN_BLOCKED_MARKER,
     AGY_LIMITED_OVERNIGHT_DRY_RUN_MARKER,
-    AGY_LIMITED_OVERNIGHT_PACKET_MARKER,
     AGY_LIMITED_OVERNIGHT_RUNNER_MARKER,
+    AGY_LIMITED_OVERNIGHT_PACKET_MARKER,
     LimitedOvernightRunStore,
     RunnerRequest,
     run_limited_overnight_dry_run,

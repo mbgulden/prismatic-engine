@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 PWP_DIR = Path(__file__).resolve().parent
 SCHEMAS_DIR = PWP_DIR / "schemas"

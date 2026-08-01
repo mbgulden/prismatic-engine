@@ -4,6 +4,8 @@ import json
 import os
 import re
 import subprocess
+import sys
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path

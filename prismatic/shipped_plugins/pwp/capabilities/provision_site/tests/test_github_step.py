@@ -21,11 +21,12 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from plugins.pwp.capabilities.provision_site import auth_loader
+
 from plugins.pwp.capabilities.provision_site.steps.github import (
     _domain_to_slug,
     step_github_checkout,
 )
+from plugins.pwp.capabilities.provision_site import auth_loader
 
 
 def _mock_user_response(login: str = "mbgulden"):
@@ -160,8 +161,8 @@ def test_step_happy_path_uses_login_plus_slug(monkeypatch, tmp_path: Path) -> No
     # No env vars — but the test patches from_env to bypass auth_loader
     from plugins.pwp.capabilities.provision_site.github_client import (
         GitHubClient,
-        GitHubCommit,
         GitHubRepo,
+        GitHubCommit,
     )
 
     fake_repo = GitHubRepo(
@@ -216,8 +217,8 @@ def test_step_persists_to_kpi_collections(monkeypatch, tmp_path: Path) -> None:
     """After a successful step, kpi-collections.json must have the github block."""
     from plugins.pwp.capabilities.provision_site.github_client import (
         GitHubClient,
-        GitHubCommit,
         GitHubRepo,
+        GitHubCommit,
     )
 
     fake_repo = GitHubRepo(

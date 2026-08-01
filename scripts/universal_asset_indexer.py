@@ -35,7 +35,9 @@ import argparse
 import json
 import os
 import sys
+from collections import defaultdict
 from pathlib import Path
+
 
 # ── Data structures ────────────────────────────────────────────────
 
@@ -43,7 +45,7 @@ from pathlib import Path
 class AssetNode:
     """A single node in the asset dependency graph."""
 
-    __slots__ = ("asset_id", "asset_type", "deps", "file_path", "name")
+    __slots__ = ("asset_id", "name", "asset_type", "file_path", "deps")
 
     def __init__(
         self,

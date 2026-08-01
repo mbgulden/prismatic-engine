@@ -38,13 +38,14 @@ extension; the webhook URL is the only thing we need to plumb.)
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional
 
 # Lazy imports so the publish_kpi_tracker module can keep working
 # when the (optional) provision_site clients aren't installed.
 import urllib.error
 import urllib.request
-from dataclasses import dataclass, field
-from typing import Any
+
 
 # Defaults — overridable via the auth_loader / env.
 DEFAULT_FAREHARBOR_BASE = "https://fareharbor.com/api/v1/companies"
@@ -84,7 +85,7 @@ class FareHarborCompany:
     is_active: bool = True
 
     @classmethod
-    def from_api(cls, data: dict[str, Any]) -> FareHarborCompany:
+    def from_api(cls, data: Dict[str, Any]) -> "FareHarborCompany":
         company = data.get("company") or {}
         processors = company.get("enabled_processor_types") or []
         return cls(
@@ -97,7 +98,7 @@ class FareHarborCompany:
             is_active=company.get("deactivation_status", "active") == "active",
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> Dict[str, Any]:
         return {
             "shortname": self.shortname,
             "name": self.name,
@@ -119,7 +120,7 @@ class WebhookProbe:
     content_type: str = ""
     error_message: str = ""
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> Dict[str, Any]:
         return {
             "url": self.url,
             "reachable": self.reachable,
@@ -134,10 +135,10 @@ class ZapierValidation:
     """Result of the full ZapierClient.validate() call."""
 
     webhook: WebhookProbe
-    fareharbor: FareHarborCompany | None = None
+    fareharbor: Optional[FareHarborCompany] = None
     webhook_token_source: str = ""
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> Dict[str, Any]:
         return {
             "webhook": self.webhook.to_dict(),
             "fareharbor": self.fareharbor.to_dict() if self.fareharbor else None,
@@ -151,8 +152,8 @@ def _http_request(
     *,
     method: str = "GET",
     timeout: int = DEFAULT_HTTP_TIMEOUT,
-    headers: dict[str, str] | None = None,
-) -> dict[str, Any]:
+    headers: Optional[Dict[str, str]] = None,
+) -> Dict[str, Any]:
     """Minimal HTTP wrapper. Returns ``{"status": int, "headers": dict, "body": str}``.
 
     Raises ``ZapierError`` on transport-level errors (DNS, connection refused,
@@ -214,9 +215,9 @@ class ZapierClient:
     def from_env(
         cls,
         *,
-        webhook_url: str | None = None,
+        webhook_url: Optional[str] = None,
         fareharbor_base: str = DEFAULT_FAREHARBOR_BASE,
-    ) -> ZapierClient:
+    ) -> "ZapierClient":
         """Build a client from the auth_loader.
 
         If ``webhook_url`` is None, the loader tries ZAPIER_WEBHOOK_URL.
@@ -336,7 +337,7 @@ class ZapierClient:
     def validate(
         self,
         *,
-        fareharbor_shortname: str | None = None,
+        fareharbor_shortname: Optional[str] = None,
     ) -> ZapierValidation:
         """Run all probes and return a structured result.
 
@@ -345,7 +346,7 @@ class ZapierClient:
         don't depend on FareHarbor).
         """
         webhook = self.probe_webhook()
-        fareharbor: FareHarborCompany | None = None
+        fareharbor: Optional[FareHarborCompany] = None
         if fareharbor_shortname:
             try:
                 fareharbor = self.probe_fareharbor(fareharbor_shortname)
@@ -360,13 +361,13 @@ class ZapierClient:
 
 
 __all__ = [
-    "DEFAULT_FAREHARBOR_BASE",
-    "DEFAULT_HTTP_TIMEOUT",
-    "FareHarborCompany",
-    "FareHarborNotFoundError",
-    "WebhookProbe",
-    "WebhookUnreachableError",
     "ZapierClient",
     "ZapierError",
+    "WebhookUnreachableError",
+    "FareHarborNotFoundError",
+    "FareHarborCompany",
+    "WebhookProbe",
     "ZapierValidation",
+    "DEFAULT_FAREHARBOR_BASE",
+    "DEFAULT_HTTP_TIMEOUT",
 ]

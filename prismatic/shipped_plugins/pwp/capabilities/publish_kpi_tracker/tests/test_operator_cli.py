@@ -10,9 +10,13 @@ Covers the four CLI subcommands against the live published_plugins tree:
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
+
 
 # Resolve relative to this test file so the test suite is portable across
 # developer machines and CI environments. Layout:

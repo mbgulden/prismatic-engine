@@ -25,12 +25,13 @@ _PLUGIN_PARENT = Path(__file__).resolve().parent.parent.parent
 if str(_PLUGIN_PARENT) not in sys.path:
     sys.path.insert(0, str(_PLUGIN_PARENT))
 
-from prismatic_hello_world.plugin import (
+from prismatic_hello_world.plugin import (  # noqa: E402
     HelloWorldPlugin,
     escalate_when_hello,
     force_rework_when_hello_world,
     no_hello_comments,
 )
+
 
 # Path to the manifest, used by tests 1 + 2.
 _MANIFEST_PATH = Path(__file__).resolve().parent.parent / "plugin-manifest.yaml"

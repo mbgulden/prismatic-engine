@@ -21,7 +21,7 @@ def setup_runtime(tmp_path: Path, monkeypatch, *, disabled: str = ""):
     monkeypatch.setenv("PRISMATIC_ENABLED_AGENTS", "kai,fred,agy,george")
     monkeypatch.setenv("PRISMATIC_DISABLED_AGENTS", disabled)
     import prismatic.ingestion_queue as q
-    from prismatic import dispatcher
+    import prismatic.dispatcher as dispatcher
 
     q = importlib.reload(q)
     dispatcher = importlib.reload(dispatcher)

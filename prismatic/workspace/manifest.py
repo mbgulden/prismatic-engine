@@ -5,9 +5,10 @@ Corresponds to §5.1 of okf-docs-workspace-deploy-v1.md.
 
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Optional
 
 
 @dataclass
@@ -22,9 +23,9 @@ class WorkspaceManifestEntry:
     last_modified: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())  # ISO8601
     size_bytes: int = 0
     status: str = "accepted"  # proposed, accepted, deprecated, superseded
-    superseded_by: str | None = None  # id of replacement doc if status=superseded
+    superseded_by: Optional[str] = None  # id of replacement doc if status=superseded
     acceptance: dict[str, Any] = field(default_factory=dict)  # from AcceptanceProtocol
-    linear_issue: str | None = None  # e.g., "GRO-4188"
+    linear_issue: Optional[str] = None  # e.g., "GRO-4188"
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to dictionary."""

@@ -26,6 +26,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+
 DEFAULT_VIEWPORTS = ("desktop:1440x900", "tablet:768x1024", "mobile:390x844")
 BROKEN_LAYOUT_MARKERS = (
     "horizontal overflow",
@@ -48,7 +49,7 @@ class ViewportSpec:
     height: int
 
     @classmethod
-    def parse(cls, value: str) -> ViewportSpec:
+    def parse(cls, value: str) -> "ViewportSpec":
         """Parse NAME:WIDTHxHEIGHT strings used by the CLI."""
         if ":" not in value or "x" not in value:
             raise ValueError(f"viewport must be NAME:WIDTHxHEIGHT, got {value!r}")

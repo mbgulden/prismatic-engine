@@ -23,6 +23,7 @@ import pytest
 
 from prismatic.telemetry import TelemetryCollector
 
+
 # ── Fixture: isolated in-memory collector ────────────────────────────────────
 
 
@@ -44,7 +45,7 @@ def _wait_drain(
     conn.row_factory = sqlite3.Row
     try:
         while time.monotonic() < deadline:
-            rows = conn.execute(f"SELECT * FROM {table}").fetchall()
+            rows = conn.execute(f"SELECT * FROM {table}").fetchall()  # noqa: S608
             if rows:
                 return [dict(r) for r in rows]
             time.sleep(0.05)
@@ -292,7 +293,7 @@ class TestDispatcherWiring:
         collector = TelemetryCollector(db_path=db_path)
         try:
             # Build a dispatcher module with main_loop + patched dependencies.
-            from prismatic import dispatcher
+            import prismatic.dispatcher as dispatcher
 
             counts = {
                 "dispatched": 0,
@@ -342,7 +343,7 @@ class TestDispatcherWiring:
         db_path = str(tmp_path / "dispatcher_test2.db")
         collector = TelemetryCollector(db_path=db_path)
         try:
-            from prismatic import dispatcher
+            import prismatic.dispatcher as dispatcher
 
             counts = {
                 "dispatched": 1,
@@ -381,7 +382,7 @@ class TestDispatcherWiring:
         db_path = str(tmp_path / "dispatcher_test3.db")
         collector = TelemetryCollector(db_path=db_path)
         try:
-            from prismatic import dispatcher
+            import prismatic.dispatcher as dispatcher
 
             counts = {
                 "dispatched": 0,

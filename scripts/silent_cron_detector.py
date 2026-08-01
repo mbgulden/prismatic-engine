@@ -31,8 +31,8 @@ import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
 
 # ── Configuration ──────────────────────────────────────────────
 HERMES_ROOT = Path(os.environ.get("HERMES_ROOT", os.path.expanduser("~/.hermes")))

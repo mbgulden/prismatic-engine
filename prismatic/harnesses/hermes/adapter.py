@@ -14,9 +14,8 @@ import os
 import subprocess
 import time
 import uuid
-from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Mapping, Sequence
 
 from prismatic.harnesses.base import AgentHarness, HarnessCapabilities, HarnessStatus
 

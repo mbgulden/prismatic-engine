@@ -8,10 +8,10 @@ and the expected Linear state/label sync?
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+from typing import Iterable, Mapping, Sequence
 
 
 class ProofStatus(str, Enum):
@@ -37,7 +37,7 @@ class WorkerRunEvidence:
     result_artifacts: tuple[str, ...] = ()
 
     @classmethod
-    def from_mapping(cls, payload: Mapping[str, object]) -> WorkerRunEvidence:
+    def from_mapping(cls, payload: Mapping[str, object]) -> "WorkerRunEvidence":
         """Build evidence from a loose run-record mapping.
 
         The dispatcher/supervisor has accumulated several record shapes over
@@ -89,7 +89,7 @@ class LinearSyncEvidence:
     final_comment_body: str | None = None
 
     @classmethod
-    def from_mapping(cls, payload: Mapping[str, object]) -> LinearSyncEvidence:
+    def from_mapping(cls, payload: Mapping[str, object]) -> "LinearSyncEvidence":
         raw_labels = payload.get("labels") or ()
         if isinstance(raw_labels, str):
             labels = (raw_labels,)

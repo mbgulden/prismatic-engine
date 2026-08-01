@@ -7,11 +7,10 @@ same contract without dispatching AGY or touching git remotes.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 
 class GateClassification(str, Enum):

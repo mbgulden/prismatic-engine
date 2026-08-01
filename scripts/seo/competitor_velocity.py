@@ -4,12 +4,8 @@ Active Oahu Tours — Competitor Content Velocity Monitor
 Runs weekly. Checks competitor top pages for new content.
 Flags new pages entering our territory, traffic surges, and ranking shifts.
 """
-import asyncio
-import json
-import os
-import sys
+import asyncio, json, os, sys
 from pathlib import Path
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 from datetime import datetime
 
@@ -151,7 +147,7 @@ async def main():
     else:
         print("\n=== No changes detected ===")
     
-    print("\n=== RUN COMPLETE ===")
+    print(f"\n=== RUN COMPLETE ===")
 
 if __name__ == "__main__":
     asyncio.run(main())

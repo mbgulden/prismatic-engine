@@ -12,6 +12,7 @@ import threading
 import time
 from pathlib import Path
 
+
 # Default TTLs (in seconds) by event type
 DEFAULT_TTLS = {
     "linear": 3600,       # 1 hour

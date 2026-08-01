@@ -7,17 +7,17 @@ Defines the core capability registry and default capability contracts.
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
+from typing import Callable, Dict, Tuple
 
 
 class Capability:
     """Represents a registered capability contract in the Prismatic Engine."""
 
-    def __init__(self, name: str, check_fn: Callable[[], tuple[bool, str]]):
+    def __init__(self, name: str, check_fn: Callable[[], Tuple[bool, str]]):
         self.name = name
         self.check_fn = check_fn
 
-    def check_status(self) -> tuple[bool, str]:
+    def check_status(self) -> Tuple[bool, str]:
         """Verify if the capability requirements (credentials, config, etc.) are met."""
         try:
             return self.check_fn()
@@ -29,9 +29,9 @@ class CapabilityRegistry:
     """Registry for managing and querying engine capabilities."""
 
     def __init__(self) -> None:
-        self._capabilities: dict[str, Capability] = {}
+        self._capabilities: Dict[str, Capability] = {}
 
-    def register(self, name: str, check_fn: Callable[[], tuple[bool, str]]) -> None:
+    def register(self, name: str, check_fn: Callable[[], Tuple[bool, str]]) -> None:
         """Register a new capability with a validation function."""
         self._capabilities[name] = Capability(name, check_fn)
 
@@ -50,40 +50,40 @@ registry = CapabilityRegistry()
 
 # ── Default Capability Check Functions ─────────────────────────────────
 
-def check_linear() -> tuple[bool, str]:
+def check_linear() -> Tuple[bool, str]:
     if os.environ.get("LINEAR_API_KEY"):
         return True, "ok"
     return False, "missing LINEAR_API_KEY env var"
 
 
-def check_vcs_github() -> tuple[bool, str]:
+def check_vcs_github() -> Tuple[bool, str]:
     if os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or os.environ.get("PRISMATIC_GITHUB_TOKEN"):
         return True, "ok"
     return False, "missing GITHUB_TOKEN / GH_TOKEN env var"
 
 
-def check_agy() -> tuple[bool, str]:
+def check_agy() -> Tuple[bool, str]:
     if os.environ.get("AGY_TOKEN"):
         return True, "ok"
     return False, "missing AGY_TOKEN env var"
 
 
-def check_jules() -> tuple[bool, str]:
+def check_jules() -> Tuple[bool, str]:
     # Jules CLI review/handoff capability - default to ok for skeleton
     return True, "ok"
 
 
-def check_telegram() -> tuple[bool, str]:
+def check_telegram() -> Tuple[bool, str]:
     if os.environ.get("TELEGRAM_BOT_TOKEN") or os.environ.get("PRISMATIC_TELEGRAM_BOT_TOKEN"):
         return True, "ok"
     return False, "missing TELEGRAM_BOT_TOKEN env var"
 
 
-def check_schedule() -> tuple[bool, str]:
+def check_schedule() -> Tuple[bool, str]:
     # SQLite/JSON schedule tracking is engine-local, default to ok
     return True, "ok"
 
-def check_chat_agy() -> tuple[bool, str]:
+def check_chat_agy() -> Tuple[bool, str]:
     """Check whether the AGY chat capability is reachable.
 
     Delegates to ``ChatAGYCapability.check_status()`` so the registry
@@ -98,7 +98,7 @@ def check_chat_agy() -> tuple[bool, str]:
     except Exception as exc:
         return False, f"chat.agy probe failed: {exc}"
 
-def check_artifact() -> tuple[bool, str]:
+def check_artifact() -> Tuple[bool, str]:
     # Artifact publishing capability, default to ok
     return True, "ok"
 

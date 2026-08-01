@@ -11,15 +11,10 @@ Covers:
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch, MagicMock
 
 import pytest
 
-from prismatic.review.pr_reviewer import (
-    APPROVE,
-    NEEDS_DISCUSSION,
-    REQUEST_CHANGES,
-)
 from prismatic.review.pr_reviewer_impl import (
     SECRET_PATTERNS,
     QualityFinding,
@@ -32,6 +27,12 @@ from prismatic.review.pr_reviewer_impl import (
     fetch_pr_diff,
     parse_pr_url,
 )
+from prismatic.review.pr_reviewer import (
+    APPROVE,
+    NEEDS_DISCUSSION,
+    REQUEST_CHANGES,
+)
+
 
 # ─────────────────────────────────────────────────────────────────────
 # URL parsing tests

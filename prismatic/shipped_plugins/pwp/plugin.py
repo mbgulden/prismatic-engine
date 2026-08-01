@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Dict, List
 
 from prismatic.interface.plugin import (
     PluginContext,
     PrismaticPlugin,
 )
 
-from .compiler import get_tokens_for_tenant, render_template, set_tenant_tokens
+from .compiler import render_template, get_tokens_for_tenant, set_tenant_tokens
 from .oauth_credentials import (
     PROVIDERS,
     TokenPaths,
@@ -30,10 +30,8 @@ try:
         load_publish_kpi_schema,
         load_publish_kpi_site,
         publish_publish_kpi_dashboard,
-        validate_publish_kpi_collection,
-    )
-    from plugins.pwp.capabilities.publish_kpi_tracker import (
         register_publish_kpi_plugin as _register_publish_kpi_plugin,
+        validate_publish_kpi_collection,
     )
 except Exception:
     PUBLISH_KPI_TRACKER_CAPABILITY_ID = "pwp.publish-kpi-tracker"
@@ -57,7 +55,7 @@ else:
     PUBLISH_KPI_TRACKER_AVAILABLE = True
 
 
-PWP_CAPABILITY_CONTRACT: dict[str, Any] = {
+PWP_CAPABILITY_CONTRACT: Dict[str, Any] = {
     "plugin_id": "pwp-design-token-plugin",
     "connect_points": [
         "PE dashboard/API consumes prismatic.pwp_integration.integration_status",
@@ -93,11 +91,11 @@ class PWPDesignTokenPlugin(PrismaticPlugin):
                 # Capability registration must never break plugin load.
                 print(f"pwp.publish-kpi-tracker registration failed: {exc}")
 
-    def capability_contract(self) -> dict[str, Any]:
+    def capability_contract(self) -> Dict[str, Any]:
         """Return the additive PWP capability contract for PE dashboards/agents."""
         return dict(PWP_CAPABILITY_CONTRACT)
 
-    def connection_contract(self) -> dict[str, Any]:
+    def connection_contract(self) -> Dict[str, Any]:
         """Return explicit connect/disconnect semantics for PE governance surfaces."""
         return {
             "plugin_id": PWP_CAPABILITY_CONTRACT["plugin_id"],
@@ -105,7 +103,7 @@ class PWPDesignTokenPlugin(PrismaticPlugin):
             "disconnect_points": list(PWP_CAPABILITY_CONTRACT["disconnect_points"]),
         }
 
-    def register_tools(self) -> list[dict[str, Any]]:
+    def register_tools(self) -> List[Dict[str, Any]]:
         """Registers PWP theme and credential-maintenance tools."""
         return [
             {
@@ -160,7 +158,7 @@ class PWPDesignTokenPlugin(PrismaticPlugin):
         """Set override tokens for tenant."""
         set_tenant_tokens(tenant_id, tokens)
 
-    def credentials_refresh(self, provider: str, verify: bool = True) -> dict[str, Any]:
+    def credentials_refresh(self, provider: str, verify: bool = True) -> Dict[str, Any]:
         """Refresh a registered provider OAuth credential without exposing secrets."""
         provider_config = PROVIDERS[provider]
         verifier = (
@@ -173,7 +171,7 @@ class PWPDesignTokenPlugin(PrismaticPlugin):
         )
         return result.public_dict()
 
-    def credentials_status(self, provider: str, verify: bool = False) -> dict[str, Any]:
+    def credentials_status(self, provider: str, verify: bool = False) -> Dict[str, Any]:
         """Validate provider token files and optionally run a live smoke check."""
         provider_config = PROVIDERS[provider]
         paths: TokenPaths = default_token_paths(provider)
@@ -181,7 +179,7 @@ class PWPDesignTokenPlugin(PrismaticPlugin):
         refresh = paths.refresh_token.read_text(encoding="utf-8").strip()
         validate_token_shape(access, label="access", provider=provider_config)
         validate_token_shape(refresh, label="refresh", provider=provider_config)
-        payload: dict[str, Any] = {
+        payload: Dict[str, Any] = {
             "status": "ok",
             "provider": provider,
             "access_token_len": len(access),

@@ -52,14 +52,16 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Union
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
 
-from . import publish_kpi_tracker as kpi
 from .pwp_kpi_site_registry import (
     iter_sites,
     load_registry,
     site_override_enabled,
 )
+from . import publish_kpi_tracker as kpi
+
 
 # `publish_root` and `launcher` accept either `Path` or `str` so the CLI
 # can pass argparse's string args directly without explicit coercion.
@@ -71,7 +73,7 @@ DEFAULT_LAUNCHER = Path(
 ) or None  # if unset, fall back to bundled hd-platform-staging shape.
 
 
-def _resolve_launcher(launcher_override: Path | None = None) -> Path:
+def _resolve_launcher(launcher_override: Optional[Path] = None) -> Path:
     """Locate the per-site launcher to invoke.
 
     Resolution order:
@@ -103,7 +105,7 @@ def _resolve_launcher(launcher_override: Path | None = None) -> Path:
     )
 
 
-def _resolve_share_targets_env(slug: str, flat: dict) -> dict[str, str]:
+def _resolve_share_targets_env(slug: str, flat: dict) -> Dict[str, str]:
     """Read the site's `share_targets` block and resolve env vars.
 
     Each env-var name in `share_targets` (e.g. `AOT_KPI_SHEET_ID`,
@@ -113,7 +115,7 @@ def _resolve_share_targets_env(slug: str, flat: dict) -> dict[str, str]:
     own defaults — e.g. `email_to_default: mbgulden@gmail.com`).
     """
     share_targets = flat.get("share_targets") or {}
-    env: dict[str, str] = {}
+    env: Dict[str, str] = {}
     for key, env_name in share_targets.items():
         if not isinstance(env_name, str):
             continue
@@ -154,10 +156,10 @@ def dispatch_one_site(
     *,
     kind: str,
     launcher: Path,
-    env_overrides: dict[str, str],
+    env_overrides: Dict[str, str],
     publish_root: Path,
     timeout: int = 120,
-) -> dict[str, Any]:
+) -> Dict[str, Any]:
     """Invoke the per-site launcher for `slug` with the right env vars.
 
     Returns a status dict with `status: dispatched|failed|skipped`,
@@ -206,11 +208,11 @@ def dispatch_one_site(
 def run(
     *,
     kind: str,
-    registry_path: PathLike | None = None,
-    publish_root: PathLike | None = None,
-    launcher: PathLike | None = None,
+    registry_path: Optional[PathLike] = None,
+    publish_root: Optional[PathLike] = None,
+    launcher: Optional[PathLike] = None,
     timeout: int = 120,
-) -> dict[str, Any]:
+) -> Dict[str, Any]:
     """Walk every registered site, dispatch the launcher per-site.
 
     Returns a manifest with `kind`, `publish_root`, `launcher`, and a
@@ -231,7 +233,7 @@ def run(
 
     launcher_path = Path(launcher) if launcher else _resolve_launcher()
 
-    manifest: dict[str, Any] = {
+    manifest: Dict[str, Any] = {
         "kind": kind,
         "started_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "publish_root": str(publish_root),
@@ -310,7 +312,7 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         manifest = run(

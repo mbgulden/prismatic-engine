@@ -15,21 +15,22 @@ import importlib
 import logging
 import os
 import sys
-from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import yaml
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
-from prismatic.core.hardware_profiles import (
-    HardwareProfileRegistry,
-)
 from prismatic.interface.plugin import (
     PluginContext,
-    PluginValidationError,
+    AgentContract,
     PrismaticPlugin,
+    PluginValidationError,
+)
+from prismatic.core.hardware_profiles import (
+    HardwareProfileError,
+    HardwareProfileRegistry,
 )
 
 logger = logging.getLogger("prismatic.loader")
@@ -84,13 +85,13 @@ class PluginLoader:
     ) -> None:
         self.core_version = core_version
         self.plugins_dir = plugins_dir
-        self.loaded_plugins: dict[str, PrismaticPlugin] = {}
-        self.registered_personas: dict[str, dict[str, Any]] = {}
-        self.registered_tools: list[dict[str, Any]] = []
-        self.registered_mcp_servers: list[dict[str, Any]] = []
-        self.registered_api_routes: list[dict[str, Any]] = []
-        self.registered_artifact_types: list[dict[str, Any]] = []
-        self.registered_capability_contracts: dict[str, dict[str, Any]] = {}
+        self.loaded_plugins: Dict[str, PrismaticPlugin] = {}
+        self.registered_personas: Dict[str, Dict[str, Any]] = {}
+        self.registered_tools: List[Dict[str, Any]] = []
+        self.registered_mcp_servers: List[Dict[str, Any]] = []
+        self.registered_api_routes: List[Dict[str, Any]] = []
+        self.registered_artifact_types: List[Dict[str, Any]] = []
+        self.registered_capability_contracts: Dict[str, Dict[str, Any]] = {}
         self.hardware_registry = hardware_registry
 
     # ── public API ─────────────────────────────────────────────────────
@@ -431,17 +432,17 @@ class PluginLoader:
 
 # ── GRO-2228: PWP pipeline hook orchestrator ───────────────────────────────
 
-from prismatic.interface.hooks import (
-    HOOK_ON_DEPLOY,
-    HOOK_ON_ERROR,
-    HOOK_ON_POST_PIPELINE,
+from prismatic.interface.hooks import (  # noqa: E402
     HOOK_ON_PRE_PIPELINE,
+    HOOK_ON_POST_PIPELINE,
+    HOOK_ON_ERROR,
+    HOOK_ON_DEPLOY,
 )
 
 # A PWP pipeline stage is a ``(name, callable)`` pair.  The callable
 # receives the pipeline context dict and returns any JSON-serializable
 # value that will be stored under ``result["stages"][i]["output"]``.
-Stage = tuple[str, Callable[[dict[str, Any]], Any]]
+Stage = Tuple[str, Callable[[Dict[str, Any]], Any]]
 
 
 class PWPPluginRunner:
@@ -480,17 +481,17 @@ class PWPPluginRunner:
             will be notified at each hook.
     """
 
-    def __init__(self, loader: PluginLoader) -> None:
+    def __init__(self, loader: "PluginLoader") -> None:
         self.loader = loader
 
     def run(
         self,
         pipeline_id: str,
-        context: dict[str, Any],
+        context: Dict[str, Any],
         stages: Iterable[Stage],
-        deploy_target: str | None = None,
-        deploy_artifact_provider: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
-    ) -> dict[str, Any]:
+        deploy_target: Optional[str] = None,
+        deploy_artifact_provider: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         """
         Run a PWP pipeline.
 
@@ -522,7 +523,7 @@ class PWPPluginRunner:
         """
         self.loader.execute_hook(HOOK_ON_PRE_PIPELINE, pipeline_id, context)
 
-        result: dict[str, Any] = {"status": "running", "stages": []}
+        result: Dict[str, Any] = {"status": "running", "stages": []}
         try:
             for stage_name, stage_fn in stages:
                 try:

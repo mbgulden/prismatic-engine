@@ -6,19 +6,16 @@ import re
 import sqlite3
 import subprocess
 import uuid
-from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Callable, Mapping, Sequence, cast
 
 from prismatic.agy_completed_work import ingest_completed_work
-from prismatic.agy_merge_backlog import (
-    get_merge_backlog_item,
-    verify_merge_backlog_item,
-)
+from prismatic.agy_merge_backlog import get_merge_backlog_item, verify_merge_backlog_item
 from prismatic.agy_overnight_guard import (
     AGY_OVERNIGHT_READINESS_GUARD_MARKER,
+    AgyOvernightGuardStore,
     evaluate_overnight_readiness,
     record_guard_decision,
 )
@@ -63,7 +60,7 @@ class RunnerRequest:
     model: str = DEFAULT_MODEL
 
     @classmethod
-    def from_mapping(cls, data: Mapping[str, Any] | None = None) -> RunnerRequest:
+    def from_mapping(cls, data: Mapping[str, Any] | None = None) -> "RunnerRequest":
         payload = dict(data or {})
         agents = payload.get("allowed_agents") or payload.get("agents") or [payload.get("agent") or "agy"]
         if not isinstance(agents, Sequence) or isinstance(agents, (str, bytes)):
@@ -344,7 +341,7 @@ def parse_packet(output: str) -> dict[str, Any]:
             return value
     except json.JSONDecodeError:
         pass
-    match = re.search(r"\{.*\}", output, flags=re.DOTALL)
+    match = re.search(r"\{.*\}", output, flags=re.S)
     if not match:
         raise ValueError("AGY output did not contain JSON packet")
     value = json.loads(match.group(0))

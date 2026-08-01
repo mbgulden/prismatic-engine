@@ -6,8 +6,9 @@ Rule-based categorizer mapping doc path and frontmatter to canonical categories:
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 ALLOWED_CATEGORIES = {
     "architecture",
@@ -29,7 +30,7 @@ class WorkspaceCategorizer:
     def categorize(
         self,
         rel_path: str,
-        frontmatter: dict[str, Any] | None = None,
+        frontmatter: Optional[dict[str, Any]] = None,
     ) -> str:
         """Determine category for a document path and optional frontmatter."""
         fm = frontmatter or {}

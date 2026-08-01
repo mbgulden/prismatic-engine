@@ -13,16 +13,20 @@ Covers:
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
-from plugins.pwp.capabilities import publish_kpi_tracker as kpi
-from plugins.pwp.capabilities.publish_kpi_tracker import (
+
+from plugins.pwp.capabilities import publish_kpi_tracker as kpi  # noqa: E402
+from plugins.pwp.capabilities.publish_kpi_tracker import (  # noqa: E402
     operator_migrate as mig,
-)
-from plugins.pwp.capabilities.publish_kpi_tracker import (
     pwp_kpi_site_registry as reg,
 )
+from plugins.pwp.capabilities.publish_kpi_tracker.site_builder import (  # noqa: E402
+    write_site_collection,
+)
+
 
 FIXTURES = Path(
     __file__

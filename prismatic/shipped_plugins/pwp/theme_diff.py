@@ -22,7 +22,7 @@ class Version:
     patch: int = 0
 
     @classmethod
-    def parse(cls, value: str) -> Version:
+    def parse(cls, value: str) -> "Version":
         match = _VERSION_RE.match(value)
         if not match:
             raise ValueError(f"Unsupported semantic version: {value}")

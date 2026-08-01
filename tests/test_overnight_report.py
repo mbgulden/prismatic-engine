@@ -12,8 +12,8 @@ def test_overnight_report_writes_json_and_html(tmp_path, monkeypatch):
     monkeypatch.setenv("PRISMATIC_STATE_DIR", str(state_dir))
     monkeypatch.setenv("PRISMATIC_RUN_RECORDS", str(state_dir / "run_records.json"))
 
-    from prismatic.reports.overnight import generate_report, write_report
     from prismatic.run_records import AgentRunRecordStore
+    from prismatic.reports.overnight import generate_report, write_report
 
     store = AgentRunRecordStore(store_path=str(state_dir / "run_records.json"))
     run_id = store.create_run("GRO-3301", "kai")

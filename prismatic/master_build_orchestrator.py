@@ -29,12 +29,12 @@ This orchestrator ensures that:
 3. State transitions are tracked and verified.
 """
 
-import argparse
-import json
-import logging
 import os
 import sys
-from typing import Any
+import json
+import logging
+import argparse
+from typing import Any, Dict, Optional
 
 import jsonschema
 import yaml
@@ -53,7 +53,7 @@ class MasterBuildOrchestrator:
     def __init__(self, manifest_path: str, schema_path: str):
         self.manifest_path = manifest_path
         self.schema_path = schema_path
-        self.manifest_data: dict[str, Any] | None = None
+        self.manifest_data: Optional[Dict[str, Any]] = None
 
     def load_manifest(self) -> bool:
         """Loads the anchor manifest from the filesystem."""

@@ -7,6 +7,7 @@ from pathlib import Path
 from prismatic.curator import issue_to_task
 from prismatic.curator.dispatcher import build_supervisor_cmd
 
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SUPERVISOR_PATH = REPO_ROOT / "scripts" / "agy_sandbox_event_supervisor.py"
 

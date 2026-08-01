@@ -1,9 +1,10 @@
-import json
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch, MagicMock, call
+import json
+import urllib.error
 
-from prismatic.capabilities.vcs_github import GitHubCapability, _emit_event
 from prismatic.providers.github import GitHubProvider
+from prismatic.capabilities.vcs_github import GitHubCapability, _emit_event
 
 
 class TestVcsGithubCapability(unittest.TestCase):

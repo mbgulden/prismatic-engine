@@ -1,8 +1,9 @@
 """Unit tests for prismatic.workspace.acceptance AcceptanceProtocol & Cache TTL (WA-5 & WA-9).
 """
 
+import time
 from prismatic.workspace.acceptance import AcceptanceProtocol
-from prismatic.workspace.routes import _CACHE_TTL
+from prismatic.workspace.routes import _CACHE_TTL, _TREE_CACHE
 
 
 def test_acceptance_protocol_validation(tmp_path):

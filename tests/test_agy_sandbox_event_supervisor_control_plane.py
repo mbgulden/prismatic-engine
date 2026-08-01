@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SUPERVISOR_PATH = REPO_ROOT / "scripts" / "agy_sandbox_event_supervisor.py"
 SUPERVISOR_HOME = str(Path("/home") / "ubuntu")

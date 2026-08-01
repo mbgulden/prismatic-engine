@@ -12,12 +12,12 @@ import dataclasses
 import json
 import os
 import re
+import shutil
 import subprocess
 import tarfile
-from collections.abc import Iterable, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable, Sequence
 
 
 @dataclasses.dataclass(slots=True)

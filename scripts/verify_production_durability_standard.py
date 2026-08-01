@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import py_compile
 import sys
 import time
@@ -167,7 +168,7 @@ def import_gateway_routes() -> dict[str, Any]:
         module = importlib.util.module_from_spec(spec)
         sys.modules["prismatic.gateway.server"] = module
         spec.loader.exec_module(module)
-        app = module.app
+        app = getattr(module, "app")
         routes = []
         for route in getattr(app, "routes", []):
             routes.append(

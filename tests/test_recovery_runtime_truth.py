@@ -94,8 +94,8 @@ def test_consumer_runtime_reports_fresh_stale_and_unreadable_heartbeat(tmp_path)
 
 
 def test_recovery_api_merges_runtime_truth(monkeypatch):
-    monkeypatch.setattr(server, "_read_dashboard_recovery_state", dict)
-    monkeypatch.setattr(server, "_run_records_for_dashboard", list)
+    monkeypatch.setattr(server, "_read_dashboard_recovery_state", lambda: {})
+    monkeypatch.setattr(server, "_run_records_for_dashboard", lambda: [])
     monkeypatch.setattr(
         recovery_runtime,
         "consumer_runtime_status",

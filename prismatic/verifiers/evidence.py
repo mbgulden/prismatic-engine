@@ -13,9 +13,8 @@ import datetime
 import hashlib
 import re
 import uuid
-from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 from prismatic.universal_result_manifest import (
     SECRET_VALUE_RE,

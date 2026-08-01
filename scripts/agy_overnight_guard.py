@@ -17,7 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from prismatic.agy_overnight_guard import (
+from prismatic.agy_overnight_guard import (  # noqa: E402
     AGY_OVERNIGHT_READINESS_GUARD_MARKER,
     AgyOvernightGuardStore,
     evaluate_overnight_readiness,

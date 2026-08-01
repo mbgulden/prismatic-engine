@@ -10,13 +10,16 @@ Covers:
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
-import plugins.pwp.capabilities.publish_kpi_tracker as kpi
 import pytest
-from plugins.pwp.capabilities.publish_kpi_tracker import (
+
+import plugins.pwp.capabilities.publish_kpi_tracker as kpi  # noqa: E402
+from plugins.pwp.capabilities.publish_kpi_tracker import (  # noqa: E402
     site_builder as sb,
 )
+
 
 # Resolve relative to this test file so the test suite is portable.
 SITES_DIR = Path(__file__).resolve().parent / "fixtures" / "sites_out"

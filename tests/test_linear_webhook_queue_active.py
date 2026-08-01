@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 def client_for_state(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("PRISMATIC_STATE_DIR", str(tmp_path))
     monkeypatch.setenv("PRISMATIC_LINEAR_RATE_LIMIT_STATE", str(tmp_path / "linear_rate_limit_state.json"))
-    from prismatic.gateway import server
+    import prismatic.gateway.server as server
 
     server = importlib.reload(server)
     return TestClient(server.app)

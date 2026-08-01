@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 
 from prismatic.agy_unattended_window import (
     UnattendedWindowRequest,

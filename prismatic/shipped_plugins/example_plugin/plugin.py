@@ -8,13 +8,13 @@ functionality.
 
 from __future__ import annotations
 
-from typing import Any
-
 from prismatic.interface.plugin import (
     AgentContract,
     PluginContext,
     PrismaticPlugin,
 )
+
+from typing import Any, Dict, List
 
 
 class ExamplePlugin(PrismaticPlugin):
@@ -22,8 +22,9 @@ class ExamplePlugin(PrismaticPlugin):
 
     def on_init(self, context: PluginContext) -> None:
         """Set up the plugin. No-op for the reference example."""
+        pass
 
-    def register_tools(self) -> list[dict[str, Any]]:
+    def register_tools(self) -> List[Dict[str, Any]]:
         """Return tool definitions. Empty for the reference example."""
         return []
 
@@ -31,13 +32,16 @@ class ExamplePlugin(PrismaticPlugin):
 
     def before_task_execution(self, contract: AgentContract) -> None:
         """Called before agent worker spawn. No-op."""
+        pass
 
     def after_task_execution(
-        self, contract: AgentContract, result: dict[str, Any]
+        self, contract: AgentContract, result: Dict[str, Any]
     ) -> None:
         """Called after agent worker exits. No-op."""
+        pass
 
     def on_state_transition(
         self, issue_id: str, from_state: str, to_state: str
     ) -> None:
         """Called on Linear ticket state change. No-op."""
+        pass

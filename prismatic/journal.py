@@ -21,10 +21,9 @@ import subprocess
 import urllib.error
 import urllib.request
 from collections import defaultdict
-from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 LINEAR_URL = "https://api.linear.app/graphql"
 DEFAULT_TEAM_ID = "b6fb2651-5a1f-4714-9bcd-9eb6e759ffef"
@@ -91,7 +90,7 @@ class JournalConfig:
     linear_url: str = LINEAR_URL
 
     @classmethod
-    def from_env(cls) -> JournalConfig:
+    def from_env(cls) -> "JournalConfig":
         workspace = _default_workspace()
         harness_profile = _default_harness_profile()
         research_repo = Path(os.environ.get("PRISMATIC_JOURNAL_REPO", str(workspace / "Hermes-Research"))).expanduser()

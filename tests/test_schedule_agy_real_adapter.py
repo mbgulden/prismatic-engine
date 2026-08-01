@@ -19,12 +19,13 @@ Tests use ``tmp_path`` and ``monkeypatch`` to avoid touching the real
 """
 
 import json
+import logging
 import os
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from prismatic.schedules import OWNER_AGY, get_agy_schedules
+from prismatic.schedules import get_agy_schedules, OWNER_AGY
 
 
 class TestAGYAdapterLivePath(unittest.TestCase):

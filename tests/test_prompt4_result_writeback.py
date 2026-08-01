@@ -1,8 +1,8 @@
 import importlib.util
 import json
+from pathlib import Path
 import sqlite3
 import subprocess
-from pathlib import Path
 
 
 def canonical_agy_result_text() -> str:

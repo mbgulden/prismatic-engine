@@ -8,6 +8,7 @@ Usage: python3 scripts/gdocs-sync.py
 
 import json
 import os
+import re
 import time
 
 FOLDER_ID = "1ZCPIAUIXg56iWRErRZSfI5WgfD1JcAKt"
@@ -15,7 +16,6 @@ REPORTS_DIR = os.path.join(os.path.dirname(__file__), "..", "reports")
 
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
-
 
 def load_creds():
     token_env = os.environ.get("GDOCS_TOKEN")

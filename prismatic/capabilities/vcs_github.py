@@ -9,10 +9,11 @@ and emits normalized events to the gateway event bus.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
-import urllib.error
 import urllib.request
-from typing import Any
+import urllib.error
+from typing import Any, Optional
 
 from prismatic.providers.github import GitHubProvider
 
@@ -44,7 +45,7 @@ class GitHubCapability:
     Ensures idempotence and event emission for all VCS operations.
     """
 
-    def __init__(self, provider: GitHubProvider | None = None):
+    def __init__(self, provider: Optional[GitHubProvider] = None):
         self.provider = provider or GitHubProvider()
 
     def create_branch(self, branch: str, base: str = "main") -> bool:
@@ -69,7 +70,7 @@ class GitHubCapability:
             )
         return success
 
-    def find_existing_pull_request(self, head: str, base: str) -> dict[str, Any] | None:
+    def find_existing_pull_request(self, head: str, base: str) -> Optional[dict[str, Any]]:
         """
         Search for an existing open pull request for the head branch.
         """
@@ -117,7 +118,7 @@ class GitHubCapability:
 
         return None
 
-    def open_pull_request(self, title: str, body: str, head: str, base: str = "main") -> dict[str, Any] | None:
+    def open_pull_request(self, title: str, body: str, head: str, base: str = "main") -> Optional[dict[str, Any]]:
         """
         Open a new pull request. Idempotent.
         """

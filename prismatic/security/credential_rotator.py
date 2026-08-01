@@ -13,9 +13,10 @@ import datetime
 import json
 import os
 import time
-import urllib.error
 import urllib.request
+import urllib.error
 from pathlib import Path
+from typing import Any
 
 # Define default paths
 PRISMATIC_HOME = Path(os.environ.get("PRISMATIC_HOME", os.path.expanduser("~")))
@@ -132,8 +133,9 @@ class CredentialRotator:
 
     def _generate_github_jwt(self, app_id: str, private_key_pem: bytes) -> str:
         """Generate GitHub App JWT signed with private key using cryptography."""
-        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives import serialization
         from cryptography.hazmat.primitives.asymmetric import padding
+        from cryptography.hazmat.primitives import hashes
 
         private_key = serialization.load_pem_private_key(
             private_key_pem,
@@ -154,7 +156,7 @@ class CredentialRotator:
             
         header_b64 = b64url(header)
         payload_b64 = b64url(payload)
-        signing_input = f"{header_b64}.{payload_b64}".encode()
+        signing_input = f"{header_b64}.{payload_b64}".encode("utf-8")
         
         signature = private_key.sign(
             signing_input,

@@ -46,7 +46,7 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 # Cache files live next to the submission logs by default.
 SUBMISSION_LOG_DIR = Path(
@@ -86,9 +86,9 @@ class LinearStatus:
     tenant_id: str = ""
     cached_at: str = ""
     fetched_at: str = ""
-    error: str | None = None
+    error: Optional[str] = None
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> Dict[str, Any]:
         return {
             "slug": self.slug,
             "linear_issue_id": self.linear_issue_id,
@@ -118,7 +118,7 @@ class LinearStatus:
 
 
 # ── Cache I/O ────────────────────────────────────────────────────────────
-def _read_cache(path: Path | None = None) -> dict[str, dict[str, Any]]:
+def _read_cache(path: Optional[Path] = None) -> Dict[str, Dict[str, Any]]:
     """Read the on-disk cache. Returns {} if missing or corrupt."""
     path = path if path is not None else CACHE_PATH
     if not path.exists():
@@ -130,7 +130,7 @@ def _read_cache(path: Path | None = None) -> dict[str, dict[str, Any]]:
     return data if isinstance(data, dict) else {}
 
 
-def _write_cache(cache: dict[str, dict[str, Any]], path: Path | None = None) -> None:
+def _write_cache(cache: Dict[str, Dict[str, Any]], path: Optional[Path] = None) -> None:
     """Persist the cache atomically. Best-effort: never raises."""
     path = path if path is not None else CACHE_PATH
     try:
@@ -143,7 +143,7 @@ def _write_cache(cache: dict[str, dict[str, Any]], path: Path | None = None) -> 
 
 
 # ── Submission log → issue_id mapping ────────────────────────────────────
-def _latest_issue_id_for_site(slug: str) -> dict[str, str] | None:
+def _latest_issue_id_for_site(slug: str) -> Optional[Dict[str, str]]:
     """Return the most recent submission's `linear_issue_id` + `tenant_id`.
 
     Reads `SUBMISSION_LOG_DIR/<slug>.json`. Each site's log holds the
@@ -192,7 +192,7 @@ def _age_days_from_iso(iso: str) -> float:
 
 
 # ── Linear API call ──────────────────────────────────────────────────────
-def _call_linear_status(issue_id: str) -> dict[str, Any]:
+def _call_linear_status(issue_id: str) -> Dict[str, Any]:
     """Fetch the issue via LinearClient. Returns a result dict.
 
     Always returns a dict, never raises. The dict has keys:
@@ -249,7 +249,7 @@ def _call_linear_status(issue_id: str) -> dict[str, Any]:
 
 
 # ── Public API ────────────────────────────────────────────────────────────
-def _cache_is_fresh(entry: dict[str, Any], *, ttl_seconds: float) -> bool:
+def _cache_is_fresh(entry: Dict[str, Any], *, ttl_seconds: float) -> bool:
     """True if the cache entry was fetched within TTL seconds."""
     ts = entry.get("ts", 0)
     if not isinstance(ts, (int, float)) or ts <= 0:
@@ -262,8 +262,8 @@ def scan_status(
     force: bool = False,
     ok_ttl_seconds: int = DEFAULT_OK_TTL_SECONDS,
     error_ttl_seconds: int = DEFAULT_ERROR_TTL_SECONDS,
-    cache_path: Path | None = None,
-) -> list[LinearStatus]:
+    cache_path: Optional[Path] = None,
+) -> List[LinearStatus]:
     """Scan submission logs and return the current Linear status for each site.
 
     Honors the on-disk cache except when `force=True`. Errors are cached
@@ -273,7 +273,7 @@ def scan_status(
     if not SUBMISSION_LOG_DIR.exists():
         return []
     cache = _read_cache(cache_path)
-    results: list[LinearStatus] = []
+    results: List[LinearStatus] = []
     wrote_cache = False
 
     for log_path in sorted(SUBMISSION_LOG_DIR.glob("*.json")):
@@ -315,7 +315,7 @@ def scan_status(
         fetched_at_iso = time.strftime("%Y-%m-%dT%H:%M:%S%z", time.gmtime(result["ts"]))
 
         # Update cache.
-        cache_entry: dict[str, Any] = {
+        cache_entry: Dict[str, Any] = {
             "ts": result["ts"],
             "fetched_at_iso": fetched_at_iso,
             "state": result["state"],
@@ -359,7 +359,7 @@ def scan_status(
     return results
 
 
-def get_status_for_site(slug: str, **kwargs: Any) -> LinearStatus | None:
+def get_status_for_site(slug: str, **kwargs: Any) -> Optional[LinearStatus]:
     """Convenience: return the LinearStatus for one site, or None."""
     for ls in scan_status(**kwargs):
         if ls.slug == slug:
@@ -405,12 +405,12 @@ def render_status_html(status: LinearStatus) -> str:
 
 
 __all__ = [
-    "CACHE_PATH",
-    "DEFAULT_ERROR_TTL_SECONDS",
-    "DEFAULT_OK_TTL_SECONDS",
-    "SUBMISSION_LOG_DIR",
     "LinearStatus",
+    "scan_status",
     "get_status_for_site",
     "render_status_html",
-    "scan_status",
+    "CACHE_PATH",
+    "SUBMISSION_LOG_DIR",
+    "DEFAULT_OK_TTL_SECONDS",
+    "DEFAULT_ERROR_TTL_SECONDS",
 ]

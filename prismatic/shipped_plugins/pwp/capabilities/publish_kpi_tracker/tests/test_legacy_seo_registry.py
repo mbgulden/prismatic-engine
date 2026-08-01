@@ -16,12 +16,15 @@ import json
 from pathlib import Path
 
 import pytest
+
 from plugins.pwp.capabilities.publish_kpi_tracker.legacy_seo_registry import (
+    V2_DEFAULT_CAPABILITY,
     _collect_v1_event_names,
     _is_v1,
     adapt_v1_to_v2,
     detect_and_adapt,
 )
+
 
 # ---------- fixtures ---------------------------------------------------------
 
@@ -228,9 +231,7 @@ def test_detect_and_adapt_alias():
 
 def test_load_registry_adapts_v1_from_disk(tmp_path: Path, monkeypatch):
     """End-to-end: a v1 file on disk, loaded via load_registry(), returns v2."""
-    from plugins.pwp.capabilities.publish_kpi_tracker import (
-        pwp_kpi_site_registry as reg,
-    )
+    from plugins.pwp.capabilities.publish_kpi_tracker import pwp_kpi_site_registry as reg
 
     f = tmp_path / "seo_sites.json"
     f.write_text(json.dumps(V1_REGISTRY), encoding="utf-8")
@@ -247,9 +248,7 @@ def test_load_registry_adapts_v1_from_disk(tmp_path: Path, monkeypatch):
 
 def test_load_registry_real_path_uses_adapter(monkeypatch):
     """Smoke: load the real config/seo_sites.json and confirm v2 fields appear."""
-    from plugins.pwp.capabilities.publish_kpi_tracker import (
-        pwp_kpi_site_registry as reg,
-    )
+    from plugins.pwp.capabilities.publish_kpi_tracker import pwp_kpi_site_registry as reg
 
     # The real registry is at <PWP_REPO>/config/seo_sites.json. We resolve it
     # relative to this file so the test doesn't depend on the absolute path

@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL = ROOT / "portable-skills" / "prismatic-completed-work-packet" / "SKILL.md"

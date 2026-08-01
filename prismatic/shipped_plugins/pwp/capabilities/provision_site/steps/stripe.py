@@ -18,10 +18,10 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, Optional
 
 
-def _load_kpi_collections(sites_root: Path, slug: str) -> dict[str, Any] | None:
+def _load_kpi_collections(sites_root: Path, slug: str) -> Optional[Dict[str, Any]]:
     """Load the site's kpi-collections.json. Returns None if not found."""
     path = sites_root / f"{slug}.kpi.json"
     if not path.exists():
@@ -33,7 +33,7 @@ def _load_kpi_collections(sites_root: Path, slug: str) -> dict[str, Any] | None:
 
 
 def _save_kpi_collections(
-    sites_root: Path, slug: str, data: dict[str, Any]
+    sites_root: Path, slug: str, data: Dict[str, Any]
 ) -> Path:
     """Save the site's kpi-collections.json. Returns the path written."""
     sites_root.mkdir(parents=True, exist_ok=True)
@@ -48,10 +48,10 @@ def step_register_stripe(
     owner: str,
     run,
     publish_root: Path,
-    prior_outputs: dict[str, dict[str, Any]] | None = None,
-    sites_root: Path | None = None,
+    prior_outputs: Optional[Dict[str, Dict[str, Any]]] = None,
+    sites_root: Optional[Path] = None,
     **_kwargs: Any,
-) -> StepResult:
+) -> "StepResult":
     """Validate Stripe credentials and persist them to kpi-collections.json.
 
     Args:

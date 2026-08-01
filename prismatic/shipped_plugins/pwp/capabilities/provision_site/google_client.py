@@ -42,9 +42,10 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
+
 
 # --- Errors ---------------------------------------------------------------
 
@@ -55,7 +56,7 @@ class GoogleError(Exception):
         self,
         message: str,
         *,
-        status_code: int | None = None,
+        status_code: Optional[int] = None,
         api: str = "",
     ) -> None:
         super().__init__(message)
@@ -102,9 +103,9 @@ class GSCSite:
 # --- Service Account JWT auth --------------------------------------------
 
 def _load_service_account(
-    json_path: str | None = None,
-    inline: str | None = None,
-) -> dict[str, Any] | None:
+    json_path: Optional[str] = None,
+    inline: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
     """Load + validate a Google credentials JSON key.
 
     Returns the parsed key dict, or None if no credentials are
@@ -162,7 +163,7 @@ def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
 
 
-def _make_jwt(sa: dict[str, Any], *, scope: str, aud: str) -> str:
+def _make_jwt(sa: Dict[str, Any], *, scope: str, aud: str) -> str:
     """Build a signed JWT for the given scope+audience.
 
     Used as the assertion grant for `https://oauth2.googleapis.com/token`.
@@ -200,7 +201,7 @@ def _make_jwt(sa: dict[str, Any], *, scope: str, aud: str) -> str:
     return signing_input.decode() + "." + _b64url(signature)
 
 
-def _exchange_jwt_for_access_token(sa: dict[str, Any], scope: str) -> str:
+def _exchange_jwt_for_access_token(sa: Dict[str, Any], scope: str) -> str:
     """Exchange a signed JWT for an OAuth2 access token via the token endpoint."""
     aud = "https://oauth2.googleapis.com/token"
     jwt_assertion = _make_jwt(sa, scope=scope, aud=aud)
@@ -269,9 +270,9 @@ class GoogleClient:
     def __init__(
         self,
         *,
-        service_account: dict[str, Any] | None = None,
-        ga4_account_id: str | None = None,
-        gtm_account_id: str | None = None,
+        service_account: Optional[Dict[str, Any]] = None,
+        ga4_account_id: Optional[str] = None,
+        gtm_account_id: Optional[str] = None,
         timeout: float = 30.0,
         max_retries: int = 3,
         retry_backoff: float = 1.5,
@@ -305,7 +306,7 @@ class GoogleClient:
         self._max_retries = max_retries
         self._retry_backoff = retry_backoff
         # Cached access tokens per (scope, expiry).
-        self._token_cache: dict[tuple[str, int], str] = {}
+        self._token_cache: Dict[Tuple[str, int], str] = {}
 
     # -- Token management -------------------------------------------------
 
@@ -343,11 +344,11 @@ class GoogleClient:
         url: str,
         *,
         scope: str,
-        json_body: dict[str, Any] | None = None,
-        params: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+        json_body: Optional[Dict[str, Any]] = None,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """Generic authenticated request with retries on 429/5xx."""
-        last_exc: GoogleError | None = None
+        last_exc: Optional[GoogleError] = None
         for attempt in range(self._max_retries):
             try:
                 token = self._access_token(scope)
@@ -407,7 +408,7 @@ class GoogleClient:
         return self._gtm_account_id
 
     @classmethod
-    def from_env(cls) -> GoogleClient:
+    def from_env(cls) -> "GoogleClient":
         """Construct from GOOGLE_SA_JSON / GOOGLE_SA_INLINE env vars.
 
         If those aren't set, falls back to auth_loader.get_secret('google_adc')
@@ -456,7 +457,7 @@ class GoogleClient:
         """
         # 1. Create the property.
         prop_url = (
-            "https://analyticsadmin.googleapis.com/v1beta/properties"
+            f"https://analyticsadmin.googleapis.com/v1beta/properties"
         )
         prop_body = {
             "parent": f"accounts/{self.ga4_account_id}",
@@ -547,7 +548,7 @@ class GoogleClient:
 
 # --- helpers --------------------------------------------------------------
 
-def _safe_json(resp: requests.Response) -> dict[str, Any]:
+def _safe_json(resp: requests.Response) -> Dict[str, Any]:
     try:
         body = resp.json()
         if not isinstance(body, dict):

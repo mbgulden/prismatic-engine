@@ -251,8 +251,8 @@ def cmd_telemetry_dashboard(hours: int = 24, db_path: str | None = None) -> int:
         print("  Ensure prismatic-engine is installed or run from the repo root.", file=sys.stderr)
         return 1
 
+    from datetime import datetime, timezone, timedelta
     import sqlite3
-    from datetime import datetime, timedelta, timezone
 
     target_path = Path(db_path) if db_path else Path(
         os.environ.get("PRISMATIC_STATE_DIR",
@@ -533,7 +533,7 @@ def cmd_telemetry_alerts(
         print(f"  [{a['severity'].upper()}] {a['rule']}")
         print(f"    {a['message']}")
         if post_comments and api_key:
-            print("    (alert comment posted to affected Linear issue)")
+            print(f"    (alert comment posted to affected Linear issue)")
         print()
 
     return 0

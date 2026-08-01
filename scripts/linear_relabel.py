@@ -25,6 +25,7 @@ import argparse
 import json
 import os
 import re
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -182,7 +183,11 @@ def classify_issue(issue: dict) -> IssueClassification:
     # Silent-cron / infrastructure / Ned investigations → ned
     elif any(kw in title_lower for kw in ["silent-cron", "silent cron", "cron",
                                            "infrastructure", "telemetry",
-                                           "ned"]) or title.startswith("[SILENT") or "[SILENT" in title:
+                                           "ned"]):
+        classification.suggested_agent = "ned"
+
+    # SILENT prefix in title → ned (Ned's investigation pattern)
+    elif title.startswith("[SILENT") or "[SILENT" in title:
         classification.suggested_agent = "ned"
 
     # PR review / merge-related → jules
@@ -319,7 +324,7 @@ def main():
     if not args.dry_run and not args.apply:
         args.dry_run = True
 
-    print("=== linear_relabel.py ===")
+    print(f"=== linear_relabel.py ===")
     print(f"  Mode: {'APPLY' if args.apply else 'DRY RUN'}")
     print(f"  Limit: {args.limit or 'all'}")
     if args.only:
@@ -335,14 +340,14 @@ def main():
         label_map = {l["name"]: l["id"] for l in r.get("data", {}).get("issueLabels", {}).get("nodes", [])}
 
     # 2. Fetch issues
-    print("\n=== Fetching open issues ===")
+    print(f"\n=== Fetching open issues ===")
     issues = fetch_open_issues(args.limit)
     if args.only:
         issues = [i for i in issues if i["identifier"] == args.only]
     print(f"  Found {len(issues)} issues to process")
 
     # 3. Classify each
-    print("\n=== Classifying ===")
+    print(f"\n=== Classifying ===")
     classifications = [classify_issue(i) for i in issues]
 
     # Stats
@@ -365,18 +370,18 @@ def main():
         else:
             no_change_count += 1
 
-    print("\n=== Summary ===")
+    print(f"\n=== Summary ===")
     print(f"  Total issues: {len(classifications)}")
     print(f"  Would change: {len(changes)}")
     print(f"  Already correct: {no_change_count}")
-    print("\n  By suggested agent:")
+    print(f"\n  By suggested agent:")
     for agent, count in sorted(by_agent.items()):
         print(f"    {agent}: {count}")
     print(f"\n  Engine consumable: {by_consumable_true}/{len(classifications)}")
     print(f"  Dispatch-ready: {by_dispatch}")
 
     # 4. Show first few changes
-    print("\n=== Sample changes (first 10) ===")
+    print(f"\n=== Sample changes (first 10) ===")
     for c, to_add in changes[:10]:
         print(f"  {c.identifier}: +{', '.join(to_add)}")
         print(f"    title: {c.title[:70]}")
@@ -394,7 +399,7 @@ def main():
             return
 
     # 6. Apply
-    print("\n=== Applying ===")
+    print(f"\n=== Applying ===")
     success_count = 0
     fail_count = 0
     for i, (c, to_add) in enumerate(changes):
@@ -411,7 +416,7 @@ def main():
         if i > 0 and i % 50 == 0:
             time.sleep(1)
 
-    print("\n=== Done ===")
+    print(f"\n=== Done ===")
     print(f"  Applied: {success_count}")
     print(f"  Failed: {fail_count}")
     print(f"\n  Next step: dispatch_engine.py can now find {by_dispatch} dispatch-ready issues")

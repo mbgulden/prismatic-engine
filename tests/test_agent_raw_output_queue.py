@@ -11,6 +11,7 @@ import pytest
 from prismatic.agent_packet_normalizer import RAW_AGENT_OUTPUT_REPAIR_QUEUE_MARKER
 from prismatic.agent_raw_output_queue import RawAgentOutputStore, queue_counts
 
+
 _GATE_ACCEPTED_SOURCE_PATH = str(Path.home() / "work" / "agy-gro-3952-proof")
 
 

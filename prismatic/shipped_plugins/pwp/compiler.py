@@ -1,7 +1,6 @@
 import json
-from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable, Tuple
 
 # Paths
 PWP_DIR = Path(__file__).resolve().parent
@@ -127,7 +126,7 @@ TOKEN_PREFIXES = {
 }
 
 
-def _iter_token_variables(prefix: str, value: Any) -> Iterable[tuple[str, Any]]:
+def _iter_token_variables(prefix: str, value: Any) -> Iterable[Tuple[str, Any]]:
     """Yield flattened token-name/value pairs in a stable path order."""
     if isinstance(value, dict):
         for key in sorted(value):
@@ -136,9 +135,9 @@ def _iter_token_variables(prefix: str, value: Any) -> Iterable[tuple[str, Any]]:
         yield prefix, value
 
 
-def _compiled_token_pairs(tokens: dict) -> list[tuple[str, Any]]:
+def _compiled_token_pairs(tokens: dict) -> list[Tuple[str, Any]]:
     """Return PWP CSS variable pairs sorted by final custom-property name."""
-    pairs: list[tuple[str, Any]] = []
+    pairs: list[Tuple[str, Any]] = []
 
     colors = tokens.get("colors", {})
     for key in sorted(colors):

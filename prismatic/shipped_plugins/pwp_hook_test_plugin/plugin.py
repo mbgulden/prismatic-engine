@@ -17,7 +17,7 @@ in production; it is a fixture used by the test suite only.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Dict, List
 
 from prismatic.interface.plugin import (
     PluginContext,
@@ -28,21 +28,21 @@ from prismatic.interface.plugin import (
 class PWPHookTestPlugin(PrismaticPlugin):
     """Records every PWP hook invocation on a class-level list."""
 
-    events: list[dict[str, Any]] = []
+    events: List[Dict[str, Any]] = []
 
     def on_init(self, context: PluginContext) -> None:
         # Re-initialise events for each fresh loader run.
         PWPHookTestPlugin.events = []
 
-    def register_tools(self) -> list[dict[str, Any]]:
+    def register_tools(self) -> List[Dict[str, Any]]:
         return []
 
-    def on_pre_pipeline(self, pipeline_id: str, context: dict[str, Any]) -> None:
+    def on_pre_pipeline(self, pipeline_id: str, context: Dict[str, Any]) -> None:
         PWPHookTestPlugin.events.append(
             {"hook": "on_pre_pipeline", "pipeline_id": pipeline_id}
         )
 
-    def on_post_pipeline(self, pipeline_id: str, result: dict[str, Any]) -> None:
+    def on_post_pipeline(self, pipeline_id: str, result: Dict[str, Any]) -> None:
         PWPHookTestPlugin.events.append(
             {
                 "hook": "on_post_pipeline",
@@ -62,7 +62,7 @@ class PWPHookTestPlugin(PrismaticPlugin):
         )
 
     def on_deploy(
-        self, pipeline_id: str, target: str, artifact: dict[str, Any]
+        self, pipeline_id: str, target: str, artifact: Dict[str, Any]
     ) -> None:
         PWPHookTestPlugin.events.append(
             {

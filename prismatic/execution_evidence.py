@@ -99,7 +99,7 @@ class ExecutionEvidence:
         return json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n"
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ExecutionEvidence:
+    def from_dict(cls, data: dict[str, Any]) -> "ExecutionEvidence":
         return cls(
             task_id=str(data.get("task_id", "")),
             run_id=str(data.get("run_id", "")),

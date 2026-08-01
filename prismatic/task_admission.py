@@ -16,11 +16,10 @@ import sqlite3
 import stat
 import subprocess
 import threading
-from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, Callable, Mapping
 
 from jsonschema import Draft202012Validator, FormatChecker
 

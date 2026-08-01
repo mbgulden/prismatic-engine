@@ -18,11 +18,12 @@ import json
 import logging
 import os
 import re
-from collections.abc import Callable
-from dataclasses import asdict, dataclass, field
+import subprocess
+from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Gap 2: VerificationVerdict — 7-layer post-completion check
@@ -846,16 +847,17 @@ def save_drift_report(
 # ``prismatic.review.pr_reviewer`` (tasks #1-5 of Gap 4).
 
 
-from prismatic.review.pipeline import PipelineOrchestrator
-from prismatic.review.pr_reviewer import (
+from prismatic.review.pr_reviewer import (  # noqa: E402  (placed after the gate code on purpose)
     APPROVE,
-    NED_REVIEW_LABEL,
     NEEDS_DISCUSSION,
-    REQUEST_CHANGES,
-    PRReviewer,
+    NED_REVIEW_LABEL,
     PRReviewResult,
+    PRReviewer,
+    REQUEST_CHANGES,
 )
-from prismatic.review.pr_reviewer_impl import RealPRReviewer
+from prismatic.review.pr_reviewer_impl import RealPRReviewer  # noqa: E402
+from prismatic.review.pipeline import PipelineOrchestrator  # noqa: E402
+
 
 # Linear state targets produced by the trigger.
 NED_REVIEW_TARGET_STATE = {

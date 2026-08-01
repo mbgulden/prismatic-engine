@@ -23,7 +23,8 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Dict, List, Optional
+
 
 STRIPE_API_URL = "https://api.stripe.com/v1"
 
@@ -35,8 +36,8 @@ class StripeError(RuntimeError):
         message: str,
         *,
         status: int = 0,
-        error_code: str | None = None,
-        error_type: str | None = None,
+        error_code: Optional[str] = None,
+        error_type: Optional[str] = None,
     ):
         super().__init__(message)
         self.status = status
@@ -51,10 +52,10 @@ class StripeProduct:
     name: str
     active: bool
     description: str = ""
-    metadata: dict[str, str] = None  # type: ignore[assignment]
+    metadata: Dict[str, str] = None  # type: ignore[assignment]
 
     @classmethod
-    def from_api(cls, data: dict[str, Any]) -> StripeProduct:
+    def from_api(cls, data: Dict[str, Any]) -> "StripeProduct":
         return cls(
             id=data["id"],
             name=data.get("name", ""),
@@ -72,10 +73,10 @@ class StripePrice:
     currency: str
     unit_amount: int  # cents
     active: bool
-    recurring_interval: str | None = None  # 'month' | 'year' | None
+    recurring_interval: Optional[str] = None  # 'month' | 'year' | None
 
     @classmethod
-    def from_api(cls, data: dict[str, Any]) -> StripePrice:
+    def from_api(cls, data: Dict[str, Any]) -> "StripePrice":
         recurring = data.get("recurring") or {}
         return cls(
             id=data["id"],
@@ -99,7 +100,7 @@ class StripeClient:
         self,
         api_key: str,
         *,
-        account_id: str | None = None,
+        account_id: Optional[str] = None,
         api_url: str = STRIPE_API_URL,
         max_retries: int = 2,
         retry_backoff: float = 1.0,
@@ -116,7 +117,7 @@ class StripeClient:
 
     # -- factory --------------------------------------------------------
     @classmethod
-    def from_env(cls) -> StripeClient:
+    def from_env(cls) -> "StripeClient":
         """Construct from environment variables.
 
         Precedence: STRIPE_RESTRICTED_KEY > STRIPE_API_KEY > STRIPE_SECRET_KEY.
@@ -164,12 +165,12 @@ class StripeClient:
         method: str,
         path: str,
         *,
-        params: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """Make a Stripe REST call. Stripe uses application/x-www-form-urlencoded
         for write requests and returns JSON."""
         url = f"{self.api_url}{path}"
-        body: bytes | None = None
+        body: Optional[bytes] = None
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "User-Agent": "pwp-provision-site/0.1",
@@ -185,7 +186,7 @@ class StripeClient:
             qs = urlencode(params)
             url = f"{url}?{qs}"
 
-        last_err: Exception | None = None
+        last_err: Optional[Exception] = None
         total_attempts = max(1, self.max_retries + 1)
         for attempt in range(total_attempts):
             try:
@@ -233,7 +234,7 @@ class StripeClient:
         )
 
     # -- public API -----------------------------------------------------
-    def validate(self) -> dict[str, Any]:
+    def validate(self) -> Dict[str, Any]:
         """Validate the API key by hitting /v1/balance.
 
         Returns the parsed balance payload. Raises StripeError on auth failure.
@@ -243,11 +244,11 @@ class StripeClient:
     def list_products(
         self,
         *,
-        active: bool | None = None,
+        active: Optional[bool] = None,
         limit: int = 50,
-    ) -> list[StripeProduct]:
+    ) -> List[StripeProduct]:
         """List products in the account."""
-        params: dict[str, Any] = {"limit": int(limit)}
+        params: Dict[str, Any] = {"limit": int(limit)}
         if active is not None:
             params["active"] = "true" if active else "false"
         data = self._request("GET", "/products", params=params)
@@ -256,12 +257,12 @@ class StripeClient:
     def list_prices(
         self,
         *,
-        product_id: str | None = None,
-        active: bool | None = None,
+        product_id: Optional[str] = None,
+        active: Optional[bool] = None,
         limit: int = 50,
-    ) -> list[StripePrice]:
+    ) -> List[StripePrice]:
         """List prices, optionally filtered by product."""
-        params: dict[str, Any] = {"limit": int(limit)}
+        params: Dict[str, Any] = {"limit": int(limit)}
         if product_id:
             params["product"] = product_id
         if active is not None:

@@ -30,8 +30,9 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from .agent_cards import get_agent_card, get_all_agent_cards
+from .agent_cards import AgentCard, get_agent_card, get_all_agent_cards, StatusIndicator
 from .state_machine import OrchestrationMode
+
 
 # ═══════════════════════════════════════════════════════════════
 # Telegram API types (inline keyboard structures)
@@ -77,7 +78,7 @@ class InlineKeyboard:
         """Serialize the keyboard to JSON string."""
         return json.dumps(self.to_tg_api(), ensure_ascii=False)
 
-    def add_row(self, *buttons: InlineButton) -> InlineKeyboard:
+    def add_row(self, *buttons: InlineButton) -> "InlineKeyboard":
         """Add a row of buttons (fluent API)."""
         self.rows.append(InlineRow(buttons=list(buttons)))
         return self
@@ -268,7 +269,7 @@ class ModeCallback:
     mode: str | None = None     # e.g. "interactive", "autonomous"
 
     @classmethod
-    def parse(cls, callback_data: str) -> ModeCallback | None:
+    def parse(cls, callback_data: str) -> "ModeCallback | None":
         """Parse a callback_data string into a ModeCallback.
 
         Returns:

@@ -193,7 +193,7 @@ def cmd_show_lanes():
             for key in allowed:
                 print(f"    ✓ {key}")
         else:
-            print("    (no external keys — fully isolated)")
+            print(f"    (no external keys — fully isolated)")
 
 
 if __name__ == "__main__":

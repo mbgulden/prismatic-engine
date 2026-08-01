@@ -1,19 +1,17 @@
-import logging
 import os
 import shutil
 import sys
-import tarfile
-import zipfile
-from pathlib import Path
-
 import yaml
+import zipfile
+import tarfile
+import logging
+from pathlib import Path
+from typing import Any, Dict, List
 
 from prismatic import __version__
 from prismatic.core.registry import PluginLoader
 from prismatic.interface.plugin import PluginContext
-from prismatic.plugins.lifecycle_manager import (
-    PluginLifecycleSandboxManager,
-)
+from prismatic.plugins.lifecycle_manager import PluginLifecycleSandboxManager, PluginState
 
 logger = logging.getLogger("prismatic.plugins.cli")
 
@@ -81,7 +79,7 @@ def get_plugins_dir() -> Path:
     pdir.mkdir(parents=True, exist_ok=True)
     return pdir
 
-def print_table(rows: list[list[str]]) -> None:
+def print_table(rows: List[List[str]]) -> None:
     if not rows:
         return
     widths = [max(len(str(c)) for c in col) for col in zip(*rows)]

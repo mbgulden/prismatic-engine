@@ -38,13 +38,16 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import socket as sock_mod
 import sys
 import time
-from dataclasses import asdict, dataclass, field
+import uuid
+from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
 
 # ═══════════════════════════════════════════════════════════════
 # Constants (env-overridable)
@@ -360,7 +363,8 @@ class NodeRegistry:
             if job_id in node.active_jobs:
                 node.active_jobs.remove(job_id)
             node.vram_allocated_mb -= job.vram_reserved_mb
-            node.vram_allocated_mb = max(node.vram_allocated_mb, 0)
+            if node.vram_allocated_mb < 0:
+                node.vram_allocated_mb = 0
 
         return job
 

@@ -16,12 +16,13 @@ Tests use ``tmp_path``, ``monkeypatch`` (via patch.dict), and a fake
 """
 
 import json
+import logging
 import os
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch, MagicMock
 
-from prismatic.schedules import OWNER_JULES, get_jules_schedules
+from prismatic.schedules import get_jules_schedules, OWNER_JULES
 
 
 class TestJulesAdapterLocalPath(unittest.TestCase):

@@ -36,8 +36,10 @@ from __future__ import annotations
 
 import secrets
 from dataclasses import dataclass
+from typing import Optional
 
 import requests
+
 
 VERIFY_PREFIX = "_pwp-verify"
 CF_DOH_RESOLVER = "https://cloudflare-dns.com/dns-query"
@@ -67,7 +69,7 @@ class VerifyResult:
     record_name: str
     expected_value: str
     observed_values: list[str]
-    error: str | None = None
+    error: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
@@ -93,7 +95,7 @@ def _query_txt_via_doh(fqdn: str) -> list[str]:
             headers={"Accept": "application/dns-json"},
             timeout=10,
         )
-    except requests.RequestException:
+    except requests.RequestException as exc:
         return []
     if resp.status_code != 200:
         return []
@@ -116,7 +118,7 @@ def verify(
     domain: str,
     expected_value: str,
     *,
-    observed_values: list[str] | None = None,
+    observed_values: Optional[list[str]] = None,
 ) -> VerifyResult:
     """Verify the DNS TXT challenge for `domain`.
 

@@ -16,6 +16,7 @@ from prismatic.core.registry import PluginLoader
 from prismatic.interface.plugin import PluginContext
 from prismatic.review.registry import ReviewerRegistry
 
+
 _CORE_VERSION = "1.0.0"
 
 

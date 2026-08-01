@@ -20,7 +20,7 @@ Used by the orchestrator to populate the new site's KPI config
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Dict
 
 from ..google_client import GoogleAuthError, GoogleClient, GoogleError
 from ..types import StepResult

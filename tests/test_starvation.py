@@ -9,10 +9,13 @@ Architecture spec: specs/plugin-hub-architecture.md Section 6
 
 from __future__ import annotations
 
+import time
 import unittest
+from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
+
 
 # ═══════════════════════════════════════════════════════════════════
 # Enums & Types
@@ -164,7 +167,11 @@ class MockClusterEnvironment:
             primary = "pve2"
             secondary = "pve3"
             tertiary = "node1"  # fallback GPU 2
-        elif plugin_type == PluginType.ASSET_FORGE_3D or plugin_type == PluginType.LYRIA_AUDIO:
+        elif plugin_type == PluginType.ASSET_FORGE_3D:
+            primary = "pve3"
+            secondary = "pve2"
+            tertiary = "node1"
+        elif plugin_type == PluginType.LYRIA_AUDIO:
             primary = "pve3"
             secondary = "pve2"
             tertiary = "node1"

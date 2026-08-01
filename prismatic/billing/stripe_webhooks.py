@@ -19,11 +19,11 @@ Usage (standalone):
 
 from __future__ import annotations
 
-import logging
 import os
-from typing import Any
+import logging
+from typing import Any, Optional
 
-from .credit_ledger import CreditLedger, TenantState
+from .credit_ledger import CreditLedger, TenantState, CreditError
 
 logger = logging.getLogger(__name__)
 
@@ -290,7 +290,7 @@ def register_stripe_routes(app: Any, credit_ledger: CreditLedger) -> None:
     handler = StripeWebhookHandler(credit_ledger)
 
     try:
-        from flask import Blueprint, jsonify, request
+        from flask import Blueprint, request, jsonify
     except ImportError:
         logger.warning("Flask not available — stripe routes not registered")
         return

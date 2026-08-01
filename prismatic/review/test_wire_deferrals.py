@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+
 from prismatic.review.apply_impact_rules import apply_impact_rules, fire_hook
 from prismatic.review.hooks import (
     HOOK_BEFORE_SECRET_SCAN,
@@ -25,11 +26,12 @@ from prismatic.review.pipeline import (
 )
 from prismatic.review.pr_reviewer import (
     APPROVE,
-    REQUEST_CHANGES,
     PRReviewResult,
+    REQUEST_CHANGES,
 )
 from prismatic.review.pr_reviewer_impl import RealPRReviewer
 from prismatic.review.registry import ComposedReviewerSpec, ReviewerRegistry
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Helpers
@@ -101,6 +103,7 @@ class TestApplyImpactRules:
 
         def rule_first(r, v):
             call_log.append(1)
+            return None  # don't override; let later rules run
 
         def rule_second(r, v):
             call_log.append(2)
@@ -276,6 +279,7 @@ class TestEndToEnd:
 
         def hook_check(diff: str):
             recorded_diffs.append(diff)
+            return None
 
         reg = ReviewerRegistry()
         reg.register_check(hook_check, name="hook_secret_scan")
@@ -304,6 +308,7 @@ class TestEndToEnd:
 
         def hook_check(diff: str):
             recorded_diffs.append(diff)
+            return None
 
         reg = ReviewerRegistry()
         reg.register_check(hook_check, name="hook_quality_checks")
@@ -400,6 +405,7 @@ class TestEndToEnd:
 
         def ned_hook(issue: dict):
             recorded_issues.append(dict(issue))
+            return None
 
         reg = ReviewerRegistry()
         reg.register_check(ned_hook, name="ned_hook")

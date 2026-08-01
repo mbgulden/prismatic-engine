@@ -160,9 +160,9 @@ def _validate_native_bindings(receipt: dict[str, Any]) -> None:
         resolved_root = root.resolve(strict=True)
     except OSError as exc:
         raise ValueError("canonical_repository_root cannot be resolved") from exc
-    if any(p.is_symlink() for p in root.parents) or root.is_symlink():
+    if resolved_root != root:
         raise ValueError("canonical_repository_root must be nonsymlink and canonical")
-    if Path(_git(root, "rev-parse", "--show-toplevel")).resolve() != resolved_root:
+    if Path(_git(root, "rev-parse", "--show-toplevel")) != root:
         raise ValueError("canonical_repository_root is not the exact Git root")
 
     clean_state = receipt["checkout_clean_state"]

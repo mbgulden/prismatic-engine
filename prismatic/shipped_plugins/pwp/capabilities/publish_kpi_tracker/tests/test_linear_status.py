@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from unittest import mock
 
+
 # Add the shipped_plugins directory to sys.path so the plugins.* namespace
 # resolves regardless of how the test harness is invoked.
 HERE = Path(__file__).resolve()
@@ -16,12 +17,12 @@ SHIP_ROOT = HERE.parents[4]
 if str(SHIP_ROOT) not in sys.path:
     sys.path.insert(0, str(SHIP_ROOT))
 
-from plugins.pwp.capabilities.publish_kpi_tracker.linear_status import (
+from plugins.pwp.capabilities.publish_kpi_tracker.linear_status import (  # noqa: E402
     CACHE_PATH,
     DEFAULT_ERROR_TTL_SECONDS,
     DEFAULT_OK_TTL_SECONDS,
-    SUBMISSION_LOG_DIR,
     LinearStatus,
+    SUBMISSION_LOG_DIR,
     _age_days_from_iso,
     _call_linear_status,
     _latest_issue_id_for_site,

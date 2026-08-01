@@ -7,10 +7,12 @@ Usage:
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
+import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 
 def _publish_root_default_for() -> Path:
@@ -58,13 +60,14 @@ def cmd_provision_status(args) -> int:
 
 def cmd_provision_list(args) -> int:
     """List all known provisioning runs."""
+    from plugins.pwp.capabilities.provision_site import orchestrator
 
     publish_root = Path(args.publish_root) if args.publish_root else None
     publish_root = publish_root or Path("/tmp/pwp-provisioning")
     if not publish_root.exists():
         print(json.dumps({"runs": []}))
         return 0
-    runs: list[dict[str, Any]] = []
+    runs: List[Dict[str, Any]] = []
     for f in sorted(publish_root.glob("*.json")):
         if f.name == "sites.json":
             continue
@@ -107,7 +110,7 @@ def cmd_funnel_config(args) -> int:
         return 2
 
     # Optional: embed current kpi-collections snapshot into the issue body
-    site_context: dict[str, Any] = {}
+    site_context: Dict[str, Any] = {}
     sites_root = Path(
         args.sites_root
         or _publish_root_default_for() / "prismatic/shipped_plugins/pwp/capabilities/publish_kpi_tracker/sites"

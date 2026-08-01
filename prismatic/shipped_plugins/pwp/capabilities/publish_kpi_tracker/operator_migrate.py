@@ -21,7 +21,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional, Tuple
 
 HERE = Path(__file__).resolve().parent
 # Resolve PWP_REPO by walking up from HERE until we find a directory that
@@ -44,8 +44,8 @@ for p in (PWP_REPO, PWP_REPO / "prismatic" / "shipped_plugins"):
     if p.is_dir() and str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
-from . import publish_kpi_tracker as kpi
-from .pwp_kpi_site_registry import (
+from . import publish_kpi_tracker as kpi  # noqa: E402
+from .pwp_kpi_site_registry import (  # noqa: E402
     _resolve_registry_path,
     iter_metric_specs_for_site,
     iter_sites,
@@ -55,10 +55,10 @@ from .pwp_kpi_site_registry import (
     site_shares,
     validate_registry_shape,
 )
-from .site_builder import build_site_collection
+from .site_builder import build_site_collection  # noqa: E402
 
 
-def _resolve_tracking_property_for_migration(site: dict) -> str | None:
+def _resolve_tracking_property_for_migration(site: dict) -> Optional[str]:
     """Pulls the resolved tracking_property from iter_sites output."""
     return site.get("_tracking_property_resolved")
 
@@ -76,7 +76,7 @@ def _site_label(slug: str) -> str:
     return f"{slug}-funnel"
 
 
-def _build_site_metrics(registry: dict, site: dict, slug: str) -> list[dict]:
+def _build_site_metrics(registry: dict, site: dict, slug: str) -> List[dict]:
     """Build the list of metric specs for one site, in deterministic order.
 
     Order:
@@ -132,9 +132,9 @@ def _build_collection(registry: dict, site: dict) -> dict:
     )
 
 
-def _filter_validated(collections: dict, slug_to_collection: dict) -> list[str]:
+def _filter_validated(collections: dict, slug_to_collection: dict) -> List[str]:
     """Run the canonical validator on every generated collection; return error list."""
-    errs: list[str] = []
+    errs: List[str] = []
     for slug, coll in slug_to_collection.items():
         v = kpi.validate(coll)
         if v:
@@ -142,7 +142,7 @@ def _filter_validated(collections: dict, slug_to_collection: dict) -> list[str]:
     return errs
 
 
-def _merge_into_existing(target: Path, registry_coll: dict) -> tuple[dict, list[str]]:
+def _merge_into_existing(target: Path, registry_coll: dict) -> Tuple[dict, List[str]]:
     """Merge registry-derived metrics into an existing curated <slug>.kpi.json.
 
     Contract: curated entries ALWAYS win. Registry adds new metrics that
@@ -166,7 +166,7 @@ def _merge_into_existing(target: Path, registry_coll: dict) -> tuple[dict, list[
 
     # Build a set of semantic keys already in the curated file.
     # For GA4 events, the semantic key is the `event` name.
-    def _semantic_key(metric_spec: dict) -> tuple[str, str] | None:
+    def _semantic_key(metric_spec: dict) -> Optional[Tuple[str, str]]:
         source = metric_spec.get("source")
         if source == "ga4":
             event = metric_spec.get("event")
@@ -180,7 +180,7 @@ def _merge_into_existing(target: Path, registry_coll: dict) -> tuple[dict, list[
         if sk:
             existing_semantic_keys.add(sk)
 
-    added: list[str] = []
+    added: List[str] = []
     for mid, spec in registry_metrics.items():
         if mid in existing_metrics:
             # Direct metric_key collision — curated wins.
@@ -197,8 +197,8 @@ def _merge_into_existing(target: Path, registry_coll: dict) -> tuple[dict, list[
     return merged, added
 
 
-def run(*, dry_run: bool = False, registry_path: Path | None = None,
-        sites_dir: Path | None = None, force: bool = False,
+def run(*, dry_run: bool = False, registry_path: Optional[Path] = None,
+        sites_dir: Optional[Path] = None, force: bool = False,
         merge: bool = False) -> dict:
     """Migrate config/seo_sites.json into per-site *.kpi.json files.
 
@@ -228,8 +228,8 @@ def run(*, dry_run: bool = False, registry_path: Path | None = None,
     sites_dir = sites_dir or (PWP_REPO / "plugins" / "pwp" / "capabilities" / "publish_kpi_tracker" / "sites")
     sites_dir.mkdir(parents=True, exist_ok=True)
 
-    manifest: dict[str, Any] = {"sites": [], "registry_path": str(_resolve_registry_path() if not registry_path else registry_path), "sites_dir": str(sites_dir), "dry_run": dry_run, "force": force, "merge": merge}
-    slug_to_collection: dict[str, dict] = {}
+    manifest: Dict[str, Any] = {"sites": [], "registry_path": str(_resolve_registry_path() if not registry_path else registry_path), "sites_dir": str(sites_dir), "dry_run": dry_run, "force": force, "merge": merge}
+    slug_to_collection: Dict[str, dict] = {}
 
     for site in iter_sites(registry):
         slug = site["slug"]
@@ -318,7 +318,7 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     manifest = run(
         dry_run=args.dry_run,

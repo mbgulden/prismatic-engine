@@ -52,7 +52,7 @@ import json
 import os
 import secrets
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 # JSON Schema (form_version 1) — must match funnel_config.FORM_SCHEMA_V1.
 # Replicated here because the dashboard host should not import provision_site
@@ -61,7 +61,7 @@ FORM_VERSION = 1
 
 # Data sources the modal exposes as checkboxes (subset of funnel_config's
 # enum that the user can actually toggle on the dashboard).
-DATA_SOURCE_OPTIONS: list[dict[str, str]] = [
+DATA_SOURCE_OPTIONS: List[Dict[str, str]] = [
     {"value": "stripe", "label": "Stripe payments"},
     {"value": "zapier", "label": "Zapier webhook"},
     {"value": "telegram", "label": "Telegram bot"},
@@ -98,7 +98,7 @@ def _csrf_token() -> str:
 
 
 # ── Pre-fill: read prior submission log (if any) ─────────────────────────
-def load_prior_submission(site_slug: str) -> dict[str, Any] | None:
+def load_prior_submission(site_slug: str) -> Optional[Dict[str, Any]]:
     """Return the prior submission form dict for a site, or None.
 
     Reads from `PWP_FUNNEL_CONFIG_DIR/<slug>.json`. The file is written
@@ -120,7 +120,7 @@ def load_prior_submission(site_slug: str) -> dict[str, Any] | None:
 def render_modal_html(
     *,
     submit_endpoint: str = DEFAULT_SUBMIT_ENDPOINT,
-    csrf_token: str | None = None,
+    csrf_token: Optional[str] = None,
 ) -> str:
     """Return the modal HTML + JS, ready to inject before `</body>`.
 
@@ -624,7 +624,7 @@ def render_modal_css() -> str:
 
 
 # ── Per-site rows: which button(s) to show ────────────────────────────────
-def site_row_buttons(site: dict[str, Any]) -> str:
+def site_row_buttons(site: Dict[str, Any]) -> str:
     """Return the HTML for the per-site buttons (Configure / Edit).
 
     Logic:
@@ -693,21 +693,21 @@ def render_button_wiring_js() -> str:
 
 
 __all__ = [
-    "DATA_SOURCE_OPTIONS",
+    "render_modal_html",
+    "render_modal_css",
+    "render_button_wiring_js",
+    "site_row_buttons",
+    "load_prior_submission",
+    "write_prior_submission_json",
+    "SUBMISSION_LOG_DIR",
     "DEFAULT_SUBMIT_ENDPOINT",
     "FORM_VERSION",
-    "SUBMISSION_LOG_DIR",
-    "load_prior_submission",
-    "render_button_wiring_js",
-    "render_modal_css",
-    "render_modal_html",
-    "site_row_buttons",
-    "write_prior_submission_json",
+    "DATA_SOURCE_OPTIONS",
 ]
 
 
 # ── Static prior-submission JSON (Phase 4.3) ────────────────────────────
-def write_prior_submission_json(publish_root: Path) -> list[Path]:
+def write_prior_submission_json(publish_root: Path) -> List[Path]:
     """Write one `<slug>.prior.json` file per site that has a prior submission.
 
     Phase 4.3 (F4 Edit funnel UI pre-fill): the modal's refinement flow
@@ -726,7 +726,7 @@ def write_prior_submission_json(publish_root: Path) -> list[Path]:
     submission log are skipped silently.
     """
     publish_root = Path(publish_root)
-    written: list[Path] = []
+    written: List[Path] = []
     if not SUBMISSION_LOG_DIR.exists():
         return written
     for log_path in SUBMISSION_LOG_DIR.glob("*.json"):

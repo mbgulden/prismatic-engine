@@ -1,20 +1,12 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 
-from seo_cron_common import (
-    AOT_GSC_PROPERTY,
-    date_window,
-    gsc_search_analytics,
-    gsc_sites,
-    stamp,
-    state_dir,
-    write_json,
-    write_text,
-)
+from seo_cron_common import date_window, gsc_search_analytics, gsc_sites, stamp, state_dir, write_json, write_text, AOT_GSC_PROPERTY
 
 # Native cron contract: exports Search Console `searchAnalytics/query` rows for
 # `sc-domain:activeoahutours.com`; URL encoding and HTTP calls live in

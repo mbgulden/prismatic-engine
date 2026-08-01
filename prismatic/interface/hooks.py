@@ -27,7 +27,7 @@ review, credit threshold); both can be subscribed to in the same plugin
 manifest.
 """
 
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 # ── canonical hook-name constants ────────────────────────────────────────────
 
@@ -49,7 +49,7 @@ HOOK_ON_POST_PIPELINE        = "on_post_pipeline"
 HOOK_ON_ERROR                = "on_error"
 HOOK_ON_DEPLOY               = "on_deploy"
 
-HOOK_NAMES: list[str] = [
+HOOK_NAMES: List[str] = [
     HOOK_ON_INIT,
     HOOK_BEFORE_TASK_EXECUTION,
     HOOK_AFTER_TASK_EXECUTION,
@@ -67,7 +67,7 @@ HOOK_NAMES: list[str] = [
 # ── PWP hook grouping helpers ───────────────────────────────────────────────
 # Use these when a plugin manifest only wants to opt in to the PWP set.
 
-PWP_HOOK_NAMES: list[str] = [
+PWP_HOOK_NAMES: List[str] = [
     HOOK_ON_PRE_PIPELINE,
     HOOK_ON_POST_PIPELINE,
     HOOK_ON_ERROR,
@@ -83,7 +83,7 @@ def on_init(context: Any) -> None:
 def before_task_execution(contract: Any) -> None:
     """Called immediately before an agent worker is spawned."""
 
-def after_task_execution(contract: Any, result: dict[str, Any] | None = None) -> None:
+def after_task_execution(contract: Any, result: Optional[Dict[str, Any]] = None) -> None:
     """Called immediately after an agent worker exits."""
 
 def on_state_transition(issue_id: str, from_state: str, to_state: str) -> None:
@@ -92,14 +92,14 @@ def on_state_transition(issue_id: str, from_state: str, to_state: str) -> None:
 
 # ── GRO-1497 dispatcher hook stubs ──────────────────────────────────────────
 
-def on_issue_dispatch(issue_id: str, agent_name: str, payload: dict[str, Any]) -> None:
+def on_issue_dispatch(issue_id: str, agent_name: str, payload: Dict[str, Any]) -> None:
     """Fired when an issue is dispatched to a provider/agent runner."""
 
 def on_review_complete(
     issue_id: str,
     origin_agent: str,
     reviewer_agent: str,
-    results: dict[str, Any],
+    results: Dict[str, Any],
 ) -> None:
     """Fired when a peer review cycle finishes and results route back."""
 
@@ -107,7 +107,7 @@ def on_pipeline_stage(
     issue_id: str,
     stage_name: str,
     status: str,
-    metadata: dict[str, Any],
+    metadata: Dict[str, Any],
 ) -> None:
     """Fired when a pipeline stage starts, fails, or completes."""
 
@@ -123,7 +123,7 @@ def on_credit_threshold(
 
 # ── GRO-2228 PWP hook stubs ─────────────────────────────────────────────────
 
-def on_pre_pipeline(pipeline_id: str, context: dict[str, Any]) -> None:
+def on_pre_pipeline(pipeline_id: str, context: Dict[str, Any]) -> None:
     """
     Fired exactly once, *before* any pipeline stage runs.
 
@@ -138,7 +138,7 @@ def on_pre_pipeline(pipeline_id: str, context: dict[str, Any]) -> None:
             should not mutate this dict.
     """
 
-def on_post_pipeline(pipeline_id: str, result: dict[str, Any]) -> None:
+def on_post_pipeline(pipeline_id: str, result: Dict[str, Any]) -> None:
     """
     Fired exactly once, *after* all pipeline stages complete successfully.
 
@@ -165,7 +165,7 @@ def on_error(pipeline_id: str, exc: BaseException, stage: str) -> None:
         stage: Name of the stage that raised (e.g. ``"build"``).
     """
 
-def on_deploy(pipeline_id: str, target: str, artifact: dict[str, Any]) -> None:
+def on_deploy(pipeline_id: str, target: str, artifact: Dict[str, Any]) -> None:
     """
     Fired after the post-pipeline publish step pushes artifacts.
 

@@ -22,7 +22,8 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Dict, List, Optional
+
 
 LINEAR_API_URL = "https://api.linear.app/graphql"
 
@@ -40,7 +41,7 @@ class LinearError(RuntimeError):
         message: str,
         *,
         status: int = 0,
-        errors: list[dict[str, Any]] | None = None,
+        errors: Optional[List[Dict[str, Any]]] = None,
     ):
         super().__init__(message)
         self.status = status
@@ -60,15 +61,15 @@ class LinearIssue:
     state: str               # workflow state name ("Todo", "In Progress", ...)
     state_id: str
     state_type: str          # "backlog" | "unstarted" | "started" | "completed" | "canceled" | ...
-    labels: list[str] = field(default_factory=list)
-    parent_id: str | None = None
-    assignee_id: str | None = None
-    assignee_name: str | None = None
+    labels: List[str] = field(default_factory=list)
+    parent_id: Optional[str] = None
+    assignee_id: Optional[str] = None
+    assignee_name: Optional[str] = None
     team_id: str = ""
     team_key: str = ""
 
     @classmethod
-    def from_api(cls, data: dict[str, Any]) -> LinearIssue:
+    def from_api(cls, data: Dict[str, Any]) -> "LinearIssue":
         state = data.get("state") or {}
         team = data.get("team") or {}
         assignee = data.get("assignee") or {}
@@ -101,7 +102,7 @@ class LinearIssue:
             team_key=team.get("key", ""),
         )
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> Dict[str, Any]:
         return {
             "id": self.id,
             "identifier": self.identifier,
@@ -129,14 +130,14 @@ class CreateIssueInput:
     team_id: str
     title: str
     description: str = ""
-    parent_id: str | None = None
-    label_ids: list[str] = field(default_factory=list)
-    assignee_id: str | None = None
-    state_id: str | None = None
-    priority: int | None = None  # 0 = No priority, 1 = Urgent, 2 = High, 3 = Medium, 4 = Low
+    parent_id: Optional[str] = None
+    label_ids: List[str] = field(default_factory=list)
+    assignee_id: Optional[str] = None
+    state_id: Optional[str] = None
+    priority: Optional[int] = None  # 0 = No priority, 1 = Urgent, 2 = High, 3 = Medium, 4 = Low
 
-    def to_graphql(self) -> dict[str, Any]:
-        out: dict[str, Any] = {
+    def to_graphql(self) -> Dict[str, Any]:
+        out: Dict[str, Any] = {
             "teamId": self.team_id,
             "title": self.title,
         }
@@ -187,7 +188,7 @@ class LinearClient:
 
     # -- factory --------------------------------------------------------
     @classmethod
-    def from_env(cls) -> LinearClient:
+    def from_env(cls) -> "LinearClient":
         """Construct from environment variables.
 
         Precedence: LINEAR_API_KEY > LINEAR_PERSONAL_TOKEN > LINEAR_TOKEN.
@@ -216,15 +217,15 @@ class LinearClient:
     def _request(
         self,
         query: str,
-        variables: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+        variables: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         """POST a GraphQL query, retry on 429/5xx.
 
         Returns the parsed JSON `data` dict. Raises LinearError on failure.
         """
         body = json.dumps({"query": query, "variables": variables or {}}).encode("utf-8")
 
-        last_err: Exception | None = None
+        last_err: Optional[Exception] = None
         # We always do at least one attempt; we retry up to max_retries
         # additional times on 429/5xx.
         total_attempts = max(1, self.max_retries + 1)
@@ -329,7 +330,7 @@ mutation IssueCreate($input: IssueCreateInput!) {
             )
         return LinearIssue.from_api(issue_raw)
 
-    def add_comment(self, issue_id: str, body: str) -> dict[str, Any]:
+    def add_comment(self, issue_id: str, body: str) -> Dict[str, Any]:
         """Post a comment on an existing issue.
 
         Returns the raw `commentCreate` payload. Body is treated as plain
@@ -412,7 +413,7 @@ mutation IssueUpdate($id: String!, $input: IssueUpdateInput!) {
             )
         return LinearIssue.from_api(result.get("issue") or {})
 
-    def lookup_user_id_by_email(self, email: str) -> str | None:
+    def lookup_user_id_by_email(self, email: str) -> Optional[str]:
         """Find a Linear user id by email, or None if not found."""
         query = """
 query UserByEmail($filter: UserFilter!) {
@@ -436,7 +437,7 @@ query UserByEmail($filter: UserFilter!) {
         label_name: str,
         *,
         limit: int = 50,
-    ) -> list[LinearIssue]:
+    ) -> List[LinearIssue]:
         """List issues in `team_id` that have a label whose name contains
         `label_name` (case-insensitive substring match).
 
@@ -475,8 +476,8 @@ query ListIssues($teamId: ID!, $first: Int!, $labelName: String!) {
         team_id: str,
         title: str,
         *,
-        parent_id: str | None = None,
-    ) -> LinearIssue | None:
+        parent_id: Optional[str] = None,
+    ) -> Optional[LinearIssue]:
         """Find an issue by exact (case-insensitive) title. Optionally
         scoped to children of a specific parent issue.
 

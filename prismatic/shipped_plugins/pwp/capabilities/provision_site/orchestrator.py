@@ -20,16 +20,16 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Dict, List, Optional
 
 from . import steps as step_module
 from .types import ProvisionRun, StepResult
 
+
 # Phase 1 step order. Each step is a function (run, run_state) -> StepResult.
 # Steps must NOT raise — they return StepResult with status="failed" + error.
-STEP_NAMES: list[str] = [
+STEP_NAMES: List[str] = [
     "platform_detect",  # Identify CF Pages / Vercel / Railway / unknown.
     "verify_domain",  # TXT challenge proves domain control.
     "cloudflare_zone",  # Skip when platform=vercel; otherwise find or create.
@@ -48,7 +48,7 @@ STEP_NAMES: list[str] = [
 # Phase 4.1 added github_checkout (between register_stripe and register_in_registry).
 
 
-def _resolve_publish_root(publish_root: Path | None) -> Path:
+def _resolve_publish_root(publish_root: Optional[Path]) -> Path:
     """Default to `<repo>/prismatic-publish/provisioning/` for run state."""
     if publish_root is not None:
         return publish_root
@@ -66,7 +66,7 @@ def _run_step(
     run: ProvisionRun,
     *,
     publish_root: Path,
-    prior_outputs: dict[str, dict[str, Any]] | None = None,
+    prior_outputs: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> StepResult:
     """Run a single step by name. Looks up the step fn in step_module.
 
@@ -76,7 +76,7 @@ def _run_step(
     (e.g. a challenge token issued before the user created the TXT
     record).
     """
-    fn: Callable[..., StepResult] | None = getattr(
+    fn: Optional[Callable[..., StepResult]] = getattr(
         step_module, f"step_{step_name}", None
     )
     if fn is None:
@@ -116,9 +116,9 @@ def run(
     *,
     domain: str,
     owner: str,
-    publish_root: Path | None = None,
+    publish_root: Optional[Path] = None,
     resume: bool = True,
-    step_filter: list[str] | None = None,
+    step_filter: Optional[List[str]] = None,
 ) -> ProvisionRun:
     """Run the provisioning flow for `domain`.
 
@@ -140,7 +140,7 @@ def run(
     started_at = dt.datetime.now(dt.timezone.utc).isoformat()
 
     # Load prior state if resuming.
-    prior: dict[str, Any] = {}
+    prior: Dict[str, Any] = {}
     if resume and state_path.exists():
         try:
             prior = json.loads(state_path.read_text(encoding="utf-8"))
@@ -169,7 +169,7 @@ def run(
     # So we include BOTH complete and failed prior steps here. We
     # deliberately exclude `skipped` (no output to forward) and
     # `pending` (no output yet).
-    prior_outputs: dict[str, dict[str, Any]] = {}
+    prior_outputs: Dict[str, Dict[str, Any]] = {}
     for prior_step in prior.get("steps", []):
         st = prior_step.get("status")
         out = prior_step.get("output")
@@ -233,8 +233,8 @@ def run(
 
 
 def status(
-    domain: str, publish_root: Path | None = None
-) -> dict[str, Any] | None:
+    domain: str, publish_root: Optional[Path] = None
+) -> Optional[Dict[str, Any]]:
     """Read the current run state for `domain`. Returns None if no run exists."""
     publish_root = _resolve_publish_root(publish_root)
     state_path = _state_path_for(domain, publish_root)

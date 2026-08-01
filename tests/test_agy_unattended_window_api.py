@@ -3,8 +3,8 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 import prismatic.agy_unattended_window as window
+import prismatic.gateway.server as server
 from prismatic.agy_unattended_window import AGY_LIMITED_UNATTENDED_WINDOW_GUARD_MARKER
-from prismatic.gateway import server
 
 
 def queue_ok():

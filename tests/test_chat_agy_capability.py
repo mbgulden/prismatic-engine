@@ -27,14 +27,15 @@ import os
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from types import SimpleNamespace
 
-from prismatic.capabilities import registry as default_registry
 from prismatic.capabilities.chat_agy import (
-    _DEFAULT_AGY_OAUTH_PATHS,
     ChatAGYCapability,
     ChatSession,
+    _DEFAULT_AGY_OAUTH_PATHS,
 )
 from prismatic.chat import ChatSession as PkgChatSession
+from prismatic.capabilities import registry as default_registry
 
 
 class TestChatSessionDataclass(unittest.TestCase):
@@ -151,7 +152,6 @@ class TestChatGatewayEndpoints(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         from fastapi.testclient import TestClient
-
         # The gateway server module pulls in heavy deps; load it lazily.
         from prismatic.gateway.server import app
         cls.client = TestClient(app)

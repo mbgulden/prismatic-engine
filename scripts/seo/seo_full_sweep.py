@@ -4,11 +4,8 @@ Active Oahu Tours — Full Competitive SEO Sweep
 Runs autonomously. Saves structured reports to cron/output/seo-audit/
 Each phase opens/closes its own MCP session (max 3-4 calls per session).
 """
-import asyncio
-import json
-import os
+import asyncio, json, os, sys, time
 from pathlib import Path
-
 REPO_ROOT = Path(__file__).resolve().parents[2]
 from datetime import datetime
 
@@ -122,7 +119,7 @@ async def phase2_competitor_keywords():
     if MY_SITE in results and "organicKeywords" in results[MY_SITE]:
         my_kws = {k.get("keyword", "").lower() for k in results[MY_SITE]["organicKeywords"]}
     
-    print("\n--- Keywords NOT in activeoahutours.com ---")
+    print(f"\n--- Keywords NOT in activeoahutours.com ---")
     for domain, data in results.items():
         if domain == MY_SITE or "error" in data:
             continue
@@ -259,7 +256,7 @@ async def phase7_auto_competitors():
     return results
 
 async def main():
-    log("=== ACTIVE OAHU TOURS — FULL SEO SWEEP ===")
+    log(f"=== ACTIVE OAHU TOURS — FULL SEO SWEEP ===")
     log(f"Started: {datetime.now().isoformat()}")
     log(f"Token: {TOKEN[:20]}...")
     
@@ -287,7 +284,7 @@ async def main():
     
     # Final summary
     log(f"\n{'='*60}")
-    log("SWEEP COMPLETE")
+    log(f"SWEEP COMPLETE")
     log(f"{'='*60}")
     for phase, status in results_summary.items():
         log(f"  {status} — {phase}")

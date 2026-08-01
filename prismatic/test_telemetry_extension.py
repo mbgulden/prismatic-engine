@@ -19,6 +19,7 @@ import pytest
 
 from prismatic.telemetry import TelemetryCollector
 
+
 # ── Fixture: isolated in-memory collector ────────────────────────────────────
 
 
@@ -38,7 +39,7 @@ def _wait_drain(c: TelemetryCollector, db_path: str, table: str, timeout: float 
     conn.row_factory = sqlite3.Row
     try:
         while time.monotonic() < deadline:
-            rows = conn.execute(f"SELECT * FROM {table}").fetchall()
+            rows = conn.execute(f"SELECT * FROM {table}").fetchall()  # noqa: S608
             if rows:
                 return [dict(r) for r in rows]
             time.sleep(0.05)

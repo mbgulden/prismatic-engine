@@ -9,11 +9,12 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+
 from prismatic.universal_result_manifest import (
     UNIVERSAL_RESULT_MANIFEST_V2_MARKER,
     adapt_legacy_packet_to_manifest_v2,
-    is_promotion_ready,
     validate_universal_manifest,
+    is_promotion_ready,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -596,7 +597,7 @@ if not schema or "$id" not in schema:
     print("Schema load failed")
     sys.exit(1)
 
-code_manifest = {code_fixture!r}
+code_manifest = {repr(code_fixture)}
 res = validate_universal_manifest(code_manifest)
 if not res.ok:
     print("Valid manifest failed in venv:", res.errors)

@@ -17,13 +17,13 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
-from prismatic.execution_evidence import (
+from prismatic.execution_evidence import (  # noqa: E402
     CommandEvidence,
     ExecutionEvidence,
     VerificationScope,
     VerificationStatus,
 )
-from prismatic.run_records import AgentRunRecordStore
+from prismatic.run_records import AgentRunRecordStore  # noqa: E402
 
 DEFAULT_OUTPUT_DIR = REPO / "artifacts" / "run-record-evidence"
 
@@ -80,7 +80,7 @@ def main() -> int:
     report_path.write_text(report, encoding="utf-8")
 
     # Import locally after records exist so this remains a lightweight API-shape check.
-    from prismatic.gateway.server import _run_record_to_dict
+    from prismatic.gateway.server import _run_record_to_dict  # noqa: PLC0415
 
     no_evidence_payload = _run_record_to_dict(no_evidence)
     verified_payload = _run_record_to_dict(verified)

@@ -5,11 +5,7 @@ import subprocess
 from pathlib import Path
 
 from prismatic.core_crons import emit
-from prismatic.worktree_janitor import (
-    list_worktrees,
-    run_janitor,
-    worktree_proof_template,
-)
+from prismatic.worktree_janitor import list_worktrees, run_janitor, worktree_proof_template
 
 
 def _git(cwd: Path, *args: str) -> str:

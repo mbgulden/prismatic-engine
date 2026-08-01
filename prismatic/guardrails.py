@@ -10,11 +10,10 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Callable, Iterable, Sequence
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Iterable, Sequence
 
 
 class GuardrailStatus(str, Enum):
@@ -40,7 +39,7 @@ class ReplayRecord:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ReplayRecord:
+    def from_dict(cls, data: dict[str, Any]) -> "ReplayRecord":
         return cls(
             event_id=str(data["event_id"]),
             event_type=str(data["event_type"]),
@@ -305,11 +304,11 @@ __all__ = [
     "ReplayQueue",
     "ReplayRecord",
     "ReplayResult",
-    "RolloutDecision",
     "SmokeCheck",
     "SmokeSuite",
     "SmokeSuiteResult",
     "StallAlert",
+    "RolloutDecision",
     "detect_silent_stalls",
     "rollout_gate",
 ]

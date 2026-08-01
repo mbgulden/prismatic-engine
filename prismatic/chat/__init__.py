@@ -13,7 +13,7 @@ contract; implementation is per-provider in the capabilities package.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, asdict, field
 from typing import Any, Optional
 
 
@@ -30,8 +30,8 @@ class ChatSession:
     agent: str
     status: str
     started_at: str
-    last_event_at: str | None = None
-    label: str | None = None
+    last_event_at: Optional[str] = None
+    label: Optional[str] = None
 
     def to_dict(self) -> dict[str, Any]:
         return {k: v for k, v in asdict(self).items() if v is not None or k in ("id", "agent", "status", "started_at")}

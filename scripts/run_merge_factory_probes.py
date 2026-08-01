@@ -15,23 +15,23 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from tests.test_merge_factory import (
-    test_cohort_mutations,
+    test_token_auth_resolution,
     test_custom_env_tokens,
-    test_default_known_token_denial,
-    test_event_idempotency,
-    test_excessive_ttl,
-    test_installed_package_api_import_and_runtime,
-    test_judge_attestations_and_transitions,
+    test_policy_mutations,
+    test_cohort_mutations,
     test_lease_global_cap_and_concurrency,
     test_lease_stale_takeover_and_expiry,
-    test_malformed_and_duplicate_config,
-    test_merge_locks_and_bindings,
-    test_no_config_fail_closed_auth,
     test_old_backlog_exclusion_when_paused,
-    test_policy_mutations,
+    test_judge_attestations_and_transitions,
+    test_merge_locks_and_bindings,
+    test_event_idempotency,
+    test_no_config_fail_closed_auth,
+    test_default_known_token_denial,
     test_runtime_key_rotation_and_removal,
+    test_malformed_and_duplicate_config,
     test_stage_mismatch_and_invalid_stage,
-    test_token_auth_resolution,
+    test_excessive_ttl,
+    test_installed_package_api_import_and_runtime,
 )
 
 

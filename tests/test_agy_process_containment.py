@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 
 from prismatic.agy_cli import (
-    CANONICAL_ADMISSION_MARKER,
     AgyLaunchSpec,
+    CANONICAL_ADMISSION_MARKER,
     launch_tmux,
     wait_tmux,
 )

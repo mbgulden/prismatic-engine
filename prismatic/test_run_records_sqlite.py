@@ -3,8 +3,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from prismatic.gateway.server import _run_record_to_dict
 from prismatic.run_records import AgentRunRecordStore
+from prismatic.gateway.server import _run_record_to_dict
 
 
 def test_sqlite_store_reads_existing_runs_and_sorts_recent_first(

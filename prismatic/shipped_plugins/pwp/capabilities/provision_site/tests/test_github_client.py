@@ -24,17 +24,20 @@ Coverage:
 
 from __future__ import annotations
 
-import http.client
 import io
+import http.client
 import json
+import time
 import urllib.error
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from plugins.pwp.capabilities.provision_site import auth_loader
 from plugins.pwp.capabilities.provision_site.github_client import (
     GitHubBranch,
     GitHubClient,
+    GitHubCommit,
     GitHubError,
     GitHubRepo,
 )
@@ -123,8 +126,9 @@ def test_from_env_raises_when_no_token(monkeypatch) -> None:
             value=None, source="none", env_var="",
             hint="(test stub)", redaction="<missing>",
         ),
-    ), pytest.raises(ValueError, match="GITHUB_TOKEN"):
-        GitHubClient.from_env()
+    ):
+        with pytest.raises(ValueError, match="GITHUB_TOKEN"):
+            GitHubClient.from_env()
 
 
 def test_direct_construction_rejects_empty() -> None:

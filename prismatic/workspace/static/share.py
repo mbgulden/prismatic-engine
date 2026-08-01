@@ -11,7 +11,7 @@ import hashlib
 import hmac
 import os
 import time
-from typing import Any
+from typing import Any, Optional
 
 DEFAULT_SECRET = os.environ.get("PRISMATIC_WORKSPACE_SHARE_SECRET", "prismatic-workspace-share-secret-v1")
 DEFAULT_TTL_SECONDS = 86400  # 24 hours
@@ -45,7 +45,7 @@ class WorkspaceShareManager:
             "share_url": f"/api/workspace/share/{token}",
         }
 
-    def validate_token(self, token: str) -> tuple[bool, str, str | None]:
+    def validate_token(self, token: str) -> tuple[bool, str, Optional[str]]:
         """Validate a share token.
 
         Returns (is_valid, doc_id, error_message).

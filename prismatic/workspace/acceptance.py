@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import yaml
 
@@ -21,13 +21,13 @@ LINK_PATTERN = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 class AcceptanceProtocol:
     """Validates documentation entries against acceptance criteria."""
 
-    def __init__(self, docs_root: Path | None = None):
+    def __init__(self, docs_root: Optional[Path] = None):
         self.docs_root = docs_root or Path(".")
 
     def validate(
         self,
         file_path: Path,
-        content: str | None = None,
+        content: Optional[str] = None,
     ) -> dict[str, Any]:
         """Validate a document file and return an acceptance dict.
 
@@ -122,7 +122,7 @@ class AcceptanceProtocol:
             return {}, content
 
     @staticmethod
-    def _find_h1(content: str) -> str | None:
+    def _find_h1(content: str) -> Optional[str]:
         """Find the first H1 heading in markdown body."""
         for line in content.splitlines():
             line_s = line.strip()

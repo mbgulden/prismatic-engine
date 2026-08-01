@@ -34,7 +34,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Dict, List, Optional, Tuple
 
 GITHUB_API_URL = "https://api.github.com"
 
@@ -54,7 +54,7 @@ class GitHubError(Exception):
         self,
         message: str,
         *,
-        status_code: int | None = None,
+        status_code: Optional[int] = None,
         body: str = "",
         path: str = "",
     ) -> None:
@@ -78,8 +78,8 @@ class GitHubRepo:
     html_url: str
     clone_url: str            # git clone URL (HTTPS with token)
     ssh_url: str
-    topics: list[str] = field(default_factory=list)
-    raw: dict[str, Any] = field(default_factory=dict, repr=False)
+    topics: List[str] = field(default_factory=list)
+    raw: Dict[str, Any] = field(default_factory=dict, repr=False)
 
 
 @dataclass
@@ -96,7 +96,7 @@ class GitHubCommit:
     author_name: str
     author_email: str
     date: str                # ISO-8601 from GitHub
-    parents: list[str]
+    parents: List[str]
 
 
 class GitHubClient:
@@ -127,7 +127,7 @@ class GitHubClient:
 
     # -- factory --------------------------------------------------------
     @classmethod
-    def from_env(cls) -> GitHubClient:
+    def from_env(cls) -> "GitHubClient":
         """Construct from environment variables.
 
         Precedence: GITHUB_TOKEN > GH_TOKEN > GITHUB_PAT.
@@ -169,9 +169,9 @@ class GitHubClient:
         method: str,
         path: str,
         *,
-        params: dict[str, Any] | None = None,
-        json_body: dict[str, Any] | None = None,
-    ) -> tuple[int, dict[str, Any], str]:
+        params: Optional[Dict[str, Any]] = None,
+        json_body: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[int, Dict[str, Any], str]:
         """Issue an HTTP request to the GitHub API.
 
         Returns (status_code, parsed_json_body, raw_text_body).
@@ -203,7 +203,7 @@ class GitHubClient:
             try:
                 with urllib.request.urlopen(req, timeout=30) as resp:
                     raw = resp.read()
-                    body: dict[str, Any] = {}
+                    body: Dict[str, Any] = {}
                     if raw:
                         try:
                             body = json.loads(raw)
@@ -276,7 +276,7 @@ class GitHubClient:
         )
 
     # -- auth / identity -------------------------------------------------
-    def get_authenticated_user(self) -> dict[str, Any]:
+    def get_authenticated_user(self) -> Dict[str, Any]:
         """GET /user — return the authenticated user's profile.
 
         Useful for confirming the token works and discovering the
@@ -285,7 +285,7 @@ class GitHubClient:
         _status, body, _text = self._request("GET", "/user")
         return body
 
-    def validate(self) -> dict[str, Any]:
+    def validate(self) -> Dict[str, Any]:
         """Validate the token; return user info on success."""
         return self.get_authenticated_user()
 
@@ -323,9 +323,9 @@ class GitHubClient:
                 return False
             raise
 
-    def list_branches(self, full_name: str) -> list[GitHubBranch]:
+    def list_branches(self, full_name: str) -> List[GitHubBranch]:
         """GET /repos/{owner}/{repo}/branches — return all branches."""
-        branches: list[GitHubBranch] = []
+        branches: List[GitHubBranch] = []
         page = 1
         while True:
             _status, body, _text = self._request(
@@ -348,7 +348,7 @@ class GitHubClient:
 
     def get_default_branch(
         self, full_name: str
-    ) -> tuple[str, str]:
+    ) -> Tuple[str, str]:
         """Resolve (default_branch_name, HEAD_sha)."""
         repo = self.get_repo(full_name)
         branches = self.list_branches(full_name)
@@ -377,8 +377,8 @@ class GitHubClient:
         )
 
     def get_file(
-        self, full_name: str, path: str, *, ref: str | None = None
-    ) -> tuple[str, str]:
+        self, full_name: str, path: str, *, ref: Optional[str] = None
+    ) -> Tuple[str, str]:
         """GET /repos/{owner}/{repo}/contents/{path}.
 
         Returns (decoded_content, sha). Useful for reading vercel.json,
@@ -400,13 +400,13 @@ class GitHubClient:
 
     def search_user_repos(
         self, user: str, *, limit: int = 50
-    ) -> list[GitHubRepo]:
+    ) -> List[GitHubRepo]:
         """Search for repos owned by `user`.
 
         Uses /search/repositories?q=user:<user> — this is rate-limited
         separately and capped by GitHub at 1000 results total.
         """
-        repos: list[GitHubRepo] = []
+        repos: List[GitHubRepo] = []
         page = 1
         while len(repos) < limit:
             _status, body, _text = self._request(
@@ -441,7 +441,7 @@ class GitHubClient:
             page += 1
         return repos
 
-    def list_webhooks(self, full_name: str) -> list[dict[str, Any]]:
+    def list_webhooks(self, full_name: str) -> List[Dict[str, Any]]:
         """GET /repos/{owner}/{repo}/hooks — list webhooks."""
         _status, body, _text = self._request(
             "GET", f"/repos/{full_name}/hooks"
@@ -453,17 +453,17 @@ class GitHubClient:
         full_name: str,
         *,
         url: str,
-        events: list[str],
+        events: List[str],
         content_type: str = "json",
         active: bool = True,
-        secret: str | None = None,
-    ) -> dict[str, Any]:
+        secret: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """POST /repos/{owner}/{repo}/hooks — create a webhook.
 
         Useful for wiring Stripe / Linear / Zapier callbacks into
         GitHub events like `push` or `release`.
         """
-        config: dict[str, Any] = {
+        config: Dict[str, Any] = {
             "url": url,
             "content_type": content_type,
         }
@@ -490,7 +490,7 @@ class GitHubClient:
     # -- GitHub Actions secrets -----------------------------------------
     def get_actions_public_key(
         self, full_name: str
-    ) -> tuple[str, str]:
+    ) -> Tuple[str, str]:
         """GET /repos/{owner}/{repo}/actions/secrets/public-key.
 
         Returns (key_id, key_base64). Required to encrypt secrets

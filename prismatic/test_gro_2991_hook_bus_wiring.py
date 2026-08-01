@@ -13,11 +13,13 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from pathlib import Path
 
 import pytest
 
 from prismatic.core.registry import PluginLoader
 from prismatic.telemetry import TelemetryCollector
+
 
 # ── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -40,7 +42,7 @@ def _wait_drain(db_path: str, table: str, timeout: float = 3.0) -> list[dict]:
     conn.row_factory = sqlite3.Row
     try:
         while time.monotonic() < deadline:
-            rows = conn.execute(f"SELECT * FROM {table}").fetchall()
+            rows = conn.execute(f"SELECT * FROM {table}").fetchall()  # noqa: S608
             if rows:
                 return [dict(r) for r in rows]
             time.sleep(0.05)
@@ -171,7 +173,7 @@ class TestExecuteHookTelemetry:
 
         # Force the import inside execute_hook to raise
         import sys as _sys
-
+        import prismatic.core.registry as reg_mod
 
         # Replace 'prismatic.telemetry' with a stub that explodes on get_collector
         class _BoomTelemetry:
