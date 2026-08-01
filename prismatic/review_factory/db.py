@@ -27,7 +27,6 @@ Usage
 
 from __future__ import annotations
 
-import json
 import os
 import sqlite3
 from contextlib import contextmanager
@@ -57,9 +56,7 @@ def _agy_default_state_dir() -> Path:
     during early module loading.  This MUST stay in sync with
     ``prismatic.agy_completed_work.default_state_dir()``.
     """
-    return Path(
-        os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state")
-    ).expanduser()
+    return Path(os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state")).expanduser()
 
 
 def default_db_path() -> Path:
@@ -279,13 +276,25 @@ class ReviewFactoryDB:
                     created_at, lease_owner, lease_expires_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    job.review_job_id, job.completed_work_id, job.task_id,
-                    job.repository, job.base_commit, job.base_tree,
-                    job.candidate_commit, job.candidate_tree,
-                    job.result_packet_path, job.result_packet_sha256,
-                    job.changed_paths_json, job.risk_tier, job.policy_version,
-                    job.state, job.required_witnesses, job.completed_witnesses,
-                    job.created_at, job.lease_owner, job.lease_expires_at,
+                    job.review_job_id,
+                    job.completed_work_id,
+                    job.task_id,
+                    job.repository,
+                    job.base_commit,
+                    job.base_tree,
+                    job.candidate_commit,
+                    job.candidate_tree,
+                    job.result_packet_path,
+                    job.result_packet_sha256,
+                    job.changed_paths_json,
+                    job.risk_tier,
+                    job.policy_version,
+                    job.state,
+                    job.required_witnesses,
+                    job.completed_witnesses,
+                    job.created_at,
+                    job.lease_owner,
+                    job.lease_expires_at,
                 ),
             )
         return job.review_job_id
@@ -317,6 +326,17 @@ class ReviewFactoryDB:
             )
         return [self._row_to_review_job(r) for r in cur.fetchall()]
 
+    def get_job_by_completed_work_id(
+        self, completed_work_id: str
+    ) -> Optional[ReviewJob]:
+        """Fetch job by completed_work_id via SQL index query."""
+        cur = self.conn.execute(
+            "SELECT * FROM review_jobs WHERE completed_work_id = ? LIMIT 1",
+            (completed_work_id,),
+        )
+        row = cur.fetchone()
+        return self._row_to_review_job(row) if row else None
+
     def update_review_job_state(
         self,
         review_job_id: str,
@@ -345,26 +365,38 @@ class ReviewFactoryDB:
                 """UPDATE review_jobs
                    SET state = ?, lease_owner = ?, lease_expires_at = ?
                    WHERE review_job_id = ? AND state = ?""",
-                (new_state.value, lease_owner, lease_expires_at,
-                 review_job_id, current.value),
+                (
+                    new_state.value,
+                    lease_owner,
+                    lease_expires_at,
+                    review_job_id,
+                    current.value,
+                ),
             )
             return cur.rowcount > 0
 
-    def increment_witnesses(self, review_job_id: str) -> int:
-        """Increment completed_witnesses.  Returns new count."""
+    def update_completed_witnesses(self, review_job_id: str) -> int:
+        """Recalculate completed_witnesses from distinct clean decision reviewers."""
         with self.transaction() as cur:
             cur.execute(
-                """UPDATE review_jobs
-                   SET completed_witnesses = completed_witnesses + 1
-                   WHERE review_job_id = ?""",
-                (review_job_id,),
-            )
-            cur.execute(
-                "SELECT completed_witnesses FROM review_jobs WHERE review_job_id = ?",
+                """SELECT COUNT(DISTINCT reviewer_id) as cnt
+                   FROM review_decisions
+                   WHERE review_job_id = ? AND verdict = 'clean'""",
                 (review_job_id,),
             )
             row = cur.fetchone()
-            return row["completed_witnesses"] if row else 0
+            cnt = row["cnt"] if row else 0
+            cur.execute(
+                """UPDATE review_jobs
+                   SET completed_witnesses = ?
+                   WHERE review_job_id = ?""",
+                (cnt, review_job_id),
+            )
+            return cnt
+
+    def increment_witnesses(self, review_job_id: str) -> int:
+        """Alias for update_completed_witnesses to preserve backward compatibility."""
+        return self.update_completed_witnesses(review_job_id)
 
     # ── verification_receipts CRUD ───────────────────────────────────
 
@@ -382,14 +414,20 @@ class ReviewFactoryDB:
                     created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    receipt.receipt_id, receipt.review_job_id,
-                    receipt.candidate_commit, receipt.candidate_tree,
+                    receipt.receipt_id,
+                    receipt.review_job_id,
+                    receipt.candidate_commit,
+                    receipt.candidate_tree,
                     receipt.immutable_archive_id,
-                    receipt.commands, receipt.exit_codes,
-                    receipt.log_paths, receipt.log_sha256,
+                    receipt.commands,
+                    receipt.exit_codes,
+                    receipt.log_paths,
+                    receipt.log_sha256,
                     receipt.changed_path_invariance_proof,
-                    receipt.classification, receipt.explicit_non_claims,
-                    receipt.baseline_failures, receipt.created_at,
+                    receipt.classification,
+                    receipt.explicit_non_claims,
+                    receipt.baseline_failures,
+                    receipt.created_at,
                 ),
             )
         return receipt.receipt_id
@@ -429,11 +467,17 @@ class ReviewFactoryDB:
                     idempotency_key, created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    decision.decision_id, decision.review_job_id,
-                    decision.reviewer_id, decision.reviewer_capability_version,
-                    decision.candidate_commit, decision.candidate_tree,
-                    decision.receipt_id, decision.verdict, decision.findings,
-                    decision.idempotency_key, decision.created_at,
+                    decision.decision_id,
+                    decision.review_job_id,
+                    decision.reviewer_id,
+                    decision.reviewer_capability_version,
+                    decision.candidate_commit,
+                    decision.candidate_tree,
+                    decision.receipt_id,
+                    decision.verdict,
+                    decision.findings,
+                    decision.idempotency_key,
+                    decision.created_at,
                 ),
             )
         return decision.decision_id
@@ -461,12 +505,20 @@ class ReviewFactoryDB:
                     expires_at, consumed_at, idempotency_key
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    auth.authorization_id, auth.review_job_id,
-                    auth.repository, auth.pr_number,
-                    auth.pr_head_commit, auth.pr_base_commit,
-                    auth.candidate_tree, auth.expected_merge_tree,
-                    auth.policy_version, auth.actor, auth.scope,
-                    auth.expires_at, auth.consumed_at, auth.idempotency_key,
+                    auth.authorization_id,
+                    auth.review_job_id,
+                    auth.repository,
+                    auth.pr_number,
+                    auth.pr_head_commit,
+                    auth.pr_base_commit,
+                    auth.candidate_tree,
+                    auth.expected_merge_tree,
+                    auth.policy_version,
+                    auth.actor,
+                    auth.scope,
+                    auth.expires_at,
+                    auth.consumed_at,
+                    auth.idempotency_key,
                 ),
             )
         return auth.authorization_id
@@ -508,17 +560,18 @@ class ReviewFactoryDB:
                     created_at
                 ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    packet.packet_id, packet.candidate_tree,
-                    packet.findings_json, packet.producer_id,
-                    packet.consumed_at, packet.resolution_attempt_n,
+                    packet.packet_id,
+                    packet.candidate_tree,
+                    packet.findings_json,
+                    packet.producer_id,
+                    packet.consumed_at,
+                    packet.resolution_attempt_n,
                     packet.created_at,
                 ),
             )
         return packet.packet_id
 
-    def get_unconsumed_repairs(
-        self, candidate_tree: str
-    ) -> list[RepairPacket]:
+    def get_unconsumed_repairs(self, candidate_tree: str) -> list[RepairPacket]:
         """Fetch unconsumed repair packets for a candidate."""
         cur = self.conn.execute(
             """SELECT * FROM repair_packets

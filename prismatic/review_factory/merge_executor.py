@@ -23,15 +23,12 @@ from __future__ import annotations
 
 import logging
 import sys
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 from prismatic.integrate import (
-    IntegratePhase,
     IntegrationManifest,
-    IntegrationStatus,
     integrate_pipeline_run,
 )
 from prismatic.merge_candidate_manifest import (
@@ -126,9 +123,7 @@ class MergeExecutor:
         # Validate authorization
         job = self.queue.db.get_review_job(job_id)
         if job is None:
-            return MergeResult(
-                job_id=job_id, success=False, error="Job not found"
-            )
+            return MergeResult(job_id=job_id, success=False, error="Job not found")
 
         auth = self.queue.db.get_authorization_for_job(job_id)
         if auth is None:
@@ -164,9 +159,7 @@ class MergeExecutor:
             self.queue.db.update_review_job_state(
                 job_id, ReviewJobState.MERGE_VERIFICATION_FAILED
             )
-            return MergeResult(
-                job_id=job_id, success=False, error=str(exc)
-            )
+            return MergeResult(job_id=job_id, success=False, error=str(exc))
 
         return result
 
@@ -186,17 +179,13 @@ class MergeExecutor:
         # Step 2: Mark merge eligible (CI_GREEN → MERGE_ELIGIBLE)
         if manifest.state == PromotionState.CI_GREEN:
             manifest = manifest.mark_merge_eligible()
-            logger.info(
-                "Manifest → MERGE_ELIGIBLE for %s", job.review_job_id
-            )
+            logger.info("Manifest → MERGE_ELIGIBLE for %s", job.review_job_id)
 
         # Step 3: Get factory bindings for attestation
-        bindings = manifest.factory_bindings()
+        manifest.factory_bindings()
 
         # Step 4: Transition factory job to merging
-        self.queue.db.update_review_job_state(
-            job.review_job_id, ReviewJobState.MERGING
-        )
+        self.queue.db.update_review_job_state(job.review_job_id, ReviewJobState.MERGING)
 
         if self.dry_run:
             logger.info("DRY RUN: would merge %s", job.review_job_id)
@@ -266,13 +255,9 @@ class MergeExecutor:
 
         # Step 8: Consume authorization and transition job
         self.queue.db.consume_authorization(auth.authorization_id)
-        self.queue.db.update_review_job_state(
-            job.review_job_id, ReviewJobState.MERGED
-        )
+        self.queue.db.update_review_job_state(job.review_job_id, ReviewJobState.MERGED)
 
-        logger.info(
-            "Merge complete: %s → %s", job.review_job_id, merge_sha
-        )
+        logger.info("Merge complete: %s → %s", job.review_job_id, merge_sha)
 
         return MergeResult(
             job_id=job.review_job_id,
@@ -321,8 +306,7 @@ class MergeExecutor:
                 return MergeCandidateManifest.read(path)
 
         raise FileNotFoundError(
-            f"No manifest found for job {job.review_job_id} "
-            f"at {job.result_packet_path}"
+            f"No manifest found for job {job.review_job_id} at {job.result_packet_path}"
         )
 
 
@@ -357,7 +341,7 @@ def _cli_approve(job_id: str) -> None:
     print(f"✅ Authorized: {job_id}")
     print(f"   Authorization ID: {auth_id}")
     print(f"   Tier: {job.risk_tier}")
-    print(f"   Expires: 60 minutes")
+    print("   Expires: 60 minutes")
     print()
     print("To execute the merge:")
     print(f"  python -m prismatic.review_factory.merge_executor merge {job_id}")
@@ -382,9 +366,7 @@ def _cli_merge(job_id: str, dry_run: bool = False) -> None:
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(
-        description="Review Factory Merge Executor CLI"
-    )
+    parser = argparse.ArgumentParser(description="Review Factory Merge Executor CLI")
     sub = parser.add_subparsers(dest="command")
 
     approve_parser = sub.add_parser("approve", help="Approve a Tier 2+ job")
@@ -392,9 +374,7 @@ if __name__ == "__main__":
 
     merge_parser = sub.add_parser("merge", help="Execute merge")
     merge_parser.add_argument("job_id", help="Review job ID")
-    merge_parser.add_argument(
-        "--dry-run", action="store_true", help="Dry-run mode"
-    )
+    merge_parser.add_argument("--dry-run", action="store_true", help="Dry-run mode")
 
     args = parser.parse_args()
 

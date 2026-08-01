@@ -22,7 +22,7 @@ This document defines the `review_decisions` table, capturing the structured out
 
 ## Structures & Constraints
 - **Idempotency Key**: Generated as `sha256(reviewer_id + candidate_tree + verdict)`. Guaranteed UNIQUE per decision to prevent duplicate reviews.
-- **Findings JSON Structure**: 
+- **Findings JSON Structure**:
   ```json
   [
     {

@@ -7,10 +7,6 @@ Tests exercise real PE integration by:
 4. Verifying the manifest advances from REVIEW_REQUIRED → CLEAN
 """
 
-import json
-
-import pytest
-
 from prismatic.merge_candidate_manifest import (
     MergeCandidateManifest,
     PromotionState,
@@ -29,7 +25,6 @@ from prismatic.review_factory.reviewer import (
     PreliminaryReviewAdapter,
     ReviewerCapability,
     StubReviewerCapability,
-    VERDICT_MAP,
 )
 
 
@@ -121,9 +116,7 @@ class TestPreliminaryReviewAdapter:
                 body="Function too long",
             ),
         ]
-        pr_result = _make_pr_result(
-            verdict=REQUEST_CHANGES, comments=comments
-        )
+        pr_result = _make_pr_result(verdict=REQUEST_CHANGES, comments=comments)
         findings = PreliminaryReviewAdapter.map_findings(pr_result)
         assert len(findings) == 1
         assert findings[0].path == "prismatic/core/router.py"

@@ -6,8 +6,6 @@ These tests exercise real PE integration by creating
 """
 
 import json
-import tempfile
-from pathlib import Path
 
 import pytest
 
@@ -15,10 +13,8 @@ from prismatic.merge_candidate_manifest import (
     MergeCandidateManifest,
     PromotionState,
     RiskTier,
-    VerificationEvidence,
 )
 from prismatic.review_factory.db import ReviewFactoryDB
-from prismatic.review_factory.models import ReviewJob, ReviewJobState
 from prismatic.review_factory.queue import ReviewQueue
 from prismatic.review_factory.verifier import VerificationWorker
 
@@ -133,7 +129,7 @@ class TestVerificationWithManifest:
         manifest = _create_tier_b_manifest()
         assert manifest.state == PromotionState.CANDIDATE
 
-        job_id = _create_review_job(queue, tier=1)
+        _ = _create_review_job(queue, tier=1)
         job = queue.lease_for_verification("verifier-1")
         assert job is not None
 
@@ -149,15 +145,22 @@ class TestVerificationWithManifest:
     def test_evidence_has_correct_structure(self, queue, worker):
         """Each VerificationEvidence has all required fields."""
         manifest = _create_tier_a_manifest()
-        job_id = _create_review_job(queue, tier=0)
+        _ = _create_review_job(queue, tier=0)
         job = queue.lease_for_verification("verifier-1")
 
         receipt, updated = worker.verify(job, manifest)
 
         for evidence in updated.verification_evidence:
-            assert evidence.proof_class in ("focused", "canonical", "package",
-                                            "failure", "recovery", "rollback",
-                                            "browser", "real_data")
+            assert evidence.proof_class in (
+                "focused",
+                "canonical",
+                "package",
+                "failure",
+                "recovery",
+                "rollback",
+                "browser",
+                "real_data",
+            )
             assert evidence.command != ""
             assert evidence.summary != ""
             assert evidence.result == "PASS"
@@ -167,7 +170,7 @@ class TestVerificationWithManifest:
     def test_receipt_captures_non_claims(self, queue, worker):
         """Receipt honestly records what was NOT tested."""
         manifest = _create_tier_a_manifest()
-        job_id = _create_review_job(queue, tier=0)
+        _ = _create_review_job(queue, tier=0)
         job = queue.lease_for_verification("verifier-1")
 
         receipt, _ = worker.verify(job, manifest)
@@ -181,7 +184,7 @@ class TestVerificationWithManifest:
     def test_invariance_proof_is_deterministic(self, queue, worker):
         """Same changed paths → same invariance proof."""
         manifest = _create_tier_a_manifest()
-        job_id = _create_review_job(queue, tier=0)
+        _ = _create_review_job(queue, tier=0)
         job = queue.lease_for_verification("verifier-1")
 
         receipt1, _ = worker.verify(job, manifest)
@@ -192,6 +195,7 @@ class TestVerificationWithManifest:
 
         # Recompute directly
         import hashlib
+
         canonical = json.dumps(sorted(["docs/readme.md"]), sort_keys=True)
         expected = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         assert proof1 == expected
@@ -220,7 +224,10 @@ class TestIntegrityInvariants:
         worker = VerificationWorker(repo_path=tmp_path)
         dummy_file = tmp_path / "prismatic/review_factory/verifier.py"
         dummy_file.parent.mkdir(parents=True, exist_ok=True)
-        dummy_file.write_text("from prismatic.merge_candidate_manifest import MergeCandidateManifest", encoding="utf-8")
+        dummy_file.write_text(
+            "from prismatic.merge_candidate_manifest import MergeCandidateManifest",
+            encoding="utf-8",
+        )
 
         res = worker._check_integration_imports(
             "prismatic/review_factory/verifier.py",
@@ -233,9 +240,14 @@ class TestIntegrityInvariants:
         worker = VerificationWorker(repo_path=tmp_path)
         test_file = tmp_path / "prismatic/review_factory/tests/test_verifier.py"
         test_file.parent.mkdir(parents=True, exist_ok=True)
-        test_file.write_text("from prismatic.review_factory.verifier import VerificationWorker\ndef test_stub(): assert True", encoding="utf-8")
+        test_file.write_text(
+            "from prismatic.review_factory.verifier import VerificationWorker\ndef test_stub(): assert True",
+            encoding="utf-8",
+        )
 
-        res = worker._check_circular_proof("prismatic/review_factory/tests/test_verifier.py")
+        res = worker._check_circular_proof(
+            "prismatic/review_factory/tests/test_verifier.py"
+        )
         assert not res.passed
         assert "circular proof" in res.stderr
 
@@ -244,9 +256,14 @@ class TestIntegrityInvariants:
         worker = VerificationWorker(repo_path=tmp_path)
         test_file = tmp_path / "prismatic/review_factory/tests/test_verifier.py"
         test_file.parent.mkdir(parents=True, exist_ok=True)
-        test_file.write_text("from prismatic.merge_candidate_manifest import MergeCandidateManifest\nfrom prismatic.review_factory.verifier import VerificationWorker", encoding="utf-8")
+        test_file.write_text(
+            "from prismatic.merge_candidate_manifest import MergeCandidateManifest\nfrom prismatic.review_factory.verifier import VerificationWorker",
+            encoding="utf-8",
+        )
 
-        res = worker._check_circular_proof("prismatic/review_factory/tests/test_verifier.py")
+        res = worker._check_circular_proof(
+            "prismatic/review_factory/tests/test_verifier.py"
+        )
         assert res.passed
 
     def test_missing_callsite_flagged(self, tmp_path):
@@ -254,7 +271,10 @@ class TestIntegrityInvariants:
         worker = VerificationWorker(repo_path=tmp_path)
         dummy_file = tmp_path / "prismatic/review_factory/verifier.py"
         dummy_file.parent.mkdir(parents=True, exist_ok=True)
-        dummy_file.write_text("from prismatic.merge_candidate_manifest import MergeCandidateManifest", encoding="utf-8")
+        dummy_file.write_text(
+            "from prismatic.merge_candidate_manifest import MergeCandidateManifest",
+            encoding="utf-8",
+        )
 
         res = worker._check_callsites(
             "prismatic/review_factory/verifier.py",
@@ -268,11 +288,13 @@ class TestIntegrityInvariants:
         worker = VerificationWorker(repo_path=tmp_path)
         dummy_file = tmp_path / "prismatic/review_factory/verifier.py"
         dummy_file.parent.mkdir(parents=True, exist_ok=True)
-        dummy_file.write_text("from prismatic.merge_candidate_manifest import MergeCandidateManifest\nmanifest.request_review(evidence)", encoding="utf-8")
+        dummy_file.write_text(
+            "from prismatic.merge_candidate_manifest import MergeCandidateManifest\nmanifest.request_review(evidence)",
+            encoding="utf-8",
+        )
 
         res = worker._check_callsites(
             "prismatic/review_factory/verifier.py",
             ["request_review"],
         )
         assert res.passed
-

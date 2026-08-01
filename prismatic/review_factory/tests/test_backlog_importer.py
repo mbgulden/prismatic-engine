@@ -7,8 +7,6 @@ Tests exercise real PE integration by:
 4. Verifying manifest-directory scanning
 """
 
-import json
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -16,7 +14,6 @@ import pytest
 from prismatic.agy_completed_work import (
     AgyCompletedWorkStore,
     CompletedWorkRow,
-    normalize_agy_result_packet,
 )
 from prismatic.review_factory.backlog_importer import BacklogImporter, ImportResult
 from prismatic.review_factory.db import ReviewFactoryDB
@@ -147,3 +144,43 @@ class TestManifestDirImport:
 
         assert result.scanned == 0
         assert result.enqueued == 0
+
+    def test_20_entry_manifest_replay_idempotency(self, tmp_path, queue):
+        """20-entry backlog manifest fixture replay is 100% idempotent."""
+        from prismatic.merge_candidate_manifest import MergeCandidateManifest, RiskTier
+
+        manifest_dir = tmp_path / "backlog_20"
+        manifest_dir.mkdir(parents=True, exist_ok=True)
+
+        for i in range(20):
+            entry_dir = manifest_dir / f"entry_{i:02d}"
+            entry_dir.mkdir(parents=True, exist_ok=True)
+            manifest = MergeCandidateManifest.create(
+                issue_id=f"GRO-200{i:02d}",
+                task_id=f"GRO-200{i:02d}",
+                task_file_sha256="0" * 64,
+                repository="mbgulden/prismatic-engine",
+                target="main",
+                base_sha="a" * 40,
+                candidate_sha=f"b{i:02d}".ljust(40, "0"),
+                changed_paths=[f"prismatic/module_{i:02d}.py"],
+                producer="agy",
+                preserved_candidate_location=f"/tmp/candidate_{i:02d}",
+                risk_tier=RiskTier.B,
+                dashboard_change=False,
+                required_ci_checks=["build"],
+            )
+            manifest.write(entry_dir / "merge_candidate.json")
+
+        importer = BacklogImporter(queue=queue)
+
+        # Run 1: imports all 20 entries
+        r1 = importer.import_from_manifest_dir(manifest_dir)
+        assert r1.scanned == 20
+        assert r1.enqueued == 20
+
+        # Run 2: replay on same queue -> 0 enqueued, 20 skipped duplicates
+        r2 = importer.import_from_manifest_dir(manifest_dir)
+        assert r2.scanned == 20
+        assert r2.enqueued == 0
+        assert r2.skipped_duplicate == 20

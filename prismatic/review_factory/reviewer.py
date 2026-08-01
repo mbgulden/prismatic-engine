@@ -21,7 +21,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from prismatic.merge_candidate_manifest import (
@@ -39,8 +38,6 @@ from prismatic.review import (
     PRReviewResult,
     PipelineOrchestrator,
     RealPRReviewer,
-    ReworkPayload,
-    build_rework_payload,
 )
 from prismatic.review_factory.models import (
     Finding,
@@ -119,13 +116,15 @@ class PreliminaryReviewAdapter:
             elif metadata.get("high_count", 0) > 0:
                 severity = "high"
 
-            findings.append(Finding(
-                severity=severity,
-                path=comment.path,
-                line=comment.line,
-                invariant=comment.body,
-                reproduction_command="",
-            ))
+            findings.append(
+                Finding(
+                    severity=severity,
+                    path=comment.path,
+                    line=comment.line,
+                    invariant=comment.body,
+                    reproduction_command="",
+                )
+            )
         return findings
 
 
@@ -208,9 +207,7 @@ class ReviewerCapability:
             receipt_id=receipt.receipt_id,
             verdict=factory_verdict.value,
             idempotency_key=idempotency_key,
-            findings=json.dumps(
-                [f.to_dict() for f in findings] if findings else []
-            ),
+            findings=json.dumps([f.to_dict() for f in findings] if findings else []),
         )
 
         # Step 6: Advance the manifest if clean
@@ -229,9 +226,7 @@ class ReviewerCapability:
                 conflict_free=True,
             )
             updated_manifest = manifest.record_review(independent_review)
-            logger.info(
-                "Manifest advanced to CLEAN for job %s", job.review_job_id
-            )
+            logger.info("Manifest advanced to CLEAN for job %s", job.review_job_id)
 
         elif factory_verdict == ReviewVerdict.REPAIR_REQUIRED:
             # Build repair packet using PipelineOrchestrator's rework payload
@@ -239,12 +234,8 @@ class ReviewerCapability:
             repair_packet = RepairPacket(
                 candidate_tree=job.candidate_tree or job.candidate_commit,
                 producer_id=job.completed_work_id,
-                findings_json=json.dumps(
-                    [f.to_dict() for f in findings]
-                ),
-                resolution_attempt_n=(
-                    rework.rework_attempt if rework else 1
-                ),
+                findings_json=json.dumps([f.to_dict() for f in findings]),
+                resolution_attempt_n=(rework.rework_attempt if rework else 1),
             )
             logger.info(
                 "Repair required for job %s (attempt %s)",
@@ -265,7 +256,6 @@ class ReviewerCapability:
         For now, construct a best-effort URL from the repository and branch.
         """
         repo = job.repository or "mbgulden/prismatic-engine"
-        branch = job.candidate_commit or "main"
         return f"https://github.com/{repo}/pull/{job.task_id}"
 
     @staticmethod
@@ -319,9 +309,7 @@ class StubReviewerCapability:
             receipt_id=receipt.receipt_id,
             verdict=self._verdict.value,
             idempotency_key=idempotency_key,
-            findings=json.dumps(
-                [f.to_dict() for f in self._findings]
-            ),
+            findings=json.dumps([f.to_dict() for f in self._findings]),
         )
 
         updated_manifest = manifest
@@ -343,9 +331,7 @@ class StubReviewerCapability:
             repair_packet = RepairPacket(
                 candidate_tree=job.candidate_tree or job.candidate_commit,
                 producer_id=job.completed_work_id,
-                findings_json=json.dumps(
-                    [f.to_dict() for f in self._findings]
-                ),
+                findings_json=json.dumps([f.to_dict() for f in self._findings]),
                 resolution_attempt_n=1,
             )
 

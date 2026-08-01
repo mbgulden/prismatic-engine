@@ -26,18 +26,15 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import subprocess
 import tempfile
-from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 from prismatic.merge_candidate_manifest import (
     MergeCandidateManifest,
-    RiskTier,
     VerificationEvidence,
 )
 from prismatic.review_factory.models import (
@@ -99,12 +96,12 @@ INTEGRATION_CALLSITE_CONTRACTS: dict[str, list[str]] = {
         "request_review",  # manifest.request_review(evidence)
     ],
     "prismatic/review_factory/reviewer.py": [
-        "review_pr",       # RealPRReviewer.review_pr()
-        "record_review",   # manifest.record_review(IndependentReview(...))
+        "review_pr",  # RealPRReviewer.review_pr()
+        "record_review",  # manifest.record_review(IndependentReview(...))
     ],
     "prismatic/review_factory/merge_executor.py": [
         "integrate_pipeline_run",  # or IntegratePhase
-        "mark_merged",             # manifest.mark_merged()
+        "mark_merged",  # manifest.mark_merged()
     ],
     "prismatic/review_factory/backlog_importer.py": [
         "AgyCompletedWorkStore",  # instantiated and used
@@ -144,9 +141,7 @@ class VerificationWorker:
         log_dir: Optional[Path] = None,
     ):
         self.repo_path = repo_path or Path(".")
-        self.log_dir = log_dir or Path(
-            tempfile.mkdtemp(prefix="rf-verify-")
-        )
+        self.log_dir = log_dir or Path(tempfile.mkdtemp(prefix="rf-verify-"))
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
     def verify(
@@ -164,7 +159,11 @@ class VerificationWorker:
             ManifestValidationError: if evidence doesn't satisfy risk tier.
         """
         # Determine required proof classes from the manifest's risk tier
-        tier_str = manifest.risk_tier.value if hasattr(manifest.risk_tier, "value") else str(manifest.risk_tier)
+        tier_str = (
+            manifest.risk_tier.value
+            if hasattr(manifest.risk_tier, "value")
+            else str(manifest.risk_tier)
+        )
         required = set(_PROOF_REQUIREMENTS.get(tier_str, {"focused"}))
         if manifest.dashboard_change:
             required |= _DASHBOARD_EXTRA
@@ -172,9 +171,7 @@ class VerificationWorker:
         # Run checks for each required proof class
         results: list[CheckResult] = []
         for proof_class in sorted(required):
-            result = self._run_proof_class(
-                proof_class, job, manifest
-            )
+            result = self._run_proof_class(proof_class, job, manifest)
             results.append(result)
 
         # ── Run the three integrity invariants ────────────────────────
@@ -214,9 +211,7 @@ class VerificationWorker:
         updated_manifest = manifest.request_review(evidence_list)
 
         # Build our internal VerificationReceipt (for factory audit trail)
-        invariance_proof = self._compute_invariance_proof(
-            list(manifest.changed_paths)
-        )
+        invariance_proof = self._compute_invariance_proof(list(manifest.changed_paths))
         receipt = VerificationReceipt(
             review_job_id=job.review_job_id,
             candidate_commit=job.candidate_commit,
@@ -228,18 +223,14 @@ class VerificationWorker:
             classification=self._classify_verification(results),
             changed_path_invariance_proof=invariance_proof,
             explicit_non_claims=json.dumps(non_claims),
-            baseline_failures=json.dumps(
-                self._compute_baseline_failures(results)
-            ),
+            baseline_failures=json.dumps(self._compute_baseline_failures(results)),
         )
 
         return receipt, updated_manifest
 
     # ── Integrity Invariants (the three catches) ─────────────────────
 
-    def _run_integrity_invariants(
-        self, job: ReviewJob
-    ) -> list[CheckResult]:
+    def _run_integrity_invariants(self, job: ReviewJob) -> list[CheckResult]:
         """Run the three integration integrity checks.
 
         These three checks cost ~0.7 seconds total and catch:
@@ -269,7 +260,7 @@ class VerificationWorker:
                 # For non-test source files, find their test file
                 # and check IT for circular proofs
                 test_path = self._derive_test_path(path)
-                if test_path:
+                if test_path and (self.repo_path / test_path).exists():
                     result = self._check_circular_proof(test_path)
                     results.append(result)
 
@@ -294,10 +285,10 @@ class VerificationWorker:
             return CheckResult(
                 name=f"integration-import:{Path(path).stem}",
                 proof_class="focused",
-                command=f"grep -c '{expected_imports[0]}' {path}",
-                exit_code=0,
-                stdout=f"File {path} not found in repo_path — skipped",
-                passed=True,
+                command=f"test -f {path}",
+                exit_code=1,
+                stderr=f"File {path} not found in repo_path — check failed",
+                passed=False,
             )
 
         try:
@@ -351,10 +342,10 @@ class VerificationWorker:
             return CheckResult(
                 name=f"circular-proof:{Path(test_path).stem}",
                 proof_class="focused",
-                command=f"grep PE-surface-import {test_path}",
-                exit_code=0,
-                stdout=f"Test file {test_path} not found in repo_path — skipped",
-                passed=True,
+                command=f"test -f {test_path}",
+                exit_code=1,
+                stderr=f"Test file {test_path} not found in repo_path — check failed",
+                passed=False,
             )
 
         try:
@@ -377,9 +368,7 @@ class VerificationWorker:
             r"from prismatic\.agy_completed_work\b",
         ]
 
-        has_external = any(
-            re.search(pat, content) for pat in external_pe_patterns
-        )
+        has_external = any(re.search(pat, content) for pat in external_pe_patterns)
 
         if not has_external:
             return CheckResult(
@@ -404,9 +393,7 @@ class VerificationWorker:
             passed=True,
         )
 
-    def _check_callsites(
-        self, path: str, expected_calls: list[str]
-    ) -> CheckResult:
+    def _check_callsites(self, path: str, expected_calls: list[str]) -> CheckResult:
         """Invariant 3: Verify the imported PE function is actually called.
 
         Import-but-don't-use is a subtler hollow pattern — the module
@@ -420,10 +407,10 @@ class VerificationWorker:
             return CheckResult(
                 name=f"callsite:{Path(path).stem}",
                 proof_class="focused",
-                command=f"grep -n callsite {path}",
-                exit_code=0,
-                stdout=f"File {path} not found in repo_path — skipped",
-                passed=True,
+                command=f"test -f {path}",
+                exit_code=1,
+                stderr=f"File {path} not found in repo_path — check failed",
+                passed=False,
             )
 
         try:
@@ -440,10 +427,7 @@ class VerificationWorker:
         # Search for each expected function call in the source
         # (excluding comments and docstrings is overkill for v1 —
         #  a grep for the function name suffices)
-        missing = [
-            fn for fn in expected_calls
-            if fn not in content
-        ]
+        missing = [fn for fn in expected_calls if fn not in content]
 
         if missing:
             return CheckResult(
@@ -491,9 +475,7 @@ class VerificationWorker:
         cmd = commands.get(proof_class, f"echo 'unknown proof class: {proof_class}'")
         return self._execute_check(proof_class, proof_class, cmd)
 
-    def _execute_check(
-        self, name: str, proof_class: str, command: str
-    ) -> CheckResult:
+    def _execute_check(self, name: str, proof_class: str, command: str) -> CheckResult:
         """Execute a check command and capture results."""
         log_path = str(self.log_dir / f"{name}.log")
 
@@ -629,18 +611,25 @@ class VerificationWorker:
         return "bounded_regression"
 
     @staticmethod
-    def _compute_non_claims(
-        job: ReviewJob, results: list[CheckResult]
-    ) -> list[str]:
+    def _compute_non_claims(job: ReviewJob, results: list[CheckResult]) -> list[str]:
         """Honest about what was NOT tested."""
         non_claims = []
 
         # Integrity invariant failures become explicit non-claims
         for r in results:
-            if not r.passed and r.name.startswith(("integration-import:", "circular-proof:", "callsite:")):
+            if not r.passed and r.name.startswith(
+                ("integration-import:", "circular-proof:", "callsite:")
+            ):
                 non_claims.append(r.stderr)
 
-        failed = [r for r in results if not r.passed and not r.name.startswith(("integration-import:", "circular-proof:", "callsite:"))]
+        failed = [
+            r
+            for r in results
+            if not r.passed
+            and not r.name.startswith(
+                ("integration-import:", "circular-proof:", "callsite:")
+            )
+        ]
         if failed:
             non_claims.append(
                 f"The following checks failed: {', '.join(r.name for r in failed)}"

@@ -7,8 +7,6 @@ Required: 3/3 PASS minimum + enqueue_completed_work returns a UUID.
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -17,18 +15,17 @@ import pytest
 
 # Ensure the test can find the prismatic package
 import sys
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from prismatic.review_factory.db import ReviewFactoryDB
 from prismatic.review_factory.models import (
     ReviewDecision,
-    ReviewJob,
     ReviewJobState,
     ReviewVerdict,
     RiskTier,
     VerificationReceipt,
 )
-from prismatic.review_factory.policy import PolicyEngine
 from prismatic.review_factory.queue import ReviewQueue
 
 
@@ -182,7 +179,7 @@ class TestStateTransitions:
         )
 
         # Verify
-        job = queue.lease_for_verification("verifier-1")
+        _ = queue.lease_for_verification("verifier-1")
         receipt = VerificationReceipt(
             review_job_id=job_id,
             candidate_commit="bbbb",
@@ -191,7 +188,7 @@ class TestStateTransitions:
         queue.complete_verification(job_id, receipt)
 
         # Review → repair_required
-        job = queue.lease_for_review("agy-v1.0")
+        _ = queue.lease_for_review("agy-v1.0")
         decision = ReviewDecision(
             review_job_id=job_id,
             reviewer_id="agy-v1.0",
@@ -199,13 +196,17 @@ class TestStateTransitions:
             candidate_tree="bbbb",
             receipt_id=receipt.receipt_id,
             verdict=ReviewVerdict.REPAIR_REQUIRED.value,
-            findings=json.dumps([{
-                "severity": "error",
-                "path": "prismatic/core/router.py",
-                "line": 42,
-                "invariant": "missing error handling",
-                "reproduction_command": "pytest tests/test_router.py -k test_error",
-            }]),
+            findings=json.dumps(
+                [
+                    {
+                        "severity": "error",
+                        "path": "prismatic/core/router.py",
+                        "line": 42,
+                        "invariant": "missing error handling",
+                        "reproduction_command": "pytest tests/test_router.py -k test_error",
+                    }
+                ]
+            ),
         )
         new_state = queue.submit_verdict(job_id, decision)
         assert new_state == ReviewJobState.REPAIR_REQUIRED.value
@@ -228,7 +229,7 @@ class TestLeaseManagement:
         """Concurrent reviewer cap (3) is enforced."""
         # Enqueue 4 jobs
         for i in range(4):
-            job_id = queue.enqueue_completed_work(
+            _ = queue.enqueue_completed_work(
                 completed_work_id=f"agy-cw-cap-{i}",
                 task_id=f"GRO-{i}",
                 repository="mbgulden/prismatic-engine",

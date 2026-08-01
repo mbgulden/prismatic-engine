@@ -41,9 +41,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Optional
 
 from prismatic.review_factory.db import ReviewFactoryDB
@@ -139,11 +137,10 @@ class ReviewQueue:
         Idempotent: if a job already exists for this
         ``completed_work_id``, returns the existing job ID.
         """
-        # Idempotency check: don't re-enqueue
-        existing = self.db.list_review_jobs(limit=1000)
-        for job in existing:
-            if job.completed_work_id == completed_work_id:
-                return job.review_job_id
+        # Idempotency check via SQL index query
+        existing = self.db.get_job_by_completed_work_id(completed_work_id)
+        if existing:
+            return existing.review_job_id
 
         # Classify risk tier
         paths = changed_paths or []
@@ -175,9 +172,7 @@ class ReviewQueue:
 
     # ── Verification lease (RF-2 uses this) ──────────────────────────
 
-    def lease_for_verification(
-        self, worker_id: str
-    ) -> Optional[ReviewJob]:
+    def lease_for_verification(self, worker_id: str) -> Optional[ReviewJob]:
         """Lease the oldest queued job for verification.
 
         Returns the job if one was leased, None if the queue is empty.
@@ -222,9 +217,7 @@ class ReviewQueue:
 
     # ── Review lease (RF-3 uses this) ────────────────────────────────
 
-    def lease_for_review(
-        self, reviewer_id: str
-    ) -> Optional[ReviewJob]:
+    def lease_for_review(self, reviewer_id: str) -> Optional[ReviewJob]:
         """Lease the oldest review-ready job for review.
 
         Enforces the concurrent reviewer cap (default: 3).
@@ -237,9 +230,7 @@ class ReviewQueue:
         if len(reviewing) >= _REVIEWER_CAP:
             return None  # pool exhausted
 
-        jobs = self.db.list_review_jobs(
-            state=ReviewJobState.REVIEW_READY, limit=1
-        )
+        jobs = self.db.list_review_jobs(state=ReviewJobState.REVIEW_READY, limit=1)
         if not jobs:
             return None
 
@@ -292,22 +283,28 @@ class ReviewQueue:
             if new_witnesses >= job.required_witnesses:
                 # All witnesses complete → merge_ready
                 self.db.update_review_job_state(
-                    review_job_id, ReviewJobState.MERGE_READY,
-                    lease_owner="", lease_expires_at="",
+                    review_job_id,
+                    ReviewJobState.MERGE_READY,
+                    lease_owner="",
+                    lease_expires_at="",
                 )
                 return ReviewJobState.MERGE_READY.value
             else:
                 # Need more witnesses → back to review_ready
                 self.db.update_review_job_state(
-                    review_job_id, ReviewJobState.REVIEW_READY,
-                    lease_owner="", lease_expires_at="",
+                    review_job_id,
+                    ReviewJobState.REVIEW_READY,
+                    lease_owner="",
+                    lease_expires_at="",
                 )
                 return ReviewJobState.REVIEW_READY.value
 
         elif verdict == ReviewVerdict.REPAIR_REQUIRED:
             self.db.update_review_job_state(
-                review_job_id, ReviewJobState.REPAIR_REQUIRED,
-                lease_owner="", lease_expires_at="",
+                review_job_id,
+                ReviewJobState.REPAIR_REQUIRED,
+                lease_owner="",
+                lease_expires_at="",
             )
             # Create a repair packet for the producer
             packet = RepairPacket(
@@ -320,8 +317,10 @@ class ReviewQueue:
 
         elif verdict == ReviewVerdict.REJECTED:
             self.db.update_review_job_state(
-                review_job_id, ReviewJobState.REJECTED,
-                lease_owner="", lease_expires_at="",
+                review_job_id,
+                ReviewJobState.REJECTED,
+                lease_owner="",
+                lease_expires_at="",
             )
             return ReviewJobState.REJECTED.value
 
@@ -384,8 +383,10 @@ class ReviewQueue:
 
         # Transition to merge_authorized
         self.db.update_review_job_state(
-            review_job_id, ReviewJobState.MERGE_AUTHORIZED,
-            lease_owner="", lease_expires_at="",
+            review_job_id,
+            ReviewJobState.MERGE_AUTHORIZED,
+            lease_owner="",
+            lease_expires_at="",
         )
         return auth_id
 
@@ -436,8 +437,10 @@ class ReviewQueue:
         # Note: we need to update candidate fields + re-classify
         # For now, transition back to queued
         return self.db.update_review_job_state(
-            review_job_id, ReviewJobState.QUEUED,
-            lease_owner="", lease_expires_at="",
+            review_job_id,
+            ReviewJobState.QUEUED,
+            lease_owner="",
+            lease_expires_at="",
         )
 
     # ── Janitor ──────────────────────────────────────────────────────

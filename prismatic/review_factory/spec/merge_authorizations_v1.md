@@ -26,6 +26,6 @@ This document defines the `merge_authorizations` table, controlling the final st
 - **Auto-Authorization**: Tier 0 and Tier 1 automatically generate a `merge_authorization` record (`scope: tier-X-auto`). NO human intervention ("Michael click") required.
 - **Human Exception**: Tier 2+ explicitly requires human authorization via CLI:
   `python -m prismatic.merge_executor approve <id>`
-- **Lifecycle**: 
+- **Lifecycle**:
   - `expires_at` restricts the validity window of an authorization.
   - `consumed_at` is set idempotently when the merge executor acts upon the authorization.

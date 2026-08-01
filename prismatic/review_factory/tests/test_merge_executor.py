@@ -8,8 +8,6 @@ Uses dry_run=True since we can't run ``integrate_pipeline_run()``
 in a test without a real git repository.
 """
 
-import json
-
 import pytest
 
 from prismatic.merge_candidate_manifest import (
@@ -21,12 +19,9 @@ from prismatic.merge_candidate_manifest import (
     VerificationEvidence,
 )
 from prismatic.review_factory.db import ReviewFactoryDB
-from prismatic.review_factory.merge_executor import MergeExecutor, MergeResult
+from prismatic.review_factory.merge_executor import MergeExecutor
 from prismatic.review_factory.models import (
-    MergeAuthorization,
-    MergeScope,
     ReviewDecision,
-    ReviewJobState,
     ReviewVerdict,
     VerificationReceipt,
 )
@@ -100,7 +95,7 @@ def _create_merge_ready_job(queue: ReviewQueue, tier: int = 0) -> str:
     )
 
     # Verify
-    job = queue.lease_for_verification("verifier-1")
+    _ = queue.lease_for_verification("verifier-1")
     receipt = VerificationReceipt(
         review_job_id=job_id,
         candidate_commit="b" * 40,

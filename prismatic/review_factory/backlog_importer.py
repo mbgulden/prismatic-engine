@@ -19,20 +19,17 @@ Usage
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 from prismatic.agy_completed_work import (
     AgyCompletedWorkStore,
     CompletedWorkRow,
-    default_db_path,
 )
 from prismatic.merge_candidate_manifest import (
     MergeCandidateManifest,
-    RiskTier,
 )
 from prismatic.review_factory.queue import ReviewQueue
 
@@ -66,9 +63,7 @@ class BacklogImporter:
         self.queue = queue or ReviewQueue()
         self._db_path = db_path
 
-    def import_from_completed_work(
-        self, limit: int = 50
-    ) -> ImportResult:
+    def import_from_completed_work(self, limit: int = 50) -> ImportResult:
         """Import eligible completed work into the review queue.
 
         Reads ``AgyCompletedWorkStore.list()`` and filters for:
@@ -90,9 +85,7 @@ class BacklogImporter:
             try:
                 self._process_row(row, result)
             except Exception as exc:
-                result.errors.append(
-                    f"Error processing {row.id}: {exc}"
-                )
+                result.errors.append(f"Error processing {row.id}: {exc}")
                 logger.warning("Import error for %s: %s", row.id, exc)
 
         logger.info(
@@ -108,9 +101,7 @@ class BacklogImporter:
 
         return result
 
-    def _process_row(
-        self, row: CompletedWorkRow, result: ImportResult
-    ) -> None:
+    def _process_row(self, row: CompletedWorkRow, result: ImportResult) -> None:
         """Process a single CompletedWorkRow for import."""
         # Filter 1: integration classification
         if row.integration_classification != "pass_ready_for_review":
@@ -133,30 +124,21 @@ class BacklogImporter:
             or packet.get("issue_identifier")
             or packet.get("scope", "")
         )
-        repository = packet.get(
-            "repository", "mbgulden/prismatic-engine"
-        )
-        base_commit = (
-            packet.get("base_commit")
-            or row.base_branch
-            or "main"
-        )
-        candidate_commit = (
-            packet.get("candidate_commit")
-            or row.source_branch
-            or ""
-        )
-        changed_paths = list(
-            packet.get("changed_files", [])
-        )
+        repository = packet.get("repository", "mbgulden/prismatic-engine")
+        base_commit = packet.get("base_commit") or row.base_branch or "main"
+        candidate_commit = packet.get("candidate_commit") or row.source_branch or ""
+        changed_paths = list(packet.get("changed_files", []))
 
         # Optional: result_packet_path for manifest loading
-        result_packet_path = (
-            packet.get("result_packet_path")
-            or packet.get("source_path")
+        result_packet_path = packet.get("result_packet_path") or packet.get(
+            "source_path"
         )
 
-        # Enqueue (idempotent by completed_work_id)
+        existing = self.queue.db.get_job_by_completed_work_id(completed_work_id)
+        if existing:
+            result.skipped_duplicate += 1
+            return
+
         job_id = self.queue.enqueue_completed_work(
             completed_work_id=completed_work_id,
             task_id=task_id,
@@ -166,18 +148,10 @@ class BacklogImporter:
             changed_paths=changed_paths,
             result_packet_path=result_packet_path,
         )
-
         if job_id:
             result.enqueued += 1
-            logger.debug(
-                "Enqueued %s as job %s", completed_work_id, job_id
-            )
-        else:
-            result.skipped_duplicate += 1
 
-    def import_from_manifest_dir(
-        self, manifest_dir: Path
-    ) -> ImportResult:
+    def import_from_manifest_dir(self, manifest_dir: Path) -> ImportResult:
         """Import from a directory of merge_candidate.json files.
 
         Scans ``manifest_dir`` for ``merge_candidate.json`` files,
@@ -197,12 +171,8 @@ class BacklogImporter:
                 manifest = MergeCandidateManifest.read(manifest_path)
                 self._process_manifest(manifest, manifest_path, result)
             except Exception as exc:
-                result.errors.append(
-                    f"Error reading {manifest_path}: {exc}"
-                )
-                logger.warning(
-                    "Manifest import error for %s: %s", manifest_path, exc
-                )
+                result.errors.append(f"Error reading {manifest_path}: {exc}")
+                logger.warning("Manifest import error for %s: %s", manifest_path, exc)
 
         return result
 
@@ -223,10 +193,14 @@ class BacklogImporter:
             result.skipped_ineligible += 1
             return
 
-        result.eligible += 1
+        work_id = f"manifest-{manifest.digest()[:16]}"
+        existing = self.queue.db.get_job_by_completed_work_id(work_id)
+        if existing:
+            result.skipped_duplicate += 1
+            return
 
         job_id = self.queue.enqueue_completed_work(
-            completed_work_id=f"manifest-{manifest.digest()[:16]}",
+            completed_work_id=work_id,
             task_id=manifest.issue_id,
             repository=manifest.repository,
             base_commit=manifest.base_sha,
@@ -237,5 +211,3 @@ class BacklogImporter:
 
         if job_id:
             result.enqueued += 1
-        else:
-            result.skipped_duplicate += 1

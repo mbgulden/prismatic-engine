@@ -22,17 +22,17 @@ Usage
 from __future__ import annotations
 
 import fnmatch
-import os
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from prismatic.review_factory.models import RiskTier
 
 # Try to import PyYAML; fall back to a basic parser if unavailable
 try:
     import yaml
+
     _HAS_YAML = True
 except ImportError:
     _HAS_YAML = False
@@ -162,8 +162,10 @@ class PolicyEngine:
             PolicyRule(
                 rule_id="tier-3-prod",
                 match_paths=(
-                    "deploy/**", "systemd/**",
-                    "**/credentials*", "**/secrets/**",
+                    "deploy/**",
+                    "systemd/**",
+                    "**/credentials*",
+                    "**/secrets/**",
                 ),
                 risk_tier=3,
                 required_witnesses=2,
@@ -172,8 +174,10 @@ class PolicyEngine:
             PolicyRule(
                 rule_id="tier-2-auth",
                 match_paths=(
-                    "prismatic/auth/**", "prismatic/migrations/**",
-                    "prismatic/**/sqlite*", "prismatic/gateway/auth*",
+                    "prismatic/auth/**",
+                    "prismatic/migrations/**",
+                    "prismatic/**/sqlite*",
+                    "prismatic/gateway/auth*",
                 ),
                 risk_tier=2,
                 required_witnesses=2,
@@ -182,8 +186,10 @@ class PolicyEngine:
             PolicyRule(
                 rule_id="tier-2-git-mutation",
                 match_paths=(
-                    "prismatic/review/**", "prismatic/merge_executor*",
-                    "prismatic/policy/**", "prismatic/review_factory/**",
+                    "prismatic/review/**",
+                    "prismatic/merge_executor*",
+                    "prismatic/policy/**",
+                    "prismatic/review_factory/**",
                 ),
                 risk_tier=2,
                 required_witnesses=2,
@@ -192,7 +198,10 @@ class PolicyEngine:
             PolicyRule(
                 rule_id="tier-0-docs",
                 match_paths=(
-                    "docs/**", "*.md", "fixtures/**", "**/test_data/**",
+                    "docs/**",
+                    "*.md",
+                    "fixtures/**",
+                    "**/test_data/**",
                 ),
                 risk_tier=0,
                 witness_required=False,
@@ -202,7 +211,8 @@ class PolicyEngine:
             PolicyRule(
                 rule_id="tier-0-generated",
                 match_paths=(
-                    "**/generated/**", "**/*.pb.go",
+                    "**/generated/**",
+                    "**/*.pb.go",
                     "**/schema_generated*",
                 ),
                 risk_tier=0,
@@ -290,7 +300,9 @@ class PolicyEngine:
         escalated = False
         escalation_reason = ""
         if not matched_rules or max_tier <= RiskTier.STANDARD:
-            high_risk_unmatched = [p for p in unmatched_paths if _has_high_risk_signal(p)]
+            high_risk_unmatched = [
+                p for p in unmatched_paths if _has_high_risk_signal(p)
+            ]
             if high_risk_unmatched:
                 escalated = True
                 max_tier = max(max_tier, RiskTier.SENSITIVE)
@@ -309,9 +321,7 @@ class PolicyEngine:
             escalation_reason=escalation_reason,
         )
 
-    def classify_with_witnesses(
-        self, changed_paths: list[str]
-    ) -> tuple[int, int]:
+    def classify_with_witnesses(self, changed_paths: list[str]) -> tuple[int, int]:
         """Convenience: return (risk_tier, required_witnesses)."""
         result = self.classify(changed_paths)
         return result.risk_tier, result.required_witnesses
