@@ -7,7 +7,9 @@ import json
 import tempfile
 from pathlib import Path
 
+import os
 import pytest
+os.environ["PRISMATIC_ALLOW_DEFAULT_HMAC"] = "1"
 
 from pe.deploy.health import PostDeployHealthChecker
 from pe.deploy.integrate import AtomicDeployRunner
@@ -79,6 +81,31 @@ class TestLinearDeployTransitioner:
         assert len(receipts) == 1
         assert receipts[0].issue_id == "GRO-4188"
         assert receipts[0].success is True
+
+    def test_durable_linear_transitions_store(self, tmp_path):
+        from pe.deploy.linear_transition import LinearTransitionsStore
+        db_file = tmp_path / "linear_transitions.json"
+        store1 = LinearTransitionsStore(db_path=db_file)
+        trans1 = LinearDeployTransitioner(dry_run=True, store=store1)
+
+        receipts1 = trans1.transition_issues_for_deploy(
+            deploy_id="dep-1",
+            pr_sha="a" * 40,
+            pr_title="Merge GRO-4188 fix",
+        )
+        assert receipts1[0].linear_response.get("status") == "dry_run"
+
+        # Re-instantiate store from same file (simulating server restart)
+        store2 = LinearTransitionsStore(db_path=db_file)
+        trans2 = LinearDeployTransitioner(dry_run=True, store=store2)
+
+        receipts2 = trans2.transition_issues_for_deploy(
+            deploy_id="dep-2",
+            pr_sha="a" * 40,
+            pr_title="Merge GRO-4188 fix",
+        )
+        # Should be deduplicated via durable store!
+        assert receipts2[0].linear_response.get("status") == "idempotent_dedupe"
 
 
 class TestAtomicDeployRunner:

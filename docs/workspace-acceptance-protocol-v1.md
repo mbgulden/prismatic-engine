@@ -49,6 +49,20 @@ Available skip reason tags:
 - `deprecated-doc`
 - `missing-replacement`
 
+## Operator Manual Override Runbook
+
+If a document fails automated acceptance checks but needs to be displayed to operators (e.g. legacy research notes or draft specs):
+
+1. **Frontmatter Override Tag**: Add `acceptance.skip_reasons` tags directly into document frontmatter.
+2. **REST API Manual Override**:
+   ```bash
+   curl -X POST "http://localhost:8000/api/workspace/acceptance/override?path=docs/my-doc.md&reason=Approved+by+Operator"
+   ```
+3. **Share Link Revocation**:
+   ```bash
+   curl -X DELETE "http://localhost:8000/api/workspace/share/<TOKEN>"
+   ```
+
 ## Execution Engine
 
-Implemented in `prismatic.workspace.acceptance.AcceptanceProtocol`. Validation runs statelessly and idempotently.
+Implemented in `prismatic.workspace.acceptance.AcceptanceProtocol`. Validation runs statelessly and idempotently with a 60-second tree cache.
