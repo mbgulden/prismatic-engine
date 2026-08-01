@@ -230,6 +230,18 @@ class MergeExecutor:
                 job.review_job_id, ReviewJobState.MERGED
             )
 
+            from prismatic.review_factory.events import emit_rf_event
+
+            emit_rf_event(
+                "review_factory.merge_completed",
+                {
+                    "review_job_id": job.review_job_id,
+                    "task_id": job.task_id,
+                    "merge_sha": merge_sha,
+                    "actor": auth.actor,
+                },
+            )
+
             return MergeResult(
                 job_id=job.review_job_id,
                 success=True,

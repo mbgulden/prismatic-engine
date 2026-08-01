@@ -57,6 +57,7 @@ from prismatic.review_factory.models import (
     RiskTier,
     VerificationReceipt,
 )
+from prismatic.review_factory.events import emit_rf_event
 from prismatic.review_factory.policy import PolicyEngine
 
 logger = logging.getLogger(__name__)
@@ -171,7 +172,17 @@ class ReviewQueue:
             state=ReviewJobState.QUEUED.value,
         )
 
-        return self.db.insert_review_job(job)
+        job_id = self.db.insert_review_job(job)
+        emit_rf_event(
+            "review_factory.job_enqueued",
+            {
+                "review_job_id": job_id,
+                "task_id": task_id,
+                "risk_tier": classification.risk_tier,
+                "repository": repository,
+            },
+        )
+        return job_id
 
     # ── Verification lease (RF-2 uses this) ──────────────────────────
 
@@ -211,12 +222,29 @@ class ReviewQueue:
         Transitions the job to ``review_ready``.
         """
         self.db.insert_receipt(receipt)
-        return self.db.update_review_job_state(
+        updated = self.db.update_review_job_state(
             review_job_id,
             ReviewJobState.REVIEW_READY,
             lease_owner="",
             lease_expires_at="",
         )
+        if updated:
+            emit_rf_event(
+                "review_factory.receipt_issued",
+                {
+                    "review_job_id": review_job_id,
+                    "receipt_id": receipt.receipt_id,
+                    "classification": receipt.classification,
+                },
+            )
+            emit_rf_event(
+                "review_factory.job_state_changed",
+                {
+                    "review_job_id": review_job_id,
+                    "new_state": ReviewJobState.REVIEW_READY.value,
+                },
+            )
+        return updated
 
     # ── Review lease (RF-3 uses this) ────────────────────────────────
 
@@ -396,6 +424,28 @@ class ReviewQueue:
             lease_owner="",
             lease_expires_at="",
         )
+        emit_rf_event(
+            "review_factory.authorization_created",
+            {
+                "review_job_id": review_job_id,
+                "authorization_id": auth_id,
+                "actor": actor,
+                "scope": scope.value,
+            },
+        )
+        emit_rf_event(
+            "review_factory.job_state_changed",
+            {
+                "review_job_id": review_job_id,
+                "new_state": ReviewJobState.MERGE_AUTHORIZED.value,
+            },
+        )
+        self.db.insert_audit_entry(
+            actor=actor,
+            action="authorize_merge",
+            review_job_id=review_job_id,
+            details={"authorization_id": auth_id, "scope": scope.value},
+        )
         return auth_id
 
     # ── Repair cycle ─────────────────────────────────────────────────
@@ -435,13 +485,67 @@ class ReviewQueue:
 
     # ── Janitor ──────────────────────────────────────────────────────
 
-    def run_janitor(self) -> dict[str, int]:
+    def force_release_lease(
+        self, review_job_id: str, actor: str = "operator", client_ip: str = ""
+    ) -> bool:
+        """Force-release a stuck lease on a review job."""
+        job = self.db.get_review_job(review_job_id)
+        if job is None:
+            return False
+
+        new_state = job.state
+        if job.state == ReviewJobState.VERIFYING.value:
+            new_state = ReviewJobState.QUEUED.value
+        elif job.state == ReviewJobState.REVIEWING.value:
+            new_state = ReviewJobState.REVIEW_READY.value
+        else:
+            return False
+
+        updated = self.db.update_review_job_state(
+            review_job_id,
+            new_state,
+            lease_owner="",
+            lease_expires_at="",
+        )
+        if updated:
+            self.db.insert_audit_entry(
+                actor=actor,
+                action="force_release_lease",
+                review_job_id=review_job_id,
+                client_ip=client_ip,
+                details={
+                    "previous_state": job.state,
+                    "new_state": new_state,
+                    "previous_owner": job.lease_owner,
+                },
+            )
+            emit_rf_event(
+                "review_factory.job_state_changed",
+                {"review_job_id": review_job_id, "new_state": new_state},
+            )
+        return updated
+
+    def run_janitor(
+        self, actor: str = "operator", client_ip: str = ""
+    ) -> dict[str, int]:
         """Run the lease janitor to reset stale leases.
 
-        Returns a dict of counts: {'verifying_reset': N, 'reviewing_reset': M}
+        Returns a dict of counts: {'verifying_reset': N, 'reviewing_reset': M, 'stale_leases_reset': N+M}
         """
         total = self.db.reset_stale_leases()
-        return {"stale_leases_reset": total}
+        if total > 0:
+            self.db.insert_audit_entry(
+                actor=actor,
+                action="run_janitor",
+                client_ip=client_ip,
+                details={"reset_count": total},
+            )
+        return {
+            "verifying_reset": total,
+            "reviewing_reset": 0,
+            "total_reset": total,
+            "stale_leases_reset": total,
+        }
 
     # ── Query helpers ────────────────────────────────────────────────
 

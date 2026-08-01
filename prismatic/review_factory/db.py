@@ -27,12 +27,15 @@ Usage
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Generator, Optional
+from typing import Any, Generator, Optional
 
 from prismatic.review_factory.models import (
     MergeAuthorization,
@@ -194,6 +197,21 @@ CREATE TABLE IF NOT EXISTS repair_packets (
 );
 
 CREATE INDEX IF NOT EXISTS idx_repair_candidate ON repair_packets(candidate_tree);
+
+-- Enterprise Audit Log: append-only table for operator actions
+CREATE TABLE IF NOT EXISTS review_factory_audit_log (
+    audit_id TEXT PRIMARY KEY,
+    timestamp TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    action TEXT NOT NULL,
+    review_job_id TEXT NOT NULL DEFAULT '',
+    client_ip TEXT NOT NULL DEFAULT '',
+    details_json TEXT NOT NULL DEFAULT '{}',
+    signature_hash TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_action ON review_factory_audit_log(action);
+CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON review_factory_audit_log(timestamp);
 """
 
 
@@ -722,3 +740,47 @@ class ReviewFactoryDB:
             resolution_attempt_n=row["resolution_attempt_n"],
             created_at=row["created_at"],
         )
+
+    def insert_audit_entry(
+        self,
+        actor: str,
+        action: str,
+        review_job_id: str = "",
+        client_ip: str = "",
+        details: Optional[dict[str, Any]] = None,
+    ) -> str:
+        """Record an immutable audit log entry."""
+        audit_id = f"audit-{uuid.uuid4().hex[:12]}"
+        now_iso = datetime.now(timezone.utc).isoformat()
+        details_json = json.dumps(details or {})
+        raw_sig = f"{audit_id}:{now_iso}:{actor}:{action}:{review_job_id}:{client_ip}:{details_json}"
+        sig_hash = hashlib.sha256(raw_sig.encode("utf-8")).hexdigest()
+
+        with self.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO review_factory_audit_log (
+                    audit_id, timestamp, actor, action, review_job_id, client_ip, details_json, signature_hash
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    audit_id,
+                    now_iso,
+                    actor,
+                    action,
+                    review_job_id,
+                    client_ip,
+                    details_json,
+                    sig_hash,
+                ),
+            )
+        return audit_id
+
+    def list_audit_entries(self, limit: int = 50) -> list[dict[str, Any]]:
+        """List audit log entries ordered by timestamp descending."""
+        with self.transaction() as conn:
+            cur = conn.execute(
+                "SELECT * FROM review_factory_audit_log ORDER BY timestamp DESC LIMIT ?",
+                (limit,),
+            )
+            return [dict(r) for r in cur.fetchall()]
