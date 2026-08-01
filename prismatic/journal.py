@@ -15,6 +15,8 @@ import hashlib
 import json
 import os
 import re
+import secrets
+import stat
 import subprocess
 import urllib.error
 import urllib.request
@@ -36,7 +38,7 @@ DEFAULT_LABELS = {
     "type:docs": "d24a4a88-00d8-40e7-9e58-6fdfc8a1a6b6",
 }
 SECRET_PATTERNS = [
-    (re.compile(r"(?i)\b(api[_-]?key|token|password|secret|oauth code)\b\s*[:=]\s*[^\s'\"]+"), r"\1: [REDACTED]"),
+    (re.compile(r'''(?i)\b(api[_-]?key|token|password|secret|oauth code)\b\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s'\"]+)'''), r"\1: [REDACTED]"),
     (re.compile(r"(?i)bearer\s+[A-Za-z0-9._~-]+"), "Bearer [REDACTED]"),
     (re.compile(r"(?i)ghp_[A-Za-z0-9]+|github_pat_[A-Za-z0-9_]+|xox[a-z]-[A-Za-z0-9-]+"), "[REDACTED]"),
 ]
@@ -688,7 +690,10 @@ def write_quarantine(records: list[dict[str, Any]], config: JournalConfig, today
 
 
 def recap_window(period: str, now: dt.datetime | None = None) -> tuple[dt.datetime, dt.datetime]:
-    now = now or dt.datetime.now(dt.timezone.utc)
+    if now is None:
+        now = dt.datetime.now(dt.timezone.utc)
+    elif now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("now must be timezone-aware")
     now = now.astimezone(dt.timezone.utc)
     if period == "daily":
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -710,15 +715,19 @@ def _recap_events(config: JournalConfig, start: dt.datetime, end: dt.datetime) -
             except (json.JSONDecodeError, OSError):
                 pass
         day += dt.timedelta(days=1)
-    accepted: list[dict[str, Any]] = []
+    accepted: list[tuple[dt.datetime, str, str, dict[str, Any]]] = []
     for event in events:
         try:
             observed = dt.datetime.fromisoformat(str(event.get("_timestamp", "")).replace("Z", "+00:00"))
         except ValueError:
             continue
-        if start <= observed.astimezone(dt.timezone.utc) <= end:
-            accepted.append(event)
-    return accepted
+        if observed.tzinfo is None or observed.utcoffset() is None:
+            continue
+        observed_utc = observed.astimezone(dt.timezone.utc)
+        if start <= observed_utc <= end:
+            accepted.append((observed_utc, _bounded_citation_id(event), json.dumps(event, sort_keys=True, default=str, separators=(",", ":")), event))
+    accepted.sort(key=lambda item: (item[0], item[1], item[2]))
+    return [item[3] for item in accepted]
 
 
 def live_cron_health(config: JournalConfig) -> list[dict[str, Any]]:
@@ -736,36 +745,164 @@ def live_cron_health(config: JournalConfig) -> list[dict[str, Any]]:
     return sorted(health, key=lambda item: item["name"])
 
 
-def build_evidence_recap(events: list[dict[str, Any]], period: str, start: dt.datetime, end: dt.datetime, cron_health: list[dict[str, Any]]) -> tuple[str, list[str]]:
+MAX_RECAP_EVENTS = 50
+MAX_RECAP_BYTES = 32_768
+MAX_RECAP_MANIFEST_BYTES = 8_192
+
+
+def _bounded_citation_id(event: dict[str, Any]) -> str:
+    candidate = str(event.get("idempotency_key") or "")
+    if re.fullmatch(r"[0-9a-f]{64}", candidate):
+        return candidate
+    return signal_idempotency_key(event)
+
+
+def _rendered_field(value: Any, limit: int) -> str:
+    return redact(str(value)).replace("\r", " ").replace("\n", " ")[:limit]
+
+
+def _write_bytes_at(directory_fd: int, name: str, payload: bytes) -> None:
+    descriptor = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory_fd)
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _create_transaction_directory(directory_fd: int) -> tuple[str, int]:
+    for _ in range(16):
+        name = f".recap-transaction-{secrets.token_hex(12)}"
+        try:
+            os.mkdir(name, 0o700, dir_fd=directory_fd)
+        except FileExistsError:
+            continue
+        try:
+            descriptor = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory_fd)
+        except BaseException:
+            os.rmdir(name, dir_fd=directory_fd)
+            raise
+        return name, descriptor
+    raise FileExistsError("unable to allocate unique recap transaction directory")
+
+
+def _replace_artifact_pair(directory_fd: int, target_name: str, target_payload: bytes, manifest_name: str, manifest_payload: bytes) -> None:
+    """Replace both artifacts using portable descriptor-relative recovery."""
+    transaction_name, transaction_fd = _create_transaction_directory(directory_fd)
+    staged_target = "recap.stage"
+    staged_manifest = "manifest.stage"
+    backup_target = "recap.backup"
+    backup_manifest = "manifest.backup"
+    target_backed_up = manifest_backed_up = False
+    target_installed = manifest_installed = False
+    preserve_transaction = False
+    try:
+        _write_bytes_at(transaction_fd, staged_target, target_payload)
+        _write_bytes_at(transaction_fd, staged_manifest, manifest_payload)
+        try:
+            os.replace(target_name, backup_target, src_dir_fd=directory_fd, dst_dir_fd=transaction_fd)
+            target_backed_up = True
+        except FileNotFoundError:
+            pass
+        try:
+            os.replace(manifest_name, backup_manifest, src_dir_fd=directory_fd, dst_dir_fd=transaction_fd)
+            manifest_backed_up = True
+        except FileNotFoundError:
+            pass
+        os.replace(staged_target, target_name, src_dir_fd=transaction_fd, dst_dir_fd=directory_fd)
+        target_installed = True
+        os.replace(staged_manifest, manifest_name, src_dir_fd=transaction_fd, dst_dir_fd=directory_fd)
+        manifest_installed = True
+    except BaseException as original_error:
+        rollback_errors: list[BaseException] = []
+        for destination, backup, backed_up, installed in (
+            (target_name, backup_target, target_backed_up, target_installed),
+            (manifest_name, backup_manifest, manifest_backed_up, manifest_installed),
+        ):
+            try:
+                if backed_up:
+                    os.replace(backup, destination, src_dir_fd=transaction_fd, dst_dir_fd=directory_fd)
+                elif installed:
+                    os.unlink(destination, dir_fd=directory_fd)
+            except BaseException as rollback_error:
+                rollback_errors.append(rollback_error)
+        if rollback_errors:
+            preserve_transaction = True
+            raise RuntimeError(
+                f"artifact replacement failed and rollback is incomplete; recoverable files are preserved in {transaction_name}"
+            ) from original_error
+        raise
+    finally:
+        try:
+            if not preserve_transaction:
+                for name in (staged_target, staged_manifest, backup_target, backup_manifest):
+                    try:
+                        os.unlink(name, dir_fd=transaction_fd)
+                    except FileNotFoundError:
+                        pass
+        finally:
+            os.close(transaction_fd)
+        if not preserve_transaction:
+            os.rmdir(transaction_name, dir_fd=directory_fd)
+
+
+def build_evidence_recap(events: list[dict[str, Any]], period: str, start: dt.datetime, end: dt.datetime, cron_health: list[dict[str, Any]], max_events: int = MAX_RECAP_EVENTS) -> tuple[str, list[str]]:
+    """Render a bounded deterministic draft; every displayed claim has an evidence ID."""
+    if isinstance(max_events, bool) or not isinstance(max_events, int):
+        raise TypeError("max_events must be an integer")
+    if not 1 <= max_events <= MAX_RECAP_EVENTS:
+        raise ValueError(f"max_events must be between 1 and {MAX_RECAP_EVENTS}")
+    selected_events = events[-max_events:]
     cited_ids: list[str] = []
     lines = [f"## {period.title()} journal recap · {start.date().isoformat()}", "", f"Window: `{start.isoformat()}` → `{end.isoformat()}`", "", "### Evidence-backed events", ""]
-    if not events:
+    if not selected_events:
         lines.append("- Quiet window: no accepted normalized events.")
-    for event in events:
-        event_id = str(event.get("idempotency_key") or signal_idempotency_key(event))
+    elif len(events) > len(selected_events):
+        lines.append(f"- Showing the latest {len(selected_events)} cited events of {len(events)} accepted events in this window.")
+    for event in selected_events:
+        event_id = _bounded_citation_id(event)
         cited_ids.append(event_id)
         detail = event.get("snippet") or event.get("summary") or event.get("latest") or event.get("source") or event.get("type", "event")
-        lines.append(f"- [E:{event_id[:12]}] **{event.get('type', 'event')}** — {redact(str(detail))[:180]}")
+        lines.append(f"- [E:{event_id}] **{_rendered_field(event.get('type', 'event'), 80)}** — {_rendered_field(detail, 180)}")
     lines += ["", "### Live scheduler health", ""]
     if not cron_health:
         lines.append("- No current scheduler state available.")
     for job in cron_health:
         state = "enabled" if job["enabled"] else "disabled"
-        lines.append(f"- **{job['name']}** — current `{job['last_status']}` ({state})")
+        lines.append(f"- **{_rendered_field(job['name'], 120)}** — current `{_rendered_field(job['last_status'], 80)}` ({state})")
     lines += ["", "---", "*Deterministic draft. Optional synthesis must only use the cited E: IDs above; historical cron events are not current-health claims.*", ""]
     return "\n".join(lines), cited_ids
 
 
 def generate_recap(period: str, config: JournalConfig | None = None, now: dt.datetime | None = None) -> dict[str, Any]:
+    """Write a bounded recap plus a bounded citation manifest; keep CLI output compact."""
     config = config or JournalConfig.from_env()
     start, end = recap_window(period, now)
     events = _recap_events(config, start, end)
-    markdown, cited_ids = build_evidence_recap(events, period, start, end, live_cron_health(config))
+    markdown, cited_ids = build_evidence_recap(events, period, start, end, live_cron_health(config), MAX_RECAP_EVENTS)
+    encoded = markdown.encode("utf-8")
+    if len(encoded) > MAX_RECAP_BYTES:
+        raise ValueError(f"recap exceeds {MAX_RECAP_BYTES} byte operational bound")
+    manifest_payload = json.dumps({"period": period, "source_event_count": len(events), "rendered_claim_count": len(cited_ids), "cited_event_ids": cited_ids}, indent=2).encode("utf-8")
+    if len(manifest_payload) > MAX_RECAP_MANIFEST_BYTES:
+        raise ValueError(f"citation manifest exceeds {MAX_RECAP_MANIFEST_BYTES} byte operational bound")
     target_dir = config.journal_root / "recaps"
     target_dir.mkdir(parents=True, exist_ok=True)
-    target = target_dir / f"{period}-{start.date().isoformat()}.md"
-    target.write_text(markdown, encoding="utf-8")
-    return {"period": period, "path": str(target), "events": len(events), "cited_event_ids": cited_ids, "quiet": not events}
+    try:
+        target_dir_fd = os.open(target_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError as exc:
+        raise ValueError("recap output directory must be a real directory, not a symlink") from exc
+    try:
+        opened = os.fstat(target_dir_fd)
+        resolved = os.stat(target_dir, follow_symlinks=False)
+        if not stat.S_ISDIR(resolved.st_mode) or (opened.st_dev, opened.st_ino) != (resolved.st_dev, resolved.st_ino):
+            raise ValueError("recap output directory identity changed during validation")
+        stem = f"{period}-{start.date().isoformat()}"
+        target = target_dir / f"{stem}.md"
+        manifest = target_dir / f"{stem}.citations.json"
+        _replace_artifact_pair(target_dir_fd, target.name, encoded, manifest.name, manifest_payload)
+    finally:
+        os.close(target_dir_fd)
+    return {"period": period, "path": str(target), "citation_manifest_path": str(manifest), "source_event_count": len(events), "rendered_claim_count": len(cited_ids), "artifact_bytes": len(encoded), "citation_manifest_bytes": len(manifest_payload), "quiet": not events}
 
 
 def run_snapshot(config: JournalConfig | None = None, force: bool = False) -> dict[str, Any]:
