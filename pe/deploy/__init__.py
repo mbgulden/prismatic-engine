@@ -1,5 +1,4 @@
-"""Production Deploy Hook & Receiver package (Workstream B).
-"""
+"""Production Deploy Hook & Receiver package (Workstream B)."""
 
 from pe.deploy.manifest import DeployManifestStore, DeployRecord
 

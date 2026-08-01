@@ -17,7 +17,6 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 import os
-import pathlib
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -54,7 +53,9 @@ class LinearTransitionsStore:
                 self._seen = set(data.get("seen_transitions", []))
                 self._queued = data.get("queued_transitions", [])
         except Exception as exc:
-            logger.warning("Failed to load Linear transitions DB from %s: %s", self.db_path, exc)
+            logger.warning(
+                "Failed to load Linear transitions DB from %s: %s", self.db_path, exc
+            )
 
     def _save(self) -> None:
         try:
@@ -70,7 +71,9 @@ class LinearTransitionsStore:
                     indent=2,
                 )
         except Exception as exc:
-            logger.warning("Failed to save Linear transitions DB to %s: %s", self.db_path, exc)
+            logger.warning(
+                "Failed to save Linear transitions DB to %s: %s", self.db_path, exc
+            )
 
     def is_seen(self, idempotency_key: str) -> bool:
         return idempotency_key in self._seen
@@ -108,7 +111,9 @@ class LinearTransitionReceipt:
 class LinearDeployTransitioner:
     """Extracts issue IDs from commit messages and transitions them to Done."""
 
-    def __init__(self, dry_run: bool = False, store: Optional[LinearTransitionsStore] = None):
+    def __init__(
+        self, dry_run: bool = False, store: Optional[LinearTransitionsStore] = None
+    ):
         self.dry_run = dry_run
         self.store = store or LinearTransitionsStore()
 
@@ -160,10 +165,16 @@ class LinearDeployTransitioner:
 
         # Queue remaining issues in durable store for next deploy (Mitigation R4)
         if remainder:
-            new_queue = [{"issue_id": issue_id, "deploy_id": deploy_id, "pr_sha": pr_sha} for issue_id in remainder]
+            new_queue = [
+                {"issue_id": issue_id, "deploy_id": deploy_id, "pr_sha": pr_sha}
+                for issue_id in remainder
+            ]
             self.store.set_queued(new_queue)
             for issue_id in remainder:
-                logger.info("Queued transition for %s to next deploy (rate limit cap 10/min)", issue_id)
+                logger.info(
+                    "Queued transition for %s to next deploy (rate limit cap 10/min)",
+                    issue_id,
+                )
 
         for issue_id in batch:
             receipt = self._transition_single_issue(issue_id, deploy_id, pr_sha)
@@ -178,13 +189,19 @@ class LinearDeployTransitioner:
         pr_sha: str,
     ) -> LinearTransitionReceipt:
         """Transition a single issue to Done with durable idempotency check."""
-        now_iso = datetime.now(timezone.utc).isoformat()[:10]  # Date component for canonical idempotency
+        now_iso = datetime.now(timezone.utc).isoformat()[
+            :10
+        ]  # Date component for canonical idempotency
         raw_key = f"{issue_id}:{pr_sha}:{now_iso}"
         idempotency_key = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
 
         # Idempotency check: dedupe repeated transitions for same issue + pr_sha using durable store
         if self.store.is_seen(idempotency_key):
-            logger.info("Idempotent skip: %s already transitioned for %s (durable key check)", issue_id, pr_sha)
+            logger.info(
+                "Idempotent skip: %s already transitioned for %s (durable key check)",
+                issue_id,
+                pr_sha,
+            )
             return LinearTransitionReceipt(
                 issue_id=issue_id,
                 from_state="Done",
@@ -196,13 +213,52 @@ class LinearDeployTransitioner:
                 success=True,
             )
 
+        # P3: State Machine Validation & Fetch Current State
+        current_state = "In Review"
+        try:
+            from linear_helpers import get_issue_state  # type: ignore
+
+            fetched_state = get_issue_state(issue_id)
+            if fetched_state and isinstance(fetched_state, str):
+                current_state = fetched_state
+        except Exception:
+            pass
+
+        from pe.deploy.linear_state import validate_linear_state_transition
+
+        allowed, reason = validate_linear_state_transition(
+            issue_id, current_state, "Done"
+        )
+        if not allowed:
+            # Post a comment to Linear explaining why transition was blocked
+            try:
+                from linear_helpers import linear_comment  # type: ignore
+
+                linear_comment(
+                    issue_id, f"⚠️ Automated deploy transition to Done blocked: {reason}"
+                )
+            except Exception:
+                pass
+            return LinearTransitionReceipt(
+                issue_id=issue_id,
+                from_state=current_state,
+                to_state=current_state,
+                transition_at=now_iso,
+                deploy_id=deploy_id,
+                idempotency_key=idempotency_key,
+                linear_response={"status": "blocked_illegal_state", "reason": reason},
+                success=False,
+            )
+
         self.store.mark_seen(idempotency_key)
 
         if self.dry_run:
-            logger.info("DRY RUN: Linear transition %s → Done", issue_id)
+            logger.info(
+                "DRY RUN: Linear transition %s (%s) → Done", issue_id, current_state
+            )
             return LinearTransitionReceipt(
                 issue_id=issue_id,
-                from_state="In Review",
+                from_state=current_state,
                 to_state="Done",
                 transition_at=datetime.now(timezone.utc).isoformat(),
                 deploy_id=deploy_id,
@@ -211,19 +267,58 @@ class LinearDeployTransitioner:
                 success=True,
             )
 
-        # Real Linear transition via linear_helpers if available
-        try:
-            from linear_helpers import update_issue_state  # type: ignore
-            resp = update_issue_state(issue_id, state_name="Done")
-            success = True
-        except Exception as exc:
-            resp = {"error": str(exc)}
-            success = False
+        # Real Linear transition via linear_helpers with G5 rate-limit backoff
+        resp = {}
+        success = False
+        backoff_delays = [1, 2, 4, 8, 16, 30]
+
+        for attempt, delay in enumerate(backoff_delays):
+            try:
+                from linear_helpers import update_issue_state  # type: ignore
+
+                resp = update_issue_state(issue_id, state_name="Done")
+                if isinstance(resp, dict) and resp.get("status_code") == 429:
+                    logger.warning(
+                        "Linear API rate limited (429) for %s; backing off %ds...",
+                        issue_id,
+                        delay,
+                    )
+                    time.sleep(delay)
+                    continue
+                success = True
+                break
+            except Exception as exc:
+                err_msg = str(exc)
+                if "429" in err_msg or "rate limit" in err_msg.lower():
+                    logger.warning(
+                        "Linear API 429 exception for %s; backing off %ds...",
+                        issue_id,
+                        delay,
+                    )
+                    time.sleep(delay)
+                    continue
+                resp = {"error": err_msg}
+                success = False
+                break
+
+        # W3: Surface transition failure as a Linear comment if failed
+        if not success:
+            try:
+                from linear_helpers import linear_comment  # type: ignore
+
+                comment_body = f"❌ Deploy hook failed to transition issue to Done for deploy {deploy_id} (PR SHA: {pr_sha}). Error: {resp.get('error', 'Linear API update failed')}"
+                linear_comment(issue_id, comment_body)
+            except Exception as _comment_exc:
+                logger.warning(
+                    "Failed to post transition failure comment to Linear for %s: %s",
+                    issue_id,
+                    _comment_exc,
+                )
 
         return LinearTransitionReceipt(
             issue_id=issue_id,
-            from_state="In Review",
-            to_state="Done",
+            from_state=current_state,
+            to_state="Done" if success else current_state,
             transition_at=now_iso,
             deploy_id=deploy_id,
             idempotency_key=idempotency_key,

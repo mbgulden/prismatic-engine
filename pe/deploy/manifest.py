@@ -40,12 +40,17 @@ def default_deploy_db_path() -> Path:
 class DeployRecord:
     """Canonical record of a production deployment."""
 
+    schema_version: str = "1.0"
     deploy_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     pr_sha: str = ""
     pr_number: int = 0
     pr_title: str = ""
-    merged_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    deployed_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    merged_at: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+    deployed_at: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
     deployer: str = "github-action"
     version_dir: str = ""
     release_symlink: str = ""
@@ -61,6 +66,7 @@ class DeployRecord:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> DeployRecord:
         return cls(
+            schema_version=d.get("schema_version", "1.0"),
             deploy_id=d.get("deploy_id", str(uuid.uuid4())),
             pr_sha=d.get("pr_sha", ""),
             pr_number=d.get("pr_number", 0),
@@ -89,7 +95,7 @@ class DeployManifestStore:
         """Append a DeployRecord to storage."""
         records = self.list_deploys(limit=1000)
         records.append(record)
-        
+
         data = [r.to_dict() for r in records]
         self.db_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
@@ -102,7 +108,9 @@ class DeployManifestStore:
             raw = json.loads(self.db_path.read_text(encoding="utf-8"))
             if isinstance(raw, list):
                 records = [DeployRecord.from_dict(d) for d in raw]
-                return sorted(records, key=lambda r: r.deployed_at, reverse=True)[:limit]
+                return sorted(records, key=lambda r: r.deployed_at, reverse=True)[
+                    :limit
+                ]
         except Exception:
             pass
 

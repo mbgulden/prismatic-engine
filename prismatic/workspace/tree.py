@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 from prismatic.workspace.acceptance import AcceptanceProtocol
 from prismatic.workspace.categorize import WorkspaceCategorizer
@@ -43,6 +43,7 @@ class WorkspaceTreeWalker:
         self,
         docs_root: Optional[Path] = None,
         acceptance: Optional[AcceptanceProtocol] = None,
+        max_depth: int = 10,
     ):
         raw_root = docs_root or default_deployed_docs_root()
         try:
@@ -50,17 +51,30 @@ class WorkspaceTreeWalker:
         except Exception:
             self.docs_root = raw_root
         self.acceptance = acceptance or AcceptanceProtocol(docs_root=self.docs_root)
+        self.max_depth = max_depth
 
     def walk(self) -> list[WorkspaceManifestEntry]:
-        """Walk docs_root and return list of WorkspaceManifestEntry records."""
+        """Walk docs_root and return list of WorkspaceManifestEntry records (G6: max_depth guarded)."""
         entries: list[WorkspaceManifestEntry] = []
         if not self.docs_root.exists():
             return entries
 
         for root, dirs, files in os.walk(self.docs_root):
+            # Calculate current depth relative to docs_root
+            try:
+                rel_root = Path(root).relative_to(self.docs_root)
+                depth = len(rel_root.parts)
+            except ValueError:
+                depth = 0
+
+            if depth >= self.max_depth:
+                dirs.clear()  # Do not recurse deeper
+                continue
+
             # Exclude node_modules, assets, hidden dirs
             dirs[:] = [
-                d for d in dirs
+                d
+                for d in dirs
                 if not d.startswith(".")
                 and d not in ("node_modules", "assets", "__pycache__", "build", "dist")
             ]
@@ -89,7 +103,10 @@ class WorkspaceTreeWalker:
             size_bytes = stat.st_size
             last_modified = Path(full_path).stat().st_mtime
             import datetime
-            mtime_iso = datetime.datetime.fromtimestamp(last_modified, datetime.timezone.utc).isoformat()
+
+            mtime_iso = datetime.datetime.fromtimestamp(
+                last_modified, datetime.timezone.utc
+            ).isoformat()
         except Exception:
             return None
 

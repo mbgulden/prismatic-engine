@@ -159,6 +159,9 @@
             <button id="tab-btn-deploy-hook" onclick="switchTab('deploy-hook')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
                 Deploy Hook
             </button>
+            <button id="tab-btn-review-factory" onclick="switchTab('review-factory')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                Review Factory
+            </button>
         </div>
     </div>
 
@@ -954,6 +957,117 @@
                     <p class="text-xs text-slate-500">Durable process-tree, CPU, I/O, log, and artifact activity receipts. Quiet or suspect is a review signal—not an automatic kill.</p>
                     <div id="agy-activity-summary" class="text-xs text-slate-400">Loading canonical AGY activity…</div>
                     <div id="agy-activity-runs" class="grid grid-cols-1 xl:grid-cols-2 gap-3"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- SECTION: REVIEW FACTORY -->
+        <div id="section-review-factory" class="hidden space-y-6">
+            <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-cyan-500/80 shadow-lg shadow-cyan-950/10" data-proof-marker="review-factory-dashboard-tab">
+                <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <h2 class="text-sm font-bold text-slate-200 uppercase tracking-[0.18em]">Review Factory V1</h2>
+                            <span id="rf-status-badge" class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-cyan-500/20 bg-cyan-500/10 text-cyan-300">Active</span>
+                        </div>
+                        <p class="text-xs text-slate-400">Deterministic verification worker, preliminary reviewer, and merge executor queue metrics.</p>
+                    </div>
+                    <!-- Operator Action Strip -->
+                    <div class="flex flex-wrap gap-2">
+                        <button type="button" id="btn-rf-janitor" onclick="triggerJanitorAction()" class="px-3 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 hover:bg-indigo-500/20 transition-colors min-h-[36px]">Run Janitor</button>
+                        <button type="button" id="btn-rf-release" onclick="openForceReleaseModal()" class="px-3 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider bg-amber-500/10 text-amber-300 border border-amber-500/20 hover:bg-amber-500/20 transition-colors min-h-[36px]">Release Lease</button>
+                        <button type="button" id="btn-rf-authorize" onclick="openAuthorizeMergeModal()" class="px-3 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 hover:bg-emerald-500/20 transition-colors min-h-[36px]">Authorize Merge</button>
+                        <button type="button" onclick="loadReviewFactoryMetrics()" class="px-3 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider bg-slate-800 text-slate-200 border border-slate-700/50 hover:bg-slate-700/70 min-h-[36px]">Refresh</button>
+                    </div>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mt-4 text-xs">
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Total Jobs</div>
+                        <div id="rf-total-jobs" class="mt-1 font-semibold text-slate-100 font-mono text-base">0</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Active Queue Depth</div>
+                        <div id="rf-active-jobs" class="mt-1 font-semibold text-cyan-400 font-mono text-base">0</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Merged</div>
+                        <div id="rf-merged-jobs" class="mt-1 font-semibold text-emerald-400 font-mono text-base">0</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3">
+                        <div class="text-[10px] uppercase tracking-wider text-slate-500">Rejected / Failed</div>
+                        <div id="rf-failed-jobs" class="mt-1 font-semibold text-rose-400 font-mono text-base">0</div>
+                    </div>
+                </div>
+
+                <!-- Filter Controls -->
+                <div class="mt-5 flex flex-wrap items-center justify-between gap-3 text-xs bg-slate-950/40 p-3 rounded-xl border border-slate-800/60">
+                    <div class="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+                        <label class="flex items-center space-x-2">
+                            <span class="text-slate-400 font-semibold uppercase text-[10px]">State:</span>
+                            <select id="rf-filter-state" onchange="filterReviewJobs()" class="bg-slate-900 border border-slate-700/80 rounded px-2.5 py-1 text-slate-200 focus:outline-none text-xs">
+                                <option value="ALL">All States</option>
+                                <option value="queued">Queued</option>
+                                <option value="verifying">Verifying</option>
+                                <option value="review_ready">Review Ready</option>
+                                <option value="reviewing">Reviewing</option>
+                                <option value="merge_ready">Merge Ready</option>
+                                <option value="merge_authorized">Merge Authorized</option>
+                                <option value="merging">Merging</option>
+                                <option value="merged">Merged</option>
+                                <option value="repair_required">Repair Required</option>
+                                <option value="rejected">Rejected</option>
+                                <option value="merge_verification_failed">Failed</option>
+                            </select>
+                        </label>
+                        <label class="flex items-center space-x-2">
+                            <span class="text-slate-400 font-semibold uppercase text-[10px]">Tier:</span>
+                            <select id="rf-filter-tier" onchange="filterReviewJobs()" class="bg-slate-900 border border-slate-700/80 rounded px-2.5 py-1 text-slate-200 focus:outline-none text-xs">
+                                <option value="ALL">All Tiers</option>
+                                <option value="0">Tier 0 (Docs/Fixtures)</option>
+                                <option value="1">Tier 1 (Standard)</option>
+                                <option value="2">Tier 2 (Auth/Factory)</option>
+                                <option value="3">Tier 3 (Production)</option>
+                            </select>
+                        </label>
+                    </div>
+                    <div class="w-full sm:w-64">
+                        <input id="rf-search-input" onkeyup="filterReviewJobs()" type="text" placeholder="Search Task ID / Job ID..." class="w-full bg-slate-900 border border-slate-700/80 rounded px-3 py-1 text-slate-200 text-xs focus:outline-none focus:border-cyan-500">
+                    </div>
+                </div>
+
+                <div class="mt-4">
+                    <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">Review Jobs Queue</h3>
+                    <div class="overflow-x-auto rounded-xl border border-slate-800/80 bg-slate-950/60">
+                        <table class="w-full text-left border-collapse text-xs">
+                            <thead>
+                                <tr class="border-b border-slate-800 bg-slate-900/50 text-slate-400 font-semibold uppercase text-[10px] tracking-wider">
+                                    <th class="px-3 py-2">Job ID</th>
+                                    <th class="px-3 py-2">Task ID</th>
+                                    <th class="px-3 py-2">Tier</th>
+                                    <th class="px-3 py-2">State</th>
+                                    <th class="px-3 py-2">Witnesses</th>
+                                    <th class="px-3 py-2">Created</th>
+                                    <th class="px-3 py-2 text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="rf-jobs-tbody">
+                                <tr><td colspan="7" class="text-center py-6 text-slate-500 text-xs">No active review jobs</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <!-- REVIEW FACTORY MODAL CONTAINER -->
+        <div id="rf-modal-container" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm hidden" onclick="if(event.target === this) closeRfModal()">
+            <div class="glass-panel w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-2xl border border-slate-700/80 p-6 shadow-2xl space-y-4">
+                <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                    <h3 id="rf-modal-title" class="text-base font-bold text-slate-100 uppercase tracking-wider">Job Detail</h3>
+                    <button type="button" onclick="closeRfModal()" class="text-slate-400 hover:text-slate-200 font-bold text-lg px-2 py-1">✕</button>
+                </div>
+                <div id="rf-modal-body" class="space-y-4 text-xs text-slate-300">
+                    <!-- Dynamic modal content loaded via JS -->
                 </div>
             </div>
         </div>
@@ -1762,7 +1876,7 @@
                       <th class="px-3 py-2">Health Check</th>
                       <th class="px-3 py-2">Linear Issue(s)</th>
                       <th class="px-3 py-2">Deployed At</th>
-                      <th class="px-3 py-2 text-right">Status</th>
+                      <th class="px-3 py-2 text-right">Status / Actions</th>
                     </tr>
                   </thead>
                   <tbody id="deploy-history-tbody">
@@ -1771,6 +1885,25 @@
                     </tr>
                   </tbody>
                 </table>
+              </div>
+            </div>
+
+            <!-- Deploy Diff Inspector Panel (P6) -->
+            <div id="deploy-diff-panel" class="hidden bg-slate-950/60 border border-slate-800 rounded-xl p-4 space-y-3">
+              <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+                <h3 class="text-sm font-bold text-slate-200 flex items-center gap-2">
+                  <span>🔍</span> Release Commit & File Diff Inspector
+                  <span id="diff-sha-badge" class="bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 px-2 py-0.5 rounded text-xs font-mono"></span>
+                </h3>
+                <button onclick="closeDeployDiff()" class="text-slate-500 hover:text-slate-300 font-bold text-xs">Close Diff</button>
+              </div>
+              <div>
+                <span class="text-[10px] font-bold uppercase text-slate-500">Stat Overview</span>
+                <pre id="deploy-diff-stat" class="font-mono text-xs text-cyan-300 bg-slate-900/80 p-3 rounded-lg border border-slate-800 mt-1 overflow-x-auto"></pre>
+              </div>
+              <div>
+                <span class="text-[10px] font-bold uppercase text-slate-500">Unified Patch Diff</span>
+                <pre id="deploy-diff-patch" class="font-mono text-[11px] text-slate-300 bg-slate-950 p-3 rounded-lg border border-slate-900 max-h-[350px] overflow-x-auto whitespace-pre mt-1"></pre>
               </div>
             </div>
           </div>
@@ -1966,7 +2099,7 @@
             activeTab = tab;
             
             // Toggle Tab Buttons
-            const tabs = ['dashboard', 'telemetry', 'merge', 'workspaces', 'skills', 'signals', 'pwp', 'plugins', 'crons', 'quota', 'foundation', 'curated-workspace', 'deploy-hook'];
+            const tabs = ['dashboard', 'telemetry', 'merge', 'workspaces', 'skills', 'signals', 'pwp', 'plugins', 'crons', 'quota', 'foundation', 'curated-workspace', 'deploy-hook', 'review-factory'];
             tabs.forEach(t => {
                 const btn = document.getElementById(`tab-btn-${t}`);
                 const sec = document.getElementById(`section-${t}`);
@@ -1989,6 +2122,8 @@
                 loadWorkspaceTree();
             } else if (tab === 'deploy-hook' && typeof loadDeployHistory === 'function') {
                 loadDeployHistory();
+            } else if (tab === 'review-factory' && typeof loadReviewFactoryMetrics === 'function') {
+                loadReviewFactoryMetrics();
             }
         }
 
@@ -4870,11 +5005,13 @@
                 if (iconEl) iconEl.textContent = latest.success ? "✅" : "❌";
                 let totalLinear = 0;
                 let html = "";
-                data.deploys.forEach(d => {
+                data.deploys.forEach((d, idx) => {
                     const shaShort = d.pr_sha ? d.pr_sha.substring(0, 7) : "manual";
                     const healthPassed = d.health_check && d.health_check.passed;
                     const linearCount = (d.linear_transitions || []).length;
                     totalLinear += linearCount;
+                    const prevSha = (idx < data.deploys.length - 1 && data.deploys[idx + 1].pr_sha) ? data.deploys[idx + 1].pr_sha : 'HEAD~1';
+                    const diffBtn = d.pr_sha ? `<button onclick="viewDeployDiff('${prevSha}', '${d.pr_sha}')" class="px-2 py-0.5 ml-2 text-[10px] font-bold rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 hover:bg-cyan-500/20">Diff</button>` : '';
                     const badge = d.success
                         ? '<span class="px-2.5 py-0.5 text-[10px] font-semibold rounded-full bg-emerald-900/60 text-emerald-300">SUCCESS</span>'
                         : '<span class="px-2.5 py-0.5 text-[10px] font-semibold rounded-full bg-rose-900/60 text-rose-300">FAILED</span>';
@@ -4885,7 +5022,7 @@
                         <td class="px-3 py-2 text-[11px]">${healthPassed ? "🟢 Passed" : "🔴 Failed"}</td>
                         <td class="px-3 py-2 text-[11px] text-indigo-400">${linearCount > 0 ? `${linearCount} transitioned` : "None"}</td>
                         <td class="px-3 py-2 text-[11px] text-slate-400">${new Date(d.deployed_at).toLocaleString()}</td>
-                        <td class="px-3 py-2 text-right">${badge}</td>
+                        <td class="px-3 py-2 text-right flex items-center justify-end space-x-1">${badge}${diffBtn}</td>
                     </tr>`;
                 });
                 if (linearCountEl) linearCountEl.textContent = totalLinear;
@@ -4893,6 +5030,33 @@
             } catch (err) {
                 tbody.innerHTML = `<tr><td colspan="7" class="text-center py-8 text-rose-400 text-xs">Error loading history: ${err.message}</td></tr>`;
             }
+        }
+
+        async function viewDeployDiff(fromSha, toSha) {
+            const panel = document.getElementById("deploy-diff-panel");
+            const badge = document.getElementById("diff-sha-badge");
+            const statEl = document.getElementById("deploy-diff-stat");
+            const patchEl = document.getElementById("deploy-diff-patch");
+            if (panel) panel.classList.remove("hidden");
+            if (badge) badge.textContent = `${fromSha.slice(0, 7)}...${toSha.slice(0, 7)}`;
+            if (statEl) statEl.textContent = "Loading git diff stat...";
+            if (patchEl) patchEl.textContent = "Loading unified patch diff...";
+
+            try {
+                const res = await fetch(`/api/deploy/diff?from_sha=${encodeURIComponent(fromSha)}&to_sha=${encodeURIComponent(toSha)}`);
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+                if (statEl) statEl.textContent = data.stat || "No diff stat available";
+                if (patchEl) patchEl.textContent = data.patch || "No file changes detected between commits";
+            } catch (err) {
+                if (statEl) statEl.textContent = `Error: ${err.message}`;
+                if (patchEl) patchEl.textContent = `Failed to fetch diff: ${err.message}`;
+            }
+        }
+
+        function closeDeployDiff() {
+            const panel = document.getElementById("deploy-diff-panel");
+            if (panel) panel.classList.add("hidden");
         }
 
         async function triggerDeployPrompt() {
@@ -4905,6 +5069,219 @@
                 loadDeployHistory();
             } catch (err) {
                 alert(`Deploy failed: ${err.message}`);
+            }
+        }
+
+        let rawRfJobs = [];
+
+        async function loadReviewFactoryMetrics() {
+            const totalEl = document.getElementById("rf-total-jobs");
+            const activeEl = document.getElementById("rf-active-jobs");
+            const mergedEl = document.getElementById("rf-merged-jobs");
+            const failedEl = document.getElementById("rf-failed-jobs");
+            try {
+                const res = await fetch("/api/review-factory/stats");
+                if (!res.ok) return;
+                const data = await res.json();
+                if (totalEl) totalEl.textContent = data.total_jobs || 0;
+                if (activeEl) activeEl.textContent = data.active_jobs || 0;
+                if (mergedEl) mergedEl.textContent = data.merged || 0;
+                if (failedEl) failedEl.textContent = (data.rejected || 0) + (data.merge_verification_failed || 0);
+
+                const jobsRes = await fetch("/api/review-factory/jobs?limit=100");
+                if (jobsRes.ok) {
+                    const jobsData = await jobsRes.json();
+                    rawRfJobs = jobsData.jobs || [];
+                    filterReviewJobs();
+                }
+            } catch (err) {
+                console.error("Error loading Review Factory metrics:", err);
+            }
+        }
+
+        function filterReviewJobs() {
+            const tbody = document.getElementById("rf-jobs-tbody");
+            if (!tbody) return;
+
+            const stateVal = document.getElementById("rf-filter-state")?.value || "ALL";
+            const tierVal = document.getElementById("rf-filter-tier")?.value || "ALL";
+            const searchVal = (document.getElementById("rf-search-input")?.value || "").toLowerCase().trim();
+
+            let filtered = rawRfJobs.filter(j => {
+                if (stateVal !== "ALL" && j.state !== stateVal) return false;
+                if (tierVal !== "ALL" && String(j.risk_tier) !== tierVal) return false;
+                if (searchVal) {
+                    const matchTask = (j.task_id || "").toLowerCase().includes(searchVal);
+                    const matchJob = (j.review_job_id || "").toLowerCase().includes(searchVal);
+                    if (!matchTask && !matchJob) return false;
+                }
+                return true;
+            });
+
+            if (filtered.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="7" class="text-center py-6 text-slate-500 text-xs italic">No matching review jobs found</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = filtered.map(j => `
+                <tr onclick="openJobDetailModal('${j.review_job_id}')" class="border-b border-slate-800/50 hover:bg-slate-900/60 cursor-pointer transition font-mono text-[11px]">
+                    <td class="px-3 py-2.5 text-indigo-300 font-bold hover:underline">${(j.review_job_id || '').slice(0, 8)}…</td>
+                    <td class="px-3 py-2.5 text-slate-200">${j.task_id || '—'}</td>
+                    <td class="px-3 py-2.5"><span class="px-2 py-0.5 rounded text-[10px] font-bold border border-cyan-500/20 bg-cyan-500/10 text-cyan-400">T${j.risk_tier}</span></td>
+                    <td class="px-3 py-2.5"><span class="px-2 py-0.5 rounded text-[10px] font-bold ${j.state === 'merged' ? 'bg-emerald-500/10 text-emerald-300 border border-emerald-500/20' : (j.state.includes('failed') || j.state === 'rejected' ? 'bg-rose-500/10 text-rose-300 border border-rose-500/20' : 'bg-amber-500/10 text-amber-300 border border-amber-500/20')}">${j.state}</span></td>
+                    <td class="px-3 py-2.5 text-slate-400">${j.witnesses || '0/1'}</td>
+                    <td class="px-3 py-2.5 text-slate-500">${new Date(j.created_at).toLocaleTimeString()}</td>
+                    <td class="px-3 py-2.5 text-right font-sans" onclick="event.stopPropagation()">
+                        <button onclick="openJobDetailModal('${j.review_job_id}')" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] font-bold">Inspect</button>
+                    </td>
+                </tr>
+            `).join("");
+        }
+
+        async function openJobDetailModal(jobId) {
+            const container = document.getElementById("rf-modal-container");
+            const titleEl = document.getElementById("rf-modal-title");
+            const bodyEl = document.getElementById("rf-modal-body");
+            if (!container || !bodyEl) return;
+
+            titleEl.textContent = `Review Job: ${jobId}`;
+            bodyEl.innerHTML = '<div class="text-center py-8 text-slate-500">Loading job details and verification receipts…</div>';
+            container.classList.remove("hidden");
+
+            try {
+                const res = await fetch(`/api/review-factory/job/${jobId}`);
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const job = data.job;
+                const receipts = data.receipts || [];
+                const decisions = data.decisions || [];
+                const auth = data.authorization;
+
+                bodyEl.innerHTML = `
+                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-950/60 p-3 rounded-xl border border-slate-800">
+                        <div><div class="text-[10px] uppercase text-slate-500">Task ID</div><div class="font-bold text-indigo-300">${job.task_id}</div></div>
+                        <div><div class="text-[10px] uppercase text-slate-500">State</div><div class="font-bold text-amber-300">${job.state}</div></div>
+                        <div><div class="text-[10px] uppercase text-slate-500">Risk Tier</div><div class="font-bold text-cyan-300">Tier ${job.risk_tier}</div></div>
+                        <div><div class="text-[10px] uppercase text-slate-500">Witnesses</div><div class="font-bold text-slate-200">${job.completed_witnesses} / ${job.required_witnesses}</div></div>
+                    </div>
+
+                    <div class="space-y-1">
+                        <div class="font-bold uppercase text-[10px] text-slate-400 tracking-wider">Candidate Commit & Tree</div>
+                        <div class="font-mono text-[11px] bg-slate-950/40 p-2 rounded border border-slate-800 text-slate-300">
+                            Commit: ${job.candidate_commit} | Base: ${job.base_commit}<br>
+                            Tree: ${job.candidate_tree} | Policy: ${job.policy_version}
+                        </div>
+                    </div>
+
+                    <div class="space-y-2">
+                        <div class="font-bold uppercase text-[10px] text-emerald-400 tracking-wider">Verification Receipts (${receipts.length})</div>
+                        ${receipts.length === 0 ? '<div class="text-slate-500 italic">No receipts recorded yet</div>' : receipts.map(r => `
+                            <div class="bg-slate-950/60 p-3 rounded-xl border border-slate-800 space-y-2">
+                                <div class="flex items-center justify-between text-[11px]">
+                                    <span class="font-bold text-cyan-300">Classification: ${r.classification}</span>
+                                    <span class="text-slate-500 font-mono">ID: ${r.receipt_id.slice(0, 10)}</span>
+                                </div>
+                                <div><span class="text-slate-500">Invariance Proof SHA:</span> <code class="text-indigo-300 font-mono text-[10px]">${r.invariance_proof}</code></div>
+                                <div><span class="text-slate-500">Executed Commands:</span> <pre class="bg-slate-900 p-2 rounded text-[10px] font-mono text-emerald-300 mt-1 overflow-x-auto">${r.commands}</pre></div>
+                                <div><span class="text-slate-500">Exit Codes:</span> <code class="text-slate-300 font-mono text-[10px]">${r.exit_codes}</code></div>
+                                <div><span class="text-slate-500">Explicit Non-Claims:</span> <pre class="bg-slate-900 p-2 rounded text-[10px] font-mono text-amber-300 mt-1 whitespace-pre-wrap">${r.explicit_non_claims}</pre></div>
+                            </div>
+                        `).join('')}
+                    </div>
+
+                    <div class="space-y-2">
+                        <div class="font-bold uppercase text-[10px] text-violet-400 tracking-wider">Review Decisions & Findings (${decisions.length})</div>
+                        ${decisions.length === 0 ? '<div class="text-slate-500 italic">No decisions recorded yet</div>' : decisions.map(d => `
+                            <div class="bg-slate-950/60 p-3 rounded-xl border border-slate-800 space-y-2">
+                                <div class="flex items-center justify-between text-[11px]">
+                                    <span class="font-bold ${d.verdict === 'clean' ? 'text-emerald-300' : 'text-rose-300'}">Verdict: ${d.verdict.toUpperCase()}</span>
+                                    <span class="text-slate-400">Reviewer: ${d.reviewer_id}</span>
+                                </div>
+                                <div><span class="text-slate-500">Findings JSON:</span> <pre class="bg-slate-900 p-2 rounded text-[10px] font-mono text-cyan-300 mt-1 overflow-x-auto">${d.findings}</pre></div>
+                            </div>
+                        `).join('')}
+                    </div>
+
+                    <div class="space-y-1">
+                        <div class="font-bold uppercase text-[10px] text-amber-400 tracking-wider">Merge Authorization State</div>
+                        <div class="bg-slate-950/60 p-3 rounded-xl border border-slate-800 text-[11px] space-y-1">
+                            ${auth ? `
+                                <div><span class="text-slate-500">Authorization ID:</span> <code class="text-indigo-300 font-mono">${auth.authorization_id}</code></div>
+                                <div><span class="text-slate-500">Actor:</span> <strong class="text-slate-200">${auth.actor}</strong> | Scope: <code class="text-cyan-300 font-mono">${auth.scope}</code></div>
+                                <div><span class="text-slate-500">Status:</span> ${auth.is_consumed ? '<span class="text-emerald-400 font-bold">CONSUMED</span>' : (auth.is_expired ? '<span class="text-rose-400 font-bold">EXPIRED</span>' : '<span class="text-cyan-400 font-bold">ACTIVE</span>')}</div>
+                            ` : '<div class="text-slate-500 italic">No merge authorization present</div>'}
+                        </div>
+                    </div>
+                `;
+            } catch (err) {
+                bodyEl.innerHTML = `<div class="text-rose-400 py-4">Error loading job detail: ${err.message}</div>`;
+            }
+        }
+
+        function closeRfModal() {
+            const container = document.getElementById("rf-modal-container");
+            if (container) container.classList.add("hidden");
+        }
+
+        async function triggerJanitorAction() {
+            const token = prompt("Enter transient Bearer token for Janitor action:", "");
+            if (token === null) return;
+            try {
+                const res = await fetch("/api/review-factory/janitor", {
+                    method: "POST",
+                    headers: { "Authorization": `Bearer ${token}` }
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+                alert(`Janitor trigger completed!\nReset count: ${JSON.stringify(data.result)}`);
+                loadReviewFactoryMetrics();
+            } catch (err) {
+                alert(`Janitor action failed: ${err.message}`);
+            }
+        }
+
+        async function openForceReleaseModal() {
+            const jobId = prompt("Enter Review Job ID to force release lease:", "");
+            if (!jobId) return;
+            const token = prompt("Enter transient Bearer token:", "");
+            if (token === null) return;
+            try {
+                const res = await fetch(`/api/review-factory/job/${jobId}/release`, {
+                    method: "POST",
+                    headers: { "Authorization": `Bearer ${token}` }
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+                alert(`Lease force-released for job ${jobId}!`);
+                loadReviewFactoryMetrics();
+            } catch (err) {
+                alert(`Force release failed: ${err.message}`);
+            }
+        }
+
+        async function openAuthorizeMergeModal() {
+            const jobId = prompt("Enter Review Job ID to authorize for merge:", "");
+            if (!jobId) return;
+            const actor = prompt("Enter Operator Identity (e.g. michael):", "michael");
+            if (!actor) return;
+            const token = prompt("Enter transient Bearer token:", "");
+            if (token === null) return;
+
+            try {
+                const res = await fetch(`/api/review-factory/job/${jobId}/authorize`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ actor: actor })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+                alert(`Merge authorized successfully!\nAuthorization ID: ${data.authorization_id}`);
+                loadReviewFactoryMetrics();
+            } catch (err) {
+                alert(`Authorization failed: ${err.message}`);
             }
         }
 

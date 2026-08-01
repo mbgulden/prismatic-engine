@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 try:
-    from fastapi import APIRouter, Depends, HTTPException, Query
-    from fastapi.responses import HTMLResponse, JSONResponse
+    from fastapi import APIRouter, HTTPException, Query
+
     _HAS_FASTAPI = True
 except ImportError:
     _HAS_FASTAPI = False
@@ -70,7 +70,9 @@ def create_workspace_router(docs_root: Optional[Path] = None) -> Any:
         entries = _get_tree_cached(walker)
         target = next((e for e in entries if e.id == doc_id), None)
         if not target:
-            raise HTTPException(status_code=404, detail=f"Document '{doc_id}' not found")
+            raise HTTPException(
+                status_code=404, detail=f"Document '{doc_id}' not found"
+            )
 
         full_path = root / target.path
         content = ""
@@ -86,7 +88,9 @@ def create_workspace_router(docs_root: Optional[Path] = None) -> Any:
         }
 
     @router.post("/acceptance")
-    async def run_acceptance(path: str = Query(..., description="Relative doc path")) -> Dict[str, Any]:
+    async def run_acceptance(
+        path: str = Query(..., description="Relative doc path"),
+    ) -> Dict[str, Any]:
         """Run acceptance protocol on a specific doc path."""
         full_path = root / path
         if not full_path.exists():
@@ -104,7 +108,9 @@ def create_workspace_router(docs_root: Optional[Path] = None) -> Any:
         entries = _get_tree_cached(walker)
         target = next((e for e in entries if e.id == doc_id), None)
         if not target:
-            raise HTTPException(status_code=404, detail=f"Document '{doc_id}' not found")
+            raise HTTPException(
+                status_code=404, detail=f"Document '{doc_id}' not found"
+            )
 
         return share_mgr.generate_token(doc_id=doc_id, ttl_seconds=ttl_seconds)
 
@@ -118,7 +124,9 @@ def create_workspace_router(docs_root: Optional[Path] = None) -> Any:
         entries = _get_tree_cached(walker)
         target = next((e for e in entries if e.id == doc_id), None)
         if not target:
-            raise HTTPException(status_code=404, detail=f"Shared document '{doc_id}' not found")
+            raise HTTPException(
+                status_code=404, detail=f"Shared document '{doc_id}' not found"
+            )
 
         full_path = root / target.path
         content = full_path.read_text(encoding="utf-8") if full_path.exists() else ""
@@ -145,7 +153,9 @@ def create_workspace_router(docs_root: Optional[Path] = None) -> Any:
         return {"path": path, "result": result}
 
     @router.post("/share/revoke")
-    async def revoke_share_link(token: str = Query(..., description="Share token")) -> Dict[str, Any]:
+    async def revoke_share_link(
+        token: str = Query(..., description="Share token"),
+    ) -> Dict[str, Any]:
         """Revoke a share token."""
         share_mgr.revoke_token(token)
         return {"status": "revoked", "token": token}

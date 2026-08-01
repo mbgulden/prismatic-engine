@@ -65,7 +65,9 @@ class AcceptanceProtocol:
         # 2. Frontmatter valid check
         status = str(frontmatter.get("status", "accepted")).lower()
         if status not in VALID_STATUSES and "invalid-status" not in skip_reasons:
-            failed_reasons.append(f"Invalid status '{status}'. Must be one of {VALID_STATUSES}")
+            failed_reasons.append(
+                f"Invalid status '{status}'. Must be one of {VALID_STATUSES}"
+            )
 
         # 3. H1 heading check
         title = frontmatter.get("title", "")
@@ -83,7 +85,9 @@ class AcceptanceProtocol:
         linear_issue = frontmatter.get("linear_issue")
         if linear_issue and not GRO_PATTERN.match(str(linear_issue)):
             if "invalid-linear-issue" not in skip_reasons:
-                failed_reasons.append(f"Invalid Linear issue format '{linear_issue}'. Expected GRO-XXXX")
+                failed_reasons.append(
+                    f"Invalid Linear issue format '{linear_issue}'. Expected GRO-XXXX"
+                )
 
         # 6. Deprecated check
         if status == "deprecated" and "deprecated-doc" not in skip_reasons:
@@ -93,7 +97,9 @@ class AcceptanceProtocol:
         if status == "superseded":
             superseded_by = frontmatter.get("superseded_by")
             if not superseded_by and "missing-replacement" not in skip_reasons:
-                failed_reasons.append("Superseded document must specify 'superseded_by'")
+                failed_reasons.append(
+                    "Superseded document must specify 'superseded_by'"
+                )
 
         passed = len(failed_reasons) == 0
 

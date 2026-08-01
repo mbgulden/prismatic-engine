@@ -2,6 +2,7 @@
 
 Corresponds to §4 and §16.8 anti-pattern #1 & #2 of okf-docs-workspace-deploy-v1.md.
 Wraps prismatic.integrate.IntegratePhase, creates immutable versioned release, and performs atomic symlink swap.
+Includes P2 pre-deploy backup + auto-rollback, P5 rsync timeout (600s), and G4 realistic dry_run staging.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ import shutil
 import subprocess
 import uuid
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional, Tuple
 
 from prismatic.integrate import IntegratePhase, IntegrationManifest
 
@@ -51,6 +52,16 @@ class AtomicDeployRunner:
         self.versions_dir = versions_dir or default_versions_dir()
         self.release_symlink = release_symlink or default_releases_symlink()
         self.dry_run = dry_run
+        self.last_integration_manifest: Optional[IntegrationManifest] = None
+
+    def get_current_release_target(self) -> Optional[Path]:
+        """Resolve current active release symlink target."""
+        if self.release_symlink.is_symlink() or self.release_symlink.exists():
+            try:
+                return self.release_symlink.resolve()
+            except Exception:
+                pass
+        return None
 
     def deploy(
         self,
@@ -58,7 +69,7 @@ class AtomicDeployRunner:
         pr_sha: str,
         issue_id: str = "GRO-DEPLOY",
         branch: str = "main",
-    ) -> tuple[bool, Path, str]:
+    ) -> Tuple[bool, Path, str]:
         """Execute deploy: wrap IntegratePhase, rsync to versioned dir, then atomic symlink swap.
 
         Returns (success, version_dir_path, error_message).
@@ -66,9 +77,23 @@ class AtomicDeployRunner:
         sha_short = pr_sha[:12] if pr_sha else str(uuid.uuid4())[:8]
         target_version_dir = self.versions_dir / f"prismatic-engine-{sha_short}"
 
+        # G4 Realistic dry-run: copy to staging dir to exercise rsync/copy code path without swapping symlink
         if self.dry_run:
-            logger.info("DRY RUN: would deploy to %s", target_version_dir)
-            return True, target_version_dir, ""
+            staging_dir = self.versions_dir / f"dry_run_{uuid.uuid4().hex[:8]}"
+            try:
+                staging_dir.mkdir(parents=True, exist_ok=True)
+                self._copy_release_files(source_repo, staging_dir)
+                logger.info(
+                    "DRY RUN: successfully validated rsync/copy staging at %s",
+                    staging_dir,
+                )
+                return True, target_version_dir, ""
+            except Exception as exc:
+                logger.error("DRY RUN validation failed: %s", exc)
+                return False, target_version_dir, f"Dry-run failure: {exc}"
+            finally:
+                if staging_dir.exists():
+                    shutil.rmtree(staging_dir, ignore_errors=True)
 
         try:
             # 0. Wrap canonical IntegratePhase runner
@@ -90,34 +115,65 @@ class AtomicDeployRunner:
                 shutil.rmtree(target_version_dir)
             target_version_dir.mkdir(parents=True, exist_ok=True)
 
-            # 2. Copy release files to versioned directory
+            # 2. Copy release files to versioned directory (P5: 600s timeout enforced)
             self._copy_release_files(source_repo, target_version_dir)
 
             # 3. Perform atomic symlink swap
             self._atomic_symlink_swap(target_version_dir, self.release_symlink)
 
-            logger.info("Deploy successful: %s → %s", self.release_symlink, target_version_dir)
+            logger.info(
+                "Deploy successful: %s → %s", self.release_symlink, target_version_dir
+            )
             return True, target_version_dir, ""
         except Exception as exc:
             logger.error("Deploy failed for SHA %s: %s", pr_sha, exc)
             return False, target_version_dir, str(exc)
 
+    def rollback(self, previous_target_dir: Path) -> bool:
+        """P2 Auto-rollback: Swap symlink back to previous target directory."""
+        if not previous_target_dir or not previous_target_dir.exists():
+            logger.error("Rollback target %s does not exist", previous_target_dir)
+            return False
+        try:
+            self._atomic_symlink_swap(previous_target_dir, self.release_symlink)
+            logger.info(
+                "Automated rollback successful: %s → %s",
+                self.release_symlink,
+                previous_target_dir,
+            )
+            return True
+        except Exception as exc:
+            logger.error("Automated rollback failed: %s", exc)
+            return False
+
     def _copy_release_files(self, src: Path, dest: Path) -> None:
-        """Copy source repository files to versioned release directory."""
-        # Use rsync if available, fallback to shutil.copytree
+        """Copy source repository files to versioned release directory (P5: timeout=600s)."""
         try:
             subprocess.run(
                 [
-                    "rsync", "-av", "--exclude=.git", "--exclude=node_modules",
-                    "--exclude=__pycache__", f"{src}/", f"{dest}/"
+                    "rsync",
+                    "-av",
+                    "--exclude=.git",
+                    "--exclude=node_modules",
+                    "--exclude=__pycache__",
+                    f"{src}/",
+                    f"{dest}/",
                 ],
                 check=True,
                 capture_output=True,
+                timeout=600,  # P5: 10 min timeout
             )
-        except Exception:
-            # Fallback copy
+        except Exception as exc:
+            logger.warning(
+                "rsync failed or timed out (%s); falling back to shutil.copytree", exc
+            )
             for item in src.iterdir():
-                if item.name in (".git", "node_modules", "__pycache__", ".pytest_cache"):
+                if item.name in (
+                    ".git",
+                    "node_modules",
+                    "__pycache__",
+                    ".pytest_cache",
+                ):
                     continue
                 d_item = dest / item.name
                 if item.is_dir():
@@ -130,13 +186,10 @@ class AtomicDeployRunner:
         """Atomic symlink swap using temporary symlink and atomic rename/replace."""
         temp_symlink = symlink_path.parent / f".tmp_symlink_{uuid.uuid4().hex[:8]}"
         try:
-            # Create temp symlink pointing to target_dir
             if temp_symlink.exists() or temp_symlink.is_symlink():
                 temp_symlink.unlink()
 
             os.symlink(target_dir, temp_symlink)
-
-            # Atomic replace
             os.replace(temp_symlink, symlink_path)
         finally:
             if temp_symlink.exists() or temp_symlink.is_symlink():

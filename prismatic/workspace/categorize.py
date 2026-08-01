@@ -6,7 +6,6 @@ Rule-based categorizer mapping doc path and frontmatter to canonical categories:
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Any, Optional
 

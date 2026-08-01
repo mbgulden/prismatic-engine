@@ -13,7 +13,9 @@ import os
 import time
 from typing import Any, Optional
 
-DEFAULT_SECRET = os.environ.get("PRISMATIC_WORKSPACE_SHARE_SECRET", "prismatic-workspace-share-secret-v1")
+DEFAULT_SECRET = os.environ.get(
+    "PRISMATIC_WORKSPACE_SHARE_SECRET", "prismatic-workspace-share-secret-v1"
+)
 DEFAULT_TTL_SECONDS = 86400  # 24 hours
 
 _REVOKED_TOKENS: set[str] = set()
@@ -68,7 +70,9 @@ class WorkspaceShareManager:
 
             # Check HMAC signature
             payload = f"{doc_id}:{expires_at}"
-            expected_sig = hmac.new(self.secret, payload.encode("utf-8"), hashlib.sha256).hexdigest()
+            expected_sig = hmac.new(
+                self.secret, payload.encode("utf-8"), hashlib.sha256
+            ).hexdigest()
 
             if not hmac.compare_digest(sig, expected_sig):
                 return False, doc_id, "Invalid signature"

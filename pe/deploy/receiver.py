@@ -14,11 +14,11 @@ import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 try:
-    from fastapi import APIRouter, FastAPI, Header, HTTPException, Request
-    from fastapi.responses import JSONResponse
+    from fastapi import FastAPI, Header, HTTPException, Request
+
     _HAS_FASTAPI = True
 except ImportError:
     _HAS_FASTAPI = False
@@ -66,7 +66,7 @@ def verify_hmac_signature(
         return False
 
     sec = sec_str.encode("utf-8")
-    
+
     # Strip 'sha256=' prefix if present
     sig = signature_header.replace("sha256=", "").strip()
     expected_sig = hmac.new(sec, body_bytes, hashlib.sha256).hexdigest()
@@ -105,6 +105,9 @@ class DeployReceiverPipeline:
         deployer = str(payload.get("deployer", "github-action"))
         commits = payload.get("commits", [])
 
+        # Step 0: Capture current symlink target for rollback backup
+        prev_target = self.deploy_runner.get_current_release_target()
+
         # Step 1: Execute atomic deploy
         success, version_dir, err_msg = self.deploy_runner.deploy(
             source_repo=self.source_repo,
@@ -112,15 +115,26 @@ class DeployReceiverPipeline:
             branch=payload.get("ref", "main"),
         )
 
-        # Step 2: Post-deploy health check
-        health_res = self.health_checker.check(
-            version_dir=version_dir,
-            release_symlink=self.deploy_runner.release_symlink,
-        )
+        # Step 2: Post-deploy health check (bypassed on dry_run since symlink isn't swapped)
+        if self.deploy_runner.dry_run:
+            health_res = {
+                "passed": True,
+                "details": "Health check bypassed for dry run",
+            }
+        else:
+            health_res = self.health_checker.check(
+                version_dir=version_dir,
+                release_symlink=self.deploy_runner.release_symlink,
+            )
 
+        rolled_back = False
         if not health_res["passed"]:
             success = False
             err_msg = f"Post-deploy health check failed: {health_res['details']}"
+            if prev_target and not self.deploy_runner.dry_run:
+                rolled_back = self.deploy_runner.rollback(prev_target)
+                if rolled_back:
+                    err_msg += f" (Automated rollback performed to {prev_target.name})"
 
         # Step 3: Transition Linear issues if deploy and health check passed
         transitions: list[dict[str, Any]] = []
@@ -157,6 +171,24 @@ class DeployReceiverPipeline:
         # Step 4: Persist deploy record
         self.store.record_deploy(record)
 
+        # Step 5: Audit log entry
+        try:
+            from pe.deploy.audit import DeployAuditLog
+
+            DeployAuditLog().record_entry(
+                action="process_deploy",
+                actor=deployer,
+                status="success" if success else "failed",
+                details={
+                    "deploy_id": record_id,
+                    "pr_sha": pr_sha,
+                    "rolled_back": rolled_back,
+                    "duration_ms": duration_ms,
+                },
+            )
+        except Exception:
+            pass
+
         return record
 
 
@@ -177,7 +209,9 @@ def create_deploy_receiver_app() -> Any:
 
         # Verify HMAC signature (§16.8 anti-pattern #3)
         if not verify_hmac_signature(body_bytes, x_hub_signature_256):
-            raise HTTPException(status_code=401, detail="Invalid or missing HMAC signature")
+            raise HTTPException(
+                status_code=401, detail="Invalid or missing HMAC signature"
+            )
 
         try:
             payload = json.loads(body_bytes.decode("utf-8"))
@@ -193,7 +227,11 @@ def create_deploy_receiver_app() -> Any:
 
     @app.get("/health")
     async def receiver_health() -> Dict[str, Any]:
-        return {"status": "ok", "port": RECEIVER_PORT, "time": datetime.now(timezone.utc).isoformat()}
+        return {
+            "status": "ok",
+            "port": RECEIVER_PORT,
+            "time": datetime.now(timezone.utc).isoformat(),
+        }
 
     return app
 
@@ -202,5 +240,7 @@ app = create_deploy_receiver_app()
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("pe.deploy.receiver:app", host="0.0.0.0", port=RECEIVER_PORT, reload=False)
 
+    uvicorn.run(
+        "pe.deploy.receiver:app", host="0.0.0.0", port=RECEIVER_PORT, reload=False
+    )
