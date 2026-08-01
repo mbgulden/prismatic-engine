@@ -3,3 +3,5 @@
 prismatic/gateway/dashboard_src/** whitespace=-blank-at-eof,-trailing-space
 prismatic/gateway/templates/dashboard.html whitespace=-blank-at-eof,-trailing-space
 prismatic/gateway/server.py whitespace=-blank-at-eof,-trailing-space
+.github/workflows/test.yml whitespace=-blank-at-eof,-trailing-space
+.github/workflows/test.yml text eol=lf
