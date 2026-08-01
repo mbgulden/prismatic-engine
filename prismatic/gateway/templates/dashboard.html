@@ -153,6 +153,12 @@
             <button id="tab-btn-quota" onclick="switchTab('quota')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
                 Resources
             </button>
+            <button id="tab-btn-curated-workspace" onclick="switchTab('curated-workspace')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                Curated Workspace
+            </button>
+            <button id="tab-btn-deploy-hook" onclick="switchTab('deploy-hook')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                Deploy Hook
+            </button>
         </div>
     </div>
 
@@ -1647,6 +1653,127 @@
                     </table>
                 </div>
             </div>
+        <!-- SECTION 9: CURATED WORKSPACE -->
+        <div id="section-curated-workspace" class="hidden space-y-6">
+          <div class="glass-panel p-6 rounded-xl space-y-6">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div>
+                <h2 class="text-xl font-bold text-white flex items-center gap-2">
+                  <span>📚</span> Curated Workspace
+                </h2>
+                <p class="text-xs text-slate-400">Live documentation tree served directly from deployed releases.</p>
+              </div>
+              <div class="flex items-center gap-3">
+                <input type="text" id="workspace-search" placeholder="Search documentation..." 
+                       class="px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 focus:outline-none focus:border-indigo-500" 
+                       onkeyup="filterWorkspace()">
+                <button onclick="loadWorkspaceTree()" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold transition">
+                  Refresh Tree
+                </button>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-12 gap-6">
+              <!-- Sidebar: Category & Document Tree -->
+              <div class="col-span-4 bg-slate-950/60 border border-slate-800 rounded-xl p-4 max-h-[75vh] overflow-y-auto space-y-4" id="workspace-tree-container">
+                <div class="text-center text-slate-500 py-8 text-xs">Loading documentation tree...</div>
+              </div>
+
+              <!-- Main Content: Document Viewer -->
+              <div class="col-span-8 bg-slate-950/60 border border-slate-800 rounded-xl p-6 flex flex-col max-h-[75vh]">
+                <div id="workspace-doc-header" class="border-b border-slate-800 pb-4 mb-4 flex items-center justify-between">
+                  <div>
+                    <h3 id="doc-title" class="text-lg font-semibold text-white">Select a Document</h3>
+                    <p id="doc-path" class="text-xs text-slate-400 mt-1">Select an entry from the tree on the left to view documentation.</p>
+                  </div>
+                  <div id="doc-actions" class="hidden flex items-center gap-2">
+                    <span id="doc-status-badge" class="px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-900/60 text-emerald-300">PASS</span>
+                    <button onclick="shareCurrentDoc()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-md text-xs font-medium border border-slate-700 transition">
+                      🔗 Share (24h Link)
+                    </button>
+                  </div>
+                </div>
+
+                <div id="doc-content-container" class="flex-1 overflow-y-auto pr-2 text-slate-300 text-xs font-mono whitespace-pre-wrap">
+                  <div class="text-slate-500 italic py-12 text-center">No document selected</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SECTION 10: DEPLOY HOOK -->
+        <div id="section-deploy-hook" class="hidden space-y-6">
+          <div class="glass-panel p-6 rounded-xl space-y-6">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div>
+                <h2 class="text-xl font-bold text-white flex items-center gap-2">
+                  <span>🚀</span> Production Deploy Hook
+                </h2>
+                <p class="text-xs text-slate-400">Post-merge deploy records, Linear issue transitions, and release health status.</p>
+              </div>
+              <div class="flex items-center gap-3">
+                <button onclick="loadDeployHistory()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg text-xs font-semibold transition">
+                  Refresh History
+                </button>
+                <button onclick="triggerDeployPrompt()" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold transition">
+                  Manual Deploy (Dry-Run)
+                </button>
+              </div>
+            </div>
+
+            <!-- Active Release Overview -->
+            <div class="grid grid-cols-3 gap-6">
+              <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-4 flex items-center justify-between">
+                <div>
+                  <div class="text-[10px] font-bold text-slate-400 uppercase">Active Release Symlink</div>
+                  <div id="active-release-path" class="text-xs font-mono text-indigo-400 mt-1 truncate max-w-[220px]">Loading...</div>
+                </div>
+                <span class="text-xl">🔗</span>
+              </div>
+
+              <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-4 flex items-center justify-between">
+                <div>
+                  <div class="text-[10px] font-bold text-slate-400 uppercase">Latest Deploy Status</div>
+                  <div id="latest-deploy-status" class="text-xs font-semibold text-emerald-400 mt-1">SUCCESS</div>
+                </div>
+                <span id="latest-deploy-icon" class="text-xl">✅</span>
+              </div>
+
+              <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-4 flex items-center justify-between">
+                <div>
+                  <div class="text-[10px] font-bold text-slate-400 uppercase">Linear Transitions (24h)</div>
+                  <div id="linear-transitions-count" class="text-lg font-bold text-white mt-1">0</div>
+                </div>
+                <span class="text-xl">🎯</span>
+              </div>
+            </div>
+
+            <!-- Deployment History Table -->
+            <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-4">
+              <h3 class="text-sm font-semibold text-white mb-3">Deployment History</h3>
+              <div class="overflow-x-auto">
+                <table class="w-full text-left text-xs text-slate-300">
+                  <thead class="text-[10px] uppercase bg-slate-900/60 text-slate-400 border-b border-slate-800">
+                    <tr>
+                      <th class="px-3 py-2">Deploy ID / SHA</th>
+                      <th class="px-3 py-2">PR Title</th>
+                      <th class="px-3 py-2">Deployer</th>
+                      <th class="px-3 py-2">Health Check</th>
+                      <th class="px-3 py-2">Linear Issue(s)</th>
+                      <th class="px-3 py-2">Deployed At</th>
+                      <th class="px-3 py-2 text-right">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody id="deploy-history-tbody">
+                    <tr>
+                      <td colspan="7" class="text-center py-8 text-slate-500">Loading deployment history...</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
         </div>
 
     </main>
@@ -1839,23 +1966,29 @@
             activeTab = tab;
             
             // Toggle Tab Buttons
-            const tabs = ['dashboard', 'telemetry', 'merge', 'workspaces', 'skills', 'signals', 'pwp', 'plugins', 'crons', 'quota', 'foundation'];
+            const tabs = ['dashboard', 'telemetry', 'merge', 'workspaces', 'skills', 'signals', 'pwp', 'plugins', 'crons', 'quota', 'foundation', 'curated-workspace', 'deploy-hook'];
             tabs.forEach(t => {
                 const btn = document.getElementById(`tab-btn-${t}`);
                 const sec = document.getElementById(`section-${t}`);
                 
-                if (t === tab) {
-                    btn.className = "px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-indigo-600/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-600/20";
-                    sec.classList.remove("hidden");
-                } else {
-                    btn.className = "px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200";
-                    sec.classList.add("hidden");
+                if (btn && sec) {
+                    if (t === tab) {
+                        btn.className = "px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-indigo-600/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-600/20";
+                        sec.classList.remove("hidden");
+                    } else {
+                        btn.className = "px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200";
+                        sec.classList.add("hidden");
+                    }
                 }
             });
             
             fetchData();
             if (tab === 'crons') {
                 loadNativeCrons();
+            } else if (tab === 'curated-workspace' && typeof loadWorkspaceTree === 'function') {
+                loadWorkspaceTree();
+            } else if (tab === 'deploy-hook' && typeof loadDeployHistory === 'function') {
+                loadDeployHistory();
             }
         }
 
@@ -4623,6 +4756,156 @@
                 text.textContent = "Connecting";
                 setTimeout(connectWS, 3000);
             };
+        }
+
+        // Curated Workspace JS Helpers
+        let currentWorkspaceDocId = null;
+
+        async function loadWorkspaceTree() {
+            const container = document.getElementById("workspace-tree-container");
+            if (!container) return;
+            try {
+                const res = await fetch("/api/workspace/tree");
+                const data = await res.json();
+                if (!data.by_category || Object.keys(data.by_category).length === 0) {
+                    container.innerHTML = '<div class="text-slate-500 text-center py-8 text-xs">No documentation entries found.</div>';
+                    return;
+                }
+                let html = "";
+                for (const [cat, entries] of Object.entries(data.by_category)) {
+                    html += `<div class="workspace-category-group">
+                        <h4 class="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5 flex items-center justify-between">
+                            <span>${cat}</span>
+                            <span class="text-slate-600">${entries.length}</span>
+                        </h4>
+                        <div class="space-y-1 pl-2">`;
+                    entries.forEach(e => {
+                        const passed = e.acceptance && e.acceptance.passed;
+                        const badgeColor = passed ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" : "bg-rose-500/20 text-rose-400 border-rose-500/30";
+                        html += `<div onclick="selectDoc('${e.id}')" 
+                                     class="workspace-doc-item p-2 rounded-lg hover:bg-slate-900 cursor-pointer flex items-center justify-between text-xs transition group"
+                                     data-title="${(e.title||'').toLowerCase()}" data-path="${(e.path||'').toLowerCase()}">
+                                  <div class="truncate max-w-[180px] text-slate-300 group-hover:text-white">${e.title}</div>
+                                  <span class="text-[9px] px-1.5 py-0.5 border rounded font-mono ${badgeColor}">${passed ? "PASS" : "FAIL"}</span>
+                                </div>`;
+                    });
+                    html += `</div></div>`;
+                }
+                container.innerHTML = html;
+            } catch (err) {
+                container.innerHTML = `<div class="text-rose-400 text-center py-8 text-xs">Error loading tree: ${err.message}</div>`;
+            }
+        }
+
+        async function selectDoc(docId) {
+            currentWorkspaceDocId = docId;
+            const headerActions = document.getElementById("doc-actions");
+            const titleEl = document.getElementById("doc-title");
+            const pathEl = document.getElementById("doc-path");
+            const contentEl = document.getElementById("doc-content-container");
+            const badgeEl = document.getElementById("doc-status-badge");
+            try {
+                const res = await fetch(`/api/workspace/entry/${docId}`);
+                const data = await res.json();
+                const entry = data.entry;
+                if (titleEl) titleEl.textContent = entry.title;
+                if (pathEl) pathEl.textContent = `path: ${entry.path} | category: ${entry.category} | modified: ${entry.last_modified}`;
+                if (headerActions) headerActions.classList.remove("hidden");
+                const passed = entry.acceptance && entry.acceptance.passed;
+                if (badgeEl) {
+                    badgeEl.className = passed ? "px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-900/60 text-emerald-300" : "px-2.5 py-1 text-xs font-semibold rounded-full bg-rose-900/60 text-rose-300";
+                    badgeEl.textContent = passed ? "ACCEPTANCE PASS" : "ACCEPTANCE FAIL";
+                }
+                if (contentEl) contentEl.textContent = data.content || "Empty document";
+            } catch (err) {
+                if (contentEl) contentEl.textContent = `Error loading document: ${err.message}`;
+            }
+        }
+
+        async function shareCurrentDoc() {
+            if (!currentWorkspaceDocId) return;
+            try {
+                const res = await fetch(`/api/workspace/share?doc_id=${currentWorkspaceDocId}`, { method: "POST" });
+                const data = await res.json();
+                const fullUrl = window.location.origin + data.share_url;
+                navigator.clipboard.writeText(fullUrl);
+                alert(`Signed 24h share link copied to clipboard!\n${fullUrl}`);
+            } catch (err) {
+                alert(`Failed to create share link: ${err.message}`);
+            }
+        }
+
+        function filterWorkspace() {
+            const query = (document.getElementById("workspace-search")?.value || "").toLowerCase();
+            const items = document.querySelectorAll(".workspace-doc-item");
+            items.forEach(item => {
+                const title = item.getAttribute("data-title") || "";
+                const path = item.getAttribute("data-path") || "";
+                item.style.display = (title.includes(query) || path.includes(query)) ? "flex" : "none";
+            });
+        }
+
+        // Deploy Hook JS Helpers
+        async function loadDeployHistory() {
+            const tbody = document.getElementById("deploy-history-tbody");
+            const pathEl = document.getElementById("active-release-path");
+            const statusEl = document.getElementById("latest-deploy-status");
+            const iconEl = document.getElementById("latest-deploy-icon");
+            const linearCountEl = document.getElementById("linear-transitions-count");
+            if (!tbody) return;
+            try {
+                const res = await fetch("/api/deploy/recent");
+                const data = await res.json();
+                if (!data.deploys || data.deploys.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="text-center py-8 text-slate-500 text-xs">No deploy records found.</td></tr>';
+                    if (pathEl) pathEl.textContent = "No active release";
+                    return;
+                }
+                const latest = data.deploys[0];
+                if (pathEl) pathEl.textContent = latest.release_symlink || latest.version_dir || "Deployed";
+                if (statusEl) {
+                    statusEl.textContent = latest.success ? "SUCCESS" : "FAILED";
+                    statusEl.className = latest.success ? "text-xs font-semibold text-emerald-400 mt-1" : "text-xs font-semibold text-rose-400 mt-1";
+                }
+                if (iconEl) iconEl.textContent = latest.success ? "✅" : "❌";
+                let totalLinear = 0;
+                let html = "";
+                data.deploys.forEach(d => {
+                    const shaShort = d.pr_sha ? d.pr_sha.substring(0, 7) : "manual";
+                    const healthPassed = d.health_check && d.health_check.passed;
+                    const linearCount = (d.linear_transitions || []).length;
+                    totalLinear += linearCount;
+                    const badge = d.success
+                        ? '<span class="px-2.5 py-0.5 text-[10px] font-semibold rounded-full bg-emerald-900/60 text-emerald-300">SUCCESS</span>'
+                        : '<span class="px-2.5 py-0.5 text-[10px] font-semibold rounded-full bg-rose-900/60 text-rose-300">FAILED</span>';
+                    html += `<tr class="border-b border-slate-800/50 hover:bg-slate-900/40 transition">
+                        <td class="px-3 py-2 font-mono text-[11px] text-indigo-300">${shaShort}</td>
+                        <td class="px-3 py-2 text-white max-w-[200px] truncate">${d.pr_title || 'Direct Deploy'}</td>
+                        <td class="px-3 py-2 text-slate-400 text-[11px]">${d.deployer}</td>
+                        <td class="px-3 py-2 text-[11px]">${healthPassed ? "🟢 Passed" : "🔴 Failed"}</td>
+                        <td class="px-3 py-2 text-[11px] text-indigo-400">${linearCount > 0 ? `${linearCount} transitioned` : "None"}</td>
+                        <td class="px-3 py-2 text-[11px] text-slate-400">${new Date(d.deployed_at).toLocaleString()}</td>
+                        <td class="px-3 py-2 text-right">${badge}</td>
+                    </tr>`;
+                });
+                if (linearCountEl) linearCountEl.textContent = totalLinear;
+                tbody.innerHTML = html;
+            } catch (err) {
+                tbody.innerHTML = `<tr><td colspan="7" class="text-center py-8 text-rose-400 text-xs">Error loading history: ${err.message}</td></tr>`;
+            }
+        }
+
+        async function triggerDeployPrompt() {
+            const sha = prompt("Enter commit SHA for dry-run deploy:", "main");
+            if (!sha) return;
+            try {
+                const res = await fetch(`/api/deploy/trigger?pr_sha=${encodeURIComponent(sha)}&dry_run=true`, { method: "POST" });
+                const data = await res.json();
+                alert(`Dry-run deploy completed!\nStatus: ${data.status}\nDeployer: ${data.record.deployer}`);
+                loadDeployHistory();
+            } catch (err) {
+                alert(`Deploy failed: ${err.message}`);
+            }
         }
 
         document.addEventListener("DOMContentLoaded", () => {

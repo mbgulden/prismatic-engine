@@ -19,16 +19,19 @@ def default_deployed_docs_root() -> Path:
 
     Priority:
     1. PRISMATIC_DEPLOYED_DOCS_DIR env var
-    2. ~/.prismatic/releases/prismatic-engine/docs
+    2. ~/.prismatic/releases/prismatic-engine/docs (resolved via symlink)
     3. ./docs (fallback)
     """
     env_dir = os.environ.get("PRISMATIC_DEPLOYED_DOCS_DIR")
     if env_dir:
-        return Path(env_dir).expanduser()
+        return Path(env_dir).expanduser().resolve()
 
     release_dir = Path("~/.prismatic/releases/prismatic-engine/docs").expanduser()
-    if release_dir.exists():
-        return release_dir
+    if release_dir.exists() or release_dir.parent.exists():
+        try:
+            return release_dir.resolve()
+        except Exception:
+            return release_dir
 
     return Path("./docs").resolve()
 
@@ -41,7 +44,11 @@ class WorkspaceTreeWalker:
         docs_root: Optional[Path] = None,
         acceptance: Optional[AcceptanceProtocol] = None,
     ):
-        self.docs_root = docs_root or default_deployed_docs_root()
+        raw_root = docs_root or default_deployed_docs_root()
+        try:
+            self.docs_root = raw_root.resolve()
+        except Exception:
+            self.docs_root = raw_root
         self.acceptance = acceptance or AcceptanceProtocol(docs_root=self.docs_root)
 
     def walk(self) -> list[WorkspaceManifestEntry]:
