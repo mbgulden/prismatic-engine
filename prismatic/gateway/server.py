@@ -239,7 +239,39 @@ async def _publish_webhook_auth_failed(source: str) -> None:
         logger.warning("webhook auth-failed bus publish failed: %s", exc)
 
 
+def _linear_state_is_terminal(state: dict | None) -> bool:
+    if not state:
+        return False
+    name = (state.get("name") or "").lower()
+    stype = (state.get("type") or "").lower()
+    return stype in ("completed", "canceled") or name in ("done", "duplicate", "canceled")
+
+
+def _prune_terminal_linear_pending(pending: dict, linear_states: dict) -> tuple[dict, list, list]:
+    active = {}
+    pruned = []
+    retained = []
+    for ticket, info in pending.items():
+        st = linear_states.get(ticket)
+        if _linear_state_is_terminal(st):
+            if info.get("force_keep_terminal"):
+                active[ticket] = info
+                retained.append(
+                    {
+                        "ticket": ticket,
+                        "linear_state": st,
+                        "rationale": info.get("terminal_keep_rationale", ""),
+                    }
+                )
+            else:
+                pruned.append({"ticket": ticket, "linear_state": st})
+        else:
+            active[ticket] = info
+    return active, pruned, retained
+
+
 # ── FastAPI Application ──────────────────────────────────────────────
+
 
 app = FastAPI(
     title="Prismatic Engine Gateway",
