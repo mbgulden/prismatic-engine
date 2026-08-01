@@ -192,8 +192,8 @@ class TestMergeExecution:
         """Dry-run merge for a Tier 0 job produces a MergeResult."""
         job_id = _create_merge_ready_job(queue, tier=0)
 
-        # Auto-authorize (Tier 0 standing policy)
-        auth_id = queue.auto_authorize_if_eligible(job_id)
+        # Authorize explicitly
+        auth_id = queue.authorize_merge(job_id, actor="michael")
         assert auth_id is not None
 
         # Build a CLEAN manifest for the executor

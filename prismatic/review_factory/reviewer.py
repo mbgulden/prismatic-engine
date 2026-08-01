@@ -249,14 +249,13 @@ class ReviewerCapability:
 
     @staticmethod
     def _derive_pr_url(job: ReviewJob) -> str:
-        """Derive GitHub PR URL from job metadata.
-
-        Convention: the job's task_id maps to a Linear issue,
-        which in turn has a linked GitHub PR.
-        For now, construct a best-effort URL from the repository and branch.
-        """
+        """Derive valid GitHub PR URL from job metadata."""
         repo = job.repository or "mbgulden/prismatic-engine"
-        return f"https://github.com/{repo}/pull/{job.task_id}"
+        import re
+
+        m = re.search(r"(\d+)", str(job.task_id))
+        pr_num = m.group(1) if m else job.task_id
+        return f"https://github.com/{repo}/pull/{pr_num}"
 
     @staticmethod
     def _compute_idempotency_key(

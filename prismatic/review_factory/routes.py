@@ -4,12 +4,12 @@ Adds review factory endpoints under ``/api/merge-factory/review/``
 and ``/api/review-factory/``.
 
 Endpoints:
-    GET  /queue            — Queue depth by state
-    GET  /jobs             — List jobs (?state=)
-    GET  /job/{id}         — Job detail
-    GET  /authorizations   — Authorization state
-    POST /janitor          — Run stale lease janitor
-    GET  /stats            — Queue statistics
+    GET  /queue            — Queue depth by state (Authenticated)
+    GET  /jobs             — List jobs (?state=) (Authenticated)
+    GET  /job/{id}         — Job detail (Authenticated)
+    GET  /authorizations   — Authorization state (Authenticated)
+    POST /janitor          — Run stale lease janitor (Admin scope required)
+    GET  /stats            — Queue statistics (Authenticated)
 """
 
 from __future__ import annotations
@@ -18,12 +18,16 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 try:
-    from fastapi import APIRouter, HTTPException, Query
+    from fastapi import APIRouter, Depends, HTTPException, Query, status
+    from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
     _HAS_FASTAPI = True
+    security_scheme = HTTPBearer(auto_error=False)
 except ImportError:
     _HAS_FASTAPI = False
+    security_scheme = None
 
+from prismatic.core.merge_factory import Principal, get_authenticated_principal
 from prismatic.review_factory.models import ReviewJobState
 from prismatic.review_factory.queue import ReviewQueue
 
@@ -35,12 +39,44 @@ def _get_queue() -> ReviewQueue:
     return _get_queue._instance
 
 
+async def get_rf_principal(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme),
+) -> Principal:
+    """Dependency to retrieve the authenticated principal or raise 401."""
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing authorization header",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    try:
+        return get_authenticated_principal(credentials.credentials)
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(exc),
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+async def require_admin_principal(
+    principal: Principal = Depends(get_rf_principal),
+) -> Principal:
+    """Dependency enforcing merge-factory-admin scope."""
+    if not principal.has_scope("merge-factory-admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Insufficient scope: merge-factory-admin required",
+        )
+    return principal
+
+
 def _attach_routes(router: Any) -> None:
     """Attach all Review Factory routes to a given router."""
     if not _HAS_FASTAPI or router is None:
         return
 
-    @router.get("/queue")
+    @router.get("/queue", dependencies=[Depends(get_rf_principal)])
     async def get_queue_depth() -> Dict[str, Any]:
         """Queue depth breakdown by state."""
         q = _get_queue()
@@ -52,7 +88,7 @@ def _attach_routes(router: Any) -> None:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
-    @router.get("/jobs")
+    @router.get("/jobs", dependencies=[Depends(get_rf_principal)])
     async def list_jobs(
         state: Optional[str] = Query(None, description="Filter by state"),
         limit: int = Query(50, ge=1, le=500),
@@ -88,7 +124,7 @@ def _attach_routes(router: Any) -> None:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
-    @router.get("/job/{job_id}")
+    @router.get("/job/{job_id}", dependencies=[Depends(get_rf_principal)])
     async def get_job_detail(job_id: str) -> Dict[str, Any]:
         """Get detail for a specific review job."""
         q = _get_queue()
@@ -129,7 +165,7 @@ def _attach_routes(router: Any) -> None:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
-    @router.get("/authorizations")
+    @router.get("/authorizations", dependencies=[Depends(get_rf_principal)])
     async def list_authorizations(
         consumed: Optional[bool] = Query(None, description="Filter by consumed status"),
         limit: int = Query(50, ge=1, le=500),
@@ -171,7 +207,7 @@ def _attach_routes(router: Any) -> None:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
-    @router.post("/janitor")
+    @router.post("/janitor", dependencies=[Depends(require_admin_principal)])
     async def run_janitor() -> Dict[str, Any]:
         """Trigger the stale lease janitor to reset expired leases."""
         q = _get_queue()
@@ -181,7 +217,7 @@ def _attach_routes(router: Any) -> None:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
-    @router.get("/stats")
+    @router.get("/stats", dependencies=[Depends(get_rf_principal)])
     async def get_stats() -> Dict[str, Any]:
         """Aggregate review factory statistics."""
         q = _get_queue()

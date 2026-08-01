@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -57,6 +58,8 @@ from prismatic.review_factory.models import (
     VerificationReceipt,
 )
 from prismatic.review_factory.policy import PolicyEngine
+
+logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -351,17 +354,20 @@ class ReviewQueue:
             return None
 
         tier = job.risk_tier
+        if not actor:
+            logger.warning(
+                "authorize_merge rejected: explicit actor identity required (no invented standing policy)"
+            )
+            return None
+
         if tier <= RiskTier.STANDARD:
             scope = MergeScope.TIER_0_AUTO if tier == 0 else MergeScope.TIER_1_AUTO
-            actor = actor or f"standing-policy: tier-{tier}"
         else:
             scope = (
                 MergeScope.TIER_2_EXCEPTION
                 if tier == 2
                 else MergeScope.TIER_3_EXCEPTION
             )
-            if not actor:
-                return None  # Tier 2/3 requires explicit actor
 
         auth = MergeAuthorization(
             review_job_id=review_job_id,
@@ -369,8 +375,10 @@ class ReviewQueue:
             pr_number=pr_number,
             pr_head_commit=pr_head_commit or job.candidate_commit,
             pr_base_commit=pr_base_commit or job.base_commit,
-            candidate_tree=job.candidate_tree,
-            expected_merge_tree=expected_merge_tree,
+            candidate_tree=job.candidate_tree or job.candidate_commit,
+            expected_merge_tree=expected_merge_tree
+            or job.candidate_tree
+            or job.candidate_commit,
             actor=actor,
             scope=scope.value,
             expires_at=(_utcnow() + timedelta(minutes=expires_minutes)).isoformat(),
@@ -389,24 +397,6 @@ class ReviewQueue:
             lease_expires_at="",
         )
         return auth_id
-
-    # ── Auto-authorization for Tier 0/1 ──────────────────────────────
-
-    def auto_authorize_if_eligible(self, review_job_id: str) -> Optional[str]:
-        """Automatically authorize merge for Tier 0/1 jobs.
-
-        Called after a job reaches merge_ready.  For Tier 0/1, this
-        creates a standing-policy authorization immediately.  For
-        Tier 2+, returns None (requires manual authorization).
-        """
-        job = self.db.get_review_job(review_job_id)
-        if job is None or job.state != ReviewJobState.MERGE_READY.value:
-            return None
-
-        if job.risk_tier > RiskTier.STANDARD:
-            return None  # Tier 2+ needs explicit authorization
-
-        return self.authorize_merge(review_job_id)
 
     # ── Repair cycle ─────────────────────────────────────────────────
 

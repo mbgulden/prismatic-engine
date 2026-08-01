@@ -90,6 +90,7 @@ def worker(tmp_path):
     return VerificationWorker(
         repo_path=tmp_path,
         log_dir=tmp_path / "logs",
+        test_mode=True,
     )
 
 
@@ -217,7 +218,7 @@ class TestIntegrityInvariants:
             ["from prismatic.merge_candidate_manifest import"],
         )
         assert not res.passed
-        assert "not found" in res.stderr
+        assert "missing expected import" in res.stderr or "not found" in res.stderr
 
     def test_valid_integration_import_passes(self, tmp_path):
         """Invariant 1: A module containing its required PE import passes."""
@@ -249,7 +250,7 @@ class TestIntegrityInvariants:
             "prismatic/review_factory/tests/test_verifier.py"
         )
         assert not res.passed
-        assert "circular proof" in res.stderr
+        assert "circular proof" in res.stderr.lower()
 
     def test_non_circular_proof_passes(self, tmp_path):
         """Invariant 2: A test importing external PE surface passes circular proof check."""

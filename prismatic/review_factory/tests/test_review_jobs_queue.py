@@ -160,8 +160,8 @@ class TestStateTransitions:
         new_state = queue.submit_verdict(job_id, decision)
         assert new_state == ReviewJobState.MERGE_READY.value
 
-        # 6. Auto-authorize (Tier 1)
-        auth_id = queue.auto_authorize_if_eligible(job_id)
+        # 6. Authorize explicitly
+        auth_id = queue.authorize_merge(job_id, actor="michael")
         assert auth_id is not None
 
         final = queue.db.get_review_job(job_id)
