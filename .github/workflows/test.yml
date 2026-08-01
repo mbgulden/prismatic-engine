@@ -38,6 +38,7 @@ jobs:
         run: |
           python -m ruff check \
             prismatic/__init__.py \
+            prismatic/review_factory/ \
             scripts/release_check.py \
             scripts/release_smoke.py \
             scripts/public_launch_smoke.py \
@@ -49,6 +50,7 @@ jobs:
             prismatic/quality/test_smoke.py
           python -m ruff format --check \
             prismatic/__init__.py \
+            prismatic/review_factory/ \
             scripts/release_check.py \
             scripts/release_smoke.py \
             scripts/public_launch_smoke.py \
@@ -81,7 +83,7 @@ jobs:
 
       - name: Run Unit Tests
         run: |
-          python -m pytest tests/
+          python -m pytest tests/ prismatic/review_factory/tests/
 
       - name: Setup Mock Git Hooks (Required by Canary Integration Tests)
         run: |
