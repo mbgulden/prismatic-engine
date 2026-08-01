@@ -10,33 +10,31 @@ from __future__ import annotations
 
 import json
 import os
+
 import pytest
-from pathlib import Path
 
 from prismatic.quality import (
-    VerificationVerdict,
+    MAX_FILES_CHANGED,
+    OUTPUT_REQUIRES_VERIFICATION,
+    TASK_SHAPE_VIOLATION,
+    DriftReport,
     LayerResult,
-    run_verification,
+    VerificationVerdict,
+    check_basic_syntax,
+    check_diff_meaningful,
+    check_drift,
+    check_files_changed,
+    check_goal_match,
+    check_linked_pr,
     check_shape,
     check_workdir,
-    check_files_changed,
-    check_diff_meaningful,
-    check_linked_pr,
-    check_basic_syntax,
-    check_goal_match,
-    DriftReport,
-    check_drift,
-    RoutingDecision,
     route_nhr_task,
-    TASK_SHAPE_VIOLATION,
-    OUTPUT_REQUIRES_VERIFICATION,
-    MAX_FILES_CHANGED,
+    run_verification,
 )
 from prismatic.quality.gates import (
-    save_verdict,
     _count_lines_per_file,
+    save_verdict,
 )
-
 
 # ─────────────────────────────────────────────────────────────────────
 # Layer tests — shape_ok
@@ -673,8 +671,8 @@ class TestTriggerNedReview:
         Without this guard, the factory would silently fall back to the
         stub (APPROVE always), defeating the point of Phase 2.
         """
-        from prismatic.review import RealPRReviewer
         from prismatic.quality.gates import trigger_ned_review
+        from prismatic.review import RealPRReviewer
 
         constructed: list[RealPRReviewer] = []
 
@@ -714,8 +712,8 @@ class TestTriggerNedReview:
         from prismatic.quality.gates import trigger_ned_review
         from prismatic.review import StubPRReviewer
         from prismatic.review.pipeline import (
-            IMPACT_TRIVIAL,
             ACTION_ADVANCE,
+            IMPACT_TRIVIAL,
         )
 
         captured: list[dict] = []
@@ -792,7 +790,7 @@ class TestTriggerNedReview:
         assert result.verdict == "NEEDS_DISCUSSION"
 
 
-def _stub_result(verdict: str) -> "PRReviewResult":
+def _stub_result(verdict: str) -> PRReviewResult:
     """Build a minimal PRReviewResult for testing without network."""
     from prismatic.review import PRReviewResult
 

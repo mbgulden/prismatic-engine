@@ -929,7 +929,7 @@ def test_reject_untracked_lifecycle_file_as_artifact_locator(test_repo_and_artif
 
     for name in lifecycle_names:
         lf = repo_dir / name
-        lf_bytes = f"lifecycle content for {name}".encode("utf-8")
+        lf_bytes = f"lifecycle content for {name}".encode()
         lf.write_bytes(lf_bytes)
         lf_digest = hashlib.sha256(lf_bytes).hexdigest()
 

@@ -17,10 +17,12 @@ import datetime
 import hashlib
 import json
 import re
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from jsonschema import Draft202012Validator
+
 from prismatic.universal_result_manifest import (
     MANIFEST_FORMAT_CHECKER,
     SECRET_VALUE_RE,
@@ -91,7 +93,7 @@ def is_valid_sha256(digest_str: str) -> bool:
     """Check if digest is a valid non-sentinel 64-hex SHA-256 string."""
     if not isinstance(digest_str, str):
         return False
-    clean_digest = digest_str[7:] if digest_str.startswith("sha256:") else digest_str
+    clean_digest = digest_str.removeprefix("sha256:")
     if not HEX64_RE.match(clean_digest):
         return False
     if clean_digest == "0" * 64 or clean_digest == "f" * 64:
@@ -190,7 +192,7 @@ def verify_log_file_integrity(
             return False, f"Log file '{log_path}' does not exist on disk"
         content = p.read_bytes()
         computed = hashlib.sha256(content).hexdigest()
-        expected = log_digest[7:] if log_digest.startswith("sha256:") else log_digest
+        expected = log_digest.removeprefix("sha256:")
         if computed.lower() != expected.lower():
             return (
                 False,
@@ -424,7 +426,7 @@ def validate_verifier_result(result: Mapping[str, Any]) -> tuple[bool, list[str]
                             child_bytes = child_path.read_bytes()
                             actual_hash = hashlib.sha256(child_bytes).hexdigest()
                             clean_expected = (
-                                digest[7:] if digest.startswith("sha256:") else digest
+                                digest.removeprefix("sha256:")
                             )
                             if actual_hash.lower() != clean_expected.lower():
                                 errors.append(

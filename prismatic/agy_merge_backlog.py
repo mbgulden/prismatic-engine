@@ -11,10 +11,11 @@ import hashlib
 import json
 import os
 import re
-from datetime import datetime, timezone
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from prismatic.agy_completed_work import (
     CompletedWorkRow,

@@ -34,10 +34,10 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 
-def _load_kpi_collections(sites_root: Path, slug: str) -> Optional[Dict[str, Any]]:
+def _load_kpi_collections(sites_root: Path, slug: str) -> dict[str, Any] | None:
     """Load the site's kpi-collections.json. Returns None if not found."""
     path = sites_root / f"{slug}.kpi.json"
     if not path.exists():
@@ -48,7 +48,7 @@ def _load_kpi_collections(sites_root: Path, slug: str) -> Optional[Dict[str, Any
         return None
 
 
-def _save_kpi_collections(sites_root: Path, slug: str, data: Dict[str, Any]) -> Path:
+def _save_kpi_collections(sites_root: Path, slug: str, data: dict[str, Any]) -> Path:
     """Save the site's kpi-collections.json. Returns the path written."""
     sites_root.mkdir(parents=True, exist_ok=True)
     path = sites_root / f"{slug}.kpi.json"
@@ -57,7 +57,7 @@ def _save_kpi_collections(sites_root: Path, slug: str, data: Dict[str, Any]) -> 
 
 
 def _resolve_fareharbor_shortname(
-    prior_outputs: Optional[Dict[str, Dict[str, Any]]],
+    prior_outputs: dict[str, dict[str, Any]] | None,
     slug: str,
 ) -> str:
     """Pick the FareHarbor shortname for this site.
@@ -90,9 +90,9 @@ def step_register_zapier_webhook(
     owner: str,
     run,
     publish_root: Path,
-    prior_outputs: Optional[Dict[str, Dict[str, Any]]] = None,
-    sites_root: Optional[Path] = None,
-    fareharbor_shortname: Optional[str] = None,
+    prior_outputs: dict[str, dict[str, Any]] | None = None,
+    sites_root: Path | None = None,
+    fareharbor_shortname: str | None = None,
     **_kwargs: Any,
 ) -> Any:
     """Validate the Zapier webhook URL and persist the config.
@@ -152,12 +152,12 @@ def step_register_zapier_webhook(
                     cur = cur.parent
 
     # Lazy imports.
+    from ..types import StepResult
     from ..zapier_client import (
         FareHarborNotFoundError,
         ZapierClient,
         ZapierError,
     )
-    from ..types import StepResult
 
     # Resolve the Zapier client.
     try:
@@ -189,8 +189,8 @@ def step_register_zapier_webhook(
     webhook_probe = client.probe_webhook()
 
     # Probe FareHarbor (best-effort).
-    fareharbor_data: Optional[Dict[str, Any]] = None
-    fareharbor_error: Optional[str] = None
+    fareharbor_data: dict[str, Any] | None = None
+    fareharbor_error: str | None = None
     try:
         company = client.probe_fareharbor(shortname)
         fareharbor_data = company.to_dict()

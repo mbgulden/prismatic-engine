@@ -23,9 +23,10 @@ import os
 import re
 import subprocess
 import sys
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 SESSION_ID_RE = re.compile(r"\b(\d{15,25})\b")
 AWAITING_RE = re.compile(r"Awaiting\s+User(?:\s+Feedback|\s+F)?", re.IGNORECASE)

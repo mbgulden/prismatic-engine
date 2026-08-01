@@ -12,7 +12,6 @@ from prismatic.observability.health_view import (
     render_markdown,
 )
 
-
 NOW = datetime(2026, 7, 6, 20, 0, tzinfo=timezone.utc)
 
 

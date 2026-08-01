@@ -110,7 +110,7 @@ print(g.acquire('agy', task, 'worker', max_concurrent=2), flush=True)
 
 
 def test_dispatcher_tracks_and_releases_finished_process(tmp_path: Path, monkeypatch):
-    import prismatic.dispatcher as dispatcher
+    from prismatic import dispatcher
 
     governor = DistributedComputeGovernor(status_path=tmp_path / "agent_status.json")
     monkeypatch.setattr(dispatcher, "_governor", governor)
@@ -130,7 +130,7 @@ def test_dispatcher_tracks_and_releases_finished_process(tmp_path: Path, monkeyp
 
 
 def test_dispatcher_duplicate_same_task_launch_is_deferred(tmp_path: Path, monkeypatch):
-    import prismatic.dispatcher as dispatcher
+    from prismatic import dispatcher
 
     governor = DistributedComputeGovernor(status_path=tmp_path / "agent_status.json")
     monkeypatch.setattr(dispatcher, "_governor", governor)
@@ -150,7 +150,7 @@ def test_dispatcher_duplicate_same_task_launch_is_deferred(tmp_path: Path, monke
 
 
 def test_finalize_launch_failure_terminates_and_releases(tmp_path: Path, monkeypatch):
-    import prismatic.dispatcher as dispatcher
+    from prismatic import dispatcher
 
     governor = DistributedComputeGovernor(status_path=tmp_path / "agent_status.json")
     assert governor.acquire("agy", "GRO-track", "node-a")
@@ -169,7 +169,7 @@ def test_finalize_launch_failure_terminates_and_releases(tmp_path: Path, monkeyp
 
 
 def test_finalize_launch_failure_force_kills_sigterm_resistant_child(tmp_path: Path, monkeypatch):
-    import prismatic.dispatcher as dispatcher
+    from prismatic import dispatcher
 
     governor = DistributedComputeGovernor(status_path=tmp_path / "agent_status.json")
     assert governor.acquire("agy", "GRO-resist", "node-a")
@@ -193,7 +193,7 @@ def test_finalize_launch_failure_force_kills_sigterm_resistant_child(tmp_path: P
 
 
 def test_dispatch_once_prunes_before_dispatch(tmp_path: Path, monkeypatch):
-    import prismatic.dispatcher as dispatcher
+    from prismatic import dispatcher
 
     events: list[str] = []
 
@@ -208,7 +208,7 @@ def test_dispatch_once_prunes_before_dispatch(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr(dispatcher, "_governor", FakeGovernor())
     monkeypatch.setattr(dispatcher, "dispatch_local_tasks", fake_dispatch_local_tasks)
-    monkeypatch.setattr(dispatcher, "setup_pipeline_issues", lambda: [])
+    monkeypatch.setattr(dispatcher, "setup_pipeline_issues", list)
     monkeypatch.setattr(dispatcher, "AGENT_CONFIG", {})
     monkeypatch.setattr(dispatcher, "cleanup_stale_agy", lambda max_age_minutes=5: 0)
     monkeypatch.setattr(dispatcher, "recover_stalled_agy", lambda max_retries=0: None)

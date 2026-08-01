@@ -29,8 +29,8 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-import urllib.request
 import urllib.error
+import urllib.request
 from contextlib import closing
 from datetime import datetime, timezone
 from typing import Any

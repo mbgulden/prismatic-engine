@@ -10,9 +10,10 @@ from __future__ import annotations
 import datetime
 import json
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from jsonschema import Draft202012Validator, FormatChecker
 

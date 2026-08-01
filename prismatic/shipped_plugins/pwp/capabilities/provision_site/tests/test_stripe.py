@@ -14,16 +14,18 @@ Coverage:
 
 from __future__ import annotations
 
-import io
 import http.client
+import io
 import json
-import time
 import urllib.error
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
+from plugins.pwp.capabilities.provision_site import auth_loader
+from plugins.pwp.capabilities.provision_site.steps.stripe import (
+    step_register_stripe,
+)
 from plugins.pwp.capabilities.provision_site.stripe_client import (
     STRIPE_API_URL,
     StripeClient,
@@ -31,11 +33,6 @@ from plugins.pwp.capabilities.provision_site.stripe_client import (
     StripePrice,
     StripeProduct,
 )
-from plugins.pwp.capabilities.provision_site import auth_loader
-from plugins.pwp.capabilities.provision_site.steps.stripe import (
-    step_register_stripe,
-)
-
 
 # --- helpers --------------------------------------------------------------
 
@@ -99,9 +96,8 @@ def test_from_env_raises_when_no_token(monkeypatch) -> None:
             value=None, source="none", env_var="",
             hint="(test stub)", redaction="<missing>",
         ),
-    ):
-        with pytest.raises(ValueError, match="STRIPE_RESTRICTED_KEY"):
-            StripeClient.from_env()
+    ), pytest.raises(ValueError, match="STRIPE_RESTRICTED_KEY"):
+        StripeClient.from_env()
 
 
 def test_direct_construction_rejects_empty() -> None:

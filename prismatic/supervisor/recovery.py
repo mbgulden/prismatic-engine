@@ -18,10 +18,8 @@ from __future__ import annotations
 import os
 import subprocess
 import time
-from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 # === Config (env-overridable) ===
 
@@ -187,7 +185,7 @@ class SupervisorPool:
             self._pool[proc.pid] = rec
             self._total_spawned += 1
             return rec
-        except Exception as e:
+        except Exception:
             # Increment retry count, will be retried up to max_retries
             self._retry_counts[issue_id] = retry_count + 1
             raise

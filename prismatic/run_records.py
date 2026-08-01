@@ -8,7 +8,10 @@ operations are idempotent and thread-safe via file-level locking.
 
 from __future__ import annotations
 
-import fcntl
+try:
+    import fcntl
+except ImportError:
+    fcntl = None  # type: ignore
 import json
 import os
 import uuid
@@ -25,7 +28,6 @@ from prismatic.execution_evidence import (
     done_gate,
     validate_evidence,
 )
-
 
 # ---------------------------------------------------------------------------
 # Dataclass

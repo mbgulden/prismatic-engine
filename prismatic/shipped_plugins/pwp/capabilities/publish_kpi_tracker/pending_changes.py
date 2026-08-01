@@ -32,8 +32,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-
+from typing import Any
 
 DEFAULT_PROVISION_DIR = Path(
     os.environ.get("PWP_PROVISION_STATE_DIR", "/tmp/pwp-provisioning")
@@ -49,7 +48,7 @@ class PendingChange:
     detail: str
     next_action: str
 
-    def to_dict(self) -> Dict[str, str]:
+    def to_dict(self) -> dict[str, str]:
         return {
             "domain": self.domain,
             "kind": self.kind,
@@ -59,14 +58,14 @@ class PendingChange:
         }
 
 
-def _read_state(path: Path) -> Optional[Dict[str, Any]]:
+def _read_state(path: Path) -> dict[str, Any] | None:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return None
 
 
-def _find_all_soft_failed_steps(state: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _find_all_soft_failed_steps(state: dict[str, Any]) -> list[dict[str, Any]]:
     """Return every step whose output dict contains `_soft_failure: True`."""
     out = []
     for step in state.get("steps", []):
@@ -106,10 +105,10 @@ def _soft_step_hint(step_name: str) -> str:
 
 
 def scan_provision_state(
-    provision_dir: Optional[Path] = None,
+    provision_dir: Path | None = None,
     *,
-    canonical_sites_path: Optional[Path] = None,
-) -> List[PendingChange]:
+    canonical_sites_path: Path | None = None,
+) -> list[PendingChange]:
     """Scan `provision_dir` for `*.json` state files and return a list of
     PendingChange records.
 
@@ -126,7 +125,7 @@ def scan_provision_state(
         return []
 
     # Optionally read the canonical sites.json to detect unmerged runs.
-    canonical_sites: Dict[str, Any] = {}
+    canonical_sites: dict[str, Any] = {}
     if canonical_sites_path and canonical_sites_path.exists():
         try:
             canonical_sites = json.loads(
@@ -135,7 +134,7 @@ def scan_provision_state(
         except Exception:
             canonical_sites = {}
 
-    out: List[PendingChange] = []
+    out: list[PendingChange] = []
     for state_path in sorted(provision_dir.glob("*.json")):
         state = _read_state(state_path)
         if state is None:
@@ -217,7 +216,7 @@ def scan_provision_state(
     return out
 
 
-def render_pending_changes_html(changes: List[PendingChange]) -> str:
+def render_pending_changes_html(changes: list[PendingChange]) -> str:
     """Render the pending changes panel as HTML (or empty string when none)."""
     if not changes:
         return ""

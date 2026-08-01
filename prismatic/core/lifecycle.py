@@ -11,7 +11,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger("prismatic.core.lifecycle")
 
@@ -45,9 +45,9 @@ class TaskContext:
     mode: OrchestrationMode = OrchestrationMode.COLLABORATIVE
     iteration_count: int = 0
     max_iterations: int = 3
-    contracts: List[Dict[str, Any]] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    history: List[Dict[str, Any]] = field(default_factory=list)
+    contracts: list[dict[str, Any]] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    history: list[dict[str, Any]] = field(default_factory=list)
 
     def add_history(self, event: str, from_state: TaskState, to_state: TaskState, note: str = ""):
         self.history.append({
@@ -66,9 +66,9 @@ class LifecycleManager:
 
     def __init__(self, mode: OrchestrationMode = OrchestrationMode.COLLABORATIVE):
         self.mode = mode
-        self._tasks: Dict[str, TaskContext] = {}
+        self._tasks: dict[str, TaskContext] = {}
 
-    def create_task(self, issue_id: str, mode: Optional[OrchestrationMode] = None) -> TaskContext:
+    def create_task(self, issue_id: str, mode: OrchestrationMode | None = None) -> TaskContext:
         task_id = str(uuid.uuid4())
         context = TaskContext(
             task_id=task_id,
@@ -79,10 +79,10 @@ class LifecycleManager:
         logger.info(f"Created new task {task_id} for issue {issue_id} in {context.mode.value} mode")
         return context
 
-    def get_task(self, task_id: str) -> Optional[TaskContext]:
+    def get_task(self, task_id: str) -> TaskContext | None:
         return self._tasks.get(task_id)
 
-    def transition(self, task_id: str, event: str, payload: Optional[Any] = None) -> TaskState:
+    def transition(self, task_id: str, event: str, payload: Any | None = None) -> TaskState:
         task = self.get_task(task_id)
         if not task:
             raise ValueError(f"Task {task_id} not found")

@@ -20,7 +20,11 @@ from prismatic.verification.github_adapter import (
 )
 from tests.test_receipt_validator import (
     resign_receipt,
+)
+from tests.test_receipt_validator import (
     valid_policy as _base_valid_policy,
+)
+from tests.test_receipt_validator import (
     valid_receipt as _base_valid_receipt,
 )
 

@@ -7,9 +7,8 @@ Lives in its own module to avoid the circular import between
 
 from __future__ import annotations
 
-import datetime as dt
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 @dataclass
@@ -17,10 +16,10 @@ class StepResult:
     """The result of one provisioning step."""
     name: str
     status: str  # "complete" | "failed" | "skipped" | "pending"
-    started_at: Optional[str] = None
-    finished_at: Optional[str] = None
-    error: Optional[str] = None
-    output: Dict[str, Any] = field(default_factory=dict)
+    started_at: str | None = None
+    finished_at: str | None = None
+    error: str | None = None
+    output: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -29,11 +28,11 @@ class ProvisionRun:
     domain: str
     owner: str
     started_at: str
-    finished_at: Optional[str] = None
+    finished_at: str | None = None
     overall_status: str = "in_progress"  # "in_progress" | "complete" | "failed"
-    steps: List[StepResult] = field(default_factory=list)
+    steps: list[StepResult] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "domain": self.domain,
             "owner": self.owner,

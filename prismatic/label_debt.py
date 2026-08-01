@@ -27,8 +27,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any
 
 AGENT_LABEL_PREFIX = "agent:"
 DISPATCH_READY = "dispatch:ready"
@@ -64,7 +65,7 @@ class IssueSnapshot:
     archived: bool = False
 
     @classmethod
-    def from_mapping(cls, raw: Mapping[str, Any]) -> "IssueSnapshot":
+    def from_mapping(cls, raw: Mapping[str, Any]) -> IssueSnapshot:
         labels = _extract_label_names(raw.get("labels", []))
         state = raw.get("state") or {}
         if isinstance(state, str):

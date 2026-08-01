@@ -33,10 +33,9 @@ This is the only file that knows the v1→v2 mapping. Everything downstream
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any
 
-
-V2_DEFAULT_CAPABILITY: Dict[str, Any] = {
+V2_DEFAULT_CAPABILITY: dict[str, Any] = {
     "enabled": True,
     "operator": "ned",
     "shares": {
@@ -73,10 +72,10 @@ def _is_v1(registry: dict) -> bool:
     return False
 
 
-def _collect_v1_event_names(sites: List[dict]) -> List[str]:
+def _collect_v1_event_names(sites: list[dict]) -> list[str]:
     """Union of all `expected_data_layer_events` and
     `expected_ga4_recommended_events` across v1 sites, deduplicated, sorted."""
-    seen: List[str] = []
+    seen: list[str] = []
     for s in sites:
         if not isinstance(s, dict):
             continue
@@ -88,7 +87,7 @@ def _collect_v1_event_names(sites: List[dict]) -> List[str]:
     return seen
 
 
-def _build_default_metric_specs(event_names: List[str]) -> Dict[str, Dict[str, Any]]:
+def _build_default_metric_specs(event_names: list[str]) -> dict[str, dict[str, Any]]:
     """One metric per event name. Source is ga4; format is number; not front_of_card.
 
     The metric `id` is the event name itself; `event` is the same string;
@@ -101,7 +100,7 @@ def _build_default_metric_specs(event_names: List[str]) -> Dict[str, Dict[str, A
     do not collide with curator-chosen bare IDs. The `registry_default.`
     prefix is stripped at render time for display to the user.
     """
-    out: Dict[str, Dict[str, Any]] = {}
+    out: dict[str, dict[str, Any]] = {}
     for ev in event_names:
         out[ev] = {
             "id": ev,
@@ -169,7 +168,7 @@ def adapt_v1_to_v2(registry: dict) -> dict:
         return v2
 
     sites = registry.get("sites") or []
-    v2: Dict[str, Any] = {
+    v2: dict[str, Any] = {
         "version": registry.get("version", 1),
         "pwp_kpi_capability": dict(V2_DEFAULT_CAPABILITY),
         "default_metric_specs": _build_default_metric_specs(

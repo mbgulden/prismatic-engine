@@ -9,9 +9,9 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from prismatic.plugin_policy import evaluate_artifact_action_policy
-from urllib.parse import urlparse
 
 ARTIFACT_SCHEMA_VERSION = "1.0.0"
 APPROVAL_STATES = {"pending", "approved", "rejected", "not_required"}

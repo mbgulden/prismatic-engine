@@ -15,7 +15,7 @@ SHIP_ROOT = HERE.parents[4]
 if str(SHIP_ROOT) not in sys.path:
     sys.path.insert(0, str(SHIP_ROOT))
 
-from plugins.pwp.capabilities.provision_site.zapier_client import (  # noqa: E402
+from plugins.pwp.capabilities.provision_site.zapier_client import (
     FareHarborCompany,
     FareHarborNotFoundError,
     WebhookProbe,

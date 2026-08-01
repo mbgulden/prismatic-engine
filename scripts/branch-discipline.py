@@ -20,7 +20,6 @@ import json
 import os
 import subprocess
 import sys
-from pathlib import Path
 from typing import Any
 
 # ── Constants ──────────────────────────────────────────
@@ -81,7 +80,7 @@ def determine_prefix(identifier: str) -> str:
             return prefix
 
     print(f"  ⚠️  No agent label found on {identifier}. Labels: {labels}")
-    print(f"  ⚠️  Defaulting to 'feature/' prefix (Fred's lane).")
+    print("  ⚠️  Defaulting to 'feature/' prefix (Fred's lane).")
     return "feature/"
 
 
@@ -136,7 +135,7 @@ def create_branch(identifier: str, prefix: str, base: str, push: bool = False) -
 
     if branch_exists(branch_name):
         print(f"  ⚠️  Branch '{branch_name}' already exists.")
-        response = input(f"  Checkout existing branch? [y/N]: ").strip().lower()
+        response = input("  Checkout existing branch? [y/N]: ").strip().lower()
         if response == "y":
             subprocess.run(["git", "checkout", branch_name], check=True)
             return branch_name
@@ -228,7 +227,7 @@ def main() -> None:
         print(f"✅ Branch '{branch_name}' created and verified.")
         print(f"   Base: {base}")
         print(f"   Prefix: {prefix}")
-        print(f"   Ready for work.")
+        print("   Ready for work.")
     else:
         print(f"❌ Branch '{branch_name}' verification failed!")
         sys.exit(1)

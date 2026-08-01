@@ -19,11 +19,11 @@ from __future__ import annotations
 
 import json
 import os
-import urllib.request
 import urllib.error
+import urllib.request
 from typing import Any
 
-from .base import TaskProvider, Issue
+from .base import Issue, TaskProvider
 
 # ── GraphQL endpoint ────────────────────────────────────────────
 LINEAR_API_URL = "https://api.linear.app/graphql"

@@ -40,10 +40,10 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
-
+from typing import Any
 
 # --- Path constants ------------------------------------------------------
 #
@@ -78,7 +78,7 @@ _PROFILE_ROOT_RE = re.compile(
 )
 
 
-def _resolve_profiles_dir(hermes_home: Path) -> Tuple[Path, Optional[str]]:
+def _resolve_profiles_dir(hermes_home: Path) -> tuple[Path, str | None]:
     """Return (profiles_dir, profile_from_path).
 
     If `hermes_home` ends in `/profiles/<name>`, the caller is inside
@@ -174,12 +174,12 @@ class AuthResult:
                  (e.g. "sk_live_XXX...len=107"); never includes the raw
                  secret.
     """
-    value: Optional[str]
+    value: str | None
     source: str
     env_var: str
     hint: str
     redaction: str
-    env: Dict[str, str] = field(default_factory=dict)
+    env: dict[str, str] = field(default_factory=dict)
 
     def __repr__(self) -> str:
         """Redact the value in repr to prevent accidental logging of
@@ -207,7 +207,7 @@ class AuthResult:
         for k, v in self.env.items():
             os.environ.setdefault(k, v)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "found": self.found,
             "source": self.source,
@@ -230,12 +230,12 @@ def _redact(value: str) -> str:
 
 # --- Loaders -------------------------------------------------------------
 
-def _load_env_file(path: Path) -> Dict[str, str]:
+def _load_env_file(path: Path) -> dict[str, str]:
     """Parse a .env-style file into a dict. Supports dotted pairs with
     single/double quotes and `#` comments. No shell interpolation."""
     if not path.exists():
         return {}
-    out: Dict[str, str] = {}
+    out: dict[str, str] = {}
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
@@ -254,13 +254,13 @@ def _load_env_file(path: Path) -> Dict[str, str]:
     return out
 
 
-def _load_profile_env(profile: str) -> Dict[str, str]:
+def _load_profile_env(profile: str) -> dict[str, str]:
     """Load the active profile's .env file."""
     path = _profile_env_path(profile)
     return _load_env_file(path)
 
 
-def _load_gcloud_adc(profile: str) -> Dict[str, Any]:
+def _load_gcloud_adc(profile: str) -> dict[str, Any]:
     """Load the gcloud application_default_credentials.json file.
 
     Returns parsed JSON; client_id / refresh_token / client_secret.
@@ -284,7 +284,7 @@ def _load_gcloud_adc(profile: str) -> Dict[str, Any]:
     return {}
 
 
-def _walk_project_env(start: Path) -> List[Path]:
+def _walk_project_env(start: Path) -> list[Path]:
     """Walk up from `start` looking for .env files in ancestor project dirs.
     Returns candidates in priority order (innermost first).
 
@@ -293,7 +293,7 @@ def _walk_project_env(start: Path) -> List[Path]:
     and may contain the user's shared production credentials.
     """
     seen: set = set()
-    candidates: List[Path] = []
+    candidates: list[Path] = []
 
     # 1. Walk up from cwd
     cur = start.resolve()
@@ -325,16 +325,16 @@ def _walk_project_env(start: Path) -> List[Path]:
 class AuthSpec:
     """How to find a credential."""
     name: str
-    env_vars: Tuple[str, ...]
+    env_vars: tuple[str, ...]
     doc: str
     # Optional: if found, also set these env vars (for client compat)
-    extra_env: Dict[str, str] = field(default_factory=dict)
+    extra_env: dict[str, str] = field(default_factory=dict)
     # Optional: a function to extract the value from gcloud ADC
-    gcloud_extractor: Optional[Callable[[Dict[str, Any]], Optional[str]]] = None
+    gcloud_extractor: Callable[[dict[str, Any]], str | None] | None = None
 
 
 # Registry of known secret types
-AUTH_SPECS: Dict[str, AuthSpec] = {
+AUTH_SPECS: dict[str, AuthSpec] = {
     "stripe_secret_key": AuthSpec(
         name="stripe_secret_key",
         env_vars=(
@@ -396,7 +396,7 @@ AUTH_SPECS: Dict[str, AuthSpec] = {
 
 # --- The main lookup function --------------------------------------------
 
-def _build_hint(spec: AuthSpec, searched: List[str]) -> str:
+def _build_hint(spec: AuthSpec, searched: list[str]) -> str:
     """Build a human-readable hint for a missing credential."""
     env_list = ", ".join(spec.env_vars)
     return (
@@ -410,9 +410,9 @@ def _build_hint(spec: AuthSpec, searched: List[str]) -> str:
 def get_secret(
     name: str,
     *,
-    explicit: Optional[str] = None,
-    profile: Optional[str] = None,
-    cwd: Optional[Path] = None,
+    explicit: str | None = None,
+    profile: str | None = None,
+    cwd: Path | None = None,
 ) -> AuthResult:
     """Look up a secret by name, returning a typed AuthResult.
 
@@ -437,7 +437,7 @@ def get_secret(
 
     profile = profile or ACTIVE_PROFILE
     cwd = cwd or Path.cwd()
-    searched: List[str] = []
+    searched: list[str] = []
 
     # 1. Explicit
     if explicit:
@@ -452,7 +452,7 @@ def get_secret(
 
     # 2. Environment variables
     for v in spec.env_vars:
-        if v in os.environ and os.environ[v]:
+        if os.environ.get(v):
             val = os.environ[v]
             return AuthResult(
                 value=val,
@@ -468,7 +468,7 @@ def get_secret(
     # 3. Profile .env
     profile_env = _load_profile_env(profile)
     for v in spec.env_vars:
-        if v in profile_env and profile_env[v]:
+        if profile_env.get(v):
             val = profile_env[v]
             return AuthResult(
                 value=val,
@@ -500,7 +500,7 @@ def get_secret(
     for p in _walk_project_env(cwd):
         proj_env = _load_env_file(p)
         for v in spec.env_vars:
-            if v in proj_env and proj_env[v]:
+            if proj_env.get(v):
                 val = proj_env[v]
                 return AuthResult(
                     value=val,
@@ -528,8 +528,8 @@ def register_secret(
     name: str,
     *,
     value: str,
-    env_var: Optional[str] = None,
-    profile: Optional[str] = None,
+    env_var: str | None = None,
+    profile: str | None = None,
 ) -> Path:
     """Persist a credential to the active profile's .env file.
 
@@ -566,7 +566,7 @@ def register_secret(
 
 # --- Self-test list of all known specs ------------------------------------
 
-def list_known() -> List[Dict[str, str]]:
+def list_known() -> list[dict[str, str]]:
     """Return a list of the registered auth specs as dicts."""
     return [
         {

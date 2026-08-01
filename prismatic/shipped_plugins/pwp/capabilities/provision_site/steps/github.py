@@ -33,7 +33,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any
 
 from ..types import StepResult
 
@@ -52,13 +52,12 @@ def _domain_to_slug(domain: str) -> str:
     so 'www.active-oahu.com' → 'active-oahu'.
     """
     d = domain.lower().strip()
-    if d.startswith("www."):
-        d = d[4:]
+    d = d.removeprefix("www.")
     parts = d.split(".")
     return parts[0] if parts else domain
 
 
-def _load_kpi_collections(sites_root: Path, slug: str) -> Optional[Dict[str, Any]]:
+def _load_kpi_collections(sites_root: Path, slug: str) -> dict[str, Any] | None:
     path = sites_root / f"{slug}.kpi.json"
     if not path.exists():
         return None
@@ -68,19 +67,19 @@ def _load_kpi_collections(sites_root: Path, slug: str) -> Optional[Dict[str, Any
         return None
 
 
-def _save_kpi_collections(sites_root: Path, slug: str, data: Dict[str, Any]) -> None:
+def _save_kpi_collections(sites_root: Path, slug: str, data: dict[str, Any]) -> None:
     path = sites_root / f"{slug}.kpi.json"
     path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
 
 
 def _resolve_repo_full_name(
     *,
-    kpi: Optional[Dict[str, Any]],
-    prior_outputs: Dict[str, Any],
+    kpi: dict[str, Any] | None,
+    prior_outputs: dict[str, Any],
     github_login: str,
     domain: str,
-    github_client: Optional["GitHubClient"] = None,
-) -> Optional[str]:
+    github_client: GitHubClient | None = None,
+) -> str | None:
     """Apply resolution rules in priority order.
 
     Rules:
@@ -136,8 +135,8 @@ def step_github_checkout(
     owner: str,
     run: Any,
     publish_root: Path,
-    prior_outputs: Optional[Dict[str, Any]] = None,
-    sites_root: Optional[Path] = None,
+    prior_outputs: dict[str, Any] | None = None,
+    sites_root: Path | None = None,
 ) -> StepResult:
     """Resolve a site's GitHub repo and persist metadata to kpi-collections.
 

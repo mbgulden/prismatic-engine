@@ -13,8 +13,6 @@ Run: pytest prismatic/supervisor/tests/test_recovery.py -v
 """
 from __future__ import annotations
 
-import os
-import subprocess
 import sys
 import tempfile
 import time
@@ -24,11 +22,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from prismatic.supervisor.recovery import (  # noqa: E402
-    SupervisorPool, SupervisorRecord, get_pool, reset_pool,
-    dispatch_to_supervisor_bounded, MAX_CONCURRENT,
+from prismatic.supervisor.recovery import (
+    SupervisorPool,
+    SupervisorRecord,
+    get_pool,
+    reset_pool,
 )
-
 
 # A trivial command that exits quickly so tests don't hang
 QUICK_CMD = ["python3", "-c", "import time; time.sleep(0.5)"]

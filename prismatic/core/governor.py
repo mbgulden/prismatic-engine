@@ -11,9 +11,10 @@ import contextlib
 import json
 import os
 import time
+from collections.abc import Generator
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any
 
 
 def _utc_now() -> str:

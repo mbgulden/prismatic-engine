@@ -13,6 +13,7 @@ from plugins.pwp.theme_task_generation import (
     create_theme_task_plan,
     generate_pwp_theme_task_plans,
 )
+
 from prismatic.capability_router import (
     AgentCapability,
     CapabilityRegistry,
@@ -339,7 +340,7 @@ def test_unordered_inputs_are_normalized_deterministically():
         verifiers={"v2", "v1"},
         capability_requirements={"DOCS", "code"},
         dependency_ids={"dep-b", "dep-a"},
-        raw_labels={"z-label", "a-label", "z-label"},
+        raw_labels={"z-label", "a-label"},
         registry=make_test_registry(),
     )
 

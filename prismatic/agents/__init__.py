@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .base import BaseAgent, AgentConfig, AGENT_TYPES
+from .base import AGENT_TYPES, AgentConfig, BaseAgent
 from .hermes import HermesAgent
 from .sandbox import SandboxAgent
 
@@ -24,11 +24,11 @@ AGENT_TYPES["hermes"] = HermesAgent
 AGENT_TYPES["sandbox"] = SandboxAgent
 
 __all__ = [
-    "BaseAgent",
+    "AGENT_TYPES",
     "AgentConfig",
+    "BaseAgent",
     "HermesAgent",
     "SandboxAgent",
-    "AGENT_TYPES",
     "create_agent",
 ]
 

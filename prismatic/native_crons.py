@@ -4,12 +4,12 @@ import json
 import os
 import shlex
 import subprocess
-import sys
 import tempfile
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal, Sequence
+from typing import Any, Literal
 
 CRON_STATE_ACTIVE = "active"
 CRON_STATE_PAUSED = "paused"
@@ -78,7 +78,7 @@ class NativeCron:
         return data
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "NativeCron":
+    def from_dict(cls, data: dict[str, Any]) -> NativeCron:
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
 

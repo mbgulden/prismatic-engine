@@ -8,10 +8,10 @@ import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
-
+from typing import Any
 
 UBERSUGGEST_SCOPE = "profile domain keywords serp backlinks site_audit content"
 UBERSUGGEST_TOKEN_ENDPOINT = "https://ubersuggest-mcp.neilpatelapi.com/token"
@@ -230,6 +230,7 @@ def verify_ubersuggest_mcp(access_token: str) -> Mapping[str, Any]:
     """
 
     import asyncio
+
     from mcp import ClientSession
     from mcp.client.streamable_http import streamablehttp_client
 
@@ -237,26 +238,25 @@ def verify_ubersuggest_mcp(access_token: str) -> Mapping[str, Any]:
         async with streamablehttp_client(
             UBERSUGGEST_MCP_ENDPOINT,
             headers={"Authorization": f"Bearer {access_token}"},
-        ) as (read, write, _):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                auth = await session.call_tool("auth_status", {})
-                overview = await session.call_tool(
-                    "domain_overview",
-                    {"domain": "activeoahutours.com"},
-                )
-                auth_text = getattr(auth.content[0], "text", "") if auth.content else ""
-                overview_text = (
-                    getattr(overview.content[0], "text", "{}")
-                    if overview.content
-                    else "{}"
-                )
-                overview_data = json.loads(overview_text)
-                return {
-                    "auth_status": auth_text,
-                    "organic": overview_data.get("organic"),
-                    "domainAuthority": overview_data.get("domainAuthority"),
-                }
+        ) as (read, write, _), ClientSession(read, write) as session:
+            await session.initialize()
+            auth = await session.call_tool("auth_status", {})
+            overview = await session.call_tool(
+                "domain_overview",
+                {"domain": "activeoahutours.com"},
+            )
+            auth_text = getattr(auth.content[0], "text", "") if auth.content else ""
+            overview_text = (
+                getattr(overview.content[0], "text", "{}")
+                if overview.content
+                else "{}"
+            )
+            overview_data = json.loads(overview_text)
+            return {
+                "auth_status": auth_text,
+                "organic": overview_data.get("organic"),
+                "domainAuthority": overview_data.get("domainAuthority"),
+            }
 
     return asyncio.run(_run())
 

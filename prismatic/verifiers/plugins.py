@@ -10,8 +10,9 @@ from __future__ import annotations
 import abc
 import hashlib
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 from prismatic.universal_result_manifest import sanitize_error_message
 from prismatic.verifiers.evidence import build_verifier_result, write_durable_log
@@ -22,7 +23,6 @@ from prismatic.verifiers.schemas import (
     is_valid_sha256,
     validate_locator_safety,
 )
-
 
 ALLOWED_UNCOMMITTED_LIFECYCLE_FILES = frozenset(
     {"AGY_TASK.md", "STARTED.md", "RESULT.md"}
@@ -60,9 +60,7 @@ def enforce_strict_provenance(
             f"Invalid candidate_digest provenance: '{cand_digest}' (must be valid 64-hex SHA-256, non-all-zero)"
         )
     cand_digest_clean = (
-        str(cand_digest)[7:]
-        if str(cand_digest).startswith("sha256:")
-        else str(cand_digest)
+        str(cand_digest).removeprefix("sha256:")
     )
 
     # 3. Check allowed_artifact_root from context
@@ -378,7 +376,6 @@ class VerifierPlugin(abc.ABC):
         self, candidate: Mapping[str, Any], context: Mapping[str, Any]
     ) -> dict[str, Any]:
         """Perform type-specific verification and return a validated machine-readable result."""
-        pass
 
 
 class CodePackageVerifier(VerifierPlugin):
@@ -988,9 +985,7 @@ class MixedBundleVerifier(VerifierPlugin):
                             if cp.is_file():
                                 actual = hashlib.sha256(cp.read_bytes()).hexdigest()
                                 expected = (
-                                    str(dig)[7:]
-                                    if str(dig).startswith("sha256:")
-                                    else str(dig)
+                                    str(dig).removeprefix("sha256:")
                                 )
                                 if actual.lower() != expected.lower():
                                     errors.append(

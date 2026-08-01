@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from collections.abc import Mapping
 from pathlib import Path
-
-from typing import Any, Mapping
+from typing import Any
 
 import pytest
 
@@ -13,15 +13,14 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from plugins.pwp.oauth_credentials import (  # noqa: E402
-    CredentialRefreshError,
+from plugins.pwp.oauth_credentials import (
     PROVIDERS,
+    CredentialRefreshError,
     TokenPaths,
     refresh_oauth_token,
     validate_token_shape,
 )
-from plugins.pwp.plugin import PWPDesignTokenPlugin  # noqa: E402
-
+from plugins.pwp.plugin import PWPDesignTokenPlugin
 
 ACCESS = "ubs_oauth2_" + "A" * 42
 REFRESH = "ubs_oauth2_" + "R" * 48

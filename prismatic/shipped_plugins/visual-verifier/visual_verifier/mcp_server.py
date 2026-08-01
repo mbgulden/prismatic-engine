@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
@@ -17,33 +17,33 @@ verifier = VisualVerifier(
 @mcp.tool()
 def verify_url(
     url: str,
-    viewports: List[Dict[str, Any]] | None = None,
-    checks: List[str] | None = None,
-) -> Dict[str, Any]:
+    viewports: list[dict[str, Any]] | None = None,
+    checks: list[str] | None = None,
+) -> dict[str, Any]:
     """Render a URL, capture viewport screenshots, and grade them."""
     return verifier.verify_url(url, viewports=viewports, checks=checks)
 
 
 @mcp.tool()
 def verify_file(
-    path: str, viewports: List[Dict[str, Any]] | None = None
-) -> Dict[str, Any]:
+    path: str, viewports: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     """Render a local HTML file, capture viewport screenshots, and grade them."""
     return verifier.verify_file(path, viewports=viewports)
 
 
 @mcp.tool()
 def grade_screenshot(
-    screenshot_b64: str, checks: List[str] | None = None
-) -> Dict[str, Any]:
+    screenshot_b64: str, checks: list[str] | None = None
+) -> dict[str, Any]:
     """Grade a single base64-encoded PNG screenshot."""
     return verifier.grade_screenshot(screenshot_b64, checks=checks)
 
 
 @mcp.tool()
 def compare_images(
-    image_a: str, image_b: str, criteria: List[str] | str | None = None
-) -> Dict[str, Any]:
+    image_a: str, image_b: str, criteria: list[str] | str | None = None
+) -> dict[str, Any]:
     """Compare two image paths or base64 payloads."""
     return verifier.compare_images(image_a, image_b, criteria=criteria)
 

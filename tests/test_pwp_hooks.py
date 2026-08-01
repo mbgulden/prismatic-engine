@@ -18,11 +18,10 @@ Linear issue:
 
 from __future__ import annotations
 
-import os
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 
@@ -33,7 +32,7 @@ _REPO_ROOT = _THIS_DIR.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from prismatic.core.registry import PWPPluginRunner, PluginLoader
+from prismatic.core.registry import PluginLoader, PWPPluginRunner
 from prismatic.interface.hooks import (
     HOOK_NAMES,
     HOOK_ON_DEPLOY,
@@ -43,7 +42,6 @@ from prismatic.interface.hooks import (
     PWP_HOOK_NAMES,
 )
 from prismatic.interface.plugin import PluginContext, PrismaticPlugin
-
 
 # ── 1. Hook-name constants exposed correctly ──────────────────────────────
 
@@ -154,10 +152,10 @@ def test_pwp_runner_fires_hooks_in_order_on_success() -> None:
     loader = _build_loader_with_recording_plugin()
     runner = PWPPluginRunner(loader)
 
-    def stage_one(_ctx: Dict[str, Any]) -> str:
+    def stage_one(_ctx: dict[str, Any]) -> str:
         return "one"
 
-    def stage_two(_ctx: Dict[str, Any]) -> str:
+    def stage_two(_ctx: dict[str, Any]) -> str:
         return "two"
 
     result = runner.run(
@@ -186,10 +184,10 @@ def test_pwp_runner_fires_on_error_and_reraises() -> None:
     loader = _build_loader_with_recording_plugin()
     runner = PWPPluginRunner(loader)
 
-    def stage_ok(_ctx: Dict[str, Any]) -> str:
+    def stage_ok(_ctx: dict[str, Any]) -> str:
         return "ok"
 
-    def stage_boom(_ctx: Dict[str, Any]) -> None:
+    def stage_boom(_ctx: dict[str, Any]) -> None:
         raise ValueError("intentional boom")
 
     with pytest.raises(ValueError, match="intentional boom"):
@@ -215,7 +213,7 @@ def test_pwp_runner_skips_deploy_on_failure() -> None:
     loader = _build_loader_with_recording_plugin()
     runner = PWPPluginRunner(loader)
 
-    def stage_boom(_ctx: Dict[str, Any]) -> None:
+    def stage_boom(_ctx: dict[str, Any]) -> None:
         raise RuntimeError("boom")
 
     with pytest.raises(RuntimeError):
@@ -264,7 +262,7 @@ def test_pwp_runner_isolates_crashing_plugin_hooks() -> None:
 
     runner = PWPPluginRunner(loader)
 
-    def stage(_ctx: Dict[str, Any]) -> str:
+    def stage(_ctx: dict[str, Any]) -> str:
         return "ok"
 
     # Must not raise even though the plugin's hooks crash.

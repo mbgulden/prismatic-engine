@@ -23,7 +23,6 @@ from typing import Any
 
 from prismatic.doctor import DoctorReport, ProviderReport, run_doctor
 
-
 # Exit codes
 EXIT_OK = 0
 EXIT_ERROR = 1

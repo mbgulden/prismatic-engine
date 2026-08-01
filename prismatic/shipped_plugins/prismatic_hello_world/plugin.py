@@ -36,14 +36,13 @@ still load without crashing. This is intentional: the PluginLoader wraps
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any
 
 from prismatic.interface.plugin import (
     AgentContract,
     PluginContext,
     PrismaticPlugin,
 )
-
 
 # ─────────────────────────────────────────────────────────────────────
 # Pattern functions
@@ -164,7 +163,7 @@ class HelloWorldPlugin(PrismaticPlugin):
         #    ``decide_next_action`` in ``PipelineOrchestrator.process``).
         registry.register_action_rule(force_rework_when_hello_world)
 
-    def register_tools(self) -> List[Dict[str, Any]]:
+    def register_tools(self) -> list[dict[str, Any]]:
         """Return tool definitions to append to agent contexts.
 
         The reference plugin exposes zero tools — it's purely a
@@ -181,7 +180,7 @@ class HelloWorldPlugin(PrismaticPlugin):
         return
 
     def after_task_execution(
-        self, contract: AgentContract, result: Dict[str, Any]
+        self, contract: AgentContract, result: dict[str, Any]
     ) -> None:
         """Called immediately after an agent worker exits. No-op."""
         return

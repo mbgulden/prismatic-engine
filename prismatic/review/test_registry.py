@@ -8,7 +8,6 @@ from prismatic.review.registry import (
     ReviewerRegistry,
 )
 
-
 # Composition semantics
 
 
@@ -140,7 +139,6 @@ class TestImpactRuleRegistration:
 
         def rule_a(result, current):
             calls.append("a")
-            return None
 
         def rule_b(result, current):
             calls.append("b")
@@ -343,9 +341,9 @@ class TestHooksModule:
 
     def test_exported_from_package(self):
         from prismatic.review import (
-            HOOK_BEFORE_SECRET_SCAN,
-            HOOK_BEFORE_NED_REVIEW,
             ALL_HOOKS,
+            HOOK_BEFORE_NED_REVIEW,
+            HOOK_BEFORE_SECRET_SCAN,
         )
 
         assert HOOK_BEFORE_SECRET_SCAN in ALL_HOOKS

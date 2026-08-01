@@ -9,11 +9,9 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-
 from prismatic.observability.ops_feed import (
     post_review_event_to_linear,
 )
-
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -165,6 +163,7 @@ class TestPatternB:
     def test_ops_feed_uses_linear_task_provider_not_subprocess(self):
         """ops_feed.py source must reference LinearTaskProvider and not subprocess/curl."""
         import inspect
+
         from prismatic import observability
 
         src = inspect.getsource(observability.ops_feed)

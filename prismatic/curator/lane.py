@@ -15,25 +15,26 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import hashlib
 import json
 import os
 import sqlite3
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 from pathlib import Path
-from typing import Iterable
 
 # Make sibling modules importable
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from prismatic.supervisor.recovery import (  # noqa: E402
-    get_pool, dispatch_to_supervisor_bounded,
+from prismatic.curator.dispatcher import (
+    LaneBudgetTracker,
+    build_supervisor_cmd,
+    decide_dispatch,
 )
-from prismatic.curator.dispatcher import (  # noqa: E402
-    LaneBudgetTracker, decide_dispatch, build_supervisor_cmd,
+from prismatic.supervisor.recovery import (
+    dispatch_to_supervisor_bounded,
+    get_pool,
 )
 
 # === Paths ===
@@ -59,7 +60,7 @@ class BusEvent:
     source: str | None = None  # parsed from payload if available
 
     @classmethod
-    def from_row(cls, row: tuple) -> "BusEvent":
+    def from_row(cls, row: tuple) -> BusEvent:
         rowid, topic, payload_json, ts = row
         try:
             payload = json.loads(payload_json)

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
 import re
-from typing import Any, Iterable, Mapping
+from collections.abc import Iterable, Mapping
+from dataclasses import asdict, dataclass
+from typing import Any
 
 SUCCESS_MARKERS: dict[str, tuple[str, ...]] = {
     "fred": (

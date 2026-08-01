@@ -15,7 +15,8 @@ binding for all 8 verifier plugin types:
 from __future__ import annotations
 
 import copy
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from prismatic.verifiers.plugins import (
     AudioVerifier,

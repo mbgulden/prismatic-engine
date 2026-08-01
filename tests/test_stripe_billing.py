@@ -11,30 +11,28 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
-import threading
-import time
-import unittest
-from unittest.mock import patch, MagicMock
-from pathlib import Path
 
 # Ensure the project root is on sys.path
 import sys
+import tempfile
+import threading
+import unittest
+from unittest.mock import MagicMock, patch
+
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from prismatic.billing.credit_ledger import (
-    SqliteCreditLedger,
     CreditError,
+    SqliteCreditLedger,
     TenantState,
 )
 from prismatic.billing.stripe_webhooks import (
-    StripeWebhookHandler,
     StripeWebhookError,
+    StripeWebhookHandler,
 )
 from prismatic.billing.usage_reporter import UsageReporter, UsageReporterError
-
 
 # ═══════════════════════════════════════════════════════════════
 # Credit Ledger Tests

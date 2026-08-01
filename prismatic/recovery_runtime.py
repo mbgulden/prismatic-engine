@@ -11,8 +11,9 @@ import json
 import os
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 SERVICE_NAME = "prismatic-consumer.service"
 HEARTBEAT_STALE_SECONDS = 120

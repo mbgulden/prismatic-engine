@@ -15,8 +15,9 @@ import os
 import pathlib
 import shutil
 import subprocess
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable, cast
+from typing import Any, cast
 
 DEFAULT_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 DEFAULT_ENV_FILES = (

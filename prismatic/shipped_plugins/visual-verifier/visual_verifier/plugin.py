@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any
 
 from prismatic.interface.plugin import PluginContext, PrismaticPlugin
 
@@ -23,7 +23,7 @@ class VisualVerifierPlugin(PrismaticPlugin):
             require_browsermcp=bool(config.get("require_browsermcp", False)),
         )
 
-    def register_tools(self) -> List[Dict[str, Any]]:
+    def register_tools(self) -> list[dict[str, Any]]:
         return [
             {
                 "name": "verify_url",
@@ -87,25 +87,25 @@ class VisualVerifierPlugin(PrismaticPlugin):
     def verify_url(
         self,
         url: str,
-        viewports: List[Dict[str, Any]] | None = None,
-        checks: List[str] | None = None,
-    ) -> Dict[str, Any]:
+        viewports: list[dict[str, Any]] | None = None,
+        checks: list[str] | None = None,
+    ) -> dict[str, Any]:
         return self.verifier.verify_url(url, viewports=viewports, checks=checks)
 
     def verify_file(
         self,
         path: str,
-        viewports: List[Dict[str, Any]] | None = None,
-        checks: List[str] | None = None,
-    ) -> Dict[str, Any]:
+        viewports: list[dict[str, Any]] | None = None,
+        checks: list[str] | None = None,
+    ) -> dict[str, Any]:
         return self.verifier.verify_file(path, viewports=viewports, checks=checks)
 
     def grade_screenshot(
-        self, screenshot_b64: str, checks: List[str] | None = None
-    ) -> Dict[str, Any]:
+        self, screenshot_b64: str, checks: list[str] | None = None
+    ) -> dict[str, Any]:
         return self.verifier.grade_screenshot(screenshot_b64, checks=checks)
 
     def compare_images(
-        self, image_a: str, image_b: str, criteria: List[str] | str | None = None
-    ) -> Dict[str, Any]:
+        self, image_a: str, image_b: str, criteria: list[str] | str | None = None
+    ) -> dict[str, Any]:
         return self.verifier.compare_images(image_a, image_b, criteria=criteria)

@@ -15,8 +15,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
-from datetime import datetime, timezone, timedelta
-from pathlib import Path
+from datetime import datetime, timedelta, timezone
 
 
 class TestCostAttributionEngine(unittest.TestCase):

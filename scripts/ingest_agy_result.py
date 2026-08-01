@@ -12,7 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from prismatic.agy_completed_work import (  # noqa: E402
+from prismatic.agy_completed_work import (
     ingest_completed_work,
     ingest_completed_work_text,
 )

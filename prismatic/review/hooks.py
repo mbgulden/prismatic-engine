@@ -35,7 +35,6 @@ Reference: okf/operations/phase2-quality-gates-plan.md (Gap 9 / Part B)
 
 from __future__ import annotations
 
-
 # Reviewer-side hooks — wired in Gap 11 via RealPRReviewer and PipelineOrchestrator
 
 HOOK_BEFORE_SECRET_SCAN = "before_secret_scan"
@@ -98,10 +97,10 @@ ALL_HOOKS = (
 
 
 __all__ = [
-    "HOOK_BEFORE_SECRET_SCAN",
-    "HOOK_BEFORE_QUALITY_CHECKS",
+    "ALL_HOOKS",
     "HOOK_BEFORE_CLASSIFY_IMPACT",
     "HOOK_BEFORE_DECIDE_ACTION",
     "HOOK_BEFORE_NED_REVIEW",
-    "ALL_HOOKS",
+    "HOOK_BEFORE_QUALITY_CHECKS",
+    "HOOK_BEFORE_SECRET_SCAN",
 ]

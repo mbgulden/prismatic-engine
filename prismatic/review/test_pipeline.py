@@ -11,8 +11,8 @@ from prismatic.review.pipeline import (
     IMPACT_BLOCKER,
     IMPACT_MAJOR,
     IMPACT_MINOR,
-    IMPACT_TRIVIAL,
     IMPACT_RANK,
+    IMPACT_TRIVIAL,
     PipelineDecision,
     PipelineOrchestrator,
     build_rework_payload,
@@ -22,8 +22,8 @@ from prismatic.review.pipeline import (
 from prismatic.review.pr_reviewer import (
     APPROVE,
     NEEDS_DISCUSSION,
-    PRReviewResult,
     REQUEST_CHANGES,
+    PRReviewResult,
 )
 
 
@@ -283,6 +283,7 @@ class TestPipelineOrchestrator:
     def test_rework_payload_serializes_for_queue(self):
         """ReworkPayload must be JSON-friendly so the factory queue can ingest it."""
         import json
+
         from prismatic.review.pr_reviewer import InlineComment
 
         orch = PipelineOrchestrator()

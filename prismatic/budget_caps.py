@@ -13,7 +13,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_BUDGET_CAPS: dict[str, Any] = {
     "daily_limit": 15.0,
     "per_model": {},

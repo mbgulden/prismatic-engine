@@ -7,7 +7,6 @@ from prismatic.gateway import server
 from prismatic.plugin_artifacts import safe_local_artifact_path
 from prismatic.plugin_policy import evaluate_job_request_policy, redact_secrets
 
-
 ROOT = Path(__file__).resolve().parents[1]
 AUDIT_PATH = ROOT / "scripts" / "public_security_readiness_audit.py"
 

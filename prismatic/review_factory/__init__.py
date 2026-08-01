@@ -31,6 +31,8 @@ from prismatic.review_factory.models import (
     VerificationReceipt,
 )
 
+from prismatic.review_factory.routes import create_review_factory_router
+
 __all__ = [
     "MergeAuthorization",
     "MergeScope",
@@ -42,4 +44,5 @@ __all__ = [
     "RiskTier",
     "VerificationClassification",
     "VerificationReceipt",
+    "create_review_factory_router",
 ]

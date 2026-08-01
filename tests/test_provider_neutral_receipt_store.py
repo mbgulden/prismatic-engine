@@ -26,7 +26,11 @@ from prismatic.verification.receipt_store import (
 )
 from tests.test_receipt_validator import (
     resign_receipt,
+)
+from tests.test_receipt_validator import (
     valid_policy as _base_policy,
+)
+from tests.test_receipt_validator import (
     valid_receipt as _base_receipt,
 )
 
@@ -376,7 +380,10 @@ def test_native_binding_failures_are_rejected_before_storage(
 def test_native_binding_rejects_symlink_repository_root(tmp_path) -> None:
     store = VerificationReceiptStore(tmp_path / "symlink.sqlite3")
     alias = tmp_path / "checkout-alias"
-    alias.symlink_to(Path(_NATIVE_GIT["root"]), target_is_directory=True)
+    try:
+        alias.symlink_to(Path(_NATIVE_GIT["root"]), target_is_directory=True)
+    except OSError:
+        pytest.skip("Symlink creation requires elevated privileges on Windows")
     receipt = valid_receipt()
     receipt["canonical_repository_root"] = str(alias)
     resign_receipt(receipt)
@@ -681,6 +688,30 @@ def test_receipt_api_and_dashboard_contract_work_without_github(
     monkeypatch.setenv(
         "PRISMATIC_VERIFICATION_RECEIPT_DB", str(tmp_path / "receipts.sqlite3")
     )
+    auth_file = tmp_path / "control-auth.json"
+    auth_token = "test-operator-token"
+    token_digest = hashlib.sha256(auth_token.encode()).hexdigest()
+    auth_file.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "credentials": [
+                    {
+                        "actor": "test-operator",
+                        "token_sha256": token_digest,
+                        "roles": ["operator", "approver", "executor"],
+                    }
+                ],
+            }
+        )
+    )
+    try:
+        auth_file.chmod(0o600)
+    except Exception:
+        pass
+    monkeypatch.setenv("PRISMATIC_CONTROL_AUTH_FILE", str(auth_file))
+    headers = {"Authorization": f"Bearer {auth_token}"}
+
     with TestClient(app) as client:
         schema_response = client.get("/api/verification/receipts/schema")
         assert schema_response.status_code == 200
@@ -691,6 +722,7 @@ def test_receipt_api_and_dashboard_contract_work_without_github(
 
         response = client.post(
             "/api/verification/receipts",
+            headers=headers,
             json={
                 "receipt": valid_receipt(),
                 "policy": valid_policy(),
@@ -723,6 +755,7 @@ def test_receipt_api_and_dashboard_contract_work_without_github(
         receipt_id = body["receipt"]["receipt_id"]
         revoked = client.post(
             f"/api/verification/receipts/{receipt_id}/revoke",
+            headers=headers,
             json={"reason": "operator revoked", "revoked_by": "test-operator"},
         )
         assert revoked.status_code == 200

@@ -15,17 +15,13 @@ Covers:
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
-
-from plugins.pwp.capabilities import publish_kpi_tracker as kpi
 from plugins.pwp.capabilities.publish_kpi_tracker import runtime_values as rv
-
 
 # Layout: <PWP_REPO>/prismatic/shipped_plugins/pwp/capabilities/publish_kpi_tracker/tests/
 # so PWP_REPO = parents[5]. Use a temp dir for sites_dir so tests don't touch

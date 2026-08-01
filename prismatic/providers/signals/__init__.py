@@ -7,23 +7,23 @@ Package-level factory: load the right SignalProvider from config.
 
 from __future__ import annotations
 
-from typing import Any
 from pathlib import Path
+from typing import Any
 
-from .base import SignalProvider, SignalPayload, SignalAction
+from .base import SignalAction, SignalPayload, SignalProvider
 from .file import FileSignalProvider
 from .http import HTTPSignalProvider
 from .redis import RedisSignalProvider
 
 __all__ = [
-    "SignalProvider",
-    "SignalPayload",
-    "SignalAction",
     "FileSignalProvider",
     "HTTPSignalProvider",
     "RedisSignalProvider",
-    "create_signal_provider",
+    "SignalAction",
+    "SignalPayload",
+    "SignalProvider",
     "create_fallback_chain",
+    "create_signal_provider",
 ]
 
 

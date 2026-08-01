@@ -8,8 +8,8 @@ Run: python3 /tmp/migrate_paths.py [--dry-run]
 """
 
 import os
-import sys
 import re
+import sys
 from pathlib import Path
 
 SKILLS_DIR = Path(os.environ.get('PRISMATIC_HOME', '/home/ubuntu')) / '.hermes' / 'profiles' / 'orchestrator' / 'skills'
@@ -143,7 +143,7 @@ def main():
                 errors.append((str(filepath.relative_to(SKILLS_DIR)), msg))
     
     print()
-    print(f"=== Migration Report ===")
+    print("=== Migration Report ===")
     print(f"Files scanned: {total_files}")
     print(f"Files changed: {changed_files}")
     print(f"Total line changes: {total_changes}")

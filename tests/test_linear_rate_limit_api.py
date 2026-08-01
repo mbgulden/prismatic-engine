@@ -6,7 +6,10 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from prismatic.gateway import server
-from prismatic.linear_rate_limit import LINEAR_RATE_LIMIT_CIRCUIT_BREAKER_MARKER, LinearRateLimitState
+from prismatic.linear_rate_limit import (
+    LINEAR_RATE_LIMIT_CIRCUIT_BREAKER_MARKER,
+    LinearRateLimitState,
+)
 
 
 def future_reset() -> str:

@@ -12,32 +12,25 @@ Covers:
 from __future__ import annotations
 
 import json
-import os
-import tempfile
-from pathlib import Path
-from unittest.mock import patch, MagicMock
-
-import pytest
+from unittest.mock import patch
 
 from prismatic.quality.failure import (
+    COUNTER_PATH,
+    FAILURE_PATTERNS,
+    OUTPUT_REQUIRES_ATTENTION,
+    POLICIES,
     FailureMode,
     RetryPolicy,
-    POLICIES,
-    FAILURE_PATTERNS,
-    ClassificationResult,
+    apply_failure_classification,
     classify_failure,
     classify_with_policy,
-    apply_failure_classification,
+    get_failure_count,
+    increment_failure,
+    reset_after_success,
+    reset_failure,
     should_retry,
     wait_for_retry,
-    increment_failure,
-    reset_failure,
-    reset_after_success,
-    get_failure_count,
-    OUTPUT_REQUIRES_ATTENTION,
-    COUNTER_PATH,
 )
-
 
 # ─────────────────────────────────────────────────────────────────────
 # FailureMode enum tests

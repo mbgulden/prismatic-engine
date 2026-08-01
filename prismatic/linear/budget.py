@@ -1,7 +1,7 @@
 import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict
+from typing import Any
 
 
 def _default_state_dir() -> str:
@@ -47,7 +47,7 @@ class LinearBudget:
             """)
             conn.commit()
 
-    def _get_state(self, agent_name: str) -> Dict[str, Any]:
+    def _get_state(self, agent_name: str) -> dict[str, Any]:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -81,7 +81,7 @@ class LinearBudget:
             )
             conn.commit()
 
-    def _refill(self, agent_name: str, state: Dict[str, Any]) -> float:
+    def _refill(self, agent_name: str, state: dict[str, Any]) -> float:
         now = datetime.now(timezone.utc)
         last_refill_at = state["last_refill_at"]
         time_passed = (now - last_refill_at).total_seconds()
@@ -128,7 +128,7 @@ class LinearBudget:
             )
             conn.commit()
 
-    def get_current_utilization(self, agent_name: str) -> Dict[str, Any]:
+    def get_current_utilization(self, agent_name: str) -> dict[str, Any]:
         state = self._get_state(agent_name)
         current_tokens = self._refill(agent_name, state)
         remaining = current_tokens

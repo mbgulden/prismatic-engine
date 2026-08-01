@@ -12,10 +12,10 @@ import pytest
 
 import prismatic.journal as journal_module
 from prismatic.journal import (
-    JournalConfig,
     MAX_RECAP_BYTES,
     MAX_RECAP_EVENTS,
     MAX_RECAP_MANIFEST_BYTES,
+    JournalConfig,
     build_evidence_recap,
     generate_recap,
     recap_window,

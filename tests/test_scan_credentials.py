@@ -1,8 +1,9 @@
+import hashlib
 import os
 import subprocess
 import sys
-import hashlib
 from pathlib import Path
+
 import pytest
 
 
@@ -34,7 +35,7 @@ def test_scan_credentials_synthetic_failure(tmp_path):
     # Compute expected location-based fingerprint: path is str(dummy_file), line is 1
     # Note: rel_path fails back to str(dummy_file) because it's not under workspace dir
     expected_fingerprint = hashlib.sha256(
-        f"{dummy_file}:1".encode("utf-8")
+        f"{dummy_file}:1".encode()
     ).hexdigest()[:16]
 
     # 4. Verify that stdout, stderr, and the log file do not contain the raw secret value

@@ -48,12 +48,10 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from pathlib import Path
 from typing import Any
 
-from .state_machine import PipelineStateMachine, Step, TransitionEvent
-from .mode_switch import ModeSwitch, OrchestrationMode, ModePolicy
-
+from .mode_switch import ModePolicy, ModeSwitch, OrchestrationMode
+from .state_machine import PipelineStateMachine, Step
 
 # ═══════════════════════════════════════════════════════════════
 # Review Severity
@@ -539,7 +537,7 @@ class ReviewAgent:
             )
             with open(path, "w") as f:
                 json.dump(result.snapshot(), f, indent=2)
-        except (OSError, IOError) as exc:
+        except OSError as exc:
             print(f"[rfr_loop] Failed to persist review {issue_id}: {exc}")
 
     def load_review(self, issue_id: str, cycle_number: int) -> ReviewResult | None:

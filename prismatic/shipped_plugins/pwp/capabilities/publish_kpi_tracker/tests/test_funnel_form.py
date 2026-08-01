@@ -6,7 +6,6 @@ import json
 import sys
 from pathlib import Path
 
-
 # Add the shipped_plugins directory to sys.path so the plugins.* namespace
 # resolves regardless of how the test harness is invoked.
 HERE = Path(__file__).resolve()
@@ -15,19 +14,17 @@ SHIP_ROOT = HERE.parents[4]  # prismatic/shipped_plugins
 if str(SHIP_ROOT) not in sys.path:
     sys.path.insert(0, str(SHIP_ROOT))
 
-from plugins.pwp.capabilities.publish_kpi_tracker.funnel_form import (  # noqa: E402
+from plugins.pwp.capabilities.publish_kpi_tracker.funnel_form import (
     DATA_SOURCE_OPTIONS,
     DEFAULT_SUBMIT_ENDPOINT,
     FORM_VERSION,
     SUBMISSION_LOG_DIR,
+    load_prior_submission,
     render_button_wiring_js,
     render_modal_css,
     render_modal_html,
     site_row_buttons,
     write_prior_submission_json,
-)
-from plugins.pwp.capabilities.publish_kpi_tracker.funnel_form import (  # noqa: E402,E501
-    load_prior_submission,
 )
 
 

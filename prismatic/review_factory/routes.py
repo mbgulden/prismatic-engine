@@ -31,6 +31,14 @@ try:
 except ImportError:
     _HAS_FASTAPI = False
     security_scheme = None
+    APIRouter = Any  # type: ignore
+    Depends = lambda x=None: None  # type: ignore
+    HTTPException = Exception  # type: ignore
+    Query = lambda default=None, **kwargs: default  # type: ignore
+    Response = Any  # type: ignore
+    status = Any  # type: ignore
+    HTTPAuthorizationCredentials = Any  # type: ignore
+    HTTPBearer = Any  # type: ignore
 
 from prismatic.core.merge_factory import Principal, get_authenticated_principal
 from prismatic.review_factory.models import ReviewJobState
@@ -94,7 +102,7 @@ async def enforce_rate_limit() -> None:
 
 def _attach_routes(router: Any) -> None:
     """Attach all Review Factory routes to a given router."""
-    if not _HAS_FASTAPI or router is None:
+    if router is None:
         return
 
     @router.get("/queue", dependencies=[Depends(get_rf_principal)])
@@ -415,21 +423,28 @@ def _attach_routes(router: Any) -> None:
 
 
 def _create_review_router() -> Any:
-    if not _HAS_FASTAPI:
+    try:
+        from fastapi import APIRouter
+        r = APIRouter(prefix="/review", tags=["review-factory"])
+        _attach_routes(r)
+        return r
+    except Exception:
         return None
-    r = APIRouter(prefix="/review", tags=["review-factory"])
-    _attach_routes(r)
-    return r
 
 
-def _create_review_factory_canonical_router() -> Any:
-    if not _HAS_FASTAPI:
+def create_review_factory_router() -> Any:
+    try:
+        from fastapi import APIRouter
+        r = APIRouter(prefix="/review-factory", tags=["review-factory"])
+        _attach_routes(r)
+        return r
+    except Exception as exc:
+        print("RF ROUTER EXCEPTION:", exc)
+        import traceback
+        traceback.print_exc()
         return None
-    r = APIRouter(prefix="/review-factory", tags=["review-factory"])
-    _attach_routes(r)
-    return r
 
 
 review_router = _create_review_router()
-review_factory_canonical_router = _create_review_factory_canonical_router()
+review_factory_canonical_router = create_review_factory_router()
 router = review_router

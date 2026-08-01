@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import json
 import sys
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 from urllib.request import urlopen
 from xml.etree import ElementTree as ET
 
-from seo_cron_common import AOT_GSC_PROPERTY, AOT_ORIGIN, gsc_sitemaps, stamp, state_dir, write_json, write_text
+from seo_cron_common import (
+    AOT_GSC_PROPERTY,
+    gsc_sitemaps,
+    stamp,
+    state_dir,
+    write_json,
+    write_text,
+)
 
 
 def fetch_sitemap_urls(sitemap_url: str) -> list[str]:

@@ -19,10 +19,11 @@ import re
 import threading
 import uuid
 from abc import ABC, abstractmethod
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from jsonschema import Draft202012Validator
 
@@ -415,22 +416,18 @@ class ArtifactStorageAdapter(ABC):
     @abstractmethod
     def store_bytes(self, content_digest: str, data: bytes) -> str:
         """Store content bytes under content_digest. Returns storage_id."""
-        pass
 
     @abstractmethod
     def read_bytes(self, content_digest: str) -> bytes:
         """Retrieve content bytes for content_digest. Raises ArtifactNotFoundError if missing."""
-        pass
 
     @abstractmethod
     def delete_bytes(self, content_digest: str, force: bool = False) -> bool:
         """Delete content bytes for content_digest. Returns True if deleted."""
-        pass
 
     @abstractmethod
     def exists(self, content_digest: str) -> bool:
         """Check if content_digest exists in storage."""
-        pass
 
 
 class LocalArtifactStorageAdapter(ArtifactStorageAdapter):

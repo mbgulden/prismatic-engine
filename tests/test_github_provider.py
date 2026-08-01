@@ -1,7 +1,8 @@
-import unittest
-from unittest.mock import patch, MagicMock
 import json
+import unittest
 import urllib.error
+from unittest.mock import MagicMock, patch
+
 from prismatic.providers.github import GitHubProvider
 
 
@@ -207,8 +208,8 @@ class TestGitHubProvider(unittest.TestCase):
         secret = "super-secret"
         # Hexdigest of HMAC-SHA256 signature for payload using secret
         # X-Hub-Signature-256 header matches this signature
-        import hmac
         import hashlib
+        import hmac
         mac = hmac.new(secret.encode("utf-8"), msg=payload, digestmod=hashlib.sha256)
         signature = f"sha256={mac.hexdigest()}"
 

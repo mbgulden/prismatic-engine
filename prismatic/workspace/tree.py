@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Optional
 
 from prismatic.workspace.acceptance import AcceptanceProtocol
 from prismatic.workspace.categorize import WorkspaceCategorizer
@@ -41,8 +40,8 @@ class WorkspaceTreeWalker:
 
     def __init__(
         self,
-        docs_root: Optional[Path] = None,
-        acceptance: Optional[AcceptanceProtocol] = None,
+        docs_root: Path | None = None,
+        acceptance: AcceptanceProtocol | None = None,
     ):
         raw_root = docs_root or default_deployed_docs_root()
         try:
@@ -76,7 +75,7 @@ class WorkspaceTreeWalker:
 
         return sorted(entries, key=lambda e: e.path)
 
-    def _process_file(self, full_path: Path) -> Optional[WorkspaceManifestEntry]:
+    def _process_file(self, full_path: Path) -> WorkspaceManifestEntry | None:
         """Process a single markdown file into a WorkspaceManifestEntry."""
         try:
             rel_path = str(full_path.relative_to(self.docs_root)).replace("\\", "/")

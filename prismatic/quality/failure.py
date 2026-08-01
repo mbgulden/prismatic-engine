@@ -13,8 +13,7 @@ import json
 import os
 import re
 import time
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
+from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -120,7 +119,7 @@ class ClassificationResult:
         }
 
 
-def classify_failure(error_log: "str | None", attempt_count: int = 0) -> ClassificationResult:
+def classify_failure(error_log: str | None, attempt_count: int = 0) -> ClassificationResult:
     """Inspect an error log + current attempt count and return a ClassificationResult.
 
     Args:

@@ -13,7 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from prismatic.agy_merge_backlog import (  # noqa: E402
+from prismatic.agy_merge_backlog import (
     AGY_CLEAN_PR_CREATE_UPDATE_MARKER,
     get_merge_backlog_item,
     list_merge_backlog,

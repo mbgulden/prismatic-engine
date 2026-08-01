@@ -15,22 +15,22 @@ import json
 import os
 import sqlite3
 import uuid
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 class Principal:
     """Stable authenticated principal identity and scopes."""
 
-    def __init__(self, identity: str, scopes: List[str]) -> None:
+    def __init__(self, identity: str, scopes: list[str]) -> None:
         self.identity = identity
         self.scopes = scopes
 
     def has_scope(self, scope: str) -> bool:
         return scope in self.scopes
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "identity": self.identity,
             "scopes": self.scopes,
@@ -42,14 +42,14 @@ MAX_LEASE_TTL_SECONDS = 3600  # 1 hour
 MAX_LOCK_TTL_SECONDS = 3600  # 1 hour
 
 
-def parse_token_keys(env_keys_raw: Optional[str]) -> Dict[str, Principal]:
+def parse_token_keys(env_keys_raw: str | None) -> dict[str, Principal]:
     """Parse PRISMATIC_MERGE_FACTORY_KEYS and return a dict of key_hash -> Principal.
 
     Format: key:identity:scope1,scope2;key2:identity2:scope3
     Fails closed: rejects malformed entries, duplicates, empty identities/scopes,
     unknown scopes, and weak/too-short keys (<16 chars).
     """
-    token_map: Dict[str, Principal] = {}
+    token_map: dict[str, Principal] = {}
     if not env_keys_raw:
         return token_map
 
@@ -115,7 +115,7 @@ def parse_token_keys(env_keys_raw: Optional[str]) -> Dict[str, Principal]:
     return token_map
 
 
-def get_authenticated_principal(token: Optional[str]) -> Principal:
+def get_authenticated_principal(token: str | None) -> Principal:
     """Authenticate and return the stable principal identity.
 
     Fails closed if the token is invalid, missing, or belongs to an unconfigured client.
@@ -138,7 +138,7 @@ def get_authenticated_principal(token: Optional[str]) -> Principal:
     return principal
 
 
-def validate_policy_schema(policy: Dict[str, Any]) -> None:
+def validate_policy_schema(policy: dict[str, Any]) -> None:
     """Validate that only allowed keys and types exist in the policy update."""
     allowed_keys = {"stage_cap", "cron_paused"}
     for k in policy:
@@ -159,7 +159,7 @@ def validate_policy_schema(policy: Dict[str, Any]) -> None:
 class MergeFactoryStore:
     """Durable SQLite storage for cohorts, leases, locks, and decision history."""
 
-    def __init__(self, db_path: Optional[str | Path] = None) -> None:
+    def __init__(self, db_path: str | Path | None = None) -> None:
         if db_path is not None:
             self.db_path = Path(db_path)
         else:
@@ -269,7 +269,7 @@ class MergeFactoryStore:
     # ── Policy & Cohort Operations
     # ─────────────────────────────────────────────────────────────────────────
 
-    def get_policy(self, conn: Optional[sqlite3.Connection] = None) -> Dict[str, Any]:
+    def get_policy(self, conn: sqlite3.Connection | None = None) -> dict[str, Any]:
         """Fetch the current operator policy. Default if not initialized."""
         close_conn = False
         if conn is None:
@@ -295,8 +295,8 @@ class MergeFactoryStore:
                 conn.close()
 
     def set_policy(
-        self, policy: Dict[str, Any], principal: Principal
-    ) -> Dict[str, Any]:
+        self, policy: dict[str, Any], principal: Principal
+    ) -> dict[str, Any]:
         """Mutate policy. Requires merge-factory-admin scope. Enforces strict schema."""
         if not principal.has_scope("merge-factory-admin"):
             raise PermissionError("Only merge-factory-admin may modify policy.")
@@ -350,7 +350,7 @@ class MergeFactoryStore:
         sequence: int,
         principal: Principal,
         allow_update: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Add a task to the admission cohort. Requires merge-factory-admin scope."""
         if not principal.has_scope("merge-factory-admin"):
             raise PermissionError("Only merge-factory-admin may modify cohorts.")
@@ -451,7 +451,7 @@ class MergeFactoryStore:
 
     def update_cohort_status(
         self, issue_id: str, status: str, principal: Principal
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Update cohort status. Requires merge-factory-admin scope."""
         if not principal.has_scope("merge-factory-admin"):
             raise PermissionError("Only merge-factory-admin may modify cohorts.")
@@ -497,7 +497,7 @@ class MergeFactoryStore:
                 conn.rollback()
                 raise
 
-    def get_cohort(self) -> List[Dict[str, Any]]:
+    def get_cohort(self) -> list[dict[str, Any]]:
         """List all admission cohort items, sorted by sequence."""
         with self._connect() as conn:
             rows = conn.execute(
@@ -532,7 +532,7 @@ class MergeFactoryStore:
 
     def acquire_lease(
         self, issue_id: str, stage: int, ttl_seconds: int, principal: Principal
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Atomically evaluate the global stage cap and acquire a lease.
 
         Enforces one global active producer cap. Stage is operator policy, not a lease partition.
@@ -657,7 +657,7 @@ class MergeFactoryStore:
 
     def heartbeat_lease(
         self, issue_id: str, lease_id: str, principal: Principal
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Renew/heartbeat a lease owned by the principal."""
         now_dt = datetime.now(timezone.utc)
         now_str = now_dt.isoformat()
@@ -720,7 +720,7 @@ class MergeFactoryStore:
                 conn.rollback()
                 raise
 
-    def get_active_leases(self) -> List[Dict[str, Any]]:
+    def get_active_leases(self) -> list[dict[str, Any]]:
         """Return all active (non-expired) leases."""
         now_str = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:
@@ -744,7 +744,7 @@ class MergeFactoryStore:
         repository: str,
         target: str,
         principal: Principal,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Append an immutable decision attestation record. Requires merge-judge scope."""
         if not principal.has_scope("merge-judge"):
             raise PermissionError(
@@ -812,8 +812,8 @@ class MergeFactoryStore:
         repository: str,
         target: str,
         *,
-        conn: Optional[sqlite3.Connection] = None,
-    ) -> Dict[str, Any]:
+        conn: sqlite3.Connection | None = None,
+    ) -> dict[str, Any]:
         """Pure/read-only validation of the candidate's active approval.
 
         Returns validity and status. Does not require special scopes (open to ordinary callers).
@@ -878,7 +878,7 @@ class MergeFactoryStore:
             if close_conn:
                 conn.close()
 
-    def get_decision_history(self, issue_id: str) -> List[Dict[str, Any]]:
+    def get_decision_history(self, issue_id: str) -> list[dict[str, Any]]:
         """Get history of decisions for an issue, ordered by timestamp ascending."""
         with self._connect() as conn:
             rows = conn.execute(
@@ -903,7 +903,7 @@ class MergeFactoryStore:
         approval_attestation_id: str,
         ttl_seconds: int,
         principal: Principal,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Acquire a repository + target merge lock.
 
         Requires a valid matching exact-candidate approval attestation.
@@ -1045,7 +1045,7 @@ class MergeFactoryStore:
         evidence_digest: str,
         approval_attestation_id: str,
         principal: Principal,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Extend lock TTL. Requires same principal identity and valid approval bindings."""
         now_dt = datetime.now(timezone.utc)
         now_str = now_dt.isoformat()
@@ -1131,7 +1131,7 @@ class MergeFactoryStore:
                 conn.rollback()
                 raise
 
-    def get_active_locks(self) -> List[Dict[str, Any]]:
+    def get_active_locks(self) -> list[dict[str, Any]]:
         """Return all active (non-expired) merge locks."""
         now_str = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:

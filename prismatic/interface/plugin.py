@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 @dataclass
@@ -37,11 +37,11 @@ class PluginContext:
     that was loaded at dispatcher start-up.
     """
 
-    config: Dict[str, Any]
+    config: dict[str, Any]
     db_connection: Any
     state_dir: str
-    telemetry_client: Optional[Any] = None
-    lock_manager: Optional[Any] = None
+    telemetry_client: Any | None = None
+    lock_manager: Any | None = None
 
 
 @dataclass
@@ -57,8 +57,8 @@ class AgentContract:
 
     thread_id: str
     persona_id: str
-    allowed_dirs: List[str] = field(default_factory=list)
-    read_only_dirs: List[str] = field(default_factory=list)
+    allowed_dirs: list[str] = field(default_factory=list)
+    read_only_dirs: list[str] = field(default_factory=list)
     max_actions: int = 10
     execution_env: str = "production"
 
@@ -91,7 +91,7 @@ class PrismaticPlugin(ABC):
         ...
 
     @abstractmethod
-    def register_tools(self) -> List[Dict[str, Any]]:
+    def register_tools(self) -> list[dict[str, Any]]:
         """
         Return a list of tool definitions to append to agent contexts.
 
@@ -103,7 +103,7 @@ class PrismaticPlugin(ABC):
 
     # ── optional discovery / integration hooks ──────────────────────────
 
-    def capability_contract(self) -> Dict[str, Any]:
+    def capability_contract(self) -> dict[str, Any]:
         """Return machine-readable capabilities contributed by this plugin.
 
         Media/service plugins should include asset domains, tool names,
@@ -112,11 +112,11 @@ class PrismaticPlugin(ABC):
         """
         return {}
 
-    def connection_contract(self) -> Dict[str, Any]:
+    def connection_contract(self) -> dict[str, Any]:
         """Return explicit connect/disconnect behavior for operator surfaces."""
         return {}
 
-    def register_mcp_servers(self) -> List[Dict[str, Any]]:
+    def register_mcp_servers(self) -> list[dict[str, Any]]:
         """Return MCP server descriptors exposed by this plugin.
 
         Descriptors may use stdio, HTTP, or SSE transports and should name
@@ -125,11 +125,11 @@ class PrismaticPlugin(ABC):
         """
         return []
 
-    def register_api_routes(self) -> List[Dict[str, Any]]:
+    def register_api_routes(self) -> list[dict[str, Any]]:
         """Return API route descriptors the plugin expects PE Gateway to expose."""
         return []
 
-    def register_artifact_types(self) -> List[Dict[str, Any]]:
+    def register_artifact_types(self) -> list[dict[str, Any]]:
         """Return artifact MIME/types emitted by this plugin for indexing."""
         return []
 
@@ -145,7 +145,7 @@ class PrismaticPlugin(ABC):
         return
 
     def after_task_execution(
-        self, contract: AgentContract, result: Dict[str, Any]
+        self, contract: AgentContract, result: dict[str, Any]
     ) -> None:
         """
         Called immediately after an agent worker exits.
@@ -169,7 +169,7 @@ class PrismaticPlugin(ABC):
     # ── GRO-1497 dispatcher hooks (optional) ────────────────────────────
 
     def on_issue_dispatch(
-        self, issue_id: str, agent_name: str, payload: Dict[str, Any]
+        self, issue_id: str, agent_name: str, payload: dict[str, Any]
     ) -> None:
         """Called immediately after an issue is dispatched to a provider."""
         return
@@ -179,7 +179,7 @@ class PrismaticPlugin(ABC):
         issue_id: str,
         origin_agent: str,
         reviewer_agent: str,
-        results: Dict[str, Any],
+        results: dict[str, Any],
     ) -> None:
         """Called when a reviewer agent completes and signals the origin agent."""
         return
@@ -189,7 +189,7 @@ class PrismaticPlugin(ABC):
         issue_id: str,
         stage_name: str,
         status: str,
-        metadata: Dict[str, Any],
+        metadata: dict[str, Any],
     ) -> None:
         """Called when a pipeline stage starts, fails, or completes."""
         return
@@ -208,7 +208,7 @@ class PrismaticPlugin(ABC):
     # ── GRO-2228 PWP pipeline hooks (optional) ──────────────────────────
 
     def on_pre_pipeline(
-        self, pipeline_id: str, context: Dict[str, Any]
+        self, pipeline_id: str, context: dict[str, Any]
     ) -> None:
         """
         Fired exactly once, *before* any pipeline stage runs.
@@ -219,7 +219,7 @@ class PrismaticPlugin(ABC):
         return
 
     def on_post_pipeline(
-        self, pipeline_id: str, result: Dict[str, Any]
+        self, pipeline_id: str, result: dict[str, Any]
     ) -> None:
         """
         Fired exactly once, *after* all pipeline stages complete
@@ -238,7 +238,7 @@ class PrismaticPlugin(ABC):
         return
 
     def on_deploy(
-        self, pipeline_id: str, target: str, artifact: Dict[str, Any]
+        self, pipeline_id: str, target: str, artifact: dict[str, Any]
     ) -> None:
         """
         Fired after the post-pipeline publish step pushes artifacts.

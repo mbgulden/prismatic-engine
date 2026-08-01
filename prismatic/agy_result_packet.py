@@ -9,11 +9,12 @@ not forced through this AGY-only schema.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 import re
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 AGY_RESULT_PACKET_MARKER = "AGY_TASK_RESULT_PACKET_OK"
 AGY_RESULT_PACKET_SCHEMA_MARKER = "AGY_RESULT_PACKET_SCHEMA_OK"

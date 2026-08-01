@@ -1,12 +1,12 @@
 import json
-from pathlib import Path
 import sys
+from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from plugins.pwp.compiler import compile_tokens_to_css  # noqa: E402
+from plugins.pwp.compiler import compile_tokens_to_css
 
 
 def _tokens() -> dict:

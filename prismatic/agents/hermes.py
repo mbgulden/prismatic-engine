@@ -12,20 +12,20 @@ files without hard-coded paths.
 """
 from __future__ import annotations
 
-import json
 import os
 import time
 from pathlib import Path
 from typing import Any
 
 from prismatic.providers.signals import (
-    SignalProvider,
-    SignalPayload,
     SignalAction,
+    SignalPayload,
+    SignalProvider,
     create_signal_provider,
 )
 from prismatic.providers.tasks.base import Issue
-from .base import BaseAgent, AgentConfig
+
+from .base import AgentConfig, BaseAgent
 
 
 class HermesAgent(BaseAgent):

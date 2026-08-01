@@ -30,7 +30,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 
 def slug_from_domain(domain: str) -> str:
@@ -58,7 +58,7 @@ def add_site_to_registry(
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
         try:
-            data: Dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+            data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             data = {}
     else:
@@ -80,7 +80,7 @@ def add_site_to_registry(
     return path
 
 
-def list_sites_in_appendix(publish_root: Path) -> Dict[str, Any]:
+def list_sites_in_appendix(publish_root: Path) -> dict[str, Any]:
     """Read all sites from the appendix. Empty dict if none."""
     path = appendix_path(publish_root)
     if not path.exists():

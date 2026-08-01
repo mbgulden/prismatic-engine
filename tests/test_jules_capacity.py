@@ -11,8 +11,8 @@ from prismatic.jules_capacity import (
     DAILY_LIMIT,
     capacity_payload,
     parse_jules_remote_list,
-    record_jules_launch,
     reconcile_jules_list_output,
+    record_jules_launch,
 )
 
 

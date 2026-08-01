@@ -30,8 +30,8 @@ from .apply_impact_rules import apply_impact_rules
 from .pr_reviewer import (
     APPROVE,
     NEEDS_DISCUSSION,
-    PRReviewResult,
     REQUEST_CHANGES,
+    PRReviewResult,
 )
 
 if TYPE_CHECKING:

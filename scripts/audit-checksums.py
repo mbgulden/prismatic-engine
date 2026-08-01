@@ -13,9 +13,9 @@ Exits:
 import argparse
 import hashlib
 import json
-import os
 import sys
 from pathlib import Path
+
 
 def calculate_sha256(filepath):
     sha256_hash = hashlib.sha256()

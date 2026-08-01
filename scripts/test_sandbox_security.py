@@ -17,11 +17,8 @@ Exit code: 0 = ALL tests pass, 1 = some tests failed.
 from __future__ import annotations
 
 import json
-import os
-import re
 import sys
 import tempfile
-import textwrap
 import traceback
 from pathlib import Path
 
@@ -200,7 +197,7 @@ def test_traversal_deep():
 @test("Symlink Escape: routes resolved path through allowed_bases")
 def test_symlink_escape_allowed_bases():
     """The resolver should check the symlink-resolved path against allowed bases."""
-    from prismatic.plugins.sandbox_pod_manager import SandboxPodManager, PodManagerError
+    from prismatic.plugins.sandbox_pod_manager import PodManagerError, SandboxPodManager
 
     # Create a symlink in /tmp that points to /etc — /etc is NOT an allowed base
     with tempfile.TemporaryDirectory() as td:
@@ -253,7 +250,7 @@ def test_cgroup_memory_format():
 
 @test("Cgroup: _parse_memory rejects invalid input")
 def test_cgroup_invalid_memory():
-    from prismatic.sandbox.cgroup_enforcer import CgroupError, CgroupEnforcer
+    from prismatic.sandbox.cgroup_enforcer import CgroupEnforcer, CgroupError
     assert_raises(CgroupError, CgroupEnforcer._parse_memory, "abc")
     assert_raises(CgroupError, CgroupEnforcer._parse_memory, "5Z")
 

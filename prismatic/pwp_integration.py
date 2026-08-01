@@ -13,9 +13,12 @@ from typing import Any, Literal
 from prismatic.plugin_architecture import get_shipped_plugins_dir, plugin_catalog
 from prismatic.plugin_artifacts import (
     PluginArtifactStore,
+)
+from prismatic.plugin_artifacts import (
     store_from_env as artifact_store_from_env,
 )
-from prismatic.plugin_jobs import PluginJobStore, store_from_env as job_store_from_env
+from prismatic.plugin_jobs import PluginJobStore
+from prismatic.plugin_jobs import store_from_env as job_store_from_env
 
 try:
     import yaml  # type: ignore

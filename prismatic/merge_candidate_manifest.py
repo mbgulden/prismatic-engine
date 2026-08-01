@@ -13,10 +13,11 @@ import os
 import re
 import tempfile
 import unicodedata
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path, PurePosixPath
-from typing import Any, Iterable
+from typing import Any
 
 SCHEMA_VERSION = 1
 PROOF_POLICY_VERSION = 1
@@ -980,11 +981,12 @@ class MergeCandidateManifest:
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(tmp_name, target)
-            directory_fd = os.open(target.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
+            if os.name != "nt":
+                directory_fd = os.open(target.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
         finally:
             try:
                 os.unlink(tmp_name)

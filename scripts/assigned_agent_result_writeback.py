@@ -13,9 +13,9 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
-import shutil
 import time
 import urllib.request
 from datetime import datetime, timezone

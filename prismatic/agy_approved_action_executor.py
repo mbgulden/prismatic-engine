@@ -65,7 +65,7 @@ def _write(records: list[dict[str, Any]], path: str | Path | None = None) -> Non
 
 def _executor_id(operator_action_approval_id: str, executor_mode: str) -> str:
     digest = hashlib.sha256(
-        f"{operator_action_approval_id}:{executor_mode}".encode("utf-8")
+        f"{operator_action_approval_id}:{executor_mode}".encode()
     ).hexdigest()[:16]
     return f"approved-executor-{digest}"
 

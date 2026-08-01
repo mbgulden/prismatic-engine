@@ -5,8 +5,7 @@ import hmac
 
 from fastapi.testclient import TestClient
 
-from prismatic.gateway import event_bus
-from prismatic.gateway import server
+from prismatic.gateway import event_bus, server
 
 
 def _signature(secret: str, body: bytes) -> str:

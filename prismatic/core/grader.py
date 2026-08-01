@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-
 DEFAULT_VIEWPORTS: tuple[dict[str, int | str], ...] = (
     {"name": "desktop", "width": 1200, "height": 800},
     {"name": "tablet", "width": 768, "height": 1024},

@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import mimetypes
 import os
+import tempfile
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-import tempfile
-import zipfile
 
-from fastapi import APIRouter, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from fastapi.responses import FileResponse
 
 router = APIRouter()
@@ -315,7 +315,7 @@ async def download_file(
             except Exception:
                 pass
             raise HTTPException(
-                status_code=500, detail=f"Failed to package folder as ZIP: {str(e)}"
+                status_code=500, detail=f"Failed to package folder as ZIP: {e!s}"
             )
 
     if not target.is_file():

@@ -14,13 +14,9 @@ Covers:
 from __future__ import annotations
 
 import json
-import os
-import tempfile
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # ═══════════════════════════════════════════════════════════════
 # Alert Rule Definitions Tests
@@ -305,6 +301,7 @@ class TestAlertWebhookEndpoint:
         """Create a test client with alert webhook routes."""
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
+
         from prismatic.gateway.alert_manager import create_alert_webhook_route
 
         test_app = FastAPI()
@@ -425,7 +422,7 @@ class TestCLISyntheticAlerts:
 
     def test_cli_runs_without_error(self, tmp_path):
         """CLI function runs and routes alerts without crashing."""
-        from prismatic.gateway.alert_manager import fire_synthetic_alerts, AlertRouter
+        from prismatic.gateway.alert_manager import fire_synthetic_alerts
 
         log_path = tmp_path / "alerts.log"
         with patch(

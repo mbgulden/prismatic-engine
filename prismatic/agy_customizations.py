@@ -16,10 +16,11 @@ import shutil
 import stat
 import tempfile
 import uuid
+from collections.abc import Iterable, Sequence
 from datetime import datetime, timezone
 from importlib import resources
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 import yaml
 

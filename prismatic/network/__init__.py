@@ -5,6 +5,7 @@ outreach lanes: per-domain token buckets, retry/backoff, proxy rotation,
 realistic browser header rotation, and semaphore-based session governance.
 """
 
+from prismatic.network.proxy_rotator import ProxyConfig, ProxyRotator
 from prismatic.network.rate_limiter import (
     DEFAULT_RETRY_STATUSES,
     DOMAIN_TIERS,
@@ -18,7 +19,6 @@ from prismatic.network.rate_limiter import (
     guarded_request,
     record_network_event,
 )
-from prismatic.network.proxy_rotator import ProxyConfig, ProxyRotator
 from prismatic.network.session_governor import SessionGovernor, SessionLease
 
 __all__ = [

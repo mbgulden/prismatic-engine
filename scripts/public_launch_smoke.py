@@ -127,6 +127,7 @@ def main() -> int:
 
     def gateway_smoke() -> None:
         from fastapi.testclient import TestClient
+
         from prismatic.gateway import server
 
         client = TestClient(server.app)

@@ -1,4 +1,3 @@
-import pytest
 from prismatic.router import score_agent, select_agent
 
 # Dummy agent registry configuration

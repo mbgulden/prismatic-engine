@@ -25,37 +25,35 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
+import shutil
 import signal
 import sqlite3
 import subprocess
-import shutil
-import shlex
 import sys
-import time
 import threading
+import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
-# ── Relative package imports ──────────────────────────────────
-from .providers.signals import create_signal_provider
+from .budget_caps import budget_caps_configured, evaluate_budget_caps, read_budget_caps
+from .capability_router import default_capability_registry, route_issue
+from .core.governor import DistributedComputeGovernor
 from .credit_policy_engine import (
+    AGENT_PROVIDER_MAP,
     PolicyAction,
     evaluate_agent_launch,
-    AGENT_PROVIDER_MAP,
 )
-from .budget_caps import budget_caps_configured, evaluate_budget_caps, read_budget_caps
-from .telemetry import get_collector
-from .capability_router import default_capability_registry, route_issue
-from .lane_contracts import filter_dispatchable_issues, starvation_signal_for
-from .mode_switch import get_mode_switch
 from .handoff_contracts import (
     HandoffValidationResult,
     extract_handoff_packet,
     validation_result,
 )
+from .lane_contracts import filter_dispatchable_issues, starvation_signal_for
 from .linear_rate_limit import (
     LinearRateLimitCircuitOpen,
     ensure_linear_circuit_closed,
@@ -63,7 +61,11 @@ from .linear_rate_limit import (
     record_linear_response_headers,
     trip_linear_circuit_from_error,
 )
-from .core.governor import DistributedComputeGovernor
+from .mode_switch import get_mode_switch
+
+# ── Relative package imports ──────────────────────────────────
+from .providers.signals import create_signal_provider
+from .telemetry import get_collector
 
 # ── IPC Bridge event emission (best-effort) ─────────────────────
 try:
@@ -101,7 +103,7 @@ DEFAULT_PIPELINE_SCAN_CADENCE = int(
     os.environ.get("PRISMATIC_POLL_PIPELINE_SCAN_CADENCE", "20")
 )
 _POLL_CYCLE_NUMBER = 0
-_CURRENT_POLL_BUDGET: "LinearCycleBudget | None" = None
+_CURRENT_POLL_BUDGET: LinearCycleBudget | None = None
 _LABEL_SCAN_CACHE: dict[tuple[str, str, int], tuple[float, list[dict[str, Any]]]] = {}
 _LAST_POLL_BUDGET_STATUS: dict[str, Any] = {}
 
@@ -420,7 +422,7 @@ def _parse_token_metrics(provider: str, output: str) -> dict[str, int] | None:
 
 
 def _drain_and_record_tokens(
-    proc: "subprocess.Popen | None",
+    proc: subprocess.Popen | None,
     run_id: str,
     agent_name: str,
     provider: str,
@@ -764,8 +766,8 @@ def gql(
     ``Bearer`` prefix is added — the raw key value is used directly
     as the HTTP ``Authorization`` header (Linear's API token format).
     """
-    import urllib.request
     import urllib.error
+    import urllib.request
 
     try:
         ensure_linear_circuit_closed(source=source)

@@ -1,6 +1,5 @@
-from copy import deepcopy
-
 import json
+from copy import deepcopy
 
 from scripts.validate_okf_docs import ROOT, _parity_errors, _schema_errors, validate
 

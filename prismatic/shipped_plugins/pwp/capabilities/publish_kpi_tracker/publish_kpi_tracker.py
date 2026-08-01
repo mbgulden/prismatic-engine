@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 HERE = Path(__file__).resolve().parent
 SCHEMA_PATH = HERE / "schemas" / "kpi-collection.schema.json"
@@ -56,17 +56,17 @@ def load_site(slug: str) -> dict:
     return _load_json(SITES_DIR / f"{slug}.kpi.json")
 
 
-def list_sites() -> List[str]:
+def list_sites() -> list[str]:
     return sorted(p.stem[:-4] for p in SITES_DIR.glob("*.kpi.json"))
 
 
-def load_all_collections() -> Dict[str, dict]:
+def load_all_collections() -> dict[str, dict]:
     return {slug: load_site(slug) for slug in list_sites()}
 
 
 # ── Validation (no third-party deps; stdlib + simple checks) ───────────────────
-def validate(collection: dict, parent: dict | None = None) -> List[str]:
-    errs: List[str] = []
+def validate(collection: dict, parent: dict | None = None) -> list[str]:
+    errs: list[str] = []
     name = collection.get("name") or "<unnamed>"
     for fld in ("schema_version", "name", "owner", "metrics"):
         if fld not in collection:
@@ -142,8 +142,8 @@ def resolve_collection(slug: str) -> dict:
 
 # ── Aggregation ─────────────────────────────────────────────────────────────
 def aggregate(
-    runtime_values: Dict[str, Dict[str, Any]] | None = None,
-    sources: Dict[str, Dict[str, str]] | None = None,
+    runtime_values: dict[str, dict[str, Any]] | None = None,
+    sources: dict[str, dict[str, str]] | None = None,
     window: str = "last24h",
 ) -> dict:
     """Multi-site shape used by the dashboards.
@@ -235,7 +235,7 @@ def _format_value(value: Any, fmt: str = "number") -> str:
         return str(value)
 
 
-def render_index(agg: dict, *, csrf_token: Optional[str] = None) -> str:
+def render_index(agg: dict, *, csrf_token: str | None = None) -> str:
     """Multi-site index page.
 
     Layout: one **per-site row** (`<section class="pwp-kpi-site-row">`) per
@@ -276,8 +276,8 @@ def render_index(agg: dict, *, csrf_token: Optional[str] = None) -> str:
     wiring_js = ""
     try:
         from .funnel_form import (
-            render_modal_html,
             render_button_wiring_js,
+            render_modal_html,
         )
 
         modal_html = render_modal_html(csrf_token=csrf_token)

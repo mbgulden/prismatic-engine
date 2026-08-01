@@ -258,8 +258,7 @@ def replace_managed_block_fixture(existing: str, block: str) -> str:
     if BEGIN_MARKER in existing and END_MARKER in existing:
         prefix = existing.split(BEGIN_MARKER)[0]
         suffix = existing.split(END_MARKER)[1]
-        if suffix.startswith("\n"):
-            suffix = suffix[1:]
+        suffix = suffix.removeprefix("\n")
         return f"{prefix}{block.strip()}\n{suffix}"
     else:
         trimmed = existing.rstrip()
@@ -273,8 +272,7 @@ def remove_managed_block_fixture(existing: str) -> str:
     if BEGIN_MARKER in existing and END_MARKER in existing:
         prefix = existing.split(BEGIN_MARKER)[0]
         suffix = existing.split(END_MARKER)[1]
-        if suffix.startswith("\n"):
-            suffix = suffix[1:]
+        suffix = suffix.removeprefix("\n")
         return f"{prefix.rstrip()}\n\n{suffix.lstrip()}".rstrip() + "\n"
     return existing
 
@@ -763,7 +761,7 @@ def test_pe_cron_runtime_fail_closed_evidence_regressions(monkeypatch) -> None:
     # 14. manifest/binding commit versus release-directory mismatch
     other_commit = "2222222222222222222222222222222222222222"
     manifest_other = (
-        f'{{"release_id":"rel_01","merge_commit":"{other_commit}"}}'.encode("utf-8")
+        f'{{"release_id":"rel_01","merge_commit":"{other_commit}"}}'.encode()
     )
     rel_other = hashlib.sha256(manifest_other).hexdigest()
     entry_other = f"0 3 * * * {base_hook} --release-digest {rel_other} --config-digest {cfg_digest}"

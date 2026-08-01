@@ -1,6 +1,5 @@
 import subprocess
-import os
-from pathlib import Path
+
 
 def run_script(phase_id, state_dir):
     result = subprocess.run(

@@ -1,21 +1,6 @@
 from copy import deepcopy
 
 from prismatic.agy_completed_work import ingest_completed_work
-from prismatic.agy_merge_backlog import (
-    AGY_CLEAN_PR_AND_VERIFICATION_GATE_MARKER,
-    AGY_CLEAN_PR_CREATE_UPDATE_MARKER,
-    AGY_PR_VERIFICATION_GATE_MARKER,
-    PROMPT5_REAL_PR_APPROVAL_GATE_MARKER,
-    PROMPT5_APPROVED_REAL_PR_EXECUTOR_MARKER,
-    build_approved_real_pr_executor_plan,
-    execute_approved_real_pr_creation,
-    build_merge_backlog_item,
-    build_real_pr_creation_approval_gate,
-    build_real_pr_creation_approved_action,
-    get_merge_backlog_item,
-    verify_merge_backlog_item,
-)
-from prismatic.completed_work_gate import demo_completed_work_packet
 from prismatic.agy_executor_runs import (
     PROMPT6_EXECUTOR_AUDIT_CANARY_BLOCKED,
     PROMPT6_EXECUTOR_AUDIT_CANARY_MARKER,
@@ -24,6 +9,21 @@ from prismatic.agy_executor_runs import (
     list_executor_runs,
     record_executor_run,
 )
+from prismatic.agy_merge_backlog import (
+    AGY_CLEAN_PR_AND_VERIFICATION_GATE_MARKER,
+    AGY_CLEAN_PR_CREATE_UPDATE_MARKER,
+    AGY_PR_VERIFICATION_GATE_MARKER,
+    PROMPT5_APPROVED_REAL_PR_EXECUTOR_MARKER,
+    PROMPT5_REAL_PR_APPROVAL_GATE_MARKER,
+    build_approved_real_pr_executor_plan,
+    build_merge_backlog_item,
+    build_real_pr_creation_approval_gate,
+    build_real_pr_creation_approved_action,
+    execute_approved_real_pr_creation,
+    get_merge_backlog_item,
+    verify_merge_backlog_item,
+)
+from prismatic.completed_work_gate import demo_completed_work_packet
 
 
 def packet(

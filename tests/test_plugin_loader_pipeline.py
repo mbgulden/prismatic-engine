@@ -29,7 +29,6 @@ from prismatic.review.pipeline import (
 from prismatic.review.pr_reviewer import APPROVE, PRReviewResult
 from prismatic.review.registry import ReviewerRegistry
 
-
 # Core version used for all tests — matches the engine's current version.
 _CORE_VERSION = "1.0.0"
 
@@ -356,6 +355,7 @@ def test_loader_loads_canonical_plugin_end_to_end():
     """
     import re
     from pathlib import Path
+
     from prismatic.core.registry import PluginLoader
     from prismatic.interface.plugin import PluginContext
 

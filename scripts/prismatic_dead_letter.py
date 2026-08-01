@@ -20,7 +20,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from prismatic.dead_letter import DeadLetterStore  # noqa: E402
+from prismatic.dead_letter import DeadLetterStore
 
 
 def _print_event(event) -> None:

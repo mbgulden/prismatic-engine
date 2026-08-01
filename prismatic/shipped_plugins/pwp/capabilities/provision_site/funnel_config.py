@@ -38,15 +38,13 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .linear_client import (
     CreateIssueInput,
     LinearClient,
     LinearIssue,
 )
-from .types import ProvisionRun
-
 
 # --- Constants ------------------------------------------------------------
 
@@ -133,19 +131,19 @@ FORM_SCHEMA_V1 = {
 
 class FunnelConfigError(ValueError):
     """Raised when the form submission is invalid."""
-    def __init__(self, message: str, *, errors: Optional[List[str]] = None):
+    def __init__(self, message: str, *, errors: list[str] | None = None):
         super().__init__(message)
         self.errors = errors or []
 
 
-def validate_form(form: Dict[str, Any]) -> List[str]:
+def validate_form(form: dict[str, Any]) -> list[str]:
     """Lightweight validator for FORM_SCHEMA_V1 (no jsonschema dependency).
 
     Returns a list of error strings (empty list = valid). We could swap
     in `jsonschema` later; the simple key+type checks below are enough
     for Phase 4 and avoid a runtime dep.
     """
-    errors: List[str] = []
+    errors: list[str] = []
 
     for required in ("site_slug", "site_domain", "form_version", "context"):
         if required not in form:
@@ -183,15 +181,15 @@ class FunnelConfigSubmission:
     """
     site_slug: str
     site_domain: str
-    form: Dict[str, Any]
+    form: dict[str, Any]
     linear_issue_id: str = ""
     linear_issue_identifier: str = ""
     linear_issue_url: str = ""
     state: str = "submitted"
     submitted_at: str = ""
-    refinements: List[Dict[str, Any]] = field(default_factory=list)
+    refinements: list[dict[str, Any]] = field(default_factory=list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "site_slug": self.site_slug,
             "site_domain": self.site_domain,
@@ -205,7 +203,7 @@ class FunnelConfigSubmission:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "FunnelConfigSubmission":
+    def from_dict(cls, data: dict[str, Any]) -> FunnelConfigSubmission:
         return cls(
             site_slug=data["site_slug"],
             site_domain=data["site_domain"],
@@ -225,7 +223,7 @@ class FunnelConfigSubmission:
         return path
 
     @classmethod
-    def load(cls, site_slug: str, log_dir: Optional[Path] = None) -> Optional["FunnelConfigSubmission"]:
+    def load(cls, site_slug: str, log_dir: Path | None = None) -> FunnelConfigSubmission | None:
         log_dir = log_dir or DEFAULT_LOG_DIR
         path = log_dir / f"{site_slug}.json"
         if not path.exists():
@@ -235,7 +233,7 @@ class FunnelConfigSubmission:
 
 # --- Issue title helpers --------------------------------------------------
 
-def build_issue_title(form: Dict[str, Any]) -> str:
+def build_issue_title(form: dict[str, Any]) -> str:
     """Build a stable issue title for the funnel-config task.
 
     Format: `[PE-KPI-FUNNEL] <kind> KPIs for <domain>`
@@ -248,9 +246,9 @@ def build_issue_title(form: Dict[str, Any]) -> str:
 
 
 def build_issue_description(
-    form: Dict[str, Any],
+    form: dict[str, Any],
     *,
-    site_context: Optional[Dict[str, Any]] = None,
+    site_context: dict[str, Any] | None = None,
 ) -> str:
     """Build the markdown description body for the Linear issue.
 
@@ -262,7 +260,7 @@ def build_issue_description(
       - the existing provision_state.json (if passed)
       - step-by-step instructions for the assigned agent
     """
-    parts: List[str] = []
+    parts: list[str] = []
 
     parts.append("## Funnel configuration request")
     parts.append("")
@@ -382,10 +380,10 @@ def build_issue_description(
 # --- Linear label lookup --------------------------------------------------
 
 # Cache the team's label IDs so we don't refetch on every dispatch.
-_LABEL_CACHE: Dict[str, str] = {}
+_LABEL_CACHE: dict[str, str] = {}
 
 
-def _resolve_label_id(client: LinearClient, team_id: str, label_name: str) -> Optional[str]:
+def _resolve_label_id(client: LinearClient, team_id: str, label_name: str) -> str | None:
     """Resolve a label name to its Linear id by listing the team's labels.
 
     We don't cache across calls (the cache would need invalidation); the
@@ -414,7 +412,7 @@ query TeamLabels($teamId: String!) {
 
 # --- Epic lookup ----------------------------------------------------------
 
-def find_parent_epic(client: LinearClient, team_id: str) -> Optional[LinearIssue]:
+def find_parent_epic(client: LinearClient, team_id: str) -> LinearIssue | None:
     """Find the PE-KPI-FUNNEL parent epic.
 
     Returns the first issue whose title contains the EPIC_TITLE_FRAGMENT
@@ -447,7 +445,7 @@ class DispatchResult:
     created: bool
     epic_id: str = ""
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "submission": self.submission.to_dict(),
             "linear_issue": self.linear_issue.to_dict(),
@@ -457,13 +455,13 @@ class DispatchResult:
 
 
 def dispatch(
-    form: Dict[str, Any],
+    form: dict[str, Any],
     *,
-    client: Optional[LinearClient] = None,
+    client: LinearClient | None = None,
     team_id: str = DEFAULT_TEAM_ID,
-    log_dir: Optional[Path] = None,
-    site_context: Optional[Dict[str, Any]] = None,
-    submission: Optional[FunnelConfigSubmission] = None,
+    log_dir: Path | None = None,
+    site_context: dict[str, Any] | None = None,
+    submission: FunnelConfigSubmission | None = None,
 ) -> DispatchResult:
     """Dispatch a funnel_config form to Linear.
 

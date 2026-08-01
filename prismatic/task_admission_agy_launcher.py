@@ -8,8 +8,9 @@ import os
 import re
 import stat
 import sys
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any
 
 from prismatic.agy_cli import (
     CANONICAL_ADMISSION_MARKER,

@@ -1,7 +1,6 @@
-import subprocess
 import json
-import os
-from pathlib import Path
+import subprocess
+
 
 def run_script(manifest):
     result = subprocess.run(

@@ -10,21 +10,19 @@ Covers:
 
 from __future__ import annotations
 
-
 from prismatic.quality.smoke import (
+    Finding,
     SmokeFinding,
     SmokeTestResult,
     extract_claimed_paths,
-    is_path_traversal,
     file_exists,
     file_has_substantive_content,
+    is_path_traversal,
     smoke_test,
-    Finding,
     verify_files_exist,
     verify_files_nonempty,
     verify_files_substantive,
 )
-
 
 # ─────────────────────────────────────────────────────────────────────
 # Claim extraction tests

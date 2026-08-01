@@ -16,7 +16,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from prismatic.journal import extract_golden_thread_summary, JournalConfig
+from prismatic.journal import JournalConfig, extract_golden_thread_summary
 
 
 def _make_config(registry_content: dict) -> JournalConfig:

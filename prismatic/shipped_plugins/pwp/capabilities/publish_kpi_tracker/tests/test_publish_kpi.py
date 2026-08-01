@@ -13,10 +13,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import plugins.pwp.capabilities.publish_kpi_tracker as kpi_mod
 import pytest
-
-import plugins.pwp.capabilities.publish_kpi_tracker as kpi_mod  # noqa: E402
-from plugins.pwp.capabilities.publish_kpi_tracker import (  # noqa: E402
+from plugins.pwp.capabilities.publish_kpi_tracker import (
     aggregate,
     list_sites,
     load_site,
@@ -26,7 +25,6 @@ from plugins.pwp.capabilities.publish_kpi_tracker import (  # noqa: E402
     resolve_collection,
     validate,
 )
-
 
 HERE = Path(__file__).resolve().parent
 FIXTURE_DIR = HERE / "fixtures"

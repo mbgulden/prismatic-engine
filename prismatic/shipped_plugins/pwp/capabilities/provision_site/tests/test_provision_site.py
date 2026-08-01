@@ -21,14 +21,14 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from plugins.pwp.capabilities.provision_site import (
     CloudflareError,
     orchestrator,
 )
+from plugins.pwp.capabilities.provision_site import types as prov_types
 from plugins.pwp.capabilities.provision_site.domain_verifier import (
-    generate_challenge_token,
     expected_record_name,
+    generate_challenge_token,
     verify,
 )
 from plugins.pwp.capabilities.provision_site.steps import (
@@ -36,8 +36,6 @@ from plugins.pwp.capabilities.provision_site.steps import (
     step_cloudflare_zone,
     step_verify_domain,
 )
-from plugins.pwp.capabilities.provision_site import types as prov_types
-
 
 HERE = Path(__file__).resolve().parent
 
@@ -591,22 +589,20 @@ Tests:
 
 from pathlib import Path
 
-
 # Sentinel imports (these are loaded once via the main test file's imports)
 from plugins.pwp.capabilities.provision_site.steps import (
     ga4,
-    gtm,
     gsc,
+    gtm,
 )
-
 
 # -- GoogleClient: JWT signing & from_env ----------------------------------
 
 
 def _gen_test_sa(tmp_path):
     """Generate a real test service-account JSON (returns sa_path, sa_dict)."""
-    from cryptography.hazmat.primitives.asymmetric import rsa
     from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
 
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     pem = key.private_bytes(
@@ -629,11 +625,11 @@ def test_google_client_from_env_missing(tmp_path, monkeypatch):
     """from_env should raise clearly when no SA creds are configured."""
     monkeypatch.delenv("GOOGLE_SA_JSON", raising=False)
     monkeypatch.delenv("GOOGLE_SA_INLINE", raising=False)
-    from plugins.pwp.capabilities.provision_site.google_client import (
-        GoogleClient,
-        GoogleAuthError,
-    )
     from plugins.pwp.capabilities.provision_site import auth_loader
+    from plugins.pwp.capabilities.provision_site.google_client import (
+        GoogleAuthError,
+        GoogleClient,
+    )
 
     # Block the auth_loader fallback so this test is hermetic
     with patch(
@@ -1110,8 +1106,9 @@ def test_vercel_client_request_shape_and_bearer_auth() -> None:
 
 def test_vercel_client_404_returns_none_for_project_lookup() -> None:
     """A 404 on project_lookup must return None (not raise)."""
-    from plugins.pwp.capabilities.provision_site.vercel_client import VercelClient
     import http.client
+
+    from plugins.pwp.capabilities.provision_site.vercel_client import VercelClient
 
     hdrs = http.client.HTTPMessage()
     err = urllib.error.HTTPError(
@@ -1129,11 +1126,12 @@ def test_vercel_client_404_returns_none_for_project_lookup() -> None:
 
 def test_vercel_client_500_raises_vercel_error() -> None:
     """A 500 on project_lookup must raise VercelError (not return None)."""
+    import http.client
+
     from plugins.pwp.capabilities.provision_site.vercel_client import (
         VercelClient,
         VercelError,
     )
-    import http.client
 
     hdrs = http.client.HTTPMessage()
     err = urllib.error.HTTPError(

@@ -14,10 +14,11 @@ import os
 import urllib.error
 import urllib.request
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 ACTIVE_AGENT_LABEL_PREFIX = "agent:"
 TERMINAL_STATE_TYPES = {"completed", "canceled", "triage"}
@@ -42,7 +43,7 @@ class IssueSummary:
     labels: tuple[str, ...]
 
     @classmethod
-    def from_linear(cls, node: dict[str, Any]) -> "IssueSummary":
+    def from_linear(cls, node: dict[str, Any]) -> IssueSummary:
         state = node.get("state") or {}
         labels = tuple(
             sorted(

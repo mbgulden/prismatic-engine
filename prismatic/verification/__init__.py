@@ -1,5 +1,9 @@
 """Provider-neutral immutable Git source acquisition and clean-room execution."""
 
+from .attestation import (
+    canonicalize_receipt,
+    verify_receipt_attestation,
+)
 from .clean_room_runner import (
     CLEAN_ROOM_RUNNER_V1_OK,
     ArtifactEvidence,
@@ -12,24 +16,13 @@ from .clean_room_runner import (
     ToolchainEntry,
     run_clean_room,
 )
-from .source_acquisition import (
-    SOURCE_ACQUISITION_V1_OK,
-    AcquiredSource,
-    SourceAcquisitionError,
-    SourceAcquisitionPolicy,
-    SourceAcquisitionRequest,
-    acquire_source,
-    validate_acquired_source,
-)
-
-from .attestation import (
-    canonicalize_receipt,
-    verify_receipt_attestation,
-)
-from .receipt_validator import (
-    check_revocation,
-    determine_merge_eligibility,
-    validate_receipt_freshness,
+from .github_adapter import (
+    GitHubAdapterError,
+    GitHubCheckRunProjection,
+    GitHubVerificationTrigger,
+    normalize_github_trigger,
+    project_github_check_run,
+    validate_trigger_receipt,
 )
 from .receipt_store import (
     OPTIONAL_HOSTED_SIGNAL,
@@ -46,55 +39,61 @@ from .receipt_store import (
     verification_receipt_store_path,
     verification_revocation_store_path,
 )
-from .github_adapter import (
-    GitHubAdapterError,
-    GitHubCheckRunProjection,
-    GitHubVerificationTrigger,
-    normalize_github_trigger,
-    project_github_check_run,
-    validate_trigger_receipt,
+from .receipt_validator import (
+    check_revocation,
+    determine_merge_eligibility,
+    validate_receipt_freshness,
+)
+from .source_acquisition import (
+    SOURCE_ACQUISITION_V1_OK,
+    AcquiredSource,
+    SourceAcquisitionError,
+    SourceAcquisitionPolicy,
+    SourceAcquisitionRequest,
+    acquire_source,
+    validate_acquired_source,
 )
 
 __all__ = [
     "CLEAN_ROOM_RUNNER_V1_OK",
+    "OPTIONAL_HOSTED_SIGNAL",
+    "PROVIDER_NEUTRAL_VERIFICATION_RECEIPT_MARKER",
+    "SOURCE_ACQUISITION_V1_OK",
+    "AcquiredSource",
     "ArtifactEvidence",
     "CleanRoomIsolation",
     "CleanRoomRun",
     "CleanRoomRunnerError",
     "CommandExecution",
     "EvidenceDigest",
+    "GitHubAdapterError",
+    "GitHubCheckRunProjection",
+    "GitHubVerificationTrigger",
     "RunnerLimits",
-    "ToolchainEntry",
-    "run_clean_room",
-    "SOURCE_ACQUISITION_V1_OK",
-    "AcquiredSource",
     "SourceAcquisitionError",
     "SourceAcquisitionPolicy",
     "SourceAcquisitionRequest",
+    "StoredVerificationReceipt",
+    "ToolchainEntry",
+    "VerificationReceiptStore",
     "acquire_source",
-    "validate_acquired_source",
+    "canonicalize_receipt",
     "check_revocation",
     "determine_merge_eligibility",
-    "validate_receipt_freshness",
-    "OPTIONAL_HOSTED_SIGNAL",
-    "PROVIDER_NEUTRAL_VERIFICATION_RECEIPT_MARKER",
-    "StoredVerificationReceipt",
-    "VerificationReceiptStore",
     "get_verification_receipt",
     "list_verification_receipts",
+    "normalize_github_trigger",
     "persist_verification_receipt",
+    "project_github_check_run",
     "receipt_identity",
     "revoke_verification_receipt",
+    "run_clean_room",
+    "validate_acquired_source",
+    "validate_receipt_freshness",
+    "validate_trigger_receipt",
     "verification_receipt_counts",
     "verification_receipt_schema",
     "verification_receipt_store_path",
     "verification_revocation_store_path",
-    "canonicalize_receipt",
     "verify_receipt_attestation",
-    "GitHubAdapterError",
-    "GitHubCheckRunProjection",
-    "GitHubVerificationTrigger",
-    "normalize_github_trigger",
-    "project_github_check_run",
-    "validate_trigger_receipt",
 ]

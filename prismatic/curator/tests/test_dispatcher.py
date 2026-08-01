@@ -12,22 +12,20 @@ Run: pytest prismatic/curator/tests/test_dispatcher.py -v
 """
 from __future__ import annotations
 
-import json
 import sys
-import tempfile
-from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from prismatic.curator.dispatcher import (  # noqa: E402
-    LaneBudgetTracker, DispatchDecision, decide_dispatch, build_supervisor_cmd,
-    LANE_MODEL, LANE_DAILY_BUDGET_USD, LANE_ESTIMATED_COST_USD,
-    BUDGET_STATE,
+from prismatic.curator.dispatcher import (
+    LANE_DAILY_BUDGET_USD,
+    LANE_ESTIMATED_COST_USD,
+    LaneBudgetTracker,
+    build_supervisor_cmd,
+    decide_dispatch,
 )
-
 
 # === LaneBudgetTracker tests ===
 

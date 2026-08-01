@@ -2,10 +2,12 @@
 # Prismatic Engine — Portable Agent Orchestration
 # Copyright (C) 2026 Michael Gulden
 
-import unittest
-import os
 import json
+import os
+import unittest
+
 from prismatic.master_build_orchestrator import MasterBuildOrchestrator
+
 
 class TestMasterBuildOrchestrator(unittest.TestCase):
     def setUp(self):

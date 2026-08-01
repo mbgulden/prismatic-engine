@@ -19,16 +19,15 @@ GitHubProvider().has_credentials() to True, and pre-seeding the
 dedup connection so the stall-tracker lookup returns no rows.
 """
 
-import unittest
-from unittest.mock import patch, MagicMock, ANY
-import os
 import sys
+import unittest
+from unittest.mock import ANY, MagicMock, patch
 
 # Mocking external dependencies before importing dispatcher.
 sys.modules['prismatic.providers.signals'] = MagicMock()
 sys.modules['prismatic.credit_policy_engine'] = MagicMock()
 
-import prismatic.dispatcher as dispatcher
+from prismatic import dispatcher
 from prismatic.mode_switch import OrchestrationMode
 
 

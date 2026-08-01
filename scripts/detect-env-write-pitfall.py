@@ -44,13 +44,7 @@ class EnvWritePitfallDetector(ast.NodeVisitor):
                     )
 
             # Recurse into nested blocks
-            if isinstance(stmt, ast.If):
-                self.check_block(stmt.body, function_name)
-                self.check_block(stmt.orelse, function_name)
-            elif isinstance(stmt, ast.For):
-                self.check_block(stmt.body, function_name)
-                self.check_block(stmt.orelse, function_name)
-            elif isinstance(stmt, ast.While):
+            if isinstance(stmt, ast.If) or isinstance(stmt, ast.For) or isinstance(stmt, ast.While):
                 self.check_block(stmt.body, function_name)
                 self.check_block(stmt.orelse, function_name)
             elif isinstance(stmt, ast.With):

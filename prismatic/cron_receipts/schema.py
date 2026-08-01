@@ -7,12 +7,13 @@ Opaque execution identity:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timezone
 import importlib.resources
 import json
 import re
-from typing import Any, ClassVar, Mapping
+from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, ClassVar
 
 import jsonschema
 

@@ -9,7 +9,6 @@ from fastapi.testclient import TestClient
 from prismatic.agent_packet_normalizer import RAW_AGENT_OUTPUT_REPAIR_QUEUE_MARKER
 from prismatic.agent_raw_output_queue import RawAgentOutputStore
 
-
 _GATE_ACCEPTED_SOURCE_PATH = str(Path.home() / "work" / "agy-gro-3952-proof")
 
 
@@ -49,7 +48,7 @@ def client_for_raw_queue(
     db_path = tmp_path / "agent_raw_output_queue.sqlite3"
     monkeypatch.setenv("PRISMATIC_STATE_DIR", str(tmp_path))
     monkeypatch.setenv("PRISMATIC_AGENT_RAW_OUTPUT_DB", str(db_path))
-    import prismatic.gateway.server as server
+    from prismatic.gateway import server
 
     server = importlib.reload(server)
     return TestClient(server.app), RawAgentOutputStore(db_path)

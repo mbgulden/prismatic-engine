@@ -10,11 +10,12 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 LINEAR_RATE_LIMIT_CIRCUIT_BREAKER_MARKER = "LINEAR_RATE_LIMIT_CIRCUIT_BREAKER_OK"
 LINEAR_RATE_LIMIT_BLOCKED_MARKER = "LINEAR_RATE_LIMIT_CIRCUIT_BREAKER_BLOCKED"

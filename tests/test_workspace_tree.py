@@ -1,15 +1,11 @@
 """Unit and integration tests for Workstream A: Curated Workspace Plugin (WA-10).
 """
 
-import json
-import tempfile
-from pathlib import Path
 
 import pytest
 
 from prismatic.workspace.acceptance import AcceptanceProtocol
 from prismatic.workspace.categorize import WorkspaceCategorizer
-from prismatic.workspace.manifest import WorkspaceManifestEntry
 from prismatic.workspace.static.share import WorkspaceShareManager
 from prismatic.workspace.tree import WorkspaceTreeWalker
 

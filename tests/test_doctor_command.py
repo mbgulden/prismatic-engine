@@ -1,7 +1,8 @@
-import unittest
-from unittest.mock import patch, MagicMock
 import argparse
 import os
+import unittest
+from unittest.mock import MagicMock, patch
+
 from prismatic.dispatcher import cmd_doctor
 
 

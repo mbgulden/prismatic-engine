@@ -41,9 +41,9 @@ Reference: okf/operations/phase2-quality-gates-plan.md (Gap 9 / Part B)
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Literal
-
+from typing import Any, Literal
 
 # Public type aliases for plugin authors
 

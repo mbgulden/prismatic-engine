@@ -7,13 +7,12 @@ import sys
 from pathlib import Path
 from unittest import mock
 
-
 HERE = Path(__file__).resolve()
 SHIP_ROOT = HERE.parents[4]
 if str(SHIP_ROOT) not in sys.path:
     sys.path.insert(0, str(SHIP_ROOT))
 
-from plugins.pwp.capabilities.provision_site.steps.zapier import (  # noqa: E402
+from plugins.pwp.capabilities.provision_site.steps.zapier import (
     _resolve_fareharbor_shortname,
     step_register_zapier_webhook,
 )

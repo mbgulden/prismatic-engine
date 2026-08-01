@@ -13,16 +13,14 @@ digest.
 This is a one-shot script. After running, the curator's tag rules are
 the source of truth going forward — no more stale entries.
 """
-import sys
-import os
 import json
 import sqlite3
-from pathlib import Path
+import sys
 
 sys.path.insert(0, "/home/ubuntu/.prismatic/venv_stable/lib/python3.12/site-packages")
 sys.path.insert(0, "/home/ubuntu/work/prismatic-engine")
 
-from prismatic.curator.lane import tag_event, BusEvent
+from prismatic.curator.lane import BusEvent, tag_event
 
 CURATOR_DB = "/home/ubuntu/.prismatic/curator/state.sqlite"
 BUS_DB = "/home/ubuntu/.prismatic/bus/event_log.sqlite"

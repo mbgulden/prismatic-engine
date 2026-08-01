@@ -68,7 +68,7 @@ def _authorization_id(
     approved_action_executor_id: str, authorization_decision: str
 ) -> str:
     digest = hashlib.sha256(
-        f"{approved_action_executor_id}:{authorization_decision}".encode("utf-8")
+        f"{approved_action_executor_id}:{authorization_decision}".encode()
     ).hexdigest()[:16]
     return f"final-authorization-{digest}"
 

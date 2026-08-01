@@ -10,10 +10,10 @@ from prismatic.workspace.static.share import WorkspaceShareManager
 from prismatic.workspace.tree import WorkspaceTreeWalker, default_deployed_docs_root
 
 __all__ = [
-    "WorkspaceManifestEntry",
-    "WorkspaceCategorizer",
     "AcceptanceProtocol",
-    "WorkspaceTreeWalker",
+    "WorkspaceCategorizer",
+    "WorkspaceManifestEntry",
     "WorkspaceShareManager",
+    "WorkspaceTreeWalker",
     "default_deployed_docs_root",
 ]

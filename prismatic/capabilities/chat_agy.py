@@ -28,9 +28,9 @@ from __future__ import annotations
 
 import os
 import shutil
-from dataclasses import dataclass, asdict, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass
@@ -46,8 +46,8 @@ class ChatSession:
     agent: str = "agy"
     status: str = "unknown"  # "running" | "paused" | "completed" | "failed" | "unknown"
     started_at: str = ""
-    last_event_at: Optional[str] = None
-    label: Optional[str] = None
+    last_event_at: str | None = None
+    label: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {k: v for k, v in asdict(self).items() if v is not None or k in ("id", "agent", "status", "started_at")}
@@ -73,7 +73,7 @@ class ChatAGYCapability:
         session = cap.get_session("id")  # None in v0.1
     """
 
-    def __init__(self, agy_path: Optional[str] = None) -> None:
+    def __init__(self, agy_path: str | None = None) -> None:
         self._agy_path = agy_path or os.environ.get("AGY_PATH") or shutil.which("agy")
 
     def check_status(self) -> tuple[bool, str]:

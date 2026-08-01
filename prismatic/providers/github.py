@@ -10,15 +10,15 @@ standard `urllib.request`.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 import subprocess
-import urllib.request
 import urllib.error
-import hmac
-import hashlib
-from typing import Any, Optional
+import urllib.request
 from pathlib import Path
+from typing import Any
 
 # Default paths (overridable via env)
 PRISMATIC_HOME = Path(os.environ.get("PRISMATIC_HOME", os.path.expanduser("~")))
@@ -32,7 +32,7 @@ class GitHubProvider:
     Supports token discovery from env, config, and `gh` CLI credentials.
     """
 
-    def __init__(self, token: Optional[str] = None, repo: Optional[str] = None):
+    def __init__(self, token: str | None = None, repo: str | None = None):
         """
         Initialize the GitHub provider.
         
@@ -115,8 +115,7 @@ class GitHubProvider:
                 if "github.com" in url:
                     part = url.split("github.com")[-1]
                     part = part.lstrip(":/")
-                    if part.endswith(".git"):
-                        part = part[:-4]
+                    part = part.removesuffix(".git")
                     return part
         except Exception:
             pass
@@ -172,7 +171,7 @@ class GitHubProvider:
         except Exception as exc:
             return False, {"error": str(exc)}, []
 
-    def verify_repo_access(self, repo: Optional[str] = None) -> tuple[bool, dict[str, Any]]:
+    def verify_repo_access(self, repo: str | None = None) -> tuple[bool, dict[str, Any]]:
         """
         Verify access to a specific repository.
         
@@ -212,7 +211,7 @@ class GitHubProvider:
         except Exception as exc:
             return False, {"error": str(exc)}
 
-    def get_branch_ref(self, branch: str, repo: Optional[str] = None) -> Optional[dict[str, Any]]:
+    def get_branch_ref(self, branch: str, repo: str | None = None) -> dict[str, Any] | None:
         """Get the Git SHA for a branch."""
         target_repo = repo or self._repo
         if not target_repo or not self._token:
@@ -236,7 +235,7 @@ class GitHubProvider:
         except Exception:
             return None
 
-    def create_branch(self, branch: str, source_branch: str = "main", repo: Optional[str] = None) -> bool:
+    def create_branch(self, branch: str, source_branch: str = "main", repo: str | None = None) -> bool:
         """Create a new branch from a source branch."""
         target_repo = repo or self._repo
         if not target_repo or not self._token:
@@ -276,7 +275,7 @@ class GitHubProvider:
         except Exception:
             return False
 
-    def open_pull_request(self, title: str, body: str, head: str, base: str = "main", repo: Optional[str] = None) -> Optional[dict[str, Any]]:
+    def open_pull_request(self, title: str, body: str, head: str, base: str = "main", repo: str | None = None) -> dict[str, Any] | None:
         """
         Create a pull request.
         
@@ -324,7 +323,7 @@ class GitHubProvider:
                 print(f"[GitHubProvider] Failed fallback to gh CLI: {cli_exc}")
             return None
 
-    def get_pull_request_diff(self, pr_number: int, repo: Optional[str] = None) -> Optional[str]:
+    def get_pull_request_diff(self, pr_number: int, repo: str | None = None) -> str | None:
         """Fetch the diff content of a pull request."""
         target_repo = repo or self._repo
         if not target_repo or not self._token:
@@ -365,7 +364,7 @@ class GitHubProvider:
                 print(f"[GitHubProvider] Fallback gh CLI diff failed: {cli_exc}")
             return None
 
-    def get_pull_request_checks(self, ref: str, repo: Optional[str] = None) -> list[dict[str, Any]]:
+    def get_pull_request_checks(self, ref: str, repo: str | None = None) -> list[dict[str, Any]]:
         """Fetch the check runs and statuses for a specific commit/ref."""
         target_repo = repo or self._repo
         if not target_repo or not self._token:
@@ -434,7 +433,7 @@ class GitHubProvider:
 
         return results
 
-    def add_pr_comment(self, pr_number: int, body: str, repo: Optional[str] = None) -> bool:
+    def add_pr_comment(self, pr_number: int, body: str, repo: str | None = None) -> bool:
         """Add a general comment to a pull request (via issues API)."""
         target_repo = repo or self._repo
         if not target_repo or not self._token:
@@ -476,7 +475,7 @@ class GitHubProvider:
                 print(f"[GitHubProvider] Fallback gh CLI comment failed: {cli_exc}")
             return False
 
-    def post_pr_review(self, pr_number: int, event: str, body: str, comments: Optional[list[dict[str, Any]]] = None, repo: Optional[str] = None) -> bool:
+    def post_pr_review(self, pr_number: int, event: str, body: str, comments: list[dict[str, Any]] | None = None, repo: str | None = None) -> bool:
         """
         Post a PR review outcome (APPROVE, REQUEST_CHANGES, COMMENT) with optional inline comments.
         
@@ -550,8 +549,7 @@ class GitHubProvider:
         if not signature or not secret:
             return False
         
-        if signature.startswith("sha256="):
-            signature = signature[7:]
+        signature = signature.removeprefix("sha256=")
             
         mac = hmac.new(secret.encode("utf-8"), msg=payload, digestmod=hashlib.sha256)
         expected = mac.hexdigest()

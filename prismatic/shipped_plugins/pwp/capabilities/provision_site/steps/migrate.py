@@ -16,7 +16,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 def _resolve_registry_path() -> Path:
@@ -34,7 +34,7 @@ def _resolve_registry_path() -> Path:
     return Path("config/seo_sites.json")
 
 
-def _build_minimal_registry(slug: str, appendix_path: Path) -> Dict[str, Any]:
+def _build_minimal_registry(slug: str, appendix_path: Path) -> dict[str, Any]:
     """Build a minimal v1-shape registry with just one site entry.
 
     `operator_migrate.run()` validates the registry as v1 (`version: 1`)
@@ -52,7 +52,7 @@ def _build_minimal_registry(slug: str, appendix_path: Path) -> Dict[str, Any]:
     if not appendix_path.exists():
         return {"version": 1, "sites": [], "default_metric_specs": {}}
     appendix = json.loads(appendix_path.read_text(encoding="utf-8"))
-    site_entries: List[Dict[str, Any]] = []
+    site_entries: list[dict[str, Any]] = []
     for domain, entry in appendix.items():
         if entry.get("slug") != slug:
             continue
@@ -85,7 +85,7 @@ def _build_minimal_registry(slug: str, appendix_path: Path) -> Dict[str, Any]:
     }
 
 
-def trigger_migrate(slug: str, publish_root: Optional[Path] = None) -> Dict[str, Any]:
+def trigger_migrate(slug: str, publish_root: Path | None = None) -> dict[str, Any]:
     """Run `operator_migrate.run()` for `slug` against the appendix.
 
     Args:

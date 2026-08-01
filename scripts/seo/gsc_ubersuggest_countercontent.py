@@ -2,13 +2,11 @@
 from __future__ import annotations
 
 import json
-import re
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse
 
-from seo_cron_common import state_dir, stamp, write_json, write_text
+from seo_cron_common import stamp, state_dir, write_json, write_text
 
 TERRITORY_TERMS = [
     "lanikai", "kailua", "mokulua", "mokolii", "mokoli", "chinaman", "sandbar",

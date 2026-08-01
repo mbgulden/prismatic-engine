@@ -19,7 +19,10 @@ Config:
 from __future__ import annotations
 
 import argparse
-import fcntl
+try:
+    import fcntl
+except ImportError:
+    fcntl = None  # type: ignore
 import json
 import os
 import subprocess

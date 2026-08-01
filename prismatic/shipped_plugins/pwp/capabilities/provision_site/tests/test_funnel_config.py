@@ -13,18 +13,13 @@ Coverage:
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-
 from plugins.pwp.capabilities.provision_site.funnel_config import (
     DEFAULT_TEAM_ID,
-    DispatchResult,
     EPIC_TITLE_FRAGMENT,
-    FORM_SCHEMA_V1,
     FunnelConfigError,
     FunnelConfigSubmission,
     build_issue_description,
@@ -37,7 +32,6 @@ from plugins.pwp.capabilities.provision_site.linear_client import (
     LinearClient,
     LinearIssue,
 )
-
 
 # --- helpers --------------------------------------------------------------
 

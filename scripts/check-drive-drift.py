@@ -16,11 +16,11 @@ Exit codes:
 
 from __future__ import annotations
 
-import os
-import sys
-import re
-import json
 import hashlib
+import json
+import os
+import re
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -35,8 +35,8 @@ for p in [
         sys.path.insert(0, p)
 
 # Note: These libraries are standard in the prismatic env.
-import google.auth.transport.requests  # noqa: E402
-from google.oauth2.credentials import Credentials  # noqa: E402
+import google.auth.transport.requests
+from google.oauth2.credentials import Credentials
 
 OKF_ROOT = Path("/home/ubuntu/work/growthwebdev-knowledge/okf")
 OKF_BASE = OKF_ROOT.parent

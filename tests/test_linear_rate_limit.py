@@ -8,7 +8,6 @@ import pytest
 from prismatic.linear_rate_limit import (
     LINEAR_RATE_LIMIT_CIRCUIT_BREAKER_MARKER,
     LinearRateLimitCircuitOpen,
-    LinearRateLimitState,
     ensure_linear_circuit_closed,
     get_linear_rate_limit_snapshot,
     parse_rate_limit_error,

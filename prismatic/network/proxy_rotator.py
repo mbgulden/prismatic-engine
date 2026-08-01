@@ -52,7 +52,7 @@ class ProxyRotator:
         self._lock = threading.Lock()
 
     @classmethod
-    def from_file(cls, path: str | Path) -> "ProxyRotator":
+    def from_file(cls, path: str | Path) -> ProxyRotator:
         data = yaml.safe_load(Path(path).read_text()) or {}
         proxies: list[ProxyConfig] = []
         for item in data.get("proxies", []) or []:
@@ -74,7 +74,7 @@ class ProxyRotator:
         )
 
     @classmethod
-    def from_env_or_file(cls, path: str | Path = "prismatic/config/proxies.yaml") -> "ProxyRotator":
+    def from_env_or_file(cls, path: str | Path = "prismatic/config/proxies.yaml") -> ProxyRotator:
         env_pool = os.environ.get("PRISMATIC_PROXY_POOL", "").strip()
         if env_pool:
             proxies = [

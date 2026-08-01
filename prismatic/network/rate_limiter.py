@@ -11,10 +11,11 @@ import random
 import sqlite3
 import threading
 import time
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Protocol
 from urllib.parse import urlparse
 
 from prismatic.telemetry import DEFAULT_DB_PATH
@@ -235,8 +236,7 @@ class TokenBucketRateLimiter:
 def normalize_domain(url_or_domain: str) -> str:
     parsed = urlparse(url_or_domain if "://" in url_or_domain else f"//{url_or_domain}")
     host = (parsed.hostname or url_or_domain).lower().strip().strip(".")
-    if host.startswith("www."):
-        host = host[4:]
+    host = host.removeprefix("www.")
     return host
 
 

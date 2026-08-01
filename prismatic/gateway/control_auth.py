@@ -77,7 +77,9 @@ def _load_credentials() -> tuple[Credential, ...]:
 
     try:
         metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_mode & 0o077:
+        if not stat.S_ISREG(metadata.st_mode) or (
+            os.name != "nt" and (metadata.st_mode & 0o077) != 0
+        ):
             raise CredentialConfigurationError
         if metadata.st_size > _MAX_CREDENTIAL_FILE_BYTES:
             raise CredentialConfigurationError

@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 from uuid import uuid4
 
 from prismatic.agy_completed_work import ingest_completed_work

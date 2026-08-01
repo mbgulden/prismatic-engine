@@ -21,9 +21,10 @@ import stat
 import subprocess
 import sys
 import time
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 CANONICAL_AGY_WORKFLOW_VERSION = "1.1.1"
 CANONICAL_TRANSPORT = "tmux-durable-anchor"

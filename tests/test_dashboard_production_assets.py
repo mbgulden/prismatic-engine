@@ -5,7 +5,6 @@ from fastapi.testclient import TestClient
 
 from prismatic.gateway.server import app
 
-
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_HEAD = (
     ROOT / "prismatic" / "gateway" / "dashboard_src" / "shell" / "00_document_open.html"

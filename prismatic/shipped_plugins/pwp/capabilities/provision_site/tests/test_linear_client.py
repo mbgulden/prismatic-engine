@@ -18,24 +18,19 @@ Coverage:
 
 from __future__ import annotations
 
-import io
 import http.client
+import io
 import json
-import os
 import urllib.error
-from pathlib import Path
-from unittest.mock import patch
 
 import pytest
-
 from plugins.pwp.capabilities.provision_site.linear_client import (
-    CreateIssueInput,
     LINEAR_API_URL,
+    CreateIssueInput,
     LinearClient,
     LinearError,
     LinearIssue,
 )
-
 
 # --- helpers --------------------------------------------------------------
 

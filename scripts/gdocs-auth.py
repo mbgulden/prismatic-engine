@@ -4,7 +4,6 @@ Google Docs OAuth Setup — Fixed redirect_uri for headless auth.
 """
 
 import json
-import os
 
 CREDS_PATH = "/home/ubuntu/mounts/synology-photo/Antigravity/credentials.json"
 

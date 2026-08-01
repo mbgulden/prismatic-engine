@@ -17,22 +17,23 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
+from prismatic.cli.doctor import EXIT_ERROR, EXIT_OK
+from prismatic.cli.doctor import run as doctor_cli_run
 from prismatic.doctor import (
-    run_doctor,
-    DoctorReport,
-    SystemInfo,
-    ConfigInfo,
-    ProviderReport,
-    CapabilityReport,
     DEFAULT_CAPABILITY_NAMES,
-    _probe_system,
+    CapabilityReport,
+    ConfigInfo,
+    DoctorReport,
+    ProviderReport,
+    SystemInfo,
+    _compute_verdict,
     _probe_config_paths,
     _probe_github,
     _probe_linear,
     _probe_native_components,
-    _compute_verdict,
+    _probe_system,
+    run_doctor,
 )
-from prismatic.cli.doctor import run as doctor_cli_run, EXIT_OK, EXIT_ERROR
 
 
 def _empty_namespace(**kwargs):
@@ -398,7 +399,7 @@ class TestBackwardCompatDispatchDelegate(unittest.TestCase):
     """The dispatcher's cmd_doctor must still exist as a callable wrapper."""
 
     def test_dispatcher_cmd_doctor_delegates_to_cli_module(self):
-        import prismatic.dispatcher as dispatcher
+        from prismatic import dispatcher
 
         self.assertTrue(callable(dispatcher.cmd_doctor))
         # The signature takes an args object. The dispatcher delegates
@@ -467,8 +468,9 @@ def test_canonical_consumer_probe_error_when_legacy_declared(tmp_path, monkeypat
 def test_canonical_consumer_probe_uses_absolute_inventory_override(
     tmp_path, monkeypatch
 ):
-    import prismatic.doctor as doctor_mod
     from pathlib import Path
+
+    import prismatic.doctor as doctor_mod
 
     manifest = Path(__file__).resolve().parents[1] / "config" / "runtime-services.json"
     monkeypatch.setenv("PRISMATIC_RUNTIME_SERVICES_CONFIG", str(manifest))
@@ -485,6 +487,7 @@ def test_canonical_consumer_probe_rejects_malformed_and_incomplete_inventory(
     import copy
     import json
     from pathlib import Path
+
     import prismatic.doctor as doctor_mod
 
     source = Path(__file__).resolve().parents[1] / "config" / "runtime-services.json"
@@ -574,6 +577,7 @@ def _systemd_show_result(
 
 def test_legacy_consumer_service_probe_error_when_active(monkeypatch):
     import subprocess
+
     import prismatic.doctor as doctor_mod
 
     monkeypatch.setattr(
@@ -592,6 +596,7 @@ def test_legacy_consumer_service_probe_error_when_active(monkeypatch):
 
 def test_legacy_consumer_service_probe_ok_when_masked(monkeypatch):
     import subprocess
+
     import prismatic.doctor as doctor_mod
 
     monkeypatch.setattr(
@@ -608,6 +613,7 @@ def test_legacy_consumer_service_probe_ok_when_masked(monkeypatch):
 
 def test_consumer_service_probe_ok_for_disabled_canonical_one_shot(monkeypatch):
     import subprocess
+
     import prismatic.doctor as doctor_mod
 
     monkeypatch.setattr(
@@ -624,6 +630,7 @@ def test_consumer_service_probe_ok_for_disabled_canonical_one_shot(monkeypatch):
 
 def test_consumer_service_probe_rejects_canonical_substring_bypasses(monkeypatch):
     import subprocess
+
     import prismatic.doctor as doctor_mod
 
     bypasses = (
@@ -649,6 +656,7 @@ def test_consumer_service_probe_rejects_canonical_substring_bypasses(monkeypatch
 
 def test_consumer_service_probe_accepts_systemd_structured_exact_argv(monkeypatch):
     import subprocess
+
     import prismatic.doctor as doctor_mod
 
     command = (
@@ -681,6 +689,7 @@ def test_inactive_disabled_legacy_command_still_fails_closed(mock_run):
 @patch("subprocess.run")
 def test_legacy_consumer_service_probe_rejects_incomplete_output(mock_run):
     import subprocess
+
     import prismatic.doctor as doctor_mod
 
     mock_run.return_value = subprocess.CompletedProcess(
@@ -715,6 +724,7 @@ def test_legacy_consumer_service_probe_error_when_systemd_inspection_unavailable
     monkeypatch,
 ):
     import subprocess
+
     import prismatic.doctor as doctor_mod
 
     def mock_run_fail(cmd, **kwargs):

@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Mapping
+from typing import Any
 
 from prismatic.agy_completed_work import normalize_agy_result_packet
 from prismatic.completed_work_gate import GateClassification, classify_completed_work
@@ -119,10 +120,7 @@ def normalize_agent_output(
         else None
     )
 
-    if hint == "secret_like_content_detected":
-        status = NormalizationStatus.REJECTED_POLICY_VIOLATION
-        rerun_allowed = False
-    elif hint == "wrong_agent_or_ambiguous_agent":
+    if hint == "secret_like_content_detected" or hint == "wrong_agent_or_ambiguous_agent":
         status = NormalizationStatus.REJECTED_POLICY_VIOLATION
         rerun_allowed = False
     elif hint in {

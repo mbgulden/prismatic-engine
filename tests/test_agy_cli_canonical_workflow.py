@@ -10,11 +10,11 @@ from pathlib import Path
 import pytest
 
 from prismatic.agy_cli import (
-    AgyLaunchSpec,
-    AgyWorkflowError,
     AGY_UNBOUNDED_PRINT_TIMEOUT,
     CANONICAL_AGY_WORKFLOW_VERSION,
     CANONICAL_RESULT_MARKER,
+    AgyLaunchSpec,
+    AgyWorkflowError,
     canonical_contract,
     launch_tmux,
     wait_tmux,

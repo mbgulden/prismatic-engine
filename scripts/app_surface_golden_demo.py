@@ -12,12 +12,12 @@ fully-controlled, isolated temporary directory.
 
 from __future__ import annotations
 
-import os
-import sys
-import shutil
 import json
-from pathlib import Path
+import os
+import shutil
+import sys
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 # Ensure repo root is in python path
@@ -35,8 +35,10 @@ os.environ["PRISMATIC_PLUGIN_ARTIFACTS_STATE"] = str(STATE_DIR / "plugin_artifac
 os.environ["PRISMATIC_AGENT_REGISTRY"] = str(STATE_DIR / "agent_registry.json")
 
 from fastapi.testclient import TestClient
+
 from prismatic.gateway.server import app
 from prismatic.pwp_integration import PWP_PLUGIN_ID
+
 
 def log_step(name: str, status: str, details: str = "") -> None:
     box = "=" * 72
@@ -288,7 +290,7 @@ def run_golden_demo() -> dict[str, Any]:
     steps_log.append({
         "step": "safety_gating_blocked", 
         "ok": blocked_actions_ok, 
-        "detail": f"Publish-ready and Export requests blocked on pending artifact."
+        "detail": "Publish-ready and Export requests blocked on pending artifact."
     })
     if not blocked_actions_ok:
         raise RuntimeError("Safety gating check failed.")
@@ -318,7 +320,7 @@ def run_golden_demo() -> dict[str, Any]:
     steps_log.append({
         "step": "safety_gating_allowed", 
         "ok": allowed_actions_ok, 
-        "detail": f"Publish and Export permitted post operator approval."
+        "detail": "Publish and Export permitted post operator approval."
     })
     if not allowed_actions_ok:
         raise RuntimeError("Safety gating post-approval failed.")
@@ -371,7 +373,7 @@ def run_golden_demo() -> dict[str, Any]:
     steps_log.append({
         "step": "safe_disconnect", 
         "ok": disconnect_ok, 
-        "detail": f"Plugin disconnected. Registry data preserved successfully."
+        "detail": "Plugin disconnected. Registry data preserved successfully."
     })
     if not disconnect_ok:
         raise RuntimeError("Safe disconnect check failed.")

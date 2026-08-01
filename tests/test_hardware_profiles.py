@@ -4,7 +4,6 @@ Tests for HardwareProfileRegistry and PluginLoader profile validation.
 
 from __future__ import annotations
 
-import json
 import tempfile
 from pathlib import Path
 
@@ -19,10 +18,7 @@ from prismatic.core.hardware_profiles import (
 from prismatic.core.registry import PluginLoader
 from prismatic.interface.plugin import (
     PluginContext,
-    PluginValidationError,
-    PrismaticPlugin,
 )
-
 
 # ── Fixtures ────────────────────────────────────────────────────────────
 

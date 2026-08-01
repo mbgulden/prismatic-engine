@@ -17,7 +17,6 @@ from typing import Any
 
 from prismatic.providers.tasks.base import Issue
 
-
 # ── Agent type registry ────────────────────────────────────────
 # Populated by agent implementations calling ``AGENT_TYPES[name] = cls``
 AGENT_TYPES: dict[str, type] = {}

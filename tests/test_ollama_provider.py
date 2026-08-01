@@ -1,7 +1,7 @@
-import unittest
-from unittest.mock import patch, MagicMock
 import json
-import io
+import unittest
+from unittest.mock import MagicMock, patch
+
 from prismatic.providers.ollama import OllamaClient
 
 

@@ -80,7 +80,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from . import publish_kpi_tracker as kpi
 
@@ -134,7 +134,7 @@ _resolve_sites_dir = default_sites_dir
 # Each source has a `query` function. They are stateless: same inputs
 # produce the same outputs. The aggregator dispatches by metric.source.
 
-def _query_ga4(metric_key: str, metric_spec: dict, site_flat: dict, *, env: Dict[str, str]) -> Optional[float]:
+def _query_ga4(metric_key: str, metric_spec: dict, site_flat: dict, *, env: dict[str, str]) -> float | None:
     """GA4 adapter: count events for a tracking_property over the window.
 
     Live mode: requires `GOOGLE_APPLICATION_CREDENTIALS` + GA4 Data API.
@@ -152,7 +152,10 @@ def _query_ga4(metric_key: str, metric_spec: dict, site_flat: dict, *, env: Dict
     # dep on google-analytics-data here).
     try:
         from google.analytics.data_v1beta import BetaAnalyticsDataClient  # type: ignore
-        from google.analytics.data_v1beta.types import DateRange, RunReportRequest  # type: ignore
+        from google.analytics.data_v1beta.types import (  # type: ignore
+            DateRange,
+            RunReportRequest,
+        )
     except ImportError:
         return None
     tracking_property = site_flat.get("tracking_property")
@@ -184,7 +187,7 @@ def _query_ga4(metric_key: str, metric_spec: dict, site_flat: dict, *, env: Dict
     return None
 
 
-def _query_stripe(metric_key: str, metric_spec: dict, site_flat: dict, *, env: Dict[str, str]) -> Optional[float]:
+def _query_stripe(metric_key: str, metric_spec: dict, site_flat: dict, *, env: dict[str, str]) -> float | None:
     """Stripe adapter: count checkout events filtered by metadata.
 
     Live mode: requires `STRIPE_API_KEY`.
@@ -203,7 +206,7 @@ def _query_stripe(metric_key: str, metric_spec: dict, site_flat: dict, *, env: D
     # Parse `metadata.funnel == sanctuary` style filters into Stripe's
     # query syntax. This is a best-effort translation: only simple
     # equality is supported.
-    md_filter: Dict[str, str] = {}
+    md_filter: dict[str, str] = {}
     flt = metric_spec.get("filter")
     if flt:
         m = re.match(r"metadata\.(\w+)\s*==\s*(\w+)", flt)
@@ -211,7 +214,7 @@ def _query_stripe(metric_key: str, metric_spec: dict, site_flat: dict, *, env: D
             md_filter[f"metadata[{m.group(1)}]"] = m.group(2)
     try:
         stripe.api_key = api_key
-        params: Dict[str, Any] = {"limit": 100, "type": event}
+        params: dict[str, Any] = {"limit": 100, "type": event}
         params.update(md_filter)
         count = 0
         # Stripe Checkout sessions are listed; pagination handled by
@@ -225,7 +228,7 @@ def _query_stripe(metric_key: str, metric_spec: dict, site_flat: dict, *, env: D
     return None
 
 
-def _query_gsc(metric_key: str, metric_spec: dict, site_flat: dict, *, env: Dict[str, str]) -> Optional[float]:
+def _query_gsc(metric_key: str, metric_spec: dict, site_flat: dict, *, env: dict[str, str]) -> float | None:
     """Google Search Console adapter: clicks / impressions / position.
 
     Live mode: requires `GOOGLE_APPLICATION_CREDENTIALS` + GSC API.
@@ -235,8 +238,8 @@ def _query_gsc(metric_key: str, metric_spec: dict, site_flat: dict, *, env: Dict
     if not creds:
         return None
     try:
-        from googleapiclient.discovery import build  # type: ignore
         from google.oauth2 import service_account  # type: ignore
+        from googleapiclient.discovery import build  # type: ignore
     except ImportError:
         return None
     flt = metric_spec.get("filter", "")
@@ -269,7 +272,7 @@ def _query_gsc(metric_key: str, metric_spec: dict, site_flat: dict, *, env: Dict
     return None
 
 
-def _query_telegram(metric_key: str, metric_spec: dict, site_flat: dict, *, env: Dict[str, str]) -> Optional[float]:
+def _query_telegram(metric_key: str, metric_spec: dict, site_flat: dict, *, env: dict[str, str]) -> float | None:
     """Telegram adapter: bot-side event counter (e.g., deep_link_clicked).
 
     Live mode: requires `TELEGRAM_BOT_TOKEN` + the bot's webhook stats.
@@ -295,7 +298,7 @@ def _query_telegram(metric_key: str, metric_spec: dict, site_flat: dict, *, env:
     return None
 
 
-def _query_internal(metric_key: str, metric_spec: dict, site_flat: dict, *, env: Dict[str, str]) -> Optional[float]:
+def _query_internal(metric_key: str, metric_spec: dict, site_flat: dict, *, env: dict[str, str]) -> float | None:
     """Internal adapter: read from `<slug>.internal.json`.
 
     Use this for things like the FareHarbor imported-completed counter
@@ -321,7 +324,7 @@ def _query_internal(metric_key: str, metric_spec: dict, site_flat: dict, *, env:
         return None
 
 
-def _query_verifier(metric_key: str, metric_spec: dict, site_flat: dict, *, env: Dict[str, str]) -> Optional[float]:
+def _query_verifier(metric_key: str, metric_spec: dict, site_flat: dict, *, env: dict[str, str]) -> float | None:
     """Verifier adapter: read from `<slug>.verifier.json`.
 
     Use this for things like `sitemap_coverage_pct` and `indexed_pct`
@@ -367,7 +370,7 @@ ADAPTERS = {
 _SAFE_EXPR_RE = re.compile(r"^[a-zA-Z0-9_./ ()*+%-]+$")
 
 
-def _compute_derived(metric_key: str, metric_spec: dict, runtime_values_for_site: Dict[str, float]) -> Optional[float]:
+def _compute_derived(metric_key: str, metric_spec: dict, runtime_values_for_site: dict[str, float]) -> float | None:
     """Evaluate a derived metric formula against the current site's runtime values.
 
     The formula is a simple arithmetic expression whose operands are
@@ -387,7 +390,7 @@ def _compute_derived(metric_key: str, metric_spec: dict, runtime_values_for_site
     # Build a mapping bare_id → value for the site. The metric_spec.id
     # is the bare id (e.g. "purchase_total") for the metric itself;
     # other operands are looked up by bare id as well.
-    by_bare_id: Dict[str, float] = {}
+    by_bare_id: dict[str, float] = {}
     for k, v in runtime_values_for_site.items():
         # k is the dotted metric_key; pull the bare id off the end.
         bare = k.split(".")[-1]
@@ -403,14 +406,14 @@ def _compute_derived(metric_key: str, metric_spec: dict, runtime_values_for_site
     if re.search(r"[a-zA-Z_][a-zA-Z0-9_.]*", expr):
         return None
     try:
-        return float(eval(expr, {"__builtins__": {}}, {}))  # noqa: S307 - inputs sanitized above
+        return float(eval(expr, {"__builtins__": {}}, {}))
     except Exception:
         return None
 
 
 # ── RuntimeValuesBuilder ───────────────────────────────────────────────────
 
-def _load_snapshot(sites_dir: Path, slug: str) -> Dict[str, float]:
+def _load_snapshot(sites_dir: Path, slug: str) -> dict[str, float]:
     """Load the canonical `<slug>.runtime.json` snapshot for a site.
 
     Returns an empty dict when the file doesn't exist. Snapshots are
@@ -425,7 +428,7 @@ def _load_snapshot(sites_dir: Path, slug: str) -> Dict[str, float]:
         data = json.loads(p.read_text(encoding="utf-8"))
     except Exception:
         return {}
-    out: Dict[str, float] = {}
+    out: dict[str, float] = {}
     for k, v in data.items():
         try:
             out[k] = float(v)
@@ -455,13 +458,13 @@ class RuntimeValuesBuilder:
     derived metrics are evaluated in collection order.
     """
 
-    def __init__(self, env: Optional[Dict[str, str]] = None) -> None:
+    def __init__(self, env: dict[str, str] | None = None) -> None:
         # Default env is os.environ; callers can inject a custom dict
         # (the FastAPI endpoint passes process.env, ad-hoc runs pass
         # the current shell's env).
-        self.env: Dict[str, str] = dict(env) if env is not None else dict(os.environ)
+        self.env: dict[str, str] = dict(env) if env is not None else dict(os.environ)
 
-    def build_site(self, slug: str, *, sites_dir: Path) -> Dict[str, float]:
+    def build_site(self, slug: str, *, sites_dir: Path) -> dict[str, float]:
         """Build runtime values for one site. Public for unit testing."""
         try:
             flat = kpi.resolve_collection(slug)
@@ -470,16 +473,16 @@ class RuntimeValuesBuilder:
         # Set the per-site env hooks so the internal/verifier adapters
         # know where to read from. We don't mutate self.env because
         # that's shared across sites; use a per-call dict.
-        site_env: Dict[str, str] = {
+        site_env: dict[str, str] = {
             **self.env,
             "_sites_dir": str(sites_dir),
             "_slug": slug,
         }
         snapshot = _load_snapshot(sites_dir, slug)
-        out: Dict[str, float] = dict(snapshot)  # snapshot wins at the end
+        out: dict[str, float] = dict(snapshot)  # snapshot wins at the end
 
         # Walk non-derived metrics first.
-        deferred: List[Tuple[str, dict]] = []
+        deferred: list[tuple[str, dict]] = []
         for metric_key, m in flat.get("metrics", {}).items():
             if m.get("source") == "derived":
                 deferred.append((metric_key, m))
@@ -508,7 +511,7 @@ class RuntimeValuesBuilder:
         # Filter out None values just in case.
         return {k: v for k, v in out.items() if v is not None}
 
-    def build_all(self, *, sites_dir: Optional[Path] = None) -> Dict[str, Dict[str, float]]:
+    def build_all(self, *, sites_dir: Path | None = None) -> dict[str, dict[str, float]]:
         """Build runtime values for every registered site.
 
         Args:
@@ -524,7 +527,7 @@ class RuntimeValuesBuilder:
             sites_dir = default_sites_dir()
         sites_dir = Path(sites_dir)
         sites_dir.mkdir(parents=True, exist_ok=True)
-        out: Dict[str, Dict[str, float]] = {}
+        out: dict[str, dict[str, float]] = {}
         for slug in sorted(kpi.list_sites()):
             values = self.build_site(slug, sites_dir=sites_dir)
             if values:
@@ -532,14 +535,14 @@ class RuntimeValuesBuilder:
         return out
 
 
-def build_runtime_values(*, sites_dir: Optional[Path] = None,
-                          env: Optional[Dict[str, str]] = None) -> Dict[str, Dict[str, float]]:
+def build_runtime_values(*, sites_dir: Path | None = None,
+                          env: dict[str, str] | None = None) -> dict[str, dict[str, float]]:
     """Convenience wrapper for the common case."""
     return RuntimeValuesBuilder(env=env).build_all(sites_dir=sites_dir)
 
 
 __all__ = [
+    "ADAPTERS",
     "RuntimeValuesBuilder",
     "build_runtime_values",
-    "ADAPTERS",
 ]

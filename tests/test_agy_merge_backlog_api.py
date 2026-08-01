@@ -1,7 +1,7 @@
-from copy import deepcopy
 import json
-from pathlib import Path
 import sqlite3
+from copy import deepcopy
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient

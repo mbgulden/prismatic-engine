@@ -40,8 +40,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
-
+from typing import Any
 
 VERCEL_API_BASE = "https://api.vercel.com"
 
@@ -69,7 +68,7 @@ class Project:
     account_id: str
 
     @classmethod
-    def from_api(cls, payload: Dict[str, Any]) -> "Project":
+    def from_api(cls, payload: dict[str, Any]) -> Project:
         return cls(
             id=payload["id"],
             name=payload["name"],
@@ -84,11 +83,11 @@ class EnvVar:
     id: str
     key: str
     value: str
-    target: List[str]
+    target: list[str]
     type: str  # 'encrypted' | 'plain' | 'sensitive'
 
     @classmethod
-    def from_api(cls, payload: Dict[str, Any]) -> "EnvVar":
+    def from_api(cls, payload: dict[str, Any]) -> EnvVar:
         return cls(
             id=payload.get("id", ""),
             key=payload["key"],
@@ -105,7 +104,7 @@ class Domain:
     verified: bool
 
     @classmethod
-    def from_api(cls, payload: Dict[str, Any]) -> "Domain":
+    def from_api(cls, payload: dict[str, Any]) -> Domain:
         return cls(
             name=payload["name"],
             verified=bool(payload.get("verified")),
@@ -121,7 +120,7 @@ class VercelClient:
         self,
         token: str,
         *,
-        team_id: Optional[str] = None,
+        team_id: str | None = None,
         timeout: float = 30.0,
         max_retries: int = 3,
         retry_backoff: float = 1.5,
@@ -141,13 +140,13 @@ class VercelClient:
         return self._token_source
 
     @property
-    def team_id(self) -> Optional[str]:
+    def team_id(self) -> str | None:
         return self._team_id
 
     # -- Construction helpers ----------------------------------------------
 
     @classmethod
-    def from_env(cls) -> "VercelClient":
+    def from_env(cls) -> VercelClient:
         """Construct from a Vercel API token env var.
 
         Accepts (in order of precedence):
@@ -174,9 +173,9 @@ class VercelClient:
         method: str,
         path: str,
         *,
-        query: Optional[Dict[str, str]] = None,
+        query: dict[str, str] | None = None,
         json_body: Any = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         url = VERCEL_API_BASE + path
         if query:
             url += "?" + urllib.parse.urlencode(
@@ -194,7 +193,7 @@ class VercelClient:
         if body_bytes is not None:
             headers["Content-Type"] = "application/json"
 
-        last_err: Optional[Exception] = None
+        last_err: Exception | None = None
         # We always do at least one attempt; we retry up to max_retries
         # additional times on 429/5xx or URLError.
         total_attempts = max(1, self._max_retries)
@@ -242,7 +241,7 @@ class VercelClient:
 
     # -- Projects ---------------------------------------------------------
 
-    def project_lookup(self, name: str) -> Optional[Project]:
+    def project_lookup(self, name: str) -> Project | None:
         """Find a project by name; returns None if not found.
 
         Uses GET /v9/projects/{nameOrId}. 404 -> None, anything else -> VercelError.
@@ -260,7 +259,7 @@ class VercelClient:
         name: str,
         *,
         framework: str = "other",
-        git_repo: Optional[Dict[str, Any]] = None,
+        git_repo: dict[str, Any] | None = None,
     ) -> Project:
         """Create a new project via POST /v9/projects.
 
@@ -269,7 +268,7 @@ class VercelClient:
           framework: 'nextjs' | 'vite' | 'astro' | 'other' | etc.
           git_repo: optional {'type': 'github', 'repo': 'owner/repo'} to wire CI/CD.
         """
-        body: Dict[str, Any] = {"name": name, "framework": framework}
+        body: dict[str, Any] = {"name": name, "framework": framework}
         if git_repo:
             body["gitRepository"] = git_repo
         payload = self._request("POST", "/v9/projects", json_body=body)
@@ -277,7 +276,7 @@ class VercelClient:
 
     # -- Environment variables --------------------------------------------
 
-    def list_env(self, project_id_or_name: str) -> List[EnvVar]:
+    def list_env(self, project_id_or_name: str) -> list[EnvVar]:
         """Return all env vars for a project (decrypted values when readable)."""
         payload = self._request(
             "GET",
@@ -286,7 +285,7 @@ class VercelClient:
         envs = payload.get("envs", payload if isinstance(payload, list) else [])
         return [EnvVar.from_api(e) for e in envs]
 
-    def find_env(self, project_id_or_name: str, key: str) -> Optional[EnvVar]:
+    def find_env(self, project_id_or_name: str, key: str) -> EnvVar | None:
         """Return the env var with this key, or None."""
         for e in self.list_env(project_id_or_name):
             if e.key == key:
@@ -299,7 +298,7 @@ class VercelClient:
         key: str,
         value: str,
         *,
-        target: Optional[List[str]] = None,
+        target: list[str] | None = None,
         secret: bool = True,
     ) -> EnvVar:
         """Create or update an env var.
@@ -363,11 +362,11 @@ class VercelClient:
 
     # -- Deployments (skeleton) -------------------------------------------
 
-    def deployment_list(self, project_id_or_name: str, limit: int = 5) -> List[Dict[str, Any]]:
+    def deployment_list(self, project_id_or_name: str, limit: int = 5) -> list[dict[str, Any]]:
         """Return the most recent deployments for a project."""
         payload = self._request(
             "GET",
-            f"/v6/deployments",
+            "/v6/deployments",
             query={"projectId": project_id_or_name, "limit": str(limit)},
         )
         return payload.get("deployments", [])

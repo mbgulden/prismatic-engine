@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import ANY, MagicMock, patch
 
-import prismatic.dispatcher as dispatcher
+from prismatic import dispatcher
 
 
 class TestJulesHostPathRouting(unittest.TestCase):

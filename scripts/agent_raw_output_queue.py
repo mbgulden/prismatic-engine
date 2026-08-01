@@ -8,8 +8,8 @@ import json
 import sys
 from pathlib import Path
 
-from prismatic.agent_raw_output_queue import RawAgentOutputStore
 from prismatic.agent_packet_normalizer import RAW_AGENT_OUTPUT_REPAIR_QUEUE_MARKER
+from prismatic.agent_raw_output_queue import RawAgentOutputStore
 
 
 def main() -> int:

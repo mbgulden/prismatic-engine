@@ -1,9 +1,9 @@
 """Tests for DynamicFallbackRouter in prismatic/router.py."""
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import MagicMock, call
 
 from prismatic.router import DynamicFallbackRouter
-
 
 # ── Fixtures ─────────────────────────────────────────────────
 

@@ -2,6 +2,7 @@
 """
 
 from fastapi.testclient import TestClient
+
 from prismatic.gateway.server import app
 
 

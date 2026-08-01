@@ -17,22 +17,16 @@ These tests cover:
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 from pathlib import Path
 
 import pytest
-
 from plugins.pwp.capabilities.publish_kpi_tracker import (
     cron_orchestrator as orch,
+)
+from plugins.pwp.capabilities.publish_kpi_tracker import (
     publish_kpi_tracker as kpi_mod,
 )
-from plugins.pwp.capabilities.publish_kpi_tracker.pwp_kpi_site_registry import (
-    load_registry,
-    site_override_enabled,
-    iter_sites,
-)
-
 
 HERE = Path(__file__).resolve().parent
 FIXTURES = HERE / "fixtures"

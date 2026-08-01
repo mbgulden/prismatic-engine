@@ -18,7 +18,7 @@ if _loaded_prismatic is not None:
             if name == "prismatic" or name.startswith("prismatic."):
                 sys.modules.pop(name, None)
 
-from prismatic.native_crons import export_system_crontab_lines  # noqa: E402
+from prismatic.native_crons import export_system_crontab_lines
 
 BEGIN = "# BEGIN PRISMATIC_NATIVE_CRONS"
 END = "# END PRISMATIC_NATIVE_CRONS"

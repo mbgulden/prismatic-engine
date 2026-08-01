@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
@@ -38,8 +39,8 @@ async def get_principal(
 
 
 class PolicyRequest(BaseModel):
-    stage_cap: Optional[int] = Field(None, description="Stage cap limit (1, 2, or 3)")
-    cron_paused: Optional[bool] = Field(
+    stage_cap: int | None = Field(None, description="Stage cap limit (1, 2, or 3)")
+    cron_paused: bool | None = Field(
         None, description="Whether generic cron is paused"
     )
 
@@ -108,7 +109,7 @@ class LockHeartbeatRequest(BaseModel):
 
 
 @router.get("/policy")
-async def get_policy() -> Dict[str, Any]:
+async def get_policy() -> dict[str, Any]:
     """Retrieve the current operator policy."""
     return MergeFactoryStore().get_policy()
 
@@ -117,7 +118,7 @@ async def get_policy() -> Dict[str, Any]:
 async def set_policy(
     request: PolicyRequest,
     principal: Principal = Depends(get_principal),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Update the operator policy. Requires merge-factory-admin scope."""
     payload = request.dict(exclude_none=True)
     try:
@@ -130,7 +131,7 @@ async def set_policy(
 
 
 @router.get("/cohort")
-async def list_cohort() -> Dict[str, Any]:
+async def list_cohort() -> dict[str, Any]:
     """List all admission cohort items."""
     cohort = MergeFactoryStore().get_cohort()
     return {"cohort": cohort, "count": len(cohort)}
@@ -140,7 +141,7 @@ async def list_cohort() -> Dict[str, Any]:
 async def add_to_cohort(
     request: CohortAddRequest,
     principal: Principal = Depends(get_principal),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Add a task to the cohort. Requires merge-factory-admin scope."""
     try:
         return MergeFactoryStore().add_to_cohort(
@@ -161,7 +162,7 @@ async def add_to_cohort(
 async def update_cohort_status(
     request: CohortStatusRequest,
     principal: Principal = Depends(get_principal),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Update cohort status. Requires merge-factory-admin scope."""
     try:
         return MergeFactoryStore().update_cohort_status(
@@ -182,7 +183,7 @@ async def update_cohort_status(
 async def acquire_lease(
     request: LeaseAcquireRequest,
     principal: Principal = Depends(get_principal),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Acquire concurrency lease. Enforces global stage cap."""
     try:
         return MergeFactoryStore().acquire_lease(
@@ -199,7 +200,7 @@ async def heartbeat_lease(
     issue_id: str = Query(..., description="Issue identifier"),
     lease_id: str = Query(..., description="Lease identifier"),
     principal: Principal = Depends(get_principal),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Extend lease expiration."""
     try:
         return MergeFactoryStore().heartbeat_lease(issue_id, lease_id, principal)
@@ -212,7 +213,7 @@ async def release_lease(
     issue_id: str = Query(..., description="Issue identifier"),
     lease_id: str = Query(..., description="Lease identifier"),
     principal: Principal = Depends(get_principal),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Release concurrency lease."""
     try:
         MergeFactoryStore().release_lease(issue_id, lease_id, principal)
@@ -230,7 +231,7 @@ async def release_lease(
 async def submit_attestation(
     request: AttestationRequest,
     principal: Principal = Depends(get_principal),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Submit an append-only decision attestation. Requires merge-judge scope."""
     try:
         return MergeFactoryStore().submit_attestation(
@@ -259,7 +260,7 @@ async def get_attestation(
     evidence_digest: str = Query(..., description="Evidence SHA-256 digest"),
     repository: str = Query(..., description="Git repository name"),
     target: str = Query(..., description="Target branch/destination name"),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Pure/read-only validation of active candidate approval. Open to ordinary callers."""
     return MergeFactoryStore().validate_approval(
         issue_id=issue_id,
@@ -281,7 +282,7 @@ async def get_attestation(
 async def acquire_lock(
     request: LockAcquireRequest,
     principal: Principal = Depends(get_principal),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Acquire merge lock. Requires valid exact-candidate approval attestation."""
     try:
         return MergeFactoryStore().acquire_lock(
@@ -306,7 +307,7 @@ async def acquire_lock(
 async def heartbeat_lock(
     request: LockHeartbeatRequest,
     principal: Principal = Depends(get_principal),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Extend lock expiration. Invalidates lock if bindings or approval changed."""
     try:
         return MergeFactoryStore().heartbeat_lock(
@@ -332,7 +333,7 @@ async def release_lock(
     target: str = Query(..., description="Target branch/destination name"),
     issue_id: str = Query(..., description="Issue identifier"),
     principal: Principal = Depends(get_principal),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Release merge lock."""
     MergeFactoryStore().release_lock(repository, target, issue_id, principal)
     return {"status": "released", "repository": repository, "target": target}

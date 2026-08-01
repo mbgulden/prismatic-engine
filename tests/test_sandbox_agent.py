@@ -1,11 +1,11 @@
-import unittest
-from unittest.mock import patch, MagicMock, mock_open
-import subprocess
 import os
+import unittest
+from unittest.mock import MagicMock, mock_open, patch
 
-from prismatic.agents.sandbox import SandboxAgent
 from prismatic.agents.base import AgentConfig
+from prismatic.agents.sandbox import SandboxAgent
 from prismatic.providers.tasks.base import Issue
+
 
 class TestSandboxAgent(unittest.TestCase):
     def setUp(self):

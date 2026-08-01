@@ -31,7 +31,7 @@ from typing import Any, Dict, Optional
 #                        the step itself decides skip-vs-run (cloudflare_zone
 #                        runs only when platform=cloudflare_pages;
 #                        vercel_project runs only when platform=vercel).
-STEP_CATEGORIES: Dict[str, str] = {
+STEP_CATEGORIES: dict[str, str] = {
     "platform_detect": "blocking",
     "verify_domain": "blocking",
     "cloudflare_zone": "conditional",
@@ -47,22 +47,22 @@ STEP_CATEGORIES: Dict[str, str] = {
 }
 
 
-from .gsc import step_gsc_verify
-from .ga4 import step_ga4_property  # noqa: F401  (re-exported for orchestrator)
-from .gtm import step_gtm_container  # noqa: F401
-from .platform_detect import step_platform_detect
-from .vercel_project import step_vercel_project
-from .stripe import step_register_stripe  # noqa: F401
-from .github import step_github_checkout  # noqa: F401
-from .zapier import step_register_zapier_webhook  # noqa: F401
 from ..domain_verifier import (
     VERIFY_PREFIX,
     generate_challenge_token,
     verify,
 )
 from ..types import StepResult
-from .register_in_registry import add_site_to_registry, slug_from_domain
+from .ga4 import step_ga4_property  # noqa: F401  (re-exported for orchestrator)
+from .github import step_github_checkout  # noqa: F401
+from .gsc import step_gsc_verify
+from .gtm import step_gtm_container  # noqa: F401
 from .migrate import trigger_migrate
+from .platform_detect import step_platform_detect
+from .register_in_registry import add_site_to_registry, slug_from_domain
+from .stripe import step_register_stripe  # noqa: F401
+from .vercel_project import step_vercel_project
+from .zapier import step_register_zapier_webhook  # noqa: F401
 
 
 def step_verify_domain(
@@ -71,7 +71,7 @@ def step_verify_domain(
     owner: str,
     run,
     publish_root: Path,
-    prior_outputs: Optional[Dict[str, Dict[str, Any]]] = None,
+    prior_outputs: dict[str, dict[str, Any]] | None = None,
     **_: Any,
 ) -> StepResult:
     """Verify the domain via DNS TXT challenge.
@@ -84,7 +84,7 @@ def step_verify_domain(
     `prior_outputs`) so the record value matches. If the record was
     found, the step is marked complete; subsequent steps then run.
     """
-    out: Dict[str, Any] = {}
+    out: dict[str, Any] = {}
     prior = prior_outputs or {}
     prior_token = prior.get("verify_domain", {}).get("challenge_token")
     challenge_token = prior_token or generate_challenge_token()
@@ -118,7 +118,7 @@ def step_cloudflare_zone(
     owner: str,
     run,
     publish_root: Path,
-    prior_outputs: Optional[Dict[str, Dict[str, Any]]] = None,
+    prior_outputs: dict[str, dict[str, Any]] | None = None,
     **_: Any,
 ) -> StepResult:
     """Create or look up the Cloudflare zone for `domain`.

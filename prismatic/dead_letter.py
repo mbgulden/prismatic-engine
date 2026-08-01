@@ -13,9 +13,10 @@ import json
 import os
 import sqlite3
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 DEFAULT_MAX_ATTEMPTS = 3
 RETRYABLE_STATUSES = {"retry", "pending_retry"}
@@ -112,7 +113,7 @@ class DeadLetterStore:
         error: str,
         attempts: int = 0,
         max_attempts: int = DEFAULT_MAX_ATTEMPTS,
-        retry_after_seconds: int | float | None = None,
+        retry_after_seconds: float | None = None,
         now: float | None = None,
     ) -> DeadLetterEvent:
         """Persist a failed event and choose retry vs dead-letter explicitly.
@@ -253,7 +254,7 @@ class DeadLetterStore:
         *,
         row_id: int,
         error: str,
-        retry_after_seconds: int | float | None = None,
+        retry_after_seconds: float | None = None,
     ) -> DeadLetterEvent:
         """Record a replay failure and either reschedule or dead-letter it."""
 

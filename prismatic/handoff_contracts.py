@@ -195,7 +195,7 @@ def extract_handoff_packet(container: Any) -> dict[str, Any] | None:
     """
     sources: list[Any] = [container]
     if hasattr(container, "metadata"):
-        sources.append(getattr(container, "metadata"))
+        sources.append(container.metadata)
     if isinstance(container, dict):
         data = container.get("data")
         metadata = container.get("metadata")

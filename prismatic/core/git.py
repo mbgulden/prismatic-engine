@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 import subprocess
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 logger = logging.getLogger("prismatic.core.git")
 
@@ -29,7 +28,7 @@ class GitManager:
         if not (self.repo_path / ".git").exists():
             raise GitError(f"Path '{repo_path}' is not a git repository.")
 
-    def _run_git(self, args: List[str]) -> str:
+    def _run_git(self, args: list[str]) -> str:
         """Helper to run git commands."""
         try:
             result = subprocess.run(
@@ -62,7 +61,7 @@ class GitManager:
         self._run_git(["checkout", "-b", full_name])
         logger.info(f"Created and checked out branch: {full_name} (from {base})")
 
-    def commit(self, message: str, agent_name: str, issue_id: Optional[str] = None) -> None:
+    def commit(self, message: str, agent_name: str, issue_id: str | None = None) -> None:
         """
         Commit staged changes with agent attribution and optional issue reference.
         Format: [AGENT] description (#ISSUE)
@@ -76,7 +75,7 @@ class GitManager:
         self._run_git(["commit", "-m", formatted_message])
         logger.info(f"Committed changes with message: {formatted_message}")
 
-    def push(self, remote: str = "origin", branch: Optional[str] = None) -> None:
+    def push(self, remote: str = "origin", branch: str | None = None) -> None:
         if not branch:
             branch = self.get_current_branch()
         self._run_git(["push", "-u", remote, branch])
@@ -96,7 +95,7 @@ class GitManager:
         self._run_git(["push", "origin", target_branch])
         logger.info(f"Merged {source_branch} into {target_branch} by {agent_name}")
 
-    def get_changed_files(self, base: str = "main", head: str = "HEAD") -> List[str]:
+    def get_changed_files(self, base: str = "main", head: str = "HEAD") -> list[str]:
         """Get list of files changed between base and head."""
         output = self._run_git(["diff", "--name-only", f"{base}...{head}"])
         return [f.strip() for f in output.split("\n") if f.strip()]

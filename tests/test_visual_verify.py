@@ -62,7 +62,7 @@ def test_browser_mcp_capture_decodes_base64_screenshot(tmp_path):
     encoded = base64.b64encode(b"\x89PNG\r\n\x1a\n" + b"1" * 2048).decode("ascii")
 
     class Handler(BaseHTTPRequestHandler):
-        def do_POST(self):  # noqa: N802 - http.server API
+        def do_POST(self):
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length))
             assert payload["action"] == "capture_screenshots"
@@ -87,7 +87,7 @@ def test_browser_mcp_capture_decodes_base64_screenshot(tmp_path):
             self.end_headers()
             self.wfile.write(body)
 
-        def log_message(self, format, *args):  # noqa: A002 - http.server API name
+        def log_message(self, format, *args):
             return
 
     server = HTTPServer(("127.0.0.1", 0), Handler)

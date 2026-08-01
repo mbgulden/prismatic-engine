@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from typing import Sequence
+from collections.abc import Sequence
 
 from prismatic.cli.doctor import run as doctor_cli_run
 from prismatic.local_tasks import LocalTaskQueue
@@ -192,4 +192,4 @@ def main() -> None:
     sys.exit(run())
 
 
-__all__ = ["run", "main", "doctor_cli_run"]
+__all__ = ["doctor_cli_run", "main", "run"]

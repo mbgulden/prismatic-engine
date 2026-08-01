@@ -23,9 +23,7 @@ import os
 import stat
 from pathlib import Path
 
-
 from plugins.pwp.capabilities.provision_site import auth_loader
-
 
 # --- Active profile resolution -------------------------------------------
 

@@ -17,9 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
-import time
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 # ── Mock Data ───────────────────────────────────────────
 
@@ -53,7 +51,6 @@ class MockLinearHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
         """Suppress default logging — use our own format."""
-        pass
 
     def do_POST(self):
         if self.path != "/graphql":
@@ -163,7 +160,7 @@ def main():
 
     server = HTTPServer(("127.0.0.1", args.port), MockLinearHandler)
     print(f"🧪 Mock Linear API running on http://127.0.0.1:{args.port}/graphql")
-    print(f"   Press Ctrl+C to stop.")
+    print("   Press Ctrl+C to stop.")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

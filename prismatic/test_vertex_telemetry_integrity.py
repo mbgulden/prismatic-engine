@@ -6,8 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from prismatic.vertex_telemetry import (
-    VertexQuotaError,
     VertexBillingLedger,
+    VertexQuotaError,
     normalize_quota_payload,
     poll_vertex_quota_status,
 )

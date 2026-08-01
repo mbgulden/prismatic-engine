@@ -52,17 +52,16 @@ class TestVisualVerifyCli(unittest.TestCase):
             with patch(
                 "prismatic.cli.visual_verify.run_visual_verification",
                 return_value=self._fake_result(tmp),
-            ) as fake_run:
-                with redirect_stdout(out):
-                    rc = cli.run(
-                        [
-                            "visual-verify",
-                            "https://example.com",
-                            "--output-dir",
-                            tmp,
-                            "--grade",
-                        ]
-                    )
+            ) as fake_run, redirect_stdout(out):
+                rc = cli.run(
+                    [
+                        "visual-verify",
+                        "https://example.com",
+                        "--output-dir",
+                        tmp,
+                        "--grade",
+                    ]
+                )
 
             self.assertEqual(rc, 0)
             fake_run.assert_called_once()
@@ -83,20 +82,17 @@ class TestVisualVerifyCli(unittest.TestCase):
             with patch(
                 "prismatic.cli.visual_verify.run_visual_verification",
                 return_value=self._fake_result(tmp),
-            ) as fake_run:
-                with patch(
-                    "sys.argv",
-                    [
-                        "prismatic-engine",
-                        "visual-verify",
-                        "https://example.com",
-                        "--output-dir",
-                        tmp,
-                    ],
-                ):
-                    with redirect_stdout(StringIO()):
-                        with self.assertRaises(SystemExit) as cm:
-                            dispatcher.main()
+            ) as fake_run, patch(
+                "sys.argv",
+                [
+                    "prismatic-engine",
+                    "visual-verify",
+                    "https://example.com",
+                    "--output-dir",
+                    tmp,
+                ],
+            ), redirect_stdout(StringIO()), self.assertRaises(SystemExit) as cm:
+                dispatcher.main()
 
             self.assertEqual(cm.exception.code, 0)
             fake_run.assert_called_once()

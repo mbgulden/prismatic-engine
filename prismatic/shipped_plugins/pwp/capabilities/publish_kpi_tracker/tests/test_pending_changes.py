@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from plugins.pwp.capabilities.publish_kpi_tracker.pending_changes import (
     PendingChange,
     render_pending_changes_html,

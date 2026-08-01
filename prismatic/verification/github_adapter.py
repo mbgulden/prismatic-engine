@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass
 import hashlib
 import hmac
 import json
-from pathlib import Path
 import re
-from typing import Any, Literal, Mapping, Sequence
 import urllib.parse
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Literal
 
 from .receipt_validator import determine_merge_eligibility
 

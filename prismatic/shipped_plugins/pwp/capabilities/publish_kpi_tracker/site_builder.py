@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 ALLOWED_SOURCES = {
     "ga4", "stripe", "telegram", "internal",
@@ -29,13 +29,13 @@ def build_site_collection(
     domain: str,
     name: str,
     tracking_property: str = "",
-    metric_specs: Optional[List[Dict[str, Any]]] = None,
-    extends: Optional[str] = None,
-    share_targets: Optional[Dict[str, str]] = None,
-    delivery_cadence: Optional[Dict[str, Dict[str, str]]] = None,
-    site_title: Optional[str] = None,
-    extra_globally_required: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    metric_specs: list[dict[str, Any]] | None = None,
+    extends: str | None = None,
+    share_targets: dict[str, str] | None = None,
+    delivery_cadence: dict[str, dict[str, str]] | None = None,
+    site_title: str | None = None,
+    extra_globally_required: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Build a per-site *.kpi.json collection dict.
 
     Args:
@@ -58,9 +58,9 @@ def build_site_collection(
     if not re.match(r"^[a-z0-9][a-z0-9-]{1,63}$", slug):
         raise ValueError(f"invalid slug: {slug!r}")
     spec_list = list(metric_specs or [])
-    metrics_obj: Dict[str, Dict[str, Any]] = {}
-    expected_events: List[str] = []
-    ga4_recommended: List[str] = []
+    metrics_obj: dict[str, dict[str, Any]] = {}
+    expected_events: list[str] = []
+    ga4_recommended: list[str] = []
     for m in spec_list:
         if not isinstance(m, dict):
             raise ValueError(f"metric spec must be a dict; got {type(m).__name__}")
@@ -81,18 +81,18 @@ def build_site_collection(
         # Treat ga4 source as the recommended-events class.
         if m["source"] == "ga4" and m.get("event"):
             ga4_recommended.append(m["event"])
-    site_events: List[str] = list(expected_events)
+    site_events: list[str] = list(expected_events)
     if extra_globally_required:
         # Only the dataLayer events propagate to the site's own list. The
         # ga4_recommended_events stay in globally_required only.
         extra = extra_globally_required.get("expected_data_layer_events")
         if isinstance(extra, list):
             site_events.extend(extra)
-    site: Dict[str, Any] = {
+    site: dict[str, Any] = {
         "title": site_title or name,
         "expected_dataLayer_events": list(dict.fromkeys(site_events)),
     }
-    out: Dict[str, Any] = {
+    out: dict[str, Any] = {
         "schema_version": "1.0",
         "name": name,
         "owner": "ned",
@@ -111,7 +111,7 @@ def build_site_collection(
     # readers and the canonical operator_cli see them in the same place.
     # If the caller passed extra_globally_required with these keys, lift them
     # to the top level too.
-    lifted_events: List[str] = list(expected_events)
+    lifted_events: list[str] = list(expected_events)
     if extra_globally_required:
         for k in ("expected_data_layer_events", "ga4_recommended_events"):
             extra = extra_globally_required.get(k)
@@ -119,7 +119,7 @@ def build_site_collection(
                 lifted_events.extend(extra)
     if lifted_events:
         out["expected_data_layer_events"] = list(dict.fromkeys(lifted_events))
-    lifted_recommended: List[str] = list(ga4_recommended)
+    lifted_recommended: list[str] = list(ga4_recommended)
     if extra_globally_required:
         for k in ("expected_data_layer_events", "ga4_recommended_events"):
             extra = extra_globally_required.get(k)
@@ -127,7 +127,7 @@ def build_site_collection(
                 lifted_recommended.extend(extra)
     if lifted_recommended:
         out["ga4_recommended_events"] = list(dict.fromkeys(lifted_recommended))
-    globally_required: Dict[str, Any] = {
+    globally_required: dict[str, Any] = {
         "expected_loader_on_every_page": True,
         "expected_data_layer_events": list(dict.fromkeys(expected_events)),
     }
@@ -160,7 +160,7 @@ def write_site_collection(
     domain: str,
     name: str,
     tracking_property: str = "",
-    metric_specs: Optional[List[Dict[str, Any]]] = None,
+    metric_specs: list[dict[str, Any]] | None = None,
     **kwargs: Any,
 ) -> Path:
     """Build the collection dict and write it to sites_dir / <slug>.kpi.json.
@@ -179,11 +179,11 @@ def write_site_collection(
 
 
 def build_sites_from_inventory(
-    inventory: List[Dict[str, Any]],
+    inventory: list[dict[str, Any]],
     sites_dir: Path,
     *,
-    per_site_metric_specs: Optional[Dict[str, List[Dict[str, Any]]]] = None,
-) -> List[Path]:
+    per_site_metric_specs: dict[str, list[dict[str, Any]]] | None = None,
+) -> list[Path]:
     """Write one *.kpi.json per inventory entry, using per-site metric specs.
 
     `inventory` is a list of dicts each with at least: {slug, domain, name,

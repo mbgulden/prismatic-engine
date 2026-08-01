@@ -24,13 +24,12 @@ from __future__ import annotations
 import json
 import logging
 import os
-import shutil
 import subprocess
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from prismatic.sandbox.cgroup_enforcer import CgroupEnforcer
 
@@ -81,7 +80,7 @@ class SandboxPodManager:
         read_only_root: bool = False,
         memory_limit: str = "512m",
         cpu_limit: float = 0.5,
-        runtime_class: Optional[str] = None,
+        runtime_class: str | None = None,
     ) -> None:
         """
         Args:
@@ -100,7 +99,7 @@ class SandboxPodManager:
         self._memory_limit = memory_limit
         self._cpu_limit = cpu_limit
         self._runtime_class = runtime_class
-        self._pods: Dict[str, PodInfo] = {}
+        self._pods: dict[str, PodInfo] = {}
         try:
             self._cgroup_enforcer = CgroupEnforcer()
         except Exception as exc:  # cgroupfs is optional in dev/CI
@@ -173,9 +172,9 @@ class SandboxPodManager:
     def start_pod(
         self,
         name: str,
-        config: Dict[str, Any],
+        config: dict[str, Any],
         timeout_s: float = 60.0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Start a sandbox pod for the given plugin.
 
         Args:
@@ -246,7 +245,7 @@ class SandboxPodManager:
             logger.error("Pod '%s' failed to start: %s", name, exc)
             raise PodManagerError(f"Failed to start pod '{name}': {exc}") from exc
 
-    def stop_pod(self, name: str, force: bool = False, timeout_s: float = 30.0) -> Dict[str, Any]:
+    def stop_pod(self, name: str, force: bool = False, timeout_s: float = 30.0) -> dict[str, Any]:
         """Stop a running sandbox pod.
 
         Args:
@@ -286,7 +285,7 @@ class SandboxPodManager:
             logger.error("Pod '%s' failed to stop: %s", name, exc)
             raise PodManagerError(f"Failed to stop pod '{name}': {exc}") from exc
 
-    def get_pod_status(self, name: str) -> Dict[str, Any]:
+    def get_pod_status(self, name: str) -> dict[str, Any]:
         """Return current status of a pod.
 
         Args:
@@ -305,11 +304,11 @@ class SandboxPodManager:
 
         return asdict(info)
 
-    def list_pods(self) -> List[Dict[str, Any]]:
+    def list_pods(self) -> list[dict[str, Any]]:
         """Return all tracked pods."""
         return [asdict(info) for info in self._pods.values()]
 
-    def purge_pod(self, name: str) -> Dict[str, Any]:
+    def purge_pod(self, name: str) -> dict[str, Any]:
         """Completely remove a pod (stop + delete container + clean metadata).
 
         Args:
@@ -403,7 +402,7 @@ class SandboxPodManager:
 
     # ── Docker helpers ─────────────────────────────────────────────
 
-    def _start_docker(self, name: str, config: Dict[str, Any], runtime_flag: str = "") -> Dict[str, Any]:
+    def _start_docker(self, name: str, config: dict[str, Any], runtime_flag: str = "") -> dict[str, Any]:
         """Launch a Docker container for the plugin."""
         cmd = ["docker", "run", "-d", "--name", name]
 
@@ -471,7 +470,7 @@ class SandboxPodManager:
 
     # ── k3s helpers ────────────────────────────────────────────────
 
-    def _start_k3s(self, name: str, config: Dict[str, Any]) -> Dict[str, Any]:
+    def _start_k3s(self, name: str, config: dict[str, Any]) -> dict[str, Any]:
         """Launch a k3s pod for the plugin via kubectl run."""
         image = config.get("image", "python:3.12-slim")
         cmd_parts = config.get("cmd", ["sleep", "infinity"])
@@ -544,7 +543,7 @@ class SandboxPodManager:
 
     # ── Simulated (no runtime) helpers ─────────────────────────────
 
-    def _start_simulated(self, name: str, config: Dict[str, Any]) -> Dict[str, Any]:
+    def _start_simulated(self, name: str, config: dict[str, Any]) -> dict[str, Any]:
         """Simulate a pod start when no container runtime is available.
 
         Used for development and testing environments.
@@ -610,7 +609,7 @@ class SandboxPodManager:
         state_file = self._state_dir / f"{name}.json"
         state_file.write_text(json.dumps(asdict(info), indent=2, default=str))
 
-    def _load_pod_info(self, name: str) -> Optional[PodInfo]:
+    def _load_pod_info(self, name: str) -> PodInfo | None:
         """Load pod info from disk."""
         state_file = self._state_dir / f"{name}.json"
         if not state_file.exists():

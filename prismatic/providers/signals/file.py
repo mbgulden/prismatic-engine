@@ -21,15 +21,16 @@ Target files:
 
 from __future__ import annotations
 
-import os
+try:
+    import fcntl
+except ImportError:
+    fcntl = None  # type: ignore
 import json
-import time
+import os
 import tempfile
-import fcntl
 from pathlib import Path
-from typing import Optional
 
-from .base import SignalProvider, SignalPayload
+from .base import SignalPayload, SignalProvider
 
 
 class FileSignalProvider(SignalProvider):
@@ -148,7 +149,7 @@ class FileSignalProvider(SignalProvider):
         """Path to the nudge file for a given agent target."""
         return self._dir / f"nudge-{target}"
 
-    def _lock(self, path: Path) -> "FileLock":
+    def _lock(self, path: Path) -> FileLock:
         """Acquire an advisory lock on the nudge file.
         
         Returns a context manager that releases on exit.
@@ -169,7 +170,7 @@ class _FileLock:
 
     def __init__(self, path: Path):
         self._path = path
-        self._fd: Optional[int] = None
+        self._fd: int | None = None
 
     def __enter__(self):
         self._fd = os.open(str(self._path), os.O_RDONLY)

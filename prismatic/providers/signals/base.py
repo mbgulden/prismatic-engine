@@ -15,10 +15,10 @@ Born from the /tmp/nudge-fred hack documented in:
 
 from __future__ import annotations
 
-import uuid
 import time
+import uuid
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any
 
@@ -58,7 +58,7 @@ class SignalPayload:
         return d
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "SignalPayload":
+    def from_dict(cls, d: dict[str, Any]) -> SignalPayload:
         """Deserialize from a transport-agnostic dict (← JSON)."""
         action = d.get("action", "work")
         if isinstance(action, str):

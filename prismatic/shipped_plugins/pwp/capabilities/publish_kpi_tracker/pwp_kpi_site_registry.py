@@ -21,10 +21,11 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 
 from .publish_kpi_tracker import ALLOWED_SOURCES
+
 
 # Walk up from this file until we find a directory that contains
 # config/seo_sites.json (the canonical registry). This is robust against
@@ -80,7 +81,7 @@ def _resolve_sites_dir() -> Path:
     return root / "plugins" / "pwp" / "capabilities" / "publish_kpi_tracker" / "sites"
 
 
-def _resolve_tracking_property(site: dict) -> Tuple[Optional[str], Optional[str]]:
+def _resolve_tracking_property(site: dict) -> tuple[str | None, str | None]:
     """Resolve the GA4 measurement ID for a site.
 
     GAP-#5 FIX — env-var-only:
@@ -104,7 +105,7 @@ def _resolve_tracking_property(site: dict) -> Tuple[Optional[str], Optional[str]
     return None, "none"
 
 
-def load_registry(path: Optional[Path] = None) -> dict:
+def load_registry(path: Path | None = None) -> dict:
     """Load the registry file. Caller may override `path` for tests.
 
     The returned dict is always in the v2 shape. If the on-disk file is the
@@ -123,18 +124,18 @@ def load_registry(path: Optional[Path] = None) -> dict:
     return adapt_v1_to_v2(raw)
 
 
-def load_schema(path: Optional[Path] = None) -> dict:
+def load_schema(path: Path | None = None) -> dict:
     p = Path(path) if path else _resolve_schema_path()
     return json.loads(p.read_text(encoding="utf-8"))
 
 
-def validate_registry_shape(registry: dict, schema: dict) -> List[str]:
+def validate_registry_shape(registry: dict, schema: dict) -> list[str]:
     """Tiny structural check: required keys present, slugs unique, expected events non-empty.
 
     Full JSON-Schema validation is left to the operator (and to the ad-hoc
     verifier) because adding a third-party dep for a 4-field check is overkill.
     """
-    errs: List[str] = []
+    errs: list[str] = []
     if registry.get("version") != 1:
         errs.append("registry.version must be 1")
     sites = registry.get("sites") or []
@@ -169,7 +170,7 @@ def iter_sites(registry: dict) -> Iterator[dict]:
         yield out
 
 
-def iter_metric_specs_for_site(registry: dict, site: dict) -> List[dict]:
+def iter_metric_specs_for_site(registry: dict, site: dict) -> list[dict]:
     """Merge default_metric_specs + per-site pwp_kpi_metric_specs into one ordered list.
 
     Per-site specs override defaults by metric id. Specs are returned as a list
@@ -179,7 +180,7 @@ def iter_metric_specs_for_site(registry: dict, site: dict) -> List[dict]:
     site_overrides = site.get("pwp_kpi_metric_specs") or {}
 
     # First apply defaults in declared order, then overlay overrides.
-    merged: Dict[str, dict] = {}
+    merged: dict[str, dict] = {}
     for mid, m in defaults.items():
         merged[mid] = dict(m)
     for mid, m in site_overrides.items():
@@ -187,7 +188,7 @@ def iter_metric_specs_for_site(registry: dict, site: dict) -> List[dict]:
 
     # Validate sources and minimal fields (cheap shape check; full JSON-Schema
     # validation lives in the operator's pre-migration verifier).
-    errs: List[str] = []
+    errs: list[str] = []
     for mid, m in merged.items():
         if m.get("source") not in ALLOWED_SOURCES:
             errs.append(f"site {site.get('slug')!r} metric {mid!r}: source {m.get('source')!r} invalid")

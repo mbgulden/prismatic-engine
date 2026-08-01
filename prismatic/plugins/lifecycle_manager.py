@@ -27,13 +27,11 @@ import logging
 import os
 import sqlite3
 import time
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
+from dataclasses import asdict, dataclass
 from enum import Enum
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from .sandbox_pod_manager import SandboxPodManager, PodManagerError
+from .sandbox_pod_manager import PodManagerError, SandboxPodManager
 
 logger = logging.getLogger("prismatic.plugins.lifecycle")
 
@@ -59,7 +57,7 @@ class PluginState(str, Enum):
 
 
 # ── Allowed transitions ────────────────────────────────────────────
-_ALLOWED_TRANSITIONS: Dict[PluginState, set[PluginState]] = {
+_ALLOWED_TRANSITIONS: dict[PluginState, set[PluginState]] = {
     PluginState.STOPPED: {PluginState.STARTING},
     PluginState.STARTING: {PluginState.RUNNING, PluginState.FAILED},
     PluginState.RUNNING: {PluginState.STOPPING, PluginState.FAILED},
@@ -86,7 +84,7 @@ class PluginLifecycleRecord:
     updated_at: float = 0.0
     config_json: str = "{}"  # JSON-serialized plugin config
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         d["state"] = self.state.value
         return d
@@ -122,7 +120,7 @@ class PluginLifecycleSandboxManager:
             os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state"),
             "plugin_lifecycle.db",
         )
-        self._plugins: Dict[str, PluginLifecycleRecord] = {}
+        self._plugins: dict[str, PluginLifecycleRecord] = {}
 
         # Initialize SQLite
         self._init_db()
@@ -252,7 +250,7 @@ class PluginLifecycleSandboxManager:
 
     # ── Public Lifecycle Commands ──────────────────────────────────
 
-    def start_plugin(self, name: str, config: Dict[str, Any]) -> Dict[str, Any]:
+    def start_plugin(self, name: str, config: dict[str, Any]) -> dict[str, Any]:
         """Start a plugin in a sandbox pod.
 
         State transition: STOPPED → STARTING → RUNNING (or FAILED).
@@ -304,7 +302,7 @@ class PluginLifecycleSandboxManager:
             self._transition(name, PluginState.FAILED, error_msg)
             raise PodManagerError(error_msg) from exc
 
-    def stop_plugin(self, name: str, force: bool = False) -> Dict[str, Any]:
+    def stop_plugin(self, name: str, force: bool = False) -> dict[str, Any]:
         """Stop a running plugin.
 
         State transition: RUNNING → STOPPING → STOPPED (or FAILED).
@@ -345,7 +343,7 @@ class PluginLifecycleSandboxManager:
             self._transition(name, PluginState.FAILED, error_msg)
             raise PodManagerError(error_msg) from exc
 
-    def restart_plugin(self, name: str) -> Dict[str, Any]:
+    def restart_plugin(self, name: str) -> dict[str, Any]:
         """Stop and restart a plugin.
 
         Shortcut for: stop_plugin(name) + start_plugin(name, last_config).
@@ -377,7 +375,7 @@ class PluginLifecycleSandboxManager:
         # Start
         return self.start_plugin(name, config)
 
-    def purge_plugin(self, name: str) -> Dict[str, Any]:
+    def purge_plugin(self, name: str) -> dict[str, Any]:
         """Completely remove a plugin (stop + delete sandbox + clean state).
 
         State transition: any → PURGED.
@@ -421,7 +419,7 @@ class PluginLifecycleSandboxManager:
 
     # ── Query Commands ─────────────────────────────────────────────
 
-    def get_plugin_status(self, name: str) -> Dict[str, Any]:
+    def get_plugin_status(self, name: str) -> dict[str, Any]:
         """Return current state and metadata for a plugin.
 
         Args:
@@ -436,7 +434,7 @@ class PluginLifecycleSandboxManager:
 
         return record.to_dict()
 
-    def list_plugins(self) -> List[Dict[str, Any]]:
+    def list_plugins(self) -> list[dict[str, Any]]:
         """Return state for all registered plugins."""
         return [r.to_dict() for r in self._plugins.values()]
 
@@ -444,8 +442,8 @@ class PluginLifecycleSandboxManager:
 
     def initialize_plugins(
         self,
-        plugin_configs: Dict[str, Dict[str, Any]],
-    ) -> Dict[str, Dict[str, Any]]:
+        plugin_configs: dict[str, dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
         """Initialize and start all registered plugins in sandbox pods.
 
         Called by the dispatcher after PluginLoader completes scanning
@@ -459,7 +457,7 @@ class PluginLifecycleSandboxManager:
         Returns:
             Dict mapping plugin name → start result (state + container_id).
         """
-        results: Dict[str, Dict[str, Any]] = {}
+        results: dict[str, dict[str, Any]] = {}
         for name, config in plugin_configs.items():
             try:
                 result = self.start_plugin(name, config)
@@ -471,7 +469,7 @@ class PluginLifecycleSandboxManager:
 
         return results
 
-    def shutdown_all(self, force: bool = False) -> Dict[str, str]:
+    def shutdown_all(self, force: bool = False) -> dict[str, str]:
         """Gracefully stop all running plugins.
 
         Called on dispatcher shutdown.
@@ -482,7 +480,7 @@ class PluginLifecycleSandboxManager:
         Returns:
             Dict mapping plugin name → final state.
         """
-        results: Dict[str, str] = {}
+        results: dict[str, str] = {}
         for name in list(self._plugins.keys()):
             try:
                 self.stop_plugin(name, force=force)

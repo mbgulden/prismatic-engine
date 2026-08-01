@@ -17,6 +17,8 @@ from prismatic.agent_packet_normalizer import (
     NormalizationResult,
     NormalizationStatus,
     normalize_agent_output,
+)
+from prismatic.agent_packet_normalizer import (
     repair_preview as preview_raw_repair,
 )
 

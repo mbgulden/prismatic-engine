@@ -1,16 +1,16 @@
+import os
 import unittest
 from unittest.mock import patch
-import os
 
 from prismatic.capabilities.registry import (
-    registry,
-    check_linear,
-    check_vcs_github,
     check_agy,
-    check_jules,
-    check_telegram,
-    check_schedule,
     check_artifact,
+    check_jules,
+    check_linear,
+    check_schedule,
+    check_telegram,
+    check_vcs_github,
+    registry,
 )
 
 

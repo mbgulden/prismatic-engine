@@ -21,9 +21,9 @@ from __future__ import annotations
 
 import json
 import time
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
-from .base import SignalProvider, SignalPayload
+from .base import SignalPayload, SignalProvider
 
 if TYPE_CHECKING:
     import redis
@@ -64,10 +64,10 @@ class RedisSignalProvider(SignalProvider):
         self._db = db
         self._password = password
         self._prefix = prefix
-        self._client: "redis.Redis | None" = None
+        self._client: redis.Redis | None = None
 
     @property
-    def client(self) -> "redis.Redis":
+    def client(self) -> redis.Redis:
         """Lazy Redis connection — only import redis when used."""
         if self._client is None:
             import redis

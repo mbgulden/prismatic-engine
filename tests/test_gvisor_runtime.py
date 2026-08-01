@@ -2,11 +2,12 @@
 Tests for gVisor runtime support in SandboxPodManager.
 """
 
-import unittest
-from unittest.mock import patch, MagicMock
-import subprocess
 import json
-from prismatic.plugins.sandbox_pod_manager import SandboxPodManager, PodState
+import unittest
+from unittest.mock import MagicMock, patch
+
+from prismatic.plugins.sandbox_pod_manager import SandboxPodManager
+
 
 class TestGVisorRuntime(unittest.TestCase):
 

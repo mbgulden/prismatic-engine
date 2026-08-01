@@ -1,27 +1,23 @@
 """Tests for prismatic.distributed_watchdog — Multi-Node Health Circuit."""
 
 import json
-import os
-import tempfile
 import time
 from pathlib import Path
 
 import pytest
 
 from prismatic.distributed_watchdog import (
-    DistributedWatchdog,
-    NodeRegistry,
-    NodeHealth,
-    JobRecord,
-    NodeDecommissionError,
-    TimeoutError,
     JOB_TIMEOUT_S,
     MAX_CONSECUTIVE_FAILURES,
-    _scan_vram_markers,
-    _cleanup_vram_marker,
     VRAM_MARKER_DIR,
+    DistributedWatchdog,
+    JobRecord,
+    NodeDecommissionError,
+    NodeHealth,
+    NodeRegistry,
+    TimeoutError,
+    _cleanup_vram_marker,
 )
-
 
 # ═══════════════════════════════════════════════════════════════
 # Fixtures
@@ -373,7 +369,6 @@ class TestDistributedWatchdog:
         watchdog.registry._jobs["stale-1"].last_heartbeat = time.time() - (JOB_TIMEOUT_S + 30)
 
         dirty_job = watchdog.registry._jobs["stale-1"]
-        from prismatic.distributed_watchdog import JobRecord
         stale_jobs = [dirty_job]
 
         count = watchdog.cleanup_stale(stale_jobs)
