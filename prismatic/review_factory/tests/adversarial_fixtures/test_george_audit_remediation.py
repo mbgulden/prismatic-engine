@@ -1,6 +1,7 @@
 """Remediation tests for George's 12 audit findings in Review Factory V1."""
 
 import sqlite3
+import subprocess
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -158,19 +159,31 @@ def test_verifier_materializes_immutable_archive(tmp_path):
 
     repo = tmp_path / "repo"
     repo.mkdir()
+    subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.invalid"],
+        cwd=repo,
+        check=True,
+    )
+    subprocess.run(["git", "config", "user.name", "RF Test"], cwd=repo, check=True)
     (repo / "docs").mkdir()
     (repo / "docs" / "readme.md").write_text("hello")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "candidate"], cwd=repo, check=True)
+    commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=repo, text=True
+    ).strip()
+    tree = subprocess.check_output(
+        ["git", "rev-parse", "HEAD^{tree}"], cwd=repo, text=True
+    ).strip()
 
-    db = ReviewFactoryDB(db_path=tmp_path / "test.db")
-    db.ensure_tables()
-    queue = ReviewQueue(db=db)
-
-    worker = VerificationWorker(queue=queue, repo_path=repo)
-    archive_dir = worker._materialize_immutable_archive(
-        candidate_commit="cand123", candidate_tree="tree123"
-    )
-    assert archive_dir.exists()
-    assert (archive_dir / "docs" / "readme.md").read_text() == "hello"
+    worker = VerificationWorker(repo_path=repo)
+    materialized = worker._materialize_immutable_archive(commit, tree)
+    try:
+        assert materialized.path.exists()
+        assert (materialized.path / "docs" / "readme.md").read_text() == "hello"
+    finally:
+        worker._cleanup_materialized_archive(materialized.path)
 
 
 def test_importer_rejects_mutable_branch_names(tmp_path):

@@ -18,14 +18,19 @@ Three integrity invariants (baked in, not bolt-on):
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import logging
+import os
+import posixpath
 import re
+import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from prismatic.merge_candidate_manifest import (
     MergeCandidateManifest,
@@ -113,6 +118,14 @@ class CheckResult:
     passed: bool = True
 
 
+@dataclass(frozen=True)
+class MaterializedArchive:
+    """Exact Git archive extracted into a read-only verification root."""
+
+    path: Path
+    artifact_sha256: str
+
+
 class VerificationWorker:
     """RF-2: Run deterministic verification and produce VerificationEvidence."""
 
@@ -133,41 +146,131 @@ class VerificationWorker:
         self,
         candidate_commit: str,
         candidate_tree: str = "",
-    ) -> Path:
-        """Create a dedicated read-only immutable copy of the candidate workspace."""
-        cand_id = candidate_tree or candidate_commit
-        archive_dir = Path(tempfile.mkdtemp(prefix=f"archive-tree-{cand_id[:12]}-"))
-        if self.repo_path.exists():
-            import shutil
+    ) -> MaterializedArchive:
+        """Materialize exact Git bytes and bind identity to the archive digest."""
+        sha_pattern = re.compile(r"[0-9a-f]{40}")
+        if not sha_pattern.fullmatch(candidate_commit):
+            raise ValueError(
+                "Candidate commit must be exactly 40 lowercase hex characters"
+            )
+        if not sha_pattern.fullmatch(candidate_tree):
+            raise ValueError(
+                "Candidate tree must be exactly 40 lowercase hex characters"
+            )
 
-            for item in self.repo_path.iterdir():
-                if item.name in (
-                    ".git",
-                    ".venv",
-                    "__pycache__",
-                    ".pytest_cache",
-                    "dist",
-                    "build",
-                ):
+        repo = self.repo_path.resolve()
+        if not repo.exists():
+            raise ValueError(f"Repository path does not exist: {repo}")
+
+        def git_text(*args: str) -> str:
+            return subprocess.run(
+                ["git", "-C", str(repo), *args],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            ).stdout
+
+        def git_bytes(*args: str) -> bytes:
+            return subprocess.run(
+                ["git", "-C", str(repo), *args],
+                check=True,
+                capture_output=True,
+                timeout=60,
+            ).stdout
+
+        resolved_commit = git_text(
+            "rev-parse", f"{candidate_commit}^{{commit}}"
+        ).strip()
+        if resolved_commit != candidate_commit:
+            raise ValueError("Candidate commit did not resolve exactly")
+        resolved_tree = git_text("rev-parse", f"{candidate_commit}^{{tree}}").strip()
+        if resolved_tree != candidate_tree:
+            raise ValueError(
+                f"Candidate tree mismatch: expected {candidate_tree}, got {resolved_tree}"
+            )
+
+        archive_bytes = git_bytes("archive", "--format=tar", candidate_commit)
+        artifact_sha256 = hashlib.sha256(archive_bytes).hexdigest()
+        archive_dir = Path(
+            tempfile.mkdtemp(prefix=f"rf-archive-{artifact_sha256[:12]}-")
+        )
+
+        try:
+            with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:") as archive:
+                for member in archive.getmembers():
+                    member_path = PurePosixPath(member.name)
+                    if (
+                        member_path.is_absolute()
+                        or ".." in member_path.parts
+                        or not member_path.parts
+                    ):
+                        raise ValueError(f"Unsafe archive member: {member.name}")
+                    # A tracked development venv contains an absolute interpreter
+                    # symlink. Its bytes remain covered by artifact_sha256, but it
+                    # is never extracted or used as verification input.
+                    if member_path.parts[0] == ".venv_dev":
+                        continue
+                    if member.islnk():
+                        raise ValueError(f"Hard links are not allowed: {member.name}")
+                    if member.issym():
+                        target = PurePosixPath(member.linkname)
+                        resolved = posixpath.normpath(str(member_path.parent / target))
+                        if (
+                            target.is_absolute()
+                            or resolved == ".."
+                            or resolved.startswith("../")
+                        ):
+                            raise ValueError(f"Unsafe symbolic link: {member.name}")
+                    elif not (member.isfile() or member.isdir()):
+                        raise ValueError(f"Unsupported archive member: {member.name}")
+                    archive.extract(member, path=archive_dir, filter="data")
+
+            for path in sorted(archive_dir.rglob("*"), reverse=True):
+                if path.is_symlink():
                     continue
-                dest = archive_dir / item.name
-                if item.is_dir():
-                    shutil.copytree(
-                        item,
-                        dest,
-                        symlinks=True,
-                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
-                    )
-                else:
-                    shutil.copy2(item, dest)
-        return archive_dir
+                os.chmod(path, 0o555 if path.is_dir() else 0o444)
+            os.chmod(archive_dir, 0o555)
+            return MaterializedArchive(archive_dir, artifact_sha256)
+        except Exception:
+            os.chmod(archive_dir, 0o755)
+            shutil.rmtree(archive_dir, ignore_errors=True)
+            raise
+
+    @staticmethod
+    def _cleanup_materialized_archive(path: Path) -> None:
+        for item in path.rglob("*"):
+            if not item.is_symlink():
+                os.chmod(item, 0o755 if item.is_dir() else 0o644)
+        os.chmod(path, 0o755)
+        shutil.rmtree(path)
 
     def verify(
         self,
         job: ReviewJob,
         manifest: MergeCandidateManifest,
     ) -> tuple[VerificationReceipt, MergeCandidateManifest]:
-        """Run verification and advance the manifest."""
+        """Materialize once, execute only there, and bind receipt to bytes."""
+        materialized = self._materialize_immutable_archive(
+            job.candidate_commit, job.candidate_tree
+        )
+        mutable_repo_path = self.repo_path
+        self.repo_path = materialized.path
+        try:
+            return self._verify_materialized(
+                job, manifest, materialized.artifact_sha256
+            )
+        finally:
+            self.repo_path = mutable_repo_path
+            self._cleanup_materialized_archive(materialized.path)
+
+    def _verify_materialized(
+        self,
+        job: ReviewJob,
+        manifest: MergeCandidateManifest,
+        artifact_sha256: str,
+    ) -> tuple[VerificationReceipt, MergeCandidateManifest]:
+        """Run all proof classes against the materialized archive."""
         tier_str = (
             manifest.risk_tier.value
             if hasattr(manifest.risk_tier, "value")
@@ -213,11 +316,16 @@ class VerificationWorker:
         updated_manifest = manifest.request_review(evidence_list)
 
         invariance_proof = self._compute_invariance_proof(list(manifest.changed_paths))
+        archive_identity = f"sha256:{artifact_sha256}"
+        receipt_identity = hashlib.sha256(
+            f"{job.review_job_id}\0{archive_identity}".encode()
+        ).hexdigest()
         receipt = VerificationReceipt(
+            receipt_id=receipt_identity,
             review_job_id=job.review_job_id,
             candidate_commit=job.candidate_commit,
-            candidate_tree=job.candidate_tree or job.candidate_commit,
-            immutable_archive_id=f"archive-tree-{job.candidate_tree or job.candidate_commit}",
+            candidate_tree=job.candidate_tree,
+            immutable_archive_id=archive_identity,
             commands=json.dumps([r.command for r in results]),
             exit_codes=json.dumps({r.name: r.exit_code for r in results}),
             log_paths=json.dumps({r.name: r.log_path for r in results}),
