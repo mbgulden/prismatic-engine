@@ -32,10 +32,11 @@ import json
 import os
 import sqlite3
 import uuid
+from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Generator, Optional
+from typing import Any
 
 from prismatic.review_factory.models import (
     MergeAuthorization,
@@ -45,7 +46,6 @@ from prismatic.review_factory.models import (
     ReviewJobState,
     VerificationReceipt,
 )
-
 
 # ─────────────────────────────────────────────────────────────────────
 # Path resolution — reuses agy_completed_work's DB
@@ -227,10 +227,10 @@ class ReviewFactoryDB:
     All writes are atomic (single transaction per method).
     """
 
-    def __init__(self, db_path: Optional[Path] = None):
+    def __init__(self, db_path: Path | None = None):
         self.db_path = db_path or default_db_path()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn: Optional[sqlite3.Connection] = None
+        self._conn: sqlite3.Connection | None = None
 
     @property
     def conn(self) -> sqlite3.Connection:
@@ -335,7 +335,7 @@ class ReviewFactoryDB:
             )
         return job.review_job_id
 
-    def get_review_job(self, review_job_id: str) -> Optional[ReviewJob]:
+    def get_review_job(self, review_job_id: str) -> ReviewJob | None:
         """Fetch a single review job by ID."""
         cur = self.conn.execute(
             "SELECT * FROM review_jobs WHERE review_job_id = ?",
@@ -346,7 +346,7 @@ class ReviewFactoryDB:
 
     def list_review_jobs(
         self,
-        state: Optional[ReviewJobState] = None,
+        state: ReviewJobState | None = None,
         limit: int = 100,
     ) -> list[ReviewJob]:
         """List review jobs, optionally filtered by state."""
@@ -362,9 +362,7 @@ class ReviewFactoryDB:
             )
         return [self._row_to_review_job(r) for r in cur.fetchall()]
 
-    def get_job_by_completed_work_id(
-        self, completed_work_id: str
-    ) -> Optional[ReviewJob]:
+    def get_job_by_completed_work_id(self, completed_work_id: str) -> ReviewJob | None:
         """Fetch job by completed_work_id via SQL index query."""
         cur = self.conn.execute(
             "SELECT * FROM review_jobs WHERE completed_work_id = ? LIMIT 1",
@@ -561,7 +559,7 @@ class ReviewFactoryDB:
 
     def get_authorization_for_job(
         self, review_job_id: str
-    ) -> Optional[MergeAuthorization]:
+    ) -> MergeAuthorization | None:
         """Fetch the latest unconsumed authorization for a job."""
         cur = self.conn.execute(
             """SELECT * FROM merge_authorizations
@@ -622,14 +620,15 @@ class ReviewFactoryDB:
         review_job_id: str,
         new_candidate_commit: str,
         new_candidate_tree: str = "",
-        new_changed_paths: Optional[list[str]] = None,
+        new_changed_paths: list[str] | None = None,
     ) -> bool:
-        """Atomically consume repair packets and update candidate info to re-queue.
+        """Atomically consume repair packets, invalidate stale evidence, and re-queue job.
 
         In a single SQL transaction:
         1. Verifies job is in REPAIR_REQUIRED state.
-        2. Marks unconsumed repair_packets for the candidate as consumed.
-        3. Updates review_job: candidate_commit, candidate_tree, changed_paths_json,
+        2. Marks repair_packets for the job/candidate as consumed.
+        3. Deletes/invalidates stale verification_receipts, review_decisions, and unconsumed merge_authorizations for the old candidate.
+        4. Updates review_jobs: candidate_commit, candidate_tree, changed_paths_json,
            resets state to QUEUED, clears lease fields, resets completed_witnesses to 0.
         """
         now = datetime.now(timezone.utc).isoformat()
@@ -643,11 +642,27 @@ class ReviewFactoryDB:
                 return False
 
             old_cand_tree = row["candidate_tree"]
+            old_cand_commit = row["candidate_commit"]
+
+            # Consume repair packets
             cur.execute(
                 """UPDATE repair_packets
                    SET consumed_at = ?, resolution_attempt_n = resolution_attempt_n + 1
-                   WHERE candidate_tree = ? AND consumed_at = ''""",
-                (now, old_cand_tree),
+                   WHERE (candidate_tree = ? OR candidate_tree = ? OR packet_id IN (SELECT packet_id FROM repair_packets WHERE candidate_tree LIKE ?)) AND consumed_at = ''""",
+                (now, old_cand_tree, old_cand_commit, f"%{review_job_id}%"),
+            )
+
+            # Invalidate stale evidence for old candidate
+            cur.execute(
+                "DELETE FROM review_decisions WHERE review_job_id = ?", (review_job_id,)
+            )
+            cur.execute(
+                "DELETE FROM verification_receipts WHERE review_job_id = ?",
+                (review_job_id,),
+            )
+            cur.execute(
+                "DELETE FROM merge_authorizations WHERE review_job_id = ?",
+                (review_job_id,),
             )
 
             cand_tree = new_candidate_tree or new_candidate_commit
@@ -675,7 +690,7 @@ class ReviewFactoryDB:
 
     # ── Janitor / recovery ───────────────────────────────────────────
 
-    def reset_stale_leases(self, now_iso: Optional[str] = None) -> int:
+    def reset_stale_leases(self, now_iso: str | None = None) -> int:
         """Reset jobs with expired leases back to their re-queue state.
 
         - ``verifying`` with expired lease → ``queued``
@@ -821,7 +836,7 @@ class ReviewFactoryDB:
         action: str,
         review_job_id: str = "",
         client_ip: str = "",
-        details: Optional[dict[str, Any]] = None,
+        details: dict[str, Any] | None = None,
     ) -> str:
         """Record an immutable audit log entry."""
         audit_id = f"audit-{uuid.uuid4().hex[:12]}"

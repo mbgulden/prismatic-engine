@@ -15,7 +15,6 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 from prismatic.core.merge_factory import MergeFactoryStore, Principal
 from prismatic.integrate import (
@@ -44,7 +43,7 @@ class MergeResult:
     success: bool
     merge_sha: str = ""
     error: str = ""
-    integration_manifest: Optional[IntegrationManifest] = None
+    integration_manifest: IntegrationManifest | None = None
     final_manifest_state: str = ""
 
 
@@ -53,10 +52,10 @@ class MergeExecutor:
 
     def __init__(
         self,
-        queue: Optional[ReviewQueue] = None,
+        queue: ReviewQueue | None = None,
         dry_run: bool = False,
-        repo_path: Optional[Path] = None,
-        mf_store: Optional[MergeFactoryStore] = None,
+        repo_path: Path | None = None,
+        mf_store: MergeFactoryStore | None = None,
     ):
         self.queue = queue or ReviewQueue()
         self.dry_run = dry_run
@@ -66,7 +65,7 @@ class MergeExecutor:
     def execute(
         self,
         job_id: str,
-        manifest: Optional[MergeCandidateManifest] = None,
+        manifest: MergeCandidateManifest | None = None,
     ) -> MergeResult:
         """Execute the merge for an authorized job."""
         job = self.queue.db.get_review_job(job_id)
@@ -175,7 +174,12 @@ class MergeExecutor:
             manifest = manifest.mark_merge_eligible()
 
         # Step 3: Acquire Merge Lock and Record Attestation via MergeFactoryStore
-        allowed_scopes = ("merge-judge", "merge-factory-admin", "tier-0-auto", "human-override")
+        allowed_scopes = (
+            "merge-judge",
+            "merge-factory-admin",
+            "tier-0-auto",
+            "human-override",
+        )
         if not auth.scope or auth.scope not in allowed_scopes:
             raise PermissionError(
                 f"Authorization actor '{auth.actor}' scope '{auth.scope}' lacks required merge privileges"
@@ -287,22 +291,27 @@ class MergeExecutor:
         # Require real verified CI checks on manifest; fail closed if missing or red
         existing_checks = {c.name: c for c in manifest.ci_checks}
         for name in manifest.required_ci_checks:
-            if name not in existing_checks or existing_checks[name].conclusion.lower() != "success":
+            if (
+                name not in existing_checks
+                or existing_checks[name].conclusion.lower() != "success"
+            ):
                 raise ValueError(
                     f"Required CI check '{name}' missing or not green for candidate {job.candidate_commit}"
                 )
         return manifest.ci_checks
 
 
-def _cli_approve(job_id: str, actor: str, operator_key: Optional[str] = None) -> None:
+def _cli_approve(job_id: str, actor: str, operator_key: str | None = None) -> None:
     if not actor:
         print("ERROR: --actor identity is required")
-        sys.exit(1)
+        raise PermissionError("Actor identity required")
 
     expected_key = os.environ.get("PRISMATIC_OPERATOR_KEY")
-    if expected_key and operator_key != expected_key:
-        print("ERROR: Invalid operator security key")
-        sys.exit(1)
+    if not expected_key or operator_key != expected_key:
+        print("ERROR: Invalid or unconfigured operator security key — fail closed")
+        raise PermissionError(
+            "PRISMATIC_OPERATOR_KEY required and must match operator_key"
+        )
 
     queue = ReviewQueue()
     job = queue.get_job(job_id)

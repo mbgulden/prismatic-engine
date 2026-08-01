@@ -6,14 +6,13 @@ and asserts the 375px zero horizontal-overflow invariant (scrollWidth <= 375).
 """
 
 import os
+import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
+
 import pytest
-
-
-import shutil
 
 
 def test_playwright_visual_audit_against_live_gateway(tmp_path):

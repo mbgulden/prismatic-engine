@@ -8,8 +8,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         html, body { max-width: 100vw; overflow-x: hidden; }
-
-        body {
+body {
             font-family: 'Plus Jakarta Sans', sans-serif;
             background-color: #080b11;
             transition: background-color 0.3s, color 0.3s;
@@ -84,8 +83,7 @@
         body.light-mode .bg-slate-900\/50 { background-color: rgba(255, 255, 255, 0.8); }
         body.light-mode .bg-slate-950\/20 { background-color: rgba(241, 245, 249, 0.3); }
         body.light-mode .bg-indigo-500\/5 { background-color: rgba(99, 102, 241, 0.05); }
-
-    </style>
+</style>
 </head>
 <body class="text-slate-200 min-h-screen flex flex-col max-w-full overflow-x-hidden">
     <!-- Header -->
@@ -158,14 +156,11 @@
             </button>
         </div>
     </div>
-
-
-    <!-- Main Container -->
+<!-- Main Container -->
     <main class="flex-grow p-4 sm:p-6 max-w-7xl w-full mx-auto space-y-6">
 
         <!-- SECTION 1: DASHBOARD (VISUALIZER topo + simulator + activity feed) -->
-
-        <div id="section-dashboard" class="space-y-6">
+<div id="section-dashboard" class="space-y-6">
             <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-violet-500/80 shadow-lg shadow-violet-950/10">
                 <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                     <div class="space-y-1">
@@ -958,8 +953,7 @@
         </div>
 
         <!-- SECTION 2: INGESTION QUEUE (the standalone stats + loop + queue history) -->
-
-        <div id="section-telemetry" class="hidden space-y-6">
+<div id="section-telemetry" class="hidden space-y-6">
             <!-- Stats Cards Grid -->
             <section class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4">
                 <!-- Received -->
@@ -1129,8 +1123,7 @@
         </div>
 
         <!-- SECTION 3: MERGE PIPELINE -->
-
-        <div id="section-merge" class="hidden space-y-6 max-w-full overflow-x-hidden">
+<div id="section-merge" class="hidden space-y-6 max-w-full overflow-x-hidden">
             <!-- Stats Cards Grid -->
             <section class="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <!-- Pending Merges -->
@@ -1284,8 +1277,71 @@
         </div>
 
         <!-- SECTION: FOUNDATION -->
+<!-- SECTION: REVIEW FACTORY -->
+        <div id="section-review-factory" class="hidden space-y-6 max-w-full overflow-x-hidden">
+            <!-- Review Factory Stats Grid -->
+            <section class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-cyan-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Queued Jobs</span>
+                    <span id="stat-rf-queued" class="text-2xl font-bold text-cyan-400 mt-2">0</span>
+                </div>
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-amber-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Verifying</span>
+                    <span id="stat-rf-verifying" class="text-2xl font-bold text-amber-400 mt-2">0</span>
+                </div>
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-indigo-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Review Ready</span>
+                    <span id="stat-rf-review-ready" class="text-2xl font-bold text-indigo-400 mt-2">0</span>
+                </div>
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-emerald-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Merged</span>
+                    <span id="stat-rf-merged" class="text-2xl font-bold text-emerald-400 mt-2">0</span>
+                </div>
+            </section>
 
-        <div id="section-foundation" class="hidden space-y-6">
+            <!-- Review Factory Jobs Table -->
+            <div class="glass-panel p-5 rounded-xl space-y-4">
+                <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                    <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Review Factory Jobs Queue</h2>
+                    <span class="text-xs text-slate-400 font-mono" id="rf-queue-status">Active Pipeline</span>
+                </div>
+                <div class="overflow-x-auto">
+                    <table id="rf-jobs-table" class="w-full text-left text-sm border-collapse">
+                        <thead>
+                            <tr class="border-b border-slate-800 text-slate-500 text-xs font-bold uppercase tracking-wider">
+                                <th class="py-2.5 px-3">Job ID</th>
+                                <th class="py-2.5 px-3">Task</th>
+                                <th class="py-2.5 px-3">Tier</th>
+                                <th class="py-2.5 px-3">State</th>
+                                <th class="py-2.5 px-3">Witnesses</th>
+                                <th class="py-2.5 px-3">Candidate Commit</th>
+                            </tr>
+                        </thead>
+                        <tbody id="rf-jobs-tbody" class="divide-y divide-slate-800/30">
+                            <tr>
+                                <td colspan="6" class="py-6 text-center text-slate-500 italic">
+                                    No review factory jobs queued.
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Job Detail Inspection Modal -->
+            <div id="rf-job-modal" class="hidden fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+                <div class="glass-panel max-w-2xl w-full p-6 rounded-2xl space-y-4 border border-slate-800 shadow-2xl">
+                    <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                        <h3 class="text-base font-bold text-slate-200" id="rf-modal-title">Review Job Inspection</h3>
+                        <button onclick="closeRFModal()" class="text-slate-400 hover:text-white font-bold">&times;</button>
+                    </div>
+                    <div id="rf-modal-body" class="space-y-3 text-xs font-mono text-slate-300 overflow-y-auto max-h-[60vh]">
+                        <!-- Populated dynamically -->
+                    </div>
+                </div>
+            </div>
+        </div>
+<div id="section-foundation" class="hidden space-y-6">
             <!-- Stats Grid -->
             <section class="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <!-- Jules runs -->
@@ -1353,8 +1409,7 @@
         </div>
 
         <!-- SECTION 4: WORKSPACES -->
-
-        <div id="section-workspaces" class="hidden space-y-6">
+<div id="section-workspaces" class="hidden space-y-6">
             <div class="glass-panel p-5 rounded-xl space-y-4">
                 <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                     <span>Workspace Tree</span>
@@ -1391,8 +1446,7 @@
         </div>
 
         <!-- SECTION 5: SKILLS -->
-
-        <div id="section-skills" class="hidden space-y-6">
+<div id="section-skills" class="hidden space-y-6">
             <div class="glass-panel p-5 rounded-xl space-y-4">
                 <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-3 flex justify-between items-center">
                     <span>Installed Agent Capabilities</span>
@@ -1407,8 +1461,7 @@
         </div>
 
         <!-- SECTION 6: SIGNALS -->
-
-        <div id="section-signals" class="hidden space-y-6" data-proof-marker="assigned-agent-signals-dashboard">
+<div id="section-signals" class="hidden space-y-6" data-proof-marker="assigned-agent-signals-dashboard">
             <div class="glass-panel p-5 rounded-xl space-y-4">
                 <div class="border-b border-slate-800 pb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                     <div>
@@ -1440,8 +1493,7 @@
         </div>
 
         <!-- SECTION 7: PLUGIN GOVERNANCE -->
-
-        <div id="section-plugins" class="hidden space-y-6">
+<div id="section-plugins" class="hidden space-y-6">
             <div class="glass-panel p-5 rounded-xl space-y-5">
                 <div class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 pb-3">
                     <div>
@@ -1492,8 +1544,7 @@
         </div>
 
         <!-- SECTION 8: PWP PLUGIN -->
-
-        <div id="section-pwp" class="hidden space-y-6">
+<div id="section-pwp" class="hidden space-y-6">
             <div class="glass-panel p-5 rounded-xl space-y-5">
                 <div class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 pb-3">
                     <div>
@@ -1541,8 +1592,7 @@
         </div>
 
         <!-- SECTION 8: NATIVE CRONS -->
-
-        <div id="section-crons" class="hidden space-y-6">
+<div id="section-crons" class="hidden space-y-6">
             <div class="glass-panel p-5 rounded-xl space-y-4">
                 <div class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 pb-3">
                     <div>
@@ -1573,8 +1623,7 @@
         </div>
 
         <!-- SECTION 8: QUOTA -->
-
-        <div id="section-quota" class="hidden space-y-6">
+<div id="section-quota" class="hidden space-y-6">
             <div class="glass-panel p-5 rounded-xl space-y-4">
                 <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-3 flex justify-between items-center">
                     <span>Resources · Model usage and budget caps</span>
@@ -1731,11 +1780,8 @@
     <div id="toast" class="fixed bottom-5 right-5 bg-slate-900 border border-slate-800 text-slate-200 px-4 py-3 rounded-lg shadow-xl text-xs font-semibold transform translate-y-20 opacity-0 transition duration-300 pointer-events-none flex items-center space-x-2">
         <span id="toast-text">Toast Message</span>
     </div>
-
-
-    <script>
-
-        const API_PREFIX = "/api/gateway";
+<script>
+const API_PREFIX = "/api/gateway";
         let activeTab = 'dashboard';
         let loadedQueueItems = [];
         let loadedNativeCrons = [];
@@ -4679,7 +4725,6 @@
             // Show AGY as default agent details
             showAgentDetail('agy');
         });
-
-    </script>
+</script>
 </body>
 </html>

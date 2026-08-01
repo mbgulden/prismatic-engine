@@ -1,0 +1,64 @@
+<!-- SECTION: REVIEW FACTORY -->
+        <div id="section-review-factory" class="hidden space-y-6 max-w-full overflow-x-hidden">
+            <!-- Review Factory Stats Grid -->
+            <section class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-cyan-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Queued Jobs</span>
+                    <span id="stat-rf-queued" class="text-2xl font-bold text-cyan-400 mt-2">0</span>
+                </div>
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-amber-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Verifying</span>
+                    <span id="stat-rf-verifying" class="text-2xl font-bold text-amber-400 mt-2">0</span>
+                </div>
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-indigo-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Review Ready</span>
+                    <span id="stat-rf-review-ready" class="text-2xl font-bold text-indigo-400 mt-2">0</span>
+                </div>
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-emerald-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Merged</span>
+                    <span id="stat-rf-merged" class="text-2xl font-bold text-emerald-400 mt-2">0</span>
+                </div>
+            </section>
+
+            <!-- Review Factory Jobs Table -->
+            <div class="glass-panel p-5 rounded-xl space-y-4">
+                <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                    <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Review Factory Jobs Queue</h2>
+                    <span class="text-xs text-slate-400 font-mono" id="rf-queue-status">Active Pipeline</span>
+                </div>
+                <div class="overflow-x-auto">
+                    <table id="rf-jobs-table" class="w-full text-left text-sm border-collapse">
+                        <thead>
+                            <tr class="border-b border-slate-800 text-slate-500 text-xs font-bold uppercase tracking-wider">
+                                <th class="py-2.5 px-3">Job ID</th>
+                                <th class="py-2.5 px-3">Task</th>
+                                <th class="py-2.5 px-3">Tier</th>
+                                <th class="py-2.5 px-3">State</th>
+                                <th class="py-2.5 px-3">Witnesses</th>
+                                <th class="py-2.5 px-3">Candidate Commit</th>
+                            </tr>
+                        </thead>
+                        <tbody id="rf-jobs-tbody" class="divide-y divide-slate-800/30">
+                            <tr>
+                                <td colspan="6" class="py-6 text-center text-slate-500 italic">
+                                    No review factory jobs queued.
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Job Detail Inspection Modal -->
+            <div id="rf-job-modal" class="hidden fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+                <div class="glass-panel max-w-2xl w-full p-6 rounded-2xl space-y-4 border border-slate-800 shadow-2xl">
+                    <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                        <h3 class="text-base font-bold text-slate-200" id="rf-modal-title">Review Job Inspection</h3>
+                        <button onclick="closeRFModal()" class="text-slate-400 hover:text-white font-bold">&times;</button>
+                    </div>
+                    <div id="rf-modal-body" class="space-y-3 text-xs font-mono text-slate-300 overflow-y-auto max-h-[60vh]">
+                        <!-- Populated dynamically -->
+                    </div>
+                </div>
+            </div>
+        </div>

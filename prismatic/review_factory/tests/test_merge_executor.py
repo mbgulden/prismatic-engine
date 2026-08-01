@@ -27,7 +27,6 @@ from prismatic.review_factory.models import (
 )
 from prismatic.review_factory.queue import ReviewQueue
 
-
 # ── Helpers ──────────────────────────────────────────────────────────
 
 
@@ -239,7 +238,8 @@ class TestMergeExecution:
 
     def test_non_dry_run_merge_executes_attestation_and_lock(self, queue, tmp_path):
         """Verify non-dry-run merge calls submit_attestation, acquire_lock, and release_lock."""
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import MagicMock, patch
+
         from prismatic.core.merge_factory import MergeFactoryStore
 
         mf_store = MergeFactoryStore(db_path=tmp_path / "test_mf.db")

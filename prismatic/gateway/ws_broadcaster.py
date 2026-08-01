@@ -19,7 +19,7 @@ import json
 import logging
 import os
 import threading
-from typing import Any, Set
+from typing import Any
 
 import websockets
 from websockets.asyncio.server import ServerConnection
@@ -58,7 +58,7 @@ class WSBroadcaster:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._server: Any = None
-        self._clients: Set[ServerConnection] = set()
+        self._clients: set[ServerConnection] = set()
         self._active = False
 
     # ── Public API ────────────────────────────────────
@@ -139,13 +139,23 @@ class WSBroadcaster:
         """Handle a new WebSocket client connection."""
         # Authenticate connection if PRISMATIC_WS_AUTH_REQUIRED is enabled
         if os.environ.get("PRISMATIC_WS_AUTH_REQUIRED", "0") in ("1", "true", "TRUE"):
-            req_headers = getattr(websocket, "request_headers", {}) or getattr(getattr(websocket, "request", None), "headers", {})
+            req_headers = getattr(websocket, "request_headers", {}) or getattr(
+                getattr(websocket, "request", None), "headers", {}
+            )
             auth_hdr = req_headers.get("Authorization", "")
             if not auth_hdr:
-                path = getattr(websocket, "path", "") or getattr(getattr(websocket, "request", None), "path", "")
+                path = getattr(websocket, "path", "") or getattr(
+                    getattr(websocket, "request", None), "path", ""
+                )
                 if "token=" in path:
                     auth_hdr = path.split("token=")[1].split("&")[0]
-            allowed_tokens = [t.strip() for t in os.environ.get("PRISMATIC_WS_TOKENS", "valid-token,test-token").split(",") if t.strip()]
+            allowed_tokens = [
+                t.strip()
+                for t in os.environ.get(
+                    "PRISMATIC_WS_TOKENS", "valid-token,test-token"
+                ).split(",")
+                if t.strip()
+            ]
             valid = any(t in auth_hdr for t in allowed_tokens) if auth_hdr else False
             if not valid:
                 logger.warning("Rejecting unauthenticated WebSocket connection")

@@ -43,9 +43,9 @@ import hashlib
 import json
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 
 from prismatic.review_factory.db import ReviewFactoryDB
+from prismatic.review_factory.events import emit_rf_event
 from prismatic.review_factory.models import (
     MergeAuthorization,
     MergeScope,
@@ -57,7 +57,6 @@ from prismatic.review_factory.models import (
     RiskTier,
     VerificationReceipt,
 )
-from prismatic.review_factory.events import emit_rf_event
 from prismatic.review_factory.policy import PolicyEngine
 
 logger = logging.getLogger(__name__)
@@ -85,7 +84,7 @@ def _utcnow_iso() -> str:
     return _utcnow().isoformat()
 
 
-def _parse_iso(iso_str: str) -> Optional[datetime]:
+def _parse_iso(iso_str: str) -> datetime | None:
     if not iso_str:
         return None
     try:
@@ -120,8 +119,8 @@ class ReviewQueue:
 
     def __init__(
         self,
-        db: Optional[ReviewFactoryDB] = None,
-        policy: Optional[PolicyEngine] = None,
+        db: ReviewFactoryDB | None = None,
+        policy: PolicyEngine | None = None,
     ):
         self.db = db or ReviewFactoryDB()
         self.db.ensure_tables()
@@ -141,7 +140,7 @@ class ReviewQueue:
         base_tree: str = "",
         candidate_commit: str = "",
         candidate_tree: str = "",
-        changed_paths: Optional[list[str]] = None,
+        changed_paths: list[str] | None = None,
         result_packet_path: str = "",
         result_packet_sha256: str = "",
     ) -> str:
@@ -198,7 +197,7 @@ class ReviewQueue:
 
     # ── Verification lease (RF-2 uses this) ──────────────────────────
 
-    def lease_for_verification(self, worker_id: str) -> Optional[ReviewJob]:
+    def lease_for_verification(self, worker_id: str) -> ReviewJob | None:
         """Lease the oldest queued job for verification.
 
         Returns the job if one was leased, None if the queue is empty.
@@ -239,12 +238,17 @@ class ReviewQueue:
         if job is None:
             raise ValueError(f"Review job {review_job_id} not found")
 
-        if getattr(receipt, "review_job_id", "") and receipt.review_job_id != review_job_id:
+        if (
+            getattr(receipt, "review_job_id", "")
+            and receipt.review_job_id != review_job_id
+        ):
             raise ValueError(
                 f"Cross-job receipt mismatch: receipt review_job_id ({receipt.review_job_id}) does not match target job ({review_job_id})"
             )
 
-        cand = getattr(receipt, "candidate_commit", "") or getattr(receipt, "candidate_sha", "")
+        cand = getattr(receipt, "candidate_commit", "") or getattr(
+            receipt, "candidate_sha", ""
+        )
         if cand and job.candidate_commit and cand != job.candidate_commit:
             raise ValueError(
                 f"Cross-job candidate commit mismatch: receipt candidate ({cand}) != job candidate ({job.candidate_commit})"
@@ -253,10 +257,14 @@ class ReviewQueue:
         if job.lease_expires_at:
             exp = _parse_iso(job.lease_expires_at)
             if exp and exp < _utcnow():
-                raise ValueError(f"Lease for job {review_job_id} expired at {job.lease_expires_at}")
+                raise ValueError(
+                    f"Lease for job {review_job_id} expired at {job.lease_expires_at}"
+                )
 
         if worker_id and job.lease_owner and worker_id != job.lease_owner:
-            raise ValueError(f"Worker identity mismatch: lease owner is {job.lease_owner}, got {worker_id}")
+            raise ValueError(
+                f"Worker identity mismatch: lease owner is {job.lease_owner}, got {worker_id}"
+            )
 
         self.db.insert_receipt(receipt)
         updated = self.db.update_review_job_state(
@@ -285,7 +293,7 @@ class ReviewQueue:
 
     # ── Review lease (RF-3 uses this) ────────────────────────────────
 
-    def lease_for_review(self, reviewer_id: str) -> Optional[ReviewJob]:
+    def lease_for_review(self, reviewer_id: str) -> ReviewJob | None:
         """Lease the oldest review-ready job for review.
 
         Enforces the concurrent reviewer cap (default: 3).
@@ -342,12 +350,17 @@ class ReviewQueue:
         if job is None:
             raise ValueError(f"Review job {review_job_id} not found")
 
-        if getattr(decision, "review_job_id", "") and decision.review_job_id != review_job_id:
+        if (
+            getattr(decision, "review_job_id", "")
+            and decision.review_job_id != review_job_id
+        ):
             raise ValueError(
                 f"Cross-job decision mismatch: decision review_job_id ({decision.review_job_id}) does not match target job ({review_job_id})"
             )
 
-        cand = getattr(decision, "candidate_commit", "") or getattr(decision, "candidate_sha", "")
+        cand = getattr(decision, "candidate_commit", "") or getattr(
+            decision, "candidate_sha", ""
+        )
         if cand and job.candidate_commit and cand != job.candidate_commit:
             raise ValueError(
                 f"Cross-job candidate commit mismatch: decision candidate ({cand}) != job candidate ({job.candidate_commit})"
@@ -356,10 +369,14 @@ class ReviewQueue:
         if job.lease_expires_at:
             exp = _parse_iso(job.lease_expires_at)
             if exp and exp < _utcnow():
-                raise ValueError(f"Lease for job {review_job_id} expired at {job.lease_expires_at}")
+                raise ValueError(
+                    f"Lease for job {review_job_id} expired at {job.lease_expires_at}"
+                )
 
         if reviewer_id and job.lease_owner and reviewer_id != job.lease_owner:
-            raise ValueError(f"Reviewer identity mismatch: lease owner is {job.lease_owner}, got {reviewer_id}")
+            raise ValueError(
+                f"Reviewer identity mismatch: lease owner is {job.lease_owner}, got {reviewer_id}"
+            )
 
         # Store the decision (idempotent via idempotency_key)
         self.db.insert_decision(decision)
@@ -427,7 +444,7 @@ class ReviewQueue:
         expected_merge_tree: str = "",
         actor: str = "",
         expires_minutes: int = 60,
-    ) -> Optional[str]:
+    ) -> str | None:
         """Create a merge authorization for a merge-ready job.
 
         For Tier 0/1: actor = "standing-policy: tier-N" (auto).
@@ -513,7 +530,7 @@ class ReviewQueue:
         review_job_id: str,
         new_candidate_commit: str,
         new_candidate_tree: str = "",
-        new_changed_paths: Optional[list[str]] = None,
+        new_changed_paths: list[str] | None = None,
     ) -> bool:
         """Re-enqueue a repaired candidate after a repair cycle.
 

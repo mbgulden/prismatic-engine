@@ -2,6 +2,7 @@
 
 from prismatic.merge_candidate_manifest import MergeCandidateManifest, RiskTier
 from prismatic.review_factory.db import ReviewFactoryDB
+from prismatic.review_factory.merge_executor import MergeExecutor
 from prismatic.review_factory.models import (
     MergeAuthorization,
     ReviewDecision,
@@ -9,7 +10,6 @@ from prismatic.review_factory.models import (
     ReviewVerdict,
     VerificationReceipt,
 )
-from prismatic.review_factory.merge_executor import MergeExecutor
 from prismatic.review_factory.queue import ReviewQueue
 from prismatic.review_factory.verifier import VerificationWorker
 

@@ -18,7 +18,6 @@ from prismatic.review_factory.db import ReviewFactoryDB
 from prismatic.review_factory.queue import ReviewQueue
 from prismatic.review_factory.verifier import VerificationWorker
 
-
 # ── Helpers ──────────────────────────────────────────────────────────
 
 

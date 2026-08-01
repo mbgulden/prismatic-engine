@@ -22,7 +22,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 from prismatic.agy_completed_work import (
     AgyCompletedWorkStore,
@@ -48,6 +47,12 @@ class ImportResult:
     errors: list[str] = field(default_factory=list)
 
 
+def _is_hex_sha(val: str) -> bool:
+    if not val or len(val) < 7:
+        return False
+    return all(c in "0123456789abcdefABCDEF" for c in val)
+
+
 class BacklogImporter:
     """RF-6: Import pending work from AgyCompletedWorkStore.
 
@@ -57,8 +62,8 @@ class BacklogImporter:
 
     def __init__(
         self,
-        queue: Optional[ReviewQueue] = None,
-        db_path: Optional[Path] = None,
+        queue: ReviewQueue | None = None,
+        db_path: Path | None = None,
     ):
         self.queue = queue or ReviewQueue()
         self._db_path = db_path
@@ -125,13 +130,15 @@ class BacklogImporter:
             or packet.get("scope", "")
         )
         repository = packet.get("repository", "mbgulden/prismatic-engine")
-        base_commit = packet.get("base_commit") or row.base_branch
-        candidate_commit = packet.get("candidate_commit") or row.source_branch
+        base_commit = packet.get("base_commit") or packet.get("base_sha") or ""
+        candidate_commit = (
+            packet.get("candidate_commit") or packet.get("candidate_sha") or ""
+        )
 
-        if not base_commit or not candidate_commit:
+        if not _is_hex_sha(base_commit) or not _is_hex_sha(candidate_commit):
             result.skipped_ineligible += 1
             result.errors.append(
-                f"Row {completed_work_id} missing explicit base_commit or candidate_commit — fail closed"
+                f"Row {completed_work_id} missing valid commit SHAs (base='{base_commit}', cand='{candidate_commit}') — fail closed"
             )
             return
 

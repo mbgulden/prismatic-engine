@@ -26,7 +26,6 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 from prismatic.merge_candidate_manifest import (
     MergeCandidateManifest,
@@ -119,14 +118,49 @@ class VerificationWorker:
 
     def __init__(
         self,
-        repo_path: Optional[Path] = None,
-        log_dir: Optional[Path] = None,
+        repo_path: Path | None = None,
+        log_dir: Path | None = None,
         test_mode: bool = False,
+        queue: object | None = None,
     ):
         self.repo_path = repo_path or Path(".")
         self.log_dir = log_dir or Path(tempfile.mkdtemp(prefix="rf-verify-"))
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.test_mode = test_mode
+        self.queue = queue
+
+    def _materialize_immutable_archive(
+        self,
+        candidate_commit: str,
+        candidate_tree: str = "",
+    ) -> Path:
+        """Create a dedicated read-only immutable copy of the candidate workspace."""
+        cand_id = candidate_tree or candidate_commit
+        archive_dir = Path(tempfile.mkdtemp(prefix=f"archive-tree-{cand_id[:12]}-"))
+        if self.repo_path.exists():
+            import shutil
+
+            for item in self.repo_path.iterdir():
+                if item.name in (
+                    ".git",
+                    ".venv",
+                    "__pycache__",
+                    ".pytest_cache",
+                    "dist",
+                    "build",
+                ):
+                    continue
+                dest = archive_dir / item.name
+                if item.is_dir():
+                    shutil.copytree(
+                        item,
+                        dest,
+                        symlinks=True,
+                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+                    )
+                else:
+                    shutil.copy2(item, dest)
+        return archive_dir
 
     def verify(
         self,
@@ -536,7 +570,7 @@ class VerificationWorker:
         )
 
     @staticmethod
-    def _derive_test_path(source_path: str) -> Optional[str]:
+    def _derive_test_path(source_path: str) -> str | None:
         p = Path(source_path)
         test_dir = p.parent / "tests"
         test_file = f"test_{p.stem}.py"

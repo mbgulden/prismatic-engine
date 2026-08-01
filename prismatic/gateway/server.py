@@ -43,7 +43,141 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from prismatic.agent_packet_normalizer import RAW_AGENT_OUTPUT_REPAIR_QUEUE_MARKER
+from prismatic.agent_raw_output_queue import (
+    get_raw_output,
+    list_raw_outputs,
+    mark_rerun_requested,
+    queue_counts,
+)
+from prismatic.agent_raw_output_queue import (
+    repair_preview as raw_output_repair_preview,
+)
+from prismatic.agy_activity import list_agy_activity_runs
+from prismatic.agy_approved_action_executor import (
+    ONE_AGENT_OPERATOR_APPROVAL_TO_EXECUTOR_DRY_RUN_MARKER,
+    build_approved_action_executor,
+    get_approved_action_executor,
+    latest_or_record_approved_action_executor,
+    list_approved_action_executors,
+    record_approved_action_executor,
+)
+from prismatic.agy_completed_work import (
+    AGY_COMPLETED_WORK_INGESTION_MARKER,
+    get_completed_work,
+    ingest_completed_work,
+    ingest_completed_work_text,
+    list_completed_work,
+)
+from prismatic.agy_executor_runs import (
+    PROMPT7_EXECUTOR_API_AUDIT_WRITEBACK_MARKER,
+    build_prompt6_executor_canary_dry_run,
+    get_executor_run,
+    list_executor_runs,
+    record_executor_run,
+)
+from prismatic.agy_final_action_authorization import (
+    ONE_AGENT_EXECUTOR_DRY_RUN_TO_FINAL_AUTHORIZATION_GATE_MARKER,
+    build_final_action_authorization,
+    get_final_action_authorization,
+    latest_or_record_final_action_authorization,
+    list_final_action_authorizations,
+    record_final_action_authorization,
+)
+from prismatic.agy_limited_overnight_runner import (
+    AGY_LIMITED_OVERNIGHT_RUNNER_MARKER,
+    LimitedOvernightRunStore,
+    RunnerRequest,
+    run_limited_overnight_dry_run,
+)
+from prismatic.agy_limited_overnight_runner import (
+    status_payload as limited_overnight_status_payload,
+)
+from prismatic.agy_limited_overnight_runner import (
+    stop_latest_run as stop_limited_overnight_run,
+)
+from prismatic.agy_merge_backlog import (
+    AGY_CLEAN_PR_AND_VERIFICATION_GATE_MARKER,
+    AGY_CLEAN_PR_CREATE_UPDATE_MARKER,
+    build_operator_pr_creation_dry_run,
+    build_pr_candidate_lifecycle,
+    build_real_pr_creation_approval_gate,
+    build_real_pr_creation_approved_action,
+    execute_approved_real_pr_creation,
+    get_merge_backlog_item,
+    list_merge_backlog,
+    verify_merge_backlog_item,
+)
+from prismatic.agy_operator_action_approval import (
+    ONE_AGENT_LEDGER_TO_OPERATOR_ACTION_APPROVAL_MARKER,
+    build_operator_action_approval,
+    get_operator_action_approval,
+    latest_or_record_operator_action_approval,
+    list_operator_action_approvals,
+    record_operator_action_approval,
+)
+from prismatic.agy_overnight_guard import (
+    AGY_OVERNIGHT_READINESS_GUARD_MARKER,
+    AgyOvernightGuardStore,
+    evaluate_overnight_readiness,
+    list_overnight_run_attempts,
+    record_guard_decision,
+    set_operator_pause,
+)
+from prismatic.agy_promotion_ledger import (
+    ONE_AGENT_PROMOTION_DECISION_LEDGER_MARKER,
+    build_promotion_decision,
+    get_promotion_decision,
+    latest_or_record_decision,
+    list_promotion_decisions,
+    record_promotion_decision,
+)
+from prismatic.agy_quarantined_execution_adapter import (
+    ONE_AGENT_FINAL_AUTHORIZATION_TO_QUARANTINED_EXECUTION_ADAPTER_MARKER,
+    build_quarantined_execution_adapter,
+    get_quarantined_execution_adapter,
+    latest_or_record_quarantined_execution_adapter,
+    list_quarantined_execution_adapters,
+    record_quarantined_execution_adapter,
+)
+from prismatic.agy_real_executor_arming_gate import (
+    ONE_AGENT_SANDBOXED_CANARY_TO_REAL_EXECUTOR_ARMING_GATE_MARKER,
+    build_real_executor_arming_gate,
+    get_real_executor_arming_gate,
+    latest_or_record_real_executor_arming_gate,
+    list_real_executor_arming_gates,
+    record_real_executor_arming_gate,
+)
+from prismatic.agy_sandboxed_execution_canary import (
+    ONE_AGENT_QUARANTINED_ADAPTER_TO_SANDBOXED_EXECUTION_CANARY_MARKER,
+    build_sandboxed_execution_canary,
+    get_sandboxed_execution_canary,
+    latest_or_record_sandboxed_execution_canary,
+    list_sandboxed_execution_canaries,
+    record_sandboxed_execution_canary,
+)
+from prismatic.agy_unattended_window import (
+    UnattendedWindowRequest,
+    UnattendedWindowStore,
+    approve_window,
+    evaluate_unattended_window,
+)
+from prismatic.agy_unattended_window import (
+    request_approval as request_unattended_window_approval,
+)
+from prismatic.agy_unattended_window import (
+    set_pause as set_unattended_window_pause,
+)
+from prismatic.agy_unattended_window import (
+    status_payload as unattended_window_status_payload,
+)
 from prismatic.api.routers.merge_factory import router as merge_factory_router
+from prismatic.budget_caps import read_budget_caps, write_budget_caps
+from prismatic.completed_work_gate import (
+    completed_work_gate_schema,
+    demo_completed_work_gate_state,
+)
+from prismatic.dispatcher import get_dispatcher_polling_budget_snapshot
 from prismatic.gateway.control_auth import control_authorization_middleware
 from prismatic.gateway.event_bus import get_event_bus
 from prismatic.gateway.ipc_bridge import UnixSocketListener, create_event_ingest_route
@@ -59,142 +193,11 @@ from prismatic.gateway.ws_broadcaster import (
     start_ws_broadcaster,
     stop_ws_broadcaster,
 )
-from prismatic.verification.receipt_store import (
-    PROVIDER_NEUTRAL_VERIFICATION_RECEIPT_MARKER,
-    get_verification_receipt,
-    list_verification_receipts,
-    persist_verification_receipt,
-    revoke_verification_receipt,
-    verification_receipt_counts,
-    verification_receipt_schema,
-)
-from prismatic.agy_activity import list_agy_activity_runs
-from prismatic.agy_completed_work import (
-    AGY_COMPLETED_WORK_INGESTION_MARKER,
-    get_completed_work,
-    ingest_completed_work,
-    ingest_completed_work_text,
-    list_completed_work,
-)
-from prismatic.agy_merge_backlog import (
-    AGY_CLEAN_PR_AND_VERIFICATION_GATE_MARKER,
-    AGY_CLEAN_PR_CREATE_UPDATE_MARKER,
-    build_operator_pr_creation_dry_run,
-    execute_approved_real_pr_creation,
-    build_real_pr_creation_approval_gate,
-    build_real_pr_creation_approved_action,
-    build_pr_candidate_lifecycle,
-    get_merge_backlog_item,
-    list_merge_backlog,
-    verify_merge_backlog_item,
-)
-from prismatic.agy_promotion_ledger import (
-    ONE_AGENT_PROMOTION_DECISION_LEDGER_MARKER,
-    build_promotion_decision,
-    get_promotion_decision,
-    latest_or_record_decision,
-    list_promotion_decisions,
-    record_promotion_decision,
-)
-from prismatic.agy_operator_action_approval import (
-    ONE_AGENT_LEDGER_TO_OPERATOR_ACTION_APPROVAL_MARKER,
-    build_operator_action_approval,
-    get_operator_action_approval,
-    latest_or_record_operator_action_approval,
-    list_operator_action_approvals,
-    record_operator_action_approval,
-)
-from prismatic.agy_approved_action_executor import (
-    ONE_AGENT_OPERATOR_APPROVAL_TO_EXECUTOR_DRY_RUN_MARKER,
-    build_approved_action_executor,
-    get_approved_action_executor,
-    latest_or_record_approved_action_executor,
-    list_approved_action_executors,
-    record_approved_action_executor,
-)
-from prismatic.agy_final_action_authorization import (
-    ONE_AGENT_EXECUTOR_DRY_RUN_TO_FINAL_AUTHORIZATION_GATE_MARKER,
-    build_final_action_authorization,
-    get_final_action_authorization,
-    latest_or_record_final_action_authorization,
-    list_final_action_authorizations,
-    record_final_action_authorization,
-)
-from prismatic.agy_quarantined_execution_adapter import (
-    ONE_AGENT_FINAL_AUTHORIZATION_TO_QUARANTINED_EXECUTION_ADAPTER_MARKER,
-    build_quarantined_execution_adapter,
-    get_quarantined_execution_adapter,
-    latest_or_record_quarantined_execution_adapter,
-    list_quarantined_execution_adapters,
-    record_quarantined_execution_adapter,
-)
-from prismatic.agy_sandboxed_execution_canary import (
-    ONE_AGENT_QUARANTINED_ADAPTER_TO_SANDBOXED_EXECUTION_CANARY_MARKER,
-    build_sandboxed_execution_canary,
-    get_sandboxed_execution_canary,
-    latest_or_record_sandboxed_execution_canary,
-    list_sandboxed_execution_canaries,
-    record_sandboxed_execution_canary,
-)
-from prismatic.agy_real_executor_arming_gate import (
-    ONE_AGENT_SANDBOXED_CANARY_TO_REAL_EXECUTOR_ARMING_GATE_MARKER,
-    build_real_executor_arming_gate,
-    get_real_executor_arming_gate,
-    latest_or_record_real_executor_arming_gate,
-    list_real_executor_arming_gates,
-    record_real_executor_arming_gate,
-)
-from prismatic.agy_executor_runs import (
-    PROMPT7_EXECUTOR_API_AUDIT_WRITEBACK_MARKER,
-    build_prompt6_executor_canary_dry_run,
-    get_executor_run,
-    list_executor_runs,
-    record_executor_run,
-)
-from prismatic.agy_overnight_guard import (
-    AGY_OVERNIGHT_READINESS_GUARD_MARKER,
-    AgyOvernightGuardStore,
-    evaluate_overnight_readiness,
-    list_overnight_run_attempts,
-    record_guard_decision,
-    set_operator_pause,
-)
-from prismatic.agy_limited_overnight_runner import (
-    AGY_LIMITED_OVERNIGHT_RUNNER_MARKER,
-    LimitedOvernightRunStore,
-    RunnerRequest,
-    run_limited_overnight_dry_run,
-    status_payload as limited_overnight_status_payload,
-    stop_latest_run as stop_limited_overnight_run,
-)
-from prismatic.agent_raw_output_queue import (
-    get_raw_output,
-    list_raw_outputs,
-    mark_rerun_requested,
-    queue_counts,
-    repair_preview as raw_output_repair_preview,
-)
-from prismatic.agent_packet_normalizer import RAW_AGENT_OUTPUT_REPAIR_QUEUE_MARKER
-from prismatic.agy_unattended_window import (
-    UnattendedWindowRequest,
-    UnattendedWindowStore,
-    approve_window,
-    evaluate_unattended_window,
-    request_approval as request_unattended_window_approval,
-    set_pause as set_unattended_window_pause,
-    status_payload as unattended_window_status_payload,
-)
-from prismatic.budget_caps import read_budget_caps, write_budget_caps
-from prismatic.completed_work_gate import (
-    completed_work_gate_schema,
-    demo_completed_work_gate_state,
-)
-from prismatic.lock import _read_locks as read_swarm_locks
 from prismatic.linear_rate_limit import (
     LINEAR_RATE_LIMIT_CIRCUIT_BREAKER_MARKER,
     get_linear_rate_limit_snapshot,
 )
-from prismatic.dispatcher import get_dispatcher_polling_budget_snapshot
+from prismatic.lock import _read_locks as read_swarm_locks
 from prismatic.plugin_architecture import MEDIA_CAPABILITY_CLASSES, plugin_catalog
 from prismatic.plugin_artifacts import store_from_env as plugin_artifact_store
 from prismatic.plugin_health import get_plugin_health
@@ -208,6 +211,15 @@ from prismatic.pwp_integration import (
     run_pwp_reference_lifecycle,
 )
 from prismatic.run_records import AgentRunRecordStore
+from prismatic.verification.receipt_store import (
+    PROVIDER_NEUTRAL_VERIFICATION_RECEIPT_MARKER,
+    get_verification_receipt,
+    list_verification_receipts,
+    persist_verification_receipt,
+    revoke_verification_receipt,
+    verification_receipt_counts,
+    verification_receipt_schema,
+)
 
 logger = logging.getLogger("prismatic.gateway.server")
 
@@ -244,10 +256,16 @@ def _linear_state_is_terminal(state: dict | None) -> bool:
         return False
     name = (state.get("name") or "").lower()
     stype = (state.get("type") or "").lower()
-    return stype in ("completed", "canceled") or name in ("done", "duplicate", "canceled")
+    return stype in ("completed", "canceled") or name in (
+        "done",
+        "duplicate",
+        "canceled",
+    )
 
 
-def _prune_terminal_linear_pending(pending: dict, linear_states: dict) -> tuple[dict, list, list]:
+def _prune_terminal_linear_pending(
+    pending: dict, linear_states: dict
+) -> tuple[dict, list, list]:
     active = {}
     pruned = []
     retained = []
@@ -1114,6 +1132,21 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     The connection stays open until the client disconnects.
     Events are broadcast to all connected clients.
     """
+    if os.environ.get("PRISMATIC_WS_AUTH_REQUIRED", "0") in ("1", "true", "TRUE"):
+        auth_hdr = websocket.headers.get("Authorization", "")
+        if not auth_hdr:
+            auth_hdr = websocket.query_params.get("token", "")
+        allowed = [
+            t.strip()
+            for t in os.environ.get(
+                "PRISMATIC_WS_TOKENS", "valid-token,test-token"
+            ).split(",")
+            if t.strip()
+        ]
+        if not auth_hdr or not any(t in auth_hdr for t in allowed):
+            await websocket.close(code=1008, reason="Unauthorized")
+            return
+
     await websocket.accept()
     _ws_clients.add(websocket)
     logger.info("WebSocket client connected (total=%d)", len(_ws_clients))
@@ -4309,8 +4342,9 @@ async def list_chat_sessions() -> list[dict[str, Any]]:
 @app.get("/chat/sessions/{session_id}")
 async def get_chat_session(session_id: str):
     """Get a single chat session by ID, or return 404 per v0.1 contract."""
-    from prismatic.capabilities.chat_agy import ChatAGYCapability
     from fastapi import HTTPException
+
+    from prismatic.capabilities.chat_agy import ChatAGYCapability
 
     cap = ChatAGYCapability()
     session = cap.get_session(session_id)
@@ -4348,8 +4382,9 @@ async def schedules_chat_command(payload: dict[str, Any]) -> dict[str, Any]:
 @app.post("/schedules/{schedule_id}/mutate")
 async def mutate_schedule(schedule_id: str, payload: dict[str, Any]):
     """Mutate a schedule with owner-aware policy check."""
-    from prismatic.schedules import request_schedule_mutation, UnauthorizedMutationError
     from fastapi.responses import JSONResponse
+
+    from prismatic.schedules import UnauthorizedMutationError, request_schedule_mutation
 
     enabled = payload.get("enabled")
     schedule_expr = payload.get("schedule_expr")
@@ -4379,6 +4414,7 @@ async def list_native_crons_endpoint(
 async def native_cron_action(cron_id: str, payload: dict[str, Any]):
     """Pause/resume/deactivate/activate/delete/run a PE-native cron."""
     from fastapi.responses import JSONResponse
+
     from prismatic.native_crons import mutate_native_cron
 
     action = payload.get("action")
@@ -4732,6 +4768,7 @@ def main() -> None:
 async def pwp_kpi_list_sites() -> dict[str, Any]:
     try:
         from plugins.pwp.capabilities.publish_kpi_tracker import list_sites
+
         return {"sites": list_sites()}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -4741,9 +4778,12 @@ async def pwp_kpi_list_sites() -> dict[str, Any]:
 async def pwp_kpi_get_site(slug: str) -> dict[str, Any]:
     try:
         from plugins.pwp.capabilities.publish_kpi_tracker import load_site
+
         return load_site(slug)
     except FileNotFoundError:
-        raise HTTPException(status_code=404, detail=f"Site KPI collection not found for slug: {slug}")
+        raise HTTPException(
+            status_code=404, detail=f"Site KPI collection not found for slug: {slug}"
+        )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -4752,6 +4792,7 @@ async def pwp_kpi_get_site(slug: str) -> dict[str, Any]:
 async def pwp_kpi_refresh() -> dict[str, Any]:
     try:
         from plugins.pwp.capabilities.publish_kpi_tracker import list_sites
+
         return {"status": "ok", "sites_refreshed": len(list_sites())}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -4764,12 +4805,47 @@ async def pwp_kpi_publish_dashboard(request: Request) -> dict[str, Any]:
         publish_root = body.get("publish_root", "")
         if not publish_root:
             raise HTTPException(status_code=400, detail="publish_root required")
-        from plugins.pwp.capabilities.publish_kpi_tracker import publish_publish_kpi_dashboard
+        from plugins.pwp.capabilities.publish_kpi_tracker import (
+            publish_publish_kpi_dashboard,
+        )
+
         return publish_publish_kpi_dashboard(publish_root)
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+from prismatic.review_factory.routes import router as review_factory_router
+
+app.include_router(review_factory_router, prefix="/api/review-factory")
+
+
+@app.get("/api/workspace/tree")
+async def gateway_workspace_tree(
+    workspace_id: str | None = Query(default=None),
+    path: str | None = Query(default=None),
+) -> dict[str, Any]:
+    try:
+        if not workspace_id:
+            try:
+                workspaces = list_workspaces()
+            except Exception:
+                workspaces = []
+            return {"workspaces": workspaces}
+        return get_node(workspace_id=workspace_id, rel_path=path or "")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/deploy/status")
+async def gateway_deploy_status() -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "deploy_receiver": "active",
+        "mode": "standalone",
+        "timestamp": time.time(),
+    }
 
 
 if __name__ == "__main__":

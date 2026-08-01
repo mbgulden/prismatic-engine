@@ -50,6 +50,16 @@ async function runVisualAudit() {
                 await page.waitForTimeout(500);
             }
 
+            // Assert presence of Review Factory elements
+            const sectionRF = await page.$('#section-review-factory');
+            const rfTable = await page.$('#rf-jobs-table');
+            const rfModal = await page.$('#rf-job-modal');
+            if (sectionRF && rfTable && rfModal) {
+                console.log(`✅ Review Factory DOM selectors verified (#section-review-factory, #rf-jobs-table, #rf-job-modal)`);
+            } else {
+                throw new Error('Review Factory DOM selectors missing');
+            }
+
             // Verify mobile horizontal overflow invariant
             if (vp.width === 375) {
                 const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);

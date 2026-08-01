@@ -7,14 +7,14 @@ Required: 3/3 PASS minimum + enqueue_completed_work returns a UUID.
 from __future__ import annotations
 
 import json
+
+# Ensure the test can find the prismatic package
+import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-
-# Ensure the test can find the prismatic package
-import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
