@@ -13,8 +13,14 @@ from pathlib import Path
 import pytest
 
 
+import shutil
+
+
 def test_playwright_visual_audit_against_live_gateway(tmp_path):
     """Run Playwright visual audit against live Gateway server and verify 375px viewport."""
+    if not shutil.which("node"):
+        pytest.skip("Node.js executable 'node' not found in system PATH")
+
     node_script = (
         Path(__file__).parent.parent / "scripts" / "visual_audit_playwright.js"
     )

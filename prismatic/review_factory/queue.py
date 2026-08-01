@@ -85,6 +85,18 @@ def _utcnow_iso() -> str:
     return _utcnow().isoformat()
 
 
+def _parse_iso(iso_str: str) -> Optional[datetime]:
+    if not iso_str:
+        return None
+    try:
+        dt = datetime.fromisoformat(iso_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        return None
+
+
 def _lease_expiry(tier: int) -> str:
     """Compute lease expiry timestamp for a given risk tier."""
     duration = _LEASE_DURATIONS.get(tier, timedelta(minutes=15))
@@ -216,11 +228,36 @@ class ReviewQueue:
         self,
         review_job_id: str,
         receipt: VerificationReceipt,
+        worker_id: str = "",
     ) -> bool:
         """Mark verification as complete and store the receipt.
 
         Transitions the job to ``review_ready``.
+        Enforces cross-job isolation and lease fencing.
         """
+        job = self.db.get_review_job(review_job_id)
+        if job is None:
+            raise ValueError(f"Review job {review_job_id} not found")
+
+        if getattr(receipt, "review_job_id", "") and receipt.review_job_id != review_job_id:
+            raise ValueError(
+                f"Cross-job receipt mismatch: receipt review_job_id ({receipt.review_job_id}) does not match target job ({review_job_id})"
+            )
+
+        cand = getattr(receipt, "candidate_commit", "") or getattr(receipt, "candidate_sha", "")
+        if cand and job.candidate_commit and cand != job.candidate_commit:
+            raise ValueError(
+                f"Cross-job candidate commit mismatch: receipt candidate ({cand}) != job candidate ({job.candidate_commit})"
+            )
+
+        if job.lease_expires_at:
+            exp = _parse_iso(job.lease_expires_at)
+            if exp and exp < _utcnow():
+                raise ValueError(f"Lease for job {review_job_id} expired at {job.lease_expires_at}")
+
+        if worker_id and job.lease_owner and worker_id != job.lease_owner:
+            raise ValueError(f"Worker identity mismatch: lease owner is {job.lease_owner}, got {worker_id}")
+
         self.db.insert_receipt(receipt)
         updated = self.db.update_review_job_state(
             review_job_id,
@@ -290,6 +327,7 @@ class ReviewQueue:
         self,
         review_job_id: str,
         decision: ReviewDecision,
+        reviewer_id: str = "",
     ) -> str:
         """Submit a review verdict and transition the job state.
 
@@ -298,13 +336,33 @@ class ReviewQueue:
         - ``rejected`` → ``rejected``
 
         Returns the new state value.
+        Enforces cross-job isolation and lease fencing.
         """
-        # Store the decision (idempotent via idempotency_key)
-        self.db.insert_decision(decision)
-
         job = self.db.get_review_job(review_job_id)
         if job is None:
             raise ValueError(f"Review job {review_job_id} not found")
+
+        if getattr(decision, "review_job_id", "") and decision.review_job_id != review_job_id:
+            raise ValueError(
+                f"Cross-job decision mismatch: decision review_job_id ({decision.review_job_id}) does not match target job ({review_job_id})"
+            )
+
+        cand = getattr(decision, "candidate_commit", "") or getattr(decision, "candidate_sha", "")
+        if cand and job.candidate_commit and cand != job.candidate_commit:
+            raise ValueError(
+                f"Cross-job candidate commit mismatch: decision candidate ({cand}) != job candidate ({job.candidate_commit})"
+            )
+
+        if job.lease_expires_at:
+            exp = _parse_iso(job.lease_expires_at)
+            if exp and exp < _utcnow():
+                raise ValueError(f"Lease for job {review_job_id} expired at {job.lease_expires_at}")
+
+        if reviewer_id and job.lease_owner and reviewer_id != job.lease_owner:
+            raise ValueError(f"Reviewer identity mismatch: lease owner is {job.lease_owner}, got {reviewer_id}")
+
+        # Store the decision (idempotent via idempotency_key)
+        self.db.insert_decision(decision)
 
         verdict = ReviewVerdict(decision.verdict)
 

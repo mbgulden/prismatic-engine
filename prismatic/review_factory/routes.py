@@ -154,7 +154,7 @@ def _attach_routes(router: Any) -> None:
     async def get_job_detail(job_id: str) -> Dict[str, Any]:
         """Get full detail for a specific review job."""
         q = _get_queue()
-        job = q.get_job(job_id)
+        job = q.db.get_review_job(job_id)
         if job is None:
             raise HTTPException(
                 status_code=404, detail=f"Review job {job_id} not found"
@@ -432,3 +432,4 @@ def _create_review_factory_canonical_router() -> Any:
 
 review_router = _create_review_router()
 review_factory_canonical_router = _create_review_factory_canonical_router()
+router = review_router
