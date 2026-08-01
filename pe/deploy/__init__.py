@@ -1,6 +1,13 @@
-"""Production Deploy Hook & Receiver package (Workstream B).
-"""
+"""pe.deploy package exports."""
+from __future__ import annotations
 
-from pe.deploy.manifest import DeployManifestStore, DeployRecord
+from prismatic.deploy.routes import create_deploy_router, deploy_router
+from prismatic.deploy.manifest import DeployManifestStore
+from prismatic.deploy.receiver import DeployReceiverPipeline
 
-__all__ = ["DeployRecord", "DeployManifestStore"]
+__all__ = [
+    "create_deploy_router",
+    "deploy_router",
+    "DeployManifestStore",
+    "DeployReceiverPipeline",
+]

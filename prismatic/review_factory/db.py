@@ -188,6 +188,7 @@ CREATE INDEX IF NOT EXISTS idx_auth_consumed ON merge_authorizations(consumed_at
 -- §5.5: repair_packets
 CREATE TABLE IF NOT EXISTS repair_packets (
     packet_id TEXT PRIMARY KEY,
+    review_job_id TEXT NOT NULL DEFAULT '',
     candidate_tree TEXT NOT NULL DEFAULT '',
     findings_json TEXT NOT NULL DEFAULT '[]',
     producer_id TEXT NOT NULL DEFAULT '',
@@ -197,6 +198,7 @@ CREATE TABLE IF NOT EXISTS repair_packets (
 );
 
 CREATE INDEX IF NOT EXISTS idx_repair_candidate ON repair_packets(candidate_tree);
+CREATE INDEX IF NOT EXISTS idx_repair_review_job ON repair_packets(review_job_id);
 
 -- Enterprise Audit Log: append-only table for operator actions
 CREATE TABLE IF NOT EXISTS review_factory_audit_log (
@@ -295,6 +297,13 @@ class ReviewFactoryDB:
                 "INSERT INTO rf_schema_version (version, applied_at) VALUES (?, ?)",
                 (2, datetime.now(timezone.utc).isoformat()),
             )
+
+        # Migration: Ensure repair_packets has review_job_id column
+        cur = self.conn.execute("PRAGMA table_info(repair_packets)")
+        cols = [r["name"] for r in cur.fetchall()]
+        if "review_job_id" not in cols:
+            self.conn.execute("ALTER TABLE repair_packets ADD COLUMN review_job_id TEXT NOT NULL DEFAULT ''")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_repair_review_job ON repair_packets(review_job_id)")
 
     # ── review_jobs CRUD ─────────────────────────────────────────────
 
@@ -585,16 +594,16 @@ class ReviewFactoryDB:
     # ── repair_packets CRUD ──────────────────────────────────────────
 
     def insert_repair_packet(self, packet: RepairPacket) -> str:
-        """Insert a repair packet.  Returns packet_id."""
+        """Insert a repair packet."""
         with self.transaction() as cur:
             cur.execute(
                 """INSERT INTO repair_packets (
-                    packet_id, candidate_tree, findings_json,
-                    producer_id, consumed_at, resolution_attempt_n,
-                    created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    packet_id, review_job_id, candidate_tree, findings_json,
+                    producer_id, consumed_at, resolution_attempt_n, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     packet.packet_id,
+                    packet.review_job_id,
                     packet.candidate_tree,
                     packet.findings_json,
                     packet.producer_id,
@@ -644,12 +653,13 @@ class ReviewFactoryDB:
             old_cand_tree = row["candidate_tree"]
             old_cand_commit = row["candidate_commit"]
 
-            # Consume repair packets
+            # Consume repair packets bound to review_job_id exactly
             cur.execute(
                 """UPDATE repair_packets
                    SET consumed_at = ?, resolution_attempt_n = resolution_attempt_n + 1
-                   WHERE (candidate_tree = ? OR candidate_tree = ? OR packet_id IN (SELECT packet_id FROM repair_packets WHERE candidate_tree LIKE ?)) AND consumed_at = ''""",
-                (now, old_cand_tree, old_cand_commit, f"%{review_job_id}%"),
+                   WHERE (review_job_id = ? OR (review_job_id = '' AND (candidate_tree = ? OR candidate_tree = ?)))
+                     AND consumed_at = ''""",
+                (now, review_job_id, old_cand_tree, old_cand_commit),
             )
 
             # Invalidate stale evidence for old candidate
@@ -820,8 +830,10 @@ class ReviewFactoryDB:
 
     @staticmethod
     def _row_to_repair_packet(row: sqlite3.Row) -> RepairPacket:
+        row_keys = row.keys() if hasattr(row, "keys") else []
         return RepairPacket(
             packet_id=row["packet_id"],
+            review_job_id=row["review_job_id"] if "review_job_id" in row_keys else "",
             candidate_tree=row["candidate_tree"],
             findings_json=row["findings_json"],
             producer_id=row["producer_id"],

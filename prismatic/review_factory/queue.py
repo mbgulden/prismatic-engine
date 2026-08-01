@@ -246,24 +246,23 @@ class ReviewQueue:
                 f"Cross-job receipt mismatch: receipt review_job_id ({receipt.review_job_id}) does not match target job ({review_job_id})"
             )
 
-        cand = getattr(receipt, "candidate_commit", "") or getattr(
-            receipt, "candidate_sha", ""
-        )
-        if cand and job.candidate_commit and cand != job.candidate_commit:
+        w_id = (worker_id or "").strip()
+        if not w_id:
+            raise ValueError("Worker identity required")
+        if job.lease_owner and w_id != job.lease_owner:
             raise ValueError(
-                f"Cross-job candidate commit mismatch: receipt candidate ({cand}) != job candidate ({job.candidate_commit})"
+                f"Worker identity mismatch: lease owner is {job.lease_owner}, got {w_id}"
             )
 
-        if job.lease_expires_at:
-            exp = _parse_iso(job.lease_expires_at)
-            if exp and exp < _utcnow():
-                raise ValueError(
-                    f"Lease for job {review_job_id} expired at {job.lease_expires_at}"
-                )
-
-        if worker_id and job.lease_owner and worker_id != job.lease_owner:
+        cand_commit = (
+            getattr(receipt, "candidate_commit", "")
+            or getattr(receipt, "candidate_sha", "")
+        ).strip()
+        if not cand_commit:
+            raise ValueError("Candidate commit required in receipt")
+        if job.candidate_commit and cand_commit != job.candidate_commit:
             raise ValueError(
-                f"Worker identity mismatch: lease owner is {job.lease_owner}, got {worker_id}"
+                f"Cross-job candidate commit mismatch: receipt candidate ({cand_commit}) != job candidate ({job.candidate_commit})"
             )
 
         self.db.insert_receipt(receipt)
@@ -414,6 +413,7 @@ class ReviewQueue:
             )
             # Create a repair packet for the producer
             packet = RepairPacket(
+                review_job_id=review_job_id,
                 candidate_tree=job.candidate_tree,
                 findings_json=decision.findings,
                 producer_id=decision.reviewer_id,

@@ -418,7 +418,9 @@ class RepairPacket:
     """
 
     packet_id: str = field(default_factory=_new_uuid)
+    review_job_id: str = ""  # FK to review_jobs
     candidate_tree: str = ""
+    candidate_attempt: int = 1
 
     # Findings from the review decision
     findings_json: str = "[]"

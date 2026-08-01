@@ -1133,17 +1133,20 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     Events are broadcast to all connected clients.
     """
     if os.environ.get("PRISMATIC_WS_AUTH_REQUIRED", "0") in ("1", "true", "TRUE"):
-        auth_hdr = websocket.headers.get("Authorization", "")
-        if not auth_hdr:
-            auth_hdr = websocket.query_params.get("token", "")
+        auth_hdr = websocket.headers.get("Authorization", "").strip()
+        if not auth_hdr.startswith("Bearer "):
+            await websocket.close(code=1008, reason="Unauthorized")
+            return
+        token = auth_hdr[7:].strip()
         allowed = [
             t.strip()
             for t in os.environ.get(
-                "PRISMATIC_WS_TOKENS", "valid-token,test-token"
+                "PRISMATIC_WS_TOKENS", ""
             ).split(",")
             if t.strip()
         ]
-        if not auth_hdr or not any(t in auth_hdr for t in allowed):
+        import secrets
+        if not token or not any(secrets.compare_digest(token, t) for t in allowed):
             await websocket.close(code=1008, reason="Unauthorized")
             return
 
@@ -4816,11 +4819,13 @@ async def pwp_kpi_publish_dashboard(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-from prismatic.review_factory.routes import router as review_factory_router
+from prismatic.review_factory.routes import create_review_factory_router
 from prismatic.workspace.routes import create_workspace_router
 from prismatic.deploy.routes import create_deploy_router
 
-app.include_router(review_factory_router, prefix="/api/review-factory")
+_rf_router = create_review_factory_router()
+if _rf_router:
+    app.include_router(_rf_router, prefix="/api")
 
 _ws_router = create_workspace_router()
 if _ws_router:

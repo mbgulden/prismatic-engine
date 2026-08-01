@@ -9,8 +9,8 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import selectors
+import shutil
 import signal
 import stat
 import subprocess
@@ -270,44 +270,55 @@ def _run(
             proc.wait()
 
     assert proc.stdout is not None and proc.stderr is not None
-    selector.register(proc.stdout, selectors.EVENT_READ)
-    selector.register(proc.stderr, selectors.EVENT_READ)
-    try:
-        while selector.get_map():
+    if os.name == "nt":
+        try:
+            out_bytes, err_bytes = proc.communicate(timeout=remaining_to_deadline())
+            retained.extend(out_bytes or b"")
+            retained.extend(err_bytes or b"")
+            if len(retained) > limit:
+                _fail("tree_listing_overflow" if binary else "output_overflow", label)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            _fail(timeout_code, label)
+    else:
+        selector.register(proc.stdout, selectors.EVENT_READ)
+        selector.register(proc.stderr, selectors.EVENT_READ)
+        try:
+            while selector.get_map():
+                remaining = remaining_to_deadline()
+                if remaining <= 0:
+                    terminate_and_reap()
+                    _fail(timeout_code, label)
+                events = selector.select(remaining)
+                if not events:
+                    if remaining_to_deadline() <= 0:
+                        terminate_and_reap()
+                        _fail(timeout_code, label)
+                    continue
+                for key, _ in events:
+                    chunk = os.read(key.fd, 64 * 1024)
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        continue
+                    total += len(chunk)
+                    if total > limit:
+                        terminate_and_reap()
+                        _fail(
+                            "tree_listing_overflow" if binary else "output_overflow", label
+                        )
+                    retained.extend(chunk)
             remaining = remaining_to_deadline()
             if remaining <= 0:
                 terminate_and_reap()
                 _fail(timeout_code, label)
-            events = selector.select(remaining)
-            if not events:
-                if remaining_to_deadline() <= 0:
-                    terminate_and_reap()
-                    _fail(timeout_code, label)
-                continue
-            for key, _ in events:
-                chunk = os.read(key.fd, 64 * 1024)
-                if not chunk:
-                    selector.unregister(key.fileobj)
-                    continue
-                total += len(chunk)
-                if total > limit:
-                    terminate_and_reap()
-                    _fail(
-                        "tree_listing_overflow" if binary else "output_overflow", label
-                    )
-                retained.extend(chunk)
-        # Drain-on-EOF completed; do not give a completed command a refreshed timeout.
-        remaining = remaining_to_deadline()
-        if remaining <= 0:
-            terminate_and_reap()
-            _fail(timeout_code, label)
-        try:
-            proc.wait(timeout=remaining)
-        except subprocess.TimeoutExpired:
-            terminate_and_reap()
-            _fail(timeout_code, label)
-    finally:
-        selector.close()
+            try:
+                proc.wait(timeout=remaining)
+            except subprocess.TimeoutExpired:
+                terminate_and_reap()
+                _fail(timeout_code, label)
+        finally:
+            selector.close()
     if proc.returncode not in allowed_returncodes:
         _fail("git_command_failed", label)
     return bytes(retained)
