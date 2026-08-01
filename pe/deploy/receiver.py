@@ -174,3 +174,11 @@ def create_deploy_receiver_app() -> Any:
         return {"status": "ok", "port": RECEIVER_PORT, "time": datetime.now(timezone.utc).isoformat()}
 
     return app
+
+
+app = create_deploy_receiver_app()
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("pe.deploy.receiver:app", host="0.0.0.0", port=RECEIVER_PORT, reload=False)
+
