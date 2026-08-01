@@ -234,7 +234,7 @@ def _attach_routes(router: Any) -> None:
         principal: Principal = Depends(require_admin_principal),
     ) -> Dict[str, Any]:
         """Authorize a merge-ready job for merge."""
-        actor = body.get("actor") or principal.actor_id or "operator"
+        actor = principal.identity
         q = _get_queue()
         auth_id = q.authorize_merge(
             review_job_id=job_id,
@@ -264,7 +264,7 @@ def _attach_routes(router: Any) -> None:
     ) -> Dict[str, Any]:
         """Force-release a stuck lease on a review job."""
         q = _get_queue()
-        actor = principal.actor_id or "operator"
+        actor = principal.identity
         released = q.force_release_lease(review_job_id=job_id, actor=actor)
         if not released:
             raise HTTPException(
@@ -328,7 +328,7 @@ def _attach_routes(router: Any) -> None:
     ) -> Dict[str, Any]:
         """Trigger the stale lease janitor to reset expired leases."""
         q = _get_queue()
-        actor = principal.actor_id or "operator"
+        actor = principal.identity
         result = q.run_janitor(actor=actor)
         return {
             "result": result,

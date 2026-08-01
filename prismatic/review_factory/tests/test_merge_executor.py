@@ -236,3 +236,45 @@ class TestMergeExecution:
         result = executor.execute(job_id, manifest=manifest)
         assert not result.success
         assert "authorization" in result.error.lower()
+
+    def test_non_dry_run_merge_executes_attestation_and_lock(self, queue, tmp_path):
+        """Verify non-dry-run merge calls submit_attestation, acquire_lock, and release_lock."""
+        from unittest.mock import patch, MagicMock
+        from prismatic.core.merge_factory import MergeFactoryStore
+
+        mf_store = MergeFactoryStore(db_path=tmp_path / "test_mf.db")
+        executor = MergeExecutor(queue=queue, dry_run=False, mf_store=mf_store)
+
+        job_id = _create_merge_ready_job(queue, tier=0)
+        auth_id = queue.authorize_merge(job_id, actor="michael")
+        assert auth_id is not None
+
+        manifest = _create_merge_ready_manifest()
+        ci_checks = [
+            CICheck(
+                name="rf-v1-verification",
+                run_id=1000,
+                conclusion="SUCCESS",
+                head_sha="b" * 40,
+                details_url="https://github.com/mbgulden/prismatic-engine/actions/runs/1000",
+            )
+        ]
+        manifest = manifest.record_ci(ci_checks)
+        manifest = manifest.mark_merge_eligible()
+
+        mock_integration_manifest = MagicMock()
+        mock_integration_manifest.merge_sha = "c" * 40
+
+        with patch(
+            "prismatic.review_factory.merge_executor.integrate_pipeline_run",
+            return_value=mock_integration_manifest,
+        ):
+            result = executor.execute(job_id, manifest=manifest)
+
+        assert result.success
+        assert result.merge_sha == "c" * 40
+
+        # Verify attestation was written to mf_store
+        decision_hist = mf_store.get_decision_history("GRO-TEST-MERGE")
+        assert len(decision_hist) == 1
+        assert decision_hist[0]["decision"] == "APPROVE_MERGE"

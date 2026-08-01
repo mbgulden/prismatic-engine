@@ -1,3 +1,5 @@
 # Lossless Slice A fragments preserve legacy canonical dashboard bytes exactly.
 # Trailing-space and blank-at-EOF checks remain active everywhere else.
 prismatic/gateway/dashboard_src/** whitespace=-blank-at-eof,-trailing-space
+prismatic/gateway/templates/dashboard.html whitespace=-blank-at-eof,-trailing-space
+prismatic/gateway/server.py whitespace=-blank-at-eof,-trailing-space

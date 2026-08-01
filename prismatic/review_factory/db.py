@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS rf_schema_version (
 -- §5.1: review_jobs
 CREATE TABLE IF NOT EXISTS review_jobs (
     review_job_id TEXT PRIMARY KEY,
-    completed_work_id TEXT NOT NULL,
+    completed_work_id TEXT UNIQUE NOT NULL,
     task_id TEXT NOT NULL,
     repository TEXT NOT NULL,
     base_commit TEXT NOT NULL,

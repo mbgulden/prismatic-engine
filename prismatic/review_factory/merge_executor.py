@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from prismatic.core.merge_factory import MergeFactoryStore
+from prismatic.core.merge_factory import MergeFactoryStore, Principal
 from prismatic.integrate import (
     IntegrationManifest,
     integrate_pipeline_run,
@@ -175,28 +175,34 @@ class MergeExecutor:
             manifest = manifest.mark_merge_eligible()
 
         # Step 3: Acquire Merge Lock and Record Attestation via MergeFactoryStore
-        attestation = self.mf_store.record_judge_attestation(
+        principal = Principal(
+            identity=auth.actor, scopes=["merge-judge", "merge-factory-admin"]
+        )
+        manifest_digest = manifest.digest()
+
+        attestation = self.mf_store.submit_attestation(
             issue_id=job.task_id,
             decision="APPROVE_MERGE",
             base_sha=job.base_commit,
             candidate_sha=job.candidate_commit,
-            manifest_digest=manifest.digest(),
-            evidence_digest=manifest.digest(),
+            manifest_digest=manifest_digest,
+            evidence_digest=manifest_digest,
             repository=job.repository,
             target="main",
-            attested_by=auth.actor,
+            principal=principal,
         )
 
-        lock = self.mf_store.acquire_merge_lock(
+        _ = self.mf_store.acquire_lock(
             repository=job.repository,
             target="main",
             issue_id=job.task_id,
             base_sha=job.base_commit,
             candidate_sha=job.candidate_commit,
-            manifest_digest=manifest.digest(),
-            evidence_digest=manifest.digest(),
+            manifest_digest=manifest_digest,
+            evidence_digest=manifest_digest,
             approval_attestation_id=attestation["attestation_id"],
             ttl_seconds=300,
+            principal=principal,
         )
 
         # Step 4: Transition job to MERGING
@@ -221,11 +227,12 @@ class MergeExecutor:
             )
 
             # Step 6: Mark manifest MERGED
-            manifest = manifest.mark_merged(merge_sha=merge_sha)
+            manifest = manifest.mark_merged(
+                candidate_sha=job.candidate_commit, merge_sha=merge_sha
+            )
 
             # Step 7: Consume authorization and mark job MERGED
-            auth.consume()
-            self.queue.db.insert_authorization(auth)
+            self.queue.db.consume_authorization(auth.authorization_id)
             self.queue.db.update_review_job_state(
                 job.review_job_id, ReviewJobState.MERGED
             )
@@ -250,10 +257,11 @@ class MergeExecutor:
                 final_manifest_state=manifest.state.value,
             )
         finally:
-            self.mf_store.release_merge_lock(
+            self.mf_store.release_lock(
                 repository=job.repository,
                 target="main",
-                lock_token=lock["lock_token"],
+                issue_id=job.task_id,
+                principal=principal,
             )
 
     def _load_manifest(self, job: ReviewJob) -> MergeCandidateManifest:
