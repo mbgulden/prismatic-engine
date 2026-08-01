@@ -1,0 +1,64 @@
+name: Post-Merge Production Deploy Hook (WB-1)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry-run deploy mode'
+        required: true
+        type: boolean
+        default: true
+
+jobs:
+  post-merge-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 5
+
+      - name: Calculate Payload & HMAC Signature
+        id: payload
+        env:
+          HMAC_SECRET: ${{ secrets.DEPLOY_HMAC_SECRET }}
+        run: |
+          if [ -z "$HMAC_SECRET" ]; then
+            echo "::error::DEPLOY_HMAC_SECRET repository secret is missing!"
+            exit 1
+          fi
+
+          PR_SHA="${{ github.sha }}"
+          COMMIT_MSG=$(git log -1 --pretty=%B | head -n 1)
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          
+          # Construct JSON payload
+          PAYLOAD_JSON=$(jq -n \
+            --arg sha "$PR_SHA" \
+            --arg title "$COMMIT_MSG" \
+            --arg deployer "${{ github.actor }}" \
+            --arg time "$TIMESTAMP" \
+            '{pr_sha: $sha, pr_title: $title, deployer: $deployer, merged_at: $time}')
+            
+          HMAC_SIG=$(echo -n "$PAYLOAD_JSON" | openssl dgst -sha256 -hmac "$HMAC_SECRET" | sed 's/^.*= //')
+          
+          echo "payload=$PAYLOAD_JSON" >> $GITHUB_OUTPUT
+          echo "sig=$HMAC_SIG" >> $GITHUB_OUTPUT
+
+      - name: Send Post-Merge Deploy Trigger to Receiver
+        env:
+          PAYLOAD_JSON: ${{ steps.payload.outputs.payload }}
+          HMAC_SIG: ${{ steps.payload.outputs.sig }}
+          RECEIVER_HOST: ${{ secrets.DEPLOY_RECEIVER_HOST }}
+        run: |
+          HOST="${RECEIVER_HOST:-localhost}"
+          echo "Triggering deploy receiver at http://${HOST}:9460/deploy"
+          curl -s -f -X POST \
+            -H "X-Hub-Signature-256: sha256=${HMAC_SIG}" \
+            -H "Content-Type: application/json" \
+            --data "${PAYLOAD_JSON}" \
+            "http://${HOST}:9460/deploy" || echo "Receiver call completed or offline"
+

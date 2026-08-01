@@ -363,6 +363,21 @@ async def _observability_auth_middleware(request: Request, call_next):
 app.include_router(create_event_ingest_route())
 app.include_router(merge_factory_router, prefix="/api")
 
+try:
+    from prismatic.workspace.routes import workspace_router
+    if workspace_router:
+        app.include_router(workspace_router, prefix="/api")
+except Exception as _exc:
+    logger.warning("workspace_router gateway mounting skipped: %s", _exc)
+
+try:
+    from prismatic.deploy.routes import deploy_router
+    if deploy_router:
+        app.include_router(deploy_router, prefix="/api")
+except Exception as _exc:
+    logger.warning("deploy_router gateway mounting skipped: %s", _exc)
+
+
 # ── Startup timestamp ──────────────────────────────────────────────
 _started_at: float = 0.0
 

@@ -1,0 +1,153 @@
+<!-- Curated Workspace Dashboard Tab (WA-7) -->
+<div id="tab-workspace" class="dashboard-tab p-6 space-y-6">
+  <div class="flex items-center justify-between border-b border-gray-700 pb-4">
+    <div>
+      <h2 class="text-2xl font-bold text-white flex items-center gap-2">
+        <span>📚</span> Curated Workspace
+      </h2>
+      <p class="text-sm text-gray-400">Live documentation tree served directly from deployed releases.</p>
+    </div>
+    <div class="flex items-center gap-3">
+      <input type="text" id="workspace-search" placeholder="Search documentation..." 
+             class="px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm text-white focus:outline-none focus:border-indigo-500" 
+             onkeyup="filterWorkspace()">
+      <button onclick="loadWorkspaceTree()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-medium transition">
+        Refresh Tree
+      </button>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-12 gap-6">
+    <!-- Sidebar: Category & Document Tree -->
+    <div class="col-span-4 bg-gray-900 border border-gray-800 rounded-xl p-4 max-h-[75vh] overflow-y-auto space-y-4" id="workspace-tree-container">
+      <div class="text-center text-gray-500 py-8">Loading documentation tree...</div>
+    </div>
+
+    <!-- Main Content: Document Viewer -->
+    <div class="col-span-8 bg-gray-900 border border-gray-800 rounded-xl p-6 flex flex-col max-h-[75vh]">
+      <div id="workspace-doc-header" class="border-b border-gray-800 pb-4 mb-4 flex items-center justify-between">
+        <div>
+          <h3 id="doc-title" class="text-xl font-semibold text-white">Select a Document</h3>
+          <p id="doc-path" class="text-xs text-gray-400 mt-1">Select an entry from the tree on the left to view documentation.</p>
+        </div>
+        <div id="doc-actions" class="hidden flex items-center gap-2">
+          <span id="doc-status-badge" class="px-2.5 py-1 text-xs font-semibold rounded-full bg-green-900/60 text-green-300">PASS</span>
+          <button onclick="shareCurrentDoc()" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-200 rounded-md text-xs font-medium border border-gray-700 transition">
+            🔗 Share (24h Link)
+          </button>
+        </div>
+      </div>
+
+      <div id="doc-content-container" class="flex-1 overflow-y-auto pr-2 text-gray-300 text-sm font-mono whitespace-pre-wrap">
+        <div class="text-gray-500 italic py-12 text-center">No document selected</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentDocId = null;
+
+async function loadWorkspaceTree() {
+  const container = document.getElementById('workspace-tree-container');
+  try {
+    const res = await fetch('/api/workspace/tree');
+    const data = await res.json();
+    
+    if (!data.by_category || Object.keys(data.by_category).length === 0) {
+      container.innerHTML = '<div class="text-gray-500 text-center py-8">No documentation entries found.</div>';
+      return;
+    }
+
+    let html = '';
+    for (const [cat, entries] of Object.entries(data.by_category)) {
+      html += `
+        <div class="workspace-category-group">
+          <h4 class="text-xs font-bold uppercase tracking-wider text-gray-400 mb-2 flex items-center justify-between">
+            <span>${cat}</span>
+            <span class="text-gray-600 text-[10px]">${entries.length}</span>
+          </h4>
+          <div class="space-y-1 pl-2">
+      `;
+
+      entries.forEach(e => {
+        const passed = e.acceptance && e.acceptance.passed;
+        const badgeColor = passed ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30';
+        
+        html += `
+          <div onclick="selectDoc('${e.id}')" 
+               class="workspace-doc-item p-2 rounded-lg hover:bg-gray-800 cursor-pointer flex items-center justify-between text-sm transition group"
+               data-title="${e.title.toLowerCase()}" data-path="${e.path.toLowerCase()}">
+            <div class="truncate max-w-[200px] text-gray-300 group-hover:text-white">${e.title}</div>
+            <span class="text-[10px] px-1.5 py-0.5 border rounded ${badgeColor}">${passed ? 'PASS' : 'FAIL'}</span>
+          </div>
+        `;
+      });
+
+      html += '</div></div>';
+    }
+
+    container.innerHTML = html;
+  } catch (err) {
+    container.innerHTML = `<div class="text-red-400 text-center py-8">Error loading tree: ${err.message}</div>`;
+  }
+}
+
+async function selectDoc(docId) {
+  currentDocId = docId;
+  const headerActions = document.getElementById('doc-actions');
+  const titleEl = document.getElementById('doc-title');
+  const pathEl = document.getElementById('doc-path');
+  const contentEl = document.getElementById('doc-content-container');
+  const badgeEl = document.getElementById('doc-status-badge');
+
+  try {
+    const res = await fetch(`/api/workspace/entry/${docId}`);
+    const data = await res.json();
+    const entry = data.entry;
+
+    titleEl.textContent = entry.title;
+    pathEl.textContent = `path: ${entry.path} | category: ${entry.category} | modified: ${entry.last_modified}`;
+    headerActions.classList.remove('hidden');
+
+    const passed = entry.acceptance && entry.acceptance.passed;
+    badgeEl.className = passed 
+      ? 'px-2.5 py-1 text-xs font-semibold rounded-full bg-green-900/60 text-green-300' 
+      : 'px-2.5 py-1 text-xs font-semibold rounded-full bg-red-900/60 text-red-300';
+    badgeEl.textContent = passed ? 'ACCEPTANCE PASS' : 'ACCEPTANCE FAIL';
+
+    contentEl.textContent = data.content || 'Empty document';
+  } catch (err) {
+    contentEl.textContent = `Error loading document: ${err.message}`;
+  }
+}
+
+async function shareCurrentDoc() {
+  if (!currentDocId) return;
+  try {
+    const res = await fetch(`/api/workspace/share?doc_id=${currentDocId}`, { method: 'POST' });
+    const data = await res.json();
+    const fullUrl = window.location.origin + data.share_url;
+    navigator.clipboard.writeText(fullUrl);
+    alert(`Signed 24h share link copied to clipboard!\n${fullUrl}`);
+  } catch (err) {
+    alert(`Failed to create share link: ${err.message}`);
+  }
+}
+
+function filterWorkspace() {
+  const query = document.getElementById('workspace-search').value.toLowerCase();
+  const items = document.querySelectorAll('.workspace-doc-item');
+  items.forEach(item => {
+    const title = item.getAttribute('data-title') || '';
+    const path = item.getAttribute('data-path') || '';
+    if (title.includes(query) || path.includes(query)) {
+      item.style.display = 'flex';
+    } else {
+      item.style.display = 'none';
+    }
+  });
+}
+
+document.addEventListener('DOMContentLoaded', loadWorkspaceTree);
+</script>
