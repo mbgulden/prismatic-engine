@@ -130,7 +130,7 @@ def test_dry_run_leaves_database_and_manifest_strictly_readonly(tmp_path):
     )
 
     # Authorize merge explicitly
-    auth_id = q.authorize_merge(job_id, actor="michael")
+    auth_id = q.authorize_merge(job_id, actor="standing-policy: tier-0")
     assert auth_id is not None
 
     job_before = db.get_review_job(job_id)

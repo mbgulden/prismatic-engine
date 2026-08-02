@@ -8,8 +8,6 @@ Uses dry_run=True since we can't run ``integrate_pipeline_run()``
 in a test without a real git repository.
 """
 
-import subprocess
-
 import pytest
 
 from prismatic.merge_candidate_manifest import (
@@ -195,7 +193,7 @@ class TestMergeExecution:
         job_id = _create_merge_ready_job(queue, tier=0)
 
         # Authorize explicitly
-        auth_id = queue.authorize_merge(job_id, actor="michael")
+        auth_id = queue.authorize_merge(job_id, actor="standing-policy: tier-0")
         assert auth_id is not None
 
         # Build a CLEAN manifest for the executor
@@ -239,9 +237,9 @@ class TestMergeExecution:
         assert not result.success
         assert "authorization" in result.error.lower()
 
-    def test_non_dry_run_merge_executes_attestation_and_lock(self, queue, tmp_path):
-        """Verify non-dry-run merge calls submit_attestation, acquire_lock, and release_lock."""
-        from unittest.mock import MagicMock, patch
+    def test_non_dry_run_rejects_synthetic_ci_before_claim(self, queue, tmp_path):
+        """Synthetic GitHub-shaped checks cannot authorize a non-dry merge."""
+        from unittest.mock import patch
 
         from prismatic.core.merge_factory import MergeFactoryStore
 
@@ -249,81 +247,37 @@ class TestMergeExecution:
         executor = MergeExecutor(queue=queue, dry_run=False, mf_store=mf_store)
 
         job_id = _create_merge_ready_job(queue, tier=0)
-        auth_id = queue.authorize_merge(job_id, actor="michael")
+        auth_id = queue.authorize_merge(job_id, actor="standing-policy: tier-0")
         assert auth_id is not None
 
         manifest = _create_merge_ready_manifest()
-        ci_checks = [
-            CICheck(
-                name="rf-v1-verification",
-                run_id=1000,
-                conclusion="SUCCESS",
-                head_sha="b" * 40,
-                details_url="https://github.com/mbgulden/prismatic-engine/actions/runs/1000",
-            )
-        ]
-        manifest = manifest.record_ci(ci_checks)
-        manifest = manifest.mark_merge_eligible()
+        manifest = manifest.record_ci(
+            [
+                CICheck(
+                    name="rf-v1-verification",
+                    run_id=1000,
+                    conclusion="SUCCESS",
+                    head_sha="b" * 40,
+                    details_url="https://github.com/mbgulden/prismatic-engine/actions/runs/1000",
+                )
+            ]
+        ).mark_merge_eligible()
 
-        mock_integration_manifest = MagicMock()
-        mock_integration_manifest.merge_sha = "c" * 40
-
-        # Provide a disposable repository so the executor's git fences pass.
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        subprocess.run(
-            ["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True
-        )
-        subprocess.run(
-            ["git", "config", "user.email", "test@example.invalid"],
-            cwd=repo,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "RF Test"],
-            cwd=repo,
-            check=True,
-            capture_output=True,
-        )
-        (repo / "README.md").write_text("seed\n")
-        subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "commit", "-m", "seed"], cwd=repo, check=True, capture_output=True
-        )
-        target_head = subprocess.check_output(
-            ["git", "rev-parse", "main"], cwd=repo, text=True
-        ).strip()
-        executor.repo_path = repo
-
-        def fake_rev_parse(ref: str) -> str:
-            # Match the real seeded head so the rollback path succeeds against it,
-            # and return the same tree as the merge commit so the result-tree fence
-            # passes under this mocked integration.
-            if ref.endswith("^{tree}"):
-                return "c" * 40
-            return target_head
-
-        with (
-            patch(
-                "prismatic.review_factory.merge_executor.integrate_pipeline_run",
-                return_value=mock_integration_manifest,
-            ),
-            patch(
-                "prismatic.review_factory.merge_executor.MergeExecutor._git_rev_parse",
-                side_effect=fake_rev_parse,
-            ),
-        ):
+        with patch(
+            "prismatic.review_factory.merge_executor.integrate_pipeline_run"
+        ) as integration:
             result = executor.execute(job_id, manifest=manifest)
 
-        # Merge must fail closed when the resulting tree does not match the
-        # candidate-tree identity bound to the job; this is the new security
-        # contract the previous head did not enforce.
         assert result.success is False
-        assert "Result tree" in (result.error or "")
+        assert "lacks provider-neutral receipt provenance" in (result.error or "")
+        integration.assert_not_called()
         row = queue.db.get_review_job(job_id)
         assert row is not None
-        assert row.state == ReviewJobState.MERGE_VERIFICATION_FAILED.value
+        assert row.state == ReviewJobState.MERGE_AUTHORIZED.value
         decision_hist = mf_store.get_decision_history("GRO-TEST-MERGE")
-        assert len(decision_hist) == 1
-        assert decision_hist[0]["decision"] == "APPROVE_MERGE"
+        assert decision_hist == []
+        consumed_at = queue.db.conn.execute(
+            "SELECT consumed_at FROM merge_authorizations WHERE authorization_id = ?",
+            (auth_id,),
+        ).fetchone()[0]
+        assert consumed_at == ""

@@ -535,15 +535,33 @@ class ReviewQueue:
             return None
 
         tier = job.risk_tier
-        if not actor:
+        if not actor or not actor.strip():
             logger.warning(
-                "authorize_merge rejected: explicit actor identity required (no invented standing policy)"
+                "authorize_merge rejected: explicit non-whitespace actor identity required"
             )
             return None
+        actor = actor.strip()
 
         if tier <= RiskTier.STANDARD:
+            expected_actor = f"standing-policy: tier-{tier}"
+            if actor != expected_actor:
+                logger.warning(
+                    "authorize_merge rejected: tier-%s requires actor %s",
+                    tier,
+                    expected_actor,
+                )
+                return None
             scope = MergeScope.TIER_0_AUTO if tier == 0 else MergeScope.TIER_1_AUTO
         else:
+            if (
+                not actor.startswith("human:")
+                or not actor.removeprefix("human:").strip()
+            ):
+                logger.warning(
+                    "authorize_merge rejected: tier-%s requires human:<identity>",
+                    tier,
+                )
+                return None
             scope = (
                 MergeScope.TIER_2_EXCEPTION
                 if tier == 2

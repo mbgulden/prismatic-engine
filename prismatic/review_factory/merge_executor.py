@@ -31,6 +31,7 @@ from prismatic.review_factory.models import (
     ReviewJobState,
 )
 from prismatic.review_factory.queue import ReviewQueue
+from prismatic.verification.receipt_store import VerificationReceiptStore
 
 logger = logging.getLogger(__name__)
 
@@ -56,11 +57,13 @@ class MergeExecutor:
         dry_run: bool = False,
         repo_path: Path | None = None,
         mf_store: MergeFactoryStore | None = None,
+        verification_receipt_store: VerificationReceiptStore | None = None,
     ):
         self.queue = queue or ReviewQueue()
         self.dry_run = dry_run
         self.repo_path = repo_path
         self.mf_store = mf_store or MergeFactoryStore()
+        self.verification_receipt_store = verification_receipt_store
 
     def execute(
         self,
@@ -151,9 +154,6 @@ class MergeExecutor:
             result = self._execute_merge(job, manifest, auth)
         except Exception as exc:
             logger.error("Merge failed for %s: %s", job_id, exc)
-            self.queue.db.update_review_job_state(
-                job_id, ReviewJobState.MERGE_VERIFICATION_FAILED
-            )
             return MergeResult(job_id=job_id, success=False, error=str(exc))
 
         return result
@@ -164,21 +164,24 @@ class MergeExecutor:
         manifest: MergeCandidateManifest,
         auth: MergeAuthorization,
     ) -> MergeResult:
-        # Step 1: Record CI checks (if manifest is in CLEAN state)
+        # Step 1: Validate every required check against a durable provider-neutral
+        # receipt, even when the caller supplies a pre-promoted manifest.
+        ci_checks = self._build_ci_checks(job, manifest)
         if manifest.state == PromotionState.CLEAN:
-            ci_checks = self._build_ci_checks(job, manifest)
             manifest = manifest.record_ci(ci_checks)
-
-        # Step 2: Mark merge eligible (CI_GREEN -> MERGE_ELIGIBLE)
         if manifest.state == PromotionState.CI_GREEN:
             manifest = manifest.mark_merge_eligible()
+        if manifest.state != PromotionState.MERGE_ELIGIBLE:
+            raise PermissionError(
+                f"Manifest state {manifest.state.value} is not merge eligible"
+            )
 
-        # Step 3: Validate authority scope and identity
+        # Step 2: Validate authority scope and identity.
         allowed_scopes = (
-            "merge-judge",
-            "merge-factory-admin",
             "tier-0-auto",
-            "human-override",
+            "tier-1-auto",
+            "tier-2-exception",
+            "tier-3-exception",
         )
         if not auth.actor or not auth.actor.strip():
             raise PermissionError("Authorization actor identity is required")
@@ -188,85 +191,99 @@ class MergeExecutor:
             )
         scopes = list({auth.scope, "merge-judge"})
         principal = Principal(identity=auth.actor, scopes=scopes)
-        manifest_digest = manifest.digest()
 
-        # Step 4: Bind the merge to the manifest's declared target and expected tree.
+        # Step 3: Bind the manifest and target to the exact review job.
+        manifest_bindings = {
+            "repository": (manifest.repository, job.repository),
+            "base_sha": (manifest.base_sha, job.base_commit),
+            "candidate_sha": (manifest.candidate_sha, job.candidate_commit),
+        }
+        for field, (observed, expected) in manifest_bindings.items():
+            if observed != expected:
+                raise PermissionError(
+                    f"Manifest {field} mismatch: expected {expected}, got {observed}"
+                )
         target_branch = manifest.target
         if not target_branch:
             raise PermissionError(
                 f"Manifest target is unset; refusing to merge {job.review_job_id}"
             )
-        if not (job.candidate_tree or job.candidate_commit):
+        expected_merge_tree = auth.expected_merge_tree
+        if not expected_merge_tree:
             raise PermissionError(
-                f"Candidate tree/commit is unset for {job.review_job_id}"
+                f"Authorization expected merge tree is unset for {job.review_job_id}"
             )
-        expected_merge_tree = job.candidate_tree or job.candidate_commit
+        manifest_digest = manifest.digest()
 
-        attestation = self.mf_store.submit_attestation(
-            issue_id=job.task_id,
-            decision="APPROVE_MERGE",
-            base_sha=job.candidate_commit,
-            candidate_sha=job.candidate_commit,
-            manifest_digest=manifest_digest,
-            evidence_digest=manifest_digest,
-            repository=job.repository,
-            target=target_branch,
-            principal=principal,
-        )
+        # Step 4: Claim the one-shot authorization before any state, Git, lock,
+        # or attestation side effect. A concurrent loser exits here and must not
+        # roll back the winner's repository.
+        if not self.queue.db.consume_authorization(auth.authorization_id):
+            raise PermissionError(
+                f"Authorization {auth.authorization_id} could not be claimed"
+            )
+        if not self.queue.db.update_review_job_state(
+            job.review_job_id, ReviewJobState.MERGING
+        ):
+            raise PermissionError(
+                f"Job {job.review_job_id} could not transition to merging"
+            )
 
-        self.mf_store.acquire_lock(
-            repository=job.repository,
-            target=target_branch,
-            issue_id=job.task_id,
-            base_sha=job.candidate_commit,
-            candidate_sha=job.candidate_commit,
-            manifest_digest=manifest_digest,
-            evidence_digest=manifest_digest,
-            approval_attestation_id=attestation["attestation_id"],
-            ttl_seconds=300,
-            principal=principal,
-        )
+        target_head_before: str | None = None
+        lock_acquired = False
         try:
             target_head_before = self._git_rev_parse(target_branch)
-
-            # Step 5: Transition the job to MERGING before any side effect.
-            self.queue.db.update_review_job_state(
-                job.review_job_id, ReviewJobState.MERGING
+            attestation = self.mf_store.submit_attestation(
+                issue_id=job.task_id,
+                decision="APPROVE_MERGE",
+                base_sha=job.base_commit,
+                candidate_sha=job.candidate_commit,
+                manifest_digest=manifest_digest,
+                evidence_digest=manifest_digest,
+                repository=job.repository,
+                target=target_branch,
+                principal=principal,
             )
+            self.mf_store.acquire_lock(
+                repository=job.repository,
+                target=target_branch,
+                issue_id=job.task_id,
+                base_sha=job.base_commit,
+                candidate_sha=job.candidate_commit,
+                manifest_digest=manifest_digest,
+                evidence_digest=manifest_digest,
+                approval_attestation_id=attestation["attestation_id"],
+                ttl_seconds=300,
+                principal=principal,
+            )
+            lock_acquired = True
 
-            # Step 6: Atomic authorization claim - only one executor consumes the auth.
-            consumed = self.queue.db.consume_authorization(auth.authorization_id)
-            if not consumed:
-                raise PermissionError(
-                    f"Authorization {auth.authorization_id} could not be claimed"
-                )
-
-            # Step 7: Execute real Git merge against the manifest target.
+            # Step 5: Execute real Git merge against the manifest target.
             integration_manifest = integrate_pipeline_run(
                 issue_id=job.task_id,
                 branch=job.candidate_commit,
                 target_branch=target_branch,
                 repo_path=self.repo_path,
             )
-
-            merge_sha = (
-                integration_manifest.merge_sha
-                if integration_manifest
-                and getattr(integration_manifest, "merge_sha", None)
-                else None
-            )
+            if not integration_manifest.is_success():
+                raise RuntimeError(
+                    integration_manifest.error_message
+                    or "Integration pipeline returned a non-success status"
+                )
+            if integration_manifest.test_results.get("passed") is False:
+                raise RuntimeError(
+                    integration_manifest.error_message
+                    or "Integration pipeline tests returned failure"
+                )
+            merge_sha = integration_manifest.merge_sha
             if not merge_sha:
                 raise RuntimeError("Integration did not return a merge SHA")
 
             merge_tree = self._git_rev_parse(f"{merge_sha}^{{tree}}")
             if merge_tree != expected_merge_tree:
-                self._rollback_target(
-                    target_branch=target_branch,
-                    original_head=target_head_before,
-                )
                 raise PermissionError(
                     f"Result tree {merge_tree} does not match expected "
-                    f"{expected_merge_tree}; rolled back {target_branch}"
+                    f"{expected_merge_tree}; refusing merge"
                 )
 
             # Step 8: Mark manifest MERGED and persist the merged state.
@@ -300,24 +317,28 @@ class MergeExecutor:
             )
         except Exception as exc:
             logger.error("Integration merge execution failed: %s", exc)
-            try:
-                self._rollback_target(
-                    target_branch=target_branch,
-                    original_head=target_head_before,
-                )
-            except Exception as rollback_exc:
-                logger.error("Rollback of %s failed: %s", target_branch, rollback_exc)
+            if target_head_before is not None:
+                try:
+                    self._rollback_target(
+                        target_branch=target_branch,
+                        original_head=target_head_before,
+                    )
+                except Exception as rollback_exc:
+                    logger.error(
+                        "Rollback of %s failed: %s", target_branch, rollback_exc
+                    )
             self.queue.db.update_review_job_state(
                 job.review_job_id, ReviewJobState.MERGE_VERIFICATION_FAILED
             )
             raise
         finally:
-            self.mf_store.release_lock(
-                repository=job.repository,
-                target=target_branch,
-                issue_id=job.task_id,
-                principal=principal,
-            )
+            if lock_acquired:
+                self.mf_store.release_lock(
+                    repository=job.repository,
+                    target=target_branch,
+                    issue_id=job.task_id,
+                    principal=principal,
+                )
 
     def _git_rev_parse(self, ref: str) -> str:
         import subprocess
@@ -362,17 +383,73 @@ class MergeExecutor:
     def _build_ci_checks(
         self, job: ReviewJob, manifest: MergeCandidateManifest
     ) -> tuple:
-        # Require real verified CI checks on manifest; fail closed if missing or red
-        existing_checks = {c.name: c for c in manifest.ci_checks}
+        """Validate required checks against durable provider-neutral receipts."""
+        existing_checks = {check.name: check for check in manifest.ci_checks}
+        if not manifest.required_ci_checks:
+            raise ValueError(
+                f"Manifest for {job.review_job_id} has no required verification checks"
+            )
+        receipt_store = self.verification_receipt_store or VerificationReceiptStore()
+        validated = []
         for name in manifest.required_ci_checks:
-            if (
-                name not in existing_checks
-                or existing_checks[name].conclusion.lower() != "success"
-            ):
+            check = existing_checks.get(name)
+            if check is None or check.conclusion != "SUCCESS":
                 raise ValueError(
                     f"Required CI check '{name}' missing or not green for candidate {job.candidate_commit}"
                 )
-        return manifest.ci_checks
+            if check.head_sha != job.candidate_commit:
+                raise ValueError(
+                    f"Required CI check '{name}' head mismatch for candidate {job.candidate_commit}"
+                )
+            if not all(
+                (
+                    check.provider_receipt_id,
+                    check.provider_receipt_sha256,
+                    check.provider_policy_sha256,
+                )
+            ):
+                raise ValueError(
+                    f"Required CI check '{name}' lacks provider-neutral receipt provenance"
+                )
+            try:
+                stored = receipt_store.get(check.provider_receipt_id)
+            except KeyError as exc:
+                raise ValueError(
+                    f"Required CI check '{name}' references an unknown provider-neutral receipt"
+                ) from exc
+            if stored.receipt_sha256 != check.provider_receipt_sha256:
+                raise ValueError(f"Required CI check '{name}' receipt digest mismatch")
+            if stored.policy_sha256 != check.provider_policy_sha256:
+                raise ValueError(f"Required CI check '{name}' policy digest mismatch")
+            if not stored.merge_eligible or stored.classification != "accepted":
+                raise ValueError(
+                    f"Required CI check '{name}' provider-neutral receipt is not accepted: "
+                    f"classification={stored.classification}, reason={stored.decision_reason}"
+                )
+            receipt_bindings = {
+                "task_id": (stored.receipt.get("task_id"), job.task_id),
+                "repository_id": (
+                    str(stored.receipt.get("repository_id")),
+                    job.repository,
+                ),
+                "base_sha": (stored.receipt.get("base_sha"), job.base_commit),
+                "candidate_sha": (
+                    stored.receipt.get("candidate_sha"),
+                    job.candidate_commit,
+                ),
+                "tree_sha": (
+                    stored.receipt.get("tree_sha"),
+                    job.candidate_tree or job.candidate_commit,
+                ),
+            }
+            for field, (observed, expected) in receipt_bindings.items():
+                if observed != expected:
+                    raise ValueError(
+                        f"Required CI check '{name}' receipt {field} mismatch: "
+                        f"expected {expected}, got {observed}"
+                    )
+            validated.append(check)
+        return tuple(validated)
 
 
 def _cli_approve(job_id: str, actor: str, operator_key: str | None = None) -> None:
