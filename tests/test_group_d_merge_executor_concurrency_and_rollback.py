@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import sqlite3
@@ -361,7 +362,91 @@ def test_group_d_synthetic_ci_rejected_before_claim(tmp_path):
     assert authorization == ""
 
 
-def test_group_d_integration_failure_rolls_back_real_git(tmp_path):
+@pytest.mark.parametrize(
+    ("binding", "tampered_value"),
+    [
+        ("issue_id", "OTHER-TASK"),
+        ("task_id", "OTHER-TASK"),
+        ("changed_paths", ("docs/other.md",)),
+        ("risk_tier", RiskTier.B),
+    ],
+)
+def test_group_d_manifest_identity_mismatch_fails_before_claim(
+    tmp_path, binding, tampered_value
+):
+    root = tmp_path / binding
+    root.mkdir()
+    git_ids = _make_repo(root)
+    receipt_db = root / "receipts.sqlite3"
+    task_label = binding.replace("changed_paths", "paths")
+    stored = _provider_receipt(
+        git_ids, VerificationReceiptStore(receipt_db), f"TASK-D-BIND-{task_label}"
+    )
+    manifest = _manifest(git_ids, f"TASK-D-BIND-{task_label}", stored)
+    bad_manifest = copy.deepcopy(manifest)
+    object.__setattr__(bad_manifest, binding, tampered_value)
+    queue, job_id, auth_id = _authorized_job(
+        root / "review.sqlite3", git_ids, f"TASK-D-BIND-{task_label}"
+    )
+    executor = _executor(queue, Path(git_ids["repo"]), root / "mf.sqlite3", receipt_db)
+
+    with patch(
+        "prismatic.review_factory.merge_executor.integrate_pipeline_run"
+    ) as integration:
+        result = executor.execute(job_id, manifest=bad_manifest)
+
+    assert result.success is False
+    assert f"manifest {binding} mismatch" in result.error.lower()
+    integration.assert_not_called()
+    consumed = queue.db.conn.execute(
+        "SELECT consumed_at FROM merge_authorizations WHERE authorization_id = ?",
+        (auth_id,),
+    ).fetchone()[0]
+    assert consumed == ""
+
+
+def test_group_d_tampered_durable_manifest_fails_before_claim(tmp_path):
+    git_ids = _make_repo(tmp_path)
+    receipt_db = tmp_path / "receipts.sqlite3"
+    stored = _provider_receipt(
+        git_ids, VerificationReceiptStore(receipt_db), "TASK-D-PACKET-DIGEST"
+    )
+    manifest = _manifest(git_ids, "TASK-D-PACKET-DIGEST", stored)
+    packet_path = tmp_path / "merge_candidate.json"
+    manifest.write(packet_path)
+    packet_digest = hashlib.sha256(packet_path.read_bytes()).hexdigest()
+    queue, job_id, auth_id = _authorized_job(
+        tmp_path / "review.sqlite3", git_ids, "TASK-D-PACKET-DIGEST"
+    )
+    queue.db.conn.execute(
+        """UPDATE review_jobs
+           SET result_packet_path = ?, result_packet_sha256 = ?
+           WHERE review_job_id = ?""",
+        (str(packet_path), packet_digest, job_id),
+    )
+    packet_path.write_text(
+        packet_path.read_text(encoding="utf-8") + " ", encoding="utf-8"
+    )
+    executor = _executor(
+        queue, Path(git_ids["repo"]), tmp_path / "mf.sqlite3", receipt_db
+    )
+
+    with patch(
+        "prismatic.review_factory.merge_executor.integrate_pipeline_run"
+    ) as integration:
+        result = executor.execute(job_id, manifest=manifest)
+
+    assert result.success is False
+    assert "durable result packet digest mismatch" in result.error.lower()
+    integration.assert_not_called()
+    consumed = queue.db.conn.execute(
+        "SELECT consumed_at FROM merge_authorizations WHERE authorization_id = ?",
+        (auth_id,),
+    ).fetchone()[0]
+    assert consumed == ""
+
+
+def test_group_d_unsafe_single_parent_mutation_refuses_rollback(tmp_path):
     git_ids = _make_repo(tmp_path)
     repo = Path(git_ids["repo"])
     receipt_db = tmp_path / "receipts.sqlite3"
@@ -387,9 +472,10 @@ def test_group_d_integration_failure_rolls_back_real_git(tmp_path):
         result = executor.execute(job_id, manifest=manifest)
 
     assert result.success is False
-    assert "forced integration failure" in result.error
-    assert _git(repo, "rev-parse", "release") == git_ids["base_commit"]
-    assert (repo / "docs" / "readme.md").read_text() == "base\n"
+    assert "rollback was refused or failed" in result.error.lower()
+    unsafe_head = _git(repo, "rev-parse", "release")
+    assert unsafe_head != git_ids["base_commit"]
+    assert (repo / "docs" / "readme.md").read_text() == "mutated-by-integration\n"
     job = queue.db.get_review_job(job_id)
     assert job is not None
     assert job.state == ReviewJobState.MERGE_VERIFICATION_FAILED.value
@@ -414,9 +500,14 @@ def test_group_d_returned_integration_failure_rolls_back_real_git(tmp_path):
     executor = _executor(queue, repo, tmp_path / "mf.sqlite3", receipt_db)
 
     def mutate_then_return_failure(**_kwargs):
-        (repo / "docs" / "readme.md").write_text("returned-failure\n")
-        _git(repo, "add", ".")
-        _git(repo, "commit", "-q", "-m", "returned integration failure")
+        _git(
+            repo,
+            "merge",
+            git_ids["candidate_commit"],
+            "--no-ff",
+            "-m",
+            "returned integration failure",
+        )
         return IntegrationManifest(
             issue_id="TASK-D-RETURNED-FAILURE",
             branch=git_ids["candidate_commit"],
@@ -439,6 +530,83 @@ def test_group_d_returned_integration_failure_rolls_back_real_git(tmp_path):
     job = queue.db.get_review_job(job_id)
     assert job is not None
     assert job.state == ReviewJobState.MERGE_VERIFICATION_FAILED.value
+
+
+def test_group_d_stale_target_head_is_rejected_without_git_mutation(tmp_path):
+    git_ids = _make_repo(tmp_path)
+    repo = Path(git_ids["repo"])
+    receipt_db = tmp_path / "receipts.sqlite3"
+    stored = _provider_receipt(
+        git_ids, VerificationReceiptStore(receipt_db), "TASK-D-STALE-TARGET"
+    )
+    manifest = _manifest(git_ids, "TASK-D-STALE-TARGET", stored)
+    queue, job_id, _auth_id = _authorized_job(
+        tmp_path / "review.sqlite3", git_ids, "TASK-D-STALE-TARGET"
+    )
+    advanced = repo / "advanced.txt"
+    advanced.write_text("unrelated target advance\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "advance target after authorization")
+    advanced_head = _git(repo, "rev-parse", "release")
+    executor = _executor(queue, repo, tmp_path / "mf.sqlite3", receipt_db)
+
+    with patch(
+        "prismatic.review_factory.merge_executor.integrate_pipeline_run"
+    ) as integration:
+        result = executor.execute(job_id, manifest=manifest)
+
+    assert result.success is False
+    assert "target release advanced" in result.error.lower()
+    assert _git(repo, "rev-parse", "release") == advanced_head
+    integration.assert_not_called()
+
+
+def test_group_d_concurrent_advance_after_failed_merge_refuses_cas_rollback(tmp_path):
+    git_ids = _make_repo(tmp_path)
+    repo = Path(git_ids["repo"])
+    receipt_db = tmp_path / "receipts.sqlite3"
+    stored = _provider_receipt(
+        git_ids, VerificationReceiptStore(receipt_db), "TASK-D-CAS-ADVANCE"
+    )
+    manifest = _manifest(git_ids, "TASK-D-CAS-ADVANCE", stored)
+    queue, job_id, _auth_id = _authorized_job(
+        tmp_path / "review.sqlite3", git_ids, "TASK-D-CAS-ADVANCE"
+    )
+    executor = _executor(queue, repo, tmp_path / "mf.sqlite3", receipt_db)
+    observed: dict[str, str] = {}
+
+    def merge_then_advance(**_kwargs):
+        _git(
+            repo,
+            "merge",
+            git_ids["candidate_commit"],
+            "--no-ff",
+            "-m",
+            "authorized merge before concurrent advance",
+        )
+        observed["merge_sha"] = _git(repo, "rev-parse", "HEAD")
+        (repo / "concurrent.txt").write_text("advance\n", encoding="utf-8")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "-q", "-m", "concurrent target advance")
+        observed["advanced_head"] = _git(repo, "rev-parse", "HEAD")
+        return IntegrationManifest(
+            issue_id="TASK-D-CAS-ADVANCE",
+            branch=git_ids["candidate_commit"],
+            target_branch="release",
+            status=IntegrationStatus.FAILED,
+            merge_sha=observed["merge_sha"],
+            error_message="failure after concurrent target advance",
+        )
+
+    with patch(
+        "prismatic.review_factory.merge_executor.integrate_pipeline_run",
+        side_effect=merge_then_advance,
+    ):
+        result = executor.execute(job_id, manifest=manifest)
+
+    assert result.success is False
+    assert "rollback was refused or failed" in result.error.lower()
+    assert _git(repo, "rev-parse", "release") == observed["advanced_head"]
 
 
 def test_group_d_authorization_rejects_arbitrary_and_whitespace_actor(tmp_path):

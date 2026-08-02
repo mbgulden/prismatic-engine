@@ -10,6 +10,8 @@ and ``integrate_pipeline_run()`` for the actual git merge.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 import sys
@@ -124,18 +126,26 @@ class MergeExecutor:
                 success=False,
                 error=f"Authorization candidate tree mismatch: expected {job.candidate_tree}, got {auth.candidate_tree}",
             )
-        if auth.expected_merge_tree and auth.expected_merge_tree != (
-            job.candidate_tree or job.candidate_commit
-        ):
-            return MergeResult(
-                job_id=job_id,
-                success=False,
-                error=f"Authorization expected merge tree mismatch: expected {job.candidate_tree}, got {auth.expected_merge_tree}",
-            )
 
-        # Load manifest if not provided
-        if manifest is None:
-            manifest = self._load_manifest(job)
+        # Load and bind the durable manifest. A caller-supplied object cannot
+        # bypass a file-backed reviewed packet.
+        try:
+            if job.result_packet_path:
+                durable_manifest = self._load_manifest(job)
+                if (
+                    manifest is not None
+                    and manifest.digest() != durable_manifest.digest()
+                ):
+                    return MergeResult(
+                        job_id=job_id,
+                        success=False,
+                        error="Supplied manifest does not match the durable result packet",
+                    )
+                manifest = durable_manifest
+            elif manifest is None:
+                manifest = self._load_manifest(job)
+        except Exception as exc:
+            return MergeResult(job_id=job_id, success=False, error=str(exc))
 
         # Dry-run check MUST happen BEFORE any state mutation or manifest promotion
         if self.dry_run:
@@ -193,10 +203,22 @@ class MergeExecutor:
         # the atomic claim before a merge-factory principal is constructed.
 
         # Step 3: Bind the manifest and target to the exact review job.
+        expected_changed_paths = tuple(
+            sorted(json.loads(job.changed_paths_json or "[]"))
+        )
+        expected_risk_tier = {0: "A", 1: "B", 2: "C", 3: "C"}.get(job.risk_tier)
         manifest_bindings = {
+            "issue_id": (manifest.issue_id, job.task_id),
+            "task_id": (manifest.task_id, job.task_id),
             "repository": (manifest.repository, job.repository),
             "base_sha": (manifest.base_sha, job.base_commit),
             "candidate_sha": (manifest.candidate_sha, job.candidate_commit),
+            "changed_paths": (manifest.changed_paths, expected_changed_paths),
+            "risk_tier": (manifest.risk_tier.value, expected_risk_tier),
+            "proof_policy_version": (
+                f"v{manifest.proof_policy_version}",
+                job.policy_version,
+            ),
         }
         for field, (observed, expected) in manifest_bindings.items():
             if observed != expected:
@@ -235,13 +257,22 @@ class MergeExecutor:
         auth = claimed_auth
         if not auth.actor or not auth.actor.strip() or auth.scope not in allowed_scopes:
             raise PermissionError("Claimed authorization identity or scope is invalid")
-        scopes = list({auth.scope, "merge-judge"})
-        principal = Principal(identity=auth.actor, scopes=scopes)
+        scopes = [auth.scope, "rf-merge-executor"]
+        principal = Principal(
+            identity=f"rf-claim:{auth.authorization_id}:{auth.actor}", scopes=scopes
+        )
 
         target_head_before: str | None = None
+        merge_sha_created: str | None = None
+        lock_token = ""
         lock_acquired = False
         try:
             target_head_before = self._git_rev_parse(target_branch)
+            if target_head_before != job.base_commit:
+                raise PermissionError(
+                    f"Target {target_branch} advanced: expected {job.base_commit}, "
+                    f"found {target_head_before}"
+                )
             attestation = self.mf_store.submit_attestation(
                 issue_id=job.task_id,
                 decision="APPROVE_MERGE",
@@ -253,7 +284,7 @@ class MergeExecutor:
                 target=target_branch,
                 principal=principal,
             )
-            self.mf_store.acquire_lock(
+            lock_record = self.mf_store.acquire_lock(
                 repository=job.repository,
                 target=target_branch,
                 issue_id=job.task_id,
@@ -265,6 +296,9 @@ class MergeExecutor:
                 ttl_seconds=300,
                 principal=principal,
             )
+            lock_token = str(lock_record.get("acquisition_token", ""))
+            if not lock_token:
+                raise RuntimeError("Merge lock did not return an acquisition token")
             lock_acquired = True
 
             # Step 5: Execute real Git merge against the manifest target.
@@ -273,7 +307,9 @@ class MergeExecutor:
                 branch=job.candidate_commit,
                 target_branch=target_branch,
                 repo_path=self.repo_path,
+                expected_target_head=job.base_commit,
             )
+            merge_sha_created = integration_manifest.merge_sha or None
             if not integration_manifest.is_success():
                 raise RuntimeError(
                     integration_manifest.error_message
@@ -295,14 +331,25 @@ class MergeExecutor:
                     f"{expected_merge_tree}; refusing merge"
                 )
 
-            # Step 8: Mark manifest MERGED and persist the merged state.
+            # Step 8: Atomically persist the merged manifest when this job is
+            # file-backed, then require durable MERGING -> MERGED finalization.
+            pre_merge_manifest = manifest
             manifest = manifest.mark_merged(
                 candidate_sha=job.candidate_commit, merge_sha=merge_sha
             )
+            manifest_persisted = False
+            if job.result_packet_path:
+                manifest.write(Path(job.result_packet_path))
+                manifest_persisted = True
 
-            self.queue.db.update_review_job_state(
+            if not self.queue.db.update_review_job_state(
                 job.review_job_id, ReviewJobState.MERGED
-            )
+            ):
+                if manifest_persisted:
+                    pre_merge_manifest.write(Path(job.result_packet_path))
+                raise RuntimeError(
+                    f"Job {job.review_job_id} could not finalize durable merged state"
+                )
 
             from prismatic.review_factory.events import emit_rf_event
 
@@ -326,19 +373,45 @@ class MergeExecutor:
             )
         except Exception as exc:
             logger.error("Integration merge execution failed: %s", exc)
+            rollback_error: Exception | None = None
             if target_head_before is not None:
                 try:
-                    self._rollback_target(
-                        target_branch=target_branch,
-                        original_head=target_head_before,
-                    )
+                    current_target_head = self._git_rev_parse(target_branch)
+                    if current_target_head != target_head_before:
+                        failed_head = merge_sha_created or current_target_head
+                        if (
+                            current_target_head != failed_head
+                            or not self._is_exact_merge_commit(
+                                merge_sha=failed_head,
+                                original_head=target_head_before,
+                                candidate_commit=job.candidate_commit,
+                            )
+                        ):
+                            raise RuntimeError(
+                                "Rollback refused: current target is not the exact "
+                                "merge commit created from the authorized parents"
+                            )
+                        self._rollback_target(
+                            target_branch=target_branch,
+                            original_head=target_head_before,
+                            failed_head=failed_head,
+                        )
                 except Exception as rollback_exc:
+                    rollback_error = rollback_exc
                     logger.error(
-                        "Rollback of %s failed: %s", target_branch, rollback_exc
+                        "CAS rollback of %s failed: %s", target_branch, rollback_exc
                     )
-            self.queue.db.update_review_job_state(
+            if not self.queue.db.update_review_job_state(
                 job.review_job_id, ReviewJobState.MERGE_VERIFICATION_FAILED
-            )
+            ):
+                logger.error(
+                    "Could not persist merge_verification_failed for %s",
+                    job.review_job_id,
+                )
+            if rollback_error is not None:
+                raise RuntimeError(
+                    f"Merge failed and rollback was refused or failed: {rollback_error}"
+                ) from exc
             raise
         finally:
             if lock_acquired:
@@ -347,6 +420,7 @@ class MergeExecutor:
                     target=target_branch,
                     issue_id=job.task_id,
                     principal=principal,
+                    acquisition_token=lock_token,
                 )
 
     def _git_rev_parse(self, ref: str) -> str:
@@ -361,22 +435,57 @@ class MergeExecutor:
         )
         return completed.stdout.strip()
 
-    def _rollback_target(self, target_branch: str, original_head: str) -> None:
+    def _is_exact_merge_commit(
+        self,
+        *,
+        merge_sha: str,
+        original_head: str,
+        candidate_commit: str,
+    ) -> bool:
+        """Prove a commit is the authorized no-ff merge before rollback."""
         import subprocess
 
-        subprocess.run(
-            ["git", "reset", "--hard", original_head],
+        completed = subprocess.run(
+            ["git", "rev-list", "--parents", "-n", "1", merge_sha],
             cwd=str(self.repo_path),
             check=True,
             capture_output=True,
+            text=True,
         )
+        parts = completed.stdout.strip().split()
+        return (
+            len(parts) >= 3
+            and parts[0] == merge_sha
+            and parts[1] == original_head
+            and candidate_commit in parts[2:]
+        )
+
+    def _rollback_target(
+        self,
+        *,
+        target_branch: str,
+        original_head: str,
+        failed_head: str,
+    ) -> None:
+        """CAS the exact failed merge ref back without overwriting advancement."""
+        import subprocess
+
         subprocess.run(
             [
                 "git",
                 "update-ref",
                 f"refs/heads/{target_branch}",
                 original_head,
+                failed_head,
             ],
+            cwd=str(self.repo_path),
+            check=True,
+            capture_output=True,
+        )
+        # Restore only index/worktree content after the ref CAS. Unlike
+        # ``reset --hard``, this does not perform another ref update.
+        subprocess.run(
+            ["git", "read-tree", "--reset", "-u", original_head],
             cwd=str(self.repo_path),
             check=True,
             capture_output=True,
@@ -384,7 +493,16 @@ class MergeExecutor:
 
     def _load_manifest(self, job: ReviewJob) -> MergeCandidateManifest:
         if job.result_packet_path and Path(job.result_packet_path).exists():
-            return MergeCandidateManifest.read(Path(job.result_packet_path))
+            packet_path = Path(job.result_packet_path)
+            if job.result_packet_sha256:
+                expected_digest = job.result_packet_sha256.removeprefix("sha256:")
+                observed_digest = hashlib.sha256(packet_path.read_bytes()).hexdigest()
+                if observed_digest != expected_digest:
+                    raise PermissionError(
+                        "Durable result packet digest mismatch: expected "
+                        f"{expected_digest}, got {observed_digest}"
+                    )
+            return MergeCandidateManifest.read(packet_path)
         raise FileNotFoundError(
             f"Candidate manifest not found at {job.result_packet_path}"
         )
