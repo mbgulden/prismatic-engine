@@ -138,6 +138,8 @@ def test_deep_link_and_canonical_dashboard_markers_are_preserved() -> None:
     assert html.count('id="section-workspaces"') == 1
     assert "/api/workspace-tree/node?file=" not in html
     assert "/api/workspace-tree/preview?file=" not in html
+    assert "/api/workspace-tree/resolve?${query.toString()}" in html
+    assert 'initialParams.has("file")' in html
     assert "/workspace-tree?file=" not in html
     assert "data-path=" not in html
     assert "canonical-merge-winner-map-2026-07-06.md" not in html

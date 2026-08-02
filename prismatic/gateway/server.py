@@ -29,6 +29,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 import uvicorn
 from fastapi import (
@@ -41,7 +42,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from prismatic.agent_packet_normalizer import RAW_AGENT_OUTPUT_REPAIR_QUEUE_MARKER
 from prismatic.agent_raw_output_queue import (
@@ -188,6 +189,7 @@ from prismatic.gateway.workspace_tree import (
     get_preview,
     list_workspaces,
     load_registry,
+    resolve_legacy_file,
 )
 from prismatic.gateway.ws_broadcaster import (
     start_ws_broadcaster,
@@ -4546,6 +4548,23 @@ async def workspace_tree_workspaces() -> dict[str, Any]:
         with load_registry() as registry:
             return list_workspaces(registry)
     except RegistryError as exc:
+        raise _workspace_http_error(exc) from None
+
+
+@app.get("/workspaces")
+async def legacy_workspaces_deep_link(file: str = Query(...)) -> RedirectResponse:
+    """Redirect retired workspace links into the canonical Hub Workspaces tab."""
+    query = urlencode({"file": file})
+    return RedirectResponse(url=f"/dashboard?{query}#workspaces", status_code=307)
+
+
+@app.get("/api/workspace-tree/resolve")
+async def workspace_tree_resolve(file: str = Query(...)) -> dict[str, Any]:
+    """Resolve a legacy relative file path to an opaque workspace identifier."""
+    try:
+        with load_registry() as registry:
+            return resolve_legacy_file(registry, file)
+    except WorkspaceTreeError as exc:
         raise _workspace_http_error(exc) from None
 
 

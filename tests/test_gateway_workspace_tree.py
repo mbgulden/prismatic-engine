@@ -586,12 +586,25 @@ def test_routes_return_contract_shapes_and_never_registry_path(
             "/api/workspace-tree/preview",
             params={"workspace_id": WORKSPACE_ID, "path": "hello.md"},
         )
+        resolved = client.get(
+            "/api/workspace-tree/resolve", params={"file": "hello.md"}
+        )
+        rejected = client.get(
+            "/api/workspace-tree/resolve", params={"file": "../hello.md"}
+        )
         legacy = client.get(
             "/workspace-tree",
             params={"workspace_id": WORKSPACE_ID, "path": "hello.md"},
         )
     assert listing.status_code == node.status_code == preview.status_code == 200
-    combined = listing.text + node.text + preview.text + legacy.text
+    assert resolved.status_code == 200
+    assert resolved.json() == {
+        "ok": True,
+        "workspace_id": WORKSPACE_ID,
+        "relative_path": "hello.md",
+    }
+    assert rejected.status_code == 400
+    combined = listing.text + node.text + preview.text + resolved.text + legacy.text
     assert str(root) not in combined
     assert str(registry_file) not in combined
     assert '"root"' not in combined

@@ -3435,6 +3435,7 @@
             const legacyQuery = new URLSearchParams({ workspace_id: workspaceId, path: relativePath });
             if (legacyLink) legacyLink.href = `/workspace-tree?${legacyQuery.toString()}`;
             const url = new URL(window.location.href);
+            url.searchParams.delete("file");
             url.searchParams.set("workspace_id", workspaceId);
             url.searchParams.set("path", relativePath);
             url.hash = "workspaces";
@@ -3516,9 +3517,18 @@
                     });
                 }
                 const params = new URLSearchParams(window.location.search);
+                const requestedFile = params.get("file");
                 const requestedWorkspace = params.get("workspace_id");
                 const requestedPath = params.get("path");
-                if (requestedWorkspace || requestedPath) {
+                if (requestedFile) {
+                    const query = new URLSearchParams({ file: requestedFile });
+                    const resolveResponse = await fetch(`/api/workspace-tree/resolve?${query.toString()}`);
+                    const resolved = await resolveResponse.json();
+                    if (!resolveResponse.ok) {
+                        throw new Error(resolved.detail || `HTTP ${resolveResponse.status}`);
+                    }
+                    await previewWorkspaceFile(resolved.workspace_id, resolved.relative_path);
+                } else if (requestedWorkspace || requestedPath) {
                     if (!/^ws-[0-9a-f]{32}$/.test(requestedWorkspace || "") || !requestedPath) {
                         throw new Error("Malformed workspace deep link.");
                     }
@@ -4852,6 +4862,7 @@
             const initialParams = new URLSearchParams(window.location.search);
             const initialTab = (
                 window.location.hash === "#workspaces"
+                || initialParams.has("file")
                 || initialParams.has("workspace_id")
                 || initialParams.has("path")
             ) ? "workspaces" : "dashboard";

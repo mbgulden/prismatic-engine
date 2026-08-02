@@ -1,5 +1,4 @@
-"""Gateway Server integration tests for Workspace & Deploy Routers.
-"""
+"""Gateway Server integration tests for Workspace & Deploy Routers."""
 
 from fastapi.testclient import TestClient
 from prismatic.gateway.server import app
@@ -18,7 +17,14 @@ def test_gateway_workspace_and_deploy_endpoints():
     data2 = r2.json()
     assert "deploys" in data2
 
-    # Test /workspaces file route matching user rule markdown links
-    r3 = client.get("/workspaces?file=prismatic/gateway/server.py")
-    assert r3.status_code == 200, f"/workspaces file route returned {r3.status_code}"
-    assert "Prismatic Engine Gateway Server" in r3.text
+    # Retired links redirect into the canonical Hub Workspaces tab.
+    r3 = client.get(
+        "/workspaces?file=prismatic/gateway/server.py", follow_redirects=False
+    )
+    assert r3.status_code == 307
+    assert r3.headers["location"] == (
+        "/dashboard?file=prismatic%2Fgateway%2Fserver.py#workspaces"
+    )
+    dashboard = client.get(r3.headers["location"])
+    assert dashboard.status_code == 200
+    assert 'id="section-workspaces"' in dashboard.text
