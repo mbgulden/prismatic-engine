@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import copy
 import json
-import shutil
 import subprocess
+import sys
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -566,10 +566,8 @@ def test_malformed_nested_object_list_and_scalar_values_fail_closed(
 
 
 def test_built_wheel_contains_packaged_schemas(tmp_path: Path) -> None:
-    uv = shutil.which("uv")
-    assert uv, "uv is required to build the wheel fixture"
     subprocess.run(
-        [uv, "build", "--wheel", "--out-dir", str(tmp_path)],
+        [sys.executable, "-m", "build", "--wheel", "--outdir", str(tmp_path)],
         cwd=ROOT,
         check=True,
         capture_output=True,

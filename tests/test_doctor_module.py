@@ -69,10 +69,20 @@ class TestDoctorPureFunction(unittest.TestCase):
         self.assertEqual(names, {"github"})
 
     def test_run_doctor_github_is_optional_unless_explicitly_required(self):
-        with patch(
-            "prismatic.doctor._probe_github",
-            side_effect=lambda _path: ProviderReport(
-                name="github", status="disconnected"
+        with (
+            patch(
+                "prismatic.doctor._probe_github",
+                side_effect=lambda _path: ProviderReport(
+                    name="github", status="disconnected"
+                ),
+            ),
+            patch(
+                "prismatic.doctor._probe_native_components",
+                return_value=[
+                    CapabilityReport(
+                        name="git", status="ok", required=True, role="native_required"
+                    )
+                ],
             ),
         ):
             optional = run_doctor(
