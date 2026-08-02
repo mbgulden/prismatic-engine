@@ -86,7 +86,7 @@ def test_terminal_agy_packet_is_reconciled_when_comment_writeback_was_missed(
     tmp_path, monkeypatch
 ):
     mod = load_module()
-    monkeypatch.setenv("HOME", "/home/ubuntu")
+    monkeypatch.setenv("HOME", str(Path.cwd().resolve().parent))
     monkeypatch.setenv("PRISMATIC_STATE_DIR", str(tmp_path))
     log_path = tmp_path / "agy.log"
     log_path.write_text(canonical_agy_result_text())
@@ -122,7 +122,7 @@ def test_terminal_agy_packet_reconciliation_is_idempotent_when_marker_exists(
     tmp_path, monkeypatch
 ):
     mod = load_module()
-    monkeypatch.setenv("HOME", "/home/ubuntu")
+    monkeypatch.setenv("HOME", str(Path.cwd().resolve().parent))
     monkeypatch.setenv("PRISMATIC_STATE_DIR", str(tmp_path))
     log_path = tmp_path / "agy.log"
     log_path.write_text(canonical_agy_result_text())

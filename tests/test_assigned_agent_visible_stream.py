@@ -153,7 +153,7 @@ def test_george_visible_packet_parser_status_lines(tmp_path: Path, monkeypatch):
     import sqlite3
     from pathlib import Path
 
-    monkeypatch.setenv("HOME", "/home/ubuntu")
+    monkeypatch.setenv("HOME", str(Path.cwd().resolve().parent))
     monkeypatch.setenv("PRISMATIC_STATE_DIR", str(tmp_path))
     spec = importlib.util.spec_from_file_location(
         "assigned_agent_result_writeback_george_test",
@@ -573,7 +573,7 @@ def test_repeated_reconciliation_duplicates_no_comment_event_or_status_mutation(
     mod = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(mod)
-    monkeypatch.setenv("HOME", "/home/ubuntu")
+    monkeypatch.setenv("HOME", str(Path.cwd().resolve().parent))
     monkeypatch.setenv("PRISMATIC_STATE_DIR", str(tmp_path))
 
     log_path = tmp_path / "agy.log"
