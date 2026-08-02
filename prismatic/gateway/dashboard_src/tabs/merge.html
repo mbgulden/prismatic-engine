@@ -1,64 +1,75 @@
         <div id="section-merge" class="hidden space-y-6 max-w-full overflow-x-hidden">
+            <section data-proof-marker="LEGACY_MERGE_PIPELINE_QUARANTINED" class="glass-panel p-5 rounded-xl border border-amber-500/30 bg-amber-500/5 space-y-3">
+                <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                        <h2 class="text-sm font-bold text-amber-300 uppercase tracking-wider">Legacy Merge Pipeline — Quarantined</h2>
+                        <p class="mt-1 text-xs text-slate-400">Historical sandbox snapshot only. This tab is not Review Factory merge authority and cannot authorize or execute merges.</p>
+                    </div>
+                    <span id="merge-snapshot-status" class="self-start rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-300">Historical snapshot</span>
+                </div>
+                <p id="merge-snapshot-meta" class="text-[11px] font-mono text-slate-500">Awaiting legacy snapshot metadata.</p>
+                <a class="inline-flex text-[11px] font-bold uppercase tracking-wider text-cyan-400 hover:text-cyan-300" href="/dashboard#review-factory">Open canonical Review Factory →</a>
+            </section>
             <!-- Stats Cards Grid -->
             <section class="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <!-- Pending Merges -->
                 <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-cyan-500 min-h-[90px]">
-                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Pending Merges</span>
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Historical Pending</span>
                     <span id="stat-merge-pending" class="text-2xl font-bold text-cyan-400 mt-2">0</span>
                 </div>
                 <!-- Merged Count -->
                 <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-emerald-500 min-h-[90px]">
-                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Merged Count</span>
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Historical Merged</span>
                     <span id="stat-merge-merged" class="text-2xl font-bold text-emerald-400 mt-2">0</span>
                 </div>
                 <!-- Last Scan -->
                 <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-indigo-500 min-h-[90px]">
-                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Last Scan</span>
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Snapshot Scan</span>
                     <span id="stat-merge-scan" class="text-sm font-semibold text-indigo-400 mt-2">Never</span>
                 </div>
                 <!-- Last Apply -->
                 <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-violet-500 min-h-[90px]">
-                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Last Apply</span>
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Historical Apply</span>
                     <span id="stat-merge-apply" class="text-sm font-semibold text-violet-400 mt-2">Never</span>
                 </div>
             </section>
 
             <!-- Two Columns Layout -->
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <!-- Left Column: Watcher Config -->
+                <!-- Left Column: Legacy provenance -->
                 <div class="space-y-6">
                     <div class="glass-panel p-5 rounded-xl space-y-4">
                         <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-2">
-                            Watcher Configurations
+                            Legacy Authority Boundary
                         </h2>
                         <div class="flex items-center justify-between border-b border-slate-900 pb-2">
-                            <span class="text-sm text-slate-400">Daemon Status</span>
-                            <span class="text-xs font-bold text-emerald-400">● Active</span>
+                            <span class="text-sm text-slate-400">Production disposition</span>
+                            <span class="text-xs font-bold text-amber-300">Quarantined by policy</span>
                         </div>
                         <div class="flex items-center justify-between border-b border-slate-900 pb-2">
-                            <span class="text-sm text-slate-400">Watch Interval</span>
-                            <span class="text-xs text-slate-200 font-mono">300s / SIGUSR1</span>
+                            <span class="text-sm text-slate-400">Merge authority</span>
+                            <span class="text-xs font-bold text-rose-300">None</span>
                         </div>
                         <div class="flex items-center justify-between border-b border-slate-900 pb-2">
-                            <span class="text-sm text-slate-400">Confidence Threshold</span>
-                            <span class="text-xs font-bold text-amber-500">≥ 80</span>
+                            <span class="text-sm text-slate-400">Canonical workflow</span>
+                            <span class="text-xs font-bold text-cyan-300">Review Factory</span>
                         </div>
                         <div class="flex items-center justify-between border-b border-slate-900 pb-2">
-                            <span class="text-sm text-slate-400">Shadow Verification</span>
-                            <span class="text-xs font-bold text-indigo-400">Port 9001</span>
+                            <span class="text-sm text-slate-400">Legacy rows</span>
+                            <span class="text-xs text-slate-300">Historical only</span>
                         </div>
                         <div class="flex items-center justify-between border-b border-slate-900 pb-2">
-                            <span class="text-sm text-slate-400">Notifications</span>
-                            <span class="text-xs font-bold text-cyan-400">Slack & Telegram</span>
+                            <span class="text-sm text-slate-400">Runtime health</span>
+                            <span class="text-xs text-slate-400">Not reported here</span>
                         </div>
                         <div class="bg-indigo-500/5 border border-indigo-500/10 rounded-lg p-3 text-xs text-slate-400 leading-relaxed mt-2">
-                            The watcher daemon monitors sandboxes dynamically. On event notification, it triggers test verification with setting resilience and auto-merges to staging.
+                            Legacy confidence scores, sandbox rows, and historical merge records cannot satisfy Review Factory review, receipt, authorization, or merge-execution gates.
                         </div>
                     </div>
 
                     <div class="glass-panel p-5 rounded-xl space-y-4">
                         <div class="flex items-center justify-between gap-3 border-b border-slate-800 pb-2">
-                            <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Canonical Merge Map</h2>
+                            <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Historical Merge Map</h2>
                             <a class="text-[10px] font-bold uppercase tracking-wider text-cyan-400 hover:text-cyan-300" href="/dashboard#workspaces">Open Workspaces</a>
                         </div>
                         <div class="space-y-2 text-xs text-slate-300">
@@ -88,7 +99,7 @@
                             </div>
                         </div>
                         <div class="bg-emerald-500/5 border border-emerald-500/10 rounded-lg p-3 text-xs text-slate-400 leading-relaxed">
-                            This keeps the highest-signal merge families visible from the dashboard instead of only inside audits.
+                            Archived handoff context. These static mappings are not current candidate selection or merge authority.
                         </div>
                     </div>
                 </div>
@@ -98,7 +109,7 @@
                     <!-- Pending Sandboxes Table -->
                     <div class="glass-panel p-5 rounded-xl space-y-4">
                         <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-3">
-                            Pending Sandboxes
+                            Historical Pending Sandboxes — Not RF Jobs
                         </h2>
                         <div class="overflow-x-auto">
                             <table class="w-full text-left text-sm border-collapse">
@@ -106,7 +117,7 @@
                                     <tr class="border-b border-slate-800 text-slate-500 text-xs font-bold uppercase tracking-wider">
                                         <th class="py-2.5 px-3">Ticket</th>
                                         <th class="py-2.5 px-3">Tier</th>
-                                        <th class="py-2.5 px-3">Confidence</th>
+                                        <th class="py-2.5 px-3">Legacy Score</th>
                                         <th class="py-2.5 px-3">Modified</th>
                                         <th class="py-2.5 px-3">Contention Files</th>
                                     </tr>
@@ -114,7 +125,7 @@
                                 <tbody id="merge-pending-tbody" class="divide-y divide-slate-800/30">
                                     <tr>
                                         <td colspan="5" class="py-6 text-center text-slate-500 italic">
-                                            No pending sandboxes.
+                                            No historical pending sandboxes.
                                         </td>
                                     </tr>
                                 </tbody>
@@ -125,7 +136,7 @@
                     <!-- Merge History Table -->
                     <div class="glass-panel p-5 rounded-xl space-y-4">
                         <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-3">
-                            Recent Auto-Merges
+                            Historical Merge Records — Automation Unverified
                         </h2>
                         <div class="overflow-x-auto">
                             <table class="w-full text-left text-sm border-collapse">

@@ -1508,49 +1508,70 @@
         }
 
         async function fetchMergeData() {
+            const statusBadge = document.getElementById("merge-snapshot-status");
+            const statusMeta = document.getElementById("merge-snapshot-meta");
+            const pendingTbody = document.getElementById("merge-pending-tbody");
+            const historyTbody = document.getElementById("merge-history-tbody");
             try {
                 const mergeRes = await fetch("/api/gateway/merge/status");
-                if (mergeRes.ok) {
-                    const data = await mergeRes.json();
+                if (!mergeRes.ok) throw new Error(`HTTP ${mergeRes.status}`);
+                const data = await mergeRes.json();
+                const pending = Array.isArray(data.pending) ? data.pending : [];
+                const merged = Array.isArray(data.merged) ? data.merged : [];
+                const driftLabel = data.drift_detected === true ? " · drift detected" : "";
+                if (statusBadge) statusBadge.textContent = `Historical snapshot${driftLabel}`;
+                if (statusMeta) {
+                    const source = escapeHTML(data.source || "legacy merge state");
+                    const snapshotScan = data.last_scan ? formatDate(data.last_scan) : "unknown scan time";
+                    statusMeta.innerHTML = `Source: ${source} · Snapshot scan: ${escapeHTML(snapshotScan)} · Not Review Factory authority`;
+                }
                     
-                    document.getElementById("stat-merge-pending").textContent = data.pending_count || 0;
-                    document.getElementById("stat-merge-merged").textContent = data.merged_count || 0;
+                    document.getElementById("stat-merge-pending").textContent = data.pending_count ?? pending.length;
+                    document.getElementById("stat-merge-merged").textContent = data.merged_count ?? merged.length;
                     document.getElementById("stat-merge-scan").textContent = data.last_scan ? formatDate(data.last_scan) : "Never";
                     document.getElementById("stat-merge-apply").textContent = data.last_apply ? formatDate(data.last_apply) : "Never";
                     
-                    // Render Pending Sandboxes
-                    const pendingTbody = document.getElementById("merge-pending-tbody");
-                    if (!data.pending || data.pending.length === 0) {
-                        pendingTbody.innerHTML = `<tr><td colspan="5" class="py-6 text-center text-slate-500 italic">No pending sandboxes.</td></tr>`;
+                    // Render historical sandbox rows. Every legacy value is escaped.
+                    if (pending.length === 0) {
+                        pendingTbody.innerHTML = `<tr><td colspan="5" class="py-6 text-center text-slate-500 italic">No historical pending sandboxes.</td></tr>`;
                     } else {
-                        pendingTbody.innerHTML = data.pending.map(sb => `
+                        pendingTbody.innerHTML = pending.map(sb => {
+                            const contention = Array.isArray(sb.contention) ? sb.contention.map(escapeHTML) : [];
+                            const contentionText = contention.join(", ") || "None";
+                            const tier = sb.tier === "" || sb.tier == null ? "—" : `T${escapeHTML(sb.tier)}`;
+                            return `
                             <tr class="border-b border-slate-800/50 hover:bg-slate-900/10">
-                                <td class="py-3 px-3 font-semibold text-slate-200 font-mono">${sb.ticket}</td>
-                                <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold border border-cyan-500/20 bg-cyan-500/10 text-cyan-400">T${sb.tier}</span></td>
-                                <td class="py-3 px-3 font-bold text-amber-400 font-mono">${sb.confidence}%</td>
-                                <td class="py-3 px-3 text-slate-400">${sb.modified} files</td>
-                                <td class="py-3 px-3 text-slate-500 font-mono text-[11px] max-w-[200px] truncate" title="${sb.contention.join(', ')}">${sb.contention.join(', ') || 'None'}</td>
+                                <td class="py-3 px-3 font-semibold text-slate-200 font-mono">${escapeHTML(sb.ticket)}</td>
+                                <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold border border-slate-500/20 bg-slate-500/10 text-slate-300">${tier}</span></td>
+                                <td class="py-3 px-3 font-bold text-amber-400 font-mono">${escapeHTML(sb.confidence)}%</td>
+                                <td class="py-3 px-3 text-slate-400">${escapeHTML(sb.modified)} files</td>
+                                <td class="py-3 px-3 text-slate-500 font-mono text-[11px] max-w-[200px] truncate" title="${contentionText}">${contentionText}</td>
                             </tr>
-                        `).join("");
+                        `}).join("");
                     }
                     
-                    // Render History
-                    const historyTbody = document.getElementById("merge-history-tbody");
-                    if (!data.merged || data.merged.length === 0) {
+                    // Render historical merge records. Provenance does not establish automation.
+                    if (merged.length === 0) {
                         historyTbody.innerHTML = `<tr><td colspan="4" class="py-6 text-center text-slate-500 italic">No merge history.</td></tr>`;
                     } else {
-                        historyTbody.innerHTML = data.merged.map(m => `
+                        historyTbody.innerHTML = merged.map(m => {
+                            const commit = String(m.commit || "");
+                            const tier = m.tier === "" || m.tier == null ? "—" : `T${escapeHTML(m.tier)}`;
+                            return `
                             <tr class="border-b border-slate-800/50 hover:bg-slate-900/10">
-                                <td class="py-3 px-3 font-semibold text-slate-200 font-mono">${m.ticket}</td>
-                                <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold border border-cyan-500/20 bg-cyan-500/10 text-cyan-400">T${m.tier}</span></td>
-                                <td class="py-3 px-3 text-emerald-400 font-mono text-xs">${m.commit.substring(0, 7)}</td>
-                                <td class="py-3 px-3 text-slate-500 text-xs">${formatDate(m.timestamp)}</td>
+                                <td class="py-3 px-3 font-semibold text-slate-200 font-mono">${escapeHTML(m.ticket)}</td>
+                                <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold border border-slate-500/20 bg-slate-500/10 text-slate-300">${tier}</span></td>
+                                <td class="py-3 px-3 text-emerald-400 font-mono text-xs">${escapeHTML(commit.substring(0, 7) || "—")}</td>
+                                <td class="py-3 px-3 text-slate-500 text-xs">${escapeHTML(m.timestamp ? formatDate(m.timestamp) : "Unknown")}</td>
                             </tr>
-                        `).join("");
+                        `}).join("");
                     }
-                }
             } catch (e) {
                 console.error("Error fetching merge details:", e);
+                if (statusBadge) statusBadge.textContent = "Historical snapshot unavailable";
+                if (statusMeta) statusMeta.textContent = "Legacy data unavailable. Review Factory remains the only canonical workflow.";
+                if (pendingTbody) pendingTbody.innerHTML = `<tr><td colspan="5" class="py-6 text-center text-rose-300">Historical snapshot unavailable.</td></tr>`;
+                if (historyTbody) historyTbody.innerHTML = `<tr><td colspan="4" class="py-6 text-center text-rose-300">Historical snapshot unavailable.</td></tr>`;
             }
         }
 

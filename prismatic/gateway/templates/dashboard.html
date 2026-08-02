@@ -1129,66 +1129,77 @@
 
         <!-- SECTION 3: MERGE PIPELINE -->
         <div id="section-merge" class="hidden space-y-6 max-w-full overflow-x-hidden">
+            <section data-proof-marker="LEGACY_MERGE_PIPELINE_QUARANTINED" class="glass-panel p-5 rounded-xl border border-amber-500/30 bg-amber-500/5 space-y-3">
+                <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                        <h2 class="text-sm font-bold text-amber-300 uppercase tracking-wider">Legacy Merge Pipeline — Quarantined</h2>
+                        <p class="mt-1 text-xs text-slate-400">Historical sandbox snapshot only. This tab is not Review Factory merge authority and cannot authorize or execute merges.</p>
+                    </div>
+                    <span id="merge-snapshot-status" class="self-start rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-300">Historical snapshot</span>
+                </div>
+                <p id="merge-snapshot-meta" class="text-[11px] font-mono text-slate-500">Awaiting legacy snapshot metadata.</p>
+                <a class="inline-flex text-[11px] font-bold uppercase tracking-wider text-cyan-400 hover:text-cyan-300" href="/dashboard#review-factory">Open canonical Review Factory →</a>
+            </section>
             <!-- Stats Cards Grid -->
             <section class="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <!-- Pending Merges -->
                 <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-cyan-500 min-h-[90px]">
-                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Pending Merges</span>
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Historical Pending</span>
                     <span id="stat-merge-pending" class="text-2xl font-bold text-cyan-400 mt-2">0</span>
                 </div>
                 <!-- Merged Count -->
                 <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-emerald-500 min-h-[90px]">
-                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Merged Count</span>
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Historical Merged</span>
                     <span id="stat-merge-merged" class="text-2xl font-bold text-emerald-400 mt-2">0</span>
                 </div>
                 <!-- Last Scan -->
                 <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-indigo-500 min-h-[90px]">
-                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Last Scan</span>
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Snapshot Scan</span>
                     <span id="stat-merge-scan" class="text-sm font-semibold text-indigo-400 mt-2">Never</span>
                 </div>
                 <!-- Last Apply -->
                 <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-violet-500 min-h-[90px]">
-                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Last Apply</span>
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Historical Apply</span>
                     <span id="stat-merge-apply" class="text-sm font-semibold text-violet-400 mt-2">Never</span>
                 </div>
             </section>
 
             <!-- Two Columns Layout -->
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <!-- Left Column: Watcher Config -->
+                <!-- Left Column: Legacy provenance -->
                 <div class="space-y-6">
                     <div class="glass-panel p-5 rounded-xl space-y-4">
                         <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-2">
-                            Watcher Configurations
+                            Legacy Authority Boundary
                         </h2>
                         <div class="flex items-center justify-between border-b border-slate-900 pb-2">
-                            <span class="text-sm text-slate-400">Daemon Status</span>
-                            <span class="text-xs font-bold text-emerald-400">● Active</span>
+                            <span class="text-sm text-slate-400">Production disposition</span>
+                            <span class="text-xs font-bold text-amber-300">Quarantined by policy</span>
                         </div>
                         <div class="flex items-center justify-between border-b border-slate-900 pb-2">
-                            <span class="text-sm text-slate-400">Watch Interval</span>
-                            <span class="text-xs text-slate-200 font-mono">300s / SIGUSR1</span>
+                            <span class="text-sm text-slate-400">Merge authority</span>
+                            <span class="text-xs font-bold text-rose-300">None</span>
                         </div>
                         <div class="flex items-center justify-between border-b border-slate-900 pb-2">
-                            <span class="text-sm text-slate-400">Confidence Threshold</span>
-                            <span class="text-xs font-bold text-amber-500">≥ 80</span>
+                            <span class="text-sm text-slate-400">Canonical workflow</span>
+                            <span class="text-xs font-bold text-cyan-300">Review Factory</span>
                         </div>
                         <div class="flex items-center justify-between border-b border-slate-900 pb-2">
-                            <span class="text-sm text-slate-400">Shadow Verification</span>
-                            <span class="text-xs font-bold text-indigo-400">Port 9001</span>
+                            <span class="text-sm text-slate-400">Legacy rows</span>
+                            <span class="text-xs text-slate-300">Historical only</span>
                         </div>
                         <div class="flex items-center justify-between border-b border-slate-900 pb-2">
-                            <span class="text-sm text-slate-400">Notifications</span>
-                            <span class="text-xs font-bold text-cyan-400">Slack & Telegram</span>
+                            <span class="text-sm text-slate-400">Runtime health</span>
+                            <span class="text-xs text-slate-400">Not reported here</span>
                         </div>
                         <div class="bg-indigo-500/5 border border-indigo-500/10 rounded-lg p-3 text-xs text-slate-400 leading-relaxed mt-2">
-                            The watcher daemon monitors sandboxes dynamically. On event notification, it triggers test verification with setting resilience and auto-merges to staging.
+                            Legacy confidence scores, sandbox rows, and historical merge records cannot satisfy Review Factory review, receipt, authorization, or merge-execution gates.
                         </div>
                     </div>
 
                     <div class="glass-panel p-5 rounded-xl space-y-4">
                         <div class="flex items-center justify-between gap-3 border-b border-slate-800 pb-2">
-                            <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Canonical Merge Map</h2>
+                            <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Historical Merge Map</h2>
                             <a class="text-[10px] font-bold uppercase tracking-wider text-cyan-400 hover:text-cyan-300" href="/dashboard#workspaces">Open Workspaces</a>
                         </div>
                         <div class="space-y-2 text-xs text-slate-300">
@@ -1218,7 +1229,7 @@
                             </div>
                         </div>
                         <div class="bg-emerald-500/5 border border-emerald-500/10 rounded-lg p-3 text-xs text-slate-400 leading-relaxed">
-                            This keeps the highest-signal merge families visible from the dashboard instead of only inside audits.
+                            Archived handoff context. These static mappings are not current candidate selection or merge authority.
                         </div>
                     </div>
                 </div>
@@ -1228,7 +1239,7 @@
                     <!-- Pending Sandboxes Table -->
                     <div class="glass-panel p-5 rounded-xl space-y-4">
                         <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-3">
-                            Pending Sandboxes
+                            Historical Pending Sandboxes — Not RF Jobs
                         </h2>
                         <div class="overflow-x-auto">
                             <table class="w-full text-left text-sm border-collapse">
@@ -1236,7 +1247,7 @@
                                     <tr class="border-b border-slate-800 text-slate-500 text-xs font-bold uppercase tracking-wider">
                                         <th class="py-2.5 px-3">Ticket</th>
                                         <th class="py-2.5 px-3">Tier</th>
-                                        <th class="py-2.5 px-3">Confidence</th>
+                                        <th class="py-2.5 px-3">Legacy Score</th>
                                         <th class="py-2.5 px-3">Modified</th>
                                         <th class="py-2.5 px-3">Contention Files</th>
                                     </tr>
@@ -1244,7 +1255,7 @@
                                 <tbody id="merge-pending-tbody" class="divide-y divide-slate-800/30">
                                     <tr>
                                         <td colspan="5" class="py-6 text-center text-slate-500 italic">
-                                            No pending sandboxes.
+                                            No historical pending sandboxes.
                                         </td>
                                     </tr>
                                 </tbody>
@@ -1255,7 +1266,7 @@
                     <!-- Merge History Table -->
                     <div class="glass-panel p-5 rounded-xl space-y-4">
                         <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-3">
-                            Recent Auto-Merges
+                            Historical Merge Records — Automation Unverified
                         </h2>
                         <div class="overflow-x-auto">
                             <table class="w-full text-left text-sm border-collapse">
@@ -3305,49 +3316,70 @@
         }
 
         async function fetchMergeData() {
+            const statusBadge = document.getElementById("merge-snapshot-status");
+            const statusMeta = document.getElementById("merge-snapshot-meta");
+            const pendingTbody = document.getElementById("merge-pending-tbody");
+            const historyTbody = document.getElementById("merge-history-tbody");
             try {
                 const mergeRes = await fetch("/api/gateway/merge/status");
-                if (mergeRes.ok) {
-                    const data = await mergeRes.json();
+                if (!mergeRes.ok) throw new Error(`HTTP ${mergeRes.status}`);
+                const data = await mergeRes.json();
+                const pending = Array.isArray(data.pending) ? data.pending : [];
+                const merged = Array.isArray(data.merged) ? data.merged : [];
+                const driftLabel = data.drift_detected === true ? " · drift detected" : "";
+                if (statusBadge) statusBadge.textContent = `Historical snapshot${driftLabel}`;
+                if (statusMeta) {
+                    const source = escapeHTML(data.source || "legacy merge state");
+                    const snapshotScan = data.last_scan ? formatDate(data.last_scan) : "unknown scan time";
+                    statusMeta.innerHTML = `Source: ${source} · Snapshot scan: ${escapeHTML(snapshotScan)} · Not Review Factory authority`;
+                }
                     
-                    document.getElementById("stat-merge-pending").textContent = data.pending_count || 0;
-                    document.getElementById("stat-merge-merged").textContent = data.merged_count || 0;
+                    document.getElementById("stat-merge-pending").textContent = data.pending_count ?? pending.length;
+                    document.getElementById("stat-merge-merged").textContent = data.merged_count ?? merged.length;
                     document.getElementById("stat-merge-scan").textContent = data.last_scan ? formatDate(data.last_scan) : "Never";
                     document.getElementById("stat-merge-apply").textContent = data.last_apply ? formatDate(data.last_apply) : "Never";
                     
-                    // Render Pending Sandboxes
-                    const pendingTbody = document.getElementById("merge-pending-tbody");
-                    if (!data.pending || data.pending.length === 0) {
-                        pendingTbody.innerHTML = `<tr><td colspan="5" class="py-6 text-center text-slate-500 italic">No pending sandboxes.</td></tr>`;
+                    // Render historical sandbox rows. Every legacy value is escaped.
+                    if (pending.length === 0) {
+                        pendingTbody.innerHTML = `<tr><td colspan="5" class="py-6 text-center text-slate-500 italic">No historical pending sandboxes.</td></tr>`;
                     } else {
-                        pendingTbody.innerHTML = data.pending.map(sb => `
+                        pendingTbody.innerHTML = pending.map(sb => {
+                            const contention = Array.isArray(sb.contention) ? sb.contention.map(escapeHTML) : [];
+                            const contentionText = contention.join(", ") || "None";
+                            const tier = sb.tier === "" || sb.tier == null ? "—" : `T${escapeHTML(sb.tier)}`;
+                            return `
                             <tr class="border-b border-slate-800/50 hover:bg-slate-900/10">
-                                <td class="py-3 px-3 font-semibold text-slate-200 font-mono">${sb.ticket}</td>
-                                <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold border border-cyan-500/20 bg-cyan-500/10 text-cyan-400">T${sb.tier}</span></td>
-                                <td class="py-3 px-3 font-bold text-amber-400 font-mono">${sb.confidence}%</td>
-                                <td class="py-3 px-3 text-slate-400">${sb.modified} files</td>
-                                <td class="py-3 px-3 text-slate-500 font-mono text-[11px] max-w-[200px] truncate" title="${sb.contention.join(', ')}">${sb.contention.join(', ') || 'None'}</td>
+                                <td class="py-3 px-3 font-semibold text-slate-200 font-mono">${escapeHTML(sb.ticket)}</td>
+                                <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold border border-slate-500/20 bg-slate-500/10 text-slate-300">${tier}</span></td>
+                                <td class="py-3 px-3 font-bold text-amber-400 font-mono">${escapeHTML(sb.confidence)}%</td>
+                                <td class="py-3 px-3 text-slate-400">${escapeHTML(sb.modified)} files</td>
+                                <td class="py-3 px-3 text-slate-500 font-mono text-[11px] max-w-[200px] truncate" title="${contentionText}">${contentionText}</td>
                             </tr>
-                        `).join("");
+                        `}).join("");
                     }
                     
-                    // Render History
-                    const historyTbody = document.getElementById("merge-history-tbody");
-                    if (!data.merged || data.merged.length === 0) {
+                    // Render historical merge records. Provenance does not establish automation.
+                    if (merged.length === 0) {
                         historyTbody.innerHTML = `<tr><td colspan="4" class="py-6 text-center text-slate-500 italic">No merge history.</td></tr>`;
                     } else {
-                        historyTbody.innerHTML = data.merged.map(m => `
+                        historyTbody.innerHTML = merged.map(m => {
+                            const commit = String(m.commit || "");
+                            const tier = m.tier === "" || m.tier == null ? "—" : `T${escapeHTML(m.tier)}`;
+                            return `
                             <tr class="border-b border-slate-800/50 hover:bg-slate-900/10">
-                                <td class="py-3 px-3 font-semibold text-slate-200 font-mono">${m.ticket}</td>
-                                <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold border border-cyan-500/20 bg-cyan-500/10 text-cyan-400">T${m.tier}</span></td>
-                                <td class="py-3 px-3 text-emerald-400 font-mono text-xs">${m.commit.substring(0, 7)}</td>
-                                <td class="py-3 px-3 text-slate-500 text-xs">${formatDate(m.timestamp)}</td>
+                                <td class="py-3 px-3 font-semibold text-slate-200 font-mono">${escapeHTML(m.ticket)}</td>
+                                <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold border border-slate-500/20 bg-slate-500/10 text-slate-300">${tier}</span></td>
+                                <td class="py-3 px-3 text-emerald-400 font-mono text-xs">${escapeHTML(commit.substring(0, 7) || "—")}</td>
+                                <td class="py-3 px-3 text-slate-500 text-xs">${escapeHTML(m.timestamp ? formatDate(m.timestamp) : "Unknown")}</td>
                             </tr>
-                        `).join("");
+                        `}).join("");
                     }
-                }
             } catch (e) {
                 console.error("Error fetching merge details:", e);
+                if (statusBadge) statusBadge.textContent = "Historical snapshot unavailable";
+                if (statusMeta) statusMeta.textContent = "Legacy data unavailable. Review Factory remains the only canonical workflow.";
+                if (pendingTbody) pendingTbody.innerHTML = `<tr><td colspan="5" class="py-6 text-center text-rose-300">Historical snapshot unavailable.</td></tr>`;
+                if (historyTbody) historyTbody.innerHTML = `<tr><td colspan="4" class="py-6 text-center text-rose-300">Historical snapshot unavailable.</td></tr>`;
             }
         }
 
