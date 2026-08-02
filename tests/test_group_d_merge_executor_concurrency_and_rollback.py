@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from prismatic.core.merge_factory import MergeFactoryStore
 from prismatic.integrate import (
@@ -26,7 +29,11 @@ from prismatic.merge_candidate_manifest import (
 )
 from prismatic.review_factory.db import ReviewFactoryDB
 from prismatic.review_factory.merge_executor import MergeExecutor
-from prismatic.review_factory.models import ReviewJob, ReviewJobState
+from prismatic.review_factory.models import (
+    MergeAuthorization,
+    ReviewJob,
+    ReviewJobState,
+)
 from prismatic.review_factory.queue import ReviewQueue
 from prismatic.verification.receipt_store import VerificationReceiptStore
 from tests.test_receipt_validator import resign_receipt, valid_policy, valid_receipt
@@ -304,7 +311,7 @@ def test_group_d_real_concurrent_executors_have_one_winner(tmp_path, monkeypatch
     assert sum(result.success for result in results) == 1
     assert integration_calls == 1
     loser = next(result for result in results if not result.success)
-    assert "could not be claimed" in loser.error
+    assert "could not be atomically claimed" in loser.error
     winner = next(result for result in results if result.success)
     assert _git(repo, "rev-parse", "release") == winner.merge_sha
     assert _git(repo, "rev-parse", "release^{tree}") == git_ids["candidate_tree"]
@@ -460,3 +467,238 @@ def test_group_d_authorization_rejects_arbitrary_and_whitespace_actor(tmp_path):
         )
         is not None
     )
+
+
+def test_group_d_atomic_authorization_creation_has_one_winner(tmp_path, monkeypatch):
+    git_ids = _make_repo(tmp_path)
+    db_path = tmp_path / "review.sqlite3"
+    seed = ReviewQueue(db=ReviewFactoryDB(db_path))
+    job = ReviewJob(
+        completed_work_id="cw-auth-race",
+        task_id="TASK-D-AUTH-RACE",
+        repository="local-repo",
+        base_commit=git_ids["base_commit"],
+        base_tree=git_ids["base_tree"],
+        candidate_commit=git_ids["candidate_commit"],
+        candidate_tree=git_ids["candidate_tree"],
+        changed_paths_json="[]",
+        risk_tier=0,
+        state=ReviewJobState.MERGE_READY.value,
+    )
+    seed.db.insert_review_job(job)
+
+    queues = [
+        ReviewQueue(db=ReviewFactoryDB(db_path)),
+        ReviewQueue(db=ReviewFactoryDB(db_path)),
+    ]
+    barrier = threading.Barrier(2)
+    for queue in queues:
+        original = queue.db.get_review_job
+
+        def synchronized_get(review_job_id, original=original):
+            observed = original(review_job_id)
+            barrier.wait(timeout=10)
+            return observed
+
+        monkeypatch.setattr(queue.db, "get_review_job", synchronized_get)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(
+            pool.map(
+                lambda queue: queue.authorize_merge(
+                    job.review_job_id,
+                    actor="standing-policy: tier-0",
+                    expected_merge_tree=git_ids["candidate_tree"],
+                ),
+                queues,
+            )
+        )
+
+    assert sum(result is not None for result in results) == 1
+    persisted = seed.db.conn.execute(
+        "SELECT * FROM merge_authorizations WHERE review_job_id = ?",
+        (job.review_job_id,),
+    ).fetchall()
+    assert len(persisted) == 1
+    current = seed.db.get_review_job(job.review_job_id)
+    assert current is not None
+    assert current.state == ReviewJobState.MERGE_AUTHORIZED.value
+
+
+def test_group_d_authorization_ttl_bounds_fail_without_mutation(tmp_path):
+    git_ids = _make_repo(tmp_path)
+    queue = ReviewQueue(db=ReviewFactoryDB(tmp_path / "review.sqlite3"))
+    job = ReviewJob(
+        completed_work_id="cw-auth-ttl",
+        task_id="TASK-D-AUTH-TTL",
+        repository="local-repo",
+        base_commit=git_ids["base_commit"],
+        base_tree=git_ids["base_tree"],
+        candidate_commit=git_ids["candidate_commit"],
+        candidate_tree=git_ids["candidate_tree"],
+        changed_paths_json="[]",
+        risk_tier=0,
+        state=ReviewJobState.MERGE_READY.value,
+    )
+    queue.db.insert_review_job(job)
+
+    for invalid_ttl in (0, -1, 1441, True):
+        assert (
+            queue.authorize_merge(
+                job.review_job_id,
+                actor="standing-policy: tier-0",
+                expires_minutes=invalid_ttl,
+            )
+            is None
+        )
+    assert queue.db.get_authorization_for_job(job.review_job_id) is None
+    current = queue.db.get_review_job(job.review_job_id)
+    assert current is not None
+    assert current.state == ReviewJobState.MERGE_READY.value
+
+
+def test_group_d_expired_or_wrong_binding_claim_changes_neither_row(tmp_path):
+    git_ids = _make_repo(tmp_path)
+    queue, job_id, auth_id = _authorized_job(
+        tmp_path / "review.sqlite3", git_ids, "TASK-D-EXPIRED-CLAIM"
+    )
+    auth = queue.db.get_authorization_for_job(job_id)
+    assert auth is not None
+
+    wrong_binding = queue.db.claim_authorization_for_merge(
+        auth_id,
+        review_job_id=job_id,
+        repository="wrong-repository",
+        pr_head_commit=git_ids["candidate_commit"],
+        pr_base_commit=git_ids["base_commit"],
+        candidate_tree=git_ids["candidate_tree"],
+        expected_merge_tree=git_ids["candidate_tree"],
+        policy_version="v1",
+    )
+    assert wrong_binding is None
+
+    queue.db.conn.execute(
+        "UPDATE merge_authorizations SET expires_at = ? WHERE authorization_id = ?",
+        ((datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(), auth_id),
+    )
+    expired = queue.db.claim_authorization_for_merge(
+        auth_id,
+        review_job_id=job_id,
+        repository="local-repo",
+        pr_head_commit=git_ids["candidate_commit"],
+        pr_base_commit=git_ids["base_commit"],
+        candidate_tree=git_ids["candidate_tree"],
+        expected_merge_tree=git_ids["candidate_tree"],
+        policy_version="v1",
+    )
+    assert expired is None
+    row = queue.db.conn.execute(
+        "SELECT consumed_at FROM merge_authorizations WHERE authorization_id = ?",
+        (auth_id,),
+    ).fetchone()
+    assert row["consumed_at"] == ""
+    current = queue.db.get_review_job(job_id)
+    assert current is not None
+    assert current.state == ReviewJobState.MERGE_AUTHORIZED.value
+
+
+def test_group_d_claim_state_failure_rolls_back_authorization_consumption(tmp_path):
+    git_ids = _make_repo(tmp_path)
+    queue, job_id, auth_id = _authorized_job(
+        tmp_path / "review.sqlite3", git_ids, "TASK-D-CLAIM-ROLLBACK"
+    )
+    queue.db.conn.executescript(
+        """CREATE TRIGGER reject_merging_transition
+           BEFORE UPDATE OF state ON review_jobs
+           WHEN NEW.state = 'merging'
+           BEGIN
+               SELECT RAISE(ABORT, 'forced merging transition failure');
+           END;"""
+    )
+
+    with pytest.raises(
+        sqlite3.IntegrityError, match="forced merging transition failure"
+    ):
+        queue.db.claim_authorization_for_merge(
+            auth_id,
+            review_job_id=job_id,
+            repository="local-repo",
+            pr_head_commit=git_ids["candidate_commit"],
+            pr_base_commit=git_ids["base_commit"],
+            candidate_tree=git_ids["candidate_tree"],
+            expected_merge_tree=git_ids["candidate_tree"],
+            policy_version="v1",
+        )
+
+    row = queue.db.conn.execute(
+        "SELECT consumed_at FROM merge_authorizations WHERE authorization_id = ?",
+        (auth_id,),
+    ).fetchone()
+    assert row["consumed_at"] == ""
+    current = queue.db.get_review_job(job_id)
+    assert current is not None
+    assert current.state == ReviewJobState.MERGE_AUTHORIZED.value
+
+
+def test_group_d_authorization_creation_state_failure_rolls_back_insert(tmp_path):
+    git_ids = _make_repo(tmp_path)
+    queue = ReviewQueue(db=ReviewFactoryDB(tmp_path / "review.sqlite3"))
+    job = ReviewJob(
+        completed_work_id="cw-create-rollback",
+        task_id="TASK-D-CREATE-ROLLBACK",
+        repository="local-repo",
+        base_commit=git_ids["base_commit"],
+        base_tree=git_ids["base_tree"],
+        candidate_commit=git_ids["candidate_commit"],
+        candidate_tree=git_ids["candidate_tree"],
+        changed_paths_json="[]",
+        risk_tier=0,
+        state=ReviewJobState.MERGE_READY.value,
+    )
+    queue.db.insert_review_job(job)
+    queue.db.conn.executescript(
+        """CREATE TRIGGER reject_merge_authorized_transition
+           BEFORE UPDATE OF state ON review_jobs
+           WHEN NEW.state = 'merge_authorized'
+           BEGIN
+               SELECT RAISE(ABORT, 'forced authorization transition failure');
+           END;"""
+    )
+    now = datetime.now(timezone.utc)
+    auth = MergeAuthorization(
+        review_job_id=job.review_job_id,
+        repository=job.repository,
+        pr_head_commit=job.candidate_commit,
+        pr_base_commit=job.base_commit,
+        candidate_tree=job.candidate_tree,
+        expected_merge_tree=job.candidate_tree,
+        policy_version=job.policy_version,
+        actor="standing-policy: tier-0",
+        scope="tier-0-auto",
+        expires_at=(now + timedelta(minutes=5)).isoformat(),
+    )
+
+    with pytest.raises(
+        sqlite3.IntegrityError, match="forced authorization transition failure"
+    ):
+        queue.db.create_authorization_and_transition(auth, now=now)
+
+    count = queue.db.conn.execute(
+        "SELECT COUNT(*) FROM merge_authorizations WHERE review_job_id = ?",
+        (job.review_job_id,),
+    ).fetchone()[0]
+    assert count == 0
+    current = queue.db.get_review_job(job.review_job_id)
+    assert current is not None
+    assert current.state == ReviewJobState.MERGE_READY.value
+
+
+def test_group_d_malformed_or_non_utc_expiry_fails_closed():
+    now = datetime.now(timezone.utc)
+    for expires_at in (
+        "",
+        "not-a-time",
+        now.replace(tzinfo=None).isoformat(),
+        "2030-01-01T00:00:00+05:00",
+    ):
+        assert MergeAuthorization(expires_at=expires_at).is_expired is True

@@ -208,6 +208,7 @@ def test_authorization_binding_mismatch_rejected(tmp_path):
         candidate_tree="wrong-tree-sha",
         expected_merge_tree="wrong-tree-sha",
         actor="hacker",
+        expires_at="2999-01-01T00:00:00+00:00",
     )
     db.insert_authorization(bad_auth)
 

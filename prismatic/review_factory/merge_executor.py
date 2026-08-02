@@ -189,8 +189,8 @@ class MergeExecutor:
             raise PermissionError(
                 f"Authorization actor '{auth.actor}' scope '{auth.scope}' lacks required merge privileges"
             )
-        scopes = list({auth.scope, "merge-judge"})
-        principal = Principal(identity=auth.actor, scopes=scopes)
+        # Scope/identity are revalidated from the authoritative row returned by
+        # the atomic claim before a merge-factory principal is constructed.
 
         # Step 3: Bind the manifest and target to the exact review job.
         manifest_bindings = {
@@ -215,19 +215,28 @@ class MergeExecutor:
             )
         manifest_digest = manifest.digest()
 
-        # Step 4: Claim the one-shot authorization before any state, Git, lock,
-        # or attestation side effect. A concurrent loser exits here and must not
-        # roll back the winner's repository.
-        if not self.queue.db.consume_authorization(auth.authorization_id):
+        # Step 4: Atomically claim one-shot authority and transition the job from
+        # merge_authorized to merging.  A contention loser changes neither row
+        # and exits before any Git, lock, or attestation side effect.
+        claimed_auth = self.queue.db.claim_authorization_for_merge(
+            auth.authorization_id,
+            review_job_id=job.review_job_id,
+            repository=job.repository,
+            pr_head_commit=job.candidate_commit,
+            pr_base_commit=job.base_commit,
+            candidate_tree=job.candidate_tree or job.candidate_commit,
+            expected_merge_tree=expected_merge_tree,
+            policy_version=job.policy_version,
+        )
+        if claimed_auth is None:
             raise PermissionError(
-                f"Authorization {auth.authorization_id} could not be claimed"
+                f"Authorization {auth.authorization_id} could not be atomically claimed"
             )
-        if not self.queue.db.update_review_job_state(
-            job.review_job_id, ReviewJobState.MERGING
-        ):
-            raise PermissionError(
-                f"Job {job.review_job_id} could not transition to merging"
-            )
+        auth = claimed_auth
+        if not auth.actor or not auth.actor.strip() or auth.scope not in allowed_scopes:
+            raise PermissionError("Claimed authorization identity or scope is invalid")
+        scopes = list({auth.scope, "merge-judge"})
+        principal = Principal(identity=auth.actor, scopes=scopes)
 
         target_head_before: str | None = None
         lock_acquired = False

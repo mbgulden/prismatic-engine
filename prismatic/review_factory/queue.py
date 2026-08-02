@@ -533,6 +533,15 @@ class ReviewQueue:
         job = self.db.get_review_job(review_job_id)
         if job is None or job.state != ReviewJobState.MERGE_READY.value:
             return None
+        if (
+            isinstance(expires_minutes, bool)
+            or not isinstance(expires_minutes, int)
+            or not 1 <= expires_minutes <= 1440
+        ):
+            logger.warning(
+                "authorize_merge rejected: expires_minutes must be an integer from 1 to 1440"
+            )
+            return None
 
         tier = job.risk_tier
         if not actor or not actor.strip():
@@ -568,6 +577,7 @@ class ReviewQueue:
                 else MergeScope.TIER_3_EXCEPTION
             )
 
+        now = _utcnow()
         auth = MergeAuthorization(
             review_job_id=review_job_id,
             repository=job.repository,
@@ -578,23 +588,18 @@ class ReviewQueue:
             expected_merge_tree=expected_merge_tree
             or job.candidate_tree
             or job.candidate_commit,
+            policy_version=job.policy_version,
             actor=actor,
             scope=scope.value,
-            expires_at=(_utcnow() + timedelta(minutes=expires_minutes)).isoformat(),
+            expires_at=(now + timedelta(minutes=expires_minutes)).isoformat(),
             idempotency_key=hashlib.sha256(
-                f"{review_job_id}-{job.candidate_tree}-{_utcnow_iso()}".encode()
+                f"{review_job_id}-{job.candidate_tree}-{now.isoformat()}".encode()
             ).hexdigest(),
         )
 
-        auth_id = self.db.insert_authorization(auth)
-
-        # Transition to merge_authorized
-        self.db.update_review_job_state(
-            review_job_id,
-            ReviewJobState.MERGE_AUTHORIZED,
-            lease_owner="",
-            lease_expires_at="",
-        )
+        if not self.db.create_authorization_and_transition(auth, now=now):
+            return None
+        auth_id = auth.authorization_id
         emit_rf_event(
             "review_factory.authorization_created",
             {

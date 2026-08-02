@@ -23,7 +23,7 @@ import hashlib
 import json
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 # ─────────────────────────────────────────────────────────────────────
@@ -399,10 +399,16 @@ class MergeAuthorization:
 
     @property
     def is_expired(self) -> bool:
+        """Fail closed unless expiry is a valid aware UTC timestamp in the future."""
         if not self.expires_at:
-            return False
-        exp = datetime.fromisoformat(self.expires_at)
-        return _utcnow() > exp
+            return True
+        try:
+            exp = datetime.fromisoformat(self.expires_at)
+        except (TypeError, ValueError):
+            return True
+        if exp.tzinfo is None or exp.utcoffset() != timedelta(0):
+            return True
+        return _utcnow() >= exp.astimezone(timezone.utc)
 
     def consume(self) -> None:
         """Mark this authorization as consumed. Idempotent."""
