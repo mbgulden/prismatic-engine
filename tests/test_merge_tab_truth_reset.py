@@ -60,3 +60,36 @@ def test_generated_dashboard_contains_phase0_truth_marker():
     assert "LEGACY_MERGE_PIPELINE_QUARANTINED" in generated
     assert "Legacy Merge Pipeline — Quarantined" in generated
     assert "● Active" not in generated
+
+
+def test_historical_cards_clear_and_flag_stale_on_failure_path():
+    script = DASHBOARD_JS.read_text(encoding="utf-8")
+
+    # Success path must clear any prior stale marker on the four Historical cards.
+    assert 'node.removeAttribute("data-stale")' in script
+    assert 'node.removeAttribute("title")' in script
+    for stat_id in (
+        "stat-merge-pending",
+        "stat-merge-merged",
+        "stat-merge-scan",
+        "stat-merge-apply",
+    ):
+        assert f'getElementById("{stat_id}")' in script
+
+    # Failure path must reset the four cards to an explicit unavailable state.
+    failure_block_start = script.index("} catch (e) {")
+    failure_block_end = script.index("}\n        }\n\n        function escapeHTML", failure_block_start)
+    failure_block = script[failure_block_start:failure_block_end]
+    for stat_id in (
+        "stat-merge-pending",
+        "stat-merge-merged",
+        "stat-merge-scan",
+        "stat-merge-apply",
+    ):
+        assert f'"{stat_id}"' in failure_block, stat_id
+    assert 'node.setAttribute("data-stale", "true")' in failure_block
+    assert 'node.textContent = "—"' in failure_block
+    # The cards must clear their prior numeric or timestamp text — not just toggle an attribute.
+    assert failure_block.count("—") >= 4
+    # The change must live in the same function that fetches the merge snapshot.
+    assert 'async function fetchMergeData' in script

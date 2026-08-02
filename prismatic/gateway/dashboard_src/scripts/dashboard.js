@@ -1525,7 +1525,21 @@
                     const snapshotScan = data.last_scan ? formatDate(data.last_scan) : "unknown scan time";
                     statusMeta.innerHTML = `Source: ${source} · Snapshot scan: ${escapeHTML(snapshotScan)} · Not Review Factory authority`;
                 }
-                    
+
+                // Staleness marker: must be cleared in the success path and set in the
+                // failure path so the four Historical cards cannot remain presented as
+                // current snapshot metadata after a later fetch fails.
+                const pendingStat = document.getElementById("stat-merge-pending");
+                const mergedStat = document.getElementById("stat-merge-merged");
+                const scanStat = document.getElementById("stat-merge-scan");
+                const applyStat = document.getElementById("stat-merge-apply");
+                for (const node of [pendingStat, mergedStat, scanStat, applyStat]) {
+                    if (node) {
+                        node.removeAttribute("data-stale");
+                        node.removeAttribute("title");
+                    }
+                }
+
                     document.getElementById("stat-merge-pending").textContent = data.pending_count ?? pending.length;
                     document.getElementById("stat-merge-merged").textContent = data.merged_count ?? merged.length;
                     document.getElementById("stat-merge-scan").textContent = data.last_scan ? formatDate(data.last_scan) : "Never";
@@ -1572,6 +1586,23 @@
                 if (statusMeta) statusMeta.textContent = "Legacy data unavailable. Review Factory remains the only canonical workflow.";
                 if (pendingTbody) pendingTbody.innerHTML = `<tr><td colspan="5" class="py-6 text-center text-rose-300">Historical snapshot unavailable.</td></tr>`;
                 if (historyTbody) historyTbody.innerHTML = `<tr><td colspan="4" class="py-6 text-center text-rose-300">Historical snapshot unavailable.</td></tr>`;
+
+                // The four Historical summary cards must not continue to display
+                // their prior poll's numbers/timestamps as if they were current.
+                // Clear the values to an explicit dash and flag them stale.
+                const statNodes = [
+                    ["stat-merge-pending", "Pending merges (unavailable)"],
+                    ["stat-merge-merged", "Merged count (unavailable)"],
+                    ["stat-merge-scan", "Snapshot scan (unavailable)"],
+                    ["stat-merge-apply", "Historical apply (unavailable)"],
+                ];
+                for (const [id, tooltip] of statNodes) {
+                    const node = document.getElementById(id);
+                    if (!node) continue;
+                    node.textContent = "—";
+                    node.setAttribute("data-stale", "true");
+                    node.setAttribute("title", tooltip);
+                }
             }
         }
 
