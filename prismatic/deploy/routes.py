@@ -6,7 +6,7 @@ Mounts under /api/deploy/.
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 try:
     from fastapi import APIRouter, HTTPException, Query
@@ -15,7 +15,6 @@ try:
 except ImportError:
     _HAS_FASTAPI = False
 
-import os
 import sys
 from pathlib import Path
 
@@ -24,8 +23,12 @@ _REPO_ROOT = str(Path(__file__).resolve().parent.parent.parent)
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from pe.deploy.manifest import DeployManifestStore, DeployRecord
-from pe.deploy.receiver import DeployReceiverPipeline
+try:
+    from prismatic.deploy.manifest import DeployManifestStore
+    from prismatic.deploy.receiver import DeployReceiverPipeline
+except ImportError:
+    from pe.deploy.manifest import DeployManifestStore  # type: ignore
+    from pe.deploy.receiver import DeployReceiverPipeline  # type: ignore
 
 
 def create_deploy_router() -> Any:
@@ -40,7 +43,7 @@ def create_deploy_router() -> Any:
     @router.get("/recent")
     async def get_recent_deploys(
         limit: int = Query(20, ge=1, le=100),
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Get recent deployment records."""
         deploys = store.list_deploys(limit=limit)
         return {
@@ -50,15 +53,26 @@ def create_deploy_router() -> Any:
         }
 
     @router.get("/latest")
-    async def get_latest_deploy() -> Dict[str, Any]:
+    async def get_latest_deploy() -> dict[str, Any]:
         """Get the most recent deployment record."""
         latest = store.get_latest()
         if not latest:
             raise HTTPException(status_code=404, detail="No deploy records found")
         return {"deploy": latest.to_dict()}
 
+    @router.get("/status")
+    async def get_deploy_status() -> dict[str, Any]:
+        """Get deployment system status and latest summary."""
+        latest = store.get_latest()
+        return {
+            "status": "active",
+            "has_deploys": bool(latest),
+            "latest_deploy_id": latest.deploy_id if latest else "",
+            "timestamp": time.time(),
+        }
+
     @router.get("/{deploy_id}")
-    async def get_deploy_detail(deploy_id: str) -> Dict[str, Any]:
+    async def get_deploy_detail(deploy_id: str) -> dict[str, Any]:
         """Get detail for a single deploy record."""
         deploys = store.list_deploys(limit=1000)
         target = next((d for d in deploys if d.deploy_id == deploy_id), None)
@@ -71,7 +85,7 @@ def create_deploy_router() -> Any:
         pr_sha: str = Query(..., description="Commit SHA"),
         pr_title: str = Query("Manual Deploy", description="PR title"),
         dry_run: bool = Query(True, description="Dry-run mode (default True per §16.8)"),
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Trigger a manual deploy (supports dry-run mode)."""
         payload = {
             "pr_sha": pr_sha,

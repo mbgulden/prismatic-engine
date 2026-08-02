@@ -22,11 +22,11 @@ from prismatic.review_factory.db import ReviewFactoryDB
 from prismatic.review_factory.merge_executor import MergeExecutor
 from prismatic.review_factory.models import (
     ReviewDecision,
+    ReviewJobState,
     ReviewVerdict,
     VerificationReceipt,
 )
 from prismatic.review_factory.queue import ReviewQueue
-
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -101,7 +101,7 @@ def _create_merge_ready_job(queue: ReviewQueue, tier: int = 0) -> str:
         candidate_commit="b" * 40,
         candidate_tree="b" * 40,
     )
-    queue.complete_verification(job_id, receipt)
+    queue.complete_verification(job_id, receipt, worker_id="verifier-1")
 
     # Review (multi-witness for high tiers)
     job_obj = queue.db.get_review_job(job_id)
@@ -117,7 +117,7 @@ def _create_merge_ready_job(queue: ReviewQueue, tier: int = 0) -> str:
                 receipt_id=receipt.receipt_id,
                 verdict=ReviewVerdict.CLEAN.value,
             )
-            queue.submit_verdict(job_id, decision)
+            queue.submit_verdict(job_id, decision, reviewer_id=f"reviewer-{witness_n}")
 
     return job_id
 
@@ -193,7 +193,7 @@ class TestMergeExecution:
         job_id = _create_merge_ready_job(queue, tier=0)
 
         # Authorize explicitly
-        auth_id = queue.authorize_merge(job_id, actor="michael")
+        auth_id = queue.authorize_merge(job_id, actor="standing-policy: tier-0")
         assert auth_id is not None
 
         # Build a CLEAN manifest for the executor
@@ -237,44 +237,47 @@ class TestMergeExecution:
         assert not result.success
         assert "authorization" in result.error.lower()
 
-    def test_non_dry_run_merge_executes_attestation_and_lock(self, queue, tmp_path):
-        """Verify non-dry-run merge calls submit_attestation, acquire_lock, and release_lock."""
-        from unittest.mock import patch, MagicMock
+    def test_non_dry_run_rejects_synthetic_ci_before_claim(self, queue, tmp_path):
+        """Synthetic GitHub-shaped checks cannot authorize a non-dry merge."""
+        from unittest.mock import patch
+
         from prismatic.core.merge_factory import MergeFactoryStore
 
         mf_store = MergeFactoryStore(db_path=tmp_path / "test_mf.db")
         executor = MergeExecutor(queue=queue, dry_run=False, mf_store=mf_store)
 
         job_id = _create_merge_ready_job(queue, tier=0)
-        auth_id = queue.authorize_merge(job_id, actor="michael")
+        auth_id = queue.authorize_merge(job_id, actor="standing-policy: tier-0")
         assert auth_id is not None
 
         manifest = _create_merge_ready_manifest()
-        ci_checks = [
-            CICheck(
-                name="rf-v1-verification",
-                run_id=1000,
-                conclusion="SUCCESS",
-                head_sha="b" * 40,
-                details_url="https://github.com/mbgulden/prismatic-engine/actions/runs/1000",
-            )
-        ]
-        manifest = manifest.record_ci(ci_checks)
-        manifest = manifest.mark_merge_eligible()
-
-        mock_integration_manifest = MagicMock()
-        mock_integration_manifest.merge_sha = "c" * 40
+        manifest = manifest.record_ci(
+            [
+                CICheck(
+                    name="rf-v1-verification",
+                    run_id=1000,
+                    conclusion="SUCCESS",
+                    head_sha="b" * 40,
+                    details_url="https://github.com/mbgulden/prismatic-engine/actions/runs/1000",
+                )
+            ]
+        ).mark_merge_eligible()
 
         with patch(
-            "prismatic.review_factory.merge_executor.integrate_pipeline_run",
-            return_value=mock_integration_manifest,
-        ):
+            "prismatic.review_factory.merge_executor.integrate_pipeline_run"
+        ) as integration:
             result = executor.execute(job_id, manifest=manifest)
 
-        assert result.success
-        assert result.merge_sha == "c" * 40
-
-        # Verify attestation was written to mf_store
+        assert result.success is False
+        assert "lacks provider-neutral receipt provenance" in (result.error or "")
+        integration.assert_not_called()
+        row = queue.db.get_review_job(job_id)
+        assert row is not None
+        assert row.state == ReviewJobState.MERGE_AUTHORIZED.value
         decision_hist = mf_store.get_decision_history("GRO-TEST-MERGE")
-        assert len(decision_hist) == 1
-        assert decision_hist[0]["decision"] == "APPROVE_MERGE"
+        assert decision_hist == []
+        consumed_at = queue.db.conn.execute(
+            "SELECT consumed_at FROM merge_authorizations WHERE authorization_id = ?",
+            (auth_id,),
+        ).fetchone()[0]
+        assert consumed_at == ""

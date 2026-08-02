@@ -13,9 +13,10 @@ import hmac
 import json
 import os
 import stat
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Awaitable, Callable, Final
+from typing import Final
 
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse

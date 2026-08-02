@@ -1,6 +1,6 @@
 # Prismatic Engine Review/Merge Factory V1 — Comprehensive OKF
 
-**Status:** CANONICAL SPEC DRAFT — pending Michael sign-off
+**Status:** IMPLEMENTATION ACCEPTED LOCALLY — deployment authorized 2026-08-02; hosted publication and production proof pending
 **Author:** Fred (orchestrator profile), 2026-07-31
 **Trigger:** Michael's review-merge-factory plan + Fred's 10-question analysis + cross-cutting additions
 
@@ -716,16 +716,49 @@ Before declaring any RF slice done, AGY must verify:
 
 ---
 
-## 17. Quick-reference card (Antigravity, print this)
+## 17. Implementation acceptance and release authorization — 2026-08-02
+
+Michael approved saving, OKF documentation, publication, and deployment after local acceptance of PR #421.
+
+```text
+PR=https://github.com/mbgulden/prismatic-engine/pull/421
+CODE_ACCEPTANCE_HEAD=a757edbbee7e8b26e93363ec32d7d5bee2e7b6a5
+CODE_ACCEPTANCE_TREE=86d43ee01bacf69f56f75fdeef4800e03e0572f7
+BASE_HEAD=b8cefdb23c40d3ea87eebc9cf40672bf24f54a69
+DETERMINISTIC_MERGE_TREE=86d43ee01bacf69f56f75fdeef4800e03e0572f7
+CANONICAL_LOCAL_SUITE=2079 passed; 1 skipped
+FRESH_CLONE_DISTRIBUTION=PUBLISHABLE; 52 checks; 0 failures
+FRESH_CLONE_CANARY=9 passed; 0 failed
+PACKAGE_BUILD=wheel and sdist PASS; Twine PASS
+RF_RENDERED_MOBILE=PASS at 375x812
+WORKSPACE_DEEP_LINK_RENDERED_MOBILE=PASS at 375x812
+AUTHORIZATION=save + document in OKF + publish + deploy
+PUBLICATION_STATE=pending at this immutable OKF record
+PRODUCTION_STATE=pending at this immutable OKF record
+```
+
+Implemented and verified boundaries:
+
+- RF queue, verifier, reviewer, merge authority, rollback, backlog importer, and authenticated gateway routes are integrated rather than duplicated.
+- The existing Prismatic Hub Review Factory tab uses authenticated live queue/jobs/detail adapters; browser credentials are not persisted.
+- Workspace Tree remains in the Hub Workspaces tab. Legacy `/workspaces?file=...` links resolve through pinned workspace descriptors to opaque workspace IDs before preview.
+- WebSocket authentication is required by default and unauthorized native browser clients receive policy close `1008` without a retry loop.
+- Dashboard source/generated parity, public security scan, installed-wheel smoke, plugin load, release smoke, package build, and mobile geometry checks pass.
+- Local canonical-suite acceptance, GitHub-hosted CI, merge proof, immutable production activation, edge proof, and browser proof are separate gates. This record claims only the completed local gates.
+
+The final deployment result is append-only evidence in the production deployment receipt and George handoff. It must bind the eventual merge commit/tree, standalone release checkout, commit-specific venv, systemd drop-in, rollback artifact, state-count preservation, local/edge/public/browser proof, and explicit non-claims.
+
+---
+
+## 18. Quick-reference card (Antigravity, print this)
 
 ```
 REVIEW/MERGE FACTORY V1 — QUICK REFERENCE
 ==========================================
-Build owner:        Antigravity 2.0 (Michael's laptop)
+Build owner:        Antigravity 2.0 + Prismatic helper lanes
 Source repo:        github.com/mbgulden/prismatic-engine
-Base branch:        origin/main @ 21be7812 (post-PR-382)
-Working dir:        /home/ubuntu/work/prismatic-engine/
-Spec freeze dir:    prismatic/review_factory/spec/ (RF-0)
+Base branch:        origin/main @ b8cefdb23c40
+Accepted code:      PR #421 @ a757edbbee7e
 Implementation:     RF-1 queue, RF-2 verifier, RF-3 reviewer,
                     RF-4 merge, RF-5 dashboard, RF-6 backlog
 
@@ -764,9 +797,9 @@ VERIFICATION:
   RF-6:   pytest tests/test_backlog_importer.py + 20 fixtures idempotent
 
 COUNTER:             91/91=100%
-ONE-LINE:            PR #382 MERGED (legacy exemplar). Factory OKF awaits sign-off.
-IN-FLIGHT:           Review Factory V1 OKF sign-off (Michael/Ned/Fred/George)
-PENDING DECISIONS:   (1) Approve OKF (2) Merge feature/gro-3306 (3) Cleanup 7 .bak files
+ONE-LINE:            RF V1 implementation locally accepted; publication/deploy authorized.
+IN-FLIGHT:           PR #421 exact-head publication → hosted CI → merge → immutable deployment
+PENDING DECISIONS:   None for this release; all later merge/deploy claims require receipts
 ```
 
 **END OF OKF.**

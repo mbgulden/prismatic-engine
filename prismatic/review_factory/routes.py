@@ -20,7 +20,7 @@ from __future__ import annotations
 import time
 from collections import defaultdict
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any
 
 try:
     from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -31,6 +31,20 @@ try:
 except ImportError:
     _HAS_FASTAPI = False
     security_scheme = None
+    APIRouter = Any  # type: ignore
+
+    def Depends(dependency=None):  # type: ignore
+        return None
+
+    HTTPException = Exception  # type: ignore
+
+    def Query(default=None, **kwargs):  # type: ignore
+        return default
+
+    Response = Any  # type: ignore
+    status = Any  # type: ignore
+    HTTPAuthorizationCredentials = Any  # type: ignore
+    HTTPBearer = Any  # type: ignore
 
 from prismatic.core.merge_factory import Principal, get_authenticated_principal
 from prismatic.review_factory.models import ReviewJobState
@@ -47,7 +61,7 @@ def _get_queue() -> ReviewQueue:
 
 
 async def get_rf_principal(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme),
+    credentials: HTTPAuthorizationCredentials | None = Depends(security_scheme),
 ) -> Principal:
     """Dependency to retrieve the authenticated principal or raise 401."""
     if credentials is None:
@@ -94,11 +108,11 @@ async def enforce_rate_limit() -> None:
 
 def _attach_routes(router: Any) -> None:
     """Attach all Review Factory routes to a given router."""
-    if not _HAS_FASTAPI or router is None:
+    if router is None:
         return
 
     @router.get("/queue", dependencies=[Depends(get_rf_principal)])
-    async def get_queue_depth() -> Dict[str, Any]:
+    async def get_queue_depth() -> dict[str, Any]:
         """Queue depth breakdown by state."""
         q = _get_queue()
         stats = q.queue_depth()
@@ -111,10 +125,10 @@ def _attach_routes(router: Any) -> None:
 
     @router.get("/jobs", dependencies=[Depends(get_rf_principal)])
     async def list_jobs(
-        state: Optional[str] = Query(None, description="Filter by state"),
-        tier: Optional[int] = Query(None, description="Filter by risk tier"),
+        state: str | None = Query(None, description="Filter by state"),
+        tier: int | None = Query(None, description="Filter by risk tier"),
         limit: int = Query(50, ge=1, le=500),
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """List review jobs, optionally filtered by state or tier."""
         q = _get_queue()
         state_filter = None
@@ -139,6 +153,7 @@ def _attach_routes(router: Any) -> None:
                     "task_id": j.task_id,
                     "state": j.state,
                     "risk_tier": j.risk_tier,
+                    "candidate_commit": j.candidate_commit,
                     "repository": j.repository,
                     "created_at": j.created_at,
                     "lease_owner": j.lease_owner,
@@ -151,7 +166,7 @@ def _attach_routes(router: Any) -> None:
         }
 
     @router.get("/job/{job_id}", dependencies=[Depends(get_rf_principal)])
-    async def get_job_detail(job_id: str) -> Dict[str, Any]:
+    async def get_job_detail(job_id: str) -> dict[str, Any]:
         """Get full detail for a specific review job."""
         q = _get_queue()
         job = q.db.get_review_job(job_id)
@@ -230,16 +245,34 @@ def _attach_routes(router: Any) -> None:
     )
     async def authorize_job_merge(
         job_id: str,
-        body: Dict[str, Any],
+        body: dict[str, Any],
         principal: Principal = Depends(require_admin_principal),
-    ) -> Dict[str, Any]:
-        """Authorize a merge-ready job for merge."""
-        actor = principal.identity
+    ) -> dict[str, Any]:
+        """Authorize a merge-ready job using tier-exact domain authority."""
         q = _get_queue()
+        job = q.db.get_review_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+        expected_merge_tree = str(body.get("expected_merge_tree", "")).strip()
+        if len(expected_merge_tree) != 40:
+            raise HTTPException(
+                status_code=400,
+                detail="expected_merge_tree must be an explicit 40-character Git tree SHA",
+            )
+        if job.risk_tier in (0, 1):
+            actor = f"standing-policy: tier-{job.risk_tier}"
+        else:
+            requester = principal.identity.strip()
+            if not requester:
+                raise HTTPException(
+                    status_code=403, detail="Authenticated identity required"
+                )
+            actor = f"human:{requester}"
         auth_id = q.authorize_merge(
             review_job_id=job_id,
             actor=actor,
             expires_minutes=body.get("expires_minutes", 60),
+            expected_merge_tree=expected_merge_tree,
         )
         if auth_id is None:
             raise HTTPException(
@@ -251,6 +284,8 @@ def _attach_routes(router: Any) -> None:
             "authorization_id": auth_id,
             "review_job_id": job_id,
             "actor": actor,
+            "requested_by": principal.identity,
+            "expected_merge_tree": expected_merge_tree,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -261,7 +296,7 @@ def _attach_routes(router: Any) -> None:
     async def force_release_job_lease(
         job_id: str,
         principal: Principal = Depends(require_admin_principal),
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Force-release a stuck lease on a review job."""
         q = _get_queue()
         actor = principal.identity
@@ -279,9 +314,9 @@ def _attach_routes(router: Any) -> None:
 
     @router.get("/authorizations", dependencies=[Depends(get_rf_principal)])
     async def list_authorizations(
-        consumed: Optional[bool] = Query(None, description="Filter by consumed status"),
+        consumed: bool | None = Query(None, description="Filter by consumed status"),
         limit: int = Query(50, ge=1, le=500),
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """List merge authorizations."""
         q = _get_queue()
         query = "SELECT * FROM merge_authorizations"
@@ -325,7 +360,7 @@ def _attach_routes(router: Any) -> None:
     )
     async def run_janitor(
         principal: Principal = Depends(require_admin_principal),
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Trigger the stale lease janitor to reset expired leases."""
         q = _get_queue()
         actor = principal.identity
@@ -336,7 +371,7 @@ def _attach_routes(router: Any) -> None:
         }
 
     @router.get("/stats", dependencies=[Depends(get_rf_principal)])
-    async def get_stats() -> Dict[str, Any]:
+    async def get_stats() -> dict[str, Any]:
         """Aggregate review factory statistics."""
         q = _get_queue()
         stats = q.queue_depth()
@@ -386,12 +421,12 @@ def _attach_routes(router: Any) -> None:
         )
 
     @router.get("/healthz")
-    async def healthz() -> Dict[str, str]:
+    async def healthz() -> dict[str, str]:
         """Liveness probe."""
         return {"status": "ok", "service": "review-factory"}
 
     @router.get("/readyz")
-    async def readyz() -> Dict[str, Any]:
+    async def readyz() -> dict[str, Any]:
         """Readiness probe checking database connectivity and table integrity."""
         try:
             q = _get_queue()
@@ -403,7 +438,7 @@ def _attach_routes(router: Any) -> None:
             )
 
     @router.get("/audit-log", dependencies=[Depends(require_admin_principal)])
-    async def get_audit_log(limit: int = Query(50, ge=1, le=500)) -> Dict[str, Any]:
+    async def get_audit_log(limit: int = Query(50, ge=1, le=500)) -> dict[str, Any]:
         """List append-only operator audit log entries."""
         q = _get_queue()
         entries = q.db.list_audit_entries(limit=limit)
@@ -415,21 +450,31 @@ def _attach_routes(router: Any) -> None:
 
 
 def _create_review_router() -> Any:
-    if not _HAS_FASTAPI:
+    try:
+        from fastapi import APIRouter
+
+        r = APIRouter(prefix="/review", tags=["review-factory"])
+        _attach_routes(r)
+        return r
+    except Exception:
         return None
-    r = APIRouter(prefix="/review", tags=["review-factory"])
-    _attach_routes(r)
-    return r
 
 
-def _create_review_factory_canonical_router() -> Any:
-    if not _HAS_FASTAPI:
+def create_review_factory_router() -> Any:
+    try:
+        from fastapi import APIRouter
+
+        r = APIRouter(prefix="/review-factory", tags=["review-factory"])
+        _attach_routes(r)
+        return r
+    except Exception as exc:
+        print("RF ROUTER EXCEPTION:", exc)
+        import traceback
+
+        traceback.print_exc()
         return None
-    r = APIRouter(prefix="/review-factory", tags=["review-factory"])
-    _attach_routes(r)
-    return r
 
 
 review_router = _create_review_router()
-review_factory_canonical_router = _create_review_factory_canonical_router()
+review_factory_canonical_router = create_review_factory_router()
 router = review_router

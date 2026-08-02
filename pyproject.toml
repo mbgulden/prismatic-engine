@@ -62,7 +62,7 @@ prismatic-gateway = "prismatic.gateway.server:main"
 prismatic-api = "prismatic.api.server:run"
 
 [tool.setuptools.packages.find]
-include = ["prismatic*"]
+include = ["prismatic*", "pe*"]
 
 [tool.setuptools.package-data]
 prismatic = [
@@ -77,6 +77,9 @@ prismatic = [
     "gateway/dashboard_src/**/*",
     "gateway/static/**/*",
     "shipped_plugins/**/*",
+]
+pe = [
+    "**/*",
 ]
 
 # ─────────────────────────────────────────────────────────────────────

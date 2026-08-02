@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import sys
+import tempfile
 import threading
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
@@ -35,6 +35,7 @@ from typing import Any
 # ═══════════════════════════════════════════════════════════════
 # Integration Status
 # ═══════════════════════════════════════════════════════════════
+
 
 class IntegrationStatus(Enum):
     """Outcome of the integration phase."""
@@ -52,23 +53,29 @@ class IntegrationStatus(Enum):
 
     def is_terminal(self) -> bool:
         """True if this status represents a terminal state."""
-        return self in (IntegrationStatus.COMPLETED, IntegrationStatus.FAILED,
-                        IntegrationStatus.SKIPPED)
+        return self in (
+            IntegrationStatus.COMPLETED,
+            IntegrationStatus.FAILED,
+            IntegrationStatus.SKIPPED,
+        )
 
 
 # ═══════════════════════════════════════════════════════════════
 # Integration Artifact
 # ═══════════════════════════════════════════════════════════════
 
+
 @dataclass
 class IntegrationArtifact:
     """A single work product collected during integration."""
 
-    artifact_type: str          # "commit", "pull_request", "test_report", "review", "file"
-    identifier: str             # e.g., commit SHA, PR number, file path
+    artifact_type: str  # "commit", "pull_request", "test_report", "review", "file"
+    identifier: str  # e.g., commit SHA, PR number, file path
     description: str
     metadata: dict[str, Any] = field(default_factory=dict)
-    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    timestamp: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -77,6 +84,7 @@ class IntegrationArtifact:
 # ═══════════════════════════════════════════════════════════════
 # Integration Manifest
 # ═══════════════════════════════════════════════════════════════
+
 
 @dataclass
 class IntegrationManifest:
@@ -95,7 +103,9 @@ class IntegrationManifest:
     test_results: dict[str, Any] = field(default_factory=dict)
     merge_sha: str = ""
     error_message: str = ""
-    started_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    started_at: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
     completed_at: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -141,7 +151,9 @@ class IntegrationManifest:
             lines.append("| Type | Identifier | Description |")
             lines.append("|------|------------|-------------|")
             for a in self.artifacts:
-                lines.append(f"| {a.artifact_type} | `{a.identifier}` | {a.description} |")
+                lines.append(
+                    f"| {a.artifact_type} | `{a.identifier}` | {a.description} |"
+                )
             lines.append("")
 
         # Test Results
@@ -174,9 +186,11 @@ class IntegrationManifest:
     def summary(self) -> str:
         """Return a concise one-line status summary."""
         if self.status == IntegrationStatus.COMPLETED:
-            return (f"✅ {self.issue_id}: Integrated {self.branch} → "
-                    f"{self.target_branch} ({len(self.artifacts)} artifacts, "
-                    f"{self.merge_sha[:8] if self.merge_sha else 'no merge'})")
+            return (
+                f"✅ {self.issue_id}: Integrated {self.branch} → "
+                f"{self.target_branch} ({len(self.artifacts)} artifacts, "
+                f"{self.merge_sha[:8] if self.merge_sha else 'no merge'})"
+            )
         elif self.status == IntegrationStatus.FAILED:
             return f"❌ {self.issue_id}: Integration failed — {self.error_message[:80]}"
         elif self.status == IntegrationStatus.SKIPPED:
@@ -191,6 +205,7 @@ class IntegrationManifest:
 # ═══════════════════════════════════════════════════════════════
 # Integrate Phase Executor
 # ═══════════════════════════════════════════════════════════════
+
 
 class IntegratePhase:
     """Execute the Integrate phase (Step 7) of the 7-step iterative loop.
@@ -225,6 +240,8 @@ class IntegratePhase:
         skip_merge: bool = False,
         skip_tests: bool = False,
         manifest_dir: str | Path | None = None,
+        expected_target_head: str = "",
+        require_manifest_persistence: bool = False,
     ):
         self.issue_id = issue_id
         self.branch = branch
@@ -233,14 +250,14 @@ class IntegratePhase:
         self.test_command = test_command
         self.skip_merge = skip_merge
         self.skip_tests = skip_tests
+        self.expected_target_head = expected_target_head
+        self.require_manifest_persistence = require_manifest_persistence
 
         # Manifest storage
         if manifest_dir:
             self._manifest_dir = Path(manifest_dir)
         else:
-            self._manifest_dir = (
-                self.repo_path / "prismatic_state" / "manifests"
-            )
+            self._manifest_dir = self.repo_path / "prismatic_state" / "manifests"
         self._manifest_dir.mkdir(parents=True, exist_ok=True)
 
         self._artifacts: list[IntegrationArtifact] = []
@@ -326,23 +343,42 @@ class IntegratePhase:
             manifest.error_message = f"Failed to checkout {self.target_branch}: {exc}"
             return
 
-        # Pull latest
-        try:
-            self._git("pull", "origin", self.target_branch)
-        except subprocess.CalledProcessError:
-            # Non-fatal: might already be up to date
-            pass
+        # Exact-authority callers bind the target head and must never pull a
+        # mutable remote after authorization. Legacy callers without a binding
+        # retain the prior best-effort pull behavior.
+        if self.expected_target_head:
+            actual_target_head = self._git("rev-parse", "HEAD").strip()
+            if actual_target_head != self.expected_target_head:
+                manifest.status = IntegrationStatus.FAILED
+                manifest.error_message = (
+                    f"Target {self.target_branch} advanced: expected "
+                    f"{self.expected_target_head}, found {actual_target_head}"
+                )
+                return
+            manifest.metadata["expected_target_head"] = self.expected_target_head
+        else:
+            try:
+                self._git("pull", "origin", self.target_branch)
+            except subprocess.CalledProcessError:
+                # Non-fatal legacy behavior: the local target may be current.
+                pass
 
         # Merge
         try:
-            result = self._git("merge", self.branch, "--no-ff", "-m",
-                               f"Integrate {self.issue_id}: {self.branch} → {self.target_branch}")
+            self._git(
+                "merge",
+                self.branch,
+                "--no-ff",
+                "-m",
+                f"Integrate {self.issue_id}: {self.branch} → {self.target_branch}",
+            )
             # Extract merge SHA
             sha_result = self._git("rev-parse", "HEAD")
             manifest.merge_sha = sha_result.strip()
             self._add_artifact(
-                "merge_commit", manifest.merge_sha,
-                f"Merged {self.branch} into {self.target_branch}"
+                "merge_commit",
+                manifest.merge_sha,
+                f"Merged {self.branch} into {self.target_branch}",
             )
         except subprocess.CalledProcessError as exc:
             manifest.status = IntegrationStatus.FAILED
@@ -398,14 +434,12 @@ class IntegratePhase:
                     f"Integration tests failed (exit code {result.returncode})"
                 )
                 self._add_artifact(
-                    "test_report", "integration_tests",
-                    f"FAILED (exit {result.returncode})"
+                    "test_report",
+                    "integration_tests",
+                    f"FAILED (exit {result.returncode})",
                 )
             else:
-                self._add_artifact(
-                    "test_report", "integration_tests",
-                    "PASSED"
-                )
+                self._add_artifact("test_report", "integration_tests", "PASSED")
         except subprocess.TimeoutExpired:
             manifest.status = IntegrationStatus.FAILED
             manifest.error_message = "Integration tests timed out (300s)"
@@ -429,8 +463,10 @@ class IntegratePhase:
         try:
             # Get commits on the branch that aren't on target
             log = self._git(
-                "log", f"{self.target_branch}..{self.branch}",
-                "--oneline", "--no-merges"
+                "log",
+                f"{self.target_branch}..{self.branch}",
+                "--oneline",
+                "--no-merges",
             )
             for line in log.strip().splitlines():
                 if line:
@@ -444,9 +480,20 @@ class IntegratePhase:
         # Attempt to find a PR associated with this branch via gh CLI
         try:
             result = subprocess.run(
-                ["gh", "pr", "list", "--head", self.branch,
-                 "--json", "number,title,url", "--limit", "1"],
-                capture_output=True, text=True, timeout=15,
+                [
+                    "gh",
+                    "pr",
+                    "list",
+                    "--head",
+                    self.branch,
+                    "--json",
+                    "number,title,url",
+                    "--limit",
+                    "1",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
                 cwd=str(self.repo_path),
             )
             if result.returncode == 0 and result.stdout.strip():
@@ -459,8 +506,7 @@ class IntegratePhase:
                         pr.get("title", ""),
                         metadata={"url": pr.get("url", "")},
                     )
-        except (subprocess.CalledProcessError, json.JSONDecodeError,
-                FileNotFoundError):
+        except (subprocess.CalledProcessError, json.JSONDecodeError, FileNotFoundError):
             pass
 
     # ── Internal: Manifest Persistence ───────────────────────
@@ -472,13 +518,40 @@ class IntegratePhase:
         return manifest
 
     def _persist_manifest(self, manifest: IntegrationManifest) -> None:
-        """Write the manifest to disk."""
+        """Atomically write the integration manifest to disk."""
         path = self._manifest_path()
+        fd = -1
+        tmp_name = ""
         try:
-            with open(path, "w") as f:
-                f.write(manifest.to_json())
+            fd, tmp_name = tempfile.mkstemp(
+                prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+            )
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                fd = -1
+                handle.write(manifest.to_json())
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_name, path)
+            tmp_name = ""
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
         except OSError as exc:
+            if self.require_manifest_persistence:
+                raise RuntimeError(
+                    f"Failed to persist integration manifest {self.issue_id}: {exc}"
+                ) from exc
             print(f"[integrate] Failed to persist manifest {self.issue_id}: {exc}")
+        finally:
+            if fd >= 0:
+                os.close(fd)
+            if tmp_name:
+                try:
+                    os.unlink(tmp_name)
+                except FileNotFoundError:
+                    pass
 
     def _manifest_path(self) -> Path:
         return self._manifest_dir / f"{self.issue_id.replace('/', '_')}.json"
@@ -489,7 +562,9 @@ class IntegratePhase:
         """Run a git command in the repo directory, returning stdout."""
         result = subprocess.run(
             ["git"] + list(args),
-            capture_output=True, text=True, check=True,
+            capture_output=True,
+            text=True,
+            check=True,
             cwd=str(self.repo_path),
         )
         return result.stdout
@@ -550,6 +625,7 @@ class IntegratePhase:
 # Pipeline Integration — State Machine Factory
 # ═══════════════════════════════════════════════════════════════
 
+
 def integrate_pipeline_run(
     issue_id: str,
     branch: str,
@@ -557,6 +633,8 @@ def integrate_pipeline_run(
     repo_path: str | Path | None = None,
     skip_merge: bool = False,
     skip_tests: bool = False,
+    expected_target_head: str = "",
+    require_manifest_persistence: bool = False,
 ) -> IntegrationManifest:
     """Convenience function to integrate a completed pipeline run.
 
@@ -581,6 +659,8 @@ def integrate_pipeline_run(
         repo_path=repo_path,
         skip_merge=skip_merge,
         skip_tests=skip_tests,
+        expected_target_head=expected_target_head,
+        require_manifest_persistence=require_manifest_persistence,
     )
     return phase.run()
 

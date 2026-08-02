@@ -6,19 +6,19 @@ and asserts the 375px zero horizontal-overflow invariant (scrollWidth <= 375).
 """
 
 import os
+import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
+
 import pytest
-
-
-import shutil
 
 
 def test_playwright_visual_audit_against_live_gateway(tmp_path):
     """Run Playwright visual audit against live Gateway server and verify 375px viewport."""
-    if not shutil.which("node"):
+    node_bin = shutil.which("node") or shutil.which("node.exe")
+    if not node_bin:
         pytest.skip("Node.js executable 'node' not found in system PATH")
 
     node_script = (
@@ -66,8 +66,10 @@ def test_playwright_visual_audit_against_live_gateway(tmp_path):
         assert server_ready, f"Gateway server did not become ready on port {port}"
 
         # Run Playwright audit script
+        rel_script = "scripts/visual_audit_playwright.js"
         res = subprocess.run(
-            ["node", str(node_script)],
+            [node_bin, rel_script, f"http://127.0.0.1:{port}"],
+            cwd=repo_root,
             env=env,
             capture_output=True,
             text=True,
@@ -83,5 +85,8 @@ def test_playwright_visual_audit_against_live_gateway(tmp_path):
         ), f"Horizontal overflow detected on mobile viewport:\n{res.stdout}"
 
     finally:
-        proc.terminate()
-        proc.wait(timeout=5)
+        try:
+            proc.terminate()
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            proc.kill()

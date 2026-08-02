@@ -7,14 +7,14 @@ Required: 3/3 PASS minimum + enqueue_completed_work returns a UUID.
 from __future__ import annotations
 
 import json
+
+# Ensure the test can find the prismatic package
+import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-
-# Ensure the test can find the prismatic package
-import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
@@ -136,7 +136,7 @@ class TestStateTransitions:
             candidate_tree="c09761ed",
             classification="targeted",
         )
-        assert queue.complete_verification(job_id, receipt)
+        assert queue.complete_verification(job_id, receipt, worker_id="verifier-1")
 
         # Verify state
         updated = queue.db.get_review_job(job_id)
@@ -157,11 +157,11 @@ class TestStateTransitions:
             receipt_id=receipt.receipt_id,
             verdict=ReviewVerdict.CLEAN.value,
         )
-        new_state = queue.submit_verdict(job_id, decision)
+        new_state = queue.submit_verdict(job_id, decision, reviewer_id="agy-v1.0")
         assert new_state == ReviewJobState.MERGE_READY.value
 
         # 6. Authorize explicitly
-        auth_id = queue.authorize_merge(job_id, actor="michael")
+        auth_id = queue.authorize_merge(job_id, actor="standing-policy: tier-1")
         assert auth_id is not None
 
         final = queue.db.get_review_job(job_id)
@@ -185,7 +185,7 @@ class TestStateTransitions:
             candidate_commit="bbbb",
             candidate_tree="bbbb",
         )
-        queue.complete_verification(job_id, receipt)
+        queue.complete_verification(job_id, receipt, worker_id="verifier-1")
 
         # Review → repair_required
         _ = queue.lease_for_review("agy-v1.0")
@@ -208,7 +208,7 @@ class TestStateTransitions:
                 ]
             ),
         )
-        new_state = queue.submit_verdict(job_id, decision)
+        new_state = queue.submit_verdict(job_id, decision, reviewer_id="agy-v1.0")
         assert new_state == ReviewJobState.REPAIR_REQUIRED.value
 
         # Verify repair packet was created
@@ -244,7 +244,9 @@ class TestLeaseManagement:
                 candidate_commit=f"bbbb{i}",
                 candidate_tree=f"bbbb{i}",
             )
-            queue.complete_verification(job.review_job_id, receipt)
+            queue.complete_verification(
+                job.review_job_id, receipt, worker_id=f"verifier-{i}"
+            )
 
         # Lease 3 reviewers — should all succeed
         for i in range(3):

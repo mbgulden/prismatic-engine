@@ -23,9 +23,8 @@ import hashlib
 import json
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
-
 
 # ─────────────────────────────────────────────────────────────────────
 # Enums
@@ -303,8 +302,8 @@ class Finding:
 class ReviewDecision:
     """A reviewer's verdict on a candidate.
 
-    The ``idempotency_key`` is computed automatically from
-    ``reviewer_id``, ``candidate_tree``, and ``verdict``.
+    The ``idempotency_key`` is computed automatically from the exact
+    job, reviewer, candidate tree, receipt, and verdict identities.
     """
 
     decision_id: str = field(default_factory=_new_uuid)
@@ -336,8 +335,15 @@ class ReviewDecision:
             self.idempotency_key = self.compute_idempotency_key()
 
     def compute_idempotency_key(self) -> str:
-        """sha256(reviewer_id + candidate_tree + verdict)."""
-        raw = f"{self.reviewer_id}{self.candidate_tree}{self.verdict}"
+        """Bind retry identity to the exact job, artifact, reviewer, and verdict."""
+        fields = (
+            self.review_job_id,
+            self.reviewer_id,
+            self.candidate_tree,
+            self.receipt_id,
+            self.verdict,
+        )
+        raw = "\0".join(fields)
         return hashlib.sha256(raw.encode()).hexdigest()
 
     @property
@@ -393,10 +399,16 @@ class MergeAuthorization:
 
     @property
     def is_expired(self) -> bool:
+        """Fail closed unless expiry is a valid aware UTC timestamp in the future."""
         if not self.expires_at:
-            return False
-        exp = datetime.fromisoformat(self.expires_at)
-        return _utcnow() > exp
+            return True
+        try:
+            exp = datetime.fromisoformat(self.expires_at)
+        except (TypeError, ValueError):
+            return True
+        if exp.tzinfo is None or exp.utcoffset() != timedelta(0):
+            return True
+        return _utcnow() >= exp.astimezone(timezone.utc)
 
     def consume(self) -> None:
         """Mark this authorization as consumed. Idempotent."""
@@ -419,7 +431,9 @@ class RepairPacket:
     """
 
     packet_id: str = field(default_factory=_new_uuid)
+    review_job_id: str = ""  # FK to review_jobs
     candidate_tree: str = ""
+    candidate_attempt: int = 1
 
     # Findings from the review decision
     findings_json: str = "[]"

@@ -18,7 +18,6 @@ from prismatic.review_factory.db import ReviewFactoryDB
 from prismatic.review_factory.queue import ReviewQueue
 from prismatic.review_factory.verifier import VerificationWorker
 
-
 # ── Helpers ──────────────────────────────────────────────────────────
 
 
@@ -111,7 +110,7 @@ class TestVerificationWithManifest:
         job = queue.lease_for_verification("verifier-1")
         assert job is not None
 
-        receipt, updated = worker.verify(job, manifest)
+        receipt, updated = worker._verify_materialized(job, manifest, "f" * 64)
 
         # Manifest advanced to REVIEW_REQUIRED
         assert updated.state == PromotionState.REVIEW_REQUIRED
@@ -134,7 +133,7 @@ class TestVerificationWithManifest:
         job = queue.lease_for_verification("verifier-1")
         assert job is not None
 
-        receipt, updated = worker.verify(job, manifest)
+        receipt, updated = worker._verify_materialized(job, manifest, "f" * 64)
 
         # Manifest advanced
         assert updated.state == PromotionState.REVIEW_REQUIRED
@@ -149,7 +148,7 @@ class TestVerificationWithManifest:
         _ = _create_review_job(queue, tier=0)
         job = queue.lease_for_verification("verifier-1")
 
-        receipt, updated = worker.verify(job, manifest)
+        receipt, updated = worker._verify_materialized(job, manifest, "f" * 64)
 
         for evidence in updated.verification_evidence:
             assert evidence.proof_class in (
@@ -174,7 +173,7 @@ class TestVerificationWithManifest:
         _ = _create_review_job(queue, tier=0)
         job = queue.lease_for_verification("verifier-1")
 
-        receipt, _ = worker.verify(job, manifest)
+        receipt, _ = worker._verify_materialized(job, manifest, "f" * 64)
 
         non_claims = json.loads(receipt.explicit_non_claims)
         assert isinstance(non_claims, list)
@@ -188,7 +187,7 @@ class TestVerificationWithManifest:
         _ = _create_review_job(queue, tier=0)
         job = queue.lease_for_verification("verifier-1")
 
-        receipt1, _ = worker.verify(job, manifest)
+        receipt1, _ = worker._verify_materialized(job, manifest, "f" * 64)
 
         # Create a second run with the same paths
         proof1 = receipt1.changed_path_invariance_proof

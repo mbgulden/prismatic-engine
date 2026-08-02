@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -883,10 +884,15 @@ def test_crontab_syntax_validation_disposable_file() -> None:
 
     asserting live `crontab -l` SHA-256 remains completely unchanged.
     """
-    # 1. Capture live crontab -l SHA-256 before
-    res_before = subprocess.run(
-        ["crontab", "-l"], capture_output=True, text=True, check=True
-    )
+    crontab = shutil.which("crontab")
+    if crontab is None:
+        pytest.skip("crontab executable is unavailable on this host")
+
+    # 1. Capture live crontab -l SHA-256 before. A host with no installed
+    # user crontab has no production state for this invariance probe.
+    res_before = subprocess.run([crontab, "-l"], capture_output=True, text=True)
+    if res_before.returncode != 0:
+        pytest.skip("no live user crontab is installed on this host")
     sha_before = hashlib.sha256(res_before.stdout.encode("utf-8")).hexdigest()
     assert sha_before == LIVE_CRONTAB_EXPORT_SHA256
 
@@ -896,18 +902,15 @@ def test_crontab_syntax_validation_disposable_file() -> None:
         temp_path = tf.name
 
     try:
-        res = subprocess.run(
-            ["crontab", "-n", temp_path], capture_output=True, text=True
-        )
+        res = subprocess.run([crontab, "-n", temp_path], capture_output=True, text=True)
         assert res.returncode == 0, f"crontab -n syntax check failed: {res.stderr}"
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
 
     # 3. Capture live crontab -l SHA-256 after
-    res_after = subprocess.run(
-        ["crontab", "-l"], capture_output=True, text=True, check=True
-    )
+    res_after = subprocess.run([crontab, "-l"], capture_output=True, text=True)
+    assert res_after.returncode == 0, "live user crontab disappeared during probe"
     sha_after = hashlib.sha256(res_after.stdout.encode("utf-8")).hexdigest()
     assert sha_after == sha_before, "Live crontab -l SHA-256 changed!"
 

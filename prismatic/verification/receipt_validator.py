@@ -22,8 +22,8 @@ except ImportError:
     jsonschema = None
     Draft202012Validator = None
 
-SHA1_PATTERN = re.compile(r"^[0-9a-fA-F]{40}$")
-DIGEST_PATTERN = re.compile(r"^(sha256:[0-9a-fA-F]{64}|sha512:[0-9a-fA-F]{128})$")
+SHA1_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+DIGEST_PATTERN = re.compile(r"^(sha256:[0-9a-f]{64}|sha512:[0-9a-f]{128})$")
 UTC_TIMESTAMP_NS_PATTERN = re.compile(
     r"^(?P<whole>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})"
     r"(?:\.(?P<fraction>\d{1,9}))?Z$"
@@ -830,9 +830,7 @@ def determine_merge_eligibility(
                                 if isinstance(ref, str):
                                     if req_name and (
                                         ref == req_name or Path(ref).name == req_name
-                                    ):
-                                        toolchain_items.append(item)
-                                    elif not req_name and ("toolchain" in ref.lower()):
+                                    ) or not req_name and ("toolchain" in ref.lower()):
                                         toolchain_items.append(item)
 
                     if is_req and len(toolchain_items) == 0:

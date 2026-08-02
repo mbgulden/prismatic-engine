@@ -28,9 +28,10 @@ import os
 import sqlite3
 import threading
 import time
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Awaitable
+from typing import Any
 
 logger = logging.getLogger("prismatic.gateway.event_bus")
 
@@ -88,7 +89,7 @@ EventHandler = Callable[["SwarmEvent"], Awaitable[None]]
 class SwarmEvent:
     """A single event in the swarm event bus."""
 
-    __slots__ = ("type", "source", "timestamp", "payload")
+    __slots__ = ("payload", "source", "timestamp", "type")
 
     def __init__(
         self,
@@ -113,7 +114,7 @@ class SwarmEvent:
         return json.dumps(self.to_dict(), default=str)
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "SwarmEvent":
+    def from_dict(cls, data: dict[str, Any]) -> SwarmEvent:
         return cls(
             event_type=data.get("type", "unknown"),
             source=data.get("source", "unknown"),
@@ -234,7 +235,7 @@ class EventBus:
         except Exception:
             raise  # re-raised for gather() error tracking
 
-    def _persist_to_sqlite(self, event: "SwarmEvent") -> None:
+    def _persist_to_sqlite(self, event: SwarmEvent) -> None:
         """Write event to the durable SQLite bus.
 
         Schema matches dispatch_consumer_v2.py's read path:

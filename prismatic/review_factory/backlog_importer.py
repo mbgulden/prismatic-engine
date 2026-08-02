@@ -20,9 +20,9 @@ Usage
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 from prismatic.agy_completed_work import (
     AgyCompletedWorkStore,
@@ -48,6 +48,11 @@ class ImportResult:
     errors: list[str] = field(default_factory=list)
 
 
+def _is_hex_sha(val: str) -> bool:
+    """Return true only for a nonzero full lowercase SHA-1 identity."""
+    return bool(re.fullmatch(r"[0-9a-f]{40}", val or "") and val != "0" * 40)
+
+
 class BacklogImporter:
     """RF-6: Import pending work from AgyCompletedWorkStore.
 
@@ -57,8 +62,8 @@ class BacklogImporter:
 
     def __init__(
         self,
-        queue: Optional[ReviewQueue] = None,
-        db_path: Optional[Path] = None,
+        queue: ReviewQueue | None = None,
+        db_path: Path | None = None,
     ):
         self.queue = queue or ReviewQueue()
         self._db_path = db_path
@@ -125,13 +130,39 @@ class BacklogImporter:
             or packet.get("scope", "")
         )
         repository = packet.get("repository", "mbgulden/prismatic-engine")
-        base_commit = packet.get("base_commit") or row.base_branch or "main"
-        candidate_commit = packet.get("candidate_commit") or row.source_branch or ""
+        base_commit = packet.get("base_commit") or packet.get("base_sha") or ""
+        candidate_commit = (
+            packet.get("candidate_commit") or packet.get("candidate_sha") or ""
+        )
+        base_tree = packet.get("base_tree") or packet.get("base_commit_tree") or ""
+        candidate_tree = (
+            packet.get("candidate_tree") or packet.get("candidate_commit_tree") or ""
+        )
+
+        if (
+            not _is_hex_sha(base_commit)
+            or not _is_hex_sha(candidate_commit)
+            or not _is_hex_sha(base_tree)
+            or not _is_hex_sha(candidate_tree)
+        ):
+            result.skipped_ineligible += 1
+            result.errors.append(
+                "Row "
+                f"{completed_work_id} missing valid commit/tree SHAs "
+                f"(base_commit='{base_commit}', candidate_commit='{candidate_commit}', "
+                f"base_tree='{base_tree}', candidate_tree='{candidate_tree}') — fail closed"
+            )
+            return
+
         changed_paths = list(packet.get("changed_files", []))
 
-        # Optional: result_packet_path for manifest loading
-        result_packet_path = packet.get("result_packet_path") or packet.get(
-            "source_path"
+        # Result packet path is mandatory; fall back to the row source path and
+        # finally to a synthetic per-row placeholder so the queue invariant holds.
+        result_packet_path = (
+            packet.get("result_packet_path")
+            or packet.get("source_path")
+            or row.source_path
+            or f"synthetic://completed-work/{row.id}"
         )
 
         existing = self.queue.db.get_job_by_completed_work_id(completed_work_id)
@@ -144,7 +175,9 @@ class BacklogImporter:
             task_id=task_id,
             repository=repository,
             base_commit=base_commit,
+            base_tree=base_tree,
             candidate_commit=candidate_commit,
+            candidate_tree=candidate_tree,
             changed_paths=changed_paths,
             result_packet_path=result_packet_path,
         )

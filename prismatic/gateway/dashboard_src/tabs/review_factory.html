@@ -1,0 +1,72 @@
+<!-- SECTION: REVIEW FACTORY -->
+        <div id="section-review-factory" class="hidden space-y-6 max-w-full overflow-x-hidden">
+            <!-- Review Factory Stats Grid -->
+            <section class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-cyan-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Queued Jobs</span>
+                    <span id="stat-rf-queued" class="text-2xl font-bold text-cyan-400 mt-2">0</span>
+                </div>
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-amber-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Verifying</span>
+                    <span id="stat-rf-verifying" class="text-2xl font-bold text-amber-400 mt-2">0</span>
+                </div>
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-indigo-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Review Ready</span>
+                    <span id="stat-rf-review-ready" class="text-2xl font-bold text-indigo-400 mt-2">0</span>
+                </div>
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-emerald-500 min-h-[90px]">
+                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Merged</span>
+                    <span id="stat-rf-merged" class="text-2xl font-bold text-emerald-400 mt-2">0</span>
+                </div>
+            </section>
+
+            <!-- Review Factory Jobs Table -->
+            <div class="glass-panel p-4 sm:p-5 rounded-xl space-y-4">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+                    <div>
+                        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Review Factory Jobs Queue</h2>
+                        <span class="text-xs text-amber-300 font-mono" id="rf-queue-status" role="status" aria-live="polite">Authentication required</span>
+                    </div>
+                    <div class="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                        <label for="rf-auth-token" class="sr-only">Review Factory bearer token</label>
+                        <input id="rf-auth-token" type="password" autocomplete="off" placeholder="Review Factory bearer token" class="w-full sm:w-64 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none">
+                        <button id="rf-connect-button" type="button" onclick="connectReviewFactory()" class="rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs font-bold text-indigo-300 hover:bg-indigo-500/20">Connect &amp; Refresh</button>
+                    </div>
+                </div>
+                <p class="text-[11px] text-slate-500">Authenticated live data from <code>/api/review-factory</code>. The token remains in this page session only and is never displayed.</p>
+                <div class="overflow-x-auto" aria-label="Review Factory jobs scroll region">
+                    <table id="rf-jobs-table" class="w-full text-left text-sm border-collapse">
+                        <thead>
+                            <tr class="border-b border-slate-800 text-slate-500 text-xs font-bold uppercase tracking-wider">
+                                <th class="py-2.5 px-3">Job ID</th>
+                                <th class="py-2.5 px-3">Task</th>
+                                <th class="py-2.5 px-3">Tier</th>
+                                <th class="py-2.5 px-3">State</th>
+                                <th class="py-2.5 px-3">Witnesses</th>
+                                <th class="py-2.5 px-3">Candidate Commit</th>
+                            </tr>
+                        </thead>
+                        <tbody id="rf-jobs-tbody" class="divide-y divide-slate-800/30">
+                            <tr>
+                                <td colspan="6" class="py-6 text-center text-slate-500 italic">
+                                    No review factory jobs queued.
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Job Detail Inspection Modal -->
+            <div id="rf-job-modal" class="hidden fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+                <div class="glass-panel max-w-2xl w-full p-6 rounded-2xl space-y-4 border border-slate-800 shadow-2xl">
+                    <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                        <h3 class="text-base font-bold text-slate-200" id="rf-modal-title">Review Job Inspection</h3>
+                        <button onclick="closeRFModal()" class="text-slate-400 hover:text-white font-bold">&times;</button>
+                    </div>
+                    <div id="rf-modal-body" class="space-y-3 text-xs font-mono text-slate-300 overflow-y-auto max-h-[60vh]">
+                        <!-- Populated dynamically -->
+                    </div>
+                </div>
+            </div>
+        </div>

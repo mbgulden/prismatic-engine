@@ -13,7 +13,7 @@ const path = require('path');
 const fs = require('fs');
 
 async function runVisualAudit() {
-    const baseUrl = process.env.PRISMATIC_TEST_URL || 'http://127.0.0.1:9000';
+    const baseUrl = process.argv[2] || process.env.PRISMATIC_TEST_URL || 'http://127.0.0.1:9000';
     console.log(`Starting Playwright visual audit against ${baseUrl}...`);
 
     const browser = await chromium.launch({
@@ -41,13 +41,24 @@ async function runVisualAudit() {
 
         try {
             console.log(`Auditing ${vp.name} (${vp.width}x${vp.height})...`);
-            await page.goto(baseUrl, { waitUntil: 'networkidle', timeout: 15000 });
+            await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 15000 });
+            await page.waitForTimeout(500);
 
             // Switch to Review Factory tab if available
             const rfTabBtn = await page.$('button[onclick*="review-factory"]');
             if (rfTabBtn) {
                 await rfTabBtn.click();
                 await page.waitForTimeout(500);
+            }
+
+            // Assert presence of Review Factory elements
+            const sectionRF = await page.$('#section-review-factory');
+            const rfTable = await page.$('#rf-jobs-table');
+            const rfModal = await page.$('#rf-job-modal');
+            if (sectionRF && rfTable && rfModal) {
+                console.log(`✅ Review Factory DOM selectors verified (#section-review-factory, #rf-jobs-table, #rf-job-modal)`);
+            } else {
+                throw new Error('Review Factory DOM selectors missing');
             }
 
             // Verify mobile horizontal overflow invariant

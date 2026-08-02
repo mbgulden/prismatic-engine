@@ -2,6 +2,7 @@
 
 from prismatic.merge_candidate_manifest import MergeCandidateManifest, RiskTier
 from prismatic.review_factory.db import ReviewFactoryDB
+from prismatic.review_factory.merge_executor import MergeExecutor
 from prismatic.review_factory.models import (
     MergeAuthorization,
     ReviewDecision,
@@ -9,15 +10,13 @@ from prismatic.review_factory.models import (
     ReviewVerdict,
     VerificationReceipt,
 )
-from prismatic.review_factory.merge_executor import MergeExecutor
 from prismatic.review_factory.queue import ReviewQueue
 from prismatic.review_factory.verifier import VerificationWorker
 
 
 def test_replayed_clean_decision_does_not_increment_witnesses(tmp_path):
     """Replayed decisions by the same reviewer must NOT increment witness count."""
-    db_path = tmp_path / "test_witness.db"
-    db = ReviewFactoryDB(db_path=db_path)
+    db = ReviewFactoryDB(db_path=tmp_path / "test_witness.db")
     db.ensure_tables()
     q = ReviewQueue(db=db)
 
@@ -27,56 +26,54 @@ def test_replayed_clean_decision_does_not_increment_witnesses(tmp_path):
         repository="mbgulden/prismatic-engine",
         base_commit="a" * 40,
         candidate_commit="b" * 40,
-        changed_paths=["prismatic/core/router.py"],
+        changed_paths=["prismatic/auth/oauth.py"],
     )
-
+    q.lease_for_verification("verifier-1")
     receipt = VerificationReceipt(
         receipt_id="rec-wit-1",
         review_job_id=job_id,
         candidate_commit="b" * 40,
         candidate_tree="b" * 40,
     )
-    db.insert_receipt(receipt)
+    q.complete_verification(job_id, receipt, worker_id="verifier-1")
 
-    # First decision from reviewer-1
+    q.lease_for_review("reviewer-1")
     d1 = ReviewDecision(
         review_job_id=job_id,
         reviewer_id="reviewer-1",
+        candidate_commit="b" * 40,
+        candidate_tree="b" * 40,
         receipt_id="rec-wit-1",
         verdict=ReviewVerdict.CLEAN.value,
         idempotency_key="key-1",
     )
-    q.submit_verdict(job_id, d1)
-    j1 = db.get_review_job(job_id)
-    assert j1.completed_witnesses == 1
+    q.submit_verdict(job_id, d1, reviewer_id="reviewer-1")
+    assert db.get_review_job(job_id).completed_witnesses == 1
 
-    # Replayed decision from reviewer-1 (same reviewer)
     d1_replay = ReviewDecision(
         review_job_id=job_id,
         reviewer_id="reviewer-1",
+        candidate_commit="b" * 40,
+        candidate_tree="b" * 40,
         receipt_id="rec-wit-1",
         verdict=ReviewVerdict.CLEAN.value,
         idempotency_key="key-1-replay",
     )
-    q.submit_verdict(job_id, d1_replay)
-    j2 = db.get_review_job(job_id)
-    assert j2.completed_witnesses == 1, (
-        "Replayed decision MUST NOT increment completed_witnesses"
-    )
+    q.submit_verdict(job_id, d1_replay, reviewer_id="reviewer-1")
+    assert db.get_review_job(job_id).completed_witnesses == 1
 
-    # Second decision from reviewer-2 (different reviewer)
+    q.lease_for_review("reviewer-2")
     d2 = ReviewDecision(
         review_job_id=job_id,
         reviewer_id="reviewer-2",
+        candidate_commit="b" * 40,
+        candidate_tree="b" * 40,
         receipt_id="rec-wit-1",
         verdict=ReviewVerdict.CLEAN.value,
         idempotency_key="key-2",
     )
-    q.submit_verdict(job_id, d2)
-    j3 = db.get_review_job(job_id)
-    assert j3.completed_witnesses == 2, (
-        "Second distinct reviewer MUST increment completed_witnesses"
-    )
+    q.submit_verdict(job_id, d2, reviewer_id="reviewer-2")
+    assert db.get_review_job(job_id).completed_witnesses == 2
 
 
 def test_missing_file_in_verifier_fails_closed(tmp_path):
@@ -117,7 +114,7 @@ def test_dry_run_leaves_database_and_manifest_strictly_readonly(tmp_path):
     )
 
     q.lease_for_verification("v1")
-    q.complete_verification(job_id, rec)
+    q.complete_verification(job_id, rec, worker_id="v1")
     q.lease_for_review("r1")
     q.submit_verdict(
         job_id,
@@ -129,10 +126,11 @@ def test_dry_run_leaves_database_and_manifest_strictly_readonly(tmp_path):
             candidate_tree="b" * 40,
             receipt_id=rec.receipt_id,
         ),
+        reviewer_id="r1",
     )
 
     # Authorize merge explicitly
-    auth_id = q.authorize_merge(job_id, actor="michael")
+    auth_id = q.authorize_merge(job_id, actor="standing-policy: tier-0")
     assert auth_id is not None
 
     job_before = db.get_review_job(job_id)
@@ -186,7 +184,7 @@ def test_authorization_binding_mismatch_rejected(tmp_path):
     )
 
     q.lease_for_verification("v1")
-    q.complete_verification(job_id, rec)
+    q.complete_verification(job_id, rec, worker_id="v1")
     q.lease_for_review("r1")
     q.submit_verdict(
         job_id,
@@ -198,6 +196,7 @@ def test_authorization_binding_mismatch_rejected(tmp_path):
             candidate_tree="b" * 40,
             receipt_id=rec.receipt_id,
         ),
+        reviewer_id="r1",
     )
 
     # Insert malicious authorization with wrong candidate_tree
@@ -209,6 +208,7 @@ def test_authorization_binding_mismatch_rejected(tmp_path):
         candidate_tree="wrong-tree-sha",
         expected_merge_tree="wrong-tree-sha",
         actor="hacker",
+        expires_at="2999-01-01T00:00:00+00:00",
     )
     db.insert_authorization(bad_auth)
 
@@ -239,7 +239,7 @@ def test_authorize_merge_rejects_missing_actor(tmp_path):
     )
 
     q.lease_for_verification("v1")
-    q.complete_verification(job_id, rec)
+    q.complete_verification(job_id, rec, worker_id="v1")
     q.lease_for_review("r1")
     q.submit_verdict(
         job_id,
@@ -251,6 +251,7 @@ def test_authorize_merge_rejects_missing_actor(tmp_path):
             candidate_tree="b" * 40,
             receipt_id=rec.receipt_id,
         ),
+        reviewer_id="r1",
     )
 
     auth_id = q.authorize_merge(job_id, actor="")

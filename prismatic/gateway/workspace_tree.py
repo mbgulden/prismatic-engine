@@ -15,8 +15,9 @@ import platform
 import re
 import stat
 import unicodedata
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Any, Iterator
+from typing import Any
 
 REGISTRY_ENV = "PRISMATIC_WORKSPACE_REGISTRY_FILE"
 REGISTRY_MAX_BYTES = 128 * 1024
@@ -610,6 +611,37 @@ def list_workspaces(registry: WorkspaceRegistry) -> dict[str, Any]:
         "workspaces": items,
         "workspace_count": len(items),
         "max_preview_bytes": MAX_PREVIEW_BYTES,
+    }
+
+
+def resolve_legacy_file(
+    registry: WorkspaceRegistry, relative_path: str
+) -> dict[str, Any]:
+    """Resolve a legacy relative file path without exposing workspace roots."""
+    normalized, _ = validate_relative_path(relative_path, allow_empty=False)
+    if not _is_previewable(normalized):
+        raise WorkspaceTreeError(403, "workspace preview denied")
+
+    matches: list[Workspace] = []
+    for workspace in registry.enabled:
+        try:
+            fd = _secure_open(workspace, normalized, directory=False)
+        except OSError as exc:
+            if exc.errno in {errno.ENOENT, errno.ENOTDIR}:
+                continue
+            raise WorkspaceTreeError(403, "workspace object unavailable") from None
+        else:
+            os.close(fd)
+            matches.append(workspace)
+
+    if not matches:
+        raise WorkspaceTreeError(404, "workspace object unavailable")
+    if len(matches) != 1:
+        raise WorkspaceTreeError(409, "workspace path is ambiguous")
+    return {
+        "ok": True,
+        "workspace_id": matches[0].workspace_id,
+        "relative_path": normalized,
     }
 
 

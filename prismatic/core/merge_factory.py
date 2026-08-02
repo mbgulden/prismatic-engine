@@ -228,12 +228,23 @@ class MergeFactoryStore:
                     evidence_digest TEXT NOT NULL,
                     approval_attestation_id TEXT NOT NULL,
                     owner_principal TEXT NOT NULL,
+                    acquisition_token TEXT NOT NULL,
                     expires_at TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
                 """
             )
+            lock_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(merge_lock)")
+            }
+            if "acquisition_token" not in lock_columns:
+                conn.execute(
+                    "ALTER TABLE merge_lock ADD COLUMN acquisition_token TEXT NOT NULL DEFAULT ''"
+                )
+            # Empty-token legacy locks have no provable owner capability and
+            # must be invalidated rather than left as unreleasable blockers.
+            conn.execute("DELETE FROM merge_lock WHERE acquisition_token = ''")
             # 5. Append-only Merge Decision / Attestation History
             conn.execute(
                 """
@@ -745,10 +756,18 @@ class MergeFactoryStore:
         target: str,
         principal: Principal,
     ) -> Dict[str, Any]:
-        """Append an immutable decision attestation record. Requires merge-judge scope."""
-        if not principal.has_scope("merge-judge"):
+        """Append an immutable decision attestation record.
+
+        General decisions require ``merge-judge``.  The review-factory executor
+        receives only the narrow post-claim capability and may emit
+        ``APPROVE_MERGE``—never repair/reject/manual decisions.
+        """
+        internal_executor = principal.has_scope(
+            "rf-merge-executor"
+        ) and principal.identity.startswith("rf-claim:")
+        if not principal.has_scope("merge-judge") and not internal_executor:
             raise PermissionError(
-                "Only an authenticated merge-judge may append attestation decisions."
+                "Only an authenticated merge-judge or claimed RF executor may append attestation decisions."
             )
 
         allowed_decisions = {
@@ -761,6 +780,10 @@ class MergeFactoryStore:
         dec_upper = decision.upper()
         if dec_upper not in allowed_decisions:
             raise ValueError(f"Invalid decision: {dec_upper}")
+        if internal_executor and dec_upper != "APPROVE_MERGE":
+            raise PermissionError(
+                "Claimed RF executor may only append APPROVE_MERGE attestations."
+            )
 
         attestation_id = "attest-" + str(uuid.uuid4())[:18]
         now = datetime.now(timezone.utc).isoformat()
@@ -903,11 +926,13 @@ class MergeFactoryStore:
         approval_attestation_id: str,
         ttl_seconds: int,
         principal: Principal,
+        acquisition_token: str = "",
     ) -> Dict[str, Any]:
         """Acquire a repository + target merge lock.
 
-        Requires a valid matching exact-candidate approval attestation.
-        Locks are owned by the principal.identity.
+        A first acquisition generates an execution-unique token. Renewal is
+        permitted only when the caller presents that exact token; shared
+        principal/issue identity alone is never treated as reentrant.
         """
         if ttl_seconds <= 0:
             raise ValueError("TTL must be positive.")
@@ -952,7 +977,9 @@ class MergeFactoryStore:
                 if existing:
                     # Check owner identity and matching issue/bindings
                     if (
-                        existing["owner_principal"] == principal.identity
+                        acquisition_token
+                        and existing["acquisition_token"] == acquisition_token
+                        and existing["owner_principal"] == principal.identity
                         and existing["issue_id"] == issue_id
                     ):
                         # Verify bindings haven't changed (rebase, conflict, etc.)
@@ -987,7 +1014,8 @@ class MergeFactoryStore:
                             "Target repository is locked under another active operation."
                         )
 
-                # Insert new lock
+                # Insert new lock with an execution-unique ownership capability.
+                acquisition_token = uuid.uuid4().hex
                 expires_dt = now_dt + timedelta(seconds=ttl_seconds)
                 expires_str = expires_dt.isoformat()
                 conn.execute(
@@ -995,8 +1023,8 @@ class MergeFactoryStore:
                     INSERT INTO merge_lock (
                         lock_id, repository, target, issue_id, base_sha, candidate_sha,
                         manifest_digest, evidence_digest, approval_attestation_id,
-                        owner_principal, expires_at, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        owner_principal, acquisition_token, expires_at, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         lock_id,
@@ -1009,6 +1037,7 @@ class MergeFactoryStore:
                         evidence_digest,
                         approval_attestation_id,
                         principal.identity,
+                        acquisition_token,
                         expires_str,
                         now_str,
                         now_str,
@@ -1026,6 +1055,7 @@ class MergeFactoryStore:
                     "evidence_digest": evidence_digest,
                     "approval_attestation_id": approval_attestation_id,
                     "owner_principal": principal.identity,
+                    "acquisition_token": acquisition_token,
                     "expires_at": expires_str,
                     "created_at": now_str,
                     "updated_at": now_str,
@@ -1045,8 +1075,9 @@ class MergeFactoryStore:
         evidence_digest: str,
         approval_attestation_id: str,
         principal: Principal,
+        acquisition_token: str,
     ) -> Dict[str, Any]:
-        """Extend lock TTL. Requires same principal identity and valid approval bindings."""
+        """Extend lock TTL using the exact acquisition token and bindings."""
         now_dt = datetime.now(timezone.utc)
         now_str = now_dt.isoformat()
         lock_id = f"{repository}:{target}"
@@ -1064,7 +1095,9 @@ class MergeFactoryStore:
 
                 # Verify owner identity
                 if (
-                    row["owner_principal"] != principal.identity
+                    not acquisition_token
+                    or row["acquisition_token"] != acquisition_token
+                    or row["owner_principal"] != principal.identity
                     or row["issue_id"] != issue_id
                 ):
                     raise PermissionError("Lock is held by another principal or issue.")
@@ -1116,16 +1149,25 @@ class MergeFactoryStore:
         target: str,
         issue_id: str,
         principal: Principal,
+        acquisition_token: str,
     ) -> None:
-        """Release merge lock if owned by the principal."""
+        """Release only the lock owned by this exact acquisition capability."""
+        if not acquisition_token:
+            raise PermissionError("Lock acquisition token is required for release.")
         lock_id = f"{repository}:{target}"
         with self._connect() as conn:
             conn.execute("BEGIN EXCLUSIVE TRANSACTION;")
             try:
-                conn.execute(
-                    "DELETE FROM merge_lock WHERE lock_id = ? AND owner_principal = ? AND issue_id = ?",
-                    (lock_id, principal.identity, issue_id),
+                cursor = conn.execute(
+                    """DELETE FROM merge_lock
+                       WHERE lock_id = ? AND owner_principal = ?
+                         AND issue_id = ? AND acquisition_token = ?""",
+                    (lock_id, principal.identity, issue_id, acquisition_token),
                 )
+                if cursor.rowcount != 1:
+                    raise PermissionError(
+                        "Lock release rejected: ownership token or bindings mismatch."
+                    )
                 conn.commit()
             except Exception:
                 conn.rollback()
@@ -1138,4 +1180,9 @@ class MergeFactoryStore:
             rows = conn.execute(
                 "SELECT * FROM merge_lock WHERE expires_at > ?", (now_str,)
             ).fetchall()
-            return [dict(r) for r in rows]
+            locks = []
+            for row in rows:
+                lock = dict(row)
+                lock.pop("acquisition_token", None)
+                locks.append(lock)
+            return locks
