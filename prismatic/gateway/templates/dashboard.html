@@ -1138,7 +1138,7 @@
                     <span id="merge-snapshot-status" class="self-start rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-300">Historical snapshot</span>
                 </div>
                 <p id="merge-snapshot-meta" class="text-[11px] font-mono text-slate-500">Awaiting legacy snapshot metadata.</p>
-                <a class="inline-flex text-[11px] font-bold uppercase tracking-wider text-cyan-400 hover:text-cyan-300" href="/dashboard#review-factory">Open canonical Review Factory →</a>
+                <a class="inline-flex text-[11px] font-bold uppercase tracking-wider text-cyan-400 hover:text-cyan-300" href="#review-factory" onclick="switchTab('review-factory')">Open canonical Review Factory →</a>
             </section>
             <!-- Stats Cards Grid -->
             <section class="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -4920,17 +4920,38 @@
             };
         }
 
+        const dashboardTabIds = new Set([
+            "dashboard", "telemetry", "merge", "review-factory", "workspaces",
+            "skills", "signals", "pwp", "plugins", "crons", "quota", "foundation",
+        ]);
+
+        function dashboardTabFromHash() {
+            const requested = window.location.hash.replace(/^#/, "");
+            return dashboardTabIds.has(requested) ? requested : null;
+        }
+
+        window.addEventListener("hashchange", () => {
+            const requestedTab = dashboardTabFromHash();
+            if (requestedTab) {
+                switchTab(requestedTab);
+            } else if (!window.location.hash) {
+                switchTab("dashboard");
+            }
+        });
+
         document.addEventListener("DOMContentLoaded", () => {
             applyTheme();
             const initialParams = new URLSearchParams(window.location.search);
-            const initialTab = (
-                window.location.hash === "#workspaces"
-                || initialParams.has("file")
+            const workspaceDeepLink = (
+                initialParams.has("file")
                 || initialParams.has("workspace_id")
                 || initialParams.has("path")
-            ) ? "workspaces" : "dashboard";
-            if (initialTab === "workspaces") {
-                switchTab("workspaces");
+            );
+            const initialTab = workspaceDeepLink
+                ? "workspaces"
+                : (dashboardTabFromHash() || "dashboard");
+            if (initialTab !== "dashboard") {
+                switchTab(initialTab);
             } else {
                 fetchData();
             }

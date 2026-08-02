@@ -3112,17 +3112,38 @@
             };
         }
 
+        const dashboardTabIds = new Set([
+            "dashboard", "telemetry", "merge", "review-factory", "workspaces",
+            "skills", "signals", "pwp", "plugins", "crons", "quota", "foundation",
+        ]);
+
+        function dashboardTabFromHash() {
+            const requested = window.location.hash.replace(/^#/, "");
+            return dashboardTabIds.has(requested) ? requested : null;
+        }
+
+        window.addEventListener("hashchange", () => {
+            const requestedTab = dashboardTabFromHash();
+            if (requestedTab) {
+                switchTab(requestedTab);
+            } else if (!window.location.hash) {
+                switchTab("dashboard");
+            }
+        });
+
         document.addEventListener("DOMContentLoaded", () => {
             applyTheme();
             const initialParams = new URLSearchParams(window.location.search);
-            const initialTab = (
-                window.location.hash === "#workspaces"
-                || initialParams.has("file")
+            const workspaceDeepLink = (
+                initialParams.has("file")
                 || initialParams.has("workspace_id")
                 || initialParams.has("path")
-            ) ? "workspaces" : "dashboard";
-            if (initialTab === "workspaces") {
-                switchTab("workspaces");
+            );
+            const initialTab = workspaceDeepLink
+                ? "workspaces"
+                : (dashboardTabFromHash() || "dashboard");
+            if (initialTab !== "dashboard") {
+                switchTab(initialTab);
             } else {
                 fetchData();
             }
