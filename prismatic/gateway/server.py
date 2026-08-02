@@ -1135,6 +1135,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     if os.environ.get("PRISMATIC_WS_AUTH_REQUIRED", "1") in ("1", "true", "TRUE"):
         auth_hdr = websocket.headers.get("Authorization", "").strip()
         if not auth_hdr.startswith("Bearer "):
+            await websocket.accept()
             await websocket.close(code=1008, reason="Unauthorized")
             return
         token = auth_hdr[7:].strip()
@@ -1146,6 +1147,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         import secrets
 
         if not token or not any(secrets.compare_digest(token, t) for t in allowed):
+            await websocket.accept()
             await websocket.close(code=1008, reason="Unauthorized")
             return
 

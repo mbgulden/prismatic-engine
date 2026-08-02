@@ -4,6 +4,7 @@
         let loadedNativeCrons = [];
         let pendingCronDeleteId = null;
         let pollingInterval = null;
+        let reviewFactoryToken = "";
 
         let agentStatusCache = { agents: [], status_counts: {}, evidence: {}, source: "not-loaded" };
 
@@ -119,7 +120,7 @@
             activeTab = tab;
             
             // Toggle Tab Buttons
-            const tabs = ['dashboard', 'telemetry', 'merge', 'workspaces', 'skills', 'signals', 'pwp', 'plugins', 'crons', 'quota', 'foundation'];
+            const tabs = ['dashboard', 'telemetry', 'merge', 'review-factory', 'workspaces', 'skills', 'signals', 'pwp', 'plugins', 'crons', 'quota', 'foundation'];
             tabs.forEach(t => {
                 const btn = document.getElementById(`tab-btn-${t}`);
                 const sec = document.getElementById(`section-${t}`);
@@ -137,6 +138,144 @@
             if (tab === 'crons') {
                 loadNativeCrons();
             }
+            if (tab === 'review-factory') {
+                loadReviewFactory();
+            }
+        }
+
+        function reviewFactoryHeaders() {
+            return reviewFactoryToken
+                ? { "Authorization": `Bearer ${reviewFactoryToken}` }
+                : {};
+        }
+
+        function setReviewFactoryStatus(message, tone = "slate") {
+            const statusEl = document.getElementById("rf-queue-status");
+            if (!statusEl) return;
+            statusEl.textContent = message;
+            const tones = {
+                slate: "text-slate-400",
+                amber: "text-amber-300",
+                emerald: "text-emerald-300",
+                rose: "text-rose-300",
+            };
+            statusEl.className = `text-xs font-mono ${tones[tone] || tones.slate}`;
+        }
+
+        function reviewFactoryStateCount(byState, names) {
+            return names.reduce((total, name) => total + Number(byState[name] || 0), 0);
+        }
+
+        function renderReviewFactoryQueue(queue) {
+            const byState = queue.by_state || {};
+            const values = {
+                "stat-rf-queued": reviewFactoryStateCount(byState, ["queued"]),
+                "stat-rf-verifying": reviewFactoryStateCount(byState, ["verifying", "claimed"]),
+                "stat-rf-review-ready": reviewFactoryStateCount(byState, ["review_ready", "merge_ready"]),
+                "stat-rf-merged": reviewFactoryStateCount(byState, ["merged"]),
+            };
+            Object.entries(values).forEach(([id, value]) => {
+                const element = document.getElementById(id);
+                if (element) element.textContent = String(value);
+            });
+        }
+
+        function renderReviewFactoryJobs(jobs) {
+            const body = document.getElementById("rf-jobs-tbody");
+            if (!body) return;
+            if (!jobs.length) {
+                body.innerHTML = '<tr><td colspan="6" class="py-6 text-center text-slate-500 italic">No review factory jobs queued.</td></tr>';
+                return;
+            }
+            body.innerHTML = jobs.map(job => {
+                const id = escapeHtml(job.review_job_id || "unknown");
+                const commit = escapeHtml((job.candidate_commit || "—").slice(0, 12));
+                return `<tr tabindex="0" data-rf-job-id="${id}" class="cursor-pointer border-b border-slate-800/40 hover:bg-slate-900/60 focus:bg-slate-900/60 focus:outline-none">
+                    <td class="py-2.5 px-3 font-mono text-cyan-300 whitespace-nowrap">${id}</td>
+                    <td class="py-2.5 px-3 text-slate-200 whitespace-nowrap">${escapeHtml(job.task_id || "—")}</td>
+                    <td class="py-2.5 px-3 text-slate-300">${escapeHtml(job.risk_tier ?? "—")}</td>
+                    <td class="py-2.5 px-3 text-slate-300 whitespace-nowrap">${escapeHtml(job.state || "unknown")}</td>
+                    <td class="py-2.5 px-3 text-slate-300 whitespace-nowrap">${escapeHtml(job.witnesses || "0/0")}</td>
+                    <td class="py-2.5 px-3 font-mono text-slate-400 whitespace-nowrap">${commit}</td>
+                </tr>`;
+            }).join("");
+            body.querySelectorAll("[data-rf-job-id]").forEach(row => {
+                const open = () => showRFJob(row.dataset.rfJobId || "");
+                row.addEventListener("click", open);
+                row.addEventListener("keydown", event => {
+                    if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        open();
+                    }
+                });
+            });
+        }
+
+        async function loadReviewFactory() {
+            if (!reviewFactoryToken) {
+                setReviewFactoryStatus("Authentication required", "amber");
+                return;
+            }
+            setReviewFactoryStatus("Loading authenticated live data…", "slate");
+            try {
+                const headers = reviewFactoryHeaders();
+                const [queueResponse, jobsResponse] = await Promise.all([
+                    fetch("/api/review-factory/queue", { headers }),
+                    fetch("/api/review-factory/jobs?limit=50", { headers }),
+                ]);
+                if (!queueResponse.ok || !jobsResponse.ok) {
+                    const status = queueResponse.ok ? jobsResponse.status : queueResponse.status;
+                    throw new Error(status === 401 ? "authentication_rejected" : `http_${status}`);
+                }
+                const [queue, jobs] = await Promise.all([
+                    queueResponse.json(),
+                    jobsResponse.json(),
+                ]);
+                renderReviewFactoryQueue(queue);
+                renderReviewFactoryJobs(jobs.jobs || []);
+                setReviewFactoryStatus(`Live · ${Number(jobs.count || 0)} jobs`, "emerald");
+            } catch (error) {
+                const message = String(error?.message || error);
+                setReviewFactoryStatus(
+                    message === "authentication_rejected" ? "Authentication rejected" : "Live data unavailable",
+                    "rose",
+                );
+                renderReviewFactoryJobs([]);
+            }
+        }
+
+        async function connectReviewFactory() {
+            const input = document.getElementById("rf-auth-token");
+            const supplied = input ? input.value.trim() : "";
+            if (supplied) reviewFactoryToken = supplied;
+            if (input) input.value = "";
+            await loadReviewFactory();
+        }
+
+        async function showRFJob(jobId) {
+            if (!reviewFactoryToken || !jobId) return;
+            const modal = document.getElementById("rf-job-modal");
+            const title = document.getElementById("rf-modal-title");
+            const body = document.getElementById("rf-modal-body");
+            if (!modal || !title || !body) return;
+            modal.classList.remove("hidden");
+            title.textContent = `Review Job ${jobId}`;
+            body.textContent = "Loading authenticated job detail…";
+            try {
+                const response = await fetch(
+                    `/api/review-factory/job/${encodeURIComponent(jobId)}`,
+                    { headers: reviewFactoryHeaders() },
+                );
+                if (!response.ok) throw new Error(`http_${response.status}`);
+                body.innerHTML = `<pre class="whitespace-pre-wrap break-words">${escapeHtml(JSON.stringify(await response.json(), null, 2))}</pre>`;
+            } catch (error) {
+                body.textContent = `Job detail unavailable: ${String(error?.message || error)}`;
+            }
+        }
+
+        function closeRFModal() {
+            const modal = document.getElementById("rf-job-modal");
+            if (modal) modal.classList.add("hidden");
         }
 
         // Toasts
@@ -2895,9 +3034,15 @@
                 } catch (err) {}
             };
 
-            ws.onclose = () => {
+            ws.onclose = (event) => {
                 const dot = document.getElementById("status-dot");
                 const text = document.getElementById("status-text");
+                if (event.code === 1008) {
+                    dot.className = "w-2.5 h-2.5 rounded-full bg-amber-500";
+                    text.className = "text-[10px] sm:text-xs font-semibold text-amber-400 uppercase tracking-wider";
+                    text.textContent = "Auth Required";
+                    return;
+                }
                 dot.className = "w-2.5 h-2.5 rounded-full bg-red-500 status-pulse";
                 text.className = "text-[10px] sm:text-xs font-semibold text-slate-400 uppercase tracking-wider";
                 text.textContent = "Connecting";

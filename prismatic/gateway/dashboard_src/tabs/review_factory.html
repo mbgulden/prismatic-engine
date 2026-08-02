@@ -21,12 +21,20 @@
             </section>
 
             <!-- Review Factory Jobs Table -->
-            <div class="glass-panel p-5 rounded-xl space-y-4">
-                <div class="flex items-center justify-between border-b border-slate-800 pb-3">
-                    <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Review Factory Jobs Queue</h2>
-                    <span class="text-xs text-slate-400 font-mono" id="rf-queue-status">Active Pipeline</span>
+            <div class="glass-panel p-4 sm:p-5 rounded-xl space-y-4">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+                    <div>
+                        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Review Factory Jobs Queue</h2>
+                        <span class="text-xs text-amber-300 font-mono" id="rf-queue-status" role="status" aria-live="polite">Authentication required</span>
+                    </div>
+                    <div class="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                        <label for="rf-auth-token" class="sr-only">Review Factory bearer token</label>
+                        <input id="rf-auth-token" type="password" autocomplete="off" placeholder="Review Factory bearer token" class="w-full sm:w-64 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-slate-200 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none">
+                        <button id="rf-connect-button" type="button" onclick="connectReviewFactory()" class="rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-2 text-xs font-bold text-indigo-300 hover:bg-indigo-500/20">Connect &amp; Refresh</button>
+                    </div>
                 </div>
-                <div class="overflow-x-auto">
+                <p class="text-[11px] text-slate-500">Authenticated live data from <code>/api/review-factory</code>. The token remains in this page session only and is never displayed.</p>
+                <div class="overflow-x-auto" aria-label="Review Factory jobs scroll region">
                     <table id="rf-jobs-table" class="w-full text-left text-sm border-collapse">
                         <thead>
                             <tr class="border-b border-slate-800 text-slate-500 text-xs font-bold uppercase tracking-wider">

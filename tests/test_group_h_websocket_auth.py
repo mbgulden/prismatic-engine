@@ -11,6 +11,7 @@ Matrix Coverage:
 import pytest
 from fastapi.testclient import TestClient
 from prismatic.gateway.server import app
+from starlette.websockets import WebSocketDisconnect
 
 
 def test_group_h_ws_auth_required_by_default(monkeypatch):
@@ -18,9 +19,10 @@ def test_group_h_ws_auth_required_by_default(monkeypatch):
     monkeypatch.setenv("PRISMATIC_WS_TOKENS", "default-required-token")
     client = TestClient(app)
 
-    with pytest.raises(Exception):
-        with client.websocket_connect("/ws"):
-            pass
+    with client.websocket_connect("/ws") as ws:
+        with pytest.raises(WebSocketDisconnect) as rejected:
+            ws.receive_json()
+        assert rejected.value.code == 1008
     with client.websocket_connect(
         "/ws", headers={"Authorization": "Bearer default-required-token"}
     ) as ws:
@@ -43,18 +45,21 @@ def test_group_h_ws_auth_strict_bearer_validation(monkeypatch):
         msg = ws.receive_json()
         assert msg.get("type") == "connected"
 
-    with pytest.raises(Exception):
-        with client.websocket_connect(
-            "/ws", headers={"Authorization": "Bearer xvalid-secret-tokenx"}
-        ) as ws:
-            pass
+    with client.websocket_connect(
+        "/ws", headers={"Authorization": "Bearer xvalid-secret-tokenx"}
+    ) as ws:
+        with pytest.raises(WebSocketDisconnect) as rejected:
+            ws.receive_json()
+        assert rejected.value.code == 1008
 
-    with pytest.raises(Exception):
-        with client.websocket_connect("/ws?token=valid-secret-token") as ws:
-            pass
+    with client.websocket_connect("/ws?token=valid-secret-token") as ws:
+        with pytest.raises(WebSocketDisconnect) as rejected:
+            ws.receive_json()
+        assert rejected.value.code == 1008
 
-    with pytest.raises(Exception):
-        with client.websocket_connect(
-            "/ws", headers={"Authorization": "Basic valid-secret-token"}
-        ) as ws:
-            pass
+    with client.websocket_connect(
+        "/ws", headers={"Authorization": "Basic valid-secret-token"}
+    ) as ws:
+        with pytest.raises(WebSocketDisconnect) as rejected:
+            ws.receive_json()
+        assert rejected.value.code == 1008

@@ -92,11 +92,11 @@ def test_all_tab_buttons_and_sections_are_unique_one_to_one() -> None:
     )
     section_tabs = re.findall(r'<div id="section-([^"]+)"', html)
 
-    assert len(button_tabs) == 11
-    assert len(section_tabs) == 11
-    assert len({button_id for button_id, _ in button_tabs}) == 11
-    assert len({target for _, target in button_tabs}) == 11
-    assert len(set(section_tabs)) == 11
+    assert len(button_tabs) == 12
+    assert len(section_tabs) == 12
+    assert len({button_id for button_id, _ in button_tabs}) == 12
+    assert len({target for _, target in button_tabs}) == 12
+    assert len(set(section_tabs)) == 12
     assert {button_id for button_id, _ in button_tabs} == {
         target for _, target in button_tabs
     }

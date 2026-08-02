@@ -153,6 +153,7 @@ def _attach_routes(router: Any) -> None:
                     "task_id": j.task_id,
                     "state": j.state,
                     "risk_tier": j.risk_tier,
+                    "candidate_commit": j.candidate_commit,
                     "repository": j.repository,
                     "created_at": j.created_at,
                     "lease_owner": j.lease_owner,

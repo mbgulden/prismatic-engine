@@ -48,8 +48,16 @@ def test_rf_dashboard_selectors_present():
     content = dashboard_path.read_text(encoding="utf-8")
 
     assert 'id="section-review-factory"' in content
+    assert 'id="tab-btn-review-factory"' in content
     assert 'id="rf-jobs-table"' in content
     assert 'id="rf-job-modal"' in content
+    assert 'id="rf-auth-token"' in content
+    assert 'let reviewFactoryToken = "";' in content
+    assert 'fetch("/api/review-factory/queue", { headers })' in content
+    assert 'fetch("/api/review-factory/jobs?limit=50", { headers })' in content
+    assert "if (event.code === 1008)" in content
+    assert 'text.textContent = "Auth Required"' in content
+    assert 'localStorage.setItem("reviewFactoryToken"' not in content
 
 
 def test_gateway_workspace_tree_route():
