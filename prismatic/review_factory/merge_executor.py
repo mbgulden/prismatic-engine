@@ -300,6 +300,12 @@ class MergeExecutor:
             if not lock_token:
                 raise RuntimeError("Merge lock did not return an acquisition token")
             lock_acquired = True
+            locked_target_head = self._git_rev_parse(target_branch)
+            if locked_target_head != job.base_commit:
+                raise PermissionError(
+                    f"Target {target_branch} advanced after lock acquisition: "
+                    f"expected {job.base_commit}, found {locked_target_head}"
+                )
 
             # Step 5: Execute real Git merge against the manifest target.
             integration_manifest = integrate_pipeline_run(
@@ -308,6 +314,7 @@ class MergeExecutor:
                 target_branch=target_branch,
                 repo_path=self.repo_path,
                 expected_target_head=job.base_commit,
+                require_manifest_persistence=True,
             )
             merge_sha_created = integration_manifest.merge_sha or None
             if not integration_manifest.is_success():
@@ -482,14 +489,22 @@ class MergeExecutor:
             check=True,
             capture_output=True,
         )
-        # Restore only index/worktree content after the ref CAS. Unlike
-        # ``reset --hard``, this does not perform another ref update.
-        subprocess.run(
-            ["git", "read-tree", "--reset", "-u", original_head],
+        # Restore index/worktree content only when this checkout's symbolic HEAD
+        # is the target. Unlike ``reset --hard``, read-tree performs no ref move.
+        symbolic_head = subprocess.run(
+            ["git", "symbolic-ref", "--short", "-q", "HEAD"],
             cwd=str(self.repo_path),
-            check=True,
+            check=False,
             capture_output=True,
-        )
+            text=True,
+        ).stdout.strip()
+        if symbolic_head == target_branch:
+            subprocess.run(
+                ["git", "read-tree", "--reset", "-u", original_head],
+                cwd=str(self.repo_path),
+                check=True,
+                capture_output=True,
+            )
 
     def _load_manifest(self, job: ReviewJob) -> MergeCandidateManifest:
         if job.result_packet_path and Path(job.result_packet_path).exists():

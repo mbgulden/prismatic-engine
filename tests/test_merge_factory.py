@@ -475,6 +475,74 @@ def test_merge_locks_and_bindings(store):
     assert len(active) == 0
 
 
+def test_stale_lock_acquisition_token_cannot_control_replacement(store):
+    from datetime import datetime, timedelta, timezone
+
+    repo = "repo-stale-lock"
+    target = "main"
+    issue = "GRO-STALE-LOCK"
+    base = "base"
+    candidate = "candidate"
+    manifest = "manifest"
+    evidence = "evidence"
+    attestation = store.submit_attestation(
+        issue_id=issue,
+        decision="APPROVE_MERGE",
+        base_sha=base,
+        candidate_sha=candidate,
+        manifest_digest=manifest,
+        evidence_digest=evidence,
+        repository=repo,
+        target=target,
+        principal=george_principal,
+    )
+    common = dict(
+        repository=repo,
+        target=target,
+        issue_id=issue,
+        base_sha=base,
+        candidate_sha=candidate,
+        manifest_digest=manifest,
+        evidence_digest=evidence,
+        approval_attestation_id=attestation["attestation_id"],
+        principal=agy_principal,
+    )
+    lock_a = store.acquire_lock(ttl_seconds=60, **common)
+    with store._connect() as conn:
+        conn.execute(
+            "UPDATE merge_lock SET expires_at = ? WHERE lock_id = ?",
+            (
+                (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(),
+                lock_a["lock_id"],
+            ),
+        )
+    lock_b = store.acquire_lock(ttl_seconds=60, **common)
+    assert lock_b["acquisition_token"] != lock_a["acquisition_token"]
+
+    with pytest.raises(PermissionError):
+        store.heartbeat_lock(acquisition_token=lock_a["acquisition_token"], **common)
+    with pytest.raises(PermissionError):
+        store.release_lock(
+            repository=repo,
+            target=target,
+            issue_id=issue,
+            principal=agy_principal,
+            acquisition_token=lock_a["acquisition_token"],
+        )
+    active = store.get_active_locks()
+    assert len(active) == 1
+    assert "acquisition_token" not in active[0]
+
+    store.release_lock(
+        repository=repo,
+        target=target,
+        issue_id=issue,
+        principal=agy_principal,
+        acquisition_token=lock_b["acquisition_token"],
+    )
+    assert store.get_active_locks() == []
+
+
 def test_lock_api_forwards_exact_capability_and_rejects_wrong_release(
     store, monkeypatch
 ):

@@ -21,7 +21,9 @@ Usage
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import tempfile
 import threading
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
@@ -239,6 +241,7 @@ class IntegratePhase:
         skip_tests: bool = False,
         manifest_dir: str | Path | None = None,
         expected_target_head: str = "",
+        require_manifest_persistence: bool = False,
     ):
         self.issue_id = issue_id
         self.branch = branch
@@ -248,6 +251,7 @@ class IntegratePhase:
         self.skip_merge = skip_merge
         self.skip_tests = skip_tests
         self.expected_target_head = expected_target_head
+        self.require_manifest_persistence = require_manifest_persistence
 
         # Manifest storage
         if manifest_dir:
@@ -514,13 +518,40 @@ class IntegratePhase:
         return manifest
 
     def _persist_manifest(self, manifest: IntegrationManifest) -> None:
-        """Write the manifest to disk."""
+        """Atomically write the integration manifest to disk."""
         path = self._manifest_path()
+        fd = -1
+        tmp_name = ""
         try:
-            with open(path, "w") as f:
-                f.write(manifest.to_json())
+            fd, tmp_name = tempfile.mkstemp(
+                prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
+            )
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                fd = -1
+                handle.write(manifest.to_json())
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp_name, path)
+            tmp_name = ""
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
         except OSError as exc:
+            if self.require_manifest_persistence:
+                raise RuntimeError(
+                    f"Failed to persist integration manifest {self.issue_id}: {exc}"
+                ) from exc
             print(f"[integrate] Failed to persist manifest {self.issue_id}: {exc}")
+        finally:
+            if fd >= 0:
+                os.close(fd)
+            if tmp_name:
+                try:
+                    os.unlink(tmp_name)
+                except FileNotFoundError:
+                    pass
 
     def _manifest_path(self) -> Path:
         return self._manifest_dir / f"{self.issue_id.replace('/', '_')}.json"
@@ -603,6 +634,7 @@ def integrate_pipeline_run(
     skip_merge: bool = False,
     skip_tests: bool = False,
     expected_target_head: str = "",
+    require_manifest_persistence: bool = False,
 ) -> IntegrationManifest:
     """Convenience function to integrate a completed pipeline run.
 
@@ -628,6 +660,7 @@ def integrate_pipeline_run(
         skip_merge=skip_merge,
         skip_tests=skip_tests,
         expected_target_head=expected_target_head,
+        require_manifest_persistence=require_manifest_persistence,
     )
     return phase.run()
 

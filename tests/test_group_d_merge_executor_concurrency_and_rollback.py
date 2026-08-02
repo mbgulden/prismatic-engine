@@ -17,6 +17,7 @@ import pytest
 
 from prismatic.core.merge_factory import MergeFactoryStore
 from prismatic.integrate import (
+    IntegratePhase,
     IntegrationManifest,
     IntegrationStatus,
     integrate_pipeline_run as real_integrate_pipeline_run,
@@ -25,6 +26,7 @@ from prismatic.merge_candidate_manifest import (
     CICheck,
     IndependentReview,
     MergeCandidateManifest,
+    PromotionState,
     RiskTier,
     VerificationEvidence,
 )
@@ -259,6 +261,23 @@ def _executor(
         mf_store=MergeFactoryStore(db_path=mf_db),
         verification_receipt_store=VerificationReceiptStore(receipt_db),
     )
+
+
+def _bind_durable_packet(
+    queue: ReviewQueue,
+    job_id: str,
+    manifest: MergeCandidateManifest,
+    packet_path: Path,
+) -> str:
+    manifest.write(packet_path)
+    digest = hashlib.sha256(packet_path.read_bytes()).hexdigest()
+    queue.db.conn.execute(
+        """UPDATE review_jobs
+           SET result_packet_path = ?, result_packet_sha256 = ?
+           WHERE review_job_id = ?""",
+        (str(packet_path), digest, job_id),
+    )
+    return digest
 
 
 def test_group_d_real_concurrent_executors_have_one_winner(tmp_path, monkeypatch):
@@ -607,6 +626,101 @@ def test_group_d_concurrent_advance_after_failed_merge_refuses_cas_rollback(tmp_
     assert result.success is False
     assert "rollback was refused or failed" in result.error.lower()
     assert _git(repo, "rev-parse", "release") == observed["advanced_head"]
+
+
+def test_group_d_file_backed_manifest_persists_merged_state(tmp_path):
+    git_ids = _make_repo(tmp_path)
+    repo = Path(git_ids["repo"])
+    receipt_db = tmp_path / "receipts.sqlite3"
+    stored = _provider_receipt(
+        git_ids, VerificationReceiptStore(receipt_db), "TASK-D-PERSIST-MERGED"
+    )
+    manifest = _manifest(git_ids, "TASK-D-PERSIST-MERGED", stored)
+    queue, job_id, _auth_id = _authorized_job(
+        tmp_path / "review.sqlite3", git_ids, "TASK-D-PERSIST-MERGED"
+    )
+    packet_path = tmp_path / "merge_candidate.json"
+    _bind_durable_packet(queue, job_id, manifest, packet_path)
+    executor = _executor(queue, repo, tmp_path / "mf.sqlite3", receipt_db)
+
+    def real_integration(**kwargs):
+        return real_integrate_pipeline_run(**kwargs, skip_tests=True)
+
+    with patch(
+        "prismatic.review_factory.merge_executor.integrate_pipeline_run",
+        side_effect=real_integration,
+    ):
+        result = executor.execute(job_id, manifest=manifest)
+
+    assert result.success is True
+    persisted = MergeCandidateManifest.read(packet_path)
+    assert persisted.state is PromotionState.MERGED
+    assert persisted.merge_sha == result.merge_sha
+
+
+def test_group_d_file_backed_manifest_write_failure_rolls_back(tmp_path, monkeypatch):
+    git_ids = _make_repo(tmp_path)
+    repo = Path(git_ids["repo"])
+    receipt_db = tmp_path / "receipts.sqlite3"
+    stored = _provider_receipt(
+        git_ids, VerificationReceiptStore(receipt_db), "TASK-D-PERSIST-FAIL"
+    )
+    manifest = _manifest(git_ids, "TASK-D-PERSIST-FAIL", stored)
+    queue, job_id, _auth_id = _authorized_job(
+        tmp_path / "review.sqlite3", git_ids, "TASK-D-PERSIST-FAIL"
+    )
+    packet_path = tmp_path / "merge_candidate.json"
+    _bind_durable_packet(queue, job_id, manifest, packet_path)
+    executor = _executor(queue, repo, tmp_path / "mf.sqlite3", receipt_db)
+    original_write = MergeCandidateManifest.write
+
+    def fail_merged_write(self, path):
+        if self.state is PromotionState.MERGED:
+            raise OSError("forced candidate manifest write failure")
+        return original_write(self, path)
+
+    monkeypatch.setattr(MergeCandidateManifest, "write", fail_merged_write)
+
+    def real_integration(**kwargs):
+        return real_integrate_pipeline_run(**kwargs, skip_tests=True)
+
+    with patch(
+        "prismatic.review_factory.merge_executor.integrate_pipeline_run",
+        side_effect=real_integration,
+    ):
+        result = executor.execute(job_id, manifest=manifest)
+
+    assert result.success is False
+    assert "forced candidate manifest write failure" in result.error
+    assert _git(repo, "rev-parse", "release") == git_ids["base_commit"]
+    persisted = MergeCandidateManifest.read(packet_path)
+    assert persisted.state is PromotionState.MERGE_ELIGIBLE
+    job = queue.db.get_review_job(job_id)
+    assert job is not None
+    assert job.state == ReviewJobState.MERGE_VERIFICATION_FAILED.value
+
+
+def test_group_d_strict_integration_manifest_persistence_fails_closed(
+    tmp_path, monkeypatch
+):
+    phase = IntegratePhase(
+        issue_id="TASK-D-STRICT-MANIFEST",
+        branch="candidate",
+        target_branch="release",
+        repo_path=tmp_path,
+        skip_merge=True,
+        skip_tests=True,
+        manifest_dir=tmp_path / "manifests",
+        require_manifest_persistence=True,
+    )
+
+    def fail_replace(_source, _target):
+        raise OSError("forced atomic persistence failure")
+
+    monkeypatch.setattr("prismatic.integrate.os.replace", fail_replace)
+    with pytest.raises(RuntimeError, match="forced atomic persistence failure"):
+        phase.run()
+    assert list((tmp_path / "manifests").glob("*.tmp")) == []
 
 
 def test_group_d_authorization_rejects_arbitrary_and_whitespace_actor(tmp_path):

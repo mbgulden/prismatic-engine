@@ -242,6 +242,9 @@ class MergeFactoryStore:
                 conn.execute(
                     "ALTER TABLE merge_lock ADD COLUMN acquisition_token TEXT NOT NULL DEFAULT ''"
                 )
+            # Empty-token legacy locks have no provable owner capability and
+            # must be invalidated rather than left as unreleasable blockers.
+            conn.execute("DELETE FROM merge_lock WHERE acquisition_token = ''")
             # 5. Append-only Merge Decision / Attestation History
             conn.execute(
                 """
@@ -1177,4 +1180,9 @@ class MergeFactoryStore:
             rows = conn.execute(
                 "SELECT * FROM merge_lock WHERE expires_at > ?", (now_str,)
             ).fetchall()
-            return [dict(r) for r in rows]
+            locks = []
+            for row in rows:
+                lock = dict(row)
+                lock.pop("acquisition_token", None)
+                locks.append(lock)
+            return locks
