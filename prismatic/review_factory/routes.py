@@ -32,9 +32,15 @@ except ImportError:
     _HAS_FASTAPI = False
     security_scheme = None
     APIRouter = Any  # type: ignore
-    Depends = lambda x=None: None  # type: ignore
+
+    def Depends(dependency=None):  # type: ignore
+        return None
+
     HTTPException = Exception  # type: ignore
-    Query = lambda default=None, **kwargs: default  # type: ignore
+
+    def Query(default=None, **kwargs):  # type: ignore
+        return default
+
     Response = Any  # type: ignore
     status = Any  # type: ignore
     HTTPAuthorizationCredentials = Any  # type: ignore
@@ -241,13 +247,31 @@ def _attach_routes(router: Any) -> None:
         body: dict[str, Any],
         principal: Principal = Depends(require_admin_principal),
     ) -> dict[str, Any]:
-        """Authorize a merge-ready job for merge."""
-        actor = principal.identity
+        """Authorize a merge-ready job using tier-exact domain authority."""
         q = _get_queue()
+        job = q.db.get_review_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+        expected_merge_tree = str(body.get("expected_merge_tree", "")).strip()
+        if len(expected_merge_tree) != 40:
+            raise HTTPException(
+                status_code=400,
+                detail="expected_merge_tree must be an explicit 40-character Git tree SHA",
+            )
+        if job.risk_tier in (0, 1):
+            actor = f"standing-policy: tier-{job.risk_tier}"
+        else:
+            requester = principal.identity.strip()
+            if not requester:
+                raise HTTPException(
+                    status_code=403, detail="Authenticated identity required"
+                )
+            actor = f"human:{requester}"
         auth_id = q.authorize_merge(
             review_job_id=job_id,
             actor=actor,
             expires_minutes=body.get("expires_minutes", 60),
+            expected_merge_tree=expected_merge_tree,
         )
         if auth_id is None:
             raise HTTPException(
@@ -259,6 +283,8 @@ def _attach_routes(router: Any) -> None:
             "authorization_id": auth_id,
             "review_job_id": job_id,
             "actor": actor,
+            "requested_by": principal.identity,
+            "expected_merge_tree": expected_merge_tree,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -425,6 +451,7 @@ def _attach_routes(router: Any) -> None:
 def _create_review_router() -> Any:
     try:
         from fastapi import APIRouter
+
         r = APIRouter(prefix="/review", tags=["review-factory"])
         _attach_routes(r)
         return r
@@ -435,12 +462,14 @@ def _create_review_router() -> Any:
 def create_review_factory_router() -> Any:
     try:
         from fastapi import APIRouter
+
         r = APIRouter(prefix="/review-factory", tags=["review-factory"])
         _attach_routes(r)
         return r
     except Exception as exc:
         print("RF ROUTER EXCEPTION:", exc)
         import traceback
+
         traceback.print_exc()
         return None
 
