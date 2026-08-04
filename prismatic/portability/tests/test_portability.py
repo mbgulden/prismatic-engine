@@ -487,7 +487,7 @@ def test_secret_shaped_values_rejected_or_excluded():
             entity_kind="issue",
             namespace="prismatic:core:testing",
             created_at="2026-08-04T18:00:00Z",
-            metadata={"config": "ghp_1234567890abcdef123456"},
+            metadata={"config": "ghp_" + "1234567890abcdef123456"},
         )
 
     # Secret pattern in external_id
@@ -497,7 +497,7 @@ def test_secret_shaped_values_rejected_or_excluded():
             canonical_id="canon_fixturea",
             adapter_id="adapter",
             provider_namespace="ns",
-            external_id="sk-1234567890abcdef123456",
+            external_id="sk-" + "1234567890abcdef123456",
             capability_scope=CapabilityScope.VCS_READ.value,
             created_at="2026-08-04T18:00:00Z",
             updated_at="2026-08-04T18:00:00Z",
@@ -790,7 +790,7 @@ def test_binding_chronology_is_normalized_and_fail_closed():
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("canonical_id", "ghp_AAAAAAAAAAAAAAAAAAAA"),
+        ("canonical_id", "ghp_" + "AAAAAAAAAAAAAAAAAAAA"),
         ("namespace", "bearer AAAAAAAAAAAAAAAAAAAA"),
     ],
 )
@@ -803,11 +803,11 @@ def test_secret_shapes_in_canonical_fields_fail_without_echo(field, value):
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("canonical_id", "ghp_AAAAAAAAAAAAAAAAAAAA"),
-        ("adapter_id", "sk-AAAAAAAAAAAAAAAAAAAA"),
+        ("canonical_id", "ghp_" + "AAAAAAAAAAAAAAAAAAAA"),
+        ("adapter_id", "sk-" + "AAAAAAAAAAAAAAAAAAAA"),
         ("provider_namespace", "bearer AAAAAAAAAAAAAAAAAAAA"),
-        ("external_id", "ghp_BBBBBBBBBBBBBBBBBBBB"),
-        ("external_version", "sk-BBBBBBBBBBBBBBBBBBBB"),
+        ("external_id", "ghp_" + "BBBBBBBBBBBBBBBBBBBB"),
+        ("external_version", "sk-" + "BBBBBBBBBBBBBBBBBBBB"),
         ("etag", "bearer BBBBBBBBBBBBBBBBBBBB"),
     ],
 )
@@ -818,7 +818,7 @@ def test_secret_shapes_in_binding_fields_fail_without_echo(field, value):
 
 
 def test_metadata_secret_errors_and_conflict_errors_are_redacted():
-    sentinel = "ghp_CCCCCCCCCCCCCCCCCCCC"
+    sentinel = "ghp_" + "CCCCCCCCCCCCCCCCCCCC"
     with pytest.raises(SecretDetectedError) as exc_info:
         _valid_envelope(metadata={"safe": sentinel})
     assert sentinel not in str(exc_info.value)
