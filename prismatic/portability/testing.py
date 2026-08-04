@@ -5,6 +5,7 @@ Prismatic Engine — Fake Offline Adapter Fixture
 Test fixture proving network-free capability negotiation, offline identity creation,
 binding conflict rejection, and outage isolation.
 """
+
 from __future__ import annotations
 
 import datetime

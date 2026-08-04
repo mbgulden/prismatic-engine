@@ -4,6 +4,7 @@ Prismatic Engine — Closed Capability Vocabulary
 
 Defines the closed capability scope vocabulary for provider registry and bindings.
 """
+
 from __future__ import annotations
 
 from enum import Enum
