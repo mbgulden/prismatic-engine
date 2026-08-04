@@ -24,6 +24,8 @@ from prismatic.portability.exceptions import (
     BindingConflictError,
     DuplicateAdapterError,
     InvalidCapabilityError,
+    InvalidEntityKindError,
+    InvalidNamespaceError,
     SecretDetectedError,
     UnsupportedCapabilityError,
     ValidationError,
@@ -199,7 +201,7 @@ def test_both_uniqueness_axes_and_conflict_behavior():
     )
     with pytest.raises(BindingConflictError) as exc_info:
         repo.register_binding(binding_axis1_conflict)
-    assert "Prior truth preserved" in str(exc_info.value)
+    assert str(exc_info.value).startswith("binding_conflict:")
 
     # Conflict on Axis 2: (adapter_id, provider_namespace, external_id, capability_scope, mapping_version)
     binding_axis2_conflict = ExternalIdentityBinding(
@@ -215,7 +217,7 @@ def test_both_uniqueness_axes_and_conflict_behavior():
     )
     with pytest.raises(BindingConflictError) as exc_info:
         repo.register_binding(binding_axis2_conflict)
-    assert "Prior truth preserved" in str(exc_info.value)
+    assert str(exc_info.value).startswith("binding_conflict:")
 
     # Original binding remains intact
     readback = repo.get_binding_by_canonical(
@@ -397,10 +399,10 @@ def test_fake_offline_adapter_uses_no_network():
 
 
 def test_malformed_versions_ids_namespaces_metadata_rejected():
-    # Contract version != 1
+    # Contract version must be a non-Boolean integer.
     with pytest.raises(ValidationError):
         CanonicalIdentityEnvelope(
-            contract_version=2,
+            contract_version="1",
             canonical_id="canon_fixturea",
             entity_kind="issue",
             namespace="prismatic:core:testing",
@@ -751,7 +753,7 @@ def test_non_finite_metadata_is_rejected_and_canonical_json_is_strict(value):
 def test_utc_equivalent_spellings_normalize_and_digest_equally():
     first = _valid_envelope(created_at="2026-08-04T18:00:00Z")
     second = _valid_envelope(created_at="2026-08-04T18:00:00+00:00")
-    assert first.created_at == second.created_at == "2026-08-04T18:00:00Z"
+    assert first.created_at == second.created_at == "2026-08-04T18:00:00.000000Z"
     assert to_canonical_json(first) == to_canonical_json(second)
     assert canonical_digest(first) == canonical_digest(second)
 
@@ -888,3 +890,130 @@ def test_provider_record_and_registry_break_all_collection_aliases():
     )
     with pytest.raises(TypeError):
         stored.metadata["settings"]["mode"] = "forbidden"
+
+
+# ── V5 additive-child proof coverage ─────────────────────────────────────────
+
+
+@pytest.mark.parametrize("field", ["contract_version", "mapping_version"])
+@pytest.mark.parametrize("invalid", [True, False, "1", 1.0, -1, 0])
+def test_r0_bool_and_string_and_float_fail_closed_ints_one_and_two_accepted(
+    field, invalid
+):
+    with pytest.raises(ValidationError):
+        _valid_envelope(**{field: invalid})
+    with pytest.raises(ValidationError):
+        _valid_binding(**{field: invalid})
+
+    for accepted in (1, 2):
+        assert getattr(_valid_envelope(**{field: accepted}), field) == accepted
+        assert getattr(_valid_binding(**{field: accepted}), field) == accepted
+
+
+def test_r3_zero_microsecond_utc_normalizes_to_six_fractional_digits():
+    zulu = _valid_envelope(created_at="2026-08-04T18:00:00Z")
+    offset = _valid_envelope(created_at="2026-08-04T18:00:00+00:00")
+    expected = "2026-08-04T18:00:00.000000Z"
+    assert zulu.created_at == offset.created_at == expected
+    assert to_canonical_json(zulu) == to_canonical_json(offset)
+    assert canonical_digest(zulu) == canonical_digest(offset)
+
+
+def test_r3_one_microsecond_increment_keeps_six_fractional_digits_and_equal_digest():
+    zulu = _valid_envelope(created_at="2026-08-04T18:00:00.000001Z")
+    offset = _valid_envelope(created_at="2026-08-04T18:00:00.000001+00:00")
+    expected = "2026-08-04T18:00:00.000001Z"
+    assert zulu.created_at == offset.created_at == expected
+    assert canonical_digest(zulu) == canonical_digest(offset)
+
+    binding = _valid_binding(
+        created_at="2026-08-04T18:00:00Z",
+        updated_at="2026-08-04T18:00:00.000001Z",
+    )
+    assert binding.created_at == "2026-08-04T18:00:00.000000Z"
+    assert binding.updated_at == expected
+
+
+def _assert_stable_code(exc: BaseException, expected: str) -> None:
+    text = str(exc)
+    assert text.startswith(f"{expected}:")
+    codes = {
+        "secret_key_detected",
+        "secret_value_detected",
+        "binding_conflict",
+        "invalid_capability",
+        "invalid_event_kind",
+        "invalid_namespace",
+    }
+    assert not any(code in text for code in codes - {expected})
+
+
+def test_r4_condition_to_stable_code_mapping():
+    secret_value = "ghp_" + "V" * 20
+    with pytest.raises(SecretDetectedError) as exc_info:
+        _valid_envelope(metadata={"safe": secret_value})
+    _assert_stable_code(exc_info.value, "secret_value_detected")
+
+    with pytest.raises(SecretDetectedError) as exc_info:
+        _valid_envelope(metadata={"api_key": "plain"})
+    _assert_stable_code(exc_info.value, "secret_key_detected")
+
+    repository = BindingRepository()
+    repository.register_binding(_valid_binding())
+    with pytest.raises(BindingConflictError) as exc_info:
+        repository.register_binding(
+            _valid_binding(external_id="caller_external_sentinel")
+        )
+    _assert_stable_code(exc_info.value, "binding_conflict")
+    assert "caller_external_sentinel" not in str(exc_info.value)
+
+    with pytest.raises(InvalidCapabilityError) as exc_info:
+        _valid_binding(capability_scope="caller_capability_sentinel")
+    _assert_stable_code(exc_info.value, "invalid_capability")
+    assert "caller_capability_sentinel" not in str(exc_info.value)
+
+    with pytest.raises(InvalidEntityKindError) as exc_info:
+        _valid_envelope(entity_kind="caller_entity_sentinel")
+    _assert_stable_code(exc_info.value, "invalid_event_kind")
+    assert "caller_entity_sentinel" not in str(exc_info.value)
+
+    with pytest.raises(InvalidNamespaceError) as exc_info:
+        _valid_envelope(namespace="prismatic:core:github_issue")
+    _assert_stable_code(exc_info.value, "invalid_namespace")
+    assert "github_issue" not in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    ("position", "field"),
+    [
+        ("envelope", "canonical_id"),
+        ("envelope", "entity_kind"),
+        ("envelope", "namespace"),
+        ("binding", "adapter_id"),
+        ("binding", "external_id"),
+        ("binding", "provider_namespace"),
+        ("binding", "capability_scope"),
+        ("binding", "external_version"),
+        ("binding", "etag"),
+        ("metadata_key", None),
+        ("metadata_value", None),
+    ],
+)
+def test_r4_no_caller_value_echo_in_any_captured_exception_text(position, field):
+    sentinel = "ghp_" + position + "_" + "X" * 20
+    expected_code = (
+        "secret_key_detected" if position == "metadata_key" else "secret_value_detected"
+    )
+
+    with pytest.raises(SecretDetectedError) as exc_info:
+        if position == "envelope":
+            _valid_envelope(**{field: sentinel})
+        elif position == "binding":
+            _valid_binding(**{field: sentinel})
+        elif position == "metadata_key":
+            _valid_envelope(metadata={sentinel: "safe"})
+        else:
+            _valid_envelope(metadata={"safe": sentinel})
+
+    _assert_stable_code(exc_info.value, expected_code)
+    assert sentinel not in str(exc_info.value)

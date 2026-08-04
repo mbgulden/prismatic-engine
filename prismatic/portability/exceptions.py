@@ -23,7 +23,13 @@ class ValidationError(PortabilityError):
 class SecretDetectedError(ValidationError):
     """Raised when a secret-shaped value or key is detected in canonical records."""
 
-    pass
+    _CODES = frozenset({"secret_key_detected", "secret_value_detected"})
+
+    def __init__(self, code: str, *, length: int | None = None) -> None:
+        if code not in self._CODES:
+            raise ValueError("invalid secret error code")
+        length_summary = "<redacted>" if length is None else str(length)
+        super().__init__(f"{code}: field=<redacted>; length={length_summary}")
 
 
 class CanonicalIdentityError(PortabilityError):
@@ -35,13 +41,29 @@ class CanonicalIdentityError(PortabilityError):
 class BindingConflictError(PortabilityError):
     """Raised when an external identity binding registration collides with existing state."""
 
-    pass
+    def __init__(self) -> None:
+        super().__init__("binding_conflict: field=<redacted>; length=<redacted>")
 
 
 class InvalidCapabilityError(ValidationError):
     """Raised when an unknown or malformed capability scope is encountered."""
 
-    pass
+    def __init__(self) -> None:
+        super().__init__("invalid_capability: field=<redacted>; length=<redacted>")
+
+
+class InvalidEntityKindError(ValidationError):
+    """Raised when an entity kind is outside the closed Core vocabulary."""
+
+    def __init__(self) -> None:
+        super().__init__("invalid_event_kind: field=<redacted>; length=<redacted>")
+
+
+class InvalidNamespaceError(ValidationError):
+    """Raised when a namespace violates Core ownership rules."""
+
+    def __init__(self) -> None:
+        super().__init__("invalid_namespace: field=<redacted>; length=<redacted>")
 
 
 class DuplicateAdapterError(PortabilityError):

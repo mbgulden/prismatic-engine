@@ -38,11 +38,9 @@ def validate_capability_scope(scope: str) -> str:
         InvalidCapabilityError: If the capability scope is unknown or malformed.
     """
     if not isinstance(scope, str) or not scope.strip():
-        raise InvalidCapabilityError("Capability scope must be a non-empty string.")
+        raise InvalidCapabilityError()
 
     normalized = scope.strip()
     if normalized not in _KNOWN_CAPABILITY_VALUES:
-        raise InvalidCapabilityError(
-            f"Unknown capability scope {normalized!r}. Must be one of: {sorted(_KNOWN_CAPABILITY_VALUES)}"
-        )
+        raise InvalidCapabilityError()
     return normalized

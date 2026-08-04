@@ -13,9 +13,8 @@ from prismatic.portability.identity import (
     CANONICAL_ID_RE,
     CORE_NAMESPACE_RE,
     _check_secrets,
+    _validate_int_version,
     _validate_iso_utc_timestamp,
-    _validate_literal_one,
-    _validate_positive_integer,
 )
 
 Axis1Key = tuple[str, str, str, int]
@@ -68,8 +67,8 @@ class ExternalIdentityBinding:
     etag: Optional[str] = None
 
     def __post_init__(self) -> None:
-        _validate_literal_one(self.contract_version, field_name="contract_version")
-        _validate_positive_integer(self.mapping_version, field_name="mapping_version")
+        _validate_int_version(self.contract_version, field_name="contract_version")
+        _validate_int_version(self.mapping_version, field_name="mapping_version")
 
         canonical_id = _validate_required_string("canonical_id", self.canonical_id)
         if not CANONICAL_ID_RE.fullmatch(canonical_id):
@@ -162,9 +161,7 @@ class BindingRepository:
         a2_key = binding.axis2_key
         with self._lock:
             if a1_key in self._axis1_index or a2_key in self._axis2_index:
-                raise BindingConflictError(
-                    "binding registration conflict; Prior truth preserved without mutation"
-                )
+                raise BindingConflictError()
             self._axis1_index[a1_key] = binding
             self._axis2_index[a2_key] = binding
 
@@ -176,7 +173,7 @@ class BindingRepository:
             mapping_version=binding.mapping_version,
         )
         if readback is None or readback.canonical_id != binding.canonical_id:
-            raise BindingConflictError("local binding readback verification failed")
+            raise BindingConflictError()
         return readback
 
     def get_binding_by_canonical(
