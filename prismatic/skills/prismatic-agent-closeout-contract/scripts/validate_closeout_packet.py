@@ -17,7 +17,7 @@ import hashlib
 import json
 import re
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Mapping, Sequence
 
 # Reuse the production secret/path safety primitives.
@@ -157,6 +157,9 @@ def _is_safe_artifact_path(path: str) -> bool:
     if not path:
         return False
     normalized = path.replace("\\", "/")
+    # Reject path traversal at any segment (POSIX ``..``).
+    if ".." in PurePosixPath(normalized).parts:
+        return False
     if any(normalized.startswith(prefix) for prefix in _UNSAFE_ARTIFACT_PATHS):
         return False
     if SECRET_PATH_RE.search(normalized):
@@ -200,6 +203,47 @@ def _check_artifact_safety(packet: Mapping[str, Any]) -> list[str]:
         errors.append(
             f"LOG='{log}' is unsafe (/tmp, secret, generated, or outside operator home)"
         )
+    # CHANGED_PATHS: secret/traversal/junk-path defense.
+    # Empty CHANGED_PATHS is permitted (e.g. an attempt that failed before
+    # any file change) as long as BLOCKERS or PROOF_CLASSES carry evidence
+    # that real work was attempted.
+    changed_paths = packet.get("CHANGED_PATHS") or []
+    if not isinstance(changed_paths, list):
+        errors.append("CHANGED_PATHS must be a list")
+    else:
+        for index, value in enumerate(changed_paths):
+            if not isinstance(value, str) or not value:
+                errors.append(f"CHANGED_PATHS[{index}] must be a non-empty string")
+                continue
+            if not _is_safe_artifact_path(value):
+                errors.append(
+                    f"CHANGED_PATHS[{index}]='{value}' is unsafe "
+                    "(traversal, secret, generated, or outside operator home)"
+                )
+        if not changed_paths:
+            blockers = packet.get("BLOCKERS") or []
+            proof = packet.get("PROOF_CLASSES") or []
+            if not (isinstance(blockers, list) and blockers) and not (
+                isinstance(proof, list) and proof
+            ):
+                errors.append(
+                    "CHANGED_PATHS may be empty only when BLOCKERS or "
+                    "PROOF_CLASSES carry evidence of attempted work"
+                )
+    # COMMAND: secret-shaped value defense (tokens, keys, credentials).
+    commands = packet.get("COMMAND") or []
+    if not isinstance(commands, list) or not commands:
+        errors.append("COMMAND must be a non-empty list")
+    else:
+        for index, value in enumerate(commands):
+            if not isinstance(value, str) or not value:
+                errors.append(f"COMMAND[{index}] must be a non-empty string")
+                continue
+            if CONTROL_RE.search(value):
+                errors.append(f"COMMAND[{index}] contains control characters")
+                continue
+            if SECRET_VALUE_RE.search(value):
+                errors.append(f"COMMAND[{index}] contains secret-like content")
     return errors
 
 
@@ -225,6 +269,12 @@ def _check_semantic_invariants(packet: Mapping[str, Any]) -> list[str]:
         and packet.get("merge_lane") != "manual-review"
     ):
         errors.append("risk_level=high requires merge_lane=manual-review")
+    if packet.get("STATUS") == "PASS":
+        # PASS must never pair with high risk or manual-review lane.
+        if packet.get("risk_level") == "high":
+            errors.append("STATUS=PASS is not allowed with risk_level=high")
+        if packet.get("merge_lane") == "manual-review":
+            errors.append("STATUS=PASS is not allowed with merge_lane=manual-review")
     return errors
 
 
@@ -259,13 +309,19 @@ def _check_log_integrity(directory: Path, packet: Mapping[str, Any]) -> list[str
 
 
 def _check_result_md(directory: Path, packet: Mapping[str, Any]) -> list[str]:
-    """RESULT.md must exist; when present, synchronized fields must match."""
+    """RESULT.md must exist; when present, synchronized fields must match.
+
+    The parser accepts both ``KEY: value`` and ``KEY=value`` formats because
+    shipped fixtures use the ``=`` form. The synchronized field set covers
+    every field the v0.2 schema documents as cross-checked (the appendix says
+    all required fields must synchronize, not five). Unknown keys are
+    recorded but do not invalidate the packet on their own.
+    """
     errors: list[str] = []
     md_path = directory / "RESULT.md"
     if not md_path.exists():
         errors.append(f"Missing required RESULT.md in {directory}")
         return errors
-    # Parse simple ``KEY: value`` lines.
     md_fields: dict[str, str] = {}
     for raw in md_path.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
@@ -273,13 +329,23 @@ def _check_result_md(directory: Path, packet: Mapping[str, Any]) -> list[str]:
             continue
         if ":" in line:
             key, _, value = line.partition(":")
-            md_fields[key.strip()] = value.strip()
+            md_fields.setdefault(key.strip(), value.strip())
+            continue
+        if "=" in line:
+            key, _, value = line.partition("=")
+            md_fields.setdefault(key.strip(), value.strip())
     synchronized = (
         "TASK_ID",
         "AGENT",
         "ACCEPTANCE_DECISION",
         "MARKER",
         "CANDIDATE_HEAD",
+        "STATUS",
+        "PRODUCER_STATUS",
+        "BASE_HEAD",
+        "CANDIDATE_TREE",
+        "RESULT",
+        "LOG_SHA256",
     )
     for field in synchronized:
         md_value = md_fields.get(field)
@@ -354,27 +420,80 @@ def validate_closeout_packet(
 
 
 def _iter_example_dirs(root: Path) -> Iterable[Path]:
+    """Yield directories whose own contents validate as a packet + RESULT.md."""
     for child in sorted(root.iterdir()):
         if child.is_dir() and (child / "result-packet.json").exists():
+            yield child
+
+
+def _iter_flat_packets(root: Path) -> Iterable[Path]:
+    """Yield flat ``result-packet.<label>.json`` files inside ``root``."""
+    for child in sorted(root.iterdir()):
+        if (
+            child.is_file()
+            and child.name.startswith("result-packet.")
+            and child.name.endswith(".json")
+            and child.name != "result-packet.json"
+        ):
             yield child
 
 
 def _run_fixture_harness(
     target_dir: Path, *, check_sha_files: bool
 ) -> tuple[bool, list[str]]:
+    """Validate every shipped fixture in both directory and flat-file forms.
+
+    A green harness must exercise at least one packet that is schema-valid
+    plus the dual-artifact and launch-binding rules. Returning PASS without
+    iterating flat fixtures (the previous behaviour) was vacuous.
+    """
     aggregate_errors: list[str] = []
     aggregate_ok = True
-    for sub in _iter_example_dirs(target_dir):
-        outcome = validate_packet_directory(sub, check_sha_files=check_sha_files)
-        label = sub.name
+    counts = {"directories": 0, "flat": 0, "ok": 0, "blocked": 0}
+
+    def _record(label: str, outcome: ValidationOutcome) -> None:
+        nonlocal aggregate_ok
         if outcome.ok:
+            counts["ok"] += 1
             print(
                 f"Fixture [{label}] VALIDATED CLEAN (check_sha_files={check_sha_files})"
             )
         else:
+            counts["blocked"] += 1
             aggregate_ok = False
             aggregate_errors.extend(f"[{label}] " + e for e in outcome.errors)
             print(f"Fixture [{label}] BLOCKED: " + "; ".join(outcome.errors))
+
+    for sub in _iter_example_dirs(target_dir):
+        counts["directories"] += 1
+        outcome = validate_packet_directory(sub, check_sha_files=check_sha_files)
+        _record(sub.name, outcome)
+
+    for flat in _iter_flat_packets(target_dir):
+        counts["flat"] += 1
+        label = flat.stem
+        try:
+            data = json.loads(flat.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            aggregate_ok = False
+            counts["blocked"] += 1
+            aggregate_errors.append(f"[{label}] invalid JSON: {exc.msg}")
+            print(f"Fixture [{label}] BLOCKED: invalid JSON: {exc.msg}")
+            continue
+        if not isinstance(data, Mapping):
+            aggregate_ok = False
+            counts["blocked"] += 1
+            aggregate_errors.append(f"[{label}] packet must be a JSON object")
+            print(f"Fixture [{label}] BLOCKED: not a JSON object")
+            continue
+        outcome = validate_closeout_packet(data)
+        _record(label, outcome)
+
+    print(
+        "FIXTURE_COUNTS=directories="
+        f"{counts['directories']},flat={counts['flat']},"
+        f"ok={counts['ok']},blocked={counts['blocked']}"
+    )
     return aggregate_ok, aggregate_errors
 
 

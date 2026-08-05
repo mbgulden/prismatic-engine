@@ -19,7 +19,7 @@
     "artifacts/logs/attempt-20260804-03.log"
   ],
   "SCOPE": "Build pipeline execution",
-  "merge_lane": "dashboard-ui",
+  "merge_lane": "manual-review",
   "risk_level": "high",
   "AD_HOC_OR_CANONICAL": "canonical suite",
   "PROOF_CLASSES": [

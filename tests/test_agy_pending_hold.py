@@ -183,6 +183,268 @@ def test_agy_completed_work_idempotent_conflict_error_preserved(tmp_path: Path):
         ingest_completed_work(packet_b, db_path=db)
 
 
+def test_v02_packet_rejects_spoofed_optional_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Optional SOURCE_BRANCH/BASE_BRANCH/SOURCE_PATH in the lossless v02_closeout
+    payload must not be allowed to contradict the trusted launch context.
+
+    Schema-level enforcement already rejects ``BASE_BRANCH`` values outside
+    ``{main, origin/main}`` and ``SOURCE_BRANCH`` values that don't start with
+    ``feature/``. This test confirms that an attacker-supplied branch/path
+    is rejected (whether by the schema or by the runtime spoof check).
+    """
+    for key, value in LAUNCH_ENV.items():
+        monkeypatch.setenv(key, value)
+    packet = _load_pass_fixture()
+    packet["SOURCE_BRANCH"] = "feature/attacker-branch"
+    packet["BASE_BRANCH"] = "attacker-base"
+    packet["SOURCE_PATH"] = "/tmp/attacker"
+    with pytest.raises(Exception) as exc:
+        normalize_agy_result_packet(packet)
+    message = str(exc.value)
+    assert "spoofed" in message or "disagrees" in message or "attacker-base" in message
+
+
+def test_legacy_packet_rejects_command_secret_and_traversal():
+    """Legacy raw validator must reject secret-shaped commands and traversal
+    paths in CHANGED_FILES, not only in CHANGED_PATHS/COMMAND under v0.2."""
+    from prismatic.agy_result_packet import validate_packet
+
+    packet = {
+        "agent": "agy",
+        "issue_identifier": "GRO-4400",
+        "branch": "feature/legacy",
+        "base_branch": "main",
+        "changed_files": ["../../ordinary.txt"],
+        "result_artifacts": [{"path": "artifacts/a.log"}],
+        "verification": {
+            "commands": ["deploy --token=super-secret-value-123456"],
+            "result": "PASS",
+            "log_path": "artifacts/a.log",
+            "ad_hoc_or_canonical": "ad-hoc targeted",
+        },
+        "non_claims": [],
+        "merge_lane": "backend-api",
+        "risk_level": "low",
+        "next_action": "merge-ready",
+        "marker": "AGY_TASK_RESULT_PACKET_OK",
+    }
+    result = validate_packet(packet)
+    assert result.ok is False
+    assert any("changed_files" in e and "traversal" in e for e in result.errors)
+    assert any("verification.commands" in e and "secret" in e for e in result.errors)
+
+
+def test_v02_validator_rejects_command_secret_and_traversal_in_changed_paths():
+    """v0.2 schema validator must reject CHANGED_PATHS traversal and COMMAND secrets."""
+    from prismatic.skills.prismatic_agent_closeout_contract import (
+        validate_closeout_packet,
+    )
+
+    packet = {
+        "agent": "agy",
+        "TASK_ID": "GRO-4500",
+        "MARKER": "AGY_TASK_RESULT_PACKET_OK",
+        "ACCEPTANCE_DECISION": "PENDING",
+        "STATUS": "BLOCKED",
+        "PRODUCER_STATUS": "BLOCKED",
+        "RESULT": "BLOCKED",
+        "BLOCKERS": ["secret found in COMMAND"],
+        "CANDIDATE_HEAD": LAUNCH_ENV["PRISMATIC_DISPATCH_CANDIDATE_HEAD"],
+        "CANDIDATE_TREE": LAUNCH_ENV["PRISMATIC_DISPATCH_CANDIDATE_TREE"],
+        "BASE_HEAD": LAUNCH_ENV["PRISMATIC_DISPATCH_BASE_HEAD"],
+        "LOG_SHA256": "0" * 64,
+        "SCOPE": "x",
+        "ATTEMPT_ID": "y",
+        "PROOF_CLASSES": ["focused"],
+        "SIDE_EFFECTS": {
+            "push": False,
+            "pr": False,
+            "merge": False,
+            "deploy": False,
+            "linear_updated": False,
+        },
+        "NOT_CLAIMING": [],
+        "NEXT_ACTION": "blocked",
+        "merge_lane": "backend-api",
+        "risk_level": "low",
+        "result_artifacts": [{"path": "artifacts/a.log"}],
+        "LOG": "artifacts/a.log",
+        "CHANGED_PATHS": ["../../ordinary.txt"],
+        "COMMAND": ["deploy --token=super-secret-value-123456"],
+        "AD_HOC_OR_CANONICAL": "ad-hoc targeted",
+    }
+    outcome = validate_closeout_packet(packet)
+    assert outcome.ok is False
+    assert any("CHANGED_PATHS" in e for e in outcome.errors)
+    assert any("COMMAND" in e for e in outcome.errors)
+
+
+def test_v02_validator_rejects_pass_with_high_risk_or_manual_review():
+    """PASS must not pair with risk=high or lane=manual-review."""
+    from prismatic.skills.prismatic_agent_closeout_contract import (
+        validate_closeout_packet,
+    )
+
+    side_effects = {
+        "push": False,
+        "pr": False,
+        "merge": False,
+        "deploy": False,
+        "linear_updated": False,
+    }
+    base = {
+        "agent": "agy",
+        "TASK_ID": "GRO-4500",
+        "MARKER": "AGY_TASK_RESULT_PACKET_OK",
+        "ACCEPTANCE_DECISION": "PENDING",
+        "STATUS": "PASS",
+        "PRODUCER_STATUS": "PASS",
+        "RESULT": "PASS",
+        "BLOCKERS": [],
+        "CANDIDATE_HEAD": LAUNCH_ENV["PRISMATIC_DISPATCH_CANDIDATE_HEAD"],
+        "CANDIDATE_TREE": LAUNCH_ENV["PRISMATIC_DISPATCH_CANDIDATE_TREE"],
+        "BASE_HEAD": LAUNCH_ENV["PRISMATIC_DISPATCH_BASE_HEAD"],
+        "LOG_SHA256": "0" * 64,
+        "SCOPE": "x",
+        "ATTEMPT_ID": "y",
+        "PROOF_CLASSES": ["focused"],
+        "SIDE_EFFECTS": side_effects,
+        "NOT_CLAIMING": [],
+        "NEXT_ACTION": "blocked",  # not merge-ready to avoid unrelated lane rule
+        "result_artifacts": [{"path": "artifacts/a.log"}],
+        "LOG": "artifacts/a.log",
+        "CHANGED_PATHS": ["prismatic/foo.py"],
+        "COMMAND": ["pytest -q tests/test_x.py"],
+        "AD_HOC_OR_CANONICAL": "ad-hoc targeted",
+    }
+    packet_high = dict(base, risk_level="high", merge_lane="manual-review")
+    packet_manual = dict(base, risk_level="low", merge_lane="manual-review")
+    packet_ok = dict(base, risk_level="low", merge_lane="backend-api")
+    assert validate_closeout_packet(packet_high).ok is False
+    assert validate_closeout_packet(packet_manual).ok is False
+    # PASS at low risk + backend-api lane with non-merge-ready next_action passes
+    assert validate_closeout_packet(packet_ok).ok is True
+
+
+def test_v02_underscore_alias_imports():
+    """The hyphenated skill directory must be importable via the underscored path."""
+    from prismatic.skills import prismatic_agent_closeout_contract as alias
+
+    assert hasattr(alias, "validate_closeout_packet")
+    assert hasattr(alias, "LaunchContext")
+    assert hasattr(alias, "ValidationOutcome")
+    assert hasattr(alias, "CloseoutValidationError")
+    assert hasattr(alias, "load_schema")
+    assert alias.validate_closeout_packet.__module__.endswith(
+        "validate_closeout_packet"
+    )
+
+
+def test_fixture_harness_iterates_flat_files():
+    """The CLI fixture harness must validate both directory and flat-file fixtures.
+
+    The shipped examples contain only flat ``result-packet.<label>.json``
+    files. If the harness only iterates directories, it reports
+    STATUS=PASS vacuously without exercising any packet.
+    """
+    import subprocess
+
+    validator_script = (
+        Path(__file__).resolve().parents[1]
+        / "prismatic"
+        / "skills"
+        / "prismatic-agent-closeout-contract"
+        / "scripts"
+        / "validate_closeout_packet.py"
+    )
+    proc = subprocess.run(
+        [
+            "python",
+            str(validator_script),
+            str(EXAMPLES_DIR),
+            "--test-fixtures",
+        ],
+        cwd=str(Path(__file__).resolve().parents[1]),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "FIXTURE_COUNTS=" in proc.stdout
+    # The shipped examples contain 3 flat files; flat count must be > 0
+    assert "flat=3" in proc.stdout
+
+
+def test_result_md_parser_accepts_equals_form():
+    """RESULT.md must parse ``KEY=value`` lines as well as ``KEY: value``."""
+    import importlib
+    import tempfile
+
+    pkg = importlib.import_module("prismatic.skills.prismatic_agent_closeout_contract")
+    validate_packet_directory = pkg.validate_packet_directory
+
+    with tempfile.TemporaryDirectory() as tmp:
+        d = Path(tmp)
+        (d / "RESULT.md").write_text(
+            "\n".join(
+                [
+                    "# v0.2 closeout result",
+                    "TASK_ID=GRO-4500",
+                    "AGENT=agy",
+                    "ACCEPTANCE_DECISION=PENDING",
+                    "MARKER=AGY_TASK_RESULT_PACKET_OK",
+                    "CANDIDATE_HEAD=a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+                    "STATUS=PASS",
+                    "PRODUCER_STATUS=PASS",
+                    "BASE_HEAD=1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b",
+                    "CANDIDATE_TREE=9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e",
+                    "RESULT=PASS",
+                    "LOG_SHA256=" + "0" * 64,
+                ]
+            )
+        )
+        packet = {
+            "agent": "agy",
+            "TASK_ID": "GRO-4500",
+            "MARKER": "AGY_TASK_RESULT_PACKET_OK",
+            "ACCEPTANCE_DECISION": "PENDING",
+            "STATUS": "PASS",
+            "PRODUCER_STATUS": "PASS",
+            "RESULT": "PASS",
+            "BLOCKERS": [],
+            "CANDIDATE_HEAD": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
+            "CANDIDATE_TREE": "9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e",
+            "BASE_HEAD": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b",
+            "LOG_SHA256": "0" * 64,
+            "SCOPE": "x",
+            "ATTEMPT_ID": "y",
+            "PROOF_CLASSES": ["focused"],
+            "SIDE_EFFECTS": {
+                "push": False,
+                "pr": False,
+                "merge": False,
+                "deploy": False,
+                "linear_updated": False,
+            },
+            "NOT_CLAIMING": [],
+            "NEXT_ACTION": "blocked",
+            "merge_lane": "backend-api",
+            "risk_level": "low",
+            "result_artifacts": [{"path": "artifacts/a.log"}],
+            "LOG": "artifacts/a.log",
+            "CHANGED_PATHS": ["prismatic/foo.py"],
+            "COMMAND": ["pytest -q tests/test_x.py"],
+            "AD_HOC_OR_CANONICAL": "ad-hoc targeted",
+        }
+        (d / "result-packet.json").write_text(json.dumps(packet))
+        outcome = validate_packet_directory(d, check_sha_files=False)
+        # Should not fail on missing synchronized fields (RESULT.md parsed)
+        missing = [e for e in outcome.errors if "RESULT.md" in e]
+        assert not missing, outcome.errors
+
+
 def test_dual_artifact_validator_runs_from_cli(monkeypatch: pytest.MonkeyPatch):
     """Standalone CLI must keep working and never emit acceptance vocabulary."""
     import subprocess

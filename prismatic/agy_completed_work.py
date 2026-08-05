@@ -250,10 +250,11 @@ def normalize_agy_result_packet(packet: Mapping[str, Any]) -> dict[str, Any]:
     """
 
     normalized = _json_object(packet, "packet")
-    if requires_v02_closeout(normalized):
+    context = _launch_context_from_settings()
+    trusted_issue = context.issue_identifier if context is not None else None
+    if requires_v02_closeout(normalized, trusted_issue=trusted_issue):
         if not is_v02_closeout_packet(normalized):
             raise ValueError("GRO-4500+ AGY packets require the v0.2 closeout contract")
-        context = _launch_context_from_settings()
         if context is None:
             raise ValueError(
                 "GRO-4500+ AGY packet missing trusted launch context "
@@ -261,6 +262,24 @@ def normalize_agy_result_packet(packet: Mapping[str, Any]) -> dict[str, Any]:
             )
         _validate_v02_packet_with_launch(normalized, context)
         normalized = _adapt_v02_packet_with_context(normalized, context)
+        # Reject any spoofed optional provenance in the lossless v02_closeout
+        # payload that contradicts the trusted launch context. The validator
+        # already binds required fields; this catches optional fields that
+        # the schema permits but the trusted dispatcher would not allow.
+        retained = normalized.get("v02_closeout")
+        if isinstance(retained, Mapping):
+            for field in ("SOURCE_BRANCH", "BASE_BRANCH", "SOURCE_PATH"):
+                spoofed = retained.get(field)
+                trusted = {
+                    "SOURCE_BRANCH": context.source_branch,
+                    "BASE_BRANCH": context.base_branch,
+                    "SOURCE_PATH": context.source_path,
+                }[field]
+                if isinstance(spoofed, str) and spoofed != trusted:
+                    raise ValueError(
+                        f"spoofed {field}='{spoofed}' contradicts trusted context "
+                        f"'{trusted}'"
+                    )
     issue = _safe_slug(
         _string(normalized.get("issue_identifier"))
         or _string(normalized.get("issue_id"))
