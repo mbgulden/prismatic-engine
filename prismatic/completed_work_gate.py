@@ -235,9 +235,15 @@ def _classify(gate_input: CompletedWorkGateInput) -> CompletedWorkGateState:
     touched_paths = _string_list(lane_scope.get("touched_paths"))
     if not touched_paths:
         touched_paths = changed_files
+    if packet.get("ACCEPTANCE_DECISION") == "PENDING":
+        reasons.append("producer acceptance pending independent review")
+        return _state(GateClassification.MANUAL_REVIEW_SCOPE, packet, reasons)
     out_of_scope = _out_of_scope_paths(touched_paths, allowed_paths)
     if out_of_scope:
-        reasons.append("touched paths outside lane scope: " + ", ".join(out_of_scope))
+        reason = "touched paths outside lane scope: " + ", ".join(out_of_scope)
+        if lane_scope.get("manual_review_reason"):
+            reason += f" ({lane_scope['manual_review_reason']})"
+        reasons.append(reason)
         return _state(GateClassification.MANUAL_REVIEW_SCOPE, packet, reasons)
 
     conflicts = tuple(gate_input.conflicts)

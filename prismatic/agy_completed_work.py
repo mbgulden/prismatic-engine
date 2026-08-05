@@ -8,17 +8,25 @@ operator scripts. It does not merge, dispatch, or mutate git state.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import re
 import sqlite3
+import sys
 import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from prismatic.agy_result_packet import is_raw_agy_result_packet, require_valid_packet
+from prismatic.agy_result_packet import (
+    AGY_RESULT_PACKET_MARKER,
+    is_raw_agy_result_packet,
+    is_v02_closeout_packet,
+    require_valid_packet,
+    requires_v02_closeout,
+)
 from prismatic.completed_work_gate import (
     AGY_COMPLETED_WORK_MARKER,
     classify_completed_work,
@@ -99,6 +107,132 @@ _SECRET_FILENAMES = {
 _SECRET_FILENAME_PREFIXES = (".env",)
 
 
+_VALIDATOR_MODULE_CACHE: dict = {}
+
+
+def _load_validator_module():
+    """Load the closeout validator module even when the editable install does
+    not expose ``prismatic.skills.*`` as importable packages.
+
+    The validator file is part of the packaged skill, so we load it by absolute
+    filesystem path. The module is cached to avoid re-execution.
+    """
+    cached = _VALIDATOR_MODULE_CACHE.get("module")
+    if cached is not None:
+        return cached
+    module_name = "prismatic_pacc_validator"
+    spec_path = (
+        Path(__file__).resolve().parent
+        / "skills"
+        / "prismatic-agent-closeout-contract"
+        / "scripts"
+        / "validate_closeout_packet.py"
+    )
+    spec = importlib.util.spec_from_file_location(module_name, spec_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load validator from {spec_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    _VALIDATOR_MODULE_CACHE["module"] = module
+    return module
+
+
+def _launch_context_from_settings():
+    """Read trusted launch context from env, when set by the dispatcher."""
+    validator = _load_validator_module()
+
+    issue = os.environ.get("PRISMATIC_DISPATCH_ISSUE")
+    branch = os.environ.get("PRISMATIC_DISPATCH_SOURCE_BRANCH")
+    base = os.environ.get("PRISMATIC_DISPATCH_BASE_BRANCH")
+    source_path = os.environ.get("PRISMATIC_DISPATCH_SOURCE_PATH")
+    candidate = os.environ.get("PRISMATIC_DISPATCH_CANDIDATE_HEAD")
+    candidate_tree = os.environ.get("PRISMATIC_DISPATCH_CANDIDATE_TREE")
+    base_commit = os.environ.get("PRISMATIC_DISPATCH_BASE_HEAD")
+    if not all(
+        [issue, branch, base, source_path, candidate, candidate_tree, base_commit]
+    ):
+        return None
+    return validator.LaunchContext(
+        issue_identifier=issue,
+        source_branch=branch,
+        base_branch=base,
+        source_path=source_path,
+        candidate_commit=candidate,
+        candidate_tree=candidate_tree,
+        base_commit=base_commit,
+    )
+
+
+def _adapt_v02_packet_with_context(
+    packet: Mapping[str, Any], context
+) -> dict[str, Any]:
+    """Adapt validated v0.2 producer output to the existing gate dialect.
+
+    No field is invented: ``source_branch``/``base_branch``/``source_path``/
+    ``source_commit_sha``/``base_commit_sha`` come from the trusted launch
+    context. ``ACCEPTANCE_DECISION`` remains ``PENDING`` until the independent
+    reviewer upgrades it.
+    """
+    adapted = {
+        "agent": "agy",
+        "issue_identifier": packet["TASK_ID"],
+        "branch": context.source_branch,
+        "base_branch": context.base_branch,
+        "source_branch": context.source_branch,
+        "source_path": context.source_path,
+        "source_commit_sha": context.candidate_commit,
+        "base_commit_sha": context.base_commit,
+        "changed_files": list(packet["CHANGED_PATHS"]),
+        "pr_url": None,
+        "result_artifacts": list(packet["result_artifacts"]),
+        "verification": {
+            "commands": list(packet["COMMAND"]),
+            "result": packet["RESULT"],
+            "log_path": packet["LOG"],
+            "ad_hoc_or_canonical": packet["AD_HOC_OR_CANONICAL"],
+        },
+        "proof": {
+            "commands": list(packet["COMMAND"]),
+            "result": packet["RESULT"],
+            "log_path": packet["LOG"],
+            "log_sha256": packet["LOG_SHA256"],
+            "scope": packet["SCOPE"],
+            "marker": packet["MARKER"],
+            "ad_hoc_or_canonical": packet["AD_HOC_OR_CANONICAL"],
+            "non_claims": list(packet["NOT_CLAIMING"]),
+            "attempt_id": packet["ATTEMPT_ID"],
+            "candidate_tree": packet["CANDIDATE_TREE"],
+            "proof_classes": list(packet["PROOF_CLASSES"]),
+            "side_effects": dict(packet["SIDE_EFFECTS"]),
+            "blockers": list(packet["BLOCKERS"]),
+        },
+        "v02_closeout": dict(packet),
+        "trusted_launch_context": {
+            "issue_identifier": context.issue_identifier,
+            "source_branch": context.source_branch,
+            "base_branch": context.base_branch,
+            "source_path": context.source_path,
+            "candidate_commit": context.candidate_commit,
+            "candidate_tree": context.candidate_tree,
+            "base_commit": context.base_commit,
+        },
+        "non_claims": list(packet["NOT_CLAIMING"]),
+        "merge_lane": packet["merge_lane"],
+        "risk_level": packet["risk_level"],
+        "next_action": packet["NEXT_ACTION"],
+        "marker": AGY_RESULT_PACKET_MARKER,
+        "ACCEPTANCE_DECISION": "PENDING",
+    }
+    return adapted
+
+
+def _validate_v02_packet_with_launch(packet: Mapping[str, Any], context) -> None:
+    validator = _load_validator_module()
+    outcome = validator.validate_closeout_packet(packet, launch_context=context)
+    outcome.raise_for_status()
+
+
 def normalize_agy_result_packet(packet: Mapping[str, Any]) -> dict[str, Any]:
     """Adapt canonical AGY result packets into the completed-work gate dialect.
 
@@ -107,9 +241,45 @@ def normalize_agy_result_packet(packet: Mapping[str, Any]) -> dict[str, Any]:
     source_branch, proof, and object-shaped lane_scope. This adapter fills only
     derivable, safe fields and leaves genuinely missing provenance absent so the
     gate can reject it explicitly.
+
+    Tasks at or above the v0.2 closeout cutoff (issue number ``>= 4500``) MUST
+    be validated with a trusted launch context. If the dispatcher has not
+    supplied a context, the v0.2 packet is rejected with ``INVALID_CLOSEOUT``
+    before any normalization, gate classification, durable evidence retention,
+    or SQLite upsert.
     """
 
     normalized = _json_object(packet, "packet")
+    context = _launch_context_from_settings()
+    trusted_issue = context.issue_identifier if context is not None else None
+    if requires_v02_closeout(normalized, trusted_issue=trusted_issue):
+        if not is_v02_closeout_packet(normalized):
+            raise ValueError("GRO-4500+ AGY packets require the v0.2 closeout contract")
+        if context is None:
+            raise ValueError(
+                "GRO-4500+ AGY packet missing trusted launch context "
+                "(PRISMATIC_DISPATCH_* env vars)"
+            )
+        _validate_v02_packet_with_launch(normalized, context)
+        normalized = _adapt_v02_packet_with_context(normalized, context)
+        # Reject any spoofed optional provenance in the lossless v02_closeout
+        # payload that contradicts the trusted launch context. The validator
+        # already binds required fields; this catches optional fields that
+        # the schema permits but the trusted dispatcher would not allow.
+        retained = normalized.get("v02_closeout")
+        if isinstance(retained, Mapping):
+            for field in ("SOURCE_BRANCH", "BASE_BRANCH", "SOURCE_PATH"):
+                spoofed = retained.get(field)
+                trusted = {
+                    "SOURCE_BRANCH": context.source_branch,
+                    "BASE_BRANCH": context.base_branch,
+                    "SOURCE_PATH": context.source_path,
+                }[field]
+                if isinstance(spoofed, str) and spoofed != trusted:
+                    raise ValueError(
+                        f"spoofed {field}='{spoofed}' contradicts trusted context "
+                        f"'{trusted}'"
+                    )
     issue = _safe_slug(
         _string(normalized.get("issue_identifier"))
         or _string(normalized.get("issue_id"))
@@ -250,14 +420,23 @@ def _normalize_lane_scope(packet: Mapping[str, Any]) -> dict[str, Any]:
         )
         lane = {"name": lane_name}
     changed = _string_list(packet.get("changed_files"))
-    if packet.get("risk_level") == "high" or packet.get("next_action") in {
-        "needs-human-review",
-        "needs-fred-cleanup",
-    }:
+    acceptance = _string(packet.get("ACCEPTANCE_DECISION"))
+    if (
+        acceptance == "PENDING"
+        or packet.get("risk_level") == "high"
+        or packet.get("next_action")
+        in {
+            "needs-human-review",
+            "needs-fred-cleanup",
+        }
+    ):
         lane.setdefault("touched_paths", changed)
         lane.setdefault("allowed_paths", [])
         lane.setdefault(
-            "manual_review_reason", "raw AGY risk/next_action requires manual review"
+            "manual_review_reason",
+            "awaiting_review_factory_decision"
+            if acceptance == "PENDING"
+            else "raw AGY risk/next_action requires manual review",
         )
         return lane
     lane.setdefault("touched_paths", changed)
