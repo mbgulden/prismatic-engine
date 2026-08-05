@@ -1,11 +1,12 @@
 """
 prismatic/curator/issue_to_task.py - Extract Linear issue to task dictionary.
 """
+
 from __future__ import annotations
 
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 # Constants for assigning lanes
@@ -32,6 +33,7 @@ REVIEW_TITLE_PATTERNS = (
     "needs human review",
 )
 DEFAULT_LINEAR_PRIORITY = int(os.environ.get("PRISMATIC_DEFAULT_LINEAR_PRIORITY", "2"))
+AGY_CLOSEOUT_V02_MIN_ISSUE = 4500
 
 
 def _parse_linear_datetime(value: str | None) -> datetime | None:
@@ -44,7 +46,11 @@ def _parse_linear_datetime(value: str | None) -> datetime | None:
 
 
 def issue_labels(issue_node: dict) -> set[str]:
-    return {n.get("name", "") for n in issue_node.get("labels", {}).get("nodes", []) if n.get("name")}
+    return {
+        n.get("name", "")
+        for n in issue_node.get("labels", {}).get("nodes", [])
+        if n.get("name")
+    }
 
 
 def is_review_only_issue(issue_node: dict | None) -> bool:
@@ -84,9 +90,14 @@ def task_priority_score(issue_node: dict | None = None) -> int:
     return score
 
 
-def assign_lane(issue_node: dict | None = None, *, explicit: bool = False,
-                active_project: str = "pwp", backlog_age_days: int = 30,
-                lane_mode: str = "off") -> tuple[str, str | None]:
+def assign_lane(
+    issue_node: dict | None = None,
+    *,
+    explicit: bool = False,
+    active_project: str = "pwp",
+    backlog_age_days: int = 30,
+    lane_mode: str = "off",
+) -> tuple[str, str | None]:
     """Return (lane, skip_reason). skip_reason is None when dispatchable."""
     if lane_mode == "off":
         return "default", None
@@ -115,14 +126,19 @@ def assign_lane(issue_node: dict | None = None, *, explicit: bool = False,
 
     active_project = (active_project or "").lower()
     if active_project in ("pwp", "prismatic-web-plugin"):
-        if labels & PROJECT_PWP_LABELS or "pwp" in title or "prismatic web plugin" in title or "prismatic web plugin" in desc:
+        if (
+            labels & PROJECT_PWP_LABELS
+            or "pwp" in title
+            or "prismatic web plugin" in title
+            or "prismatic web plugin" in desc
+        ):
             return "project", None
 
     # Backlog is mostly opt-in, but Michael (Jun 30 2026) approved auto-eligibility
     # for issues that meet ALL of: (a) has a lane label (agent:*), (b) priority 1
     # OR (priority 2 AND age < 14 days).
     if not (labels & BACKLOG_READY_LABELS):
-        has_lane = any(l.startswith("agent:") for l in labels)
+        has_lane = any(label.startswith("agent:") for label in labels)
         if not has_lane:
             return "blocked", "backlog-not-explicitly-ready-no-lane"
         if priority < 1:
@@ -132,10 +148,17 @@ def assign_lane(issue_node: dict | None = None, *, explicit: bool = False,
         if priority == 2:
             created = _parse_linear_datetime(issue_node.get("createdAt"))
             if created:
-                now = datetime.now(created.tzinfo) if created.tzinfo else datetime.utcnow()
+                now = (
+                    datetime.now(created.tzinfo)
+                    if created.tzinfo
+                    else datetime.utcnow()
+                )
                 age_days = (now - created).days
                 if age_days >= 14:
-                    return "blocked", f"backlog-not-explicitly-ready-too-old({age_days}d)"
+                    return (
+                        "blocked",
+                        f"backlog-not-explicitly-ready-too-old({age_days}d)",
+                    )
 
     created = _parse_linear_datetime(issue_node.get("createdAt"))
     if created and backlog_age_days > 0:
@@ -153,18 +176,37 @@ def build_task_content_from_issue(iid: str, issue_node: dict) -> str:
     desc = issue_node.get("description") or "(no description in Linear)"
     priority = issue_node.get("priority")
     state = (issue_node.get("state") or {}).get("name", "")
-    labels = [l["name"] for l in (issue_node.get("labels") or {}).get("nodes", [])]
+    labels = [
+        label["name"] for label in (issue_node.get("labels") or {}).get("nodes", [])
+    ]
 
     rewrite_map = [
-        (r"\brun\s+(?:a\s+)?(?:the\s+)?(?:full\s+)?(?:test|tests|pytest|lighthouse|axe|audit|benchmark)(?:\s+suite)?\b",
-         "READ existing test/lighthouse/axe output files (lighthouse-report.json, axe-results.json, web-vitals.json) — do NOT launch new runs"),
-        (r"\brun\s+npm\s+(?:install|test|run)\b", "READ package.json + node_modules — do NOT launch npm install/test/run"),
-        (r"\brun\s+pnpm\s+(?:install|test|run)\b", "READ package.json + node_modules — do NOT launch pnpm install/test/run"),
-        (r"\brun\s+pip\s+install\b", "READ requirements / pyproject — do NOT run pip install"),
+        (
+            r"\brun\s+(?:a\s+)?(?:the\s+)?(?:full\s+)?(?:test|tests|pytest|lighthouse|axe|audit|benchmark)(?:\s+suite)?\b",
+            "READ existing test/lighthouse/axe output files (lighthouse-report.json, axe-results.json, web-vitals.json) — do NOT launch new runs",
+        ),
+        (
+            r"\brun\s+npm\s+(?:install|test|run)\b",
+            "READ package.json + node_modules — do NOT launch npm install/test/run",
+        ),
+        (
+            r"\brun\s+pnpm\s+(?:install|test|run)\b",
+            "READ package.json + node_modules — do NOT launch pnpm install/test/run",
+        ),
+        (
+            r"\brun\s+pip\s+install\b",
+            "READ requirements / pyproject — do NOT run pip install",
+        ),
         (r"\bgit\s+fetch\b", "READ existing remote refs — do NOT run git fetch"),
         (r"\bgit\s+clone\b", "READ existing repo state — do NOT run git clone"),
-        (r"\bawait\s+(?:its|the|background)\s+results?\b", "READ existing result files synchronously — do NOT wait on background tasks"),
-        (r"\bwait\s+for\s+(?:\w+)\s+(?:to\s+)?finish\b", "READ existing result file for that task — do NOT wait"),
+        (
+            r"\bawait\s+(?:its|the|background)\s+results?\b",
+            "READ existing result files synchronously — do NOT wait on background tasks",
+        ),
+        (
+            r"\bwait\s+for\s+(?:\w+)\s+(?:to\s+)?finish\b",
+            "READ existing result file for that task — do NOT wait",
+        ),
     ]
     safe_desc = desc
     for pat, replacement in rewrite_map:
@@ -182,6 +224,22 @@ def build_task_content_from_issue(iid: str, issue_node: dict) -> str:
         "produce it. The runner will generate it next sprint.\n"
     )
 
+    match = re.fullmatch(r"GRO-([0-9]+)", iid, re.IGNORECASE)
+    modern_task = bool(match and int(match.group(1)) >= AGY_CLOSEOUT_V02_MIN_ISSUE)
+    appendix = ""
+    if (
+        modern_task
+        and "Mandatory Prismatic Closeout Contract Requirement" not in safe_desc
+    ):
+        appendix_path = (
+            Path(__file__).resolve().parents[1]
+            / "skills"
+            / "prismatic-agent-closeout-contract"
+            / "templates"
+            / "AGY_TASK_APPENDIX.md"
+        )
+        appendix = "\n\n" + appendix_path.read_text(encoding="utf-8").strip() + "\n"
+
     return (
         f"WORKDIR: prismatic\n"
         f"ISSUE: {iid}\n"
@@ -193,6 +251,7 @@ def build_task_content_from_issue(iid: str, issue_node: dict) -> str:
         f"DESCRIPTION:\n"
         f"{safe_desc}\n"
         f"{bg_guard}"
+        f"{appendix}"
         f"\n"
         f"MANDATORY FINISH PROTOCOL:\n"
         f"1. Write a complete summary to AGY_TASK.md sibling RESULT.md "
@@ -207,7 +266,13 @@ def build_task_content_from_issue(iid: str, issue_node: dict) -> str:
     )
 
 
-def issue_to_task(issue_node: dict, *, lane_mode: str = "off", active_project: str = "pwp", backlog_age_days: int = 30) -> dict | None:
+def issue_to_task(
+    issue_node: dict,
+    *,
+    lane_mode: str = "off",
+    active_project: str = "pwp",
+    backlog_age_days: int = 30,
+) -> dict | None:
     """Convert Linear issue node to a task dict, loading task content from cache."""
     iid = issue_node["identifier"]
     state = issue_node.get("state", {}).get("name", "")
@@ -216,7 +281,12 @@ def issue_to_task(issue_node: dict, *, lane_mode: str = "off", active_project: s
     if "[done]" in iid.lower():
         return None
 
-    lane, skip_reason = assign_lane(issue_node, active_project=active_project, backlog_age_days=backlog_age_days, lane_mode=lane_mode)
+    lane, skip_reason = assign_lane(
+        issue_node,
+        active_project=active_project,
+        backlog_age_days=backlog_age_days,
+        lane_mode=lane_mode,
+    )
     if skip_reason:
         print(f"  [lane-skip] {iid}: {skip_reason}", flush=True)
         return None
@@ -230,13 +300,20 @@ def issue_to_task(issue_node: dict, *, lane_mode: str = "off", active_project: s
                 if line.startswith("WORKDIR:"):
                     wd = line.split(":", 1)[1].strip() or "prismatic"
                     break
-            print(f"  [task-cache] {iid}: using cache WORKDIR only; task body rebuilt from Linear", flush=True)
+            print(
+                f"  [task-cache] {iid}: using cache WORKDIR only; task body rebuilt from Linear",
+                flush=True,
+            )
         except Exception as e:
-            print(f"  [task-cache] {iid}: ignored unreadable cache file: {e}", flush=True)
+            print(
+                f"  [task-cache] {iid}: ignored unreadable cache file: {e}", flush=True
+            )
 
     task_content = build_task_content_from_issue(iid, issue_node)
     if wd != "prismatic":
-        task_content = re.sub(r"^WORKDIR:.*$", f"WORKDIR: {wd}", task_content, count=1, flags=re.MULTILINE)
+        task_content = re.sub(
+            r"^WORKDIR:.*$", f"WORKDIR: {wd}", task_content, count=1, flags=re.MULTILINE
+        )
 
     return {
         "issue_id": iid,
@@ -244,5 +321,5 @@ def issue_to_task(issue_node: dict, *, lane_mode: str = "off", active_project: s
         "workdir": wd,
         "lane": lane,
         "priority_score": task_priority_score(issue_node),
-        "labels": issue_labels(issue_node)
+        "labels": issue_labels(issue_node),
     }

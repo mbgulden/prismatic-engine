@@ -18,7 +18,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from prismatic.agy_result_packet import is_raw_agy_result_packet, require_valid_packet
+from prismatic.agy_result_packet import (
+    adapt_v02_closeout_packet,
+    is_raw_agy_result_packet,
+    is_v02_closeout_packet,
+    require_valid_packet,
+    requires_v02_closeout,
+)
 from prismatic.completed_work_gate import (
     AGY_COMPLETED_WORK_MARKER,
     classify_completed_work,
@@ -110,6 +116,10 @@ def normalize_agy_result_packet(packet: Mapping[str, Any]) -> dict[str, Any]:
     """
 
     normalized = _json_object(packet, "packet")
+    if requires_v02_closeout(normalized):
+        if not is_v02_closeout_packet(normalized):
+            raise ValueError("GRO-4500+ AGY packets require the v0.2 closeout contract")
+        normalized = adapt_v02_closeout_packet(normalized)
     issue = _safe_slug(
         _string(normalized.get("issue_identifier"))
         or _string(normalized.get("issue_id"))
@@ -250,14 +260,23 @@ def _normalize_lane_scope(packet: Mapping[str, Any]) -> dict[str, Any]:
         )
         lane = {"name": lane_name}
     changed = _string_list(packet.get("changed_files"))
-    if packet.get("risk_level") == "high" or packet.get("next_action") in {
-        "needs-human-review",
-        "needs-fred-cleanup",
-    }:
+    acceptance = _string(packet.get("ACCEPTANCE_DECISION"))
+    if (
+        acceptance == "PENDING"
+        or packet.get("risk_level") == "high"
+        or packet.get("next_action")
+        in {
+            "needs-human-review",
+            "needs-fred-cleanup",
+        }
+    ):
         lane.setdefault("touched_paths", changed)
         lane.setdefault("allowed_paths", [])
         lane.setdefault(
-            "manual_review_reason", "raw AGY risk/next_action requires manual review"
+            "manual_review_reason",
+            "awaiting_review_factory_decision"
+            if acceptance == "PENDING"
+            else "raw AGY risk/next_action requires manual review",
         )
         return lane
     lane.setdefault("touched_paths", changed)
