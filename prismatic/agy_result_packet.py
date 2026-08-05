@@ -15,11 +15,11 @@ import re
 from pathlib import Path, PurePosixPath
 from typing import Any, Mapping, Sequence
 
-from jsonschema import Draft7Validator
-
 AGY_RESULT_PACKET_MARKER = "AGY_TASK_RESULT_PACKET_OK"
 AGY_RESULT_PACKET_SCHEMA_MARKER = "AGY_RESULT_PACKET_SCHEMA_OK"
 AGY_CLOSEOUT_V02_MARKER = "AGY_TASK_RESULT_PACKET_OK"
+#: Tasks at or above this issue number require the v0.2 closeout contract.
+#: Tasks below this number continue to use the legacy raw AGY dialect.
 AGY_CLOSEOUT_V02_MIN_ISSUE = 4500
 
 ALLOWED_BASE_BRANCHES = {"main", "origin/main"}
@@ -114,72 +114,46 @@ def is_v02_closeout_packet(packet: Mapping[str, Any]) -> bool:
     )
 
 
+def _parse_task_number(value: Any) -> int | None:
+    if not isinstance(value, str):
+        return None
+    match = re.fullmatch(r"GRO-([0-9]+)", value.strip(), re.IGNORECASE)
+    return int(match.group(1)) if match else None
+
+
 def requires_v02_closeout(packet: Mapping[str, Any]) -> bool:
-    raw = (
-        packet.get("TASK_ID")
-        or packet.get("issue_identifier")
-        or packet.get("issue_id")
-    )
-    match = re.fullmatch(r"GRO-([0-9]+)", str(raw or ""), re.IGNORECASE)
-    return bool(match and int(match.group(1)) >= AGY_CLOSEOUT_V02_MIN_ISSUE)
+    """Tasks at or above the cutoff MUST use the v0.2 closeout contract.
+
+    A non-numeric / malformed issue identifier is treated as legacy (modern
+    activation happens only when a real numeric id can be parsed) so that
+    upstream call sites can choose their dialect explicitly.
+    """
+    for field in ("TASK_ID", "issue_identifier", "issue_id"):
+        number = _parse_task_number(packet.get(field))
+        if number is not None:
+            return number >= AGY_CLOSEOUT_V02_MIN_ISSUE
+    return False
+
+
+def v02_provenance_required(packet: Mapping[str, Any]) -> bool:
+    """True if the v0.2 schema requires a trusted launch context for this packet."""
+    return requires_v02_closeout(packet) and is_v02_closeout_packet(packet)
 
 
 def require_valid_v02_closeout(packet: Mapping[str, Any]) -> Mapping[str, Any]:
-    schema_path = (
-        Path(__file__).resolve().parent
-        / "skills"
-        / "prismatic-agent-closeout-contract"
-        / "schemas"
-        / "result-packet.schema.json"
+    """Delegate to the importable v0.2 schema-driven validator.
+
+    The runtime caller must separately enforce a launch context binding via
+    :func:`require_valid_closeout_with_launch`; this entry point validates
+    structure only.
+    """
+    from prismatic.skills.prismatic_agent_closeout_contract.scripts.validate_closeout_packet import (
+        validate_closeout_packet,
     )
-    schema = json.loads(schema_path.read_text(encoding="utf-8"))
-    errors = [
-        error.message for error in Draft7Validator(schema).iter_errors(dict(packet))
-    ]
-    if packet.get("ACCEPTANCE_DECISION") != "PENDING":
-        errors.append("producer ACCEPTANCE_DECISION must be PENDING")
-    if packet.get("STATUS") != packet.get("PRODUCER_STATUS"):
-        errors.append("STATUS must equal PRODUCER_STATUS")
-    if packet.get("STATUS") == "PASS" and packet.get("RESULT") != "PASS":
-        errors.append("PASS producer status requires RESULT=PASS")
-    if packet.get("STATUS") == "PASS" and packet.get("BLOCKERS"):
-        errors.append("PASS producer status requires empty BLOCKERS")
-    if packet.get("STATUS") in {"BLOCKED", "ERROR"} and not packet.get("BLOCKERS"):
-        errors.append("BLOCKED/ERROR producer status requires BLOCKERS")
-    if errors:
-        raise ResultPacketValidationError(tuple(sorted(set(errors))))
+
+    outcome = validate_closeout_packet(packet)
+    outcome.raise_for_status()
     return packet
-
-
-def adapt_v02_closeout_packet(packet: Mapping[str, Any]) -> dict[str, Any]:
-    """Map validated v0.2 producer output into the existing raw AGY gate dialect."""
-    require_valid_v02_closeout(packet)
-    adapted = {
-        "agent": "agy",
-        "issue_identifier": packet["TASK_ID"],
-        "branch": packet.get("SOURCE_BRANCH") or "",
-        "base_branch": packet.get("BASE_BRANCH") or "main",
-        "source_commit_sha": packet["CANDIDATE_HEAD"],
-        "base_commit_sha": packet["BASE_HEAD"],
-        "changed_files": list(packet["CHANGED_PATHS"]),
-        "pr_url": None,
-        "result_artifacts": list(packet["result_artifacts"]),
-        "verification": {
-            "commands": list(packet["COMMAND"]),
-            "result": packet["RESULT"],
-            "log_path": packet["LOG"],
-            "ad_hoc_or_canonical": packet["AD_HOC_OR_CANONICAL"],
-        },
-        "non_claims": list(packet["NOT_CLAIMING"]),
-        "merge_lane": packet["merge_lane"],
-        "risk_level": packet["risk_level"],
-        "next_action": packet["NEXT_ACTION"],
-        "marker": AGY_RESULT_PACKET_MARKER,
-        "ACCEPTANCE_DECISION": "PENDING",
-    }
-    if packet.get("SOURCE_PATH"):
-        adapted["source_path"] = packet["SOURCE_PATH"]
-    return adapted
 
 
 def load_packet(path: str | Path) -> dict[str, Any]:

@@ -1,336 +1,454 @@
 #!/usr/bin/env python3
-"""
-Prismatic Agent Closeout Packet Validator (v0.2 Standard Spec)
-Fail-Closed CLI validator for AGY closeout packets (RESULT.md & result-packet.json).
+"""Prismatic Agent Closeout Packet Validator (v0.2 Standard Spec).
+
+Importable module + CLI. Single source of truth: the JSON Schema at
+``schemas/result-packet.schema.json``. Reuses existing secret/path safety
+primitives from ``prismatic.agy_result_packet``. Never produces an acceptance
+decision — the validator reports structural validity only.
+
+This module is invoked both from the standalone CLI and from runtime
+ingestion in :mod:`prismatic.agy_completed_work`.
 """
 
-import sys
-import os
-import json
-import hashlib
-import re
+from __future__ import annotations
+
 import argparse
-import tempfile
-import shutil
+import hashlib
+import json
+import re
+import sys
 from pathlib import Path
+from typing import Any, Iterable, Mapping, Sequence
 
-REQUIRED_FIELDS = [
-    "agent",
-    "STATUS",
-    "PRODUCER_STATUS",
-    "ACCEPTANCE_DECISION",
-    "TASK_ID",
-    "ATTEMPT_ID",
-    "BASE_HEAD",
-    "CANDIDATE_HEAD",
-    "CANDIDATE_TREE",
-    "CHANGED_PATHS",
-    "COMMAND",
-    "RESULT",
-    "LOG",
-    "LOG_SHA256",
-    "result_artifacts",
-    "SCOPE",
-    "merge_lane",
-    "risk_level",
-    "AD_HOC_OR_CANONICAL",
-    "PROOF_CLASSES",
-    "SIDE_EFFECTS",
-    "BLOCKERS",
-    "NOT_CLAIMING",
-    "NEXT_ACTION",
-    "MARKER"
-]
-
-VALID_STATUSES = {"PASS", "PARTIAL", "BLOCKED", "ERROR"}
-VALID_RESULTS = {"PASS", "FAIL", "BLOCKED"}
-VALID_ACCEPTANCE = {"PENDING", "CLEAN", "REJECTED"}
-VALID_TIERS = {"ad-hoc targeted", "canonical suite"}
-VALID_PROOF_CLASSES = {"focused", "lint", "format", "build", "browser", "production"}
-VALID_MERGE_LANES = {"dashboard-ui", "backend-api", "docs", "research", "mixed", "manual-review"}
-VALID_RISK_LEVELS = {"low", "medium", "high"}
-VALID_NEXT_ACTIONS = {"merge-ready", "needs-fred-cleanup", "needs-human-review", "blocked", "superseded"}
+# Reuse the production secret/path safety primitives.
+from prismatic.agy_result_packet import (  # noqa: E402  (import after sys.path setup)
+    CONTROL_RE,
+    JUNK_PATH_RE,
+    RESULT_ARTIFACT_OBJECT_FIELDS,
+    SECRET_PATH_RE,
+    SECRET_VALUE_RE,
+)
 
 EXPECTED_MARKER = "AGY_TASK_RESULT_PACKET_OK"
-
 SHA40_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 SHA64_RE = re.compile(r"^[0-9a-fA-F]{64}$")
-TASK_ID_RE = re.compile(r"^GRO-[0-9]+$")
+TASK_ID_RE = re.compile(r"^GRO-([0-9]+)$")
+GIT_TREE_RE = SHA40_RE
 
-def compute_sha256(filepath: Path) -> str:
-    h = hashlib.sha256()
-    with open(filepath, "rb") as f:
-        while chunk := f.read(65536):
-            h.update(chunk)
-    return h.hexdigest()
+#: ``/tmp`` is rejected as artifact provenance. Per the task appendix.
+_UNSAFE_ARTIFACT_PATHS = (
+    "/tmp/",
+    "/var/tmp/",
+    "/dev/shm/",
+    "/proc/",
+    "/sys/",
+)
 
-def parse_result_md(md_path: Path) -> dict:
-    fields = {}
-    if not md_path.exists():
-        return fields
 
-    content = md_path.read_text(encoding="utf-8")
-    for line in content.splitlines():
-        line = line.strip()
-        if "=" in line and not line.startswith("#"):
-            k, v = line.split("=", 1)
-            k = k.strip()
-            v = v.strip()
-            fields[k] = v
-    return fields
+class LaunchContext:
+    """Trusted context provided by the dispatch boundary, not the producer."""
 
-def validate_packet(directory: Path, check_sha_files: bool = True) -> tuple[bool, list[str]]:
-    errors = []
+    __slots__ = (
+        "issue_identifier",
+        "source_branch",
+        "base_branch",
+        "source_path",
+        "candidate_commit",
+        "candidate_tree",
+        "base_commit",
+    )
 
-    result_md = directory / "RESULT.md"
-    result_json = directory / "result-packet.json"
+    def __init__(
+        self,
+        *,
+        issue_identifier: str,
+        source_branch: str,
+        base_branch: str,
+        source_path: str,
+        candidate_commit: str,
+        candidate_tree: str,
+        base_commit: str,
+    ) -> None:
+        self.issue_identifier = issue_identifier
+        self.source_branch = source_branch
+        self.base_branch = base_branch
+        self.source_path = source_path
+        self.candidate_commit = candidate_commit
+        self.candidate_tree = candidate_tree
+        self.base_commit = base_commit
 
-    if not result_md.exists():
-        errors.append(f"Missing human-readable report artifact: RESULT.md in {directory}")
-    if not result_json.exists():
-        errors.append(f"Missing machine-readable schema artifact: result-packet.json in {directory}")
+    def __repr__(self) -> str:  # pragma: no cover - debug aid
+        return (
+            f"LaunchContext(issue={self.issue_identifier!r}, "
+            f"branch={self.source_branch!r}, candidate={self.candidate_commit[:8]}…)"
+        )
 
-    if errors:
-        return False, errors
 
+class ValidationOutcome:
+    """Immutable validation result."""
+
+    __slots__ = ("ok", "errors")
+
+    def __init__(self, ok: bool, errors: Sequence[str]) -> None:
+        self.ok = bool(ok)
+        self.errors = tuple(errors)
+
+    def raise_for_status(self) -> None:
+        if not self.ok:
+            raise CloseoutValidationError(self.errors)
+
+
+class CloseoutValidationError(ValueError):
+    """Raised when a v0.2 closeout packet (and its report) violate policy."""
+
+    def __init__(self, errors: Sequence[str]):
+        self.errors = tuple(errors)
+        super().__init__("Invalid closeout packet: " + "; ".join(self.errors))
+
+
+def _schema_path() -> Path:
+    return (
+        Path(__file__).resolve().parent.parent / "schemas" / "result-packet.schema.json"
+    )
+
+
+def load_schema() -> dict:
+    return json.loads(_schema_path().read_text(encoding="utf-8"))
+
+
+def _is_draft7_validator() -> bool:
     try:
-        data = json.loads(result_json.read_text(encoding="utf-8"))
-    except Exception as e:
-        errors.append(f"Failed to parse result-packet.json: {str(e)}")
-        return False, errors
+        from jsonschema import Draft7Validator  # noqa: F401
 
-    # 1. Check required fields
-    for field in REQUIRED_FIELDS:
-        if field not in data:
-            errors.append(f"Missing required field in result-packet.json: '{field}'")
+        return True
+    except Exception:  # pragma: no cover - jsonschema is required runtime dep
+        return False
 
-    if errors:
-        return False, errors
 
-    # 2. Agent discriminator check
-    if data["agent"] != "agy":
-        errors.append(f"Invalid agent '{data['agent']}'. Standard requires exactly 'agy'")
+def _check_json_schema(packet: Mapping[str, Any]) -> list[str]:
+    if not _is_draft7_validator():
+        return ["jsonschema package not available; cannot enforce schema"]
+    from jsonschema import Draft7Validator
 
-    # 3. Enum and Pattern Validations
-    if data["STATUS"] not in VALID_STATUSES:
-        errors.append(f"Invalid STATUS '{data['STATUS']}'. Expected one of {VALID_STATUSES}")
+    validator = Draft7Validator(load_schema())
+    return [error.message for error in validator.iter_errors(dict(packet))]
 
-    if data["PRODUCER_STATUS"] not in VALID_STATUSES:
-        errors.append(f"Invalid PRODUCER_STATUS '{data['PRODUCER_STATUS']}'. Expected one of {VALID_STATUSES}")
 
-    if data["ACCEPTANCE_DECISION"] not in VALID_ACCEPTANCE:
-        errors.append(f"Invalid ACCEPTANCE_DECISION '{data['ACCEPTANCE_DECISION']}'. Expected one of {VALID_ACCEPTANCE}")
+def _string_list(value: Any) -> list[str]:
+    if isinstance(value, (list, tuple)):
+        return [str(item) for item in value if isinstance(item, (str, int, float))]
+    return []
 
-    if data["RESULT"] not in VALID_RESULTS:
-        errors.append(f"Invalid RESULT '{data['RESULT']}'. Expected one of {VALID_RESULTS}")
 
-    if not TASK_ID_RE.match(data["TASK_ID"]):
-        errors.append(f"TASK_ID '{data['TASK_ID']}' must match standard GRO task format '^GRO-[0-9]+$'")
+def _artifact_path(item: Any) -> str | None:
+    if isinstance(item, str):
+        return item
+    if isinstance(item, Mapping):
+        path = item.get("path")
+        if isinstance(path, str):
+            extra = set(item) - RESULT_ARTIFACT_OBJECT_FIELDS
+            if extra:
+                return None
+            return path
+    return None
 
-    if not SHA40_RE.match(data["BASE_HEAD"]):
-        errors.append(f"BASE_HEAD '{data['BASE_HEAD']}' is not a valid 40-character hex SHA")
 
-    if not SHA40_RE.match(data["CANDIDATE_HEAD"]):
-        errors.append(f"CANDIDATE_HEAD '{data['CANDIDATE_HEAD']}' is not a valid 40-character hex SHA")
+def _is_safe_artifact_path(path: str) -> bool:
+    if not path:
+        return False
+    normalized = path.replace("\\", "/")
+    if any(normalized.startswith(prefix) for prefix in _UNSAFE_ARTIFACT_PATHS):
+        return False
+    if SECRET_PATH_RE.search(normalized):
+        return False
+    if JUNK_PATH_RE.search(normalized):
+        return False
+    if CONTROL_RE.search(normalized):
+        return False
+    if SECRET_VALUE_RE.search(normalized):
+        return False
+    # Absolute paths must resolve under operator home.
+    if path.startswith("/"):
+        home = str(Path.home())
+        try:
+            resolved = str(Path(path).resolve())
+        except OSError:
+            return False
+        if not (resolved == home or resolved.startswith(home + "/")):
+            return False
+    return True
 
-    if not SHA40_RE.match(data["CANDIDATE_TREE"]):
-        errors.append(f"CANDIDATE_TREE '{data['CANDIDATE_TREE']}' is not a valid 40-character hex SHA")
 
-    if not SHA64_RE.match(data["LOG_SHA256"]):
-        errors.append(f"LOG_SHA256 '{data['LOG_SHA256']}' is not a valid 64-character sha256 digest")
-
-    if data["merge_lane"] not in VALID_MERGE_LANES:
-        errors.append(f"Invalid merge_lane '{data['merge_lane']}'. Expected one of {VALID_MERGE_LANES}")
-
-    if data["risk_level"] not in VALID_RISK_LEVELS:
-        errors.append(f"Invalid risk_level '{data['risk_level']}'. Expected one of {VALID_RISK_LEVELS}")
-
-    if data["AD_HOC_OR_CANONICAL"] not in VALID_TIERS:
-        errors.append(f"AD_HOC_OR_CANONICAL '{data['AD_HOC_OR_CANONICAL']}' must be one of {VALID_TIERS}")
-
-    if data["NEXT_ACTION"] not in VALID_NEXT_ACTIONS:
-        errors.append(f"Invalid NEXT_ACTION '{data['NEXT_ACTION']}'. Expected one of {VALID_NEXT_ACTIONS}")
-
-    if data["MARKER"] != EXPECTED_MARKER:
-        errors.append(f"Invalid MARKER '{data['MARKER']}'. Expected exactly '{EXPECTED_MARKER}'")
-
-    # 4. Check arrays and Safe Provenance
-    if not isinstance(data["CHANGED_PATHS"], list):
-        errors.append("CHANGED_PATHS must be a list of strings")
-
-    if not isinstance(data["COMMAND"], list) or len(data["COMMAND"]) == 0:
-        errors.append("COMMAND must be a non-empty list of command line strings")
-
-    if not isinstance(data["PROOF_CLASSES"], list) or len(data["PROOF_CLASSES"]) == 0:
-        errors.append("PROOF_CLASSES must be a non-empty list of proof class strings")
-    else:
-        for pc in data["PROOF_CLASSES"]:
-            if pc not in VALID_PROOF_CLASSES:
-                errors.append(f"Invalid proof class '{pc}'. Expected one of {VALID_PROOF_CLASSES}")
-
-    # Check result_artifacts safe provenance
-    if not isinstance(data["result_artifacts"], list) or len(data["result_artifacts"]) == 0:
+def _check_artifact_safety(packet: Mapping[str, Any]) -> list[str]:
+    errors: list[str] = []
+    artifacts = packet.get("result_artifacts") or []
+    if not isinstance(artifacts, list) or not artifacts:
         errors.append("result_artifacts must be a non-empty list")
-    else:
-        for item in data["result_artifacts"]:
-            art_path = item["path"] if isinstance(item, dict) and "path" in item else str(item)
-            if art_path.startswith("/tmp") or art_path.startswith("tmp/"):
-                errors.append(f"Unsafe raw provenance artifact path '{art_path}'. /tmp paths are rejected.")
-
-    # 5. Check Side Effects
-    side_effects = data.get("SIDE_EFFECTS", {})
-    if not isinstance(side_effects, dict):
-        errors.append("SIDE_EFFECTS must be an object/dict")
-    else:
-        req_se = ["push", "pr", "merge", "deploy", "linear_updated"]
-        for se in req_se:
-            if se not in side_effects or not isinstance(side_effects[se], bool):
-                errors.append(f"SIDE_EFFECTS missing boolean property '{se}'")
-
-    # 6. Bidirectional Consistency Checks (Positive & Negative Direction)
-    status = data["STATUS"]
-    producer_status = data["PRODUCER_STATUS"]
-    result = data["RESULT"]
-    blockers = data.get("BLOCKERS", [])
-    risk_level = data.get("risk_level")
-    merge_lane = data.get("merge_lane")
-    next_action = data.get("NEXT_ACTION")
-
-    if status == "PASS":
-        if producer_status != "PASS":
-            errors.append(f"STATUS is 'PASS' but PRODUCER_STATUS is '{producer_status}'")
-        if result != "PASS":
-            errors.append(f"STATUS is 'PASS' but verification RESULT is '{result}'")
-        if blockers:
-            errors.append("STATUS is 'PASS' but BLOCKERS list is non-empty")
-        if risk_level == "high":
-            errors.append("STATUS is 'PASS' but risk_level is 'high' (high-risk changes require manual review)")
-        if merge_lane == "manual-review":
-            errors.append("STATUS is 'PASS' but merge_lane is 'manual-review'")
-        if next_action != "merge-ready":
-            errors.append(f"STATUS is 'PASS' but NEXT_ACTION is '{next_action}' (expected 'merge-ready')")
-
-    elif status == "BLOCKED":
-        if producer_status != "BLOCKED":
-            errors.append(f"STATUS is 'BLOCKED' but PRODUCER_STATUS is '{producer_status}'")
-        if result == "PASS":
-            errors.append("STATUS is 'BLOCKED' but verification RESULT is 'PASS'")
-        if not blockers:
-            errors.append("STATUS is 'BLOCKED' but BLOCKERS list is empty (must state explicit blocker reason)")
-        if next_action not in {"blocked", "needs-fred-cleanup", "needs-human-review"}:
-            errors.append(f"STATUS is 'BLOCKED' but NEXT_ACTION is '{next_action}'")
-
-    elif status == "ERROR":
-        if producer_status != "ERROR":
-            errors.append(f"STATUS is 'ERROR' but PRODUCER_STATUS is '{producer_status}'")
-        if result == "PASS":
-            errors.append("STATUS is 'ERROR' but verification RESULT is 'PASS'")
-        if not blockers:
-            errors.append("STATUS is 'ERROR' but BLOCKERS list is empty (must state explicit error details)")
-
-    elif status == "PARTIAL":
-        if producer_status != "PARTIAL":
-            errors.append(f"STATUS is 'PARTIAL' but PRODUCER_STATUS is '{producer_status}'")
-        if result == "PASS":
-            errors.append("STATUS is 'PARTIAL' but verification RESULT is 'PASS'")
-
-    # 7. Log File and Hash Check
-    if check_sha_files and data.get("LOG"):
-        log_path = directory / data["LOG"]
-        if not log_path.exists():
-            log_path = Path(data["LOG"])
-        if not log_path.exists():
-            errors.append(f"Execution log file does not exist: '{data['LOG']}' in {directory}")
-        else:
-            computed_hash = compute_sha256(log_path)
-            if computed_hash.lower() != data["LOG_SHA256"].lower():
-                errors.append(
-                    f"LOG_SHA256 mismatch for {log_path}: expected {data['LOG_SHA256']}, got {computed_hash}"
-                )
-
-    # 8. Synchronization Check with RESULT.md
-    md_fields = parse_result_md(result_md)
-    sync_check_keys = ["agent", "STATUS", "PRODUCER_STATUS", "TASK_ID", "CANDIDATE_HEAD", "RESULT", "merge_lane", "risk_level", "MARKER"]
-    for key in sync_check_keys:
-        if key in md_fields and md_fields[key] != str(data.get(key)):
-            errors.append(f"Mismatch between RESULT.md ({key}={md_fields[key]}) and result-packet.json ({key}={data.get(key)})")
-
-    return len(errors) == 0, errors
-
-def run_fixture_harness(examples_dir: Path, check_sha_files: bool = True) -> tuple[bool, list[str]]:
-    """Fixture test runner: validates .pass.json, .blocked.json, and .error.json fixtures."""
-    all_errors = []
-    fixtures = [
-        ("pass", "RESULT.pass.md", "result-packet.pass.json"),
-        ("blocked", "RESULT.blocked.md", "result-packet.blocked.json"),
-        ("error", "RESULT.error.md", "result-packet.error.json"),
-    ]
-
-    for label, md_name, json_name in fixtures:
-        md_file = examples_dir / md_name
-        json_file = examples_dir / json_name
-        if not md_file.exists() or not json_file.exists():
-            all_errors.append(f"Fixture file missing for {label}: {md_name} or {json_name}")
+        return errors
+    for index, item in enumerate(artifacts):
+        path = _artifact_path(item)
+        if path is None:
+            errors.append(f"result_artifacts[{index}] has an unsafe structure")
             continue
+        if not _is_safe_artifact_path(path):
+            errors.append(
+                f"result_artifacts[{index}]='{path}' is unsafe "
+                "(/tmp, secret, generated, or outside operator home)"
+            )
+    log = packet.get("LOG")
+    if isinstance(log, str) and not _is_safe_artifact_path(log):
+        errors.append(
+            f"LOG='{log}' is unsafe (/tmp, secret, generated, or outside operator home)"
+        )
+    return errors
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmppath = Path(tmpdir)
-            shutil.copy(md_file, tmppath / "RESULT.md")
-            shutil.copy(json_file, tmppath / "result-packet.json")
 
-            # Copy artifacts folder if present
-            artifacts_src = examples_dir / "artifacts"
-            if artifacts_src.exists():
-                shutil.copytree(artifacts_src, tmppath / "artifacts")
+def _check_semantic_invariants(packet: Mapping[str, Any]) -> list[str]:
+    errors: list[str] = []
+    if packet.get("agent") != "agy":
+        errors.append("agent must be 'agy'")
+    if packet.get("MARKER") != EXPECTED_MARKER:
+        errors.append(f"MARKER must be exactly '{EXPECTED_MARKER}'")
+    if packet.get("ACCEPTANCE_DECISION") != "PENDING":
+        errors.append("producer ACCEPTANCE_DECISION must be PENDING")
+    if packet.get("STATUS") != packet.get("PRODUCER_STATUS"):
+        errors.append("STATUS must equal PRODUCER_STATUS")
+    if packet.get("STATUS") == "PASS":
+        if packet.get("RESULT") != "PASS":
+            errors.append("STATUS=PASS requires RESULT=PASS")
+        if packet.get("BLOCKERS"):
+            errors.append("STATUS=PASS requires empty BLOCKERS")
+    if packet.get("STATUS") in {"BLOCKED", "ERROR"} and not packet.get("BLOCKERS"):
+        errors.append("STATUS in {BLOCKED, ERROR} requires non-empty BLOCKERS")
+    if (
+        packet.get("risk_level") == "high"
+        and packet.get("merge_lane") != "manual-review"
+    ):
+        errors.append("risk_level=high requires merge_lane=manual-review")
+    return errors
 
-            valid, errors = validate_packet(tmppath, check_sha_files=check_sha_files)
-            if not valid:
-                all_errors.append(f"Fixture [{label}] failed validation:")
-                for err in errors:
-                    all_errors.append(f"  - {err}")
-            else:
-                print(f"Fixture [{label}] VALIDATED CLEAN (check_sha_files={check_sha_files})")
 
-    return len(all_errors) == 0, all_errors
+def _check_log_integrity(directory: Path, packet: Mapping[str, Any]) -> list[str]:
+    """Verify LOG path + LOG_SHA256 match on-disk file when context available."""
+    errors: list[str] = []
+    log_rel = packet.get("LOG")
+    log_sha = packet.get("LOG_SHA256")
+    if not isinstance(log_rel, str) or not isinstance(log_sha, str):
+        return errors
+    candidates: list[Path] = []
+    if Path(log_rel).is_absolute():
+        candidates.append(Path(log_rel))
+    else:
+        candidates.append((directory / log_rel).resolve())
+    log_path = next((p for p in candidates if p.exists()), None)
+    if log_path is None:
+        errors.append(f"LOG file not found: {log_rel}")
+        return errors
+    if not SHA64_RE.fullmatch(log_sha):
+        errors.append("LOG_SHA256 must be 64 hex characters")
+        return errors
+    digest = hashlib.sha256()
+    with open(log_path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    if digest.hexdigest() != log_sha:
+        errors.append(
+            f"LOG_SHA256 mismatch: declared {log_sha[:12]}… vs actual {digest.hexdigest()[:12]}…"
+        )
+    return errors
 
-def main():
-    parser = argparse.ArgumentParser(description="Prismatic Closeout Packet Validator")
-    parser.add_argument("path", nargs="?", default=".", help="Directory containing closeout artifacts or examples dir")
-    parser.add_argument("--test-fixtures", action="store_true", help="Run harness against fixture files (*.pass.json, etc.)")
-    parser.add_argument("--no-check-sha", action="store_true", help="Skip sha256 checksum verification of log file")
 
-    args = parser.parse_args()
-    target_dir = Path(args.path).resolve()
+def _check_result_md(directory: Path, packet: Mapping[str, Any]) -> list[str]:
+    """RESULT.md must exist; when present, synchronized fields must match."""
+    errors: list[str] = []
+    md_path = directory / "RESULT.md"
+    if not md_path.exists():
+        errors.append(f"Missing required RESULT.md in {directory}")
+        return errors
+    # Parse simple ``KEY: value`` lines.
+    md_fields: dict[str, str] = {}
+    for raw in md_path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if ":" in line:
+            key, _, value = line.partition(":")
+            md_fields[key.strip()] = value.strip()
+    synchronized = (
+        "TASK_ID",
+        "AGENT",
+        "ACCEPTANCE_DECISION",
+        "MARKER",
+        "CANDIDATE_HEAD",
+    )
+    for field in synchronized:
+        md_value = md_fields.get(field)
+        packet_value = packet.get(field) or packet.get(field.lower())
+        if md_value is None:
+            errors.append(f"RESULT.md missing synchronized field '{field}'")
+            continue
+        if packet_value is None:
+            continue
+        if str(packet_value) != md_value:
+            errors.append(
+                f"RESULT.md {field}='{md_value}' disagrees with packet '{packet_value}'"
+            )
+    return errors
+
+
+def _check_launch_binding(packet: Mapping[str, Any], ctx: LaunchContext) -> list[str]:
+    errors: list[str] = []
+    packet_issue = str(packet.get("TASK_ID") or "")
+    if not TASK_ID_RE.fullmatch(packet_issue):
+        errors.append("TASK_ID must match ^GRO-[0-9]+$")
+    elif packet_issue != ctx.issue_identifier:
+        errors.append(
+            f"TASK_ID='{packet_issue}' does not match dispatch issue '{ctx.issue_identifier}'"
+        )
+    candidate = packet.get("CANDIDATE_HEAD")
+    if not isinstance(candidate, str) or not SHA40_RE.fullmatch(candidate):
+        errors.append("CANDIDATE_HEAD must be a 40-character hex SHA")
+    elif candidate != ctx.candidate_commit:
+        errors.append(
+            f"CANDIDATE_HEAD='{candidate}' does not match dispatch HEAD '{ctx.candidate_commit}'"
+        )
+    tree = packet.get("CANDIDATE_TREE")
+    if not isinstance(tree, str) or not GIT_TREE_RE.fullmatch(tree):
+        errors.append("CANDIDATE_TREE must be a 40-character hex SHA")
+    elif tree != ctx.candidate_tree:
+        errors.append(
+            f"CANDIDATE_TREE='{tree}' does not match dispatch tree '{ctx.candidate_tree}'"
+        )
+    base = packet.get("BASE_HEAD")
+    if not isinstance(base, str) or not SHA40_RE.fullmatch(base):
+        errors.append("BASE_HEAD must be a 40-character hex SHA")
+    elif base != ctx.base_commit:
+        errors.append(
+            f"BASE_HEAD='{base}' does not match dispatch base '{ctx.base_commit}'"
+        )
+    return errors
+
+
+def validate_closeout_packet(
+    packet: Mapping[str, Any],
+    *,
+    directory: Path | None = None,
+    launch_context: LaunchContext | None = None,
+) -> ValidationOutcome:
+    """Validate a v0.2 closeout packet (and its dual artifacts when context given)."""
+
+    errors: list[str] = []
+    errors.extend(_check_json_schema(packet))
+    errors.extend(_check_semantic_invariants(packet))
+    errors.extend(_check_artifact_safety(packet))
+    if directory is not None:
+        errors.extend(_check_log_integrity(directory, packet))
+        errors.extend(_check_result_md(directory, packet))
+    if launch_context is not None:
+        errors.extend(_check_launch_binding(packet, launch_context))
+    return ValidationOutcome(ok=not errors, errors=tuple(sorted(set(errors))))
+
+
+# ---------------------------------------------------------------------------
+# CLI (preserved entry point + behaviour; never emits acceptance vocabulary).
+
+
+def _iter_example_dirs(root: Path) -> Iterable[Path]:
+    for child in sorted(root.iterdir()):
+        if child.is_dir() and (child / "result-packet.json").exists():
+            yield child
+
+
+def _run_fixture_harness(
+    target_dir: Path, *, check_sha_files: bool
+) -> tuple[bool, list[str]]:
+    aggregate_errors: list[str] = []
+    aggregate_ok = True
+    for sub in _iter_example_dirs(target_dir):
+        outcome = validate_packet_directory(sub, check_sha_files=check_sha_files)
+        label = sub.name
+        if outcome.ok:
+            print(
+                f"Fixture [{label}] VALIDATED CLEAN (check_sha_files={check_sha_files})"
+            )
+        else:
+            aggregate_ok = False
+            aggregate_errors.extend(f"[{label}] " + e for e in outcome.errors)
+            print(f"Fixture [{label}] BLOCKED: " + "; ".join(outcome.errors))
+    return aggregate_ok, aggregate_errors
+
+
+def validate_packet_directory(
+    directory: Path | str,
+    *,
+    check_sha_files: bool = True,
+    launch_context: LaunchContext | None = None,
+) -> ValidationOutcome:
+    """Validate ``result-packet.json`` plus ``RESULT.md`` in ``directory``."""
+
+    directory = Path(directory)
+    json_path = directory / "result-packet.json"
+    if not json_path.exists():
+        return ValidationOutcome(False, (f"Missing result-packet.json in {directory}",))
+    try:
+        packet = json.loads(json_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return ValidationOutcome(
+            False, (f"result-packet.json invalid JSON: {exc.msg}",)
+        )
+    if not isinstance(packet, Mapping):
+        return ValidationOutcome(False, ("result-packet.json must be a JSON object",))
+    return validate_closeout_packet(
+        packet,
+        directory=directory if check_sha_files else None,
+        launch_context=launch_context,
+    )
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "path", nargs="?", help="Directory containing RESULT.md + result-packet.json"
+    )
+    parser.add_argument("--test-fixtures", action="store_true")
+    parser.add_argument("--no-check-sha", action="store_true")
+    parser.add_argument(
+        "--check-sha-files",
+        action="store_true",
+        help="(alias) Verify log + report hashes; default behaviour unless --no-check-sha",
+    )
+    args = parser.parse_args(list(argv) if argv is not None else None)
+
     check_sha = not args.no_check_sha
-
-    if args.test_fixtures or (target_dir / "result-packet.pass.json").exists():
-        valid, errors = run_fixture_harness(target_dir, check_sha_files=check_sha)
-        if valid:
+    if args.test_fixtures or (
+        args.path and (Path(args.path) / "result-packet.pass.json").exists()
+    ):
+        target_dir = Path(args.path).resolve() if args.path else Path(".").resolve()
+        ok, errors = _run_fixture_harness(target_dir, check_sha_files=check_sha)
+        if ok:
             print("STATUS=PASS")
             print("FIXTURE_HARNESS=100% GREEN")
             print(f"VALIDATED_DIR={target_dir}")
-            sys.exit(0)
-        else:
-            print("STATUS=BLOCKED")
-            print("REASON=FIXTURE_VALIDATION_FAILED")
-            print("ERRORS=")
-            for err in errors:
-                print(f"  - {err}")
-            sys.exit(1)
-    else:
-        valid, errors = validate_packet(target_dir, check_sha_files=check_sha)
-        if valid:
-            print("STATUS=PASS")
-            print("ACCEPTANCE_DECISION=CLEAN_STRUCTURE")
-            print(f"VALIDATED_DIR={target_dir}")
-            sys.exit(0)
-        else:
-            print("STATUS=BLOCKED")
-            print("REASON=INVALID_CLOSEOUT_PACKET")
-            print("ERRORS=")
-            for err in errors:
-                print(f"  - {err}")
-            sys.exit(1)
+            return 0
+        print("STATUS=BLOCKED")
+        print("REASON=FIXTURE_VALIDATION_FAILED")
+        for err in errors:
+            print(f"  - {err}")
+        return 1
+    if not args.path:
+        parser.error("path required when not running fixture harness")
+    target_dir = Path(args.path).resolve()
+    outcome = validate_packet_directory(target_dir, check_sha_files=check_sha)
+    if outcome.ok:
+        print("STATUS=PASS")
+        print(f"VALIDATED_DIR={target_dir}")
+        return 0
+    print("STATUS=BLOCKED")
+    print("REASON=INVALID_CLOSEOUT_PACKET")
+    for err in outcome.errors:
+        print(f"  - {err}")
+    return 1
 
-if __name__ == "__main__":
-    main()
+
+if __name__ == "__main__":  # pragma: no cover
+    sys.exit(main())

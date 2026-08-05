@@ -34,6 +34,9 @@ REVIEW_TITLE_PATTERNS = (
 )
 DEFAULT_LINEAR_PRIORITY = int(os.environ.get("PRISMATIC_DEFAULT_LINEAR_PRIORITY", "2"))
 AGY_CLOSEOUT_V02_MIN_ISSUE = 4500
+#: Supervisor-owned marker inserted into ``AGY_TASK.md`` so the appendix cannot
+#: be suppressed by tampering with the Linear description.
+AGY_CLOSEOUT_APPENDIX_MARKER = "<!-- prismatic:agy-closeout-v02-appendix -->"
 
 
 def _parse_linear_datetime(value: str | None) -> datetime | None:
@@ -224,13 +227,11 @@ def build_task_content_from_issue(iid: str, issue_node: dict) -> str:
         "produce it. The runner will generate it next sprint.\n"
     )
 
-    match = re.fullmatch(r"GRO-([0-9]+)", iid, re.IGNORECASE)
-    modern_task = bool(match and int(match.group(1)) >= AGY_CLOSEOUT_V02_MIN_ISSUE)
+    iid_match = re.fullmatch(r"GRO-([0-9]+)", iid, re.IGNORECASE)
+    iid_number = int(iid_match.group(1)) if iid_match else None
+    modern_task = iid_number is not None and iid_number >= AGY_CLOSEOUT_V02_MIN_ISSUE
     appendix = ""
-    if (
-        modern_task
-        and "Mandatory Prismatic Closeout Contract Requirement" not in safe_desc
-    ):
+    if modern_task:
         appendix_path = (
             Path(__file__).resolve().parents[1]
             / "skills"
@@ -238,7 +239,19 @@ def build_task_content_from_issue(iid: str, issue_node: dict) -> str:
             / "templates"
             / "AGY_TASK_APPENDIX.md"
         )
-        appendix = "\n\n" + appendix_path.read_text(encoding="utf-8").strip() + "\n"
+        if not appendix_path.exists():
+            raise FileNotFoundError(
+                f"AGY_TASK.md appendix missing for {iid} at {appendix_path}"
+            )
+        appendix = (
+            "\n\n"
+            + AGY_CLOSEOUT_APPENDIX_MARKER
+            + "\n"
+            + appendix_path.read_text(encoding="utf-8").strip()
+            + "\n"
+            + AGY_CLOSEOUT_APPENDIX_MARKER
+            + "\n"
+        )
 
     return (
         f"WORKDIR: prismatic\n"
