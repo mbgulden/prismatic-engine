@@ -86,9 +86,11 @@ def _create_merge_ready_job(queue: ReviewQueue, tier: int = 0) -> str:
         2: ["prismatic/auth/oauth.py"],
     }
 
-    job_id = enqueue_with_defaults(queue, 
+    job_id = enqueue_with_defaults(
+        queue,
         completed_work_id=f"agy-cw-merge-{tier}-{id(queue)}",
-        task_id="GRO-TEST-MERGE",base_commit="a" * 40,
+        task_id="GRO-TEST-MERGE",
+        base_commit="a" * 40,
         candidate_commit="b" * 40,
         changed_paths=paths.get(tier, ["docs/readme.md"]),
     )

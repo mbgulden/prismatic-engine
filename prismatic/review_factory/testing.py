@@ -42,10 +42,10 @@ That auto-wrap was brittle:
 This module is the recommended replacement: explicit, importable, no
 class-level side effects.
 """
+
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 

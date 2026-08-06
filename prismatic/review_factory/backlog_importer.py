@@ -238,9 +238,7 @@ class BacklogImporter:
         # conftest auto-wrap supplied a fake digest for non-canonical
         # paths; that masked this real production-side check.
         if manifest_path.is_file():
-            packet_sha256 = hashlib.sha256(
-                manifest_path.read_bytes()
-            ).hexdigest()
+            packet_sha256 = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
         else:
             # Non-local manifest; fall back to the manifest's own digest
             # (the canonical-JSON sha256 embedded in the dataclass) so

@@ -52,9 +52,11 @@ class TestEnqueueCompletedWork:
 
     def test_enqueue_returns_uuid(self, queue):
         """Enqueue a completed work and verify it returns a valid UUID."""
-        job_id = enqueue_with_defaults(queue, 
+        job_id = enqueue_with_defaults(
+            queue,
             completed_work_id="agy-cw-test-001",
-            task_id="GRO-4188",base_commit="21be7812",
+            task_id="GRO-4188",
+            base_commit="21be7812",
             candidate_commit="c09761ed",
             changed_paths=["prismatic/review/hooks.py"],
         )
@@ -64,14 +66,18 @@ class TestEnqueueCompletedWork:
 
     def test_enqueue_idempotent(self, queue):
         """Re-enqueueing the same completed_work_id is a no-op."""
-        job_id_1 = enqueue_with_defaults(queue, 
+        job_id_1 = enqueue_with_defaults(
+            queue,
             completed_work_id="agy-cw-test-002",
-            task_id="GRO-4188",base_commit="21be7812",
+            task_id="GRO-4188",
+            base_commit="21be7812",
             candidate_commit="c09761ed",
         )
-        job_id_2 = enqueue_with_defaults(queue, 
+        job_id_2 = enqueue_with_defaults(
+            queue,
             completed_work_id="agy-cw-test-002",
-            task_id="GRO-4188",base_commit="21be7812",
+            task_id="GRO-4188",
+            base_commit="21be7812",
             candidate_commit="c09761ed",
         )
         assert job_id_1 == job_id_2
@@ -79,9 +85,11 @@ class TestEnqueueCompletedWork:
     def test_enqueue_classifies_risk_tier(self, queue):
         """Enqueue classifies docs as Tier 0 and auth as Tier 2."""
         # Tier 0: docs-only change
-        job_id = enqueue_with_defaults(queue, 
+        job_id = enqueue_with_defaults(
+            queue,
             completed_work_id="agy-cw-tier0",
-            task_id="GRO-0001",base_commit="aaaa",
+            task_id="GRO-0001",
+            base_commit="aaaa",
             candidate_commit="bbbb",
             changed_paths=["docs/readme.md"],
         )
@@ -89,9 +97,11 @@ class TestEnqueueCompletedWork:
         assert job.risk_tier == RiskTier.DETERMINISTIC_ONLY
 
         # Tier 2: auth change
-        job_id_2 = enqueue_with_defaults(queue, 
+        job_id_2 = enqueue_with_defaults(
+            queue,
             completed_work_id="agy-cw-tier2",
-            task_id="GRO-0002",base_commit="aaaa",
+            task_id="GRO-0002",
+            base_commit="aaaa",
             candidate_commit="cccc",
             changed_paths=["prismatic/auth/oauth.py"],
         )
@@ -105,9 +115,11 @@ class TestStateTransitions:
     def test_full_tier1_lifecycle(self, queue):
         """Happy path: enqueue → verify → review → merge_ready → authorized."""
         # 1. Enqueue
-        job_id = enqueue_with_defaults(queue, 
+        job_id = enqueue_with_defaults(
+            queue,
             completed_work_id="agy-cw-lifecycle",
-            task_id="GRO-4188",base_commit="21be7812",
+            task_id="GRO-4188",
+            base_commit="21be7812",
             candidate_commit="c09761ed",
             changed_paths=["prismatic/core/router.py"],
         )
@@ -158,9 +170,11 @@ class TestStateTransitions:
 
     def test_repair_cycle(self, queue):
         """Repair path: review finds issues → repair_required → re-queue."""
-        job_id = enqueue_with_defaults(queue, 
+        job_id = enqueue_with_defaults(
+            queue,
             completed_work_id="agy-cw-repair",
-            task_id="GRO-0003",base_commit="aaaa",
+            task_id="GRO-0003",
+            base_commit="aaaa",
             candidate_commit="bbbb",
             changed_paths=["prismatic/core/router.py"],
         )
@@ -216,9 +230,11 @@ class TestLeaseManagement:
         """Concurrent reviewer cap (3) is enforced."""
         # Enqueue 4 jobs
         for i in range(4):
-            _ = enqueue_with_defaults(queue, 
+            _ = enqueue_with_defaults(
+                queue,
                 completed_work_id=f"agy-cw-cap-{i}",
-                task_id=f"GRO-{i}",base_commit="aaaa",
+                task_id=f"GRO-{i}",
+                base_commit="aaaa",
                 candidate_commit=f"bbbb{i}",
                 changed_paths=["prismatic/core/router.py"],
             )
@@ -244,9 +260,11 @@ class TestLeaseManagement:
 
     def test_janitor_resets_stale_leases(self, queue):
         """Stale verifying leases get reset to queued."""
-        job_id = enqueue_with_defaults(queue, 
+        job_id = enqueue_with_defaults(
+            queue,
             completed_work_id="agy-cw-stale",
-            task_id="GRO-STALE",base_commit="aaaa",
+            task_id="GRO-STALE",
+            base_commit="aaaa",
             candidate_commit="bbbb",
             changed_paths=["prismatic/core/router.py"],
         )
@@ -276,14 +294,18 @@ class TestQueueStatistics:
 
     def test_queue_depth(self, queue):
         """Queue depth reports correct counts by state."""
-        enqueue_with_defaults(queue, 
+        enqueue_with_defaults(
+            queue,
             completed_work_id="agy-cw-stats-1",
-            task_id="GRO-S1",base_commit="aaaa",
+            task_id="GRO-S1",
+            base_commit="aaaa",
             candidate_commit="bbbb",
         )
-        enqueue_with_defaults(queue, 
+        enqueue_with_defaults(
+            queue,
             completed_work_id="agy-cw-stats-2",
-            task_id="GRO-S2",base_commit="aaaa",
+            task_id="GRO-S2",
+            base_commit="aaaa",
             candidate_commit="cccc",
         )
 

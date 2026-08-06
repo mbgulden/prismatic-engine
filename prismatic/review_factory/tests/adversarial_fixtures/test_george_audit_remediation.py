@@ -22,9 +22,11 @@ def test_cross_job_receipt_mismatch_rejected(tmp_path):
     db.ensure_tables()
     queue = ReviewQueue(db=db)
 
-    job_id = enqueue_with_defaults(queue, 
+    job_id = enqueue_with_defaults(
+        queue,
         completed_work_id="cw-job-1",
-        task_id="GRO-1",base_commit="base1",
+        task_id="GRO-1",
+        base_commit="base1",
         candidate_commit="cand1",
     )
     queue.lease_for_verification(worker_id="verifier-1")
@@ -48,9 +50,11 @@ def test_expired_lease_completion_rejected(tmp_path):
     db.ensure_tables()
     queue = ReviewQueue(db=db)
 
-    job_id = enqueue_with_defaults(queue, 
+    job_id = enqueue_with_defaults(
+        queue,
         completed_work_id="cw-job-expired",
-        task_id="GRO-2",base_commit="base2",
+        task_id="GRO-2",
+        base_commit="base2",
         candidate_commit="cand2",
     )
 
@@ -101,9 +105,11 @@ def test_consume_repair_invalidates_stale_evidence(tmp_path):
     db.ensure_tables()
     queue = ReviewQueue(db=db)
 
-    job_id = enqueue_with_defaults(queue, 
+    job_id = enqueue_with_defaults(
+        queue,
         completed_work_id="cw-job-repair-stale",
-        task_id="GRO-STALE",base_commit="base-1",
+        task_id="GRO-STALE",
+        base_commit="base-1",
         candidate_commit="cand-old",
     )
 

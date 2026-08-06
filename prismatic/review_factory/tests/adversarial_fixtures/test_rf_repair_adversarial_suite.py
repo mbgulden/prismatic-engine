@@ -1,6 +1,5 @@
 """Adversarial test suite enforcing all 12 RF-1/RF-2/RF-3/RF-4/RF-5 repair packet security invariants."""
 
-from prismatic.merge_candidate_manifest import MergeCandidateManifest, RiskTier
 from prismatic.review_factory.db import ReviewFactoryDB
 from prismatic.review_factory.merge_executor import MergeExecutor
 from prismatic.review_factory.models import (
@@ -21,9 +20,11 @@ def test_replayed_clean_decision_does_not_increment_witnesses(tmp_path):
     db.ensure_tables()
     q = ReviewQueue(db=db)
 
-    job_id = enqueue_with_defaults(q, 
+    job_id = enqueue_with_defaults(
+        q,
         completed_work_id="agy-cw-wit-1",
-        task_id="GRO-WIT-1",base_commit="a" * 40,
+        task_id="GRO-WIT-1",
+        base_commit="a" * 40,
         candidate_commit="b" * 40,
         changed_paths=["prismatic/auth/oauth.py"],
     )
@@ -99,9 +100,11 @@ def test_dry_run_leaves_database_and_manifest_strictly_readonly(tmp_path):
     db.ensure_tables()
     q = ReviewQueue(db=db)
 
-    job_id = enqueue_with_defaults(q, 
+    job_id = enqueue_with_defaults(
+        q,
         completed_work_id="cw-dryrun-1",
-        task_id="GRO-DRYRUN-1",base_commit="a" * 40,
+        task_id="GRO-DRYRUN-1",
+        base_commit="a" * 40,
         candidate_commit="b" * 40,
         changed_paths=["docs/readme.md"],
     )
@@ -134,21 +137,6 @@ def test_dry_run_leaves_database_and_manifest_strictly_readonly(tmp_path):
     assert job_before.state == ReviewJobState.MERGE_AUTHORIZED.value
 
     # Execute with dry_run=True
-    manifest = MergeCandidateManifest.create(
-        issue_id="GRO-DRYRUN-1",
-        task_id="GRO-DRYRUN-1",
-        task_file_sha256="a" * 64,
-        repository="mbgulden/prismatic-engine",
-        target="main",
-        base_sha="a" * 40,
-        candidate_sha="b" * 40,
-        changed_paths=["docs/readme.md"],
-        producer="agy",
-        preserved_candidate_location="/tmp/dryrun",
-        risk_tier=RiskTier.A,
-        dashboard_change=False,
-        required_ci_checks=["rf-v1-verification"],
-    )
     executor = MergeExecutor(queue=q, dry_run=True)
     # RF-R2: don't pass manifest=; executor loads from durable path.
     res = executor.execute(job_id)
@@ -168,9 +156,11 @@ def test_authorization_binding_mismatch_rejected(tmp_path):
     db.ensure_tables()
     q = ReviewQueue(db=db)
 
-    job_id = enqueue_with_defaults(q, 
+    job_id = enqueue_with_defaults(
+        q,
         completed_work_id="cw-mismatch-1",
-        task_id="GRO-MISMATCH-1",base_commit="a" * 40,
+        task_id="GRO-MISMATCH-1",
+        base_commit="a" * 40,
         candidate_commit="b" * 40,
         changed_paths=["docs/readme.md"],
     )
@@ -221,9 +211,11 @@ def test_authorize_merge_rejects_missing_actor(tmp_path):
     db.ensure_tables()
     q = ReviewQueue(db=db)
 
-    job_id = enqueue_with_defaults(q, 
+    job_id = enqueue_with_defaults(
+        q,
         completed_work_id="cw-actor-1",
-        task_id="GRO-ACTOR-1",base_commit="a" * 40,
+        task_id="GRO-ACTOR-1",
+        base_commit="a" * 40,
         candidate_commit="b" * 40,
         changed_paths=["docs/readme.md"],
     )
