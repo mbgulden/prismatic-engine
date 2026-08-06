@@ -14,6 +14,7 @@ from prismatic.review_factory.models import (
     VerificationReceipt,
 )
 from prismatic.review_factory.queue import ReviewQueue
+from prismatic.review_factory.testing import enqueue_with_defaults
 
 
 COMMIT = "a" * 40
@@ -30,7 +31,7 @@ def queue(tmp_path):
 
 
 def _enqueue(queue: ReviewQueue, suffix: str) -> str:
-    return queue.enqueue_completed_work(
+    return enqueue_with_defaults(queue, 
         completed_work_id=f"cw-{suffix}",
         task_id=f"TASK-{suffix}",
         repository="org/repo",

@@ -11,6 +11,7 @@ from prismatic.review_factory.models import (
     VerificationReceipt,
 )
 from prismatic.review_factory.queue import ReviewQueue
+from prismatic.review_factory.testing import enqueue_with_defaults
 from prismatic.review_factory.verifier import VerificationWorker
 
 
@@ -20,11 +21,9 @@ def test_replayed_clean_decision_does_not_increment_witnesses(tmp_path):
     db.ensure_tables()
     q = ReviewQueue(db=db)
 
-    job_id = q.enqueue_completed_work(
+    job_id = enqueue_with_defaults(q, 
         completed_work_id="agy-cw-wit-1",
-        task_id="GRO-WIT-1",
-        repository="mbgulden/prismatic-engine",
-        base_commit="a" * 40,
+        task_id="GRO-WIT-1",base_commit="a" * 40,
         candidate_commit="b" * 40,
         changed_paths=["prismatic/auth/oauth.py"],
     )
@@ -100,11 +99,9 @@ def test_dry_run_leaves_database_and_manifest_strictly_readonly(tmp_path):
     db.ensure_tables()
     q = ReviewQueue(db=db)
 
-    job_id = q.enqueue_completed_work(
+    job_id = enqueue_with_defaults(q, 
         completed_work_id="cw-dryrun-1",
-        task_id="GRO-DRYRUN-1",
-        repository="mbgulden/prismatic-engine",
-        base_commit="a" * 40,
+        task_id="GRO-DRYRUN-1",base_commit="a" * 40,
         candidate_commit="b" * 40,
         changed_paths=["docs/readme.md"],
     )
@@ -171,11 +168,9 @@ def test_authorization_binding_mismatch_rejected(tmp_path):
     db.ensure_tables()
     q = ReviewQueue(db=db)
 
-    job_id = q.enqueue_completed_work(
+    job_id = enqueue_with_defaults(q, 
         completed_work_id="cw-mismatch-1",
-        task_id="GRO-MISMATCH-1",
-        repository="mbgulden/prismatic-engine",
-        base_commit="a" * 40,
+        task_id="GRO-MISMATCH-1",base_commit="a" * 40,
         candidate_commit="b" * 40,
         changed_paths=["docs/readme.md"],
     )
@@ -226,11 +221,9 @@ def test_authorize_merge_rejects_missing_actor(tmp_path):
     db.ensure_tables()
     q = ReviewQueue(db=db)
 
-    job_id = q.enqueue_completed_work(
+    job_id = enqueue_with_defaults(q, 
         completed_work_id="cw-actor-1",
-        task_id="GRO-ACTOR-1",
-        repository="mbgulden/prismatic-engine",
-        base_commit="a" * 40,
+        task_id="GRO-ACTOR-1",base_commit="a" * 40,
         candidate_commit="b" * 40,
         changed_paths=["docs/readme.md"],
     )

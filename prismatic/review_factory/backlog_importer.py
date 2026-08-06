@@ -19,6 +19,7 @@ Usage
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from dataclasses import dataclass, field
@@ -232,6 +233,20 @@ class BacklogImporter:
             result.skipped_duplicate += 1
             return
 
+        # Compute the real sha256 of the local manifest file so R2's
+        # file-existence + digest gate is satisfied. Prior to RF-M3 the
+        # conftest auto-wrap supplied a fake digest for non-canonical
+        # paths; that masked this real production-side check.
+        if manifest_path.is_file():
+            packet_sha256 = hashlib.sha256(
+                manifest_path.read_bytes()
+            ).hexdigest()
+        else:
+            # Non-local manifest; fall back to the manifest's own digest
+            # (the canonical-JSON sha256 embedded in the dataclass) so
+            # the R2 gate gets a deterministic 64-hex value to validate.
+            packet_sha256 = manifest.digest()
+
         job_id = self.queue.enqueue_completed_work(
             completed_work_id=work_id,
             task_id=manifest.issue_id,
@@ -240,6 +255,7 @@ class BacklogImporter:
             candidate_commit=manifest.candidate_sha,
             changed_paths=list(manifest.changed_paths),
             result_packet_path=str(manifest_path),
+            result_packet_sha256=packet_sha256,
         )
 
         if job_id:

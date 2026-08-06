@@ -16,6 +16,7 @@ from prismatic.merge_candidate_manifest import (
 )
 from prismatic.review_factory.db import ReviewFactoryDB
 from prismatic.review_factory.queue import ReviewQueue
+from prismatic.review_factory.testing import enqueue_with_defaults
 from prismatic.review_factory.verifier import VerificationWorker
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -65,11 +66,9 @@ def _create_review_job(queue: ReviewQueue, tier: int = 0) -> str:
         0: ["docs/readme.md"],
         1: ["prismatic/core/router.py"],
     }
-    return queue.enqueue_completed_work(
+    return enqueue_with_defaults(queue, 
         completed_work_id=f"agy-cw-verify-{tier}",
-        task_id=f"GRO-VERIFY-{tier}",
-        repository="mbgulden/prismatic-engine",
-        base_commit="a" * 40,
+        task_id=f"GRO-VERIFY-{tier}",base_commit="a" * 40,
         candidate_commit="b" * 40,
         changed_paths=paths.get(tier, ["docs/readme.md"]),
     )
