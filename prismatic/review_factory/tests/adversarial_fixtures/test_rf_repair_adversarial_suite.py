@@ -153,7 +153,8 @@ def test_dry_run_leaves_database_and_manifest_strictly_readonly(tmp_path):
         required_ci_checks=["rf-v1-verification"],
     )
     executor = MergeExecutor(queue=q, dry_run=True)
-    res = executor.execute(job_id, manifest=manifest)
+    # RF-R2: don't pass manifest=; executor loads from durable path.
+    res = executor.execute(job_id)
     assert res.success is True
     assert res.merge_sha == "dry-run-sha"
 

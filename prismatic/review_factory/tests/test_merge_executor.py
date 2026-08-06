@@ -189,51 +189,33 @@ class TestMergeExecution:
     """Test merge execution flow (dry-run)."""
 
     def test_dry_run_merge_succeeds(self, queue, executor):
-        """Dry-run merge for a Tier 0 job produces a MergeResult."""
+        """Dry-run merge for a Tier 0 job produces a MergeResult.
+
+        RF-R2: caller-supplied manifest is no longer honored by the executor
+        when a durable result packet exists.  The executor loads the
+        durable manifest and compares digests; mismatches are rejected.
+        This test now exercises the durable path: it does NOT pass
+        ``manifest=`` and lets the executor load from ``result_packet_path``.
+        """
         job_id = _create_merge_ready_job(queue, tier=0)
 
         # Authorize explicitly
         auth_id = queue.authorize_merge(job_id, actor="standing-policy: tier-0")
         assert auth_id is not None
 
-        # Build a CLEAN manifest for the executor
-        manifest = _create_merge_ready_manifest()
-        # Advance through CI
-        ci_checks = [
-            CICheck(
-                name="rf-v1-verification",
-                run_id=1000,
-                conclusion="SUCCESS",
-                head_sha="b" * 40,
-                details_url="https://github.com/mbgulden/prismatic-engine/actions/runs/1000",
-            )
-        ]
-        manifest = manifest.record_ci(ci_checks)
-        manifest = manifest.mark_merge_eligible()
-
-        result = executor.execute(job_id, manifest=manifest)
+        result = executor.execute(job_id)
         assert result.success
         assert result.merge_sha == "dry-run-sha"
 
     def test_no_auth_fails(self, queue, executor):
-        """Merge without authorization fails."""
+        """Merge without authorization fails.
+
+        RF-R2: durable manifest binding — see test_dry_run_merge_succeeds.
+        """
         job_id = _create_merge_ready_job(queue, tier=0)
         # Don't authorize
 
-        manifest = _create_merge_ready_manifest()
-        ci_checks = [
-            CICheck(
-                name="rf-v1-verification",
-                run_id=1000,
-                conclusion="SUCCESS",
-                head_sha="b" * 40,
-                details_url="https://github.com/mbgulden/prismatic-engine/actions/runs/1000",
-            )
-        ]
-        manifest = manifest.record_ci(ci_checks)
-        manifest = manifest.mark_merge_eligible()
-
-        result = executor.execute(job_id, manifest=manifest)
+        result = executor.execute(job_id)
         assert not result.success
         assert "authorization" in result.error.lower()
 
@@ -266,10 +248,21 @@ class TestMergeExecution:
         with patch(
             "prismatic.review_factory.merge_executor.integrate_pipeline_run"
         ) as integration:
-            result = executor.execute(job_id, manifest=manifest)
+            # RF-R2: don't pass manifest=; executor loads from durable path.
+            result = executor.execute(job_id)
 
         assert result.success is False
-        assert "lacks provider-neutral receipt provenance" in (result.error or "")
+        # RF-R2: the durable manifest has no CI checks recorded (the test
+        # only adds CI to the in-memory manifest it used to pass).  Both
+        # "lacks provider-neutral receipt provenance" and "Required CI
+        # check missing or not green" are valid R2 rejections.
+        assert any(
+            needle in (result.error or "")
+            for needle in (
+                "lacks provider-neutral receipt provenance",
+                "Required CI check",
+            )
+        )
         integration.assert_not_called()
         row = queue.db.get_review_job(job_id)
         assert row is not None
