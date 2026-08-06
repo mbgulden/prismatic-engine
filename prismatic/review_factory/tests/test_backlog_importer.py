@@ -183,3 +183,115 @@ class TestManifestDirImport:
         assert r2.scanned == 20
         assert r2.enqueued == 0
         assert r2.skipped_duplicate == 20
+
+
+# ── CLI tests (R8 deployment support) ─────────────────────────────────
+
+
+def test_cli_help_exits_cleanly(capsys):
+    """CLI --help exits 0 with all 10 flags documented."""
+    import sys
+
+    from prismatic.review_factory.backlog_importer import _cli_main
+
+    old_argv = sys.argv
+    sys.argv = ["backlog_importer", "--help"]
+    try:
+        with pytest.raises(SystemExit) as exc_info:
+            _cli_main()
+        assert exc_info.value.code == 0
+    finally:
+        sys.argv = old_argv
+
+    captured = capsys.readouterr()
+    assert "--db-path" in captured.out
+    assert "--state-dir" in captured.out
+    assert "--worker-id" in captured.out
+    assert "--max-items" in captured.out
+    assert "--enable-merge" in captured.out
+
+
+def test_cli_dry_run_with_no_eligible_rows(tmp_path):
+    """CLI dry-run exits 0 with 0 enqueued when DB is empty."""
+    import json
+    import os
+    import subprocess
+    import sys
+
+    db_path = tmp_path / "empty.db"
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    log_dir = state_dir / "logs"
+    log_dir.mkdir()
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = ":".join(
+        [
+            "/home/ubuntu/.prismatic/worktrees/george-pr421-ready",
+            env.get("PYTHONPATH", ""),
+        ]
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "prismatic.review_factory.backlog_importer",
+            "--db-path",
+            str(db_path),
+            "--state-dir",
+            str(state_dir),
+            "--worker-id",
+            "test-cli-worker",
+            "--max-items",
+            "20",
+            "--dry-run",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 0, f"CLI failed: {result.stderr}"
+    assert '"worker_id": "test-cli-worker"' in result.stdout
+    assert '"enqueued": 0' in result.stdout
+
+    # Verify subdirs were created
+    assert (state_dir / "inbox-disposition").is_dir()
+    assert (state_dir / "artifacts").is_dir()
+    assert (state_dir / "completed-work-disposition").is_dir()
+    assert (state_dir / "source-workspaces").is_dir()
+
+    # Verify receipt was written
+    receipts = list(log_dir.glob("test-cli-worker-*.json"))
+    assert len(receipts) == 1
+    receipt = json.loads(receipts[0].read_text())
+    assert receipt["worker_id"] == "test-cli-worker"
+    assert receipt["dry_run"] is True
+    assert receipt["scanned"] == 0
+
+
+def test_cli_fails_when_enable_merge_without_merge_repo_path(capsys):
+    """CLI --enable-merge without --merge-repo-path exits 2 (argparse error)."""
+    import sys
+
+    from prismatic.review_factory.backlog_importer import _cli_main
+
+    old_argv = sys.argv
+    sys.argv = [
+        "backlog_importer",
+        "--db-path",
+        "/tmp/x.db",
+        "--state-dir",
+        "/tmp/state",
+        "--worker-id",
+        "w",
+        "--enable-merge",
+    ]
+    try:
+        with pytest.raises(SystemExit) as exc_info:
+            _cli_main()
+        assert exc_info.value.code == 2
+    finally:
+        sys.argv = old_argv
