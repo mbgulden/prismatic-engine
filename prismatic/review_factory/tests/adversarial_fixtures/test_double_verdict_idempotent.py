@@ -19,6 +19,7 @@ from prismatic.review_factory.models import (
     VerificationReceipt,
 )
 from prismatic.review_factory.queue import ReviewQueue
+from prismatic.review_factory.testing import enqueue_with_defaults
 
 
 @pytest.fixture
@@ -32,10 +33,10 @@ def queue(tmp_path):
 
 def test_double_verdict_idempotent(queue):
     """Submitting the exact same verdict twice is a no-op."""
-    job_id = queue.enqueue_completed_work(
+    job_id = enqueue_with_defaults(
+        queue,
         completed_work_id="agy-cw-double",
         task_id="GRO-DOUBLE",
-        repository="mbgulden/prismatic-engine",
         base_commit="aaaa",
         candidate_commit="bbbb",
         changed_paths=["prismatic/core/router.py"],

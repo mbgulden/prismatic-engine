@@ -19,6 +19,7 @@ from prismatic.review_factory.models import (
     VerificationReceipt,
 )
 from prismatic.review_factory.queue import ReviewQueue
+from prismatic.review_factory.testing import enqueue_with_defaults
 
 
 @pytest.fixture
@@ -36,7 +37,7 @@ def test_group_a_collision_and_isolation_shared_tree(temp_queue):
     """
     shared_tree = "tree-sha-shared-1234567890abcdef1234567890abcdef12345678"
 
-    job1_id = temp_queue.enqueue_completed_work(
+    job1_id = enqueue_with_defaults(temp_queue, 
         completed_work_id="cw-job-1",
         task_id="TASK-1",
         repository="org/repo",
@@ -46,7 +47,7 @@ def test_group_a_collision_and_isolation_shared_tree(temp_queue):
         changed_paths=["src/a.py"],
     )
 
-    job2_id = temp_queue.enqueue_completed_work(
+    job2_id = enqueue_with_defaults(temp_queue, 
         completed_work_id="cw-job-2",
         task_id="TASK-2",
         repository="org/repo",

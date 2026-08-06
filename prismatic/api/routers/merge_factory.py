@@ -123,8 +123,14 @@ class LockReleaseRequest(BaseModel):
 
 
 @router.get("/policy")
-async def get_policy() -> Dict[str, Any]:
-    """Retrieve the current operator policy."""
+async def get_policy(
+    principal: Principal = Depends(get_principal),
+) -> Dict[str, Any]:
+    """Retrieve the current operator policy.
+
+    RF-R3: authenticated read.  Unauthenticated callers receive 401.
+    """
+    _ = principal  # auth-gate only; no scope check needed for reads
     return MergeFactoryStore().get_policy()
 
 
@@ -145,8 +151,14 @@ async def set_policy(
 
 
 @router.get("/cohort")
-async def list_cohort() -> Dict[str, Any]:
-    """List all admission cohort items."""
+async def list_cohort(
+    principal: Principal = Depends(get_principal),
+) -> Dict[str, Any]:
+    """List all admission cohort items.
+
+    RF-R3: authenticated read.  Unauthenticated callers receive 401.
+    """
+    _ = principal
     cohort = MergeFactoryStore().get_cohort()
     return {"cohort": cohort, "count": len(cohort)}
 
@@ -274,8 +286,14 @@ async def get_attestation(
     evidence_digest: str = Query(..., description="Evidence SHA-256 digest"),
     repository: str = Query(..., description="Git repository name"),
     target: str = Query(..., description="Target branch/destination name"),
+    principal: Principal = Depends(get_principal),
 ) -> Dict[str, Any]:
-    """Pure/read-only validation of active candidate approval. Open to ordinary callers."""
+    """Pure/read-only validation of active candidate approval.
+
+    RF-R3: same authenticated principal boundary as other Merge Factory
+    reads.  Unauthenticated callers receive 401.
+    """
+    _ = principal
     return MergeFactoryStore().validate_approval(
         issue_id=issue_id,
         base_sha=base_sha,
