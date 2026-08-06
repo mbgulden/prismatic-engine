@@ -131,5 +131,12 @@ def _wrapped_enqueue(self: ReviewQueue, *args: Any, **kwargs: Any) -> str:
     return _call_original(self, *args, **kwargs)
 
 
-# Install the wrapper at conftest load time.
-ReviewQueue.enqueue_completed_work = _wrapped_enqueue  # type: ignore[assignment]
+# Install-once sentinel: a sibling conftest at ``tests/conftest.py`` also
+# installs a wrapper. Whichever loads first wins; whichever loads second
+# sees this sentinel and skips. The wrapper delegates to
+# ``_original_enqueue`` (captured above) which is the truly-original method,
+# preventing recursion even if the install order is reversed.
+_RF_ENQUEUE_INSTALLED = "_rf_enqueue_wrapped_v1"
+if not getattr(ReviewQueue, _RF_ENQUEUE_INSTALLED, False):
+    ReviewQueue.enqueue_completed_work = _wrapped_enqueue  # type: ignore[assignment]
+    setattr(ReviewQueue, _RF_ENQUEUE_INSTALLED, True)

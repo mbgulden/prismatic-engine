@@ -12,13 +12,19 @@ We do NOT override the production enqueue path.  We wrap it at the
 boundary used by tests only, by replacing the bound method on the
 class with a thin shim that defaults to a real bundle + digest when
 the caller (a test) omits them.
+
+Install-once contract
+---------------------
+A second conftest (``prismatic/review_factory/tests/conftest.py``)
+also installs a wrapper. Whichever loads first wins; whichever loads
+second detects the sentinel and skips. The wrapper always calls the
+*truly original* method (captured into ``ReviewQueue._rf_enqueue_truly_original``
+on first install) so double-wrapping cannot recurse.
 """
 from __future__ import annotations
 
 import hashlib
 import json
-import os
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +35,10 @@ from prismatic.review_factory.queue import ReviewQueue
 
 # Module-level bundle cache so we can default-digest deterministically.
 _DEFAULT_BUNDLE: dict[str, tuple[str, str]] = {}
+
+# Sentinel: presence means a wrapper is already installed on the class.
+_RF_ENQUEUE_INSTALLED = "_rf_enqueue_wrapped_v1"
+_RF_TRULY_ORIGINAL = "_rf_enqueue_truly_original"
 
 
 def _get_default_bundle(key: str) -> tuple[str, str]:
@@ -65,13 +75,22 @@ def _wrapped_enqueue(self: ReviewQueue, *args: Any, **kwargs: Any) -> str:
         bundle, digest = _get_default_bundle(str(key))
         kwargs.setdefault("result_packet_path", bundle)
         kwargs.setdefault("result_packet_sha256", digest)
-    return self.__class__.enqueue_completed_work(self, *args, **kwargs)
+    # Delegate to the truly-original method (captured on first install).
+    # This bypasses any subsequent wrapper installs, preventing recursion.
+    original = getattr(ReviewQueue, _RF_TRULY_ORIGINAL)
+    return original.__get__(self, ReviewQueue)(*args, **kwargs)
 
 
-# Install the wrapper at conftest load time so test modules pick it up.
-# We use setattr so any later queue instance uses the wrapped method.
-_original_enqueue = ReviewQueue.enqueue_completed_work
-ReviewQueue.enqueue_completed_work = _wrapped_enqueue  # type: ignore[assignment]
+# Install-once: if another conftest (e.g. prismatic/review_factory/tests/conftest.py)
+# has already installed a wrapper, skip to avoid double-wrapping and recursion.
+if getattr(ReviewQueue, _RF_ENQUEUE_INSTALLED, False):
+    # Already wrapped; do nothing. The existing wrapper is the source of truth.
+    pass
+else:
+    # Capture the truly-original method BEFORE we install our wrapper.
+    setattr(ReviewQueue, _RF_TRULY_ORIGINAL, ReviewQueue.__dict__["enqueue_completed_work"])
+    ReviewQueue.enqueue_completed_work = _wrapped_enqueue  # type: ignore[assignment]
+    setattr(ReviewQueue, _RF_ENQUEUE_INSTALLED, True)
 
 
 @pytest.fixture(autouse=False)
