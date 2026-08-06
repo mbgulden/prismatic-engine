@@ -379,7 +379,7 @@ def _cli_main() -> int:
     result_line = {
         "worker_id": args.worker_id,
         "reviewer_id": reviewer_id,
-        "ts_utc": _dt.datetime.utcnow().isoformat() + "Z",
+        "ts_utc": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "scanned": combined.scanned,
         "eligible": combined.eligible,
         "enqueued": combined.enqueued,
@@ -394,7 +394,7 @@ def _cli_main() -> int:
     receipt_path = (
         state_dir
         / "logs"
-        / f"{args.worker_id}-{_dt.datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}.json"
+        / f"{args.worker_id}-{_dt.datetime.now(_dt.timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
     )
     receipt_path.write_text(_json.dumps(result_line, indent=2))
 
