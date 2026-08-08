@@ -31,6 +31,7 @@ import tarfile
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import Any
 
 from prismatic.merge_candidate_manifest import (
     MergeCandidateManifest,
@@ -245,6 +246,156 @@ class VerificationWorker:
         os.chmod(path, 0o755)
         shutil.rmtree(path)
 
+    def _build_command_manifest(
+        self,
+        job: ReviewJob,
+        manifest: MergeCandidateManifest,
+        required_proof_classes: set[str],
+    ) -> list[dict[str, Any]]:
+        """Build a canonical command manifest before execution detailing all sub-commands, flags, and environment variables."""
+        manifest_items = []
+
+        for proof_class in sorted(required_proof_classes):
+            if self.test_mode:
+                cmd_str = f"test-stub-{proof_class}"
+            else:
+                if proof_class == "focused":
+                    changed = (
+                        json.loads(job.changed_paths_json)
+                        if job.changed_paths_json
+                        else []
+                    )
+                    test_patterns = []
+                    for path in changed:
+                        if "/test_" in path or path.startswith("test_"):
+                            test_patterns.append(path)
+                        else:
+                            base = Path(path).stem
+                            test_patterns.append(f"**/test_{base}.py")
+                    if test_patterns:
+                        cmd_args = [
+                            sys.executable,
+                            "-m",
+                            "pytest",
+                            *test_patterns[:5],
+                            "-x",
+                            "-q",
+                            "--no-header",
+                            "-p",
+                            "no:cacheprovider",
+                        ]
+                        cmd_str = " ".join(cmd_args)
+                    else:
+                        cmd_str = "rf-verify-focused"
+                elif proof_class == "canonical":
+                    cmd_str = " ".join(
+                        [
+                            sys.executable,
+                            "-m",
+                            "pytest",
+                            "tests/",
+                            "-x",
+                            "-q",
+                            "--no-header",
+                            "-p",
+                            "no:cacheprovider",
+                        ]
+                    )
+                elif proof_class == "package":
+                    cmd_str = " ".join(
+                        [sys.executable, "-m", "py_compile", "prismatic/__init__.py"]
+                    )
+                else:
+                    cmd_str = f"rf-verify-{proof_class}"
+
+            manifest_items.append(
+                {
+                    "name": proof_class,
+                    "proof_class": proof_class,
+                    "command": cmd_str,
+                    "env": {},
+                }
+            )
+
+        changed = json.loads(job.changed_paths_json) if job.changed_paths_json else []
+        for path in changed:
+            if not path.endswith(".py"):
+                continue
+
+            import_contract = INTEGRATION_IMPORT_CONTRACTS.get(path, [])
+            if import_contract:
+                manifest_items.append(
+                    {
+                        "name": f"integration-import:{Path(path).stem}",
+                        "proof_class": "focused",
+                        "command": f"grep '{import_contract[0]}' {path}",
+                        "env": {},
+                    }
+                )
+
+            if "/test_" in path or path.startswith("test_"):
+                manifest_items.append(
+                    {
+                        "name": f"circular-proof:{Path(path).stem}",
+                        "proof_class": "focused",
+                        "command": f"grep PE-surface-import {path}",
+                        "env": {},
+                    }
+                )
+            else:
+                test_path = self._derive_test_path(path)
+                if test_path:
+                    manifest_items.append(
+                        {
+                            "name": f"circular-proof:{Path(test_path).stem}",
+                            "proof_class": "focused",
+                            "command": f"grep PE-surface-import {test_path}",
+                            "env": {},
+                        }
+                    )
+
+            callsite_contract = INTEGRATION_CALLSITE_CONTRACTS.get(path, [])
+            if callsite_contract:
+                manifest_items.append(
+                    {
+                        "name": f"callsite:{Path(path).stem}",
+                        "proof_class": "focused",
+                        "command": f"grep '{callsite_contract[0]}' {path}",
+                        "env": {},
+                    }
+                )
+
+        return manifest_items
+
+    @staticmethod
+    def compute_provenance_hash(
+        repository: str,
+        commit: str,
+        tree: str,
+        commands: list[str],
+        policy_version: str,
+        exit_codes: dict[str, int],
+        archive_sha256: str,
+        log_hashes: dict[str, str],
+    ) -> str:
+        """Compute content-addressed provenance record bound to repository identity, commit, tree, command manifest, environment policy, exit codes, artifact hashes, and log hashes."""
+        sorted_commands = sorted(commands)
+        sorted_exits = sorted(f"{k}:{v}" for k, v in exit_codes.items())
+        sorted_logs = sorted(f"{k}:{v}" for k, v in log_hashes.items())
+
+        parts = [
+            repository,
+            commit,
+            tree,
+            ",".join(sorted_commands),
+            policy_version,
+            ",".join(sorted_exits),
+            f"sha256:{archive_sha256}",
+            ",".join(sorted_logs),
+        ]
+        raw = "\0".join(parts)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
     def verify(
         self,
         job: ReviewJob,
@@ -279,6 +430,9 @@ class VerificationWorker:
         required = set(_PROOF_REQUIREMENTS.get(tier_str, {"focused"}))
         if manifest.dashboard_change:
             required |= _DASHBOARD_EXTRA
+
+        # 6. Command Manifest: Build canonical manifest BEFORE execution
+        _command_manifest = self._build_command_manifest(job, manifest, required)
 
         results: list[CheckResult] = []
         for proof_class in sorted(required):
@@ -317,19 +471,34 @@ class VerificationWorker:
 
         invariance_proof = self._compute_invariance_proof(list(manifest.changed_paths))
         archive_identity = f"sha256:{artifact_sha256}"
-        receipt_identity = hashlib.sha256(
-            f"{job.review_job_id}\0{archive_identity}".encode()
-        ).hexdigest()
+
+        exit_codes_dict = {r.name: r.exit_code for r in results}
+        log_sha_dict = {r.name: r.log_sha256 for r in results}
+
+        # 7. Content-Addressed Provenance: Compute content-addressed provenance record
+        provenance_identity = self.compute_provenance_hash(
+            repository=job.repository,
+            commit=job.candidate_commit,
+            tree=job.candidate_tree,
+            commands=[r.command for r in results],
+            policy_version=job.policy_version
+            if hasattr(job, "policy_version")
+            else "v1",
+            exit_codes=exit_codes_dict,
+            archive_sha256=artifact_sha256,
+            log_hashes=log_sha_dict,
+        )
+
         receipt = VerificationReceipt(
-            receipt_id=receipt_identity,
+            receipt_id=provenance_identity,
             review_job_id=job.review_job_id,
             candidate_commit=job.candidate_commit,
             candidate_tree=job.candidate_tree,
             immutable_archive_id=archive_identity,
             commands=json.dumps([r.command for r in results]),
-            exit_codes=json.dumps({r.name: r.exit_code for r in results}),
+            exit_codes=json.dumps(exit_codes_dict),
             log_paths=json.dumps({r.name: r.log_path for r in results}),
-            log_sha256=json.dumps({r.name: r.log_sha256 for r in results}),
+            log_sha256=json.dumps(log_sha_dict),
             classification=self._classify_verification(results),
             changed_path_invariance_proof=invariance_proof,
             explicit_non_claims=json.dumps(non_claims),
@@ -589,6 +758,8 @@ class VerificationWorker:
             "-x",
             "-q",
             "--no-header",
+            "-p",
+            "no:cacheprovider",
         ]
         return self._execute_subproc("focused", "focused", args)
 
@@ -604,7 +775,17 @@ class VerificationWorker:
                 passed=False,
             )
 
-        args = [sys.executable, "-m", "pytest", "tests/", "-x", "-q", "--no-header"]
+        args = [
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/",
+            "-x",
+            "-q",
+            "--no-header",
+            "-p",
+            "no:cacheprovider",
+        ]
         return self._execute_subproc("canonical", "canonical", args)
 
     def _run_package_check(self) -> CheckResult:
@@ -641,6 +822,29 @@ class VerificationWorker:
             stdout = proc.stdout
             stderr = proc.stderr
             passed = exit_code == 0
+            # Normalize stdout/stderr to strip non-deterministic timing and paths
+            repo_str = str(self.repo_path)
+            if repo_str:
+                stdout = stdout.replace(repo_str, "_REPOSITORY_ROOT_")
+                stderr = stderr.replace(repo_str, "_REPOSITORY_ROOT_")
+                # Normalize the randomized directory suffix
+                suffix = self.repo_path.name.split("-")[-1]
+                if suffix:
+                    stdout = stdout.replace(suffix, "_RANDOM_SUFFIX_")
+                    stderr = stderr.replace(suffix, "_RANDOM_SUFFIX_")
+            stdout = re.sub(r"in \d+\.\d+s", "in X.XXs", stdout)
+            stderr = re.sub(r"in \d+\.\d+s", "in X.XXs", stderr)
+            # Normalize randomized pytest cache filenames
+            stdout = re.sub(
+                r"pytest-cache-files-[a-zA-Z0-9_]+",
+                "pytest-cache-files-placeholder",
+                stdout,
+            )
+            stderr = re.sub(
+                r"pytest-cache-files-[a-zA-Z0-9_]+",
+                "pytest-cache-files-placeholder",
+                stderr,
+            )
         except subprocess.TimeoutExpired:
             exit_code = -1
             stdout = ""

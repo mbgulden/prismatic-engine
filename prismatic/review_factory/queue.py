@@ -399,14 +399,40 @@ class ReviewQueue:
         if len(reviewing) >= _REVIEWER_CAP:
             return None  # pool exhausted
 
-        jobs = self.db.list_review_jobs(state=ReviewJobState.REVIEW_READY, limit=1)
+        jobs = self.db.list_review_jobs(state=ReviewJobState.REVIEW_READY, limit=20)
         if not jobs:
             return None
 
-        job = jobs[0]
+        # Find the oldest job that is independent of this reviewer and not Tier 3 (PRODUCTION)
+        job = None
+        for j in jobs:
+            if j.risk_tier >= RiskTier.PRODUCTION:
+                continue
 
-        # Tier 3 is human-only — don't auto-lease
-        if job.risk_tier >= RiskTier.PRODUCTION:
+            producer = None
+            try:
+                from prismatic.agy_completed_work import AgyCompletedWorkStore
+
+                store = AgyCompletedWorkStore(db_path=self.db.db_path)
+                completed_work = store.get(j.completed_work_id)
+                producer = completed_work.agent
+            except Exception:
+                pass
+
+            if not producer:
+                cw_id = j.completed_work_id.lower().strip()
+                for prefix in ("agy", "ned", "jules"):
+                    if cw_id.startswith(f"{prefix}-") or f"-{prefix}-" in cw_id:
+                        producer = prefix
+                        break
+
+            if producer and reviewer_id.lower().strip() == producer.lower().strip():
+                continue
+
+            job = j
+            break
+
+        if job is None:
             return None
 
         expiry = _lease_expiry(job.risk_tier)
@@ -442,6 +468,29 @@ class ReviewQueue:
         if reviewer != decision_reviewer:
             raise ValueError(
                 f"Reviewer identity mismatch: decision reviewer is {decision_reviewer}, got {reviewer}"
+            )
+
+        # Check reviewer independence (distinct from producer)
+        producer = None
+        try:
+            from prismatic.agy_completed_work import AgyCompletedWorkStore
+
+            store = AgyCompletedWorkStore(db_path=self.db.db_path)
+            completed_work = store.get(job.completed_work_id)
+            producer = completed_work.agent
+        except Exception:
+            pass
+
+        if not producer:
+            cw_id = job.completed_work_id.lower().strip()
+            for prefix in ("agy", "ned", "jules"):
+                if cw_id.startswith(f"{prefix}-") or f"-{prefix}-" in cw_id:
+                    producer = prefix
+                    break
+
+        if producer and reviewer.lower().strip() == producer.lower().strip():
+            raise ValueError(
+                f"Reviewer identity reuse: reviewer '{reviewer}' is not independent of producer '{producer}'"
             )
 
         decision_job_id = (getattr(decision, "review_job_id", "") or "").strip()

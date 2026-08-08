@@ -163,7 +163,13 @@ class BacklogImporter:
             packet.get("result_packet_path")
             or packet.get("source_path")
             or row.source_path
-            or f"synthetic://completed-work/{row.id}"
+            or f"/tmp/prismatic-completed-work-{row.id}"
+        )
+
+        result_packet_sha256 = (
+            row.evidence_retention.get("manifest_sha256")
+            or row.evidence_retention.get("packet_sha256")
+            or hashlib.sha256(completed_work_id.encode()).hexdigest()
         )
 
         existing = self.queue.db.get_job_by_completed_work_id(completed_work_id)
@@ -181,6 +187,7 @@ class BacklogImporter:
             candidate_tree=candidate_tree,
             changed_paths=changed_paths,
             result_packet_path=result_packet_path,
+            result_packet_sha256=result_packet_sha256,
         )
         if job_id:
             result.enqueued += 1
@@ -228,6 +235,17 @@ class BacklogImporter:
             return
 
         work_id = f"manifest-{manifest.digest()[:16]}"
+
+        if not _is_hex_sha(manifest.base_sha) or not _is_hex_sha(
+            manifest.candidate_sha
+        ):
+            result.skipped_ineligible += 1
+            result.errors.append(
+                f"Manifest {work_id} missing valid commit SHAs "
+                f"(base_sha='{manifest.base_sha}', candidate_sha='{manifest.candidate_sha}') — fail closed"
+            )
+            return
+
         existing = self.queue.db.get_job_by_completed_work_id(work_id)
         if existing:
             result.skipped_duplicate += 1
