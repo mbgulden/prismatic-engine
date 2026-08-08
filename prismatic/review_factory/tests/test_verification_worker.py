@@ -314,47 +314,55 @@ class TestAdversarialImmutableProvenance:
 
         # The receipt's receipt_id should match the recomputed provenance hash exactly
         recomputed = receipt.recompute_provenance_hash(
-            repository=job.repository,
-            policy_version=job.policy_version
+            repository=job.repository, policy_version=job.policy_version
         )
         assert receipt.receipt_id == recomputed
 
     def test_commit_tree_mismatch_gate(self, tmp_path):
         """Commit/Tree Mismatch Gate: Queue a job with mismatched commit and tree SHAs; verification halts immediately without running commands."""
         import subprocess
+
         # Create a real git repository to resolve tree
         repo_dir = tmp_path / "mismatch_repo"
         repo_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Git setup
         subprocess.run(["git", "init"], cwd=str(repo_dir), check=True)
-        subprocess.run(["git", "config", "user.name", "Test"], cwd=str(repo_dir), check=True)
-        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=str(repo_dir), check=True)
-        
+        subprocess.run(
+            ["git", "config", "user.name", "Test"], cwd=str(repo_dir), check=True
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=str(repo_dir),
+            check=True,
+        )
+
         # Create a file and commit it
         a_file = repo_dir / "a.py"
         a_file.write_text("print('hello')", encoding="utf-8")
         subprocess.run(["git", "add", "a.py"], cwd=str(repo_dir), check=True)
-        subprocess.run(["git", "commit", "-m", "initial commit"], cwd=str(repo_dir), check=True)
-        
+        subprocess.run(
+            ["git", "commit", "-m", "initial commit"], cwd=str(repo_dir), check=True
+        )
+
         # Get actual commit SHA
         commit_sha = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             cwd=str(repo_dir),
             capture_output=True,
             text=True,
-            check=True
+            check=True,
         ).stdout.strip()
-        
+
         # Mock tree SHA (mismatched)
         mismatched_tree = "f" * 40
-        
+
         worker = VerificationWorker(repo_path=repo_dir)
-        
+
         # Attempting to materialize or verify should raise ValueError for tree mismatch
         with pytest.raises(ValueError) as exc_info:
             worker._materialize_immutable_archive(commit_sha, mismatched_tree)
-            
+
         assert "tree mismatch" in str(exc_info.value).lower()
 
     def test_branch_name_rejection(self, queue):
@@ -362,9 +370,9 @@ class TestAdversarialImmutableProvenance:
         from prismatic.review_factory.backlog_importer import BacklogImporter
         from unittest.mock import MagicMock
         from prismatic.agy_completed_work import CompletedWorkRow
-        
+
         importer = BacklogImporter(queue=queue)
-        
+
         # Create a mock CompletedWorkRow with short SHA or branch name (which is rejected by the importer)
         row_invalid = MagicMock(spec=CompletedWorkRow)
         row_invalid.id = "agy-cw-invalid-sha"
@@ -378,21 +386,24 @@ class TestAdversarialImmutableProvenance:
             "candidate_commit": "abc1234",  # short SHA
             "base_tree": "0" * 40,
             "candidate_tree": "0" * 40,
-            "changed_files": ["docs/readme.md"]
+            "changed_files": ["docs/readme.md"],
         }
-        
+
         # Mock the store list to return this row
         class MockStore:
             def list(self, limit):
                 return [row_invalid]
-        
-        importer._db_path = None # not querying real DB
+
+        importer._db_path = None  # not querying real DB
         # Monkeypatch the store list
         import unittest.mock as mock
-        with mock.patch("prismatic.review_factory.backlog_importer.AgyCompletedWorkStore") as MockStoreClass:
+
+        with mock.patch(
+            "prismatic.review_factory.backlog_importer.AgyCompletedWorkStore"
+        ) as MockStoreClass:
             MockStoreClass.return_value = MockStore()
             res = importer.import_from_completed_work()
-            
+
         # The importer should skip the ineligible row and log an error
         assert res.skipped_ineligible == 1
         assert res.enqueued == 0
@@ -403,42 +414,62 @@ class TestAdversarialImmutableProvenance:
         import subprocess
         from prismatic.review_factory.models import ReviewJob
         from prismatic.merge_candidate_manifest import MergeCandidateManifest, RiskTier
-        
+
         # Create a real Git repo to be the candidate source
         repo_dir = tmp_path / "immunity_repo"
         repo_dir.mkdir(parents=True, exist_ok=True)
-        
+
         subprocess.run(["git", "init"], cwd=str(repo_dir), check=True)
-        subprocess.run(["git", "config", "user.name", "Test"], cwd=str(repo_dir), check=True)
-        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=str(repo_dir), check=True)
-        
+        subprocess.run(
+            ["git", "config", "user.name", "Test"], cwd=str(repo_dir), check=True
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=str(repo_dir),
+            check=True,
+        )
+
         # Create a simple test file and a source module
         # Inside the committed files, the test passes
         a_module = repo_dir / "prismatic_math.py"
         a_module.write_text("def add(x, y): return x + y", encoding="utf-8")
-        
+
         # Note: We add a comment importing from prismatic.merge_candidate_manifest to satisfy the circular proof check!
         test_file = repo_dir / "test_prismatic_math.py"
         test_file.write_text(
             "import sys\nsys.path.insert(0, '.')\nimport prismatic_math\n"
             "# from prismatic.merge_candidate_manifest import MergeCandidateManifest\n"
             "def test_math(): assert prismatic_math.add(1, 1) == 2\n",
-            encoding="utf-8"
+            encoding="utf-8",
         )
-        
-        subprocess.run(["git", "add", "prismatic_math.py", "test_prismatic_math.py"], cwd=str(repo_dir), check=True)
+
+        subprocess.run(
+            ["git", "add", "prismatic_math.py", "test_prismatic_math.py"],
+            cwd=str(repo_dir),
+            check=True,
+        )
         subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo_dir), check=True)
-        
+
         # Get HEAD commit tree and sha
         commit_sha = subprocess.run(
-            ["git", "rev-parse", "HEAD"], cwd=str(repo_dir), capture_output=True, text=True, check=True
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(repo_dir),
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
         tree_sha = subprocess.run(
-            ["git", "rev-parse", "HEAD^{tree}"], cwd=str(repo_dir), capture_output=True, text=True, check=True
+            ["git", "rev-parse", "HEAD^{tree}"],
+            cwd=str(repo_dir),
+            capture_output=True,
+            text=True,
+            check=True,
         ).stdout.strip()
-        
-        worker = VerificationWorker(repo_path=repo_dir, log_dir=tmp_path / "logs", test_mode=False)
-        
+
+        worker = VerificationWorker(
+            repo_path=repo_dir, log_dir=tmp_path / "logs", test_mode=False
+        )
+
         job = ReviewJob(
             completed_work_id="agy-cw-immunity",
             task_id="GRO-IMMUNITY",
@@ -446,9 +477,9 @@ class TestAdversarialImmutableProvenance:
             base_commit=commit_sha,
             candidate_commit=commit_sha,
             candidate_tree=tree_sha,
-            changed_paths_json=json.dumps(["test_prismatic_math.py"])
+            changed_paths_json=json.dumps(["test_prismatic_math.py"]),
         )
-        
+
         manifest = MergeCandidateManifest.create(
             issue_id="GRO-IMMUNITY",
             task_id="GRO-IMMUNITY",
@@ -464,27 +495,27 @@ class TestAdversarialImmutableProvenance:
             dashboard_change=False,
             required_ci_checks=["rf-v1-verification"],
         )
-        
+
         # 1. Run verification first with unchanged source
         receipt1, _ = worker.verify(job, manifest)
         assert receipt1.exit_codes != "{}"
-        
+
         # 2. Mutate the test file in the source workspace to make it fail
         # This tests worktree mutation immunity!
         test_file.write_text(
             "import sys\nsys.path.insert(0, '.')\nimport prismatic_math\n"
             "# from prismatic.merge_candidate_manifest import MergeCandidateManifest\n"
-            "def test_math(): assert prismatic_math.add(1, 1) == 9999\n", # will fail if executed on this modified source
-            encoding="utf-8"
+            "def test_math(): assert prismatic_math.add(1, 1) == 9999\n",  # will fail if executed on this modified source
+            encoding="utf-8",
         )
-        
+
         # 3. Run verification again. The verification should still pass because it uses the git archive,
         # and the receipt ID and result fields must remain identical!
         receipt2, _ = worker.verify(job, manifest)
-        
+
         assert receipt1.receipt_id == receipt2.receipt_id
         assert receipt1.exit_codes == receipt2.exit_codes
-        
+
         # Verify both receipts exited with 0 for pytest (passed!)
         exits1 = json.loads(receipt1.exit_codes)
         assert exits1.get("focused") == 0

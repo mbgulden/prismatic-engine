@@ -412,6 +412,7 @@ class ReviewQueue:
             producer = None
             try:
                 from prismatic.agy_completed_work import AgyCompletedWorkStore
+
                 store = AgyCompletedWorkStore(db_path=self.db.db_path)
                 completed_work = store.get(j.completed_work_id)
                 producer = completed_work.agent
@@ -473,6 +474,7 @@ class ReviewQueue:
         producer = None
         try:
             from prismatic.agy_completed_work import AgyCompletedWorkStore
+
             store = AgyCompletedWorkStore(db_path=self.db.db_path)
             completed_work = store.get(job.completed_work_id)
             producer = completed_work.agent

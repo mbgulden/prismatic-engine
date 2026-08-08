@@ -267,17 +267,17 @@ class VerificationReceipt:
         cmds = json.loads(self.commands)
         exits = json.loads(self.exit_codes)
         logs = json.loads(self.log_sha256)
-        
+
         sorted_commands = sorted(cmds)
         sorted_exits = sorted(f"{k}:{v}" for k, v in exits.items())
         sorted_logs = sorted(f"{k}:{v}" for k, v in logs.items())
-        
+
         archive_id = self.immutable_archive_id
         if archive_id.startswith("sha256:"):
             archive_sha = archive_id[7:]
         else:
             archive_sha = archive_id
-            
+
         parts = [
             repository,
             self.candidate_commit,

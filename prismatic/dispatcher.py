@@ -851,7 +851,7 @@ def get_label_id(label_name: str, *, team_id: str | None = None) -> str | None:
     automatically.
 
     Args:
-        label_name: Display name of the label (e.g. ``"agent::fred"``).
+        label_name: Display name of the label (e.g. ``"agent:fred"``).
         team_id: Team ID override. Falls back to ``TEAM_ID`` constant.
 
     Returns:
@@ -1017,7 +1017,7 @@ def report_lane_starvation(
     agent_name: str, candidate_count: int, gated_count: int
 ) -> None:
     """Emit a visible no-runnable-work signal for an agent lane."""
-    label = f"agent::{agent_name}"
+    label = f"agent:{agent_name}"
     if candidate_count == 0:
         print(
             f"[dispatcher] 🟡 STARVED {label}: no candidate issues found for this lane"
@@ -1085,8 +1085,8 @@ def transition_label(
 
     Args:
         issue_id: Linear issue UUID.
-        remove_label: Name of the label to remove (e.g. ``"agent::fred"``).
-        add_label: Name of the label to add (e.g. ``"agent::kai"``).
+        remove_label: Name of the label to remove (e.g. ``"agent:fred"``).
+        add_label: Name of the label to add (e.g. ``"agent:kai"``).
         team_id: Team ID for label resolution.
 
     Returns:
@@ -1321,21 +1321,21 @@ AGENT_CONFIG: dict[str, dict[str, Any]] = {
         "executable": AGY_PATH,  # fred is a Hermes/AGY instance
         "mode": "signal",
         "timeout": 300,
-        "next_label": "agent::kai",
+        "next_label": "agent:kai",
         "description": "Hermes orchestrator — first in pipeline",
     },
     "kai": {
         "executable": "kai",
         "mode": "signal",
         "timeout": 600,
-        "next_label": "agent::agy",
+        "next_label": "agent:agy",
         "description": "Active Oahu Tours bot — review & deploy",
     },
     "agy": {
         "executable": AGY_PATH,
         "mode": "launch",
         "timeout": 900,
-        "next_label": "agent::jules",
+        "next_label": "agent:jules",
         "description": "Antigravity CLI — code generation",
     },
     "george": {
@@ -1349,7 +1349,7 @@ AGENT_CONFIG: dict[str, dict[str, Any]] = {
         "executable": JULES_PATH,
         "mode": "launch",
         "timeout": 600,
-        "next_label": "agent::codex",
+        "next_label": "agent:codex",
         "description": "Jules CLI — testing & QA",
     },
     "codex": {
@@ -3530,7 +3530,7 @@ def recover_stalled_agy(
     """Retry stalled AGY tasks, then escalate to another agent.
 
     A stalled AGY task is one where the issue still has an
-    ``agent::agy`` label after ``MAX_CYCLES_BEFORE_RECOVER``
+    ``agent:agy`` label after ``MAX_CYCLES_BEFORE_RECOVER``
     dispatcher cycles with no visible progress.
 
     .. note::
@@ -3560,8 +3560,9 @@ def recover_stalled_agy(
     )
 
     try:
-        # Find issues with agent::agy label that have been seen multiple cycles
-        issues = get_issues_with_label("agent::agy")
+        # Find issues with agent:agy label that have been seen multiple cycles
+        # Linear label format is single colon: agent:<name>
+        issues = get_issues_with_label("agent:agy")
 
         for issue in issues:
             issue_id = issue["id"]
@@ -3606,8 +3607,8 @@ def recover_stalled_agy(
                 # Transition label
                 transition_label(
                     issue_id,
-                    remove_label="agent::agy",
-                    add_label=f"agent::{escalate_to}",
+                    remove_label="agent:agy",
+                    add_label=f"agent:{escalate_to}",
                 )
 
                 # Post escalation comment
@@ -3896,11 +3897,8 @@ def detect_origin_completions(
 
     # 1. Snapshot: record current labels for issues the dispatcher
     #    has seen (builds label history over cycles)
-    agent_labels = [f"agent::{name}" for name in AGENT_CONFIG] + [
-        # Also track single-colon variants (actual Linear label names)
-        f"agent:{name}"
-        for name in AGENT_CONFIG
-    ]
+    #    Linear label format is single colon: agent:<name>
+    agent_labels = [f"agent:{name}" for name in AGENT_CONFIG]
     for label_name in agent_labels:
         try:
             issues = get_issues_with_label(label_name, max_issues=50)
@@ -3944,7 +3942,7 @@ def detect_origin_completions(
         # (b) is NOT the current reviewer (agy) or the terminal (fred)
         origin_agent = None
         for agent_name in AGENT_CONFIG:
-            label = f"agent::{agent_name}"
+            label = f"agent:{agent_name}"
             if label in ("agent:agy", "agent:fred", "agent:done"):
                 continue
             if dedup.had_label(issue_id, label):
@@ -4019,16 +4017,13 @@ def route_dispatch_ready_issues(max_issues: int = 50) -> int:
         return 0
 
     # Snapshot current load by counting active issues per configured lane.
+    # Linear label format is single colon: agent:<name>
     loads: dict[str, int] = {}
     for agent_name in AGENT_CONFIG:
         try:
-            single_colon = len(
+            loads[agent_name] = len(
                 get_issues_with_label(f"agent:{agent_name}", max_issues=100)
             )
-            double_colon = len(
-                get_issues_with_label(f"agent::{agent_name}", max_issues=100)
-            )
-            loads[agent_name] = max(single_colon, double_colon)
         except Exception:
             loads[agent_name] = 0
 
@@ -4090,7 +4085,7 @@ def dispatch_once(
 
     Process flow:
       1. Discover new pipeline issues (``setup_pipeline_issues``).
-      2. For each configured agent, find issues with ``agent::<name>``
+      2. For each configured agent, find issues with ``agent:<name>``
          label that haven't been dispatched this cycle.
       3. Dispatch each issue to its agent's launch function.
       4. Clean up stale AGY processes.
@@ -4259,9 +4254,12 @@ def dispatch_once(
         if not linear_poll_allowed or not agent_scan_due:
             counts["broad_poll_skipped"] = 1
             continue
-        label = f"agent::{agent_name}"
+        label = f"agent:{agent_name}"
         try:
-            issues = get_issues_with_label(label)
+            # max_issues=100 (GRO-4616): older dispatch:ready issues like
+            # GRO-4445 (last updated 2026-08-06) get bumped out of the
+            # team-wide top-20 window if we use the default.
+            issues = get_issues_with_label(label, max_issues=100)
         except LinearBudgetExhaustedError as exc:
             print(
                 f"[dispatcher] Error fetching issues for {label}: Linear budget/circuit open: {exc}"

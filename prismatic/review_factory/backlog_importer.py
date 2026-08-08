@@ -236,9 +236,8 @@ class BacklogImporter:
 
         work_id = f"manifest-{manifest.digest()[:16]}"
 
-        if (
-            not _is_hex_sha(manifest.base_sha)
-            or not _is_hex_sha(manifest.candidate_sha)
+        if not _is_hex_sha(manifest.base_sha) or not _is_hex_sha(
+            manifest.candidate_sha
         ):
             result.skipped_ineligible += 1
             result.errors.append(

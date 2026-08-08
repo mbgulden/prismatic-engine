@@ -2,8 +2,13 @@ import pytest
 from prismatic.review_factory.db import ReviewFactoryDB
 from prismatic.review_factory.queue import ReviewQueue
 from prismatic.review_factory.testing import enqueue_with_defaults
-from prismatic.review_factory.models import ReviewDecision, ReviewVerdict, VerificationReceipt
-from prismatic.agy_completed_work import AgyCompletedWorkStore, CompletedWorkRow
+from prismatic.review_factory.models import (
+    ReviewDecision,
+    ReviewVerdict,
+    VerificationReceipt,
+)
+from prismatic.agy_completed_work import AgyCompletedWorkStore
+
 
 def _make_test_packet(issue: str, agent: str) -> dict:
     """Create a minimal AGY result packet for ingestion."""
@@ -26,6 +31,7 @@ def _make_test_packet(issue: str, agent: str) -> dict:
             "MARKER": "AGY_TASK_RESULT_PACKET_OK",
         },
     }
+
 
 def test_reviewer_cannot_lease_own_job(tmp_path):
     """Enforce reviewer independence: a reviewer cannot lease a job they produced."""

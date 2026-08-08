@@ -260,7 +260,11 @@ class VerificationWorker:
                 cmd_str = f"test-stub-{proof_class}"
             else:
                 if proof_class == "focused":
-                    changed = json.loads(job.changed_paths_json) if job.changed_paths_json else []
+                    changed = (
+                        json.loads(job.changed_paths_json)
+                        if job.changed_paths_json
+                        else []
+                    )
                     test_patterns = []
                     for path in changed:
                         if "/test_" in path or path.startswith("test_"):
@@ -284,18 +288,34 @@ class VerificationWorker:
                     else:
                         cmd_str = "rf-verify-focused"
                 elif proof_class == "canonical":
-                    cmd_str = " ".join([sys.executable, "-m", "pytest", "tests/", "-x", "-q", "--no-header", "-p", "no:cacheprovider"])
+                    cmd_str = " ".join(
+                        [
+                            sys.executable,
+                            "-m",
+                            "pytest",
+                            "tests/",
+                            "-x",
+                            "-q",
+                            "--no-header",
+                            "-p",
+                            "no:cacheprovider",
+                        ]
+                    )
                 elif proof_class == "package":
-                    cmd_str = " ".join([sys.executable, "-m", "py_compile", "prismatic/__init__.py"])
+                    cmd_str = " ".join(
+                        [sys.executable, "-m", "py_compile", "prismatic/__init__.py"]
+                    )
                 else:
                     cmd_str = f"rf-verify-{proof_class}"
 
-            manifest_items.append({
-                "name": proof_class,
-                "proof_class": proof_class,
-                "command": cmd_str,
-                "env": {},
-            })
+            manifest_items.append(
+                {
+                    "name": proof_class,
+                    "proof_class": proof_class,
+                    "command": cmd_str,
+                    "env": {},
+                }
+            )
 
         changed = json.loads(job.changed_paths_json) if job.changed_paths_json else []
         for path in changed:
@@ -304,38 +324,46 @@ class VerificationWorker:
 
             import_contract = INTEGRATION_IMPORT_CONTRACTS.get(path, [])
             if import_contract:
-                manifest_items.append({
-                    "name": f"integration-import:{Path(path).stem}",
-                    "proof_class": "focused",
-                    "command": f"grep '{import_contract[0]}' {path}",
-                    "env": {},
-                })
+                manifest_items.append(
+                    {
+                        "name": f"integration-import:{Path(path).stem}",
+                        "proof_class": "focused",
+                        "command": f"grep '{import_contract[0]}' {path}",
+                        "env": {},
+                    }
+                )
 
             if "/test_" in path or path.startswith("test_"):
-                manifest_items.append({
-                    "name": f"circular-proof:{Path(path).stem}",
-                    "proof_class": "focused",
-                    "command": f"grep PE-surface-import {path}",
-                    "env": {},
-                })
+                manifest_items.append(
+                    {
+                        "name": f"circular-proof:{Path(path).stem}",
+                        "proof_class": "focused",
+                        "command": f"grep PE-surface-import {path}",
+                        "env": {},
+                    }
+                )
             else:
                 test_path = self._derive_test_path(path)
                 if test_path:
-                    manifest_items.append({
-                        "name": f"circular-proof:{Path(test_path).stem}",
-                        "proof_class": "focused",
-                        "command": f"grep PE-surface-import {test_path}",
-                        "env": {},
-                    })
+                    manifest_items.append(
+                        {
+                            "name": f"circular-proof:{Path(test_path).stem}",
+                            "proof_class": "focused",
+                            "command": f"grep PE-surface-import {test_path}",
+                            "env": {},
+                        }
+                    )
 
             callsite_contract = INTEGRATION_CALLSITE_CONTRACTS.get(path, [])
             if callsite_contract:
-                manifest_items.append({
-                    "name": f"callsite:{Path(path).stem}",
-                    "proof_class": "focused",
-                    "command": f"grep '{callsite_contract[0]}' {path}",
-                    "env": {},
-                })
+                manifest_items.append(
+                    {
+                        "name": f"callsite:{Path(path).stem}",
+                        "proof_class": "focused",
+                        "command": f"grep '{callsite_contract[0]}' {path}",
+                        "env": {},
+                    }
+                )
 
         return manifest_items
 
@@ -453,7 +481,9 @@ class VerificationWorker:
             commit=job.candidate_commit,
             tree=job.candidate_tree,
             commands=[r.command for r in results],
-            policy_version=job.policy_version if hasattr(job, "policy_version") else "v1",
+            policy_version=job.policy_version
+            if hasattr(job, "policy_version")
+            else "v1",
             exit_codes=exit_codes_dict,
             archive_sha256=artifact_sha256,
             log_hashes=log_sha_dict,
@@ -745,7 +775,17 @@ class VerificationWorker:
                 passed=False,
             )
 
-        args = [sys.executable, "-m", "pytest", "tests/", "-x", "-q", "--no-header", "-p", "no:cacheprovider"]
+        args = [
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/",
+            "-x",
+            "-q",
+            "--no-header",
+            "-p",
+            "no:cacheprovider",
+        ]
         return self._execute_subproc("canonical", "canonical", args)
 
     def _run_package_check(self) -> CheckResult:
@@ -795,8 +835,16 @@ class VerificationWorker:
             stdout = re.sub(r"in \d+\.\d+s", "in X.XXs", stdout)
             stderr = re.sub(r"in \d+\.\d+s", "in X.XXs", stderr)
             # Normalize randomized pytest cache filenames
-            stdout = re.sub(r"pytest-cache-files-[a-zA-Z0-9_]+", "pytest-cache-files-placeholder", stdout)
-            stderr = re.sub(r"pytest-cache-files-[a-zA-Z0-9_]+", "pytest-cache-files-placeholder", stderr)
+            stdout = re.sub(
+                r"pytest-cache-files-[a-zA-Z0-9_]+",
+                "pytest-cache-files-placeholder",
+                stdout,
+            )
+            stderr = re.sub(
+                r"pytest-cache-files-[a-zA-Z0-9_]+",
+                "pytest-cache-files-placeholder",
+                stderr,
+            )
         except subprocess.TimeoutExpired:
             exit_code = -1
             stdout = ""
