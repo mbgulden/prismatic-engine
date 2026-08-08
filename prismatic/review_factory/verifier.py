@@ -317,11 +317,9 @@ class VerificationWorker:
 
         invariance_proof = self._compute_invariance_proof(list(manifest.changed_paths))
         archive_identity = f"sha256:{artifact_sha256}"
-        receipt_identity = hashlib.sha256(
-            f"{job.review_job_id}\0{archive_identity}".encode()
-        ).hexdigest()
-        receipt = VerificationReceipt(
-            receipt_id=receipt_identity,
+        
+        # Build temp receipt first to compute its content-addressed provenance hash deterministically
+        temp_receipt = VerificationReceipt(
             review_job_id=job.review_job_id,
             candidate_commit=job.candidate_commit,
             candidate_tree=job.candidate_tree,
@@ -335,6 +333,12 @@ class VerificationWorker:
             explicit_non_claims=json.dumps(non_claims),
             baseline_failures=json.dumps(self._compute_baseline_failures(results)),
         )
+        receipt_identity = temp_receipt.recompute_provenance_hash(
+            repository=job.repository,
+            policy_version=job.policy_version
+        )
+        temp_receipt.receipt_id = receipt_identity
+        receipt = temp_receipt
 
         return receipt, updated_manifest
 

@@ -26,15 +26,15 @@ def test_cross_job_receipt_mismatch_rejected(tmp_path):
         queue,
         completed_work_id="cw-job-1",
         task_id="GRO-1",
-        base_commit="base1",
-        candidate_commit="cand1",
+        base_commit="a" * 40,
+        candidate_commit="b" * 40,
     )
     queue.lease_for_verification(worker_id="verifier-1")
 
     # Receipt for job-2 attempt on job-1
     wrong_receipt = VerificationReceipt(
         review_job_id="wrong-job-id",
-        candidate_commit="cand1",
+        candidate_commit="b" * 40,
         classification="pass",
     )
 
@@ -54,8 +54,8 @@ def test_expired_lease_completion_rejected(tmp_path):
         queue,
         completed_work_id="cw-job-expired",
         task_id="GRO-2",
-        base_commit="base2",
-        candidate_commit="cand2",
+        base_commit="a" * 40,
+        candidate_commit="b" * 40,
     )
 
     job = queue.lease_for_verification(worker_id="verifier-1")
@@ -71,7 +71,7 @@ def test_expired_lease_completion_rejected(tmp_path):
 
     receipt = VerificationReceipt(
         review_job_id=job_id,
-        candidate_commit="cand2",
+        candidate_commit="b" * 40,
         classification="pass",
     )
 
@@ -109,14 +109,14 @@ def test_consume_repair_invalidates_stale_evidence(tmp_path):
         queue,
         completed_work_id="cw-job-repair-stale",
         task_id="GRO-STALE",
-        base_commit="base-1",
-        candidate_commit="cand-old",
+        base_commit="a" * 40,
+        candidate_commit="b" * 40,
     )
 
     receipt = VerificationReceipt(
         review_job_id=job_id,
-        candidate_commit="cand-old",
-        candidate_tree="cand-old",
+        candidate_commit="b" * 40,
+        candidate_tree="b" * 40,
         classification="pass",
     )
     db.insert_receipt(receipt)
@@ -124,8 +124,8 @@ def test_consume_repair_invalidates_stale_evidence(tmp_path):
     decision = ReviewDecision(
         review_job_id=job_id,
         reviewer_id="rev-1",
-        candidate_commit="cand-old",
-        candidate_tree="cand-old",
+        candidate_commit="b" * 40,
+        candidate_tree="b" * 40,
         receipt_id=receipt.receipt_id,
         verdict="repair_required",
         idempotency_key="key-old",
@@ -140,12 +140,12 @@ def test_consume_repair_invalidates_stale_evidence(tmp_path):
 
     queue.consume_repair(
         review_job_id=job_id,
-        new_candidate_commit="cand-new",
-        new_candidate_tree="cand-new",
+        new_candidate_commit="c" * 40,
+        new_candidate_tree="c" * 40,
     )
 
     job = db.get_review_job(job_id)
-    assert job.candidate_commit == "cand-new"
+    assert job.candidate_commit == "c" * 40
     assert job.completed_witnesses == 0
 
     receipts = db.get_receipts_for_job(job_id)

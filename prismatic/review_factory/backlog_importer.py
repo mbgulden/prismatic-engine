@@ -227,6 +227,17 @@ class BacklogImporter:
             result.skipped_ineligible += 1
             return
 
+        if (
+            not _is_hex_sha(manifest.base_sha)
+            or not _is_hex_sha(manifest.candidate_sha)
+        ):
+            result.skipped_ineligible += 1
+            result.errors.append(
+                f"Manifest for {manifest.issue_id} missing valid commit SHAs "
+                f"(base_sha='{manifest.base_sha}', candidate_sha='{manifest.candidate_sha}')"
+            )
+            return
+
         work_id = f"manifest-{manifest.digest()[:16]}"
         existing = self.queue.db.get_job_by_completed_work_id(work_id)
         if existing:

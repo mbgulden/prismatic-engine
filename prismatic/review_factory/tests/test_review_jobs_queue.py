@@ -89,8 +89,8 @@ class TestEnqueueCompletedWork:
             queue,
             completed_work_id="agy-cw-tier0",
             task_id="GRO-0001",
-            base_commit="aaaa",
-            candidate_commit="bbbb",
+            base_commit="a" * 40,
+            candidate_commit="b" * 40,
             changed_paths=["docs/readme.md"],
         )
         job = queue.db.get_review_job(job_id)
@@ -101,8 +101,8 @@ class TestEnqueueCompletedWork:
             queue,
             completed_work_id="agy-cw-tier2",
             task_id="GRO-0002",
-            base_commit="aaaa",
-            candidate_commit="cccc",
+            base_commit="a" * 40,
+            candidate_commit="c" * 40,
             changed_paths=["prismatic/auth/oauth.py"],
         )
         job_2 = queue.db.get_review_job(job_id_2)
@@ -174,8 +174,8 @@ class TestStateTransitions:
             queue,
             completed_work_id="agy-cw-repair",
             task_id="GRO-0003",
-            base_commit="aaaa",
-            candidate_commit="bbbb",
+            base_commit="a" * 40,
+            candidate_commit="b" * 40,
             changed_paths=["prismatic/core/router.py"],
         )
 
@@ -183,8 +183,8 @@ class TestStateTransitions:
         _ = queue.lease_for_verification("verifier-1")
         receipt = VerificationReceipt(
             review_job_id=job_id,
-            candidate_commit="bbbb",
-            candidate_tree="bbbb",
+            candidate_commit="b" * 40,
+            candidate_tree="b" * 40,
         )
         queue.complete_verification(job_id, receipt, worker_id="verifier-1")
 
@@ -193,8 +193,8 @@ class TestStateTransitions:
         decision = ReviewDecision(
             review_job_id=job_id,
             reviewer_id="agy-v1.0",
-            candidate_commit="bbbb",
-            candidate_tree="bbbb",
+            candidate_commit="b" * 40,
+            candidate_tree="b" * 40,
             receipt_id=receipt.receipt_id,
             verdict=ReviewVerdict.REPAIR_REQUIRED.value,
             findings=json.dumps(
@@ -213,12 +213,12 @@ class TestStateTransitions:
         assert new_state == ReviewJobState.REPAIR_REQUIRED.value
 
         # Verify repair packet was created
-        packets = queue.db.get_unconsumed_repairs("bbbb")
+        packets = queue.db.get_unconsumed_repairs("b" * 40)
         assert len(packets) == 1
         assert "missing error handling" in packets[0].findings_json
 
         # Consume repair → back to queued
-        assert queue.consume_repair(job_id, "cccc")
+        assert queue.consume_repair(job_id, "c" * 40)
         updated = queue.db.get_review_job(job_id)
         assert updated.state == ReviewJobState.QUEUED.value
 
@@ -234,16 +234,16 @@ class TestLeaseManagement:
                 queue,
                 completed_work_id=f"agy-cw-cap-{i}",
                 task_id=f"GRO-{i}",
-                base_commit="aaaa",
-                candidate_commit=f"bbbb{i}",
+                base_commit="a" * 40,
+                candidate_commit=f"{i}" * 40,
                 changed_paths=["prismatic/core/router.py"],
             )
             # Fast-forward through verification
             job = queue.lease_for_verification(f"verifier-{i}")
             receipt = VerificationReceipt(
                 review_job_id=job.review_job_id,
-                candidate_commit=f"bbbb{i}",
-                candidate_tree=f"bbbb{i}",
+                candidate_commit=f"{i}" * 40,
+                candidate_tree=f"{i}" * 40,
             )
             queue.complete_verification(
                 job.review_job_id, receipt, worker_id=f"verifier-{i}"
@@ -264,8 +264,8 @@ class TestLeaseManagement:
             queue,
             completed_work_id="agy-cw-stale",
             task_id="GRO-STALE",
-            base_commit="aaaa",
-            candidate_commit="bbbb",
+            base_commit="a" * 40,
+            candidate_commit="b" * 40,
             changed_paths=["prismatic/core/router.py"],
         )
 
@@ -298,15 +298,15 @@ class TestQueueStatistics:
             queue,
             completed_work_id="agy-cw-stats-1",
             task_id="GRO-S1",
-            base_commit="aaaa",
-            candidate_commit="bbbb",
+            base_commit="a" * 40,
+            candidate_commit="b" * 40,
         )
         enqueue_with_defaults(
             queue,
             completed_work_id="agy-cw-stats-2",
             task_id="GRO-S2",
-            base_commit="aaaa",
-            candidate_commit="cccc",
+            base_commit="a" * 40,
+            candidate_commit="c" * 40,
         )
 
         stats = queue.queue_depth()

@@ -141,6 +141,8 @@ def test_gateway_agent_governance_status_endpoint_uses_dashboard_inputs(
             )
         ]
     )
+    import prismatic.agent_governance_status as governance_status
+    monkeypatch.setattr(governance_status, "_load_completed_work", lambda limit=100: [])
     monkeypatch.setattr(server, "_run_store", fake_store)
 
     response = TestClient(server.app).get("/api/gateway/agents/governance-status")

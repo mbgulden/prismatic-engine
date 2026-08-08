@@ -37,16 +37,16 @@ def test_double_verdict_idempotent(queue):
         queue,
         completed_work_id="agy-cw-double",
         task_id="GRO-DOUBLE",
-        base_commit="aaaa",
-        candidate_commit="bbbb",
+        base_commit="a" * 40,
+        candidate_commit="b" * 40,
         changed_paths=["prismatic/core/router.py"],
     )
 
     job = queue.lease_for_verification("v1")
     receipt = VerificationReceipt(
         review_job_id=job_id,
-        candidate_commit="bbbb",
-        candidate_tree="bbbb",
+        candidate_commit="b" * 40,
+        candidate_tree="b" * 40,
     )
     queue.complete_verification(job_id, receipt, worker_id="v1")
 
@@ -54,8 +54,8 @@ def test_double_verdict_idempotent(queue):
     decision = ReviewDecision(
         review_job_id=job_id,
         reviewer_id="reviewer-1",
-        candidate_commit="bbbb",
-        candidate_tree="bbbb",
+        candidate_commit="b" * 40,
+        candidate_tree="b" * 40,
         receipt_id=receipt.receipt_id,
         verdict=ReviewVerdict.CLEAN.value,
     )

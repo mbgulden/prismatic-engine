@@ -97,13 +97,15 @@ def _harness_fixture(tmp_path: Path) -> tuple[AGYCLIHarness, dict[str, str]]:
     fake = _write(
         tmp_path / "agy-fake",
         """#!/usr/bin/env python3
-import pathlib, re, sys
+import pathlib, re, sys, os
 args = sys.argv[1:]
 prompt = args[args.index('--print') + 1]
 plan = re.search(r'plan to (.+?)\\. Then execute', prompt).group(1)
 result = re.search(r'final result to (.+?) with marker', prompt).group(1)
 pathlib.Path(plan).write_text('PLAN FIRST\\n')
 pathlib.Path(result).write_text('PRISMATIC_AGY_RESULT_V1\\nPRODUCER ONLY\\n')
+os.chmod(plan, 0o600)
+os.chmod(result, 0o600)
 print('HARNESS_FAKE_DONE')
 """,
         0o500,
