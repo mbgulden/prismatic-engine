@@ -82,20 +82,6 @@ def test_reviewer_cannot_submit_verdict_on_own_job(tmp_path):
     packet = _make_test_packet(issue="GRO-IND-2", agent="agy")
     row = store.ingest(packet)
 
-    with store._connect() as conn:
-        conn.execute(
-            """INSERT INTO agy_completed_work (
-                id, created_at, updated_at, agent, source_branch, source_path, base_branch,
-                classification, eligible_for_merge, requires_clean_rebuild, proof_result, proof_marker,
-                gate_marker, ingestion_marker, packet_json, gate_json, non_claims_json, evidence_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                row.id, row.created_at, row.updated_at, row.agent, row.source_branch, row.source_path, row.base_branch,
-                row.classification, int(row.eligible_for_merge), int(row.requires_clean_rebuild), row.proof_result, row.proof_marker,
-                row.gate_marker, row.ingestion_marker, "{}", "{}", "", "{}"
-            )
-        )
-
     # Enqueue in queue
     job_id = enqueue_with_defaults(
         q,
