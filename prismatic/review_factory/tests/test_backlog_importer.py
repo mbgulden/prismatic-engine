@@ -295,3 +295,79 @@ def test_cli_fails_when_enable_merge_without_merge_repo_path(capsys):
         assert exc_info.value.code == 2
     finally:
         sys.argv = old_argv
+
+
+class TestManifestShaValidation:
+    """Ensure that manifests with invalid SHAs (like branch names or short SHAs) are rejected."""
+
+    def test_import_manifest_rejects_branch_name(self, tmp_path, queue):
+        import json
+        from prismatic.merge_candidate_manifest import MergeCandidateManifest, RiskTier
+
+        manifest_dir = tmp_path / "invalid_manifests"
+        manifest_dir.mkdir(parents=True, exist_ok=True)
+
+        manifest = MergeCandidateManifest.create(
+            issue_id="GRO-SHA-INVALID-1",
+            task_id="GRO-SHA-INVALID-1",
+            task_file_sha256="0" * 64,
+            repository="mbgulden/prismatic-engine",
+            target="main",
+            base_sha="a" * 40,
+            candidate_sha="b" * 40,
+            changed_paths=["prismatic/module.py"],
+            producer="agy",
+            preserved_candidate_location="/tmp/invalid-sha-1",
+            risk_tier=RiskTier.B,
+            dashboard_change=False,
+            required_ci_checks=["build"],
+        )
+        data = json.loads(manifest.canonical_json())
+        data["base_sha"] = "main"  # invalid SHA!
+
+        with open(manifest_dir / "merge_candidate.json", "w") as f:
+            json.dump(data, f)
+
+        importer = BacklogImporter(queue=queue)
+        result = importer.import_from_manifest_dir(manifest_dir)
+
+        assert result.scanned == 1
+        assert result.enqueued == 0
+        assert len(result.errors) == 1
+        assert "must be a lowercase 40-hex commit SHA" in result.errors[0]
+
+    def test_import_manifest_rejects_short_sha(self, tmp_path, queue):
+        import json
+        from prismatic.merge_candidate_manifest import MergeCandidateManifest, RiskTier
+
+        manifest_dir = tmp_path / "invalid_manifests"
+        manifest_dir.mkdir(parents=True, exist_ok=True)
+
+        manifest = MergeCandidateManifest.create(
+            issue_id="GRO-SHA-INVALID-2",
+            task_id="GRO-SHA-INVALID-2",
+            task_file_sha256="0" * 64,
+            repository="mbgulden/prismatic-engine",
+            target="main",
+            base_sha="a" * 40,
+            candidate_sha="b" * 40,
+            changed_paths=["prismatic/module.py"],
+            producer="agy",
+            preserved_candidate_location="/tmp/invalid-sha-2",
+            risk_tier=RiskTier.B,
+            dashboard_change=False,
+            required_ci_checks=["build"],
+        )
+        data = json.loads(manifest.canonical_json())
+        data["candidate_sha"] = "abc1234"  # short SHA!
+
+        with open(manifest_dir / "merge_candidate.json", "w") as f:
+            json.dump(data, f)
+
+        importer = BacklogImporter(queue=queue)
+        result = importer.import_from_manifest_dir(manifest_dir)
+
+        assert result.scanned == 1
+        assert result.enqueued == 0
+        assert len(result.errors) == 1
+        assert "must be a lowercase 40-hex commit SHA" in result.errors[0]

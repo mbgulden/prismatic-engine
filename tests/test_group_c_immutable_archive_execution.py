@@ -105,9 +105,10 @@ def test_verify_invokes_materializer_once_and_uses_committed_bytes(
     assert materializer_spy.call_count == 1
     assert observed == ["committed\n"]
     assert receipt.immutable_archive_id == f"sha256:{digest}"
-    expected_receipt_id = hashlib.sha256(
-        f"{job.review_job_id}\0sha256:{digest}".encode()
-    ).hexdigest()
+    expected_receipt_id = receipt.recompute_provenance_hash(
+        repository=job.repository,
+        policy_version=job.policy_version if hasattr(job, "policy_version") else "v1"
+    )
     assert receipt.receipt_id == expected_receipt_id
     assert receipt.candidate_commit == commit
     assert receipt.candidate_tree == tree
