@@ -88,7 +88,7 @@ class TestJulesHostPathRouting(unittest.TestCase):
                         "labels": [label],
                     }
                 ]
-                if label == "agent::jules"
+                if label == "agent:jules"
                 else []
             )
 
@@ -99,7 +99,7 @@ class TestJulesHostPathRouting(unittest.TestCase):
         self.assertEqual(launches, [])
         self.assertEqual(counts.get("host_path_rerouted"), 1)
         mock_reroute.assert_called_once()
-        dedup.mark_processed.assert_any_call("issue-uuid", "agent::jules", ANY)
+        dedup.mark_processed.assert_any_call("issue-uuid", "agent:jules", ANY)
 
 
 if __name__ == "__main__":

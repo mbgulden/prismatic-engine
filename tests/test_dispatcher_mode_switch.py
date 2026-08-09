@@ -104,10 +104,10 @@ class TestDispatcherModeSwitchIntegration(unittest.TestCase):
         mock_github_provider = mock_github_provider_cls.return_value
         mock_github_provider.has_credentials.return_value = True
 
-        # Simulate issue with agent::agy (dispatch -> execute is major)
-        mock_get_issues.side_effect = lambda label: (
+        # Simulate issue with agent:agy (dispatch -> execute is major)
+        mock_get_issues.side_effect = lambda label, **_kwargs: (
             [{"id": "issue_123", "title": "Test AGY", "identifier": "GRO-123", "labels": [label]}]
-            if label == "agent::agy" else []
+            if label == "agent:agy" else []
         )
 
         # No /approve in comments, no prior pause comment
@@ -147,10 +147,10 @@ class TestDispatcherModeSwitchIntegration(unittest.TestCase):
         mock_github_provider = mock_github_provider_cls.return_value
         mock_github_provider.has_credentials.return_value = True
 
-        # Simulate issue with agent::jules (execute -> review is minor)
-        mock_get_issues.side_effect = lambda label: (
+        # Simulate issue with agent:jules (execute -> review is minor)
+        mock_get_issues.side_effect = lambda label, **_kwargs: (
             [{"id": "issue_456", "title": "Test Jules", "identifier": "GRO-456", "labels": [label]}]
-            if label == "agent::jules" else []
+            if label == "agent:jules" else []
         )
 
         # Run dispatch
@@ -185,10 +185,10 @@ class TestDispatcherModeSwitchIntegration(unittest.TestCase):
         mock_github_provider = mock_github_provider_cls.return_value
         mock_github_provider.has_credentials.return_value = True
 
-        # Simulate issue with agent::agy
-        mock_get_issues.side_effect = lambda label: (
+        # Simulate issue with agent:agy
+        mock_get_issues.side_effect = lambda label, **_kwargs: (
             [{"id": "issue_123", "title": "Test AGY", "identifier": "GRO-123", "labels": [label]}]
-            if label == "agent::agy" else []
+            if label == "agent:agy" else []
         )
 
         counts = dispatcher.dispatch_once(self.mock_dedup, pipelines={"pipelines": {}})
@@ -219,9 +219,9 @@ class TestDispatcherModeSwitchIntegration(unittest.TestCase):
         mock_github_provider = mock_github_provider_cls.return_value
         mock_github_provider.has_credentials.return_value = True
 
-        mock_get_issues.side_effect = lambda label: (
+        mock_get_issues.side_effect = lambda label, **_kwargs: (
             [{"id": "issue_123", "title": "Test AGY", "identifier": "GRO-123", "labels": [label]}]
-            if label == "agent::agy" else []
+            if label == "agent:agy" else []
         )
 
         # /approve is in a comment
@@ -258,7 +258,7 @@ class TestDispatcherModeSwitchIntegration(unittest.TestCase):
 
         # Simulate issue stalled in AGY
         mock_get_issues.return_value = [
-            {"id": "stalled_issue", "title": "Stalled", "identifier": "GRO-100", "labels": ["agent::agy"]}
+            {"id": "stalled_issue", "title": "Stalled", "identifier": "GRO-100", "labels": ["agent:agy"]}
         ]
 
         # No /approve in comments
