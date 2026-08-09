@@ -3751,6 +3751,13 @@ class EventRouterDedup:
         if db_dir and not os.path.exists(db_dir):
             os.makedirs(db_dir, exist_ok=True)
         self._conn = sqlite3.connect(self._db_path)
+        # Row factory so cursor rows support dict-style access (matches
+        # the canonical implementation in prismatic/dedup.py).
+        self._conn.row_factory = sqlite3.Row
+        # Lock for thread-safe dispatch counter access (matches the
+        # canonical implementation in prismatic/dedup.py).
+        import threading as _threading
+        self._lock = _threading.Lock()
         self._init_db()
 
     def _init_db(self) -> None:
@@ -3855,6 +3862,105 @@ class EventRouterDedup:
 
     def close(self) -> None:
         self._conn.close()
+
+    # -- Dispatch cap (GRO-2979 regression prevention) -------------------
+    # Counter that prevents per-issue retry storms. Mirrors the canonical
+    # implementation in prismatic/dedup.py so the dispatcher loop can
+    # throttle when an issue has been re-dispatched too many times in the
+    # configured window without a closure row.
+
+    # Hard cap on dispatches per issue (defends against retry storms;
+    # GRO-2051 re-dispatched 178 times before this existed).
+    MAX_DISPATCH_COUNT_PER_ISSUE = int(
+        os.environ.get("PRISMATIC_MAX_DISPATCH_PER_ISSUE", "20")
+    )
+    # Window for the "stuck in <48h" rule.
+    MAX_DISPATCH_WINDOW_HOURS = int(
+        os.environ.get("PRISMATIC_MAX_DISPATCH_WINDOW_HOURS", "48")
+    )
+
+    def _count_dispatches(self, issue_id: str) -> int:
+        """Return the total recorded dispatch count for *issue_id*."""
+        with self._lock:
+            self._conn.execute(
+                """CREATE TABLE IF NOT EXISTS dispatch_counts (
+                    issue_id TEXT PRIMARY KEY,
+                    count INTEGER NOT NULL DEFAULT 0,
+                    last_dispatched_at REAL,
+                    first_dispatched_at REAL
+                )"""
+            )
+            row = self._conn.execute(
+                "SELECT count FROM dispatch_counts WHERE issue_id = ?",
+                (issue_id,),
+            ).fetchone()
+            return row["count"] if row else 0
+
+    def record_dispatch(self, issue_id: str) -> int:
+        """Bump the dispatch counter for *issue_id*. Returns new count.
+
+        Idempotent against back-to-back calls: every dispatch increments
+        exactly once.
+        """
+        with self._lock:
+            self._conn.execute(
+                """CREATE TABLE IF NOT EXISTS dispatch_counts (
+                    issue_id TEXT PRIMARY KEY,
+                    count INTEGER NOT NULL DEFAULT 0,
+                    last_dispatched_at REAL,
+                    first_dispatched_at REAL
+                )"""
+            )
+            now = time.time()
+            self._conn.execute(
+                """INSERT INTO dispatch_counts (issue_id, count, last_dispatched_at, first_dispatched_at)
+                   VALUES (?, 1, ?, ?)
+                   ON CONFLICT(issue_id) DO UPDATE SET
+                       count = count + 1,
+                       last_dispatched_at = ?""",
+                (issue_id, now, now, now),
+            )
+            self._conn.commit()
+            row = self._conn.execute(
+                "SELECT count FROM dispatch_counts WHERE issue_id = ?",
+                (issue_id,),
+            ).fetchone()
+            return row["count"] if row else 0
+
+    def is_over_dispatch_cap(
+        self, issue_id: str, *, window_hours: int | None = None
+    ) -> bool:
+        """True if *issue_id* has exceeded the dispatch cap inside the window.
+
+        Reads ``dispatch_counts.count`` and ``last_dispatched_at``; returns
+        True when both:
+          (a) count >= ``MAX_DISPATCH_COUNT_PER_ISSUE``, AND
+          (b) last_dispatched_at is within ``window_hours`` (default
+              ``MAX_DISPATCH_WINDOW_HOURS``).
+        """
+        if window_hours is None:
+            window_hours = self.MAX_DISPATCH_WINDOW_HOURS
+        with self._lock:
+            self._conn.execute(
+                """CREATE TABLE IF NOT EXISTS dispatch_counts (
+                    issue_id TEXT PRIMARY KEY,
+                    count INTEGER NOT NULL DEFAULT 0,
+                    last_dispatched_at REAL,
+                    first_dispatched_at REAL
+                )"""
+            )
+            row = self._conn.execute(
+                "SELECT count, last_dispatched_at FROM dispatch_counts WHERE issue_id = ?",
+                (issue_id,),
+            ).fetchone()
+        if not row:
+            return False
+        count = row["count"]
+        last_at = row["last_dispatched_at"] or 0.0
+        if count < self.MAX_DISPATCH_COUNT_PER_ISSUE:
+            return False
+        window_seconds = window_hours * 3600
+        return (time.time() - last_at) <= window_seconds
 
 
 # Re-export for external callers
