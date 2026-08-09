@@ -36,7 +36,7 @@ jobs:
           TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           
           # Construct JSON payload
-          PAYLOAD_JSON=$(jq -n \
+          PAYLOAD_JSON=$(jq -c -n \
             --arg sha "$PR_SHA" \
             --arg title "$COMMIT_MSG" \
             --arg deployer "${{ github.actor }}" \
