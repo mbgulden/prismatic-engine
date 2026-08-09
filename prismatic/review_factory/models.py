@@ -262,6 +262,32 @@ class VerificationReceipt:
     # Timestamp
     created_at: str = field(default_factory=_utcnow_iso)
 
+    def recompute_provenance_hash(self, repository: str, policy_version: str) -> str:
+        """Recompute the content-addressed provenance record from stored evidence."""
+        cmds = json.loads(self.commands)
+        exits = json.loads(self.exit_codes)
+        logs = json.loads(self.log_sha256)
+        sorted_commands = sorted(cmds)
+        sorted_exits = sorted(f"{k}:{v}" for k, v in exits.items())
+        sorted_logs = sorted(f"{k}:{v}" for k, v in logs.items())
+        archive_id = self.immutable_archive_id
+        if archive_id.startswith("sha256:"):
+            archive_sha = archive_id[7:]
+        else:
+            archive_sha = archive_id
+        parts = [
+            repository,
+            self.candidate_commit,
+            self.candidate_tree,
+            ",".join(sorted_commands),
+            policy_version,
+            ",".join(sorted_exits),
+            f"sha256:{archive_sha}",
+            ",".join(sorted_logs),
+        ]
+        raw = "\0".join(parts)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Schema 3: review_decisions (§5.3)
