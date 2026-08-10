@@ -244,14 +244,18 @@ def _normalize_lane_scope(packet: Mapping[str, Any]) -> dict[str, Any]:
         )
         lane = {"name": lane_name}
     changed = _string_list(packet.get("changed_files"))
-    if packet.get("risk_level") == "high" or packet.get("next_action") in {
+    acceptance = _string(packet.get("ACCEPTANCE_DECISION"))
+    if acceptance == "PENDING" or packet.get("risk_level") == "high" or packet.get("next_action") in {
         "needs-human-review",
         "needs-fred-cleanup",
     }:
         lane.setdefault("touched_paths", changed)
         lane.setdefault("allowed_paths", [])
         lane.setdefault(
-            "manual_review_reason", "raw AGY risk/next_action requires manual review"
+            "manual_review_reason",
+            "awaiting_review_factory_decision"
+            if acceptance == "PENDING"
+            else "raw AGY risk/next_action requires manual review"
         )
         return lane
     lane.setdefault("touched_paths", changed)

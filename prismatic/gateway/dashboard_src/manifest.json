@@ -48,6 +48,9 @@
       "path": "tabs/quota.html"
     },
     {
+      "path": "tabs/settings.html"
+    },
+    {
       "path": "shell/03_script_open.html"
     },
     {

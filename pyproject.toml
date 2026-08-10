@@ -61,6 +61,7 @@ prismatic-api = "prismatic.api.server:run"
 
 [tool.setuptools.packages.find]
 include = ["prismatic*"]
+exclude = ["prismatic*.tests*", "*tests*"]
 
 [tool.setuptools.package-data]
 prismatic = [
@@ -72,6 +73,18 @@ prismatic = [
     "gateway/dashboard_src/**/*",
     "gateway/static/**/*",
     "shipped_plugins/**/*",
+]
+
+[tool.setuptools.exclude-package-data]
+prismatic = [
+    "**/__pycache__/*",
+    "**/__pycache__/**/*",
+    "**/tests/*",
+    "**/tests/**/*",
+    "shipped_plugins/**/tests/*",
+    "shipped_plugins/**/tests/**/*",
+    "*.pyc",
+    "*.pyo",
 ]
 
 # ─────────────────────────────────────────────────────────────────────

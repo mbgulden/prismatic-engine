@@ -1006,12 +1006,13 @@ def test_cli_token_authentication(monkeypatch, tmp_path):
     rc = cli_main(["cohort", "add", "GRO-CLI-FILE", "1", "11"])
     assert rc == 0
 
-    # 4. Test authentication fails if token file has open permissions (e.g. 0644)
-    os.chmod(token_file, 0o644)
-    f_err = io.StringIO()
-    with redirect_stderr(f_err), redirect_stdout(io.StringIO()):
-        rc = cli_main(["cohort", "add", "GRO-CLI-FILE-BAD", "1", "12"])
-    assert rc != 0
-    assert (
-        "permissions are too open" in f_err.getvalue() or "Error:" in f_err.getvalue()
-    )
+    # 4. Test authentication fails if token file has open permissions (e.g. 0644) on POSIX
+    if os.name != "nt":
+        os.chmod(token_file, 0o644)
+        f_err = io.StringIO()
+        with redirect_stderr(f_err), redirect_stdout(io.StringIO()):
+            rc = cli_main(["cohort", "add", "GRO-CLI-FILE-BAD", "1", "12"])
+        assert rc != 0
+        assert (
+            "permissions are too open" in f_err.getvalue() or "Error:" in f_err.getvalue()
+        )

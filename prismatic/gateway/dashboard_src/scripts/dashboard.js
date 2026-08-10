@@ -119,23 +119,77 @@
             activeTab = tab;
             
             // Toggle Tab Buttons
-            const tabs = ['dashboard', 'telemetry', 'merge', 'workspaces', 'skills', 'signals', 'pwp', 'plugins', 'crons', 'quota', 'foundation'];
+            const tabs = ['dashboard', 'telemetry', 'merge', 'workspaces', 'skills', 'signals', 'pwp', 'plugins', 'crons', 'quota', 'foundation', 'settings'];
             tabs.forEach(t => {
                 const btn = document.getElementById(`tab-btn-${t}`);
                 const sec = document.getElementById(`section-${t}`);
                 
                 if (t === tab) {
-                    btn.className = "px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-indigo-600/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-600/20";
-                    sec.classList.remove("hidden");
+                    if (btn) btn.className = "px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-indigo-600/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-600/20";
+                    if (sec) sec.classList.remove("hidden");
                 } else {
-                    btn.className = "px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200";
-                    sec.classList.add("hidden");
+                    if (btn) btn.className = "px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200";
+                    if (sec) sec.classList.add("hidden");
                 }
             });
             
             fetchData();
             if (tab === 'crons') {
                 loadNativeCrons();
+            } else if (tab === 'settings') {
+                fetchSettingsData();
+            }
+        }
+
+        async function fetchSettingsData() {
+            try {
+                const res = await fetch("/api/settings/credentials");
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const creds = data.credentials || {};
+                const grid = document.getElementById("settings-credentials-status-grid");
+                if (grid) {
+                    grid.innerHTML = Object.values(creds).map(item => {
+                        const conf = item.configured;
+                        const badgeClass = conf ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/20" : "bg-slate-800 text-slate-500 border-slate-700";
+                        const label = conf ? "CONNECTED" : "NOT CONFIGURED";
+                        return `
+                            <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3 space-y-1">
+                                <div class="flex justify-between items-center">
+                                    <span class="font-bold text-slate-300 font-mono text-[11px]">${item.key}</span>
+                                    <span class="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border ${badgeClass}">${label}</span>
+                                </div>
+                                <div class="text-[11px] font-mono text-slate-400">${item.redacted_value || '—'}</div>
+                                <div class="text-[10px] text-slate-500">Source: ${item.source || 'none'}</div>
+                            </div>
+                        `;
+                    }).join("");
+                }
+            } catch (err) {
+                console.error("Error loading settings data:", err);
+            }
+        }
+
+        async function saveSettingsCredentials() {
+            const keys = ["GOOGLE_SA_JSON", "GA4_ACCOUNT_ID", "GTM_ACCOUNT_ID", "GSC_VERIFICATION_TOKEN", "CLOUDFLARE_API_TOKEN", "VERCEL_TOKEN", "GITHUB_TOKEN", "LINEAR_API_KEY"];
+            const payload = {};
+            keys.forEach(k => {
+                const el = document.getElementById(`setting-${k}`);
+                if (el && el.value.trim()) {
+                    payload[k] = el.value.trim();
+                }
+            });
+            try {
+                const res = await fetch("/api/settings/credentials", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                showToast("Settings & credentials saved successfully!");
+                await fetchSettingsData();
+            } catch (err) {
+                showToast(`Save failed: ${err.message}`, true);
             }
         }
 

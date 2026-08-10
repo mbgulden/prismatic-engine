@@ -11,7 +11,10 @@ locking semantics.
 
 from __future__ import annotations
 
-import fcntl
+try:
+    import fcntl
+except (ImportError, ModuleNotFoundError):
+    fcntl = None
 import json
 import logging
 import os

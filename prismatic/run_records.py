@@ -8,7 +8,10 @@ operations are idempotent and thread-safe via file-level locking.
 
 from __future__ import annotations
 
-import fcntl
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 import json
 import os
 import uuid

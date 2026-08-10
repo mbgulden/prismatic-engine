@@ -147,6 +147,31 @@ def assign_lane(issue_node: dict | None = None, *, explicit: bool = False,
     return "backlog", None
 
 
+def _get_closeout_appendix() -> str:
+    """Load the mandatory AGY closeout contract appendix template."""
+    base_paths = [
+        Path(__file__).resolve().parents[1] / "skills" / "prismatic-agent-closeout-contract" / "templates" / "AGY_TASK_APPENDIX.md",
+        Path(__file__).resolve().parents[2] / ".agents" / "skills" / "prismatic-agent-closeout-contract" / "templates" / "AGY_TASK_APPENDIX.md",
+        Path("/home/ubuntu/work/prismatic-engine-stable/prismatic/skills/prismatic-agent-closeout-contract/templates/AGY_TASK_APPENDIX.md"),
+    ]
+    for p in base_paths:
+        if p.is_file():
+            try:
+                return p.read_text(encoding="utf-8")
+            except Exception:
+                pass
+    return (
+        "\n\n## Mandatory Prismatic Closeout Contract Requirement (v0.2 Standard Spec)\n\n"
+        "Your task output MUST produce two synchronized closeout artifacts upon completion:\n"
+        "1. RESULT.md — Human-readable markdown closeout report.\n"
+        "2. result-packet.json — Strict machine-readable JSON schema packet.\n\n"
+        "Required Fields: agent ('agy'), STATUS, PRODUCER_STATUS, ACCEPTANCE_DECISION ('PENDING'), "
+        "TASK_ID (^GRO-[0-9]+$), ATTEMPT_ID, BASE_HEAD, CANDIDATE_HEAD, CANDIDATE_TREE, CHANGED_PATHS, "
+        "COMMAND, RESULT, LOG, LOG_SHA256, result_artifacts, SCOPE, merge_lane, risk_level, "
+        "AD_HOC_OR_CANONICAL, PROOF_CLASSES, SIDE_EFFECTS, BLOCKERS, NOT_CLAIMING, NEXT_ACTION, MARKER ('AGY_TASK_RESULT_PACKET_OK').\n"
+    )
+
+
 def build_task_content_from_issue(iid: str, issue_node: dict) -> str:
     """Build a rich AGY_TASK.md from a Linear issue node."""
     title = issue_node.get("title", "(no title)")
@@ -182,6 +207,19 @@ def build_task_content_from_issue(iid: str, issue_node: dict) -> str:
         "produce it. The runner will generate it next sprint.\n"
     )
 
+    LEGACY_MIN_ISSUE = 4500
+    issue_num = 999999
+    m = re.search(r"GRO-(\d+)", iid, re.IGNORECASE)
+    if m:
+        try:
+            issue_num = int(m.group(1))
+        except ValueError:
+            pass
+
+    appendix = ""
+    if issue_num >= LEGACY_MIN_ISSUE and "Mandatory Prismatic Closeout Contract Requirement" not in safe_desc:
+        appendix = "\n\n" + _get_closeout_appendix()
+
     return (
         f"WORKDIR: prismatic\n"
         f"ISSUE: {iid}\n"
@@ -193,7 +231,7 @@ def build_task_content_from_issue(iid: str, issue_node: dict) -> str:
         f"DESCRIPTION:\n"
         f"{safe_desc}\n"
         f"{bg_guard}"
-        f"\n"
+        f"{appendix}\n"
         f"MANDATORY FINISH PROTOCOL:\n"
         f"1. Write a complete summary to AGY_TASK.md sibling RESULT.md "
         f"(use Write tool). RESULT.md must include: what you did, files "
@@ -205,6 +243,7 @@ def build_task_content_from_issue(iid: str, issue_node: dict) -> str:
         f"4. If you cannot save RESULT.md, output ERROR: {iid} <reason> "
         f"instead.\n"
     )
+
 
 
 def issue_to_task(issue_node: dict, *, lane_mode: str = "off", active_project: str = "pwp", backlog_age_days: int = 30) -> dict | None:

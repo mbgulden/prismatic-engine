@@ -23,7 +23,7 @@ def _get_token() -> str:
     if os.path.exists(token_file_path):
         stat_info = os.stat(token_file_path)
         # Enforce mode 0600 or stricter (no group/other access)
-        if (stat_info.st_mode & 0o077) != 0:
+        if os.name != "nt" and (stat_info.st_mode & 0o077) != 0:
             raise PermissionError(
                 f"Token file {token_file_path} permissions are too open. Must be mode 0600 or stricter."
             )
