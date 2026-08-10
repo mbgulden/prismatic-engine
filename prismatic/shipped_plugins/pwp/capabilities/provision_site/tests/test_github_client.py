@@ -27,6 +27,7 @@ from __future__ import annotations
 import io
 import http.client
 import json
+import time
 import urllib.error
 from unittest.mock import MagicMock, patch
 
@@ -36,6 +37,7 @@ from plugins.pwp.capabilities.provision_site import auth_loader
 from plugins.pwp.capabilities.provision_site.github_client import (
     GitHubBranch,
     GitHubClient,
+    GitHubCommit,
     GitHubError,
     GitHubRepo,
 )
@@ -86,9 +88,9 @@ def test_from_env_precedence(monkeypatch) -> None:
     """GITHUB_TOKEN wins over GH_TOKEN and GITHUB_PAT."""
     for k in ("GITHUB_TOKEN", "GH_TOKEN", "GITHUB_PAT"):
         monkeypatch.delenv(k, raising=False)
-    monkeypatch.setenv("GH_TOKEN", ('ghp_b_sh' + 'ould_not' + '_be_used'))
-    monkeypatch.setenv("GITHUB_PAT", ('ghp_c_sh' + 'ould_not' + '_be_used'))
-    monkeypatch.setenv("GITHUB_TOKEN", "ghp_a_winner")
+    monkeypatch.setenv("GH_TOKEN", "test_dummy_token_b_should_not_be_used")
+    monkeypatch.setenv("GITHUB_PAT", "test_dummy_token_c_should_not_be_used")
+    monkeypatch.setenv("GITHUB_TOKEN", "test_dummy_token_a_winner")
     c = GitHubClient.from_env()
     assert c.token_source == "GITHUB_TOKEN"
     for k in ("GITHUB_TOKEN", "GH_TOKEN", "GITHUB_PAT"):

@@ -74,7 +74,7 @@ HERMES_HOME = Path(
 
 # Pattern: HERMES_HOME = <root>/.hermes/profiles/<name>
 _PROFILE_ROOT_RE = re.compile(
-    r"/\.hermes/profiles/([^/]+)/?$"
+    r"[/\\]\.hermes[/\\]profiles[/\\]([^/\\]+)[/\\]?$", re.IGNORECASE
 )
 
 
@@ -118,7 +118,7 @@ def _resolve_active_profile() -> str:
     """
     raw = os.environ.get("HERMES_PROFILE", "") or ""
     if raw:
-        if "/" in raw:
+        if "/" in raw or "\\" in raw:
             return Path(raw).name
         return raw
     # If HERMES_HOME was detected at import time as a profile root,

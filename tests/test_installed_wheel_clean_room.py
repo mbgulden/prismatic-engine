@@ -89,21 +89,27 @@ def test_clean_room_installed_wheel_plugin_contract(tmp_path: Path) -> None:
 
     venv_dir = tmp_path / "venv"
     subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], check=True)
-    venv_py = venv_dir / "bin" / "python"
-    venv_pip = venv_dir / "bin" / "pip"
+    bindir = "Scripts" if sys.platform == "win32" else "bin"
+    venv_py = venv_dir / bindir / ("python.exe" if sys.platform == "win32" else "python")
 
-    subprocess.run([str(venv_pip), "install", "--force-reinstall", f"{wheel_path}[all]"], check=True)
+    subprocess.run([str(venv_py), "-m", "pip", "install", f"{wheel_path}[all]"], check=True)
 
     empty_cwd = tmp_path / "empty_cwd"
     empty_cwd.mkdir()
 
-    # Clean environment without PYTHONPATH or PRISMATIC_PLUGINS_DIR
+    # Clean environment without PYTHONPATH, PRISMATIC_PLUGINS_DIR, or auth overrides
     clean_env = {
         k: v
         for k, v in os.environ.items()
-        if k not in {"PYTHONPATH", "PRISMATIC_PLUGINS_DIR"}
+        if k not in {
+            "PYTHONPATH",
+            "PRISMATIC_PLUGINS_DIR",
+            "PRISMATIC_CONTROL_AUTH_FILE",
+            "PRISMATIC_CONTROL_KEY",
+            "PRISMATIC_NO_CONTROL_AUTH",
+        }
     }
-    clean_env["PATH"] = f"{venv_dir / 'bin'}:{clean_env.get('PATH', '')}"
+    clean_env["PATH"] = f"{venv_dir / bindir}{os.pathsep}{clean_env.get('PATH', '')}"
 
     # 1. Shipped plugin catalog includes and validates example-plugin
     cmd_cat = [
@@ -204,6 +210,7 @@ def test_clean_room_installed_wheel_plugin_contract(tmp_path: Path) -> None:
         **clean_env,
         "PRISMATIC_EXPECT_INSTALLED_PREFIX": str(venv_dir),
         "HOME": str(tmp_path / "home"),
+        "PRISMATIC_NO_CONTROL_AUTH": "1",
     }
     public_smoke = subprocess.run(
         [str(venv_py), str(REPO_ROOT / "scripts/public_launch_smoke.py")],

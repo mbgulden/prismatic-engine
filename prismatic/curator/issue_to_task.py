@@ -173,6 +173,31 @@ def assign_lane(
     return "backlog", None
 
 
+def _get_closeout_appendix() -> str:
+    """Load the mandatory AGY closeout contract appendix template."""
+    base_paths = [
+        Path(__file__).resolve().parents[1] / "skills" / "prismatic-agent-closeout-contract" / "templates" / "AGY_TASK_APPENDIX.md",
+        Path(__file__).resolve().parents[2] / ".agents" / "skills" / "prismatic-agent-closeout-contract" / "templates" / "AGY_TASK_APPENDIX.md",
+        Path("/home/ubuntu/work/prismatic-engine-stable/prismatic/skills/prismatic-agent-closeout-contract/templates/AGY_TASK_APPENDIX.md"),
+    ]
+    for p in base_paths:
+        if p.is_file():
+            try:
+                return p.read_text(encoding="utf-8")
+            except Exception:
+                pass
+    return (
+        "\n\n## Mandatory Prismatic Closeout Contract Requirement (v0.2 Standard Spec)\n\n"
+        "Your task output MUST produce two synchronized closeout artifacts upon completion:\n"
+        "1. RESULT.md — Human-readable markdown closeout report.\n"
+        "2. result-packet.json — Strict machine-readable JSON schema packet.\n\n"
+        "Required Fields: agent ('agy'), STATUS, PRODUCER_STATUS, ACCEPTANCE_DECISION ('PENDING'), "
+        "TASK_ID (^GRO-[0-9]+$), ATTEMPT_ID, BASE_HEAD, CANDIDATE_HEAD, CANDIDATE_TREE, CHANGED_PATHS, "
+        "COMMAND, RESULT, LOG, LOG_SHA256, result_artifacts, SCOPE, merge_lane, risk_level, "
+        "AD_HOC_OR_CANONICAL, PROOF_CLASSES, SIDE_EFFECTS, BLOCKERS, NOT_CLAIMING, NEXT_ACTION, MARKER ('AGY_TASK_RESULT_PACKET_OK').\n"
+    )
+
+
 def build_task_content_from_issue(iid: str, issue_node: dict) -> str:
     """Build a rich AGY_TASK.md from a Linear issue node."""
     title = issue_node.get("title", "(no title)")

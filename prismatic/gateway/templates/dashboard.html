@@ -158,6 +158,9 @@
             <button id="tab-btn-quota" onclick="switchTab('quota')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
                 Resources
             </button>
+            <button id="tab-btn-settings" onclick="switchTab('settings')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                Settings
+            </button>
         </div>
     </div>
 
@@ -1805,6 +1808,64 @@
         <span id="toast-text">Toast Message</span>
     </div>
 
+        <!-- SECTION: SETTINGS (Centralized Credentials & External Account Permissions) -->
+        <div id="section-settings" class="space-y-6 hidden">
+            <section class="glass-panel p-5 rounded-2xl border-l-2 border-l-cyan-500/80 shadow-lg shadow-cyan-950/10">
+                <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <h2 class="text-sm font-bold text-slate-200 uppercase tracking-[0.18em]">Centralized External Account Credentials & Permissions</h2>
+                            <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border border-cyan-500/20 bg-cyan-500/10 text-cyan-300">Central Store</span>
+                        </div>
+                        <p class="text-xs text-slate-400">Configure Google Service Accounts, GA4/GTM Account IDs, Cloudflare, Vercel, Stripe, GitHub, and Linear tokens. PWP and Prismatic capabilities fetch credentials directly from this store.</p>
+                    </div>
+                    <button onclick="saveSettingsCredentials()" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider bg-cyan-600 hover:bg-cyan-500 text-white transition-all shadow-md shadow-cyan-500/20 flex items-center gap-2">
+                        <span>Save Credentials</span>
+                    </button>
+                </div>
+                <div id="settings-credentials-status-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-6 text-xs">
+                    <!-- Rendered dynamically -->
+                </div>
+            </section>
+
+            <section class="glass-panel p-5 rounded-2xl space-y-4">
+                <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300 border-b border-slate-800 pb-2">Credential Configuration Form</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                    <div>
+                        <label class="block text-slate-400 font-bold uppercase text-[10px] mb-1">Google Service Account JSON Path (GOOGLE_SA_JSON)</label>
+                        <input id="setting-GOOGLE_SA_JSON" type="text" placeholder="/path/to/service-account.json" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 font-mono text-xs focus:outline-none focus:border-indigo-500" />
+                    </div>
+                    <div>
+                        <label class="block text-slate-400 font-bold uppercase text-[10px] mb-1">Google GA4 Account ID (GA4_ACCOUNT_ID)</label>
+                        <input id="setting-GA4_ACCOUNT_ID" type="text" placeholder="123456789" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 font-mono text-xs focus:outline-none focus:border-indigo-500" />
+                    </div>
+                    <div>
+                        <label class="block text-slate-400 font-bold uppercase text-[10px] mb-1">Google GTM Account ID (GTM_ACCOUNT_ID)</label>
+                        <input id="setting-GTM_ACCOUNT_ID" type="text" placeholder="987654321" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 font-mono text-xs focus:outline-none focus:border-indigo-500" />
+                    </div>
+                    <div>
+                        <label class="block text-slate-400 font-bold uppercase text-[10px] mb-1">GSC Verification Token (GSC_VERIFICATION_TOKEN)</label>
+                        <input id="setting-GSC_VERIFICATION_TOKEN" type="text" placeholder="google-site-verification=..." class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 font-mono text-xs focus:outline-none focus:border-indigo-500" />
+                    </div>
+                    <div>
+                        <label class="block text-slate-400 font-bold uppercase text-[10px] mb-1">Cloudflare API Token (CLOUDFLARE_API_TOKEN)</label>
+                        <input id="setting-CLOUDFLARE_API_TOKEN" type="password" placeholder="••••••••••••••••" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 font-mono text-xs focus:outline-none focus:border-indigo-500" />
+                    </div>
+                    <div>
+                        <label class="block text-slate-400 font-bold uppercase text-[10px] mb-1">Vercel API Token (VERCEL_TOKEN)</label>
+                        <input id="setting-VERCEL_TOKEN" type="password" placeholder="••••••••••••••••" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 font-mono text-xs focus:outline-none focus:border-indigo-500" />
+                    </div>
+                    <div>
+                        <label class="block text-slate-400 font-bold uppercase text-[10px] mb-1">GitHub API Token (GITHUB_TOKEN)</label>
+                        <input id="setting-GITHUB_TOKEN" type="password" placeholder="ghp_••••••••••••••••" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 font-mono text-xs focus:outline-none focus:border-indigo-500" />
+                    </div>
+                    <div>
+                        <label class="block text-slate-400 font-bold uppercase text-[10px] mb-1">Linear API Key (LINEAR_API_KEY)</label>
+                        <input id="setting-LINEAR_API_KEY" type="password" placeholder="lin_api_••••••••••••••••" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-slate-200 font-mono text-xs focus:outline-none focus:border-indigo-500" />
+                    </div>
+                </div>
+            </section>
+        </div>
     <script>
         const API_PREFIX = "/api/gateway";
         let activeTab = 'dashboard';
@@ -1928,23 +1989,77 @@
             activeTab = tab;
             
             // Toggle Tab Buttons
-            const tabs = ['dashboard', 'telemetry', 'merge', 'review-factory', 'workspaces', 'skills', 'signals', 'pwp', 'plugins', 'crons', 'quota', 'foundation'];
+            const tabs = ['dashboard', 'telemetry', 'merge', 'review-factory', 'workspaces', 'skills', 'signals', 'pwp', 'plugins', 'crons', 'quota', 'foundation', 'settings'];
             tabs.forEach(t => {
                 const btn = document.getElementById(`tab-btn-${t}`);
                 const sec = document.getElementById(`section-${t}`);
                 
                 if (t === tab) {
-                    btn.className = "px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-indigo-600/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-600/20";
-                    sec.classList.remove("hidden");
+                    if (btn) btn.className = "px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-indigo-600/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-600/20";
+                    if (sec) sec.classList.remove("hidden");
                 } else {
-                    btn.className = "px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200";
-                    sec.classList.add("hidden");
+                    if (btn) btn.className = "px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200";
+                    if (sec) sec.classList.add("hidden");
                 }
             });
             
             fetchData();
             if (tab === 'crons') {
                 loadNativeCrons();
+            } else if (tab === 'settings') {
+                fetchSettingsData();
+            }
+        }
+
+        async function fetchSettingsData() {
+            try {
+                const res = await fetch("/api/settings/credentials");
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const data = await res.json();
+                const creds = data.credentials || {};
+                const grid = document.getElementById("settings-credentials-status-grid");
+                if (grid) {
+                    grid.innerHTML = Object.values(creds).map(item => {
+                        const conf = item.configured;
+                        const badgeClass = conf ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/20" : "bg-slate-800 text-slate-500 border-slate-700";
+                        const label = conf ? "CONNECTED" : "NOT CONFIGURED";
+                        return `
+                            <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3 space-y-1">
+                                <div class="flex justify-between items-center">
+                                    <span class="font-bold text-slate-300 font-mono text-[11px]">${item.key}</span>
+                                    <span class="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border ${badgeClass}">${label}</span>
+                                </div>
+                                <div class="text-[11px] font-mono text-slate-400">${item.redacted_value || '—'}</div>
+                                <div class="text-[10px] text-slate-500">Source: ${item.source || 'none'}</div>
+                            </div>
+                        `;
+                    }).join("");
+                }
+            } catch (err) {
+                console.error("Error loading settings data:", err);
+            }
+        }
+
+        async function saveSettingsCredentials() {
+            const keys = ["GOOGLE_SA_JSON", "GA4_ACCOUNT_ID", "GTM_ACCOUNT_ID", "GSC_VERIFICATION_TOKEN", "CLOUDFLARE_API_TOKEN", "VERCEL_TOKEN", "GITHUB_TOKEN", "LINEAR_API_KEY"];
+            const payload = {};
+            keys.forEach(k => {
+                const el = document.getElementById(`setting-${k}`);
+                if (el && el.value.trim()) {
+                    payload[k] = el.value.trim();
+                }
+            });
+            try {
+                const res = await fetch("/api/settings/credentials", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                showToast("Settings & credentials saved successfully!");
+                await fetchSettingsData();
+            } catch (err) {
+                showToast(`Save failed: ${err.message}`, true);
             }
             if (tab === 'review-factory') {
                 loadReviewFactory();

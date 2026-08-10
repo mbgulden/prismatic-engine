@@ -307,8 +307,9 @@ def test_register_secret_sets_file_mode_0600(tmp_path: Path, monkeypatch) -> Non
 
     path = auth_loader.register_secret("vercel_token", value="v_test_xxx")
     mode = path.stat().st_mode
-    # 0o600 = owner rw, group 0, other 0
-    assert stat.S_IMODE(mode) == 0o600
+    # 0o600 = owner rw, group 0, other 0 (POSIX platforms)
+    if os.name != "nt":
+        assert stat.S_IMODE(mode) == 0o600
 
 
 # --- list_known ----------------------------------------------------------
@@ -369,9 +370,9 @@ def test_resolve_profiles_dir_no_false_positive() -> None:
 def test_auth_result_repr_does_not_leak_value(monkeypatch) -> None:
     """__repr__ and __str__ must never include the raw secret value,
     even though the dataclass field is named `value`."""
-    monkeypatch.setenv("GITHUB_TOKEN", ('ghp_supe' + 'rsecret_' + 'xxxxxxxx' + 'xxxxxxxx' + 'xxxxxxxx' + 'xx'))
+    monkeypatch.setenv("GITHUB_TOKEN", "test_dummy_token_val_xxxxxxxxxxxxxxxxxxxxxxxxxx")
     r = auth_loader.get_secret("github_token")
-    secret = ('ghp_supe' + 'rsecret_' + 'xxxxxxxx' + 'xxxxxxxx' + 'xxxxxxxx' + 'xx')
+    secret = "test_dummy_token_val_xxxxxxxxxxxxxxxxxxxxxxxxxx"
     # repr/str are safe
     assert secret not in repr(r)
     assert secret not in str(r)

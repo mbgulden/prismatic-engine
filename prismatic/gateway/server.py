@@ -18,6 +18,7 @@ Integration:
 from __future__ import annotations
 
 import argparse
+from contextlib import asynccontextmanager
 import hashlib
 import hmac as _hmac
 import html
@@ -290,6 +291,42 @@ def _prune_terminal_linear_pending(
     return active, pruned, retained
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifecycle manager for EventBus, IPC bridge, WebSocket broadcaster, and store."""
+    global _started_at, _run_store, _ipc_listener
+
+    _started_at = time.time()
+
+    # Initialize EventBus (ensure singleton)
+    get_event_bus()
+
+    # Start IPC bridge Unix socket listener
+    _ipc_listener = UnixSocketListener()
+    await _ipc_listener.start()
+
+    # Start WebSocket broadcaster (daemon thread with its own event loop)
+    start_ws_broadcaster()
+
+    # Initialize run records store
+    state_dir = os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state/")
+    store_path = os.path.join(state_dir, "run_records.json")
+    _run_store = AgentRunRecordStore(store_path)
+
+    logger.info(
+        "Gateway started at %s, store=%s, ipc=%s",
+        time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        store_path,
+        _ipc_listener.socket_path,
+    )
+    yield
+    if _ipc_listener:
+        await _ipc_listener.stop()
+        _ipc_listener = None
+
+    stop_ws_broadcaster()
+
+
 # ── FastAPI Application ──────────────────────────────────────────────
 
 
@@ -298,6 +335,7 @@ app = FastAPI(
     description="HTTP/gRPC gateway for the Prismatic Engine orchestration hub",
     version="0.1.0",
     openapi_url=None,  # Disable OpenAPI schema generation — internal gateway
+    lifespan=lifespan,
 )
 
 # One fail-closed boundary covers all current and future HTTP mutation routes.
@@ -393,57 +431,7 @@ _ipc_listener: UnixSocketListener | None = None
 _ws_clients: set[WebSocket] = set()
 
 
-# ── Lifecycle Events ──────────────────────────────────────────────
-
-
-@app.on_event("startup")
-async def startup() -> None:
-    """Initialize EventBus, IPC bridge, WebSocket broadcaster, and store."""
-    global _started_at, _run_store, _ipc_listener
-
-    _started_at = time.time()
-    _server_started_at = _started_at
-
-    # Initialize EventBus (ensure singleton)
-    get_event_bus()
-
-    # Start IPC bridge Unix socket listener
-    _ipc_listener = UnixSocketListener()
-    await _ipc_listener.start()
-
-    # Start WebSocket broadcaster (daemon thread with its own event loop)
-    start_ws_broadcaster()
-
-    # Initialize run records store
-    state_dir = os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state/")
-    store_path = os.path.join(state_dir, "run_records.json")
-    _run_store = AgentRunRecordStore(store_path)
-
-    logger.info(
-        "Gateway started at %s, store=%s, ipc=%s",
-        time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        store_path,
-        _ipc_listener.socket_path,
-    )
-    # NOTE: dispatch consumer is now managed by systemd unit
-    # `prismatic-consumer.service` (see Phase D SPOF-2 fix). Do not spawn
-    # the in-process consumer here — it's dead-on-arrival because the
-    # EventBus singleton is per-process and the subprocess can't see
-    # events published by this gateway process.
-
-
-@app.on_event("shutdown")
-async def shutdown() -> None:
-    """Stop the IPC bridge listener on gateway shutdown."""
-    global _ipc_listener
-
-    if _ipc_listener:
-        await _ipc_listener.stop()
-        _ipc_listener = None
-
-    stop_ws_broadcaster()
-
-    logger.info("Gateway shutdown complete")
+# ── Lifecycle Events managed via FastAPI lifespan context manager ──
 
 
 # ── Agent Dashboard API ─────────────────────────────────────────────
