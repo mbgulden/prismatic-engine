@@ -4525,14 +4525,21 @@ async def serve_governance_index() -> HTMLResponse:
 
 
 @app.get("/dashboard", response_class=HTMLResponse)
-async def serve_governance_dashboard() -> HTMLResponse:
-    """Serve the canonical Prismatic governance/control-plane dashboard."""
-    return _serve_governance_dashboard_html()
-
-
+@app.get("/settings", response_class=HTMLResponse)
+@app.get("/workspaces", response_class=HTMLResponse)
+@app.get("/tasks", response_class=HTMLResponse)
+@app.get("/telemetry", response_class=HTMLResponse)
+@app.get("/merge", response_class=HTMLResponse)
+@app.get("/foundation", response_class=HTMLResponse)
+@app.get("/skills", response_class=HTMLResponse)
+@app.get("/signals", response_class=HTMLResponse)
+@app.get("/crons", response_class=HTMLResponse)
+@app.get("/pwp", response_class=HTMLResponse)
+@app.get("/plugins", response_class=HTMLResponse)
+@app.get("/quota", response_class=HTMLResponse)
 @app.get("/tab/{tab_name}", response_class=HTMLResponse)
-async def serve_governance_tab(tab_name: str) -> HTMLResponse:
-    """Serve the canonical dashboard UI for deep tab URLs (e.g. /tab/settings)."""
+async def serve_governance_tab(tab_name: str | None = None) -> HTMLResponse:
+    """Serve the canonical dashboard UI for clean top-level tab routes."""
     return _serve_governance_dashboard_html()
 
 

@@ -120,49 +120,75 @@
     </header>
 
     <!-- Navigation Tabs Bar -->
-    <div class="border-b border-slate-800/80 bg-slate-950/20 py-2.5 overflow-x-hidden max-w-full" data-proof-marker="dashboard-tabs-mobile-wrap">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 flex flex-wrap gap-2 min-w-0">
-            <button id="tab-btn-dashboard" onclick="switchTab('dashboard')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-indigo-600/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-600/20">
-                Dashboard
-            </button>
-            <button id="tab-btn-telemetry" data-proof-marker="ingestion" onclick="switchTab('telemetry')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
-                Ingestion Queue
-            </button>
-            <button id="tab-btn-merge" onclick="switchTab('merge')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
-                Merge Pipeline
-            </button>
-            <button id="tab-btn-review-factory" onclick="switchTab('review-factory')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
-                Review Factory
-            </button>
-            <button id="tab-btn-foundation" onclick="switchTab('foundation')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
-                Foundation
-            </button>
-            <button id="tab-btn-workspaces" onclick="switchTab('workspaces')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
-                Workspaces
-            </button>
-            <button id="tab-btn-skills" onclick="switchTab('skills')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
-                Skills
-            </button>
-            <button id="tab-btn-signals" onclick="switchTab('signals')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
-                Signals
-            </button>
-            <button id="tab-btn-crons" onclick="switchTab('crons')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
-                Native Crons
-            </button>
-            <button id="tab-btn-pwp" onclick="switchTab('pwp')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
-                PWP Plugin
-            </button>
-            <button id="tab-btn-plugins" onclick="switchTab('plugins')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
-                Plugins
-            </button>
-            <button id="tab-btn-quota" onclick="switchTab('quota')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
-                Resources
-            </button>
-            <button id="tab-btn-settings" onclick="switchTab('settings')" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
-                Settings
-            </button>
-        </div>
-    </div>
+    <nav class="border-b border-slate-800/80 bg-slate-950/20 py-2.5 overflow-x-hidden max-w-full" data-proof-marker="dashboard-tabs-mobile-wrap" aria-label="Main Navigation">
+        <ul class="max-w-7xl mx-auto px-4 sm:px-6 flex flex-wrap gap-2 min-w-0 list-none m-0 p-0">
+            <li>
+                <a id="tab-btn-dashboard" href="/" onclick="switchTab('dashboard', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-indigo-600/10 text-indigo-400 border-indigo-500/20 hover:bg-indigo-600/20">
+                    Dashboard
+                </a>
+            </li>
+            <li>
+                <a id="tab-btn-telemetry" href="/telemetry" data-proof-marker="ingestion" onclick="switchTab('telemetry', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                    Ingestion Queue
+                </a>
+            </li>
+            <li>
+                <a id="tab-btn-merge" href="/merge" onclick="switchTab('merge', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                    Merge Pipeline
+                </a>
+            </li>
+            <li>
+                <a id="tab-btn-review-factory" href="/review-factory" onclick="switchTab('review-factory', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                    Review Factory
+                </a>
+            </li>
+            <li>
+                <a id="tab-btn-foundation" href="/foundation" onclick="switchTab('foundation', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                    Foundation
+                </a>
+            </li>
+            <li>
+                <a id="tab-btn-workspaces" href="/workspaces" onclick="switchTab('workspaces', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                    Workspaces
+                </a>
+            </li>
+            <li>
+                <a id="tab-btn-skills" href="/skills" onclick="switchTab('skills', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                    Skills
+                </a>
+            </li>
+            <li>
+                <a id="tab-btn-signals" href="/signals" onclick="switchTab('signals', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                    Signals
+                </a>
+            </li>
+            <li>
+                <a id="tab-btn-crons" href="/crons" onclick="switchTab('crons', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                    Native Crons
+                </a>
+            </li>
+            <li>
+                <a id="tab-btn-pwp" href="/pwp" onclick="switchTab('pwp', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                    PWP Plugin
+                </a>
+            </li>
+            <li>
+                <a id="tab-btn-plugins" href="/plugins" onclick="switchTab('plugins', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                    Plugins
+                </a>
+            </li>
+            <li>
+                <a id="tab-btn-quota" href="/quota" onclick="switchTab('quota', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                    Resources
+                </a>
+            </li>
+            <li>
+                <a id="tab-btn-settings" href="/settings" onclick="switchTab('settings', event)" class="inline-block px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider border transition-all duration-200 bg-transparent text-slate-400 border-transparent hover:bg-slate-800/50 hover:text-slate-200">
+                    Settings
+                </a>
+            </li>
+        </ul>
+    </nav>
 
     <!-- Main Container -->
     <main class="flex-grow p-4 sm:p-6 max-w-7xl w-full mx-auto space-y-6">
@@ -2003,9 +2029,19 @@
         }
 
         // Tab Switching
-        function switchTab(tab) {
+        function switchTab(tab, event = null, updateHistory = true) {
+            if (event && event.preventDefault) {
+                event.preventDefault();
+            }
             activeTab = tab;
             
+            if (updateHistory && window.history && window.history.pushState) {
+                const targetPath = tab === "dashboard" ? "/" : `/${tab}`;
+                if (window.location.pathname !== targetPath) {
+                    window.history.pushState({ tab }, "", targetPath);
+                }
+            }
+
             // Toggle Tab Buttons
             const tabs = ['dashboard', 'telemetry', 'merge', 'review-factory', 'workspaces', 'skills', 'signals', 'pwp', 'plugins', 'crons', 'quota', 'foundation', 'settings'];
             tabs.forEach(t => {
@@ -5061,18 +5097,14 @@
         function dashboardTabFromURL() {
             const requestedHash = window.location.hash.replace(/^#/, "");
             if (dashboardTabIds.has(requestedHash)) return requestedHash;
-            const pathMatch = window.location.pathname.match(/\/tab\/([a-z-]+)/);
-            if (pathMatch && dashboardTabIds.has(pathMatch[1])) return pathMatch[1];
+            const path = window.location.pathname.replace(/^\//, "").replace(/^tab\//, "");
+            if (dashboardTabIds.has(path)) return path;
             return null;
         }
 
-        window.addEventListener("hashchange", () => {
-            const requestedTab = dashboardTabFromURL();
-            if (requestedTab) {
-                switchTab(requestedTab);
-            } else if (!window.location.hash) {
-                switchTab("dashboard");
-            }
+        window.addEventListener("popstate", (e) => {
+            const tab = (e.state && e.state.tab) || dashboardTabFromURL() || "dashboard";
+            switchTab(tab, null, false);
         });
 
         document.addEventListener("DOMContentLoaded", () => {

@@ -116,9 +116,19 @@
         }
 
         // Tab Switching
-        function switchTab(tab) {
+        function switchTab(tab, event = null, updateHistory = true) {
+            if (event && event.preventDefault) {
+                event.preventDefault();
+            }
             activeTab = tab;
             
+            if (updateHistory && window.history && window.history.pushState) {
+                const targetPath = tab === "dashboard" ? "/" : `/${tab}`;
+                if (window.location.pathname !== targetPath) {
+                    window.history.pushState({ tab }, "", targetPath);
+                }
+            }
+
             // Toggle Tab Buttons
             const tabs = ['dashboard', 'telemetry', 'merge', 'review-factory', 'workspaces', 'skills', 'signals', 'pwp', 'plugins', 'crons', 'quota', 'foundation', 'settings'];
             tabs.forEach(t => {
@@ -3174,18 +3184,14 @@
         function dashboardTabFromURL() {
             const requestedHash = window.location.hash.replace(/^#/, "");
             if (dashboardTabIds.has(requestedHash)) return requestedHash;
-            const pathMatch = window.location.pathname.match(/\/tab\/([a-z-]+)/);
-            if (pathMatch && dashboardTabIds.has(pathMatch[1])) return pathMatch[1];
+            const path = window.location.pathname.replace(/^\//, "").replace(/^tab\//, "");
+            if (dashboardTabIds.has(path)) return path;
             return null;
         }
 
-        window.addEventListener("hashchange", () => {
-            const requestedTab = dashboardTabFromURL();
-            if (requestedTab) {
-                switchTab(requestedTab);
-            } else if (!window.location.hash) {
-                switchTab("dashboard");
-            }
+        window.addEventListener("popstate", (e) => {
+            const tab = (e.state && e.state.tab) || dashboardTabFromURL() || "dashboard";
+            switchTab(tab, null, false);
         });
 
         document.addEventListener("DOMContentLoaded", () => {
