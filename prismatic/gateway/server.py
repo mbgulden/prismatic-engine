@@ -4530,6 +4530,12 @@ async def serve_governance_dashboard() -> HTMLResponse:
     return _serve_governance_dashboard_html()
 
 
+@app.get("/tab/{tab_name}", response_class=HTMLResponse)
+async def serve_governance_tab(tab_name: str) -> HTMLResponse:
+    """Serve the canonical dashboard UI for deep tab URLs (e.g. /tab/settings)."""
+    return _serve_governance_dashboard_html()
+
+
 @app.get("/api/workspaces")
 async def workspace_tree_workspaces() -> dict[str, Any]:
     try:

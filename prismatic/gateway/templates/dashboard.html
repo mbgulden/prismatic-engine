@@ -5037,16 +5037,19 @@
 
         const dashboardTabIds = new Set([
             "dashboard", "telemetry", "merge", "review-factory", "workspaces",
-            "skills", "signals", "pwp", "plugins", "crons", "quota", "foundation",
+            "skills", "signals", "pwp", "plugins", "crons", "quota", "foundation", "settings",
         ]);
 
-        function dashboardTabFromHash() {
-            const requested = window.location.hash.replace(/^#/, "");
-            return dashboardTabIds.has(requested) ? requested : null;
+        function dashboardTabFromURL() {
+            const requestedHash = window.location.hash.replace(/^#/, "");
+            if (dashboardTabIds.has(requestedHash)) return requestedHash;
+            const pathMatch = window.location.pathname.match(/\/tab\/([a-z-]+)/);
+            if (pathMatch && dashboardTabIds.has(pathMatch[1])) return pathMatch[1];
+            return null;
         }
 
         window.addEventListener("hashchange", () => {
-            const requestedTab = dashboardTabFromHash();
+            const requestedTab = dashboardTabFromURL();
             if (requestedTab) {
                 switchTab(requestedTab);
             } else if (!window.location.hash) {
@@ -5064,7 +5067,7 @@
             );
             const initialTab = workspaceDeepLink
                 ? "workspaces"
-                : (dashboardTabFromHash() || "dashboard");
+                : (dashboardTabFromURL() || "dashboard");
             if (initialTab !== "dashboard") {
                 switchTab(initialTab);
             } else {
