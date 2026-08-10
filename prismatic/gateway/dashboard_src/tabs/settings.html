@@ -1,0 +1,76 @@
+<section id="section-settings" class="space-y-6 hidden">
+    <div class="flex flex-wrap items-center justify-between gap-4">
+        <div>
+            <h2 class="text-xl font-bold bg-gradient-to-r from-cyan-400 to-indigo-400 bg-clip-text text-transparent">Central Credentials & System Settings</h2>
+            <p class="text-xs text-slate-400 mt-1">Manage global API keys, tokens, and service credentials securely.</p>
+        </div>
+        <div class="flex items-center space-x-3">
+            <button onclick="saveSettingsCredentials()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold uppercase tracking-wider transition-all duration-200 shadow-lg shadow-indigo-600/20">
+                Save Changes
+            </button>
+        </div>
+    </div>
+
+    <!-- Active Credential Status Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4" id="settings-credentials-grid">
+        <div class="bg-slate-900/60 border border-slate-800 rounded-xl p-4 animate-pulse">
+            <div class="h-4 bg-slate-800 rounded w-1/2 mb-2"></div>
+            <div class="h-3 bg-slate-800/60 rounded w-3/4"></div>
+        </div>
+    </div>
+
+    <!-- Edit Credentials Form -->
+    <div class="bg-slate-900/60 border border-slate-800 rounded-xl p-6 space-y-6">
+        <h3 class="text-sm font-bold uppercase tracking-wider text-slate-300 border-b border-slate-800 pb-3">Service Credentials Editor</h3>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- Google Service Account JSON -->
+            <div class="space-y-2 md:col-span-2">
+                <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">Google SA JSON Key (GA4 / GTM / GSC)</label>
+                <textarea id="setting-GOOGLE_SA_JSON" rows="4" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder='{"type": "service_account", "project_id": "...", ...}'></textarea>
+            </div>
+
+            <!-- GA4 Property ID -->
+            <div class="space-y-2">
+                <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">GA4 Account / Property ID</label>
+                <input id="setting-GA4_ACCOUNT_ID" type="text" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="properties/123456789">
+            </div>
+
+            <!-- GTM Container ID -->
+            <div class="space-y-2">
+                <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">GTM Account / Container ID</label>
+                <input id="setting-GTM_ACCOUNT_ID" type="text" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="accounts/123/containers/456">
+            </div>
+
+            <!-- GSC Verification Token -->
+            <div class="space-y-2">
+                <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">GSC Verification Token</label>
+                <input id="setting-GSC_VERIFICATION_TOKEN" type="text" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="google-site-verification=...">
+            </div>
+
+            <!-- Cloudflare API Token -->
+            <div class="space-y-2">
+                <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">Cloudflare API Token</label>
+                <input id="setting-CLOUDFLARE_API_TOKEN" type="password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="••••••••••••••••••••••••">
+            </div>
+
+            <!-- Vercel Token -->
+            <div class="space-y-2">
+                <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">Vercel API Token</label>
+                <input id="setting-VERCEL_TOKEN" type="password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="••••••••••••••••••••••••">
+            </div>
+
+            <!-- GitHub Token -->
+            <div class="space-y-2">
+                <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">GitHub Personal Access Token</label>
+                <input id="setting-GITHUB_TOKEN" type="password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="ghp_••••••••••••••••••••">
+            </div>
+
+            <!-- Linear API Key -->
+            <div class="space-y-2">
+                <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">Linear API Key</label>
+                <input id="setting-LINEAR_API_KEY" type="password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="lin_api_••••••••••••••••">
+            </div>
+        </div>
+    </div>
+</section>
