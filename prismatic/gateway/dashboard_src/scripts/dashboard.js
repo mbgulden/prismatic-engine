@@ -3225,8 +3225,11 @@
             ws.onmessage = (e) => {
                 try {
                     const event = JSON.parse(e.data);
-                    if (["webhook_queued", "webhook_processing", "webhook_completed", "webhook_failed", "dispatcher_cycle"].includes(event.type)) {
+                    if (["webhook_queued", "webhook_processing", "webhook_completed", "webhook_failed", "dispatcher_cycle"].includes(event.type) || (event.type && event.type.startsWith("review_factory_"))) {
                         fetchData();
+                        if (activeTab === "review-factory") {
+                            loadReviewFactory();
+                        }
                     }
                     // Append event to signals console log
                     addLocalSignal(event.type.replace("webhook_", "").toUpperCase(), event.message || JSON.stringify(event));
@@ -3288,13 +3291,12 @@
             loadCanonicalAgyActivity();
             loadReviewFactory();
             connectWS();
+            // Event-driven WebSocket handles real-time sync.
+            // 30-second passive background safety fallback only.
             pollingInterval = setInterval(() => {
                 fetchData();
                 loadCanonicalAgyActivity();
-                if (activeTab === "review-factory") {
-                    loadReviewFactory();
-                }
-            }, 4000);
+            }, 30000);
             
             // Close modal on click outside
             window.onclick = function(event) {
