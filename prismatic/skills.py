@@ -30,7 +30,6 @@ def _engine_skills_dir() -> Path:
     candidate = Path(__file__).resolve().parent / "skills"
     if candidate.is_dir():
         return candidate
-    # Fallback: installed as egg/site-packages
     candidate2 = Path(sys.prefix) / "prismatic" / "skills"
     return candidate2 if candidate2.is_dir() else candidate
 
@@ -42,7 +41,50 @@ def _user_skills_dir() -> Path:
     return d
 
 
-# ── Skill manifest loading ──────────────────────────────────────────
+def _workspace_skills_dir() -> Path | None:
+    """Return workspace .agents/skills/ directory if present."""
+    import os
+    cwd = Path.cwd().resolve()
+    for parent in [cwd] + list(cwd.parents):
+        candidate = parent / ".agents" / "skills"
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def get_universal_skills_dirs() -> list[Path]:
+    """Return all universal skill discovery directories in priority order."""
+    import os
+    dirs: list[Path] = []
+
+    # 1. Environment variable override
+    env_path = os.environ.get("PRISMATIC_SKILLS_PATH")
+    if env_path:
+        p = Path(env_path).resolve()
+        if p.is_dir():
+            dirs.append(p)
+
+    # 2. Workspace level (.agents/skills/)
+    ws_dir = _workspace_skills_dir()
+    if ws_dir and ws_dir not in dirs:
+        dirs.append(ws_dir)
+
+    # 3. Engine distribution level (prismatic/skills/)
+    eng_dir = _engine_skills_dir()
+    if eng_dir and eng_dir not in dirs:
+        dirs.append(eng_dir)
+
+    # 4. User home fallback (~/.prismatic/skills/)
+    usr_dir = _user_skills_dir()
+    if usr_dir and usr_dir not in dirs:
+        dirs.append(usr_dir)
+
+    # 5. Global Antigravity Config (~/.gemini/config/skills/)
+    gemini_dir = Path.home() / ".gemini" / "config" / "skills"
+    if gemini_dir.is_dir() and gemini_dir not in dirs:
+        dirs.append(gemini_dir)
+
+    return dirs
 
 
 def _load_manifest(skill_dir: Path) -> dict[str, Any] | None:
@@ -77,6 +119,7 @@ def _load_manifest(skill_dir: Path) -> dict[str, Any] | None:
         return None
 
     data["_path"] = str(skill_dir.resolve())
+    data["installed"] = True
     return data
 
 
@@ -84,29 +127,32 @@ def _load_manifest(skill_dir: Path) -> dict[str, Any] | None:
 
 
 def list_skills(installed: bool = False) -> list[dict[str, Any]]:
-    """Return all available (or installed) skills with their manifests.
+    """Return all available skills aggregated across universal discovery directories."""
+    discovered: dict[str, dict[str, Any]] = {}
 
-    Parameters
-    ----------
-    installed :
-        If True, list only skills in ``~/.prismatic/skills/``.
-        Otherwise list all bundled skills.
+    for base in get_universal_skills_dirs():
+        if not base.is_dir():
+            continue
+        for entry in sorted(base.iterdir()):
+            if entry.is_dir() and entry.name not in discovered:
+                manifest = _load_manifest(entry)
+                if manifest is not None:
+                    discovered[entry.name] = manifest
 
-    Returns
-    -------
-    list[dict]
-        Each entry is the parsed manifest with an added ``_path`` key.
-    """
-    base = _user_skills_dir() if installed else _engine_skills_dir()
-    results: list[dict[str, Any]] = []
-    if not base.is_dir():
-        return results
-    for entry in sorted(base.iterdir()):
-        if entry.is_dir():
-            manifest = _load_manifest(entry)
-            if manifest is not None:
-                results.append(manifest)
-    return results
+    return list(discovered.values())
+
+
+def upload_skill(name: str, content: str) -> dict[str, Any]:
+    """Upload or create a custom skill in the workspace .agents/skills/ directory."""
+    ws_dir = _workspace_skills_dir() or (Path.cwd() / ".agents" / "skills")
+    skill_dir = ws_dir / name
+    skill_dir.mkdir(parents=True, exist_ok=True)
+
+    skill_file = skill_dir / "SKILL.md"
+    skill_file.write_text(content, encoding="utf-8")
+
+    manifest = _load_manifest(skill_dir) or {"name": name, "description": "Uploaded Skill", "_path": str(skill_dir), "installed": True}
+    return manifest
 
 
 def skill_info(name: str) -> dict[str, Any] | None:

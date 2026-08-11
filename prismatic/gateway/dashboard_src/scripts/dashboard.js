@@ -1864,7 +1864,10 @@
 
         async function renderSkillsView() {
             const grid = document.getElementById("skills-grid");
-            grid.innerHTML = `<div class="col-span-full text-slate-500 italic">Loading live skill registry…</div>`;
+            if (!grid) return;
+            if (!grid.children.length || grid.querySelector(".italic")) {
+                grid.innerHTML = `<div class="col-span-full text-slate-500 italic">Loading live skill registry…</div>`;
+            }
             try {
                 const res = await fetch(`${API_PREFIX}/skills`);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -1876,18 +1879,20 @@
                 }
                 grid.innerHTML = skills.map(sk => {
                     const installed = Boolean(sk.installed);
+                    const name = sk.name || sk.id || 'unnamed-skill';
                     const action = installed ? 'uninstall' : 'install';
                     const buttonLabel = installed ? 'Uninstall Skill' : 'Install Skill';
+                    const category = sk.category || 'agent-capability';
                     return `
-                        <div class="glass-panel p-4 rounded-xl flex flex-col justify-between space-y-3 relative overflow-hidden">
+                        <div class="glass-panel p-4 rounded-xl flex flex-col justify-between space-y-3 relative overflow-hidden border border-slate-800/80 hover:border-slate-700 transition">
                             <div class="flex justify-between items-start gap-2">
-                                <span class="text-xs text-slate-500 font-bold uppercase">${escapeHtml(sk.version || '?')}</span>
-                                <span class="px-2 py-0.5 rounded text-[9px] font-bold ${installed ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20' : 'bg-slate-800 text-slate-400'} uppercase">${escapeHtml(sk.status || (installed ? 'Active' : 'Available'))}</span>
+                                <span class="text-xs text-slate-500 font-bold uppercase">${escapeHtml(sk.version || 'v1.0')}</span>
+                                <span class="px-2 py-0.5 rounded text-[9px] font-bold ${installed ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-slate-800 text-slate-400'} uppercase">${installed ? 'Installed & Active' : 'Available'}</span>
                             </div>
-                            <h3 class="font-bold text-slate-200 leading-tight">${escapeHtml(sk.name || sk.id)}</h3>
-                            <p class="text-xs text-slate-400 leading-relaxed">${escapeHtml(sk.description || 'No description provided.')}</p>
-                            <div class="text-[10px] text-slate-500 uppercase font-bold">${escapeHtml(sk.category || 'uncategorized')}</div>
-                            <button onclick="toggleSkillInstall('${encodeURIComponent(sk.id)}', '${action}')" class="w-full bg-slate-950 hover:bg-slate-900 border border-slate-800/80 text-xs font-semibold py-1.5 rounded transition">
+                            <h3 class="font-bold text-slate-200 leading-tight text-sm">${escapeHtml(name)}</h3>
+                            <p class="text-xs text-slate-400 leading-relaxed line-clamp-3">${escapeHtml(sk.description || 'No description provided.')}</p>
+                            <div class="text-[10px] text-indigo-400 uppercase font-bold tracking-wider">${escapeHtml(category)}</div>
+                            <button onclick="toggleSkillInstall('${encodeURIComponent(name)}', '${action}')" class="w-full ${installed ? 'bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/60 text-rose-300' : 'bg-indigo-950/40 hover:bg-indigo-900/60 border border-indigo-800/60 text-indigo-300'} text-xs font-semibold py-1.5 rounded transition">
                                 ${buttonLabel}
                             </button>
                         </div>
@@ -1911,6 +1916,28 @@
             } catch (err) {
                 console.error("Error updating skill:", err);
                 showToast(`Skill ${action} failed: ${err.message || err}`, true);
+            }
+        }
+
+        async function uploadCustomSkillPrompt() {
+            const name = prompt("Enter skill identifier name (e.g. custom-verifier-gate):");
+            if (!name) return;
+            const content = prompt("Paste SKILL.md contents (with YAML frontmatter --- name: ... ---):");
+            if (!content) return;
+
+            try {
+                const res = await fetch(`${API_PREFIX}/skills/upload`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, content })
+                });
+                const data = await res.json();
+                if (!res.ok || data.ok === false) throw new Error(data.detail || data.error || 'Upload failed');
+                showToast(`Successfully uploaded skill: ${name}`);
+                await renderSkillsView();
+            } catch (err) {
+                console.error("Skill upload failed:", err);
+                showToast(`Upload failed: ${err.message || err}`, true);
             }
         }
 

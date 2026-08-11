@@ -3861,6 +3861,27 @@ async def dashboard_skill_uninstall(name: str) -> dict[str, Any]:
     }
 
 
+@app.post("/api/skills/upload", response_model=None)
+@app.post("/api/gateway/skills/upload", response_model=None)
+async def dashboard_skill_upload(request: Request) -> dict[str, Any]:
+    try:
+        from prismatic.skills import upload_skill
+        body = await request.json()
+        name = body.get("name", "custom-skill")
+        content = body.get("content", "")
+        manifest = upload_skill(name, content)
+
+        try:
+            from prismatic.gateway.event_bus import SwarmEvent, get_event_bus
+            get_event_bus().publish(SwarmEvent("skills.synced", {"skill": name}))
+        except Exception:
+            pass
+
+        return {"ok": True, "status": "uploaded", "skill": manifest}
+    except Exception as exc:
+        return JSONResponse({"error": "upload_failed", "detail": str(exc)}, status_code=400)
+
+
 @app.get("/api/quota")
 @app.get("/api/gateway/quota")
 @app.get("/api/quotas")
