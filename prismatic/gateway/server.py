@@ -4526,7 +4526,14 @@ def _serve_governance_dashboard_html() -> HTMLResponse:
             "Prismatic governance dashboard HTML not found",
             status_code=404,
         )
-    return HTMLResponse(_GOVERNANCE_DASHBOARD_HTML.read_text(encoding="utf-8"))
+    return HTMLResponse(
+        _GOVERNANCE_DASHBOARD_HTML.read_text(encoding="utf-8"),
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 @app.get("/static/dashboard.css", response_class=Response)
@@ -4559,6 +4566,7 @@ async def serve_governance_index() -> HTMLResponse:
 @app.get("/merge", response_class=HTMLResponse)
 @app.get("/foundation", response_class=HTMLResponse)
 @app.get("/skills", response_class=HTMLResponse)
+@app.get("/review-factory", response_class=HTMLResponse)
 @app.get("/signals", response_class=HTMLResponse)
 @app.get("/crons", response_class=HTMLResponse)
 @app.get("/pwp", response_class=HTMLResponse)
