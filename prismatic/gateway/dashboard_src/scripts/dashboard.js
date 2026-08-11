@@ -2614,34 +2614,120 @@
             `;
         }
 
+        let discoveredAgentsList = [];
+
+        function openAgentNudgeModal() {
+            const modal = document.getElementById("agent-nudge-modal");
+            if (modal) modal.classList.remove("hidden");
+        }
+
+        function closeAgentNudgeModal() {
+            const modal = document.getElementById("agent-nudge-modal");
+            if (modal) modal.classList.add("hidden");
+        }
+
+        async function submitAgentNudge() {
+            const agentSelect = document.getElementById("nudge-target-agent");
+            const messageText = document.getElementById("nudge-message-text");
+            const agent = agentSelect?.value || "all";
+            const message = (messageText?.value || "").trim();
+
+            if (!message) {
+                showToast("Please enter guidance instructions to inject.", true);
+                return;
+            }
+
+            try {
+                const res = await fetch("/api/gateway/signals/nudge", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ agent, message })
+                });
+                const data = await res.json();
+                if (!res.ok || data.ok === false) throw new Error(data.detail || data.error || "Nudge failed");
+                showToast(`Injected guidance for agent "${agent}"`);
+                closeAgentNudgeModal();
+                if (messageText) messageText.value = "";
+                await renderSignalsView();
+            } catch (err) {
+                console.error("Nudge injection failed:", err);
+                showToast(`Nudge failed: ${err.message || err}`, true);
+            }
+        }
+
+        function renderAgentTabs(agents) {
+            const tabsBox = document.getElementById("signals-agent-tabs");
+            if (!tabsBox) return;
+            const allActive = activeSignalsAgent === "all" ? "bg-indigo-600/20 text-indigo-300 border-indigo-500/30 font-bold" : "bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200";
+            let html = `<button onclick="setSignalsAgent('all')" data-agent-tab="all" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs uppercase border transition ${allActive}">All (${agents.length})</button>`;
+            
+            agents.forEach(a => {
+                const aid = a.agent_id;
+                const isActive = activeSignalsAgent === aid;
+                const activeClass = isActive ? "bg-indigo-600/20 text-indigo-300 border-indigo-500/30 font-bold" : "bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200";
+                html += `<button onclick="setSignalsAgent('${aid}')" data-agent-tab="${aid}" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs uppercase border transition ${activeClass}">${a.icon || '🤖'} ${escapeHtml(aid)} (${a.signal_count || 0})</button>`;
+            });
+            tabsBox.innerHTML = html;
+        }
+
         function renderSignalPanes(payload) {
             latestSignalsPayload = payload || latestSignalsPayload || { items: [], by_agent: {}, counts: {} };
             const panes = document.getElementById('signals-agent-panes');
-            const summary = document.getElementById('signals-summary');
             const consoleBox = document.getElementById('signals-log-box');
             if (!panes || !consoleBox) return;
-            const agents = ['kai', 'fred', 'agy', 'george'];
+
+            const knownAgents = discoveredAgentsList.length ? discoveredAgentsList : [
+                { agent_id: 'agy', name: 'Antigravity (AGY)', icon: '⚡', active_model: 'gemini-2.5-pro', status: 'idle' },
+                { agent_id: 'hermes', name: 'Hermes Orchestrator', icon: '🌐', active_model: 'claude-3-7-sonnet', status: 'idle' },
+                { agent_id: 'kai', name: 'Kai (UI Specialist)', icon: '🎨', active_model: 'claude-3-7-sonnet', status: 'idle' },
+                { agent_id: 'fred', name: 'Fred (TDD Specialist)', icon: '⚙️', active_model: 'claude-3-7-sonnet', status: 'idle' },
+                { agent_id: 'george', name: 'George (Peer Reviewer)', icon: '🛡️', active_model: 'gpt-4o', status: 'idle' },
+                { agent_id: 'autobot', name: 'Autobot (CI Worker)', icon: '🤖', active_model: 'deepseek-r1', status: 'idle' }
+            ];
+
             const byAgent = latestSignalsPayload.by_agent || {};
             const items = latestSignalsPayload.items || [];
-            const visibleAgents = activeSignalsAgent === 'all' ? agents : [activeSignalsAgent];
-            if (summary) {
-                const counts = latestSignalsPayload.counts || {};
-                summary.textContent = `${items.length} signals · Kai ${counts.kai || 0} · Fred ${counts.fred || 0} · AGY ${counts.agy || 0} · George ${counts.george || 0}`;
-            }
-            panes.innerHTML = visibleAgents.map(agent => {
-                const agentItems = byAgent[agent] || [];
+            const visibleAgents = activeSignalsAgent === 'all' 
+                ? knownAgents 
+                : knownAgents.filter(a => a.agent_id === activeSignalsAgent);
+
+            panes.innerHTML = visibleAgents.map(ag => {
+                const aid = ag.agent_id;
+                const agentItems = byAgent[aid] || [];
+                const statusBadge = ag.status === 'executing' 
+                    ? '<span class="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Executing</span>'
+                    : ag.status === 'errored'
+                    ? '<span class="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-rose-500/10 text-rose-400 border border-rose-500/20">Errored</span>'
+                    : '<span class="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-slate-800 text-slate-400 border border-slate-700">Idle</span>';
+
                 return `
-                    <section class="rounded-xl border border-slate-900 bg-slate-950/40 overflow-hidden" data-agent-pane="${agent}">
-                        <div class="px-4 py-3 border-b border-slate-900 bg-slate-900/60 flex items-center justify-between">
-                            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300">${escapeHtml(agent)} stream</h3>
-                            <span class="text-[10px] text-slate-500">${agentItems.length} events</span>
+                    <section class="agent-telemetry-pane rounded-xl border border-slate-800 bg-slate-950/40 overflow-hidden flex flex-col justify-between" data-agent-pane="${aid}">
+                        <div class="px-4 py-3 border-b border-slate-800 bg-slate-900/60 flex items-center justify-between">
+                            <div class="flex items-center gap-2">
+                                <span class="text-base">${ag.icon || '🤖'}</span>
+                                <div>
+                                    <h3 class="agent-title-text text-xs font-bold uppercase tracking-wider text-slate-200">${escapeHtml(ag.name || aid)}</h3>
+                                    <div class="text-[10px] text-indigo-400 font-mono mt-0.5">MODEL: ${escapeHtml(ag.active_model || 'default')}</div>
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                ${statusBadge}
+                                <span class="text-[10px] text-slate-500 font-mono">${agentItems.length} events</span>
+                            </div>
                         </div>
                         <div class="p-3 space-y-3 max-h-[520px] overflow-y-auto">
-                            ${agentItems.length ? agentItems.slice(0, 25).map(signalCard).join('') : `<div class="text-xs text-slate-500 italic py-6 text-center">No ${escapeHtml(agent)} signals yet.</div>`}
+                            ${ag.current_task ? `
+                                <div class="p-2 rounded-lg bg-slate-900/80 border border-slate-800 text-[11px] text-slate-300 flex items-center justify-between">
+                                    <span class="text-slate-400 font-mono">Active Task:</span>
+                                    <span class="font-bold font-mono text-cyan-400">${escapeHtml(ag.current_task)}</span>
+                                </div>
+                            ` : ''}
+                            ${agentItems.length ? agentItems.slice(0, 25).map(signalCard).join('') : `<div class="agent-desc-text text-xs text-slate-500 italic py-6 text-center">No ${escapeHtml(aid)} signals recorded yet. Ready for dispatch.</div>`}
                         </div>
                     </section>
                 `;
             }).join('');
+
             consoleBox.innerHTML = items.length ? items.slice(0, 80).map(item => {
                 const ts = item.timestamp || item.created_at || item.started_at;
                 const color = signalSeverityColor(item.severity || item.status).split(' ')[0];
@@ -2651,12 +2737,32 @@
 
         async function renderSignalsView() {
             const container = document.getElementById("signals-log-box");
-            if (container) container.innerHTML = `<div class="text-slate-500 italic">Loading assigned-agent signal streams…</div>`;
+            if (container && !container.children.length) {
+                container.innerHTML = `<div class="text-slate-500 italic">Loading assigned-agent signal streams…</div>`;
+            }
+
             try {
-                const res = await fetch("/api/gateway/signals?limit=200");
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                const payload = await res.json();
-                renderSignalPanes(payload);
+                const [agentsRes, signalsRes] = await Promise.all([
+                    fetch("/api/gateway/agents").catch(() => null),
+                    fetch("/api/gateway/signals?limit=200").catch(() => null)
+                ]);
+
+                if (agentsRes && agentsRes.ok) {
+                    const agentData = await agentsRes.json();
+                    discoveredAgentsList = agentData.agents || [];
+                    const totalEl = document.getElementById("sig-metric-total");
+                    const activeEl = document.getElementById("sig-metric-active");
+                    if (totalEl) totalEl.textContent = discoveredAgentsList.length;
+                    if (activeEl) activeEl.textContent = agentData.active_agents || 0;
+                    renderAgentTabs(discoveredAgentsList);
+                }
+
+                if (signalsRes && signalsRes.ok) {
+                    const payload = await signalsRes.json();
+                    const eventsEl = document.getElementById("sig-metric-events");
+                    if (eventsEl) eventsEl.textContent = payload.count || 0;
+                    renderSignalPanes(payload);
+                }
             } catch (err) {
                 console.error("Error loading agent signals:", err);
                 if (container) container.innerHTML = `<div class="text-rose-400 italic">Signals API unavailable: ${escapeHtml(err.message || err)}</div>`;

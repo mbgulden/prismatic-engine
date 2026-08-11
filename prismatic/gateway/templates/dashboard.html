@@ -320,6 +320,25 @@
             color: #020617 !important;
         }
 
+        /* Light Mode Rules for Signals Cockpit & Agent Cards */
+        body.light-mode #nudge-target-agent,
+        body.light-mode #nudge-message-text {
+            background-color: #ffffff !important;
+            border-color: #cbd5e1 !important;
+            color: #0f172a !important;
+        }
+        body.light-mode .agent-telemetry-pane {
+            background-color: #ffffff !important;
+            border-color: #e2e8f0 !important;
+            box-shadow: 0 1px 3px 0 rgba(0,0,0,0.05) !important;
+        }
+        body.light-mode .agent-title-text {
+            color: #0f172a !important;
+        }
+        body.light-mode .agent-desc-text {
+            color: #475569 !important;
+        }
+
         /* Light Mode Polish for Skill Search, Sidebar Nav, and Count Badges */
         body.light-mode #skills-splitter-container {
             background-color: #ffffff !important;
@@ -2131,29 +2150,101 @@
             <div class="glass-panel p-5 rounded-xl space-y-4">
                 <div class="border-b border-slate-800 pb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                     <div>
-                        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider">Agent Signals Cockpit</h2>
-                        <p class="text-xs text-slate-500 mt-1">Telegram-visible wake/action/result breadcrumbs plus compact transcript tails. Linear remains source of truth.</p>
+                        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+                            <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                            Agent Signals Cockpit &amp; Live Telemetry
+                        </h2>
+                        <p class="text-xs text-slate-500 mt-1">Real-time dynamic discovery for AGY, Hermes, Kai, Fred, George &amp; Autobot processes, model providers, and signal streams.</p>
                     </div>
-                    <div id="signals-summary" class="text-xs text-slate-500">Loading signals…</div>
+                    <div class="flex items-center gap-2 flex-shrink-0">
+                        <button type="button" onclick="openAgentNudgeModal()" class="canonical-header-btn px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:text-white hover:border-amber-500 text-xs font-semibold flex items-center gap-1.5 transition shadow-sm">
+                            <svg class="w-3.5 h-3.5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z"/></svg>
+                            <span>Inject Guidance</span>
+                        </button>
+                        <button type="button" onclick="renderSignalsView()" class="canonical-header-btn px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:text-white hover:border-indigo-500 text-xs font-semibold flex items-center gap-1.5 transition shadow-sm">
+                            <svg class="w-3.5 h-3.5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                            <span>Refresh Signals</span>
+                        </button>
+                    </div>
                 </div>
-                <div class="flex gap-2 overflow-x-auto pb-1" data-proof-marker="signals-mobile-agent-tabs" id="signals-agent-tabs">
-                    <button onclick="setSignalsAgent('all')" data-agent-tab="all" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs font-bold uppercase border bg-indigo-600/20 text-indigo-300 border-indigo-500/30">All</button>
-                    <button onclick="setSignalsAgent('kai')" data-agent-tab="kai" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs font-bold uppercase border bg-slate-900 text-slate-400 border-slate-800">Kai</button>
-                    <button onclick="setSignalsAgent('fred')" data-agent-tab="fred" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs font-bold uppercase border bg-slate-900 text-slate-400 border-slate-800">Fred</button>
-                    <button onclick="setSignalsAgent('agy')" data-agent-tab="agy" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs font-bold uppercase border bg-slate-900 text-slate-400 border-slate-800">AGY</button>
-                    <button onclick="setSignalsAgent('george')" data-agent-tab="george" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs font-bold uppercase border bg-slate-900 text-slate-400 border-slate-800">George</button>
+
+                <!-- 4 Top Metric Cards -->
+                <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                    <div class="glass-panel p-3.5 rounded-xl border border-slate-800 bg-slate-900/40">
+                        <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Discovered Agents</div>
+                        <div id="sig-metric-total" class="text-xl font-bold font-mono text-slate-200 mt-0.5">6</div>
+                    </div>
+                    <div class="glass-panel p-3.5 rounded-xl border border-slate-800 bg-slate-900/40">
+                        <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Active Executing</div>
+                        <div id="sig-metric-active" class="text-xl font-bold font-mono text-emerald-400 mt-0.5">0</div>
+                    </div>
+                    <div class="glass-panel p-3.5 rounded-xl border border-slate-800 bg-slate-900/40">
+                        <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Total Signal Events</div>
+                        <div id="sig-metric-events" class="text-xl font-bold font-mono text-indigo-400 mt-0.5">0</div>
+                    </div>
+                    <div class="glass-panel p-3.5 rounded-xl border border-slate-800 bg-slate-900/40">
+                        <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Process Status</div>
+                        <div id="sig-metric-status" class="text-xl font-bold font-mono text-cyan-400 mt-0.5">Healthy</div>
+                    </div>
                 </div>
-                <div id="signals-agent-panes" class="grid grid-cols-1 xl:grid-cols-2 gap-4" data-proof-marker="signals-agent-pane-grid">
-                    <!-- Populated dynamically with one pane per agent; mobile uses the tabs above to show one stream at a time. -->
+
+                <!-- Dynamic Agent Selection Tabs -->
+                <div class="flex gap-2 overflow-x-auto pb-1 border-b border-slate-800/60 pt-2" id="signals-agent-tabs">
+                    <!-- Populated dynamically via renderSignalsView -->
                 </div>
-                <div class="bg-slate-950 rounded-lg border border-slate-900 overflow-hidden font-mono text-xs">
-                    <div class="bg-slate-900 border-b border-slate-800 px-4 py-2 text-slate-500 font-bold uppercase flex justify-between">
-                        <span>All Signals Console</span>
-                        <span>ws://localhost:9000/ws + /api/gateway/signals</span>
+
+                <!-- Agent Process & Telemetry Panes -->
+                <div id="signals-agent-panes" class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                    <!-- Populated dynamically with one pane per agent -->
+                </div>
+
+                <!-- Console Stream Box -->
+                <div class="bg-slate-950 rounded-xl border border-slate-800/80 overflow-hidden font-mono text-xs shadow-inner">
+                    <div class="bg-slate-900 border-b border-slate-800 px-4 py-2.5 text-slate-400 font-bold uppercase flex justify-between items-center text-[11px]">
+                        <span class="flex items-center gap-2">
+                            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                            Live Multi-Agent Signal Stream
+                        </span>
+                        <span class="text-slate-500 font-normal">ws://.../ws &amp; /api/gateway/signals</span>
                     </div>
                     <div class="p-4 space-y-2 max-h-[360px] overflow-y-auto" id="signals-log-box">
-                        <!-- Populated dynamically -->
+                        <div class="text-slate-500 italic">Listening for live agent signals...</div>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Operator Guidance / Nudge Modal -->
+        <div id="agent-nudge-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+            <div class="pe-modal-card glass-panel w-full max-w-[520px] p-6 rounded-2xl border border-slate-700/80 space-y-4 shadow-2xl bg-slate-900" style="max-width: 520px !important;">
+                <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+                    <h3 class="text-sm font-bold uppercase text-slate-200 tracking-wider flex items-center gap-2">
+                        <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z"/></svg>
+                        Inject Operator Guidance / Nudge
+                    </h3>
+                    <button type="button" onclick="closeAgentNudgeModal()" class="text-slate-400 hover:text-white text-lg font-bold">&times;</button>
+                </div>
+                <div class="space-y-3 text-xs">
+                    <div>
+                        <label class="block font-bold text-slate-300 mb-1">Target Agent</label>
+                        <select id="nudge-target-agent" class="w-full px-3 py-2 rounded-lg border border-slate-800 bg-slate-950 text-slate-200 font-mono focus:border-amber-500 focus:outline-none">
+                            <option value="all">All Active Agents</option>
+                            <option value="agy">Antigravity (AGY)</option>
+                            <option value="hermes">Hermes Orchestrator</option>
+                            <option value="kai">Kai (UI Specialist)</option>
+                            <option value="fred">Fred (TDD Specialist)</option>
+                            <option value="george">George (Peer Reviewer)</option>
+                            <option value="autobot">Autobot (CI Worker)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block font-bold text-slate-300 mb-1">Guidance Instruction / Prompt Nudge</label>
+                        <textarea id="nudge-message-text" rows="4" placeholder="e.g. Focus on TDD regression testing for workspace tree state persistence..." class="w-full px-3 py-2 rounded-lg border border-slate-800 bg-slate-950 text-slate-200 font-mono focus:border-amber-500 focus:outline-none leading-relaxed"></textarea>
+                    </div>
+                </div>
+                <div class="flex justify-end gap-2 pt-2 border-t border-slate-800">
+                    <button type="button" onclick="closeAgentNudgeModal()" class="px-4 py-2 rounded-lg text-xs font-semibold text-slate-400 hover:bg-slate-800 transition">Cancel</button>
+                    <button type="button" onclick="submitAgentNudge()" class="px-4 py-2 rounded-lg text-xs font-bold bg-amber-600 hover:bg-amber-500 text-white transition shadow-sm border border-amber-500">Inject Guidance</button>
                 </div>
             </div>
         </div>
@@ -5141,34 +5232,120 @@
             `;
         }
 
+        let discoveredAgentsList = [];
+
+        function openAgentNudgeModal() {
+            const modal = document.getElementById("agent-nudge-modal");
+            if (modal) modal.classList.remove("hidden");
+        }
+
+        function closeAgentNudgeModal() {
+            const modal = document.getElementById("agent-nudge-modal");
+            if (modal) modal.classList.add("hidden");
+        }
+
+        async function submitAgentNudge() {
+            const agentSelect = document.getElementById("nudge-target-agent");
+            const messageText = document.getElementById("nudge-message-text");
+            const agent = agentSelect?.value || "all";
+            const message = (messageText?.value || "").trim();
+
+            if (!message) {
+                showToast("Please enter guidance instructions to inject.", true);
+                return;
+            }
+
+            try {
+                const res = await fetch("/api/gateway/signals/nudge", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ agent, message })
+                });
+                const data = await res.json();
+                if (!res.ok || data.ok === false) throw new Error(data.detail || data.error || "Nudge failed");
+                showToast(`Injected guidance for agent "${agent}"`);
+                closeAgentNudgeModal();
+                if (messageText) messageText.value = "";
+                await renderSignalsView();
+            } catch (err) {
+                console.error("Nudge injection failed:", err);
+                showToast(`Nudge failed: ${err.message || err}`, true);
+            }
+        }
+
+        function renderAgentTabs(agents) {
+            const tabsBox = document.getElementById("signals-agent-tabs");
+            if (!tabsBox) return;
+            const allActive = activeSignalsAgent === "all" ? "bg-indigo-600/20 text-indigo-300 border-indigo-500/30 font-bold" : "bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200";
+            let html = `<button onclick="setSignalsAgent('all')" data-agent-tab="all" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs uppercase border transition ${allActive}">All (${agents.length})</button>`;
+            
+            agents.forEach(a => {
+                const aid = a.agent_id;
+                const isActive = activeSignalsAgent === aid;
+                const activeClass = isActive ? "bg-indigo-600/20 text-indigo-300 border-indigo-500/30 font-bold" : "bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200";
+                html += `<button onclick="setSignalsAgent('${aid}')" data-agent-tab="${aid}" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs uppercase border transition ${activeClass}">${a.icon || '🤖'} ${escapeHtml(aid)} (${a.signal_count || 0})</button>`;
+            });
+            tabsBox.innerHTML = html;
+        }
+
         function renderSignalPanes(payload) {
             latestSignalsPayload = payload || latestSignalsPayload || { items: [], by_agent: {}, counts: {} };
             const panes = document.getElementById('signals-agent-panes');
-            const summary = document.getElementById('signals-summary');
             const consoleBox = document.getElementById('signals-log-box');
             if (!panes || !consoleBox) return;
-            const agents = ['kai', 'fred', 'agy', 'george'];
+
+            const knownAgents = discoveredAgentsList.length ? discoveredAgentsList : [
+                { agent_id: 'agy', name: 'Antigravity (AGY)', icon: '⚡', active_model: 'gemini-2.5-pro', status: 'idle' },
+                { agent_id: 'hermes', name: 'Hermes Orchestrator', icon: '🌐', active_model: 'claude-3-7-sonnet', status: 'idle' },
+                { agent_id: 'kai', name: 'Kai (UI Specialist)', icon: '🎨', active_model: 'claude-3-7-sonnet', status: 'idle' },
+                { agent_id: 'fred', name: 'Fred (TDD Specialist)', icon: '⚙️', active_model: 'claude-3-7-sonnet', status: 'idle' },
+                { agent_id: 'george', name: 'George (Peer Reviewer)', icon: '🛡️', active_model: 'gpt-4o', status: 'idle' },
+                { agent_id: 'autobot', name: 'Autobot (CI Worker)', icon: '🤖', active_model: 'deepseek-r1', status: 'idle' }
+            ];
+
             const byAgent = latestSignalsPayload.by_agent || {};
             const items = latestSignalsPayload.items || [];
-            const visibleAgents = activeSignalsAgent === 'all' ? agents : [activeSignalsAgent];
-            if (summary) {
-                const counts = latestSignalsPayload.counts || {};
-                summary.textContent = `${items.length} signals · Kai ${counts.kai || 0} · Fred ${counts.fred || 0} · AGY ${counts.agy || 0} · George ${counts.george || 0}`;
-            }
-            panes.innerHTML = visibleAgents.map(agent => {
-                const agentItems = byAgent[agent] || [];
+            const visibleAgents = activeSignalsAgent === 'all' 
+                ? knownAgents 
+                : knownAgents.filter(a => a.agent_id === activeSignalsAgent);
+
+            panes.innerHTML = visibleAgents.map(ag => {
+                const aid = ag.agent_id;
+                const agentItems = byAgent[aid] || [];
+                const statusBadge = ag.status === 'executing' 
+                    ? '<span class="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Executing</span>'
+                    : ag.status === 'errored'
+                    ? '<span class="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-rose-500/10 text-rose-400 border border-rose-500/20">Errored</span>'
+                    : '<span class="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-slate-800 text-slate-400 border border-slate-700">Idle</span>';
+
                 return `
-                    <section class="rounded-xl border border-slate-900 bg-slate-950/40 overflow-hidden" data-agent-pane="${agent}">
-                        <div class="px-4 py-3 border-b border-slate-900 bg-slate-900/60 flex items-center justify-between">
-                            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300">${escapeHtml(agent)} stream</h3>
-                            <span class="text-[10px] text-slate-500">${agentItems.length} events</span>
+                    <section class="agent-telemetry-pane rounded-xl border border-slate-800 bg-slate-950/40 overflow-hidden flex flex-col justify-between" data-agent-pane="${aid}">
+                        <div class="px-4 py-3 border-b border-slate-800 bg-slate-900/60 flex items-center justify-between">
+                            <div class="flex items-center gap-2">
+                                <span class="text-base">${ag.icon || '🤖'}</span>
+                                <div>
+                                    <h3 class="agent-title-text text-xs font-bold uppercase tracking-wider text-slate-200">${escapeHtml(ag.name || aid)}</h3>
+                                    <div class="text-[10px] text-indigo-400 font-mono mt-0.5">MODEL: ${escapeHtml(ag.active_model || 'default')}</div>
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                ${statusBadge}
+                                <span class="text-[10px] text-slate-500 font-mono">${agentItems.length} events</span>
+                            </div>
                         </div>
                         <div class="p-3 space-y-3 max-h-[520px] overflow-y-auto">
-                            ${agentItems.length ? agentItems.slice(0, 25).map(signalCard).join('') : `<div class="text-xs text-slate-500 italic py-6 text-center">No ${escapeHtml(agent)} signals yet.</div>`}
+                            ${ag.current_task ? `
+                                <div class="p-2 rounded-lg bg-slate-900/80 border border-slate-800 text-[11px] text-slate-300 flex items-center justify-between">
+                                    <span class="text-slate-400 font-mono">Active Task:</span>
+                                    <span class="font-bold font-mono text-cyan-400">${escapeHtml(ag.current_task)}</span>
+                                </div>
+                            ` : ''}
+                            ${agentItems.length ? agentItems.slice(0, 25).map(signalCard).join('') : `<div class="agent-desc-text text-xs text-slate-500 italic py-6 text-center">No ${escapeHtml(aid)} signals recorded yet. Ready for dispatch.</div>`}
                         </div>
                     </section>
                 `;
             }).join('');
+
             consoleBox.innerHTML = items.length ? items.slice(0, 80).map(item => {
                 const ts = item.timestamp || item.created_at || item.started_at;
                 const color = signalSeverityColor(item.severity || item.status).split(' ')[0];
@@ -5178,12 +5355,32 @@
 
         async function renderSignalsView() {
             const container = document.getElementById("signals-log-box");
-            if (container) container.innerHTML = `<div class="text-slate-500 italic">Loading assigned-agent signal streams…</div>`;
+            if (container && !container.children.length) {
+                container.innerHTML = `<div class="text-slate-500 italic">Loading assigned-agent signal streams…</div>`;
+            }
+
             try {
-                const res = await fetch("/api/gateway/signals?limit=200");
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                const payload = await res.json();
-                renderSignalPanes(payload);
+                const [agentsRes, signalsRes] = await Promise.all([
+                    fetch("/api/gateway/agents").catch(() => null),
+                    fetch("/api/gateway/signals?limit=200").catch(() => null)
+                ]);
+
+                if (agentsRes && agentsRes.ok) {
+                    const agentData = await agentsRes.json();
+                    discoveredAgentsList = agentData.agents || [];
+                    const totalEl = document.getElementById("sig-metric-total");
+                    const activeEl = document.getElementById("sig-metric-active");
+                    if (totalEl) totalEl.textContent = discoveredAgentsList.length;
+                    if (activeEl) activeEl.textContent = agentData.active_agents || 0;
+                    renderAgentTabs(discoveredAgentsList);
+                }
+
+                if (signalsRes && signalsRes.ok) {
+                    const payload = await signalsRes.json();
+                    const eventsEl = document.getElementById("sig-metric-events");
+                    if (eventsEl) eventsEl.textContent = payload.count || 0;
+                    renderSignalPanes(payload);
+                }
             } catch (err) {
                 console.error("Error loading agent signals:", err);
                 if (container) container.innerHTML = `<div class="text-rose-400 italic">Signals API unavailable: ${escapeHtml(err.message || err)}</div>`;

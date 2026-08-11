@@ -227,6 +227,10 @@ async def required_role(request: Request) -> str | None:
         or _is_webhook_boundary(path)
         or path.startswith("/api/skills")
         or path.startswith("/api/gateway/skills")
+        or path.startswith("/api/signals")
+        or path.startswith("/api/gateway/signals")
+        or path.startswith("/api/agents")
+        or path.startswith("/api/gateway/agents")
         or path.startswith("/api/workspace-tree/")
     ):
         return None

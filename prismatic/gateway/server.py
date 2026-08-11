@@ -3667,6 +3667,7 @@ async def gateway_agent_detail(agent_id: str) -> dict[str, Any]:
     return build_agent_detail(agent_id, **_dashboard_agent_inputs())
 
 
+@app.get("/api/signals")
 @app.get("/api/gateway/signals")
 async def gateway_agent_signals(
     limit: int = Query(200, ge=1, le=1000),
@@ -3676,6 +3677,64 @@ async def gateway_agent_signals(
     from prismatic.agent_signal_stream import list_agent_signals
 
     return list_agent_signals(limit=limit, agent=agent, include_log_tails=True)
+
+
+@app.get("/api/agents")
+@app.get("/api/gateway/agents")
+async def gateway_agents_summary() -> dict[str, Any]:
+    """Return live dynamic agent discovery, active model, and process telemetry."""
+    from prismatic.agents.registry import get_agent_telemetry_summary
+
+    return get_agent_telemetry_summary()
+
+
+@app.post("/api/signals/emit")
+@app.post("/api/gateway/signals/emit")
+async def gateway_emit_signal(body: dict[str, Any]) -> dict[str, Any]:
+    """Emit a durable signal event from CLI, agent harness, or webhook."""
+    from prismatic.agent_signal_stream import record_agent_signal
+
+    item = record_agent_signal(
+        agent=body.get("agent", "unknown"),
+        event_type=body.get("event_type", "custom"),
+        issue_id=body.get("issue_id", ""),
+        status=body.get("status", "info"),
+        message=body.get("message", ""),
+        run_id=body.get("run_id", ""),
+        source=body.get("source", "api"),
+        severity=body.get("severity", "info"),
+        metadata=body.get("metadata"),
+    )
+    try:
+        from prismatic.gateway.event_bus import SwarmEvent, get_event_bus
+        get_event_bus().publish(SwarmEvent("signal.emitted", item))
+    except Exception:
+        pass
+    return {"ok": True, "signal": item}
+
+
+@app.post("/api/signals/nudge")
+@app.post("/api/gateway/signals/nudge")
+async def gateway_nudge_agent(body: dict[str, Any]) -> dict[str, Any]:
+    """Inject operator guidance or nudge to an active agent process."""
+    from prismatic.agent_signal_stream import record_agent_signal
+
+    agent = body.get("agent", "all")
+    message = body.get("message", "")
+    item = record_agent_signal(
+        agent=agent,
+        event_type="nudge_injected",
+        status="waiting_input",
+        message=f"Operator Guidance: {message}",
+        source="dashboard_operator",
+        severity="warning",
+    )
+    try:
+        from prismatic.gateway.event_bus import SwarmEvent, get_event_bus
+        get_event_bus().publish(SwarmEvent("agent.nudged", {"agent": agent, "message": message}))
+    except Exception:
+        pass
+    return {"ok": True, "nudge": item}
 
 
 @app.get("/api/gateway/timeline")

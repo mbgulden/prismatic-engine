@@ -309,6 +309,25 @@
             color: #020617 !important;
         }
 
+        /* Light Mode Rules for Signals Cockpit & Agent Cards */
+        body.light-mode #nudge-target-agent,
+        body.light-mode #nudge-message-text {
+            background-color: #ffffff !important;
+            border-color: #cbd5e1 !important;
+            color: #0f172a !important;
+        }
+        body.light-mode .agent-telemetry-pane {
+            background-color: #ffffff !important;
+            border-color: #e2e8f0 !important;
+            box-shadow: 0 1px 3px 0 rgba(0,0,0,0.05) !important;
+        }
+        body.light-mode .agent-title-text {
+            color: #0f172a !important;
+        }
+        body.light-mode .agent-desc-text {
+            color: #475569 !important;
+        }
+
         /* Light Mode Polish for Skill Search, Sidebar Nav, and Count Badges */
         body.light-mode #skills-splitter-container {
             background-color: #ffffff !important;
