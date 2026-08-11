@@ -32,13 +32,11 @@ To eliminate review rejections, un-reachable commits, and evidence mismatches, e
 
 ---
 
-## 2. Mandatory Verification Invariants
+## 2. Process Retrospective Lessons (George Audit Synthesis)
 
-1. **`PRE_PACKET_REMOTE_PUSH_CHECK`**: Antigravity MUST NOT generate a handoff packet artifact until `git push -u origin <branch>` has executed and `git ls-remote origin <branch>` returns the exact candidate commit SHA (`git rev-parse HEAD`).
-2. **`DUAL_TREE_GIT_TRACKING_CHECK`**: `.agents/AGENTS.md` and `.agents/skills/<skill>/SKILL.md` MUST be committed to Git inside the repository root (`git ls-tree -r HEAD .agents`).
-3. **`COMMAND_LINE_REPRODUCIBILITY`**: The evidence ledger MUST specify explicit environment variables (`$env:PYTHONPATH="."`) and root test configurations (`[tool.pytest.ini_options]`) so reviewers achieve 100% identical test results on bare `pytest` invocations.
-4. **`FRESH_WORKTREE_CLEAN_ROOM_CHECK`**: Verification runs MUST prove that code executes cleanly on a fresh, untracked checkout without depending on local un-staged modifications or ambient environment state.
-5. **`SECRET_SCANNING_FENCE`**: Every candidate commit MUST pass credential and path-safety scanning before pushing to remote.
+1. **Remote Ref Snapshot Requirement**: The packet MUST embed the exact `git ls-remote origin <branch>` output captured at packet generation time.
+2. **Environment Portability Gate**: Code and tests MUST NOT depend on hardcoded profile names (`ned`, `george`) or import-time cached profile paths.
+3. **Self-Verifying Evidence**: Verification packets must pass their own structural and empirical validation gates before publication.
 
 ---
 
@@ -52,8 +50,8 @@ When preparing a Pull Request or addressing review findings, the agent MUST asse
 | Metric | Required Threshold | Result |
 | :--- | :--- | :--- |
 | **Remote Branch** | `origin/<branch>` | `origin/feature/<name>` |
-| **Head Commit SHA** | Exact Git SHA | `<HEAD_COMMIT_SHA>` |
-| **Candidate Tree SHA** | Exact Tree SHA | `<TREE_SHA>` |
+| **Head Commit SHA** | `git rev-parse HEAD` | `<HEAD_COMMIT_SHA>` |
+| **Candidate Tree SHA** | `git cat-file -p HEAD` | `<TREE_SHA>` |
 | **Remote Reachability** | `git ls-remote origin <branch>` | `REMOTE_REACHABLE_OK` |
 | **Pytest Suite** | 100% Green Pass | `N / N PASSED` |
 | **Git Diff Check** | `git diff --check` | 0 errors / 0 warnings |
