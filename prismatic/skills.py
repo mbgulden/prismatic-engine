@@ -105,6 +105,96 @@ def _categorize_skill(name: str, description: str) -> str:
     return "general"
 
 
+def _is_builtin_skill(skill_dir: Path, skill_name: str) -> bool:
+    eng_dir = _engine_skills_dir()
+    try:
+        if eng_dir and eng_dir.is_dir() and skill_dir.resolve().is_relative_to(eng_dir.resolve()):
+            return True
+    except Exception:
+        pass
+    known_engine_skills = {
+        "agy-automated-image-crop-and-verification", "agy-delegate-goals-not-tasks",
+        "agy-documentation-on-the-fly", "agy-installed-artifact-first",
+        "agy-lane-system-index", "agy-prismatic-engine-authoring",
+        "agy-research-metabolizer", "agy-runtime-contract-closure",
+        "agy-secure-coding", "agy-systematic-debug", "agy-tdd-discipline",
+        "antigravity-prismatic-pr-evidence", "canonical-dashboard-surface-restoration",
+        "cloudflare_management", "credential-authority-atomic-claims-and-hosted-receipts",
+        "gateway-route-composition-and-websocket-security", "hermes_infrastructure_management",
+        "immutable-candidate-materialization-and-provenance", "linear_task_routing",
+        "pr_decision_manager", "prismatic-agent-closeout-contract",
+        "prismatic-engine-operations", "prismatic-full-feature-delivery-gate",
+        "prismatic-validation-pipeline", "puppeteer-automation-specialist",
+        "review-factory-transactional-lineage-and-repair", "rf-browser-ci-lossless-acceptance",
+        "subagent-claim-verification-gate", "transactional-merge-execution-rollback-and-audit",
+        "workspace_deep_linking"
+    }
+    return skill_name in known_engine_skills
+
+
+def _skills_state_file() -> Path:
+    p = Path.home() / ".prismatic" / "skills_state.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def get_disabled_skills() -> set[str]:
+    p = _skills_state_file()
+    if p.is_file():
+        try:
+            import json
+            data = json.loads(p.read_text(encoding="utf-8"))
+            return set(data.get("disabled", []))
+        except Exception:
+            pass
+    return set()
+
+
+def toggle_skill_enabled(name: str) -> bool:
+    disabled = get_disabled_skills()
+    if name in disabled:
+        disabled.remove(name)
+        enabled = True
+    else:
+        disabled.add(name)
+        enabled = False
+
+    p = _skills_state_file()
+    try:
+        import json
+        p.write_text(json.dumps({"disabled": sorted(list(disabled))}, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+    return enabled
+
+
+def delete_skill(name: str) -> tuple[bool, str]:
+    if _is_builtin_skill(Path("dummy"), name):
+        return False, "Built-in Prismatic Engine skills cannot be deleted; they can only be disabled."
+
+    ws_dir = _workspace_skills_dir()
+    usr_dir = _user_skills_dir()
+
+    candidates = []
+    if ws_dir:
+        candidates.append(ws_dir / name)
+    if usr_dir:
+        candidates.append(usr_dir / name)
+
+    deleted = False
+    for dst in candidates:
+        if dst.is_dir():
+            try:
+                shutil.rmtree(dst, ignore_errors=True)
+                deleted = True
+            except Exception as exc:
+                return False, f"Failed to delete skill directory: {exc}"
+
+    if deleted:
+        return True, f"Permanently deleted custom skill '{name}'"
+    return False, f"Custom skill '{name}' not found"
+
+
 def _load_manifest(skill_dir: Path) -> dict[str, Any] | None:
     """Load and validate a skill manifest from *skill_dir* (supports manifest.yaml and SKILL.md)."""
     manifest_path = skill_dir / "manifest.yaml"
@@ -136,11 +226,17 @@ def _load_manifest(skill_dir: Path) -> dict[str, Any] | None:
     if not isinstance(data, dict) or "name" not in data:
         return None
 
+    skill_name = str(data.get("name", skill_dir.name))
+    data["_path"] = str(skill_dir.resolve())
+    data["installed"] = True
+    data["builtin"] = _is_builtin_skill(skill_dir, skill_name)
+    data["enabled"] = skill_name not in get_disabled_skills()
+
     raw_cat = str(data.get("category", "") or "").lower()
     if raw_cat in {"governance", "testing", "security", "runtime", "infrastructure", "workflow", "general"}:
         data["category"] = raw_cat
     else:
-        data["category"] = _categorize_skill(data.get("name", skill_dir.name), data.get("description", "") + " " + raw_cat)
+        data["category"] = _categorize_skill(skill_name, data.get("description", "") + " " + raw_cat)
     return data
 
 

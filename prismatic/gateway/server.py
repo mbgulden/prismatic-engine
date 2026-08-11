@@ -3893,6 +3893,42 @@ async def dashboard_skill_upload(request: Request) -> dict[str, Any]:
         return JSONResponse({"error": "upload_failed", "detail": str(exc)}, status_code=400)
 
 
+@app.post("/api/skills/{name}/toggle", response_model=None)
+@app.post("/api/gateway/skills/{name}/toggle", response_model=None)
+async def dashboard_skill_toggle(name: str) -> dict[str, Any]:
+    try:
+        from prismatic.skills import toggle_skill_enabled
+        enabled = toggle_skill_enabled(name)
+        try:
+            from prismatic.gateway.event_bus import SwarmEvent, get_event_bus
+            get_event_bus().publish(SwarmEvent("skills.synced", {"skill": name, "enabled": enabled}))
+        except Exception:
+            pass
+        return {"ok": True, "skill": name, "enabled": enabled}
+    except Exception as exc:
+        return JSONResponse({"error": "toggle_failed", "detail": str(exc)}, status_code=400)
+
+
+@app.post("/api/skills/{name}/delete", response_model=None)
+@app.post("/api/gateway/skills/{name}/delete", response_model=None)
+@app.delete("/api/skills/{name}", response_model=None)
+@app.delete("/api/gateway/skills/{name}", response_model=None)
+async def dashboard_skill_delete(name: str) -> dict[str, Any]:
+    try:
+        from prismatic.skills import delete_skill
+        ok, msg = delete_skill(name)
+        if not ok:
+            return JSONResponse({"ok": False, "error": "cannot_delete", "detail": msg}, status_code=400)
+        try:
+            from prismatic.gateway.event_bus import SwarmEvent, get_event_bus
+            get_event_bus().publish(SwarmEvent("skills.synced", {"skill": name, "action": "delete"}))
+        except Exception:
+            pass
+        return {"ok": True, "skill": name, "message": msg}
+    except Exception as exc:
+        return JSONResponse({"error": "delete_failed", "detail": str(exc)}, status_code=400)
+
+
 @app.get("/api/quota")
 @app.get("/api/gateway/quota")
 @app.get("/api/quotas")

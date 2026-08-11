@@ -203,17 +203,28 @@
 
         /* Skills Modals Light Mode Polish */
         body.light-mode #upload-skill-modal .glass-panel,
-        body.light-mode #skill-detail-modal .glass-panel {
+        body.light-mode #skill-detail-modal .glass-panel,
+        body.light-mode #delete-skill-modal .glass-panel {
             background-color: #ffffff !important;
             border-color: #cbd5e1 !important;
             color: #0f172a !important;
             box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1) !important;
+        }
+        body.light-mode #delete-skill-modal .glass-panel {
+            border-color: #fecaca !important;
         }
         body.light-mode #upload-skill-modal h3,
         body.light-mode #skill-detail-modal h3,
         body.light-mode #upload-skill-modal label,
         body.light-mode #skill-detail-modal label {
             color: #0f172a !important;
+        }
+        body.light-mode #delete-skill-modal h3,
+        body.light-mode #delete-skill-target-name {
+            color: #dc2626 !important;
+        }
+        body.light-mode #delete-skill-modal p {
+            color: #334155 !important;
         }
         body.light-mode #upload-skill-name,
         body.light-mode #upload-skill-content {
