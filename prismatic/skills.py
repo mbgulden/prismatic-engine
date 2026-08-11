@@ -136,10 +136,11 @@ def _load_manifest(skill_dir: Path) -> dict[str, Any] | None:
     if not isinstance(data, dict) or "name" not in data:
         return None
 
-    data["_path"] = str(skill_dir.resolve())
-    data["installed"] = True
-    if not data.get("category"):
-        data["category"] = _categorize_skill(data.get("name", skill_dir.name), data.get("description", ""))
+    raw_cat = str(data.get("category", "") or "").lower()
+    if raw_cat in {"governance", "testing", "security", "runtime", "infrastructure", "workflow", "general"}:
+        data["category"] = raw_cat
+    else:
+        data["category"] = _categorize_skill(data.get("name", skill_dir.name), data.get("description", "") + " " + raw_cat)
     return data
 
 

@@ -171,10 +171,63 @@
         body.light-mode #skills-search-input::placeholder {
             color: #94a3b8 !important;
         }
-        body.light-mode #skills-sort-select {
+        body.light-mode #btn-upload-skill {
+            background-color: #10b981 !important;
+            border-color: #059669 !important;
+            color: #ffffff !important;
+            box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05) !important;
+        }
+        body.light-mode #btn-upload-skill:hover {
+            background-color: #059669 !important;
+        }
+        body.light-mode #btn-sync-skills {
+            background-color: #6366f1 !important;
+            border-color: #4f46e5 !important;
+            color: #ffffff !important;
+            box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05) !important;
+        }
+        body.light-mode #btn-sync-skills:hover {
+            background-color: #4f46e5 !important;
+        }
+        body.light-mode #skills-splitter-container {
+            background-color: #ffffff !important;
+            border-color: #cbd5e1 !important;
+        }
+        body.light-mode #skills-sidebar {
+            background-color: #f8fafc !important;
+            border-color: #e2e8f0 !important;
+        }
+        body.light-mode #skills-grid-container {
+            background-color: #ffffff !important;
+        }
+
+        /* Skills Modals Light Mode Polish */
+        body.light-mode #upload-skill-modal .glass-panel,
+        body.light-mode #skill-detail-modal .glass-panel {
             background-color: #ffffff !important;
             border-color: #cbd5e1 !important;
             color: #0f172a !important;
+            box-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1) !important;
+        }
+        body.light-mode #upload-skill-modal h3,
+        body.light-mode #skill-detail-modal h3,
+        body.light-mode #upload-skill-modal label,
+        body.light-mode #skill-detail-modal label {
+            color: #0f172a !important;
+        }
+        body.light-mode #upload-skill-name,
+        body.light-mode #upload-skill-content {
+            background-color: #ffffff !important;
+            border-color: #cbd5e1 !important;
+            color: #0f172a !important;
+        }
+        body.light-mode #skill-detail-path {
+            background-color: #f1f5f9 !important;
+            border-color: #cbd5e1 !important;
+            color: #334155 !important;
+        }
+        body.light-mode #skill-detail-desc {
+            color: #334155 !important;
         }
         body.light-mode .skill-card-uninstall {
             background-color: #fef2f2 !important;

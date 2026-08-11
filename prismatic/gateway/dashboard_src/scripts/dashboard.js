@@ -2332,10 +2332,24 @@
             }
         }
 
+        function getNormalizedCategory(sk) {
+            const c = String(sk.category || "").toLowerCase();
+            const n = String(sk.name || "").toLowerCase();
+            const d = String(sk.description || "").toLowerCase();
+            const combo = `${c} ${n} ${d}`;
+            if (c === "governance" || combo.includes("gov") || combo.includes("contract") || combo.includes("claim") || combo.includes("gate") || combo.includes("closeout")) return "governance";
+            if (c === "testing" || combo.includes("tdd") || combo.includes("test") || combo.includes("pipeline") || combo.includes("validation") || combo.includes("evidence")) return "testing";
+            if (c === "security" || combo.includes("secure") || combo.includes("auth") || combo.includes("credential") || combo.includes("permission")) return "security";
+            if (c === "runtime" || combo.includes("runtime") || combo.includes("artifact") || combo.includes("immutable") || combo.includes("provenance")) return "runtime";
+            if (c === "infrastructure" || combo.includes("cloudflare") || combo.includes("hermes") || combo.includes("infrastructure") || combo.includes("vm") || combo.includes("proxmox")) return "infrastructure";
+            if (c === "workflow" || combo.includes("linear") || combo.includes("routing") || combo.includes("link") || combo.includes("decision") || combo.includes("goal")) return "workflow";
+            return "general";
+        }
+
         function updateSkillCategoryCounts() {
             const counts = { all: skillsState.allSkills.length, governance: 0, testing: 0, security: 0, runtime: 0, infrastructure: 0, workflow: 0, general: 0 };
             skillsState.allSkills.forEach(sk => {
-                const cat = (sk.category || "general").toLowerCase();
+                const cat = getNormalizedCategory(sk);
                 if (counts[cat] !== undefined) counts[cat]++;
                 else counts.general++;
             });
@@ -2369,7 +2383,7 @@
             const sortBy = sortSelect?.value || "name-asc";
 
             let filtered = skillsState.allSkills.filter(sk => {
-                const cat = (sk.category || "general").toLowerCase();
+                const cat = getNormalizedCategory(sk);
                 if (skillsState.activeCategory !== "all" && cat !== skillsState.activeCategory) {
                     return false;
                 }
