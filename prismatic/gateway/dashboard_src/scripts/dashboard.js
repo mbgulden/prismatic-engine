@@ -2707,7 +2707,11 @@
                                 <span class="text-base">${ag.icon || '🤖'}</span>
                                 <div>
                                     <h3 class="agent-title-text text-xs font-bold uppercase tracking-wider text-slate-200">${escapeHtml(ag.name || aid)}</h3>
-                                    <div class="text-[10px] text-indigo-400 font-mono mt-0.5">MODEL: ${escapeHtml(ag.active_model || 'default')}</div>
+                                    <div class="text-[10px] text-indigo-400 font-mono mt-0.5 flex flex-wrap items-center gap-1.5">
+                                        <span>MODEL: ${escapeHtml(ag.active_model || 'default')}</span>
+                                        <span class="text-slate-600">•</span>
+                                        <span class="text-slate-400 font-sans">${escapeHtml(ag.source || 'Registered Harness')}</span>
+                                    </div>
                                 </div>
                             </div>
                             <div class="flex items-center gap-2">

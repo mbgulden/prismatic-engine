@@ -28,68 +28,113 @@ def _read_json(path: Path) -> dict[str, Any] | None:
 class AgentRegistryManager:
     """Manages agent discovery, active process lifecycle, and model telemetry."""
 
-    DEFAULT_KNOWN_AGENTS = [
-        {
-            "agent_id": "agy",
-            "name": "Antigravity (AGY)",
-            "type": "cli_harness",
-            "executable": "agy",
-            "active_model": "gemini-2.5-pro",
-            "model_provider": "Google DeepMind",
-            "capabilities": ["architecture", "tdd", "verification", "refactoring"],
-            "icon": "⚡",
-        },
-        {
-            "agent_id": "hermes",
-            "name": "Hermes Orchestrator",
-            "type": "hermes_node",
-            "executable": "hermes",
-            "active_model": "claude-3-7-sonnet",
-            "model_provider": "Anthropic",
-            "capabilities": ["infrastructure", "proxmox", "deployments", "dns"],
-            "icon": "🌐",
-        },
-        {
-            "agent_id": "kai",
-            "name": "Kai (UI Specialist)",
-            "type": "specialist_subagent",
-            "executable": "kai",
-            "active_model": "claude-3-7-sonnet",
-            "model_provider": "Anthropic",
-            "capabilities": ["css", "ui_design", "accessibility", "playwright"],
-            "icon": "🎨",
-        },
-        {
-            "agent_id": "fred",
-            "name": "Fred (TDD Specialist)",
-            "type": "specialist_subagent",
-            "executable": "fred",
-            "active_model": "claude-3-7-sonnet",
-            "model_provider": "Anthropic",
-            "capabilities": ["python_kernel", "fastapi", "pytest", "review_factory"],
-            "icon": "⚙️",
-        },
-        {
-            "agent_id": "george",
-            "name": "George (Peer Reviewer)",
-            "type": "review_agent",
-            "executable": "george",
-            "active_model": "gpt-4o",
-            "model_provider": "OpenAI",
-            "capabilities": ["peer_review", "rebase_audit", "pr_evidence"],
-            "icon": "🛡️",
-        },
-        {
-            "agent_id": "autobot",
-            "name": "Autobot (CI Worker)",
-            "type": "verification_worker",
-            "executable": "autobot",
-            "active_model": "deepseek-r1",
-            "model_provider": "DeepSeek",
-            "capabilities": ["ci_runner", "wheel_build", "clean_room"],
-            "icon": "🤖",
-        },
-    ]
+    @classmethod
+    def discover_known_agents(cls) -> list[dict[str, Any]]:
+        # Read environment or settings overrides
+        hermes_endpoint = os.environ.get("HERMES_ENDPOINT", "http://100.83.32.92:9000")
+        agy_model = os.environ.get("AGY_MODEL") or os.environ.get("GEMINI_MODEL") or "gemini-2.5-pro"
+        
+        # Check Jules Capacity Ledger
+        jules_payload = {}
+        try:
+            from prismatic.jules_capacity import capacity_payload
+            jules_payload = capacity_payload()
+        except Exception:
+            pass
+
+        jules_status = "idle"
+        jules_task = ""
+        if jules_payload.get("ok"):
+            active = jules_payload.get("active", 0)
+            awaiting = jules_payload.get("awaiting", 0)
+            if active > 0:
+                jules_status = "executing"
+                jules_task = f"Active Sessions ({active})"
+            elif awaiting > 0:
+                jules_status = "waiting_input"
+                jules_task = f"Awaiting Plan ({awaiting})"
+
+        return [
+            {
+                "agent_id": "agy",
+                "name": "Antigravity (AGY)",
+                "type": "cli_harness",
+                "executable": "agy",
+                "active_model": agy_model,
+                "model_provider": "Google DeepMind",
+                "capabilities": ["architecture", "tdd", "verification", "refactoring"],
+                "icon": "⚡",
+                "source": "AGY CLI Connection",
+            },
+            {
+                "agent_id": "hermes",
+                "name": "Hermes Orchestrator",
+                "type": "hermes_node",
+                "executable": "hermes",
+                "active_model": "claude-3-7-sonnet",
+                "model_provider": "Anthropic / Proxmox Node",
+                "capabilities": ["infrastructure", "proxmox", "deployments", "dns"],
+                "icon": "🌐",
+                "source": f"Hermes Hub ({hermes_endpoint})",
+            },
+            {
+                "agent_id": "jules",
+                "name": "Jules CLI",
+                "type": "jules_harness",
+                "executable": "jules",
+                "active_model": "jules-agent-v1",
+                "model_provider": "Google Cloud",
+                "capabilities": ["multi_repo", "capacity_ledger", "auto_pr"],
+                "icon": "🚀",
+                "source": "Jules Capacity Store (300/day limit)",
+                "status_override": jules_status,
+                "current_task_override": jules_task,
+            },
+            {
+                "agent_id": "kai",
+                "name": "Kai (UI Specialist)",
+                "type": "specialist_subagent",
+                "executable": "kai",
+                "active_model": "claude-3-7-sonnet",
+                "model_provider": "Anthropic",
+                "capabilities": ["css", "ui_design", "accessibility", "playwright"],
+                "icon": "🎨",
+                "source": "Subagent Registry",
+            },
+            {
+                "agent_id": "fred",
+                "name": "Fred (TDD Specialist)",
+                "type": "specialist_subagent",
+                "executable": "fred",
+                "active_model": "claude-3-7-sonnet",
+                "model_provider": "Anthropic",
+                "capabilities": ["python_kernel", "fastapi", "pytest", "review_factory"],
+                "icon": "⚙️",
+                "source": "Subagent Registry",
+            },
+            {
+                "agent_id": "george",
+                "name": "George (Peer Reviewer)",
+                "type": "review_agent",
+                "executable": "george",
+                "active_model": "gpt-4o",
+                "model_provider": "OpenAI",
+                "capabilities": ["peer_review", "rebase_audit", "pr_evidence"],
+                "icon": "🛡️",
+                "source": "Subagent Registry",
+            },
+            {
+                "agent_id": "autobot",
+                "name": "Autobot (CI Worker)",
+                "type": "verification_worker",
+                "executable": "autobot",
+                "active_model": "deepseek-r1",
+                "model_provider": "DeepSeek",
+                "capabilities": ["ci_runner", "wheel_build", "clean_room"],
+                "icon": "🤖",
+                "source": "Subagent Registry",
+            },
+        ]
 
     @classmethod
     def get_active_agents(cls) -> list[dict[str, Any]]:
@@ -109,14 +154,14 @@ class AgentRegistryManager:
 
         agents: list[dict[str, Any]] = []
 
-        for meta in cls.DEFAULT_KNOWN_AGENTS:
+        for meta in cls.discover_known_agents():
             aid = meta["agent_id"]
             last_sig = last_signal_by_agent.get(aid, {})
             signal_count = counts.get(aid, 0)
 
             # Determine status & model override
-            status = "idle"
-            current_task = ""
+            status = meta.get("status_override", "idle")
+            current_task = meta.get("current_task_override", "")
 
             if aid == "agy" and agy_runs_data.get("status") == "ok":
                 runs = agy_runs_data.get("runs", [])
@@ -148,6 +193,7 @@ class AgentRegistryManager:
                     "model_provider": meta["model_provider"],
                     "capabilities": meta["capabilities"],
                     "icon": meta["icon"],
+                    "source": meta["source"],
                     "signal_count": signal_count,
                     "current_task": current_task,
                     "last_signal_at": last_sig.get("timestamp"),

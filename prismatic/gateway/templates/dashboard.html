@@ -2546,6 +2546,58 @@
             </div>
         </div>
     </div>
+
+    <!-- Agent Harness & Discovery Connections -->
+    <div class="bg-slate-900/60 border border-slate-800 rounded-xl p-6 space-y-6">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+            <div>
+                <h3 class="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                    <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+                    Agent Harness &amp; Dynamic Discovery Connections
+                </h3>
+                <p class="text-xs text-slate-500 mt-1">Configure live provider endpoints, CLI binary paths, and model defaults for portable agent discovery.</p>
+            </div>
+            <span class="px-2.5 py-1 rounded text-[10px] font-bold uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Dynamic Discovery</span>
+        </div>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- Hermes Orchestrator Hub Endpoint -->
+            <div class="space-y-2">
+                <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">Hermes Orchestrator Hub Endpoint</label>
+                <input id="setting-HERMES_ENDPOINT" type="text" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="http://100.83.32.92:9000">
+            </div>
+
+            <!-- AGY CLI Default Model -->
+            <div class="space-y-2">
+                <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">AGY CLI Active Model</label>
+                <input id="setting-AGY_MODEL" type="text" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="gemini-2.5-pro">
+            </div>
+
+            <!-- Jules CLI DB Path -->
+            <div class="space-y-2">
+                <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">Jules Capacity Database Path</label>
+                <input id="setting-JULES_DB_PATH" type="text" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="~/.prismatic/db/jules_capacity.sqlite3">
+            </div>
+
+            <!-- OpenAI API Key -->
+            <div class="space-y-2">
+                <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">OpenAI API Key (George Peer Reviewer)</label>
+                <input id="setting-OPENAI_API_KEY" type="password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="sk-proj-••••••••••••••••">
+            </div>
+
+            <!-- Anthropic API Key -->
+            <div class="space-y-2">
+                <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">Anthropic API Key (Kai &amp; Fred)</label>
+                <input id="setting-ANTHROPIC_API_KEY" type="password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="sk-ant-••••••••••••••••">
+            </div>
+
+            <!-- Google Gemini API Key -->
+            <div class="space-y-2">
+                <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">Google Gemini API Key (AGY Engine)</label>
+                <input id="setting-GEMINI_API_KEY" type="password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="AIzaSy••••••••••••••••">
+            </div>
+        </div>
+    </div>
 </section>
     </main>
 
@@ -5325,7 +5377,11 @@
                                 <span class="text-base">${ag.icon || '🤖'}</span>
                                 <div>
                                     <h3 class="agent-title-text text-xs font-bold uppercase tracking-wider text-slate-200">${escapeHtml(ag.name || aid)}</h3>
-                                    <div class="text-[10px] text-indigo-400 font-mono mt-0.5">MODEL: ${escapeHtml(ag.active_model || 'default')}</div>
+                                    <div class="text-[10px] text-indigo-400 font-mono mt-0.5 flex flex-wrap items-center gap-1.5">
+                                        <span>MODEL: ${escapeHtml(ag.active_model || 'default')}</span>
+                                        <span class="text-slate-600">•</span>
+                                        <span class="text-slate-400 font-sans">${escapeHtml(ag.source || 'Registered Harness')}</span>
+                                    </div>
                                 </div>
                             </div>
                             <div class="flex items-center gap-2">
