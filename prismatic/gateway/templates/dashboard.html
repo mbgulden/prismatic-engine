@@ -131,6 +131,15 @@
             background-color: #f1f5f9 !important;
             color: #0f172a !important;
         }
+        body.light-mode #workspace-tree-search {
+            background-color: #ffffff !important;
+            border-color: #cbd5e1 !important;
+            color: #0f172a !important;
+            padding-left: 2.5rem !important;
+        }
+        body.light-mode #workspace-tree-search::placeholder {
+            color: #94a3b8 !important;
+        }
         body.light-mode #workspace-file-preview {
             background-color: #ffffff !important;
             border-color: #e2e8f0 !important;
@@ -1589,9 +1598,9 @@
                             </div>
                             
                             <!-- Search Filter Input (Pixel-Perfect Vertically Centered SVG) -->
-                            <div class="relative flex items-center">
-                                <svg class="w-3.5 h-3.5 text-slate-500 absolute left-3 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-                                <input id="workspace-tree-search" type="text" placeholder="Filter folders &amp; files..." onkeyup="filterWorkspaceTreeNodes()" class="w-full rounded-lg border border-slate-800 bg-slate-950 pl-9 pr-3 py-1.5 text-xs text-slate-200 placeholder:text-slate-600 focus:border-slate-600 focus:outline-none font-mono">
+                            <div class="relative flex items-center min-w-0 w-full">
+                                <svg class="w-4 h-4 text-slate-400 dark:text-slate-500 absolute left-3 pointer-events-none z-10 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                                <input id="workspace-tree-search" type="text" placeholder="Filter folders &amp; files..." onkeyup="filterWorkspaceTreeNodes()" class="w-full rounded-lg border border-slate-800 bg-slate-950 pr-3 py-1.5 text-xs text-slate-200 placeholder:text-slate-600 focus:border-slate-600 focus:outline-none font-mono" style="padding-left: 2.5rem !important;">
                             </div>
                         </div>
                         <div id="workspace-tree-roots" class="p-3 space-y-3 overflow-auto overscroll-contain flex-1 font-mono text-[11px] sm:text-xs touch-pan-y min-w-0 max-w-full break-words select-none">
@@ -3895,22 +3904,28 @@
         }
 
         async function rehydrateExpandedPaths() {
-            const pathsToExpand = Array.from(workspaceTreeState.expandedPaths);
-            if (!pathsToExpand.length) return;
+            let expandedAny = true;
+            let iterations = 0;
+            while (expandedAny && iterations < 15) {
+                expandedAny = false;
+                iterations++;
+                const pathsToExpand = Array.from(workspaceTreeState.expandedPaths);
+                
+                // Sort paths by depth (shallowest first)
+                pathsToExpand.sort((a, b) => a.split("/").length - b.split("/").length);
 
-            // Sort paths by depth (shallowest first)
-            pathsToExpand.sort((a, b) => a.split("/").length - b.split("/").length);
-
-            for (const key of pathsToExpand) {
-                const parts = key.split(":");
-                const workspaceId = parts[0];
-                const relPath = parts.slice(1).join(":");
-                const nodeEl = document.querySelector(`.workspace-node[data-workspace-id="${CSS.escape(workspaceId)}"][data-relative-path="${CSS.escape(relPath)}"]`);
-                if (nodeEl) {
-                    const button = nodeEl.querySelector(":scope > button[data-workspace-action='expand']");
-                    const childrenEl = nodeEl.querySelector(":scope > .workspace-node-children");
-                    if (button && childrenEl && childrenEl.classList.contains("hidden")) {
-                        await toggleWorkspaceDirectory(button);
+                for (const key of pathsToExpand) {
+                    const parts = key.split(":");
+                    const workspaceId = parts[0];
+                    const relPath = parts.slice(1).join(":");
+                    const nodeEl = document.querySelector(`.workspace-node[data-workspace-id="${CSS.escape(workspaceId)}"][data-relative-path="${CSS.escape(relPath)}"]`);
+                    if (nodeEl) {
+                        const button = nodeEl.querySelector(":scope > button[data-workspace-action='expand']");
+                        const childrenEl = nodeEl.querySelector(":scope > .workspace-node-children");
+                        if (button && childrenEl && (childrenEl.classList.contains("hidden") || childrenEl.dataset.loaded !== "true")) {
+                            await toggleWorkspaceDirectory(button);
+                            expandedAny = true;
+                        }
                     }
                 }
             }
@@ -4198,7 +4213,22 @@
             if (!previewEl || !nameEl) return;
             workspaceTreeState.selectedWorkspaceId = workspaceId;
             workspaceTreeState.selectedRelativePath = relativePath;
-            nameEl.textContent = relativePath.rsplit ? relativePath.rsplit("/", 1)[-1] : relativePath;
+            void saveWorkspaceTreeState();
+
+            // Clear previous selection highlights in tree sidebar
+            document.querySelectorAll("#workspace-tree-roots button.is-selected").forEach(btn => {
+                btn.classList.remove("is-selected", "bg-slate-200", "dark:bg-slate-800", "text-slate-900", "dark:text-slate-100", "font-semibold", "border-l-2", "border-slate-500", "dark:border-slate-400", "shadow-sm");
+                btn.classList.add("text-slate-700", "dark:text-slate-300", "font-normal");
+            });
+
+            // Highlight selected node button
+            const selectedBtn = document.querySelector(`.workspace-node[data-workspace-id="${CSS.escape(workspaceId)}"][data-relative-path="${CSS.escape(relativePath)}"] > button`);
+            if (selectedBtn) {
+                selectedBtn.classList.remove("text-slate-700", "dark:text-slate-300", "font-normal");
+                selectedBtn.classList.add("is-selected", "bg-slate-200", "dark:bg-slate-800", "text-slate-900", "dark:text-slate-100", "font-semibold", "border-l-2", "border-slate-500", "dark:border-slate-400", "shadow-sm");
+            }
+
+            nameEl.textContent = relativePath.includes ? (relativePath.split("/").pop() || relativePath) : relativePath;
             if (scopeEl) scopeEl.textContent = relativePath;
             previewEl.textContent = "Loading file preview…";
 

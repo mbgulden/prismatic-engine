@@ -1831,22 +1831,28 @@
         }
 
         async function rehydrateExpandedPaths() {
-            const pathsToExpand = Array.from(workspaceTreeState.expandedPaths);
-            if (!pathsToExpand.length) return;
+            let expandedAny = true;
+            let iterations = 0;
+            while (expandedAny && iterations < 15) {
+                expandedAny = false;
+                iterations++;
+                const pathsToExpand = Array.from(workspaceTreeState.expandedPaths);
+                
+                // Sort paths by depth (shallowest first)
+                pathsToExpand.sort((a, b) => a.split("/").length - b.split("/").length);
 
-            // Sort paths by depth (shallowest first)
-            pathsToExpand.sort((a, b) => a.split("/").length - b.split("/").length);
-
-            for (const key of pathsToExpand) {
-                const parts = key.split(":");
-                const workspaceId = parts[0];
-                const relPath = parts.slice(1).join(":");
-                const nodeEl = document.querySelector(`.workspace-node[data-workspace-id="${CSS.escape(workspaceId)}"][data-relative-path="${CSS.escape(relPath)}"]`);
-                if (nodeEl) {
-                    const button = nodeEl.querySelector(":scope > button[data-workspace-action='expand']");
-                    const childrenEl = nodeEl.querySelector(":scope > .workspace-node-children");
-                    if (button && childrenEl && childrenEl.classList.contains("hidden")) {
-                        await toggleWorkspaceDirectory(button);
+                for (const key of pathsToExpand) {
+                    const parts = key.split(":");
+                    const workspaceId = parts[0];
+                    const relPath = parts.slice(1).join(":");
+                    const nodeEl = document.querySelector(`.workspace-node[data-workspace-id="${CSS.escape(workspaceId)}"][data-relative-path="${CSS.escape(relPath)}"]`);
+                    if (nodeEl) {
+                        const button = nodeEl.querySelector(":scope > button[data-workspace-action='expand']");
+                        const childrenEl = nodeEl.querySelector(":scope > .workspace-node-children");
+                        if (button && childrenEl && (childrenEl.classList.contains("hidden") || childrenEl.dataset.loaded !== "true")) {
+                            await toggleWorkspaceDirectory(button);
+                            expandedAny = true;
+                        }
                     }
                 }
             }
@@ -2134,7 +2140,22 @@
             if (!previewEl || !nameEl) return;
             workspaceTreeState.selectedWorkspaceId = workspaceId;
             workspaceTreeState.selectedRelativePath = relativePath;
-            nameEl.textContent = relativePath.rsplit ? relativePath.rsplit("/", 1)[-1] : relativePath;
+            void saveWorkspaceTreeState();
+
+            // Clear previous selection highlights in tree sidebar
+            document.querySelectorAll("#workspace-tree-roots button.is-selected").forEach(btn => {
+                btn.classList.remove("is-selected", "bg-slate-200", "dark:bg-slate-800", "text-slate-900", "dark:text-slate-100", "font-semibold", "border-l-2", "border-slate-500", "dark:border-slate-400", "shadow-sm");
+                btn.classList.add("text-slate-700", "dark:text-slate-300", "font-normal");
+            });
+
+            // Highlight selected node button
+            const selectedBtn = document.querySelector(`.workspace-node[data-workspace-id="${CSS.escape(workspaceId)}"][data-relative-path="${CSS.escape(relativePath)}"] > button`);
+            if (selectedBtn) {
+                selectedBtn.classList.remove("text-slate-700", "dark:text-slate-300", "font-normal");
+                selectedBtn.classList.add("is-selected", "bg-slate-200", "dark:bg-slate-800", "text-slate-900", "dark:text-slate-100", "font-semibold", "border-l-2", "border-slate-500", "dark:border-slate-400", "shadow-sm");
+            }
+
+            nameEl.textContent = relativePath.includes ? (relativePath.split("/").pop() || relativePath) : relativePath;
             if (scopeEl) scopeEl.textContent = relativePath;
             previewEl.textContent = "Loading file preview…";
 
