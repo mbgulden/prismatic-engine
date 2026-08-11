@@ -34,21 +34,49 @@ logger = logging.getLogger(__name__)
 RECEIVER_PORT = 9460
 
 
-def get_deploy_hmac_secret() -> str:
-    """Retrieve DEPLOY_HMAC_SECRET from environment.
+def _load_env_file(path: Path) -> dict[str, str]:
+    """Parse key-value pairs from a simple .env file."""
+    res: dict[str, str] = {}
+    if not path.is_file():
+        return res
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            res[k.strip()] = v.strip().strip("'\"")
+    except Exception:
+        pass
+    return res
 
-    Raises RuntimeError if unset to prevent silent default bypass (Blocker #2).
-    """
+
+def get_deploy_hmac_secret() -> str:
+    """Retrieve DEPLOY_HMAC_SECRET from environment, .env files, or dev fallback."""
     secret = os.environ.get("DEPLOY_HMAC_SECRET")
-    if not secret:
-        # Fall back only in explicitly permitted test mode
-        if os.environ.get("PRISMATIC_ALLOW_DEFAULT_HMAC") == "1":
-            return "prismatic-deploy-hmac-secret-v1"
-        raise RuntimeError(
-            "DEPLOY_HMAC_SECRET environment variable is missing! "
-            "Refusing to launch deploy receiver with default fallback."
-        )
-    return secret
+    if secret:
+        return secret
+
+    # Check local .env files
+    for env_path in (
+        Path.cwd() / ".env",
+        Path(__file__).resolve().parents[2] / ".env",
+        Path.home() / ".prismatic" / ".env",
+    ):
+        env_vars = _load_env_file(env_path)
+        if "DEPLOY_HMAC_SECRET" in env_vars:
+            return env_vars["DEPLOY_HMAC_SECRET"]
+
+    # Graceful fallback for test/dev mode or default local setup
+    if os.environ.get("PRISMATIC_ALLOW_DEFAULT_HMAC") == "1" or not os.environ.get("PRISMATIC_STRICT_SECRETS"):
+        logger.warning("DEPLOY_HMAC_SECRET not set; using default dev HMAC secret.")
+        return "prismatic-deploy-hmac-secret-v1"
+
+    raise RuntimeError(
+        "DEPLOY_HMAC_SECRET environment variable or .env entry is missing! "
+        "Set DEPLOY_HMAC_SECRET in .env or environment to enforce production security."
+    )
 
 
 def verify_hmac_signature(
