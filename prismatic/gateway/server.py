@@ -4578,6 +4578,14 @@ async def serve_governance_tab(tab_name: str | None = None) -> HTMLResponse:
     return _serve_governance_dashboard_html()
 
 
+@app.get("/{full_path:path}", response_class=HTMLResponse)
+async def serve_governance_spa_fallback(full_path: str) -> HTMLResponse:
+    """SPA Fallback: serve dashboard HTML for any client-side route except APIs."""
+    if full_path.startswith("api/") or full_path.startswith("static/") or full_path.startswith("ws"):
+        raise HTTPException(status_code=404, detail="Not Found")
+    return _serve_governance_dashboard_html()
+
+
 @app.get("/api/workspaces")
 async def workspace_tree_workspaces() -> dict[str, Any]:
     try:
