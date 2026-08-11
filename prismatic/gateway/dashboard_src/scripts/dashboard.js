@@ -1732,6 +1732,16 @@
             sidebarWidth: parseInt(localStorage.getItem("ws_sidebar_width") || "380", 10),
         };
 
+        function applySidebarWidth(w) {
+            const sidebar = document.getElementById("workspace-tree-sidebar");
+            if (!sidebar) return;
+            const clamped = Math.max(200, Math.min(800, w));
+            sidebar.style.width = `${clamped}px`;
+            sidebar.style.minWidth = `${clamped}px`;
+            sidebar.style.maxWidth = `${clamped}px`;
+            sidebar.style.flex = `0 0 ${clamped}px`;
+        }
+
         function initWorkspaceSplitter() {
             const handle = document.getElementById("workspace-splitter-handle");
             const sidebar = document.getElementById("workspace-tree-sidebar");
@@ -1740,7 +1750,7 @@
             
             // Restore saved width
             if (workspaceTreeState.sidebarWidth && window.innerWidth >= 1024) {
-                sidebar.style.width = `${Math.max(220, Math.min(750, workspaceTreeState.sidebarWidth))}px`;
+                applySidebarWidth(workspaceTreeState.sidebarWidth);
             }
 
             let dragging = false;
@@ -1748,8 +1758,8 @@
             const onPointerMove = (e) => {
                 if (!dragging) return;
                 const containerRect = container.getBoundingClientRect();
-                const newWidth = Math.max(220, Math.min(containerRect.width - 250, e.clientX - containerRect.left));
-                sidebar.style.width = `${newWidth}px`;
+                const newWidth = Math.max(200, Math.min(containerRect.width - 250, e.clientX - containerRect.left));
+                applySidebarWidth(newWidth);
                 workspaceTreeState.sidebarWidth = Math.round(newWidth);
             };
 
@@ -1823,11 +1833,11 @@
             
             ["name", "date", "type", "size"].forEach(s => {
                 const el = document.getElementById(`sort-check-${s}`);
-                if (el) el.className = s === workspaceTreeState.sortBy ? "text-cyan-400 font-bold" : "hidden text-cyan-400 font-bold";
+                if (el) el.className = s === workspaceTreeState.sortBy ? "text-slate-200 font-bold" : "hidden text-slate-200 font-bold";
             });
             ["asc", "desc"].forEach(o => {
                 const el = document.getElementById(`order-check-${o}`);
-                if (el) el.className = o === workspaceTreeState.sortOrder ? "text-cyan-400 font-bold" : "hidden text-cyan-400 font-bold";
+                if (el) el.className = o === workspaceTreeState.sortOrder ? "text-slate-200 font-bold" : "hidden text-slate-200 font-bold";
             });
             
             const rootsEl = document.getElementById("workspace-tree-roots");
@@ -1926,33 +1936,33 @@
 
             const isSelected = workspaceTreeState.selectedWorkspaceId === workspaceId && workspaceTreeState.selectedRelativePath === relativePath;
 
-            // Crisp, high-contrast typography & active left-border badges
+            // Clean, elegant grey/slate styling (No harsh neon cyan/blue text or borders)
             const buttonClass = isSelected
-                ? "bg-indigo-950/80 text-indigo-100 border-l-2 border-indigo-400 font-bold shadow-sm"
+                ? "bg-slate-800/90 text-slate-100 font-semibold border-l-2 border-slate-400 shadow-sm"
                 : isDir
-                    ? "text-cyan-200 hover:text-white hover:bg-cyan-500/10 font-medium"
+                    ? "text-slate-300 hover:text-white hover:bg-slate-800/40 font-normal"
                     : previewable
-                        ? "text-slate-200 hover:text-white hover:bg-slate-800/80 font-normal"
-                        : "text-slate-500 cursor-not-allowed opacity-60";
+                        ? "text-slate-300 hover:text-white hover:bg-slate-800/40 font-normal"
+                        : "text-slate-500 cursor-not-allowed opacity-50";
 
             const action = isDir ? "expand" : "preview";
             const disabled = !isDir && !previewable ? "disabled" : "";
             const childHtml = children.length
-                ? `<div class="workspace-node-children ml-3 border-l border-slate-800/80 pl-2">${children.map(child => renderWorkspaceNode(workspaceId, child, depth + 1)).join("")}</div>`
-                : `<div class="workspace-node-children ml-3 border-l border-slate-800/80 pl-2 hidden"></div>`;
+                ? `<div class="workspace-node-children ml-2.5 border-l border-slate-800/60 pl-2">${children.map(child => renderWorkspaceNode(workspaceId, child, depth + 1)).join("")}</div>`
+                : `<div class="workspace-node-children ml-2.5 border-l border-slate-800/60 pl-2 hidden"></div>`;
 
-            // Smart compact date & size badging
+            // Smart compact date & size badging in clean neutral slate
             const shortDate = node.mtime ? formatYYMMDD(node.mtime) : "";
             const compactSize = node.size != null ? (node.size > 1048576 ? `${(node.size/1048576).toFixed(1)}MB` : node.size > 1024 ? `${(node.size/1024).toFixed(1)}KB` : `${node.size}B`) : "";
 
             let metaBadgeHtml = "";
             if (workspaceTreeState.sortBy === "date" && shortDate) {
-                metaBadgeHtml = `<span class="text-[10px] font-mono text-cyan-400 bg-cyan-950/40 border border-cyan-500/30 px-1.5 py-0.5 rounded whitespace-nowrap flex-shrink-0 ml-2">${escapeHTML(shortDate)}</span>`;
+                metaBadgeHtml = `<span class="text-[10px] font-mono text-slate-400 bg-slate-900 border border-slate-800/80 px-1.5 py-0.5 rounded whitespace-nowrap flex-shrink-0 ml-2">${escapeHTML(shortDate)}</span>`;
             } else if (workspaceTreeState.sortBy === "size" && compactSize) {
-                metaBadgeHtml = `<span class="text-[10px] font-mono text-indigo-300 bg-indigo-950/40 border border-indigo-500/30 px-1.5 py-0.5 rounded whitespace-nowrap flex-shrink-0 ml-2">${escapeHTML(compactSize)}</span>`;
+                metaBadgeHtml = `<span class="text-[10px] font-mono text-slate-400 bg-slate-900 border border-slate-800/80 px-1.5 py-0.5 rounded whitespace-nowrap flex-shrink-0 ml-2">${escapeHTML(compactSize)}</span>`;
             } else if (compactSize || shortDate) {
                 const labelStr = compactSize || shortDate;
-                metaBadgeHtml = `<span class="text-[10px] font-mono text-slate-400 bg-slate-900 border border-slate-800 px-1.5 py-0.5 rounded whitespace-nowrap flex-shrink-0 ml-2">${escapeHTML(labelStr)}</span>`;
+                metaBadgeHtml = `<span class="text-[10px] font-mono text-slate-500 bg-slate-900/60 border border-slate-800/60 px-1.5 py-0.5 rounded whitespace-nowrap flex-shrink-0 ml-2">${escapeHTML(labelStr)}</span>`;
             }
 
             return `<div class="workspace-node my-0.5" 
@@ -1986,8 +1996,12 @@
                 childrenEl.classList.toggle("hidden");
                 const isHidden = childrenEl.classList.contains("hidden");
                 button.querySelector("span span").textContent = isHidden ? "▸" : "▾";
-                button.className = button.className.replace(/bg-\S+/, "").trim();
-                button.classList.add(isHidden ? "text-cyan-200" : "text-cyan-300", "font-bold", "bg-cyan-950/40");
+                if (isHidden) {
+                    button.classList.remove("bg-slate-800/60", "text-slate-100", "font-semibold");
+                    button.classList.add("text-slate-300");
+                } else {
+                    button.classList.add("bg-slate-800/60", "text-slate-100", "font-semibold");
+                }
                 if (isHidden) workspaceTreeState.expandedPaths.delete(stateKey);
                 else workspaceTreeState.expandedPaths.add(stateKey);
                 saveWorkspaceTreeState();
@@ -2015,7 +2029,7 @@
                     ? children.map(child => renderWorkspaceNode(workspaceId, child, 0)).join("")
                     : `<div class="px-2 py-1 text-slate-500 italic">Empty folder.</div>`;
                 button.querySelector("span span").textContent = "▾";
-                button.classList.add("text-cyan-300", "font-bold", "bg-cyan-950/40");
+                button.classList.add("bg-slate-800/60", "text-slate-100", "font-semibold");
             } catch (err) {
                 childrenEl.innerHTML = `<div class="px-2 py-1 text-rose-400">Could not load folder: ${escapeHTML(err.message)}</div>`;
             }
@@ -2124,8 +2138,7 @@
                 if (statusEl) statusEl.textContent = `${data.workspace_count || workspaceTreeState.workspaces.length} workspaces · sorted by ${workspaceTreeState.sortBy} (${workspaceTreeState.sortOrder})`;
                 rootsEl.innerHTML = workspaceTreeState.workspaces.map(ws => {
                     const rootNode = { name: ws.name, type: "directory", relative_path: "", previewable: false, children: [] };
-                    return `<div class="rounded-lg border border-slate-800/70 bg-slate-950/50 p-2">
-                        <div class="text-[10px] uppercase tracking-wider text-slate-500 mb-1">${escapeHTML(ws.workspace_id)}</div>
+                    return `<div class="rounded-lg border border-slate-800/60 bg-slate-900/30 p-1.5 mb-2">
                         ${renderWorkspaceNode(ws.workspace_id, rootNode, 0)}
                     </div>`;
                 }).join("") || `<div class="text-slate-500 italic">No workspace roots configured.</div>`;
