@@ -11,8 +11,11 @@ def test_health_checker_filesystem(tmp_path):
     (version_dir / "prismatic").mkdir()
 
     symlink_path = tmp_path / "release_symlink"
-    import os
-    os.symlink(version_dir, symlink_path)
+    import os, shutil
+    try:
+        os.symlink(version_dir, symlink_path)
+    except OSError:
+        shutil.copytree(version_dir, symlink_path)
 
     checker = PostDeployHealthChecker()
     res = checker.check(version_dir=version_dir, release_symlink=symlink_path)
