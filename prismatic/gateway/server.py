@@ -4567,9 +4567,6 @@ async def serve_governance_index() -> HTMLResponse:
 @app.get("/foundation", response_class=HTMLResponse)
 @app.get("/skills", response_class=HTMLResponse)
 @app.get("/review-factory", response_class=HTMLResponse)
-async def serve_review_factory_tab() -> HTMLResponse:
-    """Serve canonical governance dashboard for /review-factory direct URL."""
-    return _serve_governance_dashboard_html()
 @app.get("/signals", response_class=HTMLResponse)
 @app.get("/crons", response_class=HTMLResponse)
 @app.get("/pwp", response_class=HTMLResponse)
@@ -4578,14 +4575,6 @@ async def serve_review_factory_tab() -> HTMLResponse:
 @app.get("/tab/{tab_name}", response_class=HTMLResponse)
 async def serve_governance_tab(tab_name: str | None = None) -> HTMLResponse:
     """Serve the canonical dashboard UI for clean top-level tab routes."""
-    return _serve_governance_dashboard_html()
-
-
-@app.get("/{full_path:path}", response_class=HTMLResponse)
-async def serve_governance_spa_fallback(full_path: str) -> HTMLResponse:
-    """SPA Fallback: serve dashboard HTML for any client-side route except APIs."""
-    if full_path.startswith("api/") or full_path.startswith("static/") or full_path.startswith("ws"):
-        raise HTTPException(status_code=404, detail="Not Found")
     return _serve_governance_dashboard_html()
 
 
