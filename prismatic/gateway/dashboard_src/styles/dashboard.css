@@ -160,14 +160,50 @@
             background-color: #f1f5f9 !important;
             color: #0f172a !important;
         }
-        body.light-mode #workspace-tree-search {
+        body.light-mode #workspace-tree-search,
+        body.light-mode #skills-search-input {
             background-color: #ffffff !important;
             border-color: #cbd5e1 !important;
             color: #0f172a !important;
             padding-left: 2.5rem !important;
         }
-        body.light-mode #workspace-tree-search::placeholder {
+        body.light-mode #workspace-tree-search::placeholder,
+        body.light-mode #skills-search-input::placeholder {
             color: #94a3b8 !important;
+        }
+        body.light-mode #skills-sort-select {
+            background-color: #ffffff !important;
+            border-color: #cbd5e1 !important;
+            color: #0f172a !important;
+        }
+        body.light-mode .skill-card-uninstall {
+            background-color: #fef2f2 !important;
+            border-color: #fecaca !important;
+            color: #dc2626 !important;
+            font-weight: 600 !important;
+        }
+        body.light-mode .skill-card-uninstall:hover {
+            background-color: #fee2e2 !important;
+            color: #991b1b !important;
+        }
+        body.light-mode .skill-card-install {
+            background-color: #eef2ff !important;
+            border-color: #c7d2fe !important;
+            color: #4945ff !important;
+            font-weight: 600 !important;
+        }
+        body.light-mode .skill-card-install:hover {
+            background-color: #e0e7ff !important;
+            color: #3730a3 !important;
+        }
+        body.light-mode .skill-cat-btn:hover {
+            background-color: #f1f5f9 !important;
+            color: #0f172a !important;
+        }
+        body.light-mode .skill-cat-btn.active {
+            background-color: #eef2ff !important;
+            color: #4945ff !important;
+            border-color: #c7d2fe !important;
         }
         body.light-mode #workspace-file-preview {
             background-color: #ffffff !important;

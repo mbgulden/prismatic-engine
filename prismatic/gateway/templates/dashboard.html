@@ -171,14 +171,50 @@
             background-color: #f1f5f9 !important;
             color: #0f172a !important;
         }
-        body.light-mode #workspace-tree-search {
+        body.light-mode #workspace-tree-search,
+        body.light-mode #skills-search-input {
             background-color: #ffffff !important;
             border-color: #cbd5e1 !important;
             color: #0f172a !important;
             padding-left: 2.5rem !important;
         }
-        body.light-mode #workspace-tree-search::placeholder {
+        body.light-mode #workspace-tree-search::placeholder,
+        body.light-mode #skills-search-input::placeholder {
             color: #94a3b8 !important;
+        }
+        body.light-mode #skills-sort-select {
+            background-color: #ffffff !important;
+            border-color: #cbd5e1 !important;
+            color: #0f172a !important;
+        }
+        body.light-mode .skill-card-uninstall {
+            background-color: #fef2f2 !important;
+            border-color: #fecaca !important;
+            color: #dc2626 !important;
+            font-weight: 600 !important;
+        }
+        body.light-mode .skill-card-uninstall:hover {
+            background-color: #fee2e2 !important;
+            color: #991b1b !important;
+        }
+        body.light-mode .skill-card-install {
+            background-color: #eef2ff !important;
+            border-color: #c7d2fe !important;
+            color: #4945ff !important;
+            font-weight: 600 !important;
+        }
+        body.light-mode .skill-card-install:hover {
+            background-color: #e0e7ff !important;
+            color: #3730a3 !important;
+        }
+        body.light-mode .skill-cat-btn:hover {
+            background-color: #f1f5f9 !important;
+            color: #0f172a !important;
+        }
+        body.light-mode .skill-cat-btn.active {
+            background-color: #eef2ff !important;
+            color: #4945ff !important;
+            border-color: #c7d2fe !important;
         }
         body.light-mode #workspace-file-preview {
             background-color: #ffffff !important;
@@ -1693,26 +1729,146 @@
         </div>
 
         <!-- SECTION 5: SKILLS -->
-        <div id="section-skills" class="hidden space-y-6">
+        <div id="section-skills" class="hidden space-y-6 max-w-full">
             <div class="glass-panel p-5 rounded-xl space-y-4">
-                <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-3 flex justify-between items-center">
-                    <span>Installed Agent Capabilities</span>
+                <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider border-b border-slate-800 pb-3 flex items-center justify-between">
+                    <span class="flex items-center gap-2">
+                        <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L5.605 15.12a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/></svg>
+                        Installed Agent Capabilities &amp; Skills Registry
+                    </span>
                     <div class="flex items-center gap-2">
-                        <button onclick="uploadCustomSkillPrompt()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded transition shadow-sm flex items-center gap-1">
-                            <span>+ Upload Skill</span>
+                        <button type="button" onclick="openUploadSkillModal()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition shadow-sm flex items-center gap-1.5">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                            <span>Upload Skill</span>
                         </button>
-                        <button onclick="renderSkillsView()" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-3 py-1.5 rounded transition">
-                            Sync Registry
+                        <button type="button" onclick="renderSkillsView()" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition flex items-center gap-1.5">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                            <span>Sync Registry</span>
                         </button>
                     </div>
                 </h2>
-                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4" id="skills-grid">
-                    <!-- Populated dynamically -->
+
+                <!-- 2-Column Splitter Layout for Skills -->
+                <div class="flex flex-col lg:flex-row gap-4 min-h-[600px] max-w-full overflow-hidden">
+                    
+                    <!-- Left Sidebar Nav & Filters -->
+                    <aside class="w-full lg:w-[280px] flex-shrink-0 flex flex-col space-y-4 border-b lg:border-b-0 lg:border-r border-slate-800/80 pr-0 lg:pr-4">
+                        <!-- Search Bar -->
+                        <div class="relative flex items-center min-w-0 w-full">
+                            <svg class="w-4 h-4 text-slate-400 dark:text-slate-500 absolute left-3 pointer-events-none z-10 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                            <input id="skills-search-input" type="text" placeholder="Filter skills..." onkeyup="filterSkillsView()" class="w-full rounded-lg border border-slate-800 bg-slate-950 pr-3 py-1.5 text-xs text-slate-200 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none font-mono" style="padding-left: 2.5rem !important;">
+                        </div>
+
+                        <!-- Categories List -->
+                        <div class="space-y-1">
+                            <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500 px-2 py-1">Categories</div>
+                            <button type="button" onclick="filterSkillCategory('all')" id="cat-btn-all" class="skill-cat-btn active w-full text-left px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-between transition bg-indigo-600/20 text-indigo-300 border border-indigo-500/30">
+                                <span>All Capabilities</span>
+                                <span id="cat-count-all" class="px-1.5 py-0.5 rounded text-[10px] bg-indigo-500/20 text-indigo-300 font-mono">0</span>
+                            </button>
+                            <button type="button" onclick="filterSkillCategory('governance')" id="cat-btn-governance" class="skill-cat-btn w-full text-left px-3 py-1.5 rounded-lg text-xs font-medium flex items-center justify-between text-slate-400 hover:text-white hover:bg-slate-800/40 transition">
+                                <span>🛡️ Agent Governance</span>
+                                <span id="cat-count-governance" class="px-1.5 py-0.5 rounded text-[10px] bg-slate-900 text-slate-400 font-mono">0</span>
+                            </button>
+                            <button type="button" onclick="filterSkillCategory('testing')" id="cat-btn-testing" class="skill-cat-btn w-full text-left px-3 py-1.5 rounded-lg text-xs font-medium flex items-center justify-between text-slate-400 hover:text-white hover:bg-slate-800/40 transition">
+                                <span>🧪 Testing &amp; TDD</span>
+                                <span id="cat-count-testing" class="px-1.5 py-0.5 rounded text-[10px] bg-slate-900 text-slate-400 font-mono">0</span>
+                            </button>
+                            <button type="button" onclick="filterSkillCategory('security')" id="cat-btn-security" class="skill-cat-btn w-full text-left px-3 py-1.5 rounded-lg text-xs font-medium flex items-center justify-between text-slate-400 hover:text-white hover:bg-slate-800/40 transition">
+                                <span>🔒 Security &amp; Audit</span>
+                                <span id="cat-count-security" class="px-1.5 py-0.5 rounded text-[10px] bg-slate-900 text-slate-400 font-mono">0</span>
+                            </button>
+                            <button type="button" onclick="filterSkillCategory('runtime')" id="cat-btn-runtime" class="skill-cat-btn w-full text-left px-3 py-1.5 rounded-lg text-xs font-medium flex items-center justify-between text-slate-400 hover:text-white hover:bg-slate-800/40 transition">
+                                <span>⚡ Runtime &amp; Core</span>
+                                <span id="cat-count-runtime" class="px-1.5 py-0.5 rounded text-[10px] bg-slate-900 text-slate-400 font-mono">0</span>
+                            </button>
+                            <button type="button" onclick="filterSkillCategory('infrastructure')" id="cat-btn-infrastructure" class="skill-cat-btn w-full text-left px-3 py-1.5 rounded-lg text-xs font-medium flex items-center justify-between text-slate-400 hover:text-white hover:bg-slate-800/40 transition">
+                                <span>🌐 Cloud &amp; Infra</span>
+                                <span id="cat-count-infrastructure" class="px-1.5 py-0.5 rounded text-[10px] bg-slate-900 text-slate-400 font-mono">0</span>
+                            </button>
+                            <button type="button" onclick="filterSkillCategory('workflow')" id="cat-btn-workflow" class="skill-cat-btn w-full text-left px-3 py-1.5 rounded-lg text-xs font-medium flex items-center justify-between text-slate-400 hover:text-white hover:bg-slate-800/40 transition">
+                                <span>📋 Task &amp; Workflow</span>
+                                <span id="cat-count-workflow" class="px-1.5 py-0.5 rounded text-[10px] bg-slate-900 text-slate-400 font-mono">0</span>
+                            </button>
+                            <button type="button" onclick="filterSkillCategory('general')" id="cat-btn-general" class="skill-cat-btn w-full text-left px-3 py-1.5 rounded-lg text-xs font-medium flex items-center justify-between text-slate-400 hover:text-white hover:bg-slate-800/40 transition">
+                                <span>📦 Custom &amp; General</span>
+                                <span id="cat-count-general" class="px-1.5 py-0.5 rounded text-[10px] bg-slate-900 text-slate-400 font-mono">0</span>
+                            </button>
+                        </div>
+
+                        <!-- Sort Options -->
+                        <div class="pt-2 border-t border-slate-800/60">
+                            <label class="text-[10px] font-bold uppercase tracking-wider text-slate-500 px-2 block mb-1">Sort Order</label>
+                            <select id="skills-sort-select" onchange="filterSkillsView()" class="w-full text-xs bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-slate-300 focus:outline-none font-mono">
+                                <option value="name-asc">Name (A-Z)</option>
+                                <option value="name-desc">Name (Z-A)</option>
+                                <option value="category">Category</option>
+                            </select>
+                        </div>
+                    </aside>
+
+                    <!-- Right Cards Grid -->
+                    <main class="flex-1 flex flex-col min-w-0">
+                        <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" id="skills-grid">
+                            <!-- Dynamic skills populated by renderSkillsView -->
+                        </div>
+                    </main>
                 </div>
             </div>
         </div>
 
-        <!-- SECTION 6: SIGNALS -->
+        <!-- Modal 1: Upload Custom Skill -->
+        <div id="upload-skill-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+            <div class="glass-panel w-full max-w-xl p-6 rounded-2xl border border-slate-800 space-y-4 shadow-2xl">
+                <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+                    <h3 class="text-sm font-bold uppercase text-slate-200 tracking-wider flex items-center gap-2">
+                        <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                        Upload Agent Skill Package
+                    </h3>
+                    <button type="button" onclick="closeUploadSkillModal()" class="text-slate-400 hover:text-white text-lg font-bold">&times;</button>
+                </div>
+                <div class="space-y-3 text-xs">
+                    <div>
+                        <label class="block font-bold text-slate-300 mb-1">Skill Identifier Name</label>
+                        <input id="upload-skill-name" type="text" placeholder="e.g. custom-security-verifier" class="w-full px-3 py-2 rounded-lg border border-slate-800 bg-slate-950 text-slate-200 font-mono focus:border-emerald-500 focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block font-bold text-slate-300 mb-1">SKILL.md Markdown Content (with YAML frontmatter)</label>
+                        <textarea id="upload-skill-content" rows="8" placeholder="---&#10;name: custom-security-verifier&#10;description: Verifies security policies&#10;category: security&#10;---&#10;&#10;# Instructions..." class="w-full px-3 py-2 rounded-lg border border-slate-800 bg-slate-950 text-slate-200 font-mono focus:border-emerald-500 focus:outline-none leading-relaxed"></textarea>
+                    </div>
+                </div>
+                <div class="flex justify-end gap-2 pt-2 border-t border-slate-800">
+                    <button type="button" onclick="closeUploadSkillModal()" class="px-4 py-2 rounded-lg text-xs font-semibold text-slate-400 hover:bg-slate-800 transition">Cancel</button>
+                    <button type="button" onclick="submitCustomSkillUpload()" class="px-4 py-2 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition shadow-sm">Upload &amp; Register</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal 2: Skill Detail Inspector -->
+        <div id="skill-detail-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+            <div class="glass-panel w-full max-w-2xl p-6 rounded-2xl border border-slate-800 space-y-4 shadow-2xl max-h-[85vh] flex flex-col">
+                <div class="flex justify-between items-center border-b border-slate-800 pb-3 flex-shrink-0">
+                    <div>
+                        <span id="skill-detail-category" class="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-indigo-500/20 text-indigo-300">Category</span>
+                        <h3 id="skill-detail-title" class="text-base font-bold text-slate-200 mt-1 font-mono">Skill Name</h3>
+                    </div>
+                    <button type="button" onclick="closeSkillDetailModal()" class="text-slate-400 hover:text-white text-lg font-bold">&times;</button>
+                </div>
+                <div class="flex-1 overflow-auto space-y-3 font-mono text-xs text-slate-300 pr-2">
+                    <div class="p-2.5 rounded-lg bg-slate-950 border border-slate-800 text-[11px] text-slate-400 break-all">
+                        <span class="text-slate-500 font-bold block mb-0.5">LOCATION PATH:</span>
+                        <span id="skill-detail-path">—</span>
+                    </div>
+                    <div>
+                        <span class="text-slate-500 font-bold block mb-1">DESCRIPTION:</span>
+                        <p id="skill-detail-desc" class="text-slate-300 leading-relaxed font-sans text-xs">—</p>
+                    </div>
+                </div>
+                <div class="flex justify-end pt-2 border-t border-slate-800 flex-shrink-0">
+                    <button type="button" onclick="closeSkillDetailModal()" class="px-4 py-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 transition">Close</button>
+                </div>
+            </div>
+        </div>
         <div id="section-signals" class="hidden space-y-6" data-proof-marker="assigned-agent-signals-dashboard">
             <div class="glass-panel p-5 rounded-xl space-y-4">
                 <div class="border-b border-slate-800 pb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -4419,6 +4575,13 @@
             }
         }
 
+        let skillsState = {
+            allSkills: [],
+            activeCategory: 'all',
+            searchQuery: '',
+            sortBy: 'name-asc'
+        };
+
         async function renderSkillsView() {
             const grid = document.getElementById("skills-grid");
             if (!grid) return;
@@ -4429,44 +4592,124 @@
                 const res = await fetch(`${API_PREFIX}/skills`);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
-                const skills = data.skills || [];
-                if (skills.length === 0) {
-                    grid.innerHTML = `<div class="col-span-full text-slate-500 italic">No packaged Prismatic skills found.</div>`;
-                    return;
-                }
-                grid.innerHTML = skills.map(sk => {
-                    const installed = Boolean(sk.installed);
-                    const name = sk.name || sk.id || 'unnamed-skill';
-                    const action = installed ? 'uninstall' : 'install';
-                    const buttonLabel = installed ? 'Uninstall Skill' : 'Install Skill';
-                    const category = sk.category || 'agent-capability';
-                    return `
-                        <div class="glass-panel p-4 rounded-xl flex flex-col justify-between space-y-3 relative overflow-hidden border border-slate-800/80 hover:border-slate-700 transition">
-                            <div class="flex justify-between items-start gap-2">
-                                <span class="text-xs text-slate-500 font-bold uppercase">${escapeHtml(sk.version || 'v1.0')}</span>
-                                <span class="px-2 py-0.5 rounded text-[9px] font-bold ${installed ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-slate-800 text-slate-400'} uppercase">${installed ? 'Installed & Active' : 'Available'}</span>
-                            </div>
-                            <h3 class="font-bold text-slate-200 leading-tight text-sm">${escapeHtml(name)}</h3>
-                            <p class="text-xs text-slate-400 leading-relaxed line-clamp-3">${escapeHtml(sk.description || 'No description provided.')}</p>
-                            <div class="text-[10px] text-indigo-400 uppercase font-bold tracking-wider">${escapeHtml(category)}</div>
-                            <button onclick="toggleSkillInstall('${encodeURIComponent(name)}', '${action}')" class="w-full ${installed ? 'bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/60 text-rose-300' : 'bg-indigo-950/40 hover:bg-indigo-900/60 border border-indigo-800/60 text-indigo-300'} text-xs font-semibold py-1.5 rounded transition">
-                                ${buttonLabel}
-                            </button>
-                        </div>
-                    `;
-                }).join("");
+                skillsState.allSkills = data.skills || [];
+                updateSkillCategoryCounts();
+                filterSkillsView();
             } catch (err) {
                 console.error("Error loading skills registry:", err);
                 grid.innerHTML = `<div class="col-span-full text-rose-400 italic">Skills API unavailable: ${escapeHtml(err.message || err)}</div>`;
             }
         }
 
+        function updateSkillCategoryCounts() {
+            const counts = { all: skillsState.allSkills.length, governance: 0, testing: 0, security: 0, runtime: 0, infrastructure: 0, workflow: 0, general: 0 };
+            skillsState.allSkills.forEach(sk => {
+                const cat = (sk.category || "general").toLowerCase();
+                if (counts[cat] !== undefined) counts[cat]++;
+                else counts.general++;
+            });
+            Object.keys(counts).forEach(cat => {
+                const el = document.getElementById(`cat-count-${cat}`);
+                if (el) el.textContent = counts[cat];
+            });
+        }
+
+        function filterSkillCategory(category) {
+            skillsState.activeCategory = category;
+            document.querySelectorAll(".skill-cat-btn").forEach(btn => {
+                btn.classList.remove("active", "bg-indigo-600/20", "text-indigo-300", "border", "border-indigo-500/30", "font-semibold");
+                btn.classList.add("text-slate-400", "font-medium");
+            });
+            const activeBtn = document.getElementById(`cat-btn-${category}`);
+            if (activeBtn) {
+                activeBtn.classList.remove("text-slate-400", "font-medium");
+                activeBtn.classList.add("active", "bg-indigo-600/20", "text-indigo-300", "border", "border-indigo-500/30", "font-semibold");
+            }
+            filterSkillsView();
+        }
+
+        function filterSkillsView() {
+            const grid = document.getElementById("skills-grid");
+            if (!grid) return;
+            const searchInput = document.getElementById("skills-search-input");
+            const sortSelect = document.getElementById("skills-sort-select");
+
+            const query = (searchInput?.value || "").trim().toLowerCase();
+            const sortBy = sortSelect?.value || "name-asc";
+
+            let filtered = skillsState.allSkills.filter(sk => {
+                const cat = (sk.category || "general").toLowerCase();
+                if (skillsState.activeCategory !== "all" && cat !== skillsState.activeCategory) {
+                    return false;
+                }
+                if (query) {
+                    const name = (sk.name || "").toLowerCase();
+                    const desc = (sk.description || "").toLowerCase();
+                    const c = (sk.category || "").toLowerCase();
+                    return name.includes(query) || desc.includes(query) || c.includes(query);
+                }
+                return true;
+            });
+
+            // Sorting
+            filtered.sort((a, b) => {
+                const nameA = (a.name || "").toLowerCase();
+                const nameB = (b.name || "").toLowerCase();
+                if (sortBy === "name-asc") return nameA.localeCompare(nameB);
+                if (sortBy === "name-desc") return nameB.localeCompare(nameA);
+                if (sortBy === "category") return (a.category || "").localeCompare(b.category || "");
+                return 0;
+            });
+
+            if (filtered.length === 0) {
+                grid.innerHTML = `<div class="col-span-full text-slate-500 italic py-8 text-center">No matching agent capabilities found.</div>`;
+                return;
+            }
+
+            grid.innerHTML = filtered.map(sk => {
+                const installed = Boolean(sk.installed);
+                const name = sk.name || sk.id || 'unnamed-skill';
+                const action = installed ? 'uninstall' : 'install';
+                const buttonLabel = installed ? 'Uninstall Skill' : 'Install Skill';
+                const category = sk.category || 'general';
+                const version = sk.version || 'v1.0';
+
+                return `
+                    <div class="glass-panel p-4 rounded-xl flex flex-col justify-between space-y-3 relative overflow-hidden border border-slate-800/80 hover:border-slate-700 transition shadow-sm group">
+                        <div class="flex justify-between items-start gap-2">
+                            <span class="px-2 py-0.5 rounded text-[9px] font-mono font-bold uppercase bg-slate-900 text-slate-400 border border-slate-800">${escapeHtml(version)}</span>
+                            <span class="px-2 py-0.5 rounded text-[9px] font-bold ${installed ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-slate-800 text-slate-400'} uppercase">${installed ? 'Installed & Active' : 'Available'}</span>
+                        </div>
+                        <div>
+                            <h3 class="font-bold text-slate-200 leading-tight text-sm font-mono group-hover:text-white transition">${escapeHtml(name)}</h3>
+                            <div class="text-[10px] text-indigo-400 font-bold uppercase tracking-wider mt-1">
+                                <span>${escapeHtml(category)}</span>
+                            </div>
+                        </div>
+                        <p class="text-xs text-slate-400 leading-relaxed line-clamp-3">${escapeHtml(sk.description || 'No description provided.')}</p>
+                        
+                        <div class="flex items-center gap-2 pt-2 border-t border-slate-800/60">
+                            <button type="button" onclick="openSkillDetailModal('${encodeURIComponent(name)}')" class="flex-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition text-center">
+                                View Details
+                            </button>
+                            <button type="button" onclick="toggleSkillInstall('${encodeURIComponent(name)}', '${action}')" class="skill-card-${action} flex-1 ${installed ? 'bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/60 text-rose-300' : 'bg-indigo-950/40 hover:bg-indigo-900/60 border border-indigo-800/60 text-indigo-300'} text-xs font-semibold py-1.5 rounded-lg transition text-center">
+                                ${buttonLabel}
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join("");
+        }
+
         async function toggleSkillInstall(encodedSkillId, action) {
             const skillId = decodeURIComponent(encodedSkillId);
+            if (action === "uninstall" && !confirm(`Are you sure you want to uninstall skill "${skillId}"?`)) {
+                return;
+            }
             try {
                 const res = await fetch(`${API_PREFIX}/skills/${encodeURIComponent(skillId)}/${action}`, { method: 'POST' });
                 const data = await res.json().catch(() => ({}));
-                if (!res.ok || data.ok === false) throw new Error(data.error || `HTTP ${res.status}`);
+                if (!res.ok || data.ok === false) throw new Error(data.error || data.detail || `HTTP ${res.status}`);
                 showToast(`${action === 'install' ? 'Installed' : 'Uninstalled'} ${skillId}`);
                 await renderSkillsView();
                 if (activeTab === 'signals') await renderSignalsView();
@@ -4476,11 +4719,26 @@
             }
         }
 
-        async function uploadCustomSkillPrompt() {
-            const name = prompt("Enter skill identifier name (e.g. custom-verifier-gate):");
-            if (!name) return;
-            const content = prompt("Paste SKILL.md contents (with YAML frontmatter --- name: ... ---):");
-            if (!content) return;
+        function openUploadSkillModal() {
+            const modal = document.getElementById("upload-skill-modal");
+            if (modal) modal.classList.remove("hidden");
+        }
+
+        function closeUploadSkillModal() {
+            const modal = document.getElementById("upload-skill-modal");
+            if (modal) modal.classList.add("hidden");
+        }
+
+        async function submitCustomSkillUpload() {
+            const nameInput = document.getElementById("upload-skill-name");
+            const contentInput = document.getElementById("upload-skill-content");
+            const name = (nameInput?.value || "").trim();
+            const content = (contentInput?.value || "").trim();
+
+            if (!name || !content) {
+                showToast("Please provide both skill name and SKILL.md content.", true);
+                return;
+            }
 
             try {
                 const res = await fetch(`${API_PREFIX}/skills/upload`, {
@@ -4491,11 +4749,36 @@
                 const data = await res.json();
                 if (!res.ok || data.ok === false) throw new Error(data.detail || data.error || 'Upload failed');
                 showToast(`Successfully uploaded skill: ${name}`);
+                closeUploadSkillModal();
+                if (nameInput) nameInput.value = "";
+                if (contentInput) contentInput.value = "";
                 await renderSkillsView();
             } catch (err) {
                 console.error("Skill upload failed:", err);
                 showToast(`Upload failed: ${err.message || err}`, true);
             }
+        }
+
+        async function openSkillDetailModal(encodedName) {
+            const name = decodeURIComponent(encodedName);
+            const modal = document.getElementById("skill-detail-modal");
+            const titleEl = document.getElementById("skill-detail-title");
+            const catEl = document.getElementById("skill-detail-category");
+            const descEl = document.getElementById("skill-detail-desc");
+            const pathEl = document.getElementById("skill-detail-path");
+
+            if (!modal) return;
+            const skill = skillsState.allSkills.find(s => s.name === name || s.id === name);
+            if (titleEl) titleEl.textContent = name;
+            if (catEl) catEl.textContent = skill?.category || "general";
+            if (descEl) descEl.textContent = skill?.description || "No detailed description available.";
+            if (pathEl) pathEl.textContent = skill?._path || "Universal Discovery Path";
+            modal.classList.remove("hidden");
+        }
+
+        function closeSkillDetailModal() {
+            const modal = document.getElementById("skill-detail-modal");
+            if (modal) modal.classList.add("hidden");
         }
 
         function signalSeverityColor(value) {

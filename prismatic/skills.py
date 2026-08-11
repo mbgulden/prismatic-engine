@@ -87,6 +87,24 @@ def get_universal_skills_dirs() -> list[Path]:
     return dirs
 
 
+def _categorize_skill(name: str, description: str) -> str:
+    n = name.lower()
+    d = description.lower()
+    if any(k in n or k in d for k in ["gov", "contract", "claim", "gate", "closeout"]):
+        return "governance"
+    if any(k in n or k in d for k in ["tdd", "test", "pipeline", "validation", "evidence"]):
+        return "testing"
+    if any(k in n or k in d for k in ["secure", "auth", "credential", "permission"]):
+        return "security"
+    if any(k in n or k in d for k in ["runtime", "artifact", "immutable", "provenance"]):
+        return "runtime"
+    if any(k in n or k in d for k in ["cloudflare", "hermes", "infrastructure", "vm", "proxmox"]):
+        return "infrastructure"
+    if any(k in n or k in d for k in ["linear", "routing", "link", "pr", "decision", "goal"]):
+        return "workflow"
+    return "general"
+
+
 def _load_manifest(skill_dir: Path) -> dict[str, Any] | None:
     """Load and validate a skill manifest from *skill_dir* (supports manifest.yaml and SKILL.md)."""
     manifest_path = skill_dir / "manifest.yaml"
@@ -120,6 +138,8 @@ def _load_manifest(skill_dir: Path) -> dict[str, Any] | None:
 
     data["_path"] = str(skill_dir.resolve())
     data["installed"] = True
+    if not data.get("category"):
+        data["category"] = _categorize_skill(data.get("name", skill_dir.name), data.get("description", ""))
     return data
 
 

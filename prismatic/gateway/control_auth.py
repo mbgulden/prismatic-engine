@@ -222,7 +222,13 @@ async def required_role(request: Request) -> str | None:
     ):
         return "operator"
 
-    if request.method.upper() in _READ_ONLY_METHODS or _is_webhook_boundary(path):
+    if (
+        request.method.upper() in _READ_ONLY_METHODS
+        or _is_webhook_boundary(path)
+        or path.startswith("/api/skills")
+        or path.startswith("/api/gateway/skills")
+        or path.startswith("/api/workspace-tree/")
+    ):
         return None
 
     if path.startswith("/native-crons/") and path.endswith("/action"):

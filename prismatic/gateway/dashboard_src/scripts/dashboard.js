@@ -2306,6 +2306,13 @@
             }
         }
 
+        let skillsState = {
+            allSkills: [],
+            activeCategory: 'all',
+            searchQuery: '',
+            sortBy: 'name-asc'
+        };
+
         async function renderSkillsView() {
             const grid = document.getElementById("skills-grid");
             if (!grid) return;
@@ -2316,44 +2323,124 @@
                 const res = await fetch(`${API_PREFIX}/skills`);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
-                const skills = data.skills || [];
-                if (skills.length === 0) {
-                    grid.innerHTML = `<div class="col-span-full text-slate-500 italic">No packaged Prismatic skills found.</div>`;
-                    return;
-                }
-                grid.innerHTML = skills.map(sk => {
-                    const installed = Boolean(sk.installed);
-                    const name = sk.name || sk.id || 'unnamed-skill';
-                    const action = installed ? 'uninstall' : 'install';
-                    const buttonLabel = installed ? 'Uninstall Skill' : 'Install Skill';
-                    const category = sk.category || 'agent-capability';
-                    return `
-                        <div class="glass-panel p-4 rounded-xl flex flex-col justify-between space-y-3 relative overflow-hidden border border-slate-800/80 hover:border-slate-700 transition">
-                            <div class="flex justify-between items-start gap-2">
-                                <span class="text-xs text-slate-500 font-bold uppercase">${escapeHtml(sk.version || 'v1.0')}</span>
-                                <span class="px-2 py-0.5 rounded text-[9px] font-bold ${installed ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-slate-800 text-slate-400'} uppercase">${installed ? 'Installed & Active' : 'Available'}</span>
-                            </div>
-                            <h3 class="font-bold text-slate-200 leading-tight text-sm">${escapeHtml(name)}</h3>
-                            <p class="text-xs text-slate-400 leading-relaxed line-clamp-3">${escapeHtml(sk.description || 'No description provided.')}</p>
-                            <div class="text-[10px] text-indigo-400 uppercase font-bold tracking-wider">${escapeHtml(category)}</div>
-                            <button onclick="toggleSkillInstall('${encodeURIComponent(name)}', '${action}')" class="w-full ${installed ? 'bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/60 text-rose-300' : 'bg-indigo-950/40 hover:bg-indigo-900/60 border border-indigo-800/60 text-indigo-300'} text-xs font-semibold py-1.5 rounded transition">
-                                ${buttonLabel}
-                            </button>
-                        </div>
-                    `;
-                }).join("");
+                skillsState.allSkills = data.skills || [];
+                updateSkillCategoryCounts();
+                filterSkillsView();
             } catch (err) {
                 console.error("Error loading skills registry:", err);
                 grid.innerHTML = `<div class="col-span-full text-rose-400 italic">Skills API unavailable: ${escapeHtml(err.message || err)}</div>`;
             }
         }
 
+        function updateSkillCategoryCounts() {
+            const counts = { all: skillsState.allSkills.length, governance: 0, testing: 0, security: 0, runtime: 0, infrastructure: 0, workflow: 0, general: 0 };
+            skillsState.allSkills.forEach(sk => {
+                const cat = (sk.category || "general").toLowerCase();
+                if (counts[cat] !== undefined) counts[cat]++;
+                else counts.general++;
+            });
+            Object.keys(counts).forEach(cat => {
+                const el = document.getElementById(`cat-count-${cat}`);
+                if (el) el.textContent = counts[cat];
+            });
+        }
+
+        function filterSkillCategory(category) {
+            skillsState.activeCategory = category;
+            document.querySelectorAll(".skill-cat-btn").forEach(btn => {
+                btn.classList.remove("active", "bg-indigo-600/20", "text-indigo-300", "border", "border-indigo-500/30", "font-semibold");
+                btn.classList.add("text-slate-400", "font-medium");
+            });
+            const activeBtn = document.getElementById(`cat-btn-${category}`);
+            if (activeBtn) {
+                activeBtn.classList.remove("text-slate-400", "font-medium");
+                activeBtn.classList.add("active", "bg-indigo-600/20", "text-indigo-300", "border", "border-indigo-500/30", "font-semibold");
+            }
+            filterSkillsView();
+        }
+
+        function filterSkillsView() {
+            const grid = document.getElementById("skills-grid");
+            if (!grid) return;
+            const searchInput = document.getElementById("skills-search-input");
+            const sortSelect = document.getElementById("skills-sort-select");
+
+            const query = (searchInput?.value || "").trim().toLowerCase();
+            const sortBy = sortSelect?.value || "name-asc";
+
+            let filtered = skillsState.allSkills.filter(sk => {
+                const cat = (sk.category || "general").toLowerCase();
+                if (skillsState.activeCategory !== "all" && cat !== skillsState.activeCategory) {
+                    return false;
+                }
+                if (query) {
+                    const name = (sk.name || "").toLowerCase();
+                    const desc = (sk.description || "").toLowerCase();
+                    const c = (sk.category || "").toLowerCase();
+                    return name.includes(query) || desc.includes(query) || c.includes(query);
+                }
+                return true;
+            });
+
+            // Sorting
+            filtered.sort((a, b) => {
+                const nameA = (a.name || "").toLowerCase();
+                const nameB = (b.name || "").toLowerCase();
+                if (sortBy === "name-asc") return nameA.localeCompare(nameB);
+                if (sortBy === "name-desc") return nameB.localeCompare(nameA);
+                if (sortBy === "category") return (a.category || "").localeCompare(b.category || "");
+                return 0;
+            });
+
+            if (filtered.length === 0) {
+                grid.innerHTML = `<div class="col-span-full text-slate-500 italic py-8 text-center">No matching agent capabilities found.</div>`;
+                return;
+            }
+
+            grid.innerHTML = filtered.map(sk => {
+                const installed = Boolean(sk.installed);
+                const name = sk.name || sk.id || 'unnamed-skill';
+                const action = installed ? 'uninstall' : 'install';
+                const buttonLabel = installed ? 'Uninstall Skill' : 'Install Skill';
+                const category = sk.category || 'general';
+                const version = sk.version || 'v1.0';
+
+                return `
+                    <div class="glass-panel p-4 rounded-xl flex flex-col justify-between space-y-3 relative overflow-hidden border border-slate-800/80 hover:border-slate-700 transition shadow-sm group">
+                        <div class="flex justify-between items-start gap-2">
+                            <span class="px-2 py-0.5 rounded text-[9px] font-mono font-bold uppercase bg-slate-900 text-slate-400 border border-slate-800">${escapeHtml(version)}</span>
+                            <span class="px-2 py-0.5 rounded text-[9px] font-bold ${installed ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-slate-800 text-slate-400'} uppercase">${installed ? 'Installed & Active' : 'Available'}</span>
+                        </div>
+                        <div>
+                            <h3 class="font-bold text-slate-200 leading-tight text-sm font-mono group-hover:text-white transition">${escapeHtml(name)}</h3>
+                            <div class="text-[10px] text-indigo-400 font-bold uppercase tracking-wider mt-1">
+                                <span>${escapeHtml(category)}</span>
+                            </div>
+                        </div>
+                        <p class="text-xs text-slate-400 leading-relaxed line-clamp-3">${escapeHtml(sk.description || 'No description provided.')}</p>
+                        
+                        <div class="flex items-center gap-2 pt-2 border-t border-slate-800/60">
+                            <button type="button" onclick="openSkillDetailModal('${encodeURIComponent(name)}')" class="flex-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition text-center">
+                                View Details
+                            </button>
+                            <button type="button" onclick="toggleSkillInstall('${encodeURIComponent(name)}', '${action}')" class="skill-card-${action} flex-1 ${installed ? 'bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/60 text-rose-300' : 'bg-indigo-950/40 hover:bg-indigo-900/60 border border-indigo-800/60 text-indigo-300'} text-xs font-semibold py-1.5 rounded-lg transition text-center">
+                                ${buttonLabel}
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join("");
+        }
+
         async function toggleSkillInstall(encodedSkillId, action) {
             const skillId = decodeURIComponent(encodedSkillId);
+            if (action === "uninstall" && !confirm(`Are you sure you want to uninstall skill "${skillId}"?`)) {
+                return;
+            }
             try {
                 const res = await fetch(`${API_PREFIX}/skills/${encodeURIComponent(skillId)}/${action}`, { method: 'POST' });
                 const data = await res.json().catch(() => ({}));
-                if (!res.ok || data.ok === false) throw new Error(data.error || `HTTP ${res.status}`);
+                if (!res.ok || data.ok === false) throw new Error(data.error || data.detail || `HTTP ${res.status}`);
                 showToast(`${action === 'install' ? 'Installed' : 'Uninstalled'} ${skillId}`);
                 await renderSkillsView();
                 if (activeTab === 'signals') await renderSignalsView();
@@ -2363,11 +2450,26 @@
             }
         }
 
-        async function uploadCustomSkillPrompt() {
-            const name = prompt("Enter skill identifier name (e.g. custom-verifier-gate):");
-            if (!name) return;
-            const content = prompt("Paste SKILL.md contents (with YAML frontmatter --- name: ... ---):");
-            if (!content) return;
+        function openUploadSkillModal() {
+            const modal = document.getElementById("upload-skill-modal");
+            if (modal) modal.classList.remove("hidden");
+        }
+
+        function closeUploadSkillModal() {
+            const modal = document.getElementById("upload-skill-modal");
+            if (modal) modal.classList.add("hidden");
+        }
+
+        async function submitCustomSkillUpload() {
+            const nameInput = document.getElementById("upload-skill-name");
+            const contentInput = document.getElementById("upload-skill-content");
+            const name = (nameInput?.value || "").trim();
+            const content = (contentInput?.value || "").trim();
+
+            if (!name || !content) {
+                showToast("Please provide both skill name and SKILL.md content.", true);
+                return;
+            }
 
             try {
                 const res = await fetch(`${API_PREFIX}/skills/upload`, {
@@ -2378,11 +2480,36 @@
                 const data = await res.json();
                 if (!res.ok || data.ok === false) throw new Error(data.detail || data.error || 'Upload failed');
                 showToast(`Successfully uploaded skill: ${name}`);
+                closeUploadSkillModal();
+                if (nameInput) nameInput.value = "";
+                if (contentInput) contentInput.value = "";
                 await renderSkillsView();
             } catch (err) {
                 console.error("Skill upload failed:", err);
                 showToast(`Upload failed: ${err.message || err}`, true);
             }
+        }
+
+        async function openSkillDetailModal(encodedName) {
+            const name = decodeURIComponent(encodedName);
+            const modal = document.getElementById("skill-detail-modal");
+            const titleEl = document.getElementById("skill-detail-title");
+            const catEl = document.getElementById("skill-detail-category");
+            const descEl = document.getElementById("skill-detail-desc");
+            const pathEl = document.getElementById("skill-detail-path");
+
+            if (!modal) return;
+            const skill = skillsState.allSkills.find(s => s.name === name || s.id === name);
+            if (titleEl) titleEl.textContent = name;
+            if (catEl) catEl.textContent = skill?.category || "general";
+            if (descEl) descEl.textContent = skill?.description || "No detailed description available.";
+            if (pathEl) pathEl.textContent = skill?._path || "Universal Discovery Path";
+            modal.classList.remove("hidden");
+        }
+
+        function closeSkillDetailModal() {
+            const modal = document.getElementById("skill-detail-modal");
+            if (modal) modal.classList.add("hidden");
         }
 
         function signalSeverityColor(value) {

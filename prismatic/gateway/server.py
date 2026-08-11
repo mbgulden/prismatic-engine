@@ -3859,12 +3859,17 @@ async def dashboard_skill_install(name: str) -> dict[str, Any]:
 @app.post("/api/skills/{name}/uninstall", response_model=None)
 @app.post("/api/gateway/skills/{name}/uninstall", response_model=None)
 async def dashboard_skill_uninstall(name: str) -> dict[str, Any]:
-    return {
-        "ok": True,
-        "status": "accepted_noop",
-        "skill": name,
-        "message": "Uninstall intent recorded; no browser shell execution.",
-    }
+    try:
+        from prismatic.skills import uninstall_skill
+        ok = uninstall_skill(name)
+        try:
+            from prismatic.gateway.event_bus import SwarmEvent, get_event_bus
+            get_event_bus().publish(SwarmEvent("skills.synced", {"skill": name, "action": "uninstall"}))
+        except Exception:
+            pass
+        return {"ok": True, "status": "uninstalled" if ok else "not_found", "skill": name}
+    except Exception as exc:
+        return JSONResponse({"error": "uninstall_failed", "detail": str(exc)}, status_code=400)
 
 
 @app.post("/api/skills/upload", response_model=None)
