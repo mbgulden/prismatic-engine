@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -9,7 +10,7 @@ from typing import Any, Mapping
 
 import pytest
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
+_REPO_ROOT = next((p for p in Path(__file__).resolve().parents if (p / "pyproject.toml").exists()), Path(__file__).resolve().parents[3])
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
@@ -184,6 +185,7 @@ def test_repo_local_pwp_credentials_status_command_validates_temp_tokens(
         [sys.executable, "scripts/pwp", "credentials", "status", "ubersuggest"],
         cwd=_REPO_ROOT,
         env={
+            **os.environ,
             "UBERSUGGEST_ACCESS_TOKEN_FILE": str(access),
             "UBERSUGGEST_REFRESH_TOKEN_FILE": str(refresh),
         },
@@ -213,6 +215,7 @@ def test_repo_local_pwp_credentials_status_command_fails_for_mangled_token(
         [sys.executable, "scripts/pwp", "credentials", "status", "ubersuggest"],
         cwd=_REPO_ROOT,
         env={
+            **os.environ,
             "UBERSUGGEST_ACCESS_TOKEN_FILE": str(access),
             "UBERSUGGEST_REFRESH_TOKEN_FILE": str(refresh),
         },

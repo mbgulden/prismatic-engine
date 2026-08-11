@@ -115,15 +115,22 @@ def default_sites_dir() -> Path:
     env var overrides.
     """
     env_root = os.environ.get("PWP_REPO_ROOT")
-    root = Path(env_root) if env_root else _walk_to_pwp_repo()
-    return (
-        root
-        / "plugins"
-        / "pwp"
-        / "capabilities"
-        / "publish_kpi_tracker"
-        / "sites"
-    )
+    if env_root:
+        c_env = Path(env_root) / "plugins" / "pwp" / "capabilities" / "publish_kpi_tracker" / "sites"
+        if c_env.is_dir():
+            return c_env
+        c_env_shipped = Path(env_root) / "prismatic" / "shipped_plugins" / "pwp" / "capabilities" / "publish_kpi_tracker" / "sites"
+        if c_env_shipped.is_dir():
+            return c_env_shipped
+        return c_env
+    root = _walk_to_pwp_repo()
+    c1 = root / "plugins" / "pwp" / "capabilities" / "publish_kpi_tracker" / "sites"
+    if c1.is_dir():
+        return c1
+    c2 = root / "prismatic" / "shipped_plugins" / "pwp" / "capabilities" / "publish_kpi_tracker" / "sites"
+    if c2.is_dir():
+        return c2
+    return Path(__file__).parent / "sites"
 
 
 # Backwards-compatible private alias (kept for internal callers).

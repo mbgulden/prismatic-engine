@@ -37,52 +37,34 @@ import os
 import sys
 from pathlib import Path
 
-# Make the package importable regardless of the cwd the operator is launched from.
 HERE = Path(__file__).resolve().parent
-# Path layout: <PWP_REPO>/prismatic/shipped_plugins/pwp/capabilities/publish_kpi_tracker/operator_cli.py
-# (the `plugins` at the top of the repo is a symlink to `prismatic/shipped_plugins/`).
-# For `import plugins.pwp.capabilities.publish_kpi_tracker` to work, sys.path must
-# contain the directory that has `plugins/` as a child. There are two such
-# candidates: the symlink (`<PWP_REPO>/plugins`) and the symlink target
-# (`<PWP_REPO>/prismatic/shipped_plugins`). We insert both.
-# Resolve candidates the file might live under. The repo has a `plugins/`
-# symlink pointing to `prismatic/shipped_plugins/`, so there are two possible
-# `parents[N]` chains to the repo root depending on whether __file__ resolves
-# through the symlink or not. Try a small list of candidates and insert the
-# first one that exists.
 PWP_REPO_OVERRIDE = os.environ.get("PWP_REPO_ROOT")
-if PWP_REPO_OVERRIDE:
-    candidates = [Path(PWP_REPO_OVERRIDE)]
-else:
-    # Insert in order: (resolved) symlink target path's grandparent,
-    # symlink path's grandparent, symlink target's parent of __file__,
-    # and a few more. The first dir that has a `plugins` package is the one
-    # we want.
-    seen = set()
-    candidates = []
-    for p in [HERE] + list(HERE.parents) + list(Path(__file__).resolve().parents):
-        for root in (p, p / "prismatic" / "shipped_plugins"):
-            if root.is_dir() and str(root) not in seen:
-                seen.add(str(root))
-                candidates.append(root)
-# Always insert the symlink target first, then the symlink, so the
-# `plugins` namespace package at the repo root does not shadow the
-# `plugins.pwp.capabilities.publish_kpi_tracker` submodule chain.
-inserted = set()
-for root in candidates:
-    if root.name == "shipped_plugins" and root.is_dir():
-        p = str(root)
-        if p not in sys.path and p not in inserted:
-            sys.path.insert(0, p)
-            inserted.add(p)
-for root in candidates:
-    if root.name == "prismatic-pwp-ubersuggest-auth" and root.is_dir():
-        p = str(root)
-        if p not in sys.path and p not in inserted:
-            sys.path.insert(0, p)
-            inserted.add(p)
 
-from plugins.pwp.capabilities import publish_kpi_tracker as kpi  # noqa: E402
+if PWP_REPO_OVERRIDE:
+    REPO_ROOT = Path(PWP_REPO_OVERRIDE)
+else:
+    REPO_ROOT = None
+    for p in [HERE] + list(HERE.parents):
+        if (p / "prismatic").is_dir() or (p / "config" / "seo_sites.json").is_file():
+            REPO_ROOT = p
+            break
+    if REPO_ROOT is None:
+        REPO_ROOT = HERE.parents[4]
+
+if str(REPO_ROOT) in sys.path:
+    sys.path.remove(str(REPO_ROOT))
+sys.path.insert(0, str(REPO_ROOT))
+
+SHIPPED_PLUGINS = REPO_ROOT / "prismatic" / "shipped_plugins"
+if SHIPPED_PLUGINS.is_dir():
+    if str(SHIPPED_PLUGINS) in sys.path:
+        sys.path.remove(str(SHIPPED_PLUGINS))
+    sys.path.insert(1, str(SHIPPED_PLUGINS))
+
+try:
+    from plugins.pwp.capabilities import publish_kpi_tracker as kpi  # noqa: E402
+except ImportError:
+    import prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker as kpi  # noqa: E402
 
 
 def _resolve_publish_root(args) -> Path:
@@ -121,7 +103,10 @@ def cmd_list_sites(args) -> int:
         runtime = kpi.read_runtime_values(args.runtime_values_path)
     if runtime is None:
         # Run the pipeline ourselves so headline_value is populated.
-        from plugins.pwp.capabilities.publish_kpi_tracker import runtime_values as rv
+        try:
+            from plugins.pwp.capabilities.publish_kpi_tracker import runtime_values as rv
+        except ImportError:
+            from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import runtime_values as rv
         runtime = rv.build_runtime_values()
     summaries = kpi.build_all_site_summaries(runtime_values=runtime)
     print(json.dumps(summaries, indent=2, sort_keys=True))
@@ -162,12 +147,10 @@ def cmd_validate(args) -> int:
 
 def cmd_migrate(args) -> int:
     """Derive per-site *.kpi.json files from the registry."""
-    # Absolute import (not relative) so this works whether the CLI is invoked
-    # as `python3 plugins/.../operator_cli.py` (script mode, __package__ == "")
-    # or via `python3 -m plugins.pwp.capabilities.publish_kpi_tracker.operator_cli`
-    # (module mode, __package__ set). Mirrors the import pattern used at the
-    # top of this file for `kpi`.
-    from plugins.pwp.capabilities.publish_kpi_tracker import operator_migrate as migrate
+    try:
+        from plugins.pwp.capabilities.publish_kpi_tracker import operator_migrate as migrate
+    except ImportError:
+        from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import operator_migrate as migrate
     rc = 1
     try:
         manifest = migrate.run(
@@ -193,7 +176,10 @@ def cmd_snapshot(args) -> int:
     have a live-mode adapter fill them). Existing files are NOT
     overwritten unless --force is passed.
     """
-    from plugins.pwp.capabilities.publish_kpi_tracker import runtime_values as rv
+    try:
+        from plugins.pwp.capabilities.publish_kpi_tracker import runtime_values as rv
+    except ImportError:
+        from prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker import runtime_values as rv
     sites_dir = Path(args.sites_dir) if args.sites_dir else rv.default_sites_dir()
     sites_dir.mkdir(parents=True, exist_ok=True)
     manifest = {"sites": [], "sites_dir": str(sites_dir), "force": args.force}
@@ -326,7 +312,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     # Provisioning (Phase 1 Cloudflare-first MVP) — delegates to the
     # provision_site capability's operator_cli.attach_subparser().
-    from plugins.pwp.capabilities.provision_site import operator_cli as prov_cli
+    try:
+        from plugins.pwp.capabilities.provision_site import operator_cli as prov_cli
+    except ImportError:
+        import prismatic.shipped_plugins.pwp.capabilities.provision_site.operator_cli as prov_cli
     prov_cli.attach_subparser(sub)
 
     return p

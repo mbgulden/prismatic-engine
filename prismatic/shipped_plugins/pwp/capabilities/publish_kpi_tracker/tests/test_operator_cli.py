@@ -23,7 +23,9 @@ import pytest
 #   <PWP_REPO>/prismatic/shipped_plugins/pwp/capabilities/publish_kpi_tracker/tests/test_operator_cli.py
 # so PWP_REPO = parents[6] (the extra `tests/` level adds one).
 PWP_REPO = Path(__file__).resolve().parents[6]
-CLI = PWP_REPO / "plugins" / "pwp" / "capabilities" / "publish_kpi_tracker" / "operator_cli.py"
+_cli_shipped = PWP_REPO / "prismatic" / "shipped_plugins" / "pwp" / "capabilities" / "publish_kpi_tracker" / "operator_cli.py"
+_cli_symlink = PWP_REPO / "plugins" / "pwp" / "capabilities" / "publish_kpi_tracker" / "operator_cli.py"
+CLI = _cli_symlink if _cli_symlink.is_file() else _cli_shipped
 
 
 def _run(*args, expect_rc=0):

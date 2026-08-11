@@ -3,33 +3,33 @@
 from __future__ import annotations
 
 import sys
+import types
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-PLUGIN_ROOT = REPO_ROOT / "plugins"
-for path in (str(PLUGIN_ROOT), str(REPO_ROOT)):
+SHIPPED_PLUGINS = REPO_ROOT / "prismatic" / "shipped_plugins"
+
+for path in (str(SHIPPED_PLUGINS), str(REPO_ROOT)):
     if path in sys.path:
         sys.path.remove(path)
-# REPO_ROOT must be first so `plugins.pwp` resolves to this checkout rather
-# than an unrelated installed `plugins` package in agent virtualenvs.
+
 sys.path.insert(0, str(REPO_ROOT))
-sys.path.insert(1, str(PLUGIN_ROOT))
-external_plugins = sys.modules.get("plugins")
-if external_plugins is not None:
-    module_file = getattr(external_plugins, "__file__", "") or ""
-    if not module_file.startswith(str(REPO_ROOT)):
-        sys.modules.pop("plugins", None)
+sys.path.insert(1, str(SHIPPED_PLUGINS))
+
+plugins_pkg = types.ModuleType("plugins")
+plugins_pkg.__path__ = [str(SHIPPED_PLUGINS)]
+sys.modules["plugins"] = plugins_pkg
+
+try:
+    import prismatic.shipped_plugins.pwp as pwp_mod
+    plugins_pkg.pwp = pwp_mod
+    sys.modules["plugins.pwp"] = pwp_mod
+except ImportError:
+    pass
 
 from plugins.pwp.oauth_credentials import main as credentials_main  # noqa: E402
 from plugins.pwp.theme_diff import main as theme_diff_main  # noqa: E402
 from plugins.pwp.theme_validator import main as theme_validate_main  # noqa: E402
-from prismatic.pwp_integration import (  # noqa: E402
-    connect_pwp,
-    disconnect_pwp,
-    integration_status,
-    refresh_pwp,
-    run_pwp_reference_lifecycle,
-)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -41,6 +41,12 @@ def main(argv: list[str] | None = None) -> int:
     if len(args) >= 2 and args[0] == "theme" and args[1] in {"diff", "check-compat"}:
         return theme_diff_main(args[1:])
     if len(args) >= 1 and args[0] == "integration":
+        from prismatic.pwp_integration import (
+            connect_pwp,
+            disconnect_pwp,
+            integration_status,
+            refresh_pwp,
+        )
         if len(args) >= 2 and args[1] == "status":
             import json
             print(json.dumps(integration_status(), indent=2, sort_keys=True))
@@ -59,6 +65,7 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(refresh_pwp(), indent=2, sort_keys=True))
             return 0
     if len(args) >= 2 and args[0] == "lifecycle" and args[1] == "demo":
+        from prismatic.pwp_integration import run_pwp_reference_lifecycle
         import json
         disconnect_after = "--keep-connected" not in args[2:]
         payload = run_pwp_reference_lifecycle(disconnect_after=disconnect_after)

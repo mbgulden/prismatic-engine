@@ -53,7 +53,7 @@ class TestConstants:
     def test_submission_log_dir_path_exists(self):
         # Should be under /tmp/pwp-provisioning/funnel-config by default.
         assert SUBMISSION_LOG_DIR.name == "funnel-config"
-        assert str(SUBMISSION_LOG_DIR).startswith("/tmp/")
+        assert str(SUBMISSION_LOG_DIR).replace("\\", "/").startswith("/tmp/")
 
 
 # ── render_modal_html structure ──────────────────────────────────────────

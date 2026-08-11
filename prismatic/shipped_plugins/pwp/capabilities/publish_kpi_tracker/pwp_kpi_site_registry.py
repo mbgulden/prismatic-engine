@@ -16,13 +16,13 @@ This module is read-only; it does NOT write any *.kpi.json file (that's the
 operator's job in `operator_migrate.py`).
 """
 
-from __future__ import annotations
-
 import json
 import os
 import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
+
+HERE = Path(__file__).resolve().parent
 
 from .publish_kpi_tracker import ALLOWED_SOURCES
 
@@ -49,6 +49,16 @@ SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,63}$")
 GA4_MEAS_RE = re.compile(r"^G-[A-Z0-9]{4,12}$")
 
 
+def _get_pwp_plugin_dir(root: Path) -> Path:
+    p2 = root / "prismatic" / "shipped_plugins" / "pwp"
+    if (p2 / "capabilities").is_dir():
+        return p2
+    p1 = root / "plugins" / "pwp"
+    if (p1 / "capabilities").is_dir():
+        return p1
+    return p2
+
+
 def _resolve_registry_path() -> Path:
     """Resolve the registry file location. The PWP_REPO env var overrides."""
     env_root = os.environ.get("PWP_REPO_ROOT")
@@ -63,21 +73,25 @@ def _resolve_schema_path() -> Path:
     """
     env_root = os.environ.get("PWP_REPO_ROOT")
     root = Path(env_root) if env_root else REPO_ROOT
-    return (
-        root
-        / "plugins"
-        / "pwp"
+    candidate = (
+        _get_pwp_plugin_dir(root)
         / "capabilities"
         / "publish_kpi_tracker"
         / "schemas"
         / "kpi-registry.schema.json"
     )
+    if candidate.is_file():
+        return candidate
+    return HERE / "schemas" / "kpi-registry.schema.json"
 
 
 def _resolve_sites_dir() -> Path:
     env_root = os.environ.get("PWP_REPO_ROOT")
     root = Path(env_root) if env_root else REPO_ROOT
-    return root / "plugins" / "pwp" / "capabilities" / "publish_kpi_tracker" / "sites"
+    candidate = _get_pwp_plugin_dir(root) / "capabilities" / "publish_kpi_tracker" / "sites"
+    if candidate.is_dir():
+        return candidate
+    return HERE / "sites"
 
 
 def _resolve_tracking_property(site: dict) -> Tuple[Optional[str], Optional[str]]:
