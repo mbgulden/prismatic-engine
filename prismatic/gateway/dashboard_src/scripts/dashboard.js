@@ -151,6 +151,10 @@
                 fetchSettingsData();
             } else if (tab === 'review-factory') {
                 loadReviewFactory();
+            } else if (tab === 'skills') {
+                renderSkillsView();
+            } else if (tab === 'workspaces') {
+                renderWorkspacesView();
             }
         }
 

@@ -251,6 +251,33 @@
         body.light-mode #skill-detail-desc {
             color: #334155 !important;
         }
+
+        /* Guaranteed Desktop Splitter & Left Sidebar for Skills Tab */
+        #skills-splitter-container {
+            display: flex;
+            flex-direction: column;
+            min-height: 640px;
+            width: 100%;
+            overflow: hidden;
+            border-radius: 0.75rem;
+        }
+        @media (min-width: 1024px) {
+            #skills-splitter-container {
+                flex-direction: row !important;
+            }
+            #skills-sidebar {
+                width: 280px !important;
+                min-width: 280px !important;
+                max-width: 280px !important;
+                flex-shrink: 0 !important;
+                border-right-width: 1px !important;
+                border-bottom-width: 0 !important;
+            }
+            #skills-grid-container {
+                flex: 1 1 0% !important;
+                min-width: 0 !important;
+            }
+        }
         body.light-mode .skill-card-uninstall {
             background-color: #fef2f2 !important;
             border-color: #fecaca !important;
@@ -2509,6 +2536,10 @@
                 fetchSettingsData();
             } else if (tab === 'review-factory') {
                 loadReviewFactory();
+            } else if (tab === 'skills') {
+                renderSkillsView();
+            } else if (tab === 'workspaces') {
+                renderWorkspacesView();
             }
         }
 
