@@ -127,3 +127,34 @@ class TestWorkspaceShareManager:
         valid, doc_id, err = mgr.validate_token(token)
         assert valid is False
         assert "revoked" in err.lower()
+
+
+class TestDashboardIntegrity:
+    def test_dashboard_js_syntax_validity(self):
+        import subprocess
+        js_path = Path(__file__).resolve().parents[1] / "prismatic" / "gateway" / "dashboard_src" / "scripts" / "dashboard.js"
+        res = subprocess.run(["node", "-c", str(js_path)], capture_output=True, text=True)
+        assert res.returncode == 0, f"Dashboard JS syntax check failed: {res.stderr}"
+
+    def test_dashboard_template_contains_all_tabs(self):
+        html_path = Path(__file__).resolve().parents[1] / "prismatic" / "gateway" / "templates" / "dashboard.html"
+        assert html_path.is_file()
+        content = html_path.read_text(encoding="utf-8")
+
+        required_sections = [
+            'id="section-dashboard"',
+            'id="section-telemetry"',
+            'id="section-merge"',
+            'id="section-review-factory"',
+            'id="section-foundation"',
+            'id="section-workspaces"',
+            'id="section-skills"',
+            'id="section-signals"',
+            'id="section-plugins"',
+            'id="section-pwp"',
+            'id="section-crons"',
+            'id="section-quota"',
+            'id="section-settings"',
+        ]
+        for sec in required_sections:
+            assert sec in content, f"Missing required dashboard tab section: {sec}"

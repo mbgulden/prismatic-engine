@@ -96,9 +96,22 @@ def _resolve_generated_path(generated: str) -> Path:
     return resolved
 
 
+def validate_js_syntax(src_root: Path) -> None:
+    import subprocess
+    js_files = list(src_root.glob("**/*.js"))
+    for js in js_files:
+        try:
+            res = subprocess.run(["node", "-c", str(js)], capture_output=True, text=True)
+            if res.returncode != 0:
+                raise DashboardBuildError(f"JS syntax validation failed for {js.name}:\n{res.stderr.strip()}")
+        except FileNotFoundError:
+            pass  # node runtime optional if not installed in CI environment
+
+
 def build_bytes(manifest_path: Path = DEFAULT_MANIFEST) -> bytes:
     manifest = load_manifest(manifest_path)
     src_root: Path = manifest["src_root"]
+    validate_js_syntax(src_root)
     chunks: list[bytes] = []
     for entry in manifest["fragments"]:
         chunks.append((src_root / entry["path"]).read_bytes())

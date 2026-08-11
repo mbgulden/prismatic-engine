@@ -2499,7 +2499,6 @@
                 showToast(`Toggle failed: ${err.message || err}`, true);
             }
         }
-        }
 
         async function toggleSkillInstall(encodedSkillId, action) {
             const skillId = decodeURIComponent(encodedSkillId);
