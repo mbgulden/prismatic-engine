@@ -121,14 +121,11 @@ def _resolve_active_profile() -> str:
         if "/" in raw or "\\" in raw:
             return Path(raw).name
         return raw
-    # If HERMES_HOME was detected at import time as a profile root,
-    # trust that detection (Layout B).
-    if _HERMES_HOME_PROFILE:
-        return _HERMES_HOME_PROFILE
     hh = os.environ.get("HERMES_HOME", "")
-    m = _PROFILE_ROOT_RE.search(hh)
-    if m:
-        return m.group(1)
+    if hh:
+        m = _PROFILE_ROOT_RE.search(hh)
+        if m:
+            return m.group(1)
     return "ned"
 
 

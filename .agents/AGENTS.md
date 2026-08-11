@@ -41,4 +41,3 @@ To enforce absolute system reliability, prevent self-deceiving claims, and ensur
    - [agy-runtime-contract-closure](file:///c:/Users/Michael%20Gulden/Github/Hermes/.agents/skills/agy-runtime-contract-closure/SKILL.md): Enforce the 6 Anti-Deception invariants (observable execution proof, route surface proof, clean wheel distribution testing, boundary fences, and receipt identity truth).
 2. **Subagent Claim Verification Invariant**: Subagent output summaries are classified as `PRODUCER_CLAIM_UNVERIFIED` until Antigravity independently verifies the handles (file paths, SHA-256 digests, process exit codes) directly against disk or runtime tools.
 3. **Execution Evidence Ledger Requirement**: Every completed work attempt MUST include an explicit **Machine Verification Evidence Ledger** in the final response containing exact commit/tree SHAs, command exit codes, and log digests.
-
