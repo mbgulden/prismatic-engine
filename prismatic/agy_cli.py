@@ -10,7 +10,10 @@ from __future__ import annotations
 import argparse
 import contextlib
 import ctypes
-import fcntl
+try:
+    import fcntl
+except ImportError:
+    fcntl = None  # type: ignore
 import hashlib
 import json
 import os
@@ -244,10 +247,12 @@ def _run_state_lock(run_dir: Path):
             raise AgyWorkflowError(
                 "canonical run-state lock is not a private regular file"
             )
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        if fcntl is not None:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
         yield
     finally:
-        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        if fcntl is not None:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
         os.close(lock_fd)
 
 
@@ -259,7 +264,8 @@ def _release_active_slot(path: Path, run_id: str) -> None:
         lock_metadata = os.fstat(lock_fd)
         if not stat.S_ISREG(lock_metadata.st_mode) or lock_metadata.st_nlink != 1:
             raise AgyWorkflowError("canonical slot lock is not a private regular file")
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        if fcntl is not None:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
         try:
             metadata = path.lstat()
             if (
@@ -276,7 +282,8 @@ def _release_active_slot(path: Path, run_id: str) -> None:
         if payload.get("run_id") == run_id:
             path.unlink()
     finally:
-        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        if fcntl is not None:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
         os.close(lock_fd)
 
 
