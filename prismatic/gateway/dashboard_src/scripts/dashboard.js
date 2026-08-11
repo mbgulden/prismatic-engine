@@ -149,6 +149,8 @@
                 loadNativeCrons();
             } else if (tab === 'settings') {
                 fetchSettingsData();
+            } else if (tab === 'review-factory') {
+                loadReviewFactory();
             }
         }
 
@@ -276,11 +278,7 @@
         }
 
         async function loadReviewFactory() {
-            if (!reviewFactoryToken) {
-                setReviewFactoryStatus("Authentication required", "amber");
-                return;
-            }
-            setReviewFactoryStatus("Loading authenticated live data…", "slate");
+            setReviewFactoryStatus("Loading live data…", "slate");
             try {
                 const headers = reviewFactoryHeaders();
                 const [queueResponse, jobsResponse] = await Promise.all([
@@ -297,7 +295,9 @@
                 ]);
                 renderReviewFactoryQueue(queue);
                 renderReviewFactoryJobs(jobs.jobs || []);
-                setReviewFactoryStatus(`Live · ${Number(jobs.count || 0)} jobs`, "emerald");
+                const count = Number(jobs.count || 0);
+                const authSuffix = reviewFactoryToken ? " (Authenticated)" : "";
+                setReviewFactoryStatus(`Live · ${count} jobs${authSuffix}`, "emerald");
             } catch (error) {
                 const message = String(error?.message || error);
                 setReviewFactoryStatus(
@@ -3286,10 +3286,14 @@
             loadPluginGovernance();
             loadPWPStatus();
             loadCanonicalAgyActivity();
+            loadReviewFactory();
             connectWS();
             pollingInterval = setInterval(() => {
                 fetchData();
                 loadCanonicalAgyActivity();
+                if (activeTab === "review-factory") {
+                    loadReviewFactory();
+                }
             }, 4000);
             
             // Close modal on click outside
