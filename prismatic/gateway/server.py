@@ -196,6 +196,10 @@ from prismatic.gateway.ws_broadcaster import (
     start_ws_broadcaster,
     stop_ws_broadcaster,
 )
+from prismatic.gateway.verification_daemon import (
+    start_verification_daemon,
+    stop_verification_daemon,
+)
 from prismatic.linear_rate_limit import (
     LINEAR_RATE_LIMIT_CIRCUIT_BREAKER_MARKER,
     get_linear_rate_limit_snapshot,
@@ -307,6 +311,7 @@ async def lifespan(app: FastAPI):
 
     # Start WebSocket broadcaster (daemon thread with its own event loop)
     start_ws_broadcaster()
+    start_verification_daemon()
 
     # Initialize run records store
     state_dir = os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state/")
@@ -325,6 +330,7 @@ async def lifespan(app: FastAPI):
         _ipc_listener = None
 
     stop_ws_broadcaster()
+    stop_verification_daemon()
 
 
 # ── FastAPI Application ──────────────────────────────────────────────
