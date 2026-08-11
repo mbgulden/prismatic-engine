@@ -1729,7 +1729,52 @@
             sortBy: localStorage.getItem("ws_sort_by") || "name",
             sortOrder: localStorage.getItem("ws_sort_order") || "asc",
             expandedPaths: new Set(JSON.parse(localStorage.getItem("ws_expanded_paths") || "[]")),
+            sidebarWidth: parseInt(localStorage.getItem("ws_sidebar_width") || "380", 10),
         };
+
+        function initWorkspaceSplitter() {
+            const handle = document.getElementById("workspace-splitter-handle");
+            const sidebar = document.getElementById("workspace-tree-sidebar");
+            const container = document.getElementById("workspace-splitter-container");
+            if (!handle || !sidebar || !container) return;
+            
+            // Restore saved width
+            if (workspaceTreeState.sidebarWidth && window.innerWidth >= 1024) {
+                sidebar.style.width = `${Math.max(220, Math.min(750, workspaceTreeState.sidebarWidth))}px`;
+            }
+
+            let dragging = false;
+
+            const onPointerMove = (e) => {
+                if (!dragging) return;
+                const containerRect = container.getBoundingClientRect();
+                const newWidth = Math.max(220, Math.min(containerRect.width - 250, e.clientX - containerRect.left));
+                sidebar.style.width = `${newWidth}px`;
+                workspaceTreeState.sidebarWidth = Math.round(newWidth);
+            };
+
+            const onPointerUp = (e) => {
+                if (!dragging) return;
+                dragging = false;
+                document.body.style.userSelect = "";
+                document.body.style.cursor = "";
+                if (handle.hasPointerCapture(e.pointerId)) {
+                    handle.releasePointerCapture(e.pointerId);
+                }
+                localStorage.setItem("ws_sidebar_width", workspaceTreeState.sidebarWidth);
+            };
+
+            handle.addEventListener("pointerdown", (e) => {
+                dragging = true;
+                document.body.style.userSelect = "none";
+                document.body.style.cursor = "col-resize";
+                handle.setPointerCapture(e.pointerId);
+            });
+
+            handle.addEventListener("pointermove", onPointerMove);
+            handle.addEventListener("pointerup", onPointerUp);
+            handle.addEventListener("pointercancel", onPointerUp);
+        }
 
         function saveWorkspaceTreeState() {
             try {
@@ -1739,15 +1784,30 @@
             } catch (e) {}
         }
 
-        function formatDateTime(isoString) {
+        function formatYYMMDD(isoString) {
             if (!isoString) return "";
             try {
                 const d = new Date(isoString);
                 if (isNaN(d.getTime())) return "";
-                const pad = n => String(n).padStart(2, "0");
-                return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+                const yy = String(d.getFullYear()).slice(-2);
+                const mm = String(d.getMonth() + 1).padStart(2, "0");
+                const dd = String(d.getDate()).padStart(2, "0");
+                const hh = String(d.getHours()).padStart(2, "0");
+                const min = String(d.getMinutes()).padStart(2, "0");
+                return `${yy}-${mm}-${dd} ${hh}:${min}`;
             } catch (e) {
                 return "";
+            }
+        }
+
+        function formatFullDateTime(isoString) {
+            if (!isoString) return "—";
+            try {
+                const d = new Date(isoString);
+                if (isNaN(d.getTime())) return "—";
+                return d.toUTCString().replace("GMT", "UTC");
+            } catch (e) {
+                return "—";
             }
         }
 
@@ -1769,26 +1829,87 @@
                 const el = document.getElementById(`order-check-${o}`);
                 if (el) el.className = o === workspaceTreeState.sortOrder ? "text-cyan-400 font-bold" : "hidden text-cyan-400 font-bold";
             });
+            
+            const rootsEl = document.getElementById("workspace-tree-roots");
+            if (rootsEl) rootsEl.setAttribute("data-sort-active", workspaceTreeState.sortBy);
         }
 
-        function setWorkspaceSort(sortBy) {
+        function sortWorkspaceTreeInPlace(sortBy, sortOrder) {
             workspaceTreeState.sortBy = sortBy;
-            saveWorkspaceTreeState();
-            updateWorkspaceSortUI();
-            const menu = document.getElementById("workspace-sort-menu");
-            if (menu) menu.classList.add("hidden");
-            workspaceTreeState.initialized = false;
-            void renderWorkspacesView();
-        }
-
-        function setWorkspaceOrder(sortOrder) {
             workspaceTreeState.sortOrder = sortOrder;
             saveWorkspaceTreeState();
             updateWorkspaceSortUI();
+
+            const containers = document.querySelectorAll("#workspace-tree-roots, .workspace-node-children");
+            containers.forEach(container => {
+                const nodes = Array.from(container.children).filter(el => el.classList && el.classList.contains("workspace-node"));
+                if (!nodes.length) return;
+
+                const isDesc = sortOrder === "desc";
+                nodes.sort((a, b) => {
+                    const isDirA = a.dataset.isDir === "true" ? 1 : 0;
+                    const isDirB = b.dataset.isDir === "true" ? 1 : 0;
+
+                    // Folders first
+                    if (isDirA !== isDirB) return isDirB - isDirA;
+
+                    let valA = a.dataset[sortBy] || "";
+                    let valB = b.dataset[sortBy] || "";
+
+                    if (sortBy === "size") {
+                        valA = parseInt(valA || "0", 10);
+                        valB = parseInt(valB || "0", 10);
+                        return isDesc ? valB - valA : valA - valB;
+                    }
+
+                    const cmp = String(valA).localeCompare(String(valB), undefined, { numeric: true, sensitivity: "base" });
+                    return isDesc ? -cmp : cmp;
+                });
+
+                nodes.forEach(node => container.appendChild(node));
+            });
+        }
+
+        function setWorkspaceSort(sortBy) {
             const menu = document.getElementById("workspace-sort-menu");
             if (menu) menu.classList.add("hidden");
-            workspaceTreeState.initialized = false;
-            void renderWorkspacesView();
+            sortWorkspaceTreeInPlace(sortBy, workspaceTreeState.sortOrder);
+        }
+
+        function setWorkspaceOrder(sortOrder) {
+            const menu = document.getElementById("workspace-sort-menu");
+            if (menu) menu.classList.add("hidden");
+            sortWorkspaceTreeInPlace(workspaceTreeState.sortBy, sortOrder);
+        }
+
+        function filterWorkspaceTreeNodes() {
+            const input = document.getElementById("workspace-tree-search");
+            if (!input) return;
+            const query = input.value.trim().toLowerCase();
+            const allNodes = document.querySelectorAll(".workspace-node");
+
+            if (!query) {
+                allNodes.forEach(node => node.classList.remove("hidden"));
+                return;
+            }
+
+            allNodes.forEach(node => {
+                const name = (node.dataset.name || "").toLowerCase();
+                const relPath = (node.dataset.relativePath || "").toLowerCase();
+                const match = name.includes(query) || relPath.includes(query);
+                if (match) {
+                    node.classList.remove("hidden");
+                    let parentNode = node.parentElement?.closest(".workspace-node");
+                    while (parentNode) {
+                        parentNode.classList.remove("hidden");
+                        const childBox = parentNode.querySelector(":scope > .workspace-node-children");
+                        if (childBox) childBox.classList.remove("hidden");
+                        parentNode = parentNode.parentElement?.closest(".workspace-node");
+                    }
+                } else {
+                    node.classList.add("hidden");
+                }
+            });
         }
 
         function workspaceNodeIcon(node) {
@@ -1801,28 +1922,54 @@
             const isDir = node.type === "directory";
             const previewable = node.previewable === true;
             const children = Array.isArray(node.children) ? node.children : [];
-            const indent = Math.min(depth * 14, 72);
-            const buttonClass = isDir
-                ? "text-cyan-300 hover:text-white hover:bg-cyan-500/10"
-                : previewable
-                    ? "text-slate-300 hover:text-white hover:bg-slate-800/70"
-                    : "text-slate-500 cursor-not-allowed";
+            const indent = Math.min(depth * 12, 60);
+
+            const isSelected = workspaceTreeState.selectedWorkspaceId === workspaceId && workspaceTreeState.selectedRelativePath === relativePath;
+
+            // Crisp, high-contrast typography & active left-border badges
+            const buttonClass = isSelected
+                ? "bg-indigo-950/80 text-indigo-100 border-l-2 border-indigo-400 font-bold shadow-sm"
+                : isDir
+                    ? "text-cyan-200 hover:text-white hover:bg-cyan-500/10 font-medium"
+                    : previewable
+                        ? "text-slate-200 hover:text-white hover:bg-slate-800/80 font-normal"
+                        : "text-slate-500 cursor-not-allowed opacity-60";
+
             const action = isDir ? "expand" : "preview";
             const disabled = !isDir && !previewable ? "disabled" : "";
             const childHtml = children.length
                 ? `<div class="workspace-node-children ml-3 border-l border-slate-800/80 pl-2">${children.map(child => renderWorkspaceNode(workspaceId, child, depth + 1)).join("")}</div>`
                 : `<div class="workspace-node-children ml-3 border-l border-slate-800/80 pl-2 hidden"></div>`;
-            const mtimeFormatted = node.mtime ? formatDateTime(node.mtime) : "";
-            const sizeFormatted = node.size != null ? (node.size > 1048576 ? `${(node.size/1048576).toFixed(1)}MB` : node.size > 1024 ? `${(node.size/1024).toFixed(1)}KB` : `${node.size}b`) : "";
-            const metaInfo = [mtimeFormatted, sizeFormatted].filter(Boolean).join(" · ");
 
-            return `<div class="workspace-node" data-workspace-id="${escapeHTML(workspaceId)}" data-relative-path="${escapeHTML(relativePath)}" style="margin-left:${indent}px">
-                <button type="button" data-workspace-action="${action}" class="w-full text-left px-2 py-1.5 rounded flex items-center justify-between gap-2 ${buttonClass}" ${disabled}>
+            // Smart compact date & size badging
+            const shortDate = node.mtime ? formatYYMMDD(node.mtime) : "";
+            const compactSize = node.size != null ? (node.size > 1048576 ? `${(node.size/1048576).toFixed(1)}MB` : node.size > 1024 ? `${(node.size/1024).toFixed(1)}KB` : `${node.size}B`) : "";
+
+            let metaBadgeHtml = "";
+            if (workspaceTreeState.sortBy === "date" && shortDate) {
+                metaBadgeHtml = `<span class="text-[10px] font-mono text-cyan-400 bg-cyan-950/40 border border-cyan-500/30 px-1.5 py-0.5 rounded whitespace-nowrap flex-shrink-0 ml-2">${escapeHTML(shortDate)}</span>`;
+            } else if (workspaceTreeState.sortBy === "size" && compactSize) {
+                metaBadgeHtml = `<span class="text-[10px] font-mono text-indigo-300 bg-indigo-950/40 border border-indigo-500/30 px-1.5 py-0.5 rounded whitespace-nowrap flex-shrink-0 ml-2">${escapeHTML(compactSize)}</span>`;
+            } else if (compactSize || shortDate) {
+                const labelStr = compactSize || shortDate;
+                metaBadgeHtml = `<span class="text-[10px] font-mono text-slate-400 bg-slate-900 border border-slate-800 px-1.5 py-0.5 rounded whitespace-nowrap flex-shrink-0 ml-2">${escapeHTML(labelStr)}</span>`;
+            }
+
+            return `<div class="workspace-node my-0.5" 
+                data-workspace-id="${escapeHTML(workspaceId)}" 
+                data-relative-path="${escapeHTML(relativePath)}" 
+                data-name="${escapeHTML(label)}"
+                data-is-dir="${isDir}"
+                data-date="${escapeHTML(node.mtime || "")}"
+                data-size="${node.size || 0}"
+                data-type="${isDir ? "directory" : "file"}"
+                style="margin-left:${indent}px">
+                <button type="button" data-workspace-action="${action}" class="w-full text-left px-2 py-1 rounded transition-colors ${buttonClass}" ${disabled}>
                     <span class="flex items-center gap-1.5 min-w-0 truncate">
-                        <span class="inline-block w-4 text-slate-500 flex-shrink-0">${workspaceNodeIcon(node)}</span>
+                        <span class="inline-block w-4 text-slate-400 flex-shrink-0 font-bold">${workspaceNodeIcon(node)}</span>
                         <span class="truncate">${escapeHTML(label)}</span>
                     </span>
-                    ${metaInfo ? `<span class="text-[10px] font-mono text-slate-500 whitespace-nowrap flex-shrink-0 ml-2">${escapeHTML(metaInfo)}</span>` : ""}
+                    ${metaBadgeHtml}
                 </button>
                 ${isDir ? childHtml : ""}
             </div>`;
@@ -1838,7 +1985,9 @@
             if (childrenEl.dataset.loaded === "true") {
                 childrenEl.classList.toggle("hidden");
                 const isHidden = childrenEl.classList.contains("hidden");
-                button.querySelector("span").textContent = isHidden ? "▸" : "▾";
+                button.querySelector("span span").textContent = isHidden ? "▸" : "▾";
+                button.className = button.className.replace(/bg-\S+/, "").trim();
+                button.classList.add(isHidden ? "text-cyan-200" : "text-cyan-300", "font-bold", "bg-cyan-950/40");
                 if (isHidden) workspaceTreeState.expandedPaths.delete(stateKey);
                 else workspaceTreeState.expandedPaths.add(stateKey);
                 saveWorkspaceTreeState();
@@ -1865,7 +2014,8 @@
                 childrenEl.innerHTML = children.length
                     ? children.map(child => renderWorkspaceNode(workspaceId, child, 0)).join("")
                     : `<div class="px-2 py-1 text-slate-500 italic">Empty folder.</div>`;
-                button.querySelector("span").textContent = "▾";
+                button.querySelector("span span").textContent = "▾";
+                button.classList.add("text-cyan-300", "font-bold", "bg-cyan-950/40");
             } catch (err) {
                 childrenEl.innerHTML = `<div class="px-2 py-1 text-rose-400">Could not load folder: ${escapeHTML(err.message)}</div>`;
             }
@@ -1875,11 +2025,20 @@
             const nameEl = document.getElementById("workspace-preview-name");
             const previewEl = document.getElementById("workspace-file-preview");
             const legacyLink = document.getElementById("workspace-legacy-link");
+            const statsBar = document.getElementById("workspace-preview-stats-bar");
+            const mtimeEl = document.getElementById("stat-file-mtime");
+            const sizeEl = document.getElementById("stat-file-size");
+            const linesEl = document.getElementById("stat-file-lines");
+            const scopeEl = document.getElementById("workspace-preview-scope");
+            const badgeEl = document.getElementById("workspace-preview-type-badge");
+
             if (!previewEl || !nameEl) return;
             workspaceTreeState.selectedWorkspaceId = workspaceId;
             workspaceTreeState.selectedRelativePath = relativePath;
-            nameEl.textContent = relativePath;
+            nameEl.textContent = relativePath.rsplit ? relativePath.rsplit("/", 1)[-1] : relativePath;
+            if (scopeEl) scopeEl.textContent = relativePath;
             previewEl.textContent = "Loading file preview…";
+
             const legacyQuery = new URLSearchParams({ workspace_id: workspaceId, path: relativePath });
             if (legacyLink) legacyLink.href = `/workspace-tree?${legacyQuery.toString()}`;
             const url = new URL(window.location.href);
@@ -1888,15 +2047,32 @@
             url.searchParams.set("path", relativePath);
             url.hash = "workspaces";
             window.history.replaceState({}, "", url.toString());
+
             try {
                 const query = new URLSearchParams({ workspace_id: workspaceId, path: relativePath });
                 const res = await fetch(`/api/workspace-tree/preview?${query.toString()}`);
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+
                 previewEl.textContent = data.content || "";
-                nameEl.textContent = `${data.workspace_name || "workspace"} / ${data.relative_path || relativePath}`;
+                nameEl.textContent = data.name || relativePath;
+                if (scopeEl) scopeEl.textContent = `${data.workspace_name || "Workspace"} / ${data.relative_path || relativePath}`;
+
+                const ext = (data.name || "").split(".").pop().toUpperCase() || "FILE";
+                if (badgeEl) badgeEl.textContent = `${ext} DOCUMENT`;
+
+                // Display full date/time/size stats bar at the top of detail view
+                if (statsBar) statsBar.classList.remove("hidden");
+                if (mtimeEl) mtimeEl.textContent = `Modified: ${formatFullDateTime(data.mtime || new Date().isoString)}`;
+                
+                const exactBytes = Number(data.size || 0);
+                const kbStr = exactBytes > 1048576 ? `${(exactBytes/1048576).toFixed(1)} MB` : `${(exactBytes/1024).toFixed(1)} KB`;
+                if (sizeEl) sizeEl.textContent = `Size: ${exactBytes.toLocaleString()} bytes (${kbStr})`;
+                if (linesEl) linesEl.textContent = `Lines: ${(data.lines || 1).toLocaleString()}`;
+
             } catch (err) {
                 previewEl.textContent = `Preview unavailable: ${err.message}`;
+                if (statsBar) statsBar.classList.add("hidden");
             }
         }
 
@@ -1935,6 +2111,7 @@
             const rootsEl = document.getElementById("workspace-tree-roots");
             const statusEl = document.getElementById("workspace-tree-status");
             if (!rootsEl) return;
+            initWorkspaceSplitter();
             if (workspaceTreeState.initialized || workspaceTreeState.rendering) return;
             workspaceTreeState.rendering = true;
             updateWorkspaceSortUI();
