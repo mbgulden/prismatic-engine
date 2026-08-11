@@ -4527,7 +4527,7 @@ def _serve_governance_dashboard_html() -> HTMLResponse:
             status_code=404,
         )
     return HTMLResponse(
-        _GOVERNANCE_DASHBOARD_HTML.read_text(encoding="utf-8"),
+        content=_GOVERNANCE_DASHBOARD_HTML.read_text(encoding="utf-8"),
         headers={
             "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
             "Pragma": "no-cache",
