@@ -1786,12 +1786,70 @@
             handle.addEventListener("pointercancel", onPointerUp);
         }
 
-        function saveWorkspaceTreeState() {
+        async function saveWorkspaceTreeState() {
+            const payload = {
+                expanded_paths: Array.from(workspaceTreeState.expandedPaths),
+                selected_workspace_id: workspaceTreeState.selectedWorkspaceId,
+                selected_relative_path: workspaceTreeState.selectedRelativePath,
+                sidebar_width: workspaceTreeState.sidebarWidth,
+                sort_by: workspaceTreeState.sortBy,
+                sort_order: workspaceTreeState.sortOrder
+            };
             try {
                 localStorage.setItem("ws_sort_by", workspaceTreeState.sortBy);
                 localStorage.setItem("ws_sort_order", workspaceTreeState.sortOrder);
-                localStorage.setItem("ws_expanded_paths", JSON.stringify(Array.from(workspaceTreeState.expandedPaths)));
+                localStorage.setItem("ws_expanded_paths", JSON.stringify(payload.expanded_paths));
+                if (workspaceTreeState.selectedWorkspaceId) localStorage.setItem("ws_selected_workspace_id", workspaceTreeState.selectedWorkspaceId);
+                if (workspaceTreeState.selectedRelativePath) localStorage.setItem("ws_selected_relative_path", workspaceTreeState.selectedRelativePath);
+                
+                await fetch("/api/workspace-tree/state", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
             } catch (e) {}
+        }
+
+        async function fetchServerWorkspaceTreeState() {
+            try {
+                const res = await fetch("/api/workspace-tree/state");
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.ok && data.state && typeof data.state === "object") {
+                        const s = data.state;
+                        if (Array.isArray(s.expanded_paths)) {
+                            s.expanded_paths.forEach(p => workspaceTreeState.expandedPaths.add(p));
+                        }
+                        if (s.selected_workspace_id) workspaceTreeState.selectedWorkspaceId = s.selected_workspace_id;
+                        if (s.selected_relative_path) workspaceTreeState.selectedRelativePath = s.selected_relative_path;
+                        if (s.sidebar_width) workspaceTreeState.sidebarWidth = s.sidebar_width;
+                        if (s.sort_by) workspaceTreeState.sortBy = s.sort_by;
+                        if (s.sort_order) workspaceTreeState.sortOrder = s.sort_order;
+                    }
+                }
+            } catch (e) {}
+        }
+
+        async function rehydrateExpandedPaths() {
+            const pathsToExpand = Array.from(workspaceTreeState.expandedPaths);
+            if (!pathsToExpand.length) return;
+
+            // Sort paths by depth (shallowest first)
+            pathsToExpand.sort((a, b) => a.split("/").length - b.split("/").length);
+
+            for (const key of pathsToExpand) {
+                const parts = key.split(":");
+                const workspaceId = parts[0];
+                const relPath = parts.slice(1).join(":");
+                const nodeEl = document.querySelector(`.workspace-node[data-workspace-id="${CSS.escape(workspaceId)}"][data-relative-path="${CSS.escape(relPath)}"]`);
+                if (nodeEl) {
+                    const button = nodeEl.querySelector(":scope > button[data-workspace-action='expand']");
+                    const childrenEl = nodeEl.querySelector(":scope > .workspace-node-children");
+                    if (button && childrenEl && childrenEl.classList.contains("hidden")) {
+                        await toggleWorkspaceDirectory(button);
+                    }
+                }
+            }
         }
 
         function formatYYMMDD(isoString) {
@@ -1970,18 +2028,18 @@
                 ? `<div class="workspace-node-children ml-3 border-l border-slate-300 dark:border-slate-800/80 pl-2.5 space-y-0.5">${children.map(child => renderWorkspaceNode(workspaceId, child, depth + 1)).join("")}</div>`
                 : `<div class="workspace-node-children ml-3 border-l border-slate-300 dark:border-slate-800/80 pl-2.5 space-y-0.5 hidden"></div>`;
 
-            // Smart compact date & size badging in dual light/dark neutral slate
+            // Clean, borderless, bright slate date & size text (No box outlines)
             const shortDate = node.mtime ? formatYYMMDD(node.mtime) : "";
             const compactSize = node.size != null ? (node.size > 1048576 ? `${(node.size/1048576).toFixed(1)}MB` : node.size > 1024 ? `${(node.size/1024).toFixed(1)}KB` : `${node.size}B`) : "";
 
             let metaBadgeHtml = "";
             if (workspaceTreeState.sortBy === "date" && shortDate) {
-                metaBadgeHtml = `<span class="tree-meta-badge text-[10px] font-mono text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 px-1.5 py-0.5 rounded whitespace-nowrap flex-shrink-0 ml-2">${escapeHTML(shortDate)}</span>`;
+                metaBadgeHtml = `<span class="text-[10px] font-mono text-slate-400 dark:text-slate-400 font-medium whitespace-nowrap flex-shrink-0 ml-2">${escapeHTML(shortDate)}</span>`;
             } else if (workspaceTreeState.sortBy === "size" && compactSize) {
-                metaBadgeHtml = `<span class="tree-meta-badge text-[10px] font-mono text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 px-1.5 py-0.5 rounded whitespace-nowrap flex-shrink-0 ml-2">${escapeHTML(compactSize)}</span>`;
+                metaBadgeHtml = `<span class="text-[10px] font-mono text-slate-400 dark:text-slate-400 font-medium whitespace-nowrap flex-shrink-0 ml-2">${escapeHTML(compactSize)}</span>`;
             } else if (compactSize || shortDate) {
                 const labelStr = compactSize || shortDate;
-                metaBadgeHtml = `<span class="tree-meta-badge text-[10px] font-mono text-slate-500 dark:text-slate-500 bg-slate-100/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800/60 px-1.5 py-0.5 rounded whitespace-nowrap flex-shrink-0 ml-2">${escapeHTML(labelStr)}</span>`;
+                metaBadgeHtml = `<span class="text-[10px] font-mono text-slate-400 dark:text-slate-400 font-medium whitespace-nowrap flex-shrink-0 ml-2">${escapeHTML(labelStr)}</span>`;
             }
 
             return `<div class="workspace-node my-0.5" 
@@ -2027,11 +2085,11 @@
                 }
                 if (isHidden) workspaceTreeState.expandedPaths.delete(stateKey);
                 else workspaceTreeState.expandedPaths.add(stateKey);
-                saveWorkspaceTreeState();
+                void saveWorkspaceTreeState();
                 return;
             }
             workspaceTreeState.expandedPaths.add(stateKey);
-            saveWorkspaceTreeState();
+            void saveWorkspaceTreeState();
             childrenEl.classList.remove("hidden");
             childrenEl.innerHTML = `<div class="px-2 py-1 text-slate-500 italic">Loading…</div>`;
             try {
@@ -2155,7 +2213,11 @@
             initWorkspaceSplitter();
             if (workspaceTreeState.initialized || workspaceTreeState.rendering) return;
             workspaceTreeState.rendering = true;
+
+            // Fetch cross-device persistent state from server
+            await fetchServerWorkspaceTreeState();
             updateWorkspaceSortUI();
+
             rootsEl.innerHTML = `<div class="text-slate-500 italic">Loading workspace tree…</div>`;
             try {
                 const res = await fetch("/api/workspaces");
@@ -2182,6 +2244,10 @@
                         }
                     });
                 }
+
+                // Rehydrate all open nested folders from server/local state
+                await rehydrateExpandedPaths();
+
                 const params = new URLSearchParams(window.location.search);
                 const requestedFile = params.get("file");
                 const requestedWorkspace = params.get("workspace_id");
@@ -2199,6 +2265,8 @@
                         throw new Error("Malformed workspace deep link.");
                     }
                     await previewWorkspaceFile(requestedWorkspace, requestedPath);
+                } else if (workspaceTreeState.selectedWorkspaceId && workspaceTreeState.selectedRelativePath) {
+                    await previewWorkspaceFile(workspaceTreeState.selectedWorkspaceId, workspaceTreeState.selectedRelativePath);
                 }
                 workspaceTreeState.initialized = true;
             } catch (err) {

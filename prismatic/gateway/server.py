@@ -4597,6 +4597,40 @@ async def workspace_tree_workspaces() -> dict[str, Any]:
         raise _workspace_http_error(exc) from None
 
 
+STATE_FILE_PATH = os.path.expanduser("~/.prismatic/config/workspace-tree-state.json")
+
+
+@app.get("/api/workspace-tree/state")
+async def get_workspace_tree_state() -> dict[str, Any]:
+    """Retrieve persistent workspace tree state across devices and sessions."""
+    try:
+        if os.path.exists(STATE_FILE_PATH):
+            with open(STATE_FILE_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return {"ok": True, "state": data}
+    except Exception:
+        pass
+    return {"ok": True, "state": {}}
+
+
+@app.post("/api/workspace-tree/state")
+async def save_workspace_tree_state_endpoint(request: Request) -> dict[str, Any]:
+    """Save persistent workspace tree state (expanded paths, file selection, width)."""
+    try:
+        data = await request.json()
+        if isinstance(data, dict):
+            os.makedirs(os.path.dirname(STATE_FILE_PATH), exist_ok=True)
+            tmp_path = f"{STATE_FILE_PATH}.tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            os.replace(tmp_path, STATE_FILE_PATH)
+            return {"ok": True}
+    except Exception as exc:
+        return {"ok": False, "detail": str(exc)}
+    return {"ok": True}
+
+
 @app.get("/workspaces")
 async def legacy_workspaces_deep_link(file: str = Query(...)) -> RedirectResponse:
     """Redirect retired workspace links into the canonical Hub Workspaces tab."""
