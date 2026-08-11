@@ -1922,8 +1922,27 @@
             });
         }
 
-        function workspaceNodeIcon(node) {
-            return node.type === "directory" ? "▸" : "•";
+        function workspaceNodeIcon(node, isExpanded = false) {
+            if (node.type === "directory") {
+                if (isExpanded) {
+                    return `<span class="text-[10px] text-slate-400 font-mono flex-shrink-0 w-3">▾</span><svg class="w-4 h-4 text-amber-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z"/></svg>`;
+                }
+                return `<span class="text-[10px] text-slate-400 font-mono flex-shrink-0 w-3">▸</span><svg class="w-4 h-4 text-amber-500/90 dark:text-amber-400/90 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>`;
+            }
+            const ext = (node.name || "").split(".").pop().toLowerCase();
+            if (["py", "js", "ts", "jsx", "tsx", "sh", "json", "html", "css", "ps1", "c", "cpp", "go", "rs", "java"].includes(ext)) {
+                return `<span class="w-3 flex-shrink-0"></span><svg class="w-4 h-4 text-sky-600 dark:text-sky-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>`;
+            }
+            if (["md", "txt", "log", "rst", "doc", "pdf"].includes(ext)) {
+                return `<span class="w-3 flex-shrink-0"></span><svg class="w-4 h-4 text-indigo-600 dark:text-indigo-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>`;
+            }
+            if (["env", "yml", "yaml", "toml", "ini", "conf", "config"].includes(ext)) {
+                return `<span class="w-3 flex-shrink-0"></span><svg class="w-4 h-4 text-emerald-600 dark:text-emerald-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>`;
+            }
+            if (["png", "jpg", "jpeg", "gif", "svg", "ico", "webp"].includes(ext)) {
+                return `<span class="w-3 flex-shrink-0"></span><svg class="w-4 h-4 text-purple-600 dark:text-purple-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>`;
+            }
+            return `<span class="w-3 flex-shrink-0"></span><svg class="w-4 h-4 text-slate-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>`;
         }
 
         function renderWorkspaceNode(workspaceId, node, depth = 0) {
@@ -1932,37 +1951,37 @@
             const isDir = node.type === "directory";
             const previewable = node.previewable === true;
             const children = Array.isArray(node.children) ? node.children : [];
-            const indent = Math.min(depth * 12, 60);
+            const indent = Math.min(depth * 10, 50);
 
             const isSelected = workspaceTreeState.selectedWorkspaceId === workspaceId && workspaceTreeState.selectedRelativePath === relativePath;
 
-            // Clean, elegant grey/slate styling (No harsh neon cyan/blue text or borders)
+            // Dual Light/Dark Mode compatible classes
             const buttonClass = isSelected
-                ? "bg-slate-800/90 text-slate-100 font-semibold border-l-2 border-slate-400 shadow-sm"
+                ? "is-selected bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-slate-100 font-semibold border-l-2 border-slate-500 dark:border-slate-400 shadow-sm"
                 : isDir
-                    ? "text-slate-300 hover:text-white hover:bg-slate-800/40 font-normal"
+                    ? "text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/40 font-normal"
                     : previewable
-                        ? "text-slate-300 hover:text-white hover:bg-slate-800/40 font-normal"
-                        : "text-slate-500 cursor-not-allowed opacity-50";
+                        ? "text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800/40 font-normal"
+                        : "text-slate-400 dark:text-slate-500 cursor-not-allowed opacity-50";
 
             const action = isDir ? "expand" : "preview";
             const disabled = !isDir && !previewable ? "disabled" : "";
             const childHtml = children.length
-                ? `<div class="workspace-node-children ml-2.5 border-l border-slate-800/60 pl-2">${children.map(child => renderWorkspaceNode(workspaceId, child, depth + 1)).join("")}</div>`
-                : `<div class="workspace-node-children ml-2.5 border-l border-slate-800/60 pl-2 hidden"></div>`;
+                ? `<div class="workspace-node-children ml-3 border-l border-slate-300 dark:border-slate-800/80 pl-2.5 space-y-0.5">${children.map(child => renderWorkspaceNode(workspaceId, child, depth + 1)).join("")}</div>`
+                : `<div class="workspace-node-children ml-3 border-l border-slate-300 dark:border-slate-800/80 pl-2.5 space-y-0.5 hidden"></div>`;
 
-            // Smart compact date & size badging in clean neutral slate
+            // Smart compact date & size badging in dual light/dark neutral slate
             const shortDate = node.mtime ? formatYYMMDD(node.mtime) : "";
             const compactSize = node.size != null ? (node.size > 1048576 ? `${(node.size/1048576).toFixed(1)}MB` : node.size > 1024 ? `${(node.size/1024).toFixed(1)}KB` : `${node.size}B`) : "";
 
             let metaBadgeHtml = "";
             if (workspaceTreeState.sortBy === "date" && shortDate) {
-                metaBadgeHtml = `<span class="text-[10px] font-mono text-slate-400 bg-slate-900 border border-slate-800/80 px-1.5 py-0.5 rounded whitespace-nowrap flex-shrink-0 ml-2">${escapeHTML(shortDate)}</span>`;
+                metaBadgeHtml = `<span class="tree-meta-badge text-[10px] font-mono text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 px-1.5 py-0.5 rounded whitespace-nowrap flex-shrink-0 ml-2">${escapeHTML(shortDate)}</span>`;
             } else if (workspaceTreeState.sortBy === "size" && compactSize) {
-                metaBadgeHtml = `<span class="text-[10px] font-mono text-slate-400 bg-slate-900 border border-slate-800/80 px-1.5 py-0.5 rounded whitespace-nowrap flex-shrink-0 ml-2">${escapeHTML(compactSize)}</span>`;
+                metaBadgeHtml = `<span class="tree-meta-badge text-[10px] font-mono text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-900 border border-slate-300 dark:border-slate-800 px-1.5 py-0.5 rounded whitespace-nowrap flex-shrink-0 ml-2">${escapeHTML(compactSize)}</span>`;
             } else if (compactSize || shortDate) {
                 const labelStr = compactSize || shortDate;
-                metaBadgeHtml = `<span class="text-[10px] font-mono text-slate-500 bg-slate-900/60 border border-slate-800/60 px-1.5 py-0.5 rounded whitespace-nowrap flex-shrink-0 ml-2">${escapeHTML(labelStr)}</span>`;
+                metaBadgeHtml = `<span class="tree-meta-badge text-[10px] font-mono text-slate-500 dark:text-slate-500 bg-slate-100/80 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800/60 px-1.5 py-0.5 rounded whitespace-nowrap flex-shrink-0 ml-2">${escapeHTML(labelStr)}</span>`;
             }
 
             return `<div class="workspace-node my-0.5" 
@@ -1976,8 +1995,8 @@
                 style="margin-left:${indent}px">
                 <button type="button" data-workspace-action="${action}" class="w-full text-left px-2 py-1 rounded transition-colors ${buttonClass}" ${disabled}>
                     <span class="flex items-center gap-1.5 min-w-0 truncate">
-                        <span class="inline-block w-4 text-slate-400 flex-shrink-0 font-bold">${workspaceNodeIcon(node)}</span>
-                        <span class="truncate">${escapeHTML(label)}</span>
+                        ${workspaceNodeIcon(node, false)}
+                        <span class="truncate ml-0.5">${escapeHTML(label)}</span>
                     </span>
                     ${metaBadgeHtml}
                 </button>
@@ -1995,12 +2014,16 @@
             if (childrenEl.dataset.loaded === "true") {
                 childrenEl.classList.toggle("hidden");
                 const isHidden = childrenEl.classList.contains("hidden");
-                button.querySelector("span span").textContent = isHidden ? "▸" : "▾";
+                
+                const iconBox = button.querySelector("span");
+                if (iconBox) {
+                    iconBox.outerHTML = `<span class="flex items-center gap-1.5 min-w-0 truncate">${workspaceNodeIcon({ type: "directory" }, !isHidden)}<span class="truncate ml-0.5">${escapeHTML(wrapper.dataset.name || "")}</span></span>`;
+                }
+
                 if (isHidden) {
-                    button.classList.remove("bg-slate-800/60", "text-slate-100", "font-semibold");
-                    button.classList.add("text-slate-300");
+                    button.classList.remove("bg-slate-200", "dark:bg-slate-800/60", "text-slate-900", "dark:text-slate-100", "font-semibold");
                 } else {
-                    button.classList.add("bg-slate-800/60", "text-slate-100", "font-semibold");
+                    button.classList.add("bg-slate-100", "dark:bg-slate-800/60", "text-slate-900", "dark:text-slate-100", "font-semibold");
                 }
                 if (isHidden) workspaceTreeState.expandedPaths.delete(stateKey);
                 else workspaceTreeState.expandedPaths.add(stateKey);
@@ -2028,8 +2051,12 @@
                 childrenEl.innerHTML = children.length
                     ? children.map(child => renderWorkspaceNode(workspaceId, child, 0)).join("")
                     : `<div class="px-2 py-1 text-slate-500 italic">Empty folder.</div>`;
-                button.querySelector("span span").textContent = "▾";
-                button.classList.add("bg-slate-800/60", "text-slate-100", "font-semibold");
+                
+                const iconBox = button.querySelector("span");
+                if (iconBox) {
+                    iconBox.outerHTML = `<span class="flex items-center gap-1.5 min-w-0 truncate">${workspaceNodeIcon({ type: "directory" }, true)}<span class="truncate ml-0.5">${escapeHTML(wrapper.dataset.name || "")}</span></span>`;
+                }
+                button.classList.add("bg-slate-100", "dark:bg-slate-800/60", "text-slate-900", "dark:text-slate-100", "font-semibold");
             } catch (err) {
                 childrenEl.innerHTML = `<div class="px-2 py-1 text-rose-400">Could not load folder: ${escapeHTML(err.message)}</div>`;
             }

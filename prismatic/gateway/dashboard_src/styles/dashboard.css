@@ -73,3 +73,55 @@
         body.light-mode .bg-slate-900\/50 { background-color: rgba(255, 255, 255, 0.8); }
         body.light-mode .bg-slate-950\/20 { background-color: rgba(241, 245, 249, 0.3); }
         body.light-mode .bg-indigo-500\/5 { background-color: rgba(99, 102, 241, 0.05); }
+
+        /* Workspaces Explorer Light Mode Polish */
+        body.light-mode #workspace-splitter-container {
+            background-color: #ffffff;
+            border-color: #cbd5e1;
+        }
+        body.light-mode #workspace-tree-sidebar {
+            border-color: #e2e8f0;
+        }
+        body.light-mode #workspace-tree-sidebar > div:first-child {
+            background-color: #f8fafc;
+            border-color: #e2e8f0;
+        }
+        body.light-mode #workspace-preview-panel {
+            background-color: #f8fafc;
+        }
+        body.light-mode #workspace-preview-panel > div:first-child {
+            background-color: #ffffff;
+            border-color: #e2e8f0;
+        }
+        body.light-mode #workspace-file-preview {
+            background-color: #ffffff !important;
+            border-color: #e2e8f0 !important;
+            color: #0f172a !important;
+        }
+        body.light-mode .workspace-node button {
+            color: #334155;
+        }
+        body.light-mode .workspace-node button:hover {
+            background-color: #f1f5f9;
+            color: #0f172a;
+        }
+        body.light-mode .workspace-node button.is-selected {
+            background-color: #e2e8f0;
+            color: #0f172a;
+            border-left-color: #475569;
+        }
+        body.light-mode .workspace-node-children {
+            border-left-color: #cbd5e1;
+        }
+        body.light-mode #workspace-splitter-handle {
+            background-color: #f1f5f9;
+            border-color: #cbd5e1;
+        }
+        body.light-mode #workspace-splitter-handle:hover {
+            background-color: #e2e8f0;
+        }
+        body.light-mode .tree-meta-badge {
+            background-color: #f1f5f9;
+            border-color: #cbd5e1;
+            color: #475569;
+        }
