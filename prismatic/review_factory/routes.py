@@ -430,6 +430,11 @@ def _create_review_factory_canonical_router() -> Any:
     return r
 
 
+def create_review_factory_router() -> Any:
+    """Return canonical review-factory router prefixed with /review-factory."""
+    return _create_review_factory_canonical_router()
+
+
 review_router = _create_review_router()
 review_factory_canonical_router = _create_review_factory_canonical_router()
 router = review_router
