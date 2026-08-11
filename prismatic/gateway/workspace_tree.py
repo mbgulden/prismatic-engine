@@ -37,6 +37,7 @@ PREVIEW_EXTENSIONS = frozenset(
         ".js",
         ".json",
         ".jsx",
+        ".log",
         ".md",
         ".py",
         ".sh",
