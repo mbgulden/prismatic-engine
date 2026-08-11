@@ -2423,31 +2423,31 @@
                 const version = sk.version || 'v1.0';
 
                 return `
-                    <div class="glass-panel p-4 rounded-xl flex flex-col justify-between space-y-3 relative overflow-hidden border border-slate-800/80 hover:border-slate-700 transition shadow-sm group">
+                    <div class="skill-card-container glass-panel p-4 rounded-xl flex flex-col justify-between space-y-3 relative overflow-hidden border border-slate-800/80 hover:border-slate-700 transition shadow-sm group">
                         <div class="flex justify-between items-start gap-2">
-                            <span class="px-2 py-0.5 rounded text-[9px] font-mono font-bold uppercase bg-slate-900 text-slate-400 border border-slate-800">${escapeHtml(version)}</span>
+                            <span class="skill-version-badge px-2 py-0.5 rounded text-[9px] font-mono font-bold uppercase bg-slate-900 text-slate-400 border border-slate-800">${escapeHtml(version)}</span>
                             <div class="flex items-center gap-1.5">
                                 ${builtin ? '<span class="px-2 py-0.5 rounded text-[9px] font-bold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 uppercase">Engine Core</span>' : '<span class="px-2 py-0.5 rounded text-[9px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20 uppercase">Custom</span>'}
                                 <span class="px-2 py-0.5 rounded text-[9px] font-bold ${enabled ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-slate-800 text-slate-400 border border-slate-700'} uppercase">${enabled ? 'Enabled' : 'Disabled'}</span>
                             </div>
                         </div>
                         <div>
-                            <h3 class="font-bold text-slate-200 leading-tight text-sm font-mono group-hover:text-white transition">${escapeHtml(name)}</h3>
+                            <h3 class="skill-card-title font-bold text-slate-200 leading-tight text-sm font-mono group-hover:text-white transition">${escapeHtml(name)}</h3>
                             <div class="text-[10px] text-indigo-400 font-bold uppercase tracking-wider mt-1">
                                 <span>${escapeHtml(category)}</span>
                             </div>
                         </div>
-                        <p class="text-xs text-slate-400 leading-relaxed line-clamp-3">${escapeHtml(sk.description || 'No description provided.')}</p>
+                        <p class="skill-card-desc text-xs text-slate-400 leading-relaxed line-clamp-3">${escapeHtml(sk.description || 'No description provided.')}</p>
                         
                         <div class="flex items-center gap-1.5 pt-2 border-t border-slate-800/60">
-                            <button type="button" onclick="openSkillDetailModal('${encodeURIComponent(name)}')" class="flex-1 px-2 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition text-center">
+                            <button type="button" onclick="openSkillDetailModal('${encodeURIComponent(name)}')" class="skill-action-btn-details flex-1 px-2 py-1.5 rounded-lg text-xs font-semibold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 transition text-center">
                                 Details
                             </button>
-                            <button type="button" onclick="toggleSkillEnabled('${encodeURIComponent(name)}')" class="flex-1 ${enabled ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700' : 'bg-emerald-950/40 hover:bg-emerald-900/60 border border-emerald-800/60 text-emerald-300'} text-xs font-semibold py-1.5 rounded-lg transition text-center">
+                            <button type="button" onclick="toggleSkillEnabled('${encodeURIComponent(name)}')" class="flex-1 ${enabled ? 'skill-action-btn-disable bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700' : 'skill-action-btn-enable bg-emerald-950/40 hover:bg-emerald-900/60 border border-emerald-800/60 text-emerald-300'} text-xs font-semibold py-1.5 rounded-lg transition text-center">
                                 ${enabled ? 'Disable' : 'Enable'}
                             </button>
                             ${!builtin ? `
-                                <button type="button" onclick="openDeleteSkillModal('${encodeURIComponent(name)}')" class="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/60 text-rose-300 transition text-center flex items-center justify-center" title="Delete Skill">
+                                <button type="button" onclick="openDeleteSkillModal('${encodeURIComponent(name)}')" class="skill-action-btn-delete px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/60 text-rose-300 transition text-center flex items-center justify-center" title="Delete Skill">
                                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                                 </button>
                             ` : ''}

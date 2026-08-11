@@ -267,11 +267,70 @@
                 min-width: 0 !important;
             }
         }
-        body.light-mode .skill-card-uninstall {
+        /* Light Mode Polish for Skill Cards & Sidebar Elements */
+        body.light-mode .skill-card-container {
+            background-color: #ffffff !important;
+            border-color: #e2e8f0 !important;
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05) !important;
+        }
+        body.light-mode .skill-card-title {
+            color: #0f172a !important;
+        }
+        body.light-mode .skill-card-desc {
+            color: #475569 !important;
+        }
+        body.light-mode .skill-version-badge {
+            background-color: #f1f5f9 !important;
+            border-color: #cbd5e1 !important;
+            color: #475569 !important;
+        }
+        body.light-mode .skill-cat-count-badge {
+            background-color: #e2e8f0 !important;
+            color: #475569 !important;
+        }
+        body.light-mode .skill-cat-btn.active .skill-cat-count-badge {
+            background-color: #c7d2fe !important;
+            color: #3730a3 !important;
+        }
+        body.light-mode .skill-action-btn-details {
+            background-color: #f8fafc !important;
+            border-color: #cbd5e1 !important;
+            color: #0f172a !important;
+            font-weight: 600 !important;
+        }
+        body.light-mode .skill-action-btn-details:hover {
+            background-color: #f1f5f9 !important;
+            color: #020617 !important;
+        }
+        body.light-mode .skill-action-btn-disable {
+            background-color: #f8fafc !important;
+            border-color: #cbd5e1 !important;
+            color: #475569 !important;
+            font-weight: 600 !important;
+        }
+        body.light-mode .skill-action-btn-disable:hover {
+            background-color: #f1f5f9 !important;
+            color: #0f172a !important;
+        }
+        body.light-mode .skill-action-btn-enable {
+            background-color: #ecfdf5 !important;
+            border-color: #a7f3d0 !important;
+            color: #047857 !important;
+            font-weight: 600 !important;
+        }
+        body.light-mode .skill-action-btn-enable:hover {
+            background-color: #d1fae5 !important;
+            color: #065f46 !important;
+        }
+        body.light-mode .skill-action-btn-delete {
             background-color: #fef2f2 !important;
             border-color: #fecaca !important;
             color: #dc2626 !important;
             font-weight: 600 !important;
+        }
+        body.light-mode .skill-action-btn-delete:hover {
+            background-color: #fee2e2 !important;
+            color: #991b1b !important;
         }
         body.light-mode .skill-card-uninstall:hover {
             background-color: #fee2e2 !important;
