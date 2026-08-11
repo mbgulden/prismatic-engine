@@ -128,6 +128,20 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Emit machine-readable JSON verification payload",
     )
 
+    verify_packet = subparsers.add_parser(
+        "verify-packet",
+        help="Replay machine verification packet and assert Deterministic Log Digest (DLD) hash match",
+    )
+    verify_packet.add_argument(
+        "packet_file",
+        help="Path to result-packet.json machine artifact",
+    )
+    verify_packet.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit machine-readable JSON verification payload",
+    )
+
     return parser
 
 
@@ -236,6 +250,28 @@ def run(argv: Sequence[str] | None = None) -> int:
             print(f"Tests Failed:           {res.tests_failed}")
             print(f"Deterministic SHA-256:  {res.deterministic_log_sha256}")
             print("=========================================================================")
+
+        return 0 if res.status == "PASS" else 1
+
+    if args.command == "verify-packet":
+        import json
+        from pathlib import Path
+        from prismatic.quality.log_normalizer import verify_packet_file
+
+        res = verify_packet_file(Path(args.packet_file))
+        if args.json:
+            print(json.dumps(res.to_dict(), indent=2))
+        else:
+            print("=================== PRISMATIC PACKET REPLAY VERIFICATION ===================")
+            print(f"Marker:                 {res.marker}")
+            print(f"Status:                 {res.status}")
+            print(f"Packet ID:              {res.packet_id}")
+            print(f"Candidate Head SHA:     {res.candidate_head}")
+            print(f"Candidate Tree SHA:     {res.candidate_tree}")
+            print(f"Claimed DLD SHA-256:    {res.claimed_dld_sha256}")
+            print(f"Recomputed DLD SHA-256: {res.recomputed_dld_sha256}")
+            print(f"DLD Bytes Matched:      {res.dld_bytes_matched}")
+            print("==========================================================================")
 
         return 0 if res.status == "PASS" else 1
 

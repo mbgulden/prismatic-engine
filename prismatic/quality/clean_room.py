@@ -18,10 +18,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 
-# Regex patterns for Deterministic Log Digest (DLD) normalization
-TIMING_RE = re.compile(r"in \d+(?:\.\d+)?s(?: \(\d+:\d+:\d+\))?", re.IGNORECASE)
-HEX_PTR_RE = re.compile(r"0x[0-9a-fA-F]{8,16}")
-TEMP_PATH_RE = re.compile(r"[A-Za-z]:\\[^\s\n\r]+|/tmp/[^\s\n\r]+", re.IGNORECASE)
+from prismatic.quality.log_normalizer import compute_dld_sha256, normalize_log
 
 
 @dataclass
@@ -55,21 +52,6 @@ class CleanRoomResult:
             "execution_seconds": self.execution_seconds,
             "deterministic_log_sha256": self.deterministic_log_sha256,
         }
-
-
-def normalize_log_for_deterministic_hash(raw_text: str) -> str:
-    """Strip non-deterministic timing strings, memory addresses, and temp paths."""
-    text = TIMING_RE.sub("in <NORMALIZED>s", raw_text)
-    text = HEX_PTR_RE.sub("0x<PTR>", text)
-    lines = [line.rstrip() for line in text.splitlines()]
-    return "\n".join(lines).strip() + "\n"
-
-
-def compute_deterministic_sha256(raw_text: str) -> str:
-    import hashlib
-
-    norm = normalize_log_for_deterministic_hash(raw_text)
-    return hashlib.sha256(norm.encode("utf-8")).hexdigest().upper()
 
 
 class CleanRoomRunner:
@@ -180,7 +162,7 @@ class CleanRoomRunner:
             )
 
             raw_log = res.stdout + "\n" + res.stderr
-            dld_sha256 = compute_deterministic_sha256(raw_log)
+            dld_sha256 = compute_dld_sha256(raw_log)
 
             # Parse test counts
             passed = 0
