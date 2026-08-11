@@ -4,7 +4,10 @@ import hashlib
 import importlib.util
 import json
 import os
-import pwd
+try:
+    import pwd
+except ImportError:
+    pwd = None
 import sqlite3
 import subprocess
 import sys

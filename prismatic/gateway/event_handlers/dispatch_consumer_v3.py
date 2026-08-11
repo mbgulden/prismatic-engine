@@ -43,7 +43,10 @@ from __future__ import annotations
 
 import datetime
 import errno
-import fcntl
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 import hashlib
 import json
 import os

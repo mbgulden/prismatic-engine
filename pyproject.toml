@@ -117,3 +117,8 @@ prismatic = [
 # Add entries here only when integrating an internal plugin that lives
 # in the main repo (e.g. a security-policy plugin). External plugins
 # declare their own entry points in their own pyproject.toml.
+
+[tool.pytest.ini_options]
+pythonpath = [".", "prismatic/shipped_plugins/pwp"]
+testpaths = ["prismatic/shipped_plugins/pwp"]
+filterwarnings = ["ignore::DeprecationWarning", "ignore::UserWarning"]
