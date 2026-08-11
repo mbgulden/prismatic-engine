@@ -363,10 +363,19 @@ def _valid_display_name(value: Any) -> bool:
 
 
 def _open_root(root: str) -> tuple[int, int, tuple[int, int]]:
-    if not isinstance(root, str) or not root.startswith("/") or root == "/":
+    if not isinstance(root, str) or not root.startswith("/"):
         raise RegistryError
     if len(root) > MAX_PATH_CHARS or "\x00" in root or "//" in root:
         raise RegistryError
+    if root == "/":
+        fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            metadata = os.fstat(fd)
+            mount_id = _mount_id(fd)
+            return fd, mount_id, (metadata.st_dev, metadata.st_ino)
+        except Exception:
+            os.close(fd)
+            raise
     components = root.split("/")[1:]
     if not components or any(component in {"", ".", ".."} for component in components):
         raise RegistryError
