@@ -67,7 +67,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--db-path", default=None, help="Override SQLite DB path for local tasks"
     )
 
-    subparsers.add_parser("skills", help="Delegate to prismatic-engine-skills")
+    skills = subparsers.add_parser("skills", help="Manage and sync Prismatic Engine skills")
+    skills_subparsers = skills.add_subparsers(dest="skills_command")
+    skills_sync = skills_subparsers.add_parser("sync", help="Bootstrap and sync skills into workspace")
+    skills_sync.add_argument("--target", default=None, help="Target workspace path (default: cwd)")
+    skills_sync.add_argument("--force", action="store_true", help="Force overwrite existing skills")
+    skills_sync.add_argument("--json", action="store_true", help="Emit machine-readable JSON payload")
 
     journal = subparsers.add_parser("journal", help="Journal continuity commands")
     journal_subparsers = journal.add_subparsers(dest="journal_command")
@@ -190,6 +195,30 @@ def run(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command == "skills":
+        if getattr(args, "skills_command", None) == "sync":
+            import json
+            from pathlib import Path
+            from prismatic.skills.bootstrapper import SkillBootstrapper
+
+            bootstrapper = SkillBootstrapper()
+            target_path = Path(args.target) if args.target else None
+            res = bootstrapper.sync_skills(target_workspace=target_path, force=args.force)
+
+            if args.json:
+                print(json.dumps(res.to_dict(), indent=2))
+            else:
+                print("=================== PRISMATIC SKILLS SYNC ===================")
+                print(f"Marker:                 {res.marker}")
+                print(f"Status:                 {res.status}")
+                print(f"Target Workspace:       {res.target_workspace}")
+                print(f"Rules Synced:           {res.agents_rules_synced}")
+                print(f"Skills Synced Count:    {res.skills_synced_count}")
+                print(f"Dual-Tree Matched:      {res.dual_tree_matched}")
+                print(f"Skill Tree SHA-256:     {res.skill_tree_sha256}")
+                print("=============================================================")
+
+            return 0 if res.status == "PASS" else 1
+
         from prismatic.skills import cli_skills
 
         return int(cli_skills(sys.argv[2:]) or 0)
