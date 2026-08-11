@@ -278,7 +278,56 @@
                 min-width: 0 !important;
             }
         }
-        /* Light Mode Polish for Skill Cards & Sidebar Elements */
+        /* Light Mode Polish for Skill Search, Sidebar Nav, and Count Badges */
+        body.light-mode #skills-splitter-container {
+            background-color: #ffffff !important;
+            border-color: #cbd5e1 !important;
+        }
+        body.light-mode #skills-sidebar {
+            background-color: #f8fafc !important;
+            border-color: #cbd5e1 !important;
+        }
+        body.light-mode #skills-grid-container {
+            background-color: #ffffff !important;
+        }
+        body.light-mode #skills-search-input {
+            background-color: #ffffff !important;
+            border-color: #cbd5e1 !important;
+            color: #0f172a !important;
+            font-weight: 500 !important;
+        }
+        body.light-mode #skills-search-input::placeholder {
+            color: #64748b !important;
+        }
+        body.light-mode #skills-sort-select {
+            background-color: #ffffff !important;
+            border-color: #cbd5e1 !important;
+            color: #0f172a !important;
+            font-weight: 500 !important;
+        }
+        body.light-mode .skill-cat-btn {
+            color: #475569 !important;
+        }
+        body.light-mode .skill-cat-btn:hover {
+            background-color: #f1f5f9 !important;
+            color: #0f172a !important;
+        }
+        body.light-mode .skill-cat-btn.active {
+            background-color: #e0e7ff !important;
+            border-color: #c7d2fe !important;
+            color: #3730a3 !important;
+            font-weight: 700 !important;
+        }
+        body.light-mode .skill-cat-count-badge {
+            background-color: #e2e8f0 !important;
+            color: #0f172a !important;
+            font-weight: 700 !important;
+        }
+        body.light-mode .skill-cat-btn.active .skill-cat-count-badge {
+            background-color: #c7d2fe !important;
+            color: #3730a3 !important;
+            font-weight: 700 !important;
+        }
         body.light-mode .skill-card-container {
             background-color: #ffffff !important;
             border-color: #e2e8f0 !important;
@@ -294,14 +343,6 @@
             background-color: #f1f5f9 !important;
             border-color: #cbd5e1 !important;
             color: #475569 !important;
-        }
-        body.light-mode .skill-cat-count-badge {
-            background-color: #e2e8f0 !important;
-            color: #475569 !important;
-        }
-        body.light-mode .skill-cat-btn.active .skill-cat-count-badge {
-            background-color: #c7d2fe !important;
-            color: #3730a3 !important;
         }
         body.light-mode .skill-action-btn-details {
             background-color: #f8fafc !important;
@@ -1914,35 +1955,35 @@
                             <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500 px-2 py-1">Categories</div>
                             <button type="button" onclick="filterSkillCategory('all')" id="cat-btn-all" class="skill-cat-btn active w-full text-left px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-between transition bg-indigo-600/20 text-indigo-300 border border-indigo-500/30">
                                 <span>All Capabilities</span>
-                                <span id="cat-count-all" class="px-1.5 py-0.5 rounded text-[10px] bg-indigo-500/20 text-indigo-300 font-mono">0</span>
+                                <span id="cat-count-all" class="skill-cat-count-badge px-1.5 py-0.5 rounded text-[10px] bg-indigo-500/20 text-indigo-300 font-mono">0</span>
                             </button>
                             <button type="button" onclick="filterSkillCategory('governance')" id="cat-btn-governance" class="skill-cat-btn w-full text-left px-3 py-1.5 rounded-lg text-xs font-medium flex items-center justify-between text-slate-400 hover:text-white hover:bg-slate-800/40 transition">
                                 <span>🛡️ Agent Governance</span>
-                                <span id="cat-count-governance" class="px-1.5 py-0.5 rounded text-[10px] bg-slate-900 text-slate-400 font-mono">0</span>
+                                <span id="cat-count-governance" class="skill-cat-count-badge px-1.5 py-0.5 rounded text-[10px] bg-slate-800/80 text-slate-300 font-mono">0</span>
                             </button>
                             <button type="button" onclick="filterSkillCategory('testing')" id="cat-btn-testing" class="skill-cat-btn w-full text-left px-3 py-1.5 rounded-lg text-xs font-medium flex items-center justify-between text-slate-400 hover:text-white hover:bg-slate-800/40 transition">
                                 <span>🧪 Testing &amp; TDD</span>
-                                <span id="cat-count-testing" class="px-1.5 py-0.5 rounded text-[10px] bg-slate-900 text-slate-400 font-mono">0</span>
+                                <span id="cat-count-testing" class="skill-cat-count-badge px-1.5 py-0.5 rounded text-[10px] bg-slate-800/80 text-slate-300 font-mono">0</span>
                             </button>
                             <button type="button" onclick="filterSkillCategory('security')" id="cat-btn-security" class="skill-cat-btn w-full text-left px-3 py-1.5 rounded-lg text-xs font-medium flex items-center justify-between text-slate-400 hover:text-white hover:bg-slate-800/40 transition">
                                 <span>🔒 Security &amp; Audit</span>
-                                <span id="cat-count-security" class="px-1.5 py-0.5 rounded text-[10px] bg-slate-900 text-slate-400 font-mono">0</span>
+                                <span id="cat-count-security" class="skill-cat-count-badge px-1.5 py-0.5 rounded text-[10px] bg-slate-800/80 text-slate-300 font-mono">0</span>
                             </button>
                             <button type="button" onclick="filterSkillCategory('runtime')" id="cat-btn-runtime" class="skill-cat-btn w-full text-left px-3 py-1.5 rounded-lg text-xs font-medium flex items-center justify-between text-slate-400 hover:text-white hover:bg-slate-800/40 transition">
                                 <span>⚡ Runtime &amp; Core</span>
-                                <span id="cat-count-runtime" class="px-1.5 py-0.5 rounded text-[10px] bg-slate-900 text-slate-400 font-mono">0</span>
+                                <span id="cat-count-runtime" class="skill-cat-count-badge px-1.5 py-0.5 rounded text-[10px] bg-slate-800/80 text-slate-300 font-mono">0</span>
                             </button>
                             <button type="button" onclick="filterSkillCategory('infrastructure')" id="cat-btn-infrastructure" class="skill-cat-btn w-full text-left px-3 py-1.5 rounded-lg text-xs font-medium flex items-center justify-between text-slate-400 hover:text-white hover:bg-slate-800/40 transition">
                                 <span>🌐 Cloud &amp; Infra</span>
-                                <span id="cat-count-infrastructure" class="px-1.5 py-0.5 rounded text-[10px] bg-slate-900 text-slate-400 font-mono">0</span>
+                                <span id="cat-count-infrastructure" class="skill-cat-count-badge px-1.5 py-0.5 rounded text-[10px] bg-slate-800/80 text-slate-300 font-mono">0</span>
                             </button>
                             <button type="button" onclick="filterSkillCategory('workflow')" id="cat-btn-workflow" class="skill-cat-btn w-full text-left px-3 py-1.5 rounded-lg text-xs font-medium flex items-center justify-between text-slate-400 hover:text-white hover:bg-slate-800/40 transition">
                                 <span>📋 Task &amp; Workflow</span>
-                                <span id="cat-count-workflow" class="px-1.5 py-0.5 rounded text-[10px] bg-slate-900 text-slate-400 font-mono">0</span>
+                                <span id="cat-count-workflow" class="skill-cat-count-badge px-1.5 py-0.5 rounded text-[10px] bg-slate-800/80 text-slate-300 font-mono">0</span>
                             </button>
                             <button type="button" onclick="filterSkillCategory('general')" id="cat-btn-general" class="skill-cat-btn w-full text-left px-3 py-1.5 rounded-lg text-xs font-medium flex items-center justify-between text-slate-400 hover:text-white hover:bg-slate-800/40 transition">
                                 <span>📦 Custom &amp; General</span>
-                                <span id="cat-count-general" class="px-1.5 py-0.5 rounded text-[10px] bg-slate-900 text-slate-400 font-mono">0</span>
+                                <span id="cat-count-general" class="skill-cat-count-badge px-1.5 py-0.5 rounded text-[10px] bg-slate-800/80 text-slate-300 font-mono">0</span>
                             </button>
                         </div>
 

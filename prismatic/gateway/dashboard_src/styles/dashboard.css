@@ -267,7 +267,56 @@
                 min-width: 0 !important;
             }
         }
-        /* Light Mode Polish for Skill Cards & Sidebar Elements */
+        /* Light Mode Polish for Skill Search, Sidebar Nav, and Count Badges */
+        body.light-mode #skills-splitter-container {
+            background-color: #ffffff !important;
+            border-color: #cbd5e1 !important;
+        }
+        body.light-mode #skills-sidebar {
+            background-color: #f8fafc !important;
+            border-color: #cbd5e1 !important;
+        }
+        body.light-mode #skills-grid-container {
+            background-color: #ffffff !important;
+        }
+        body.light-mode #skills-search-input {
+            background-color: #ffffff !important;
+            border-color: #cbd5e1 !important;
+            color: #0f172a !important;
+            font-weight: 500 !important;
+        }
+        body.light-mode #skills-search-input::placeholder {
+            color: #64748b !important;
+        }
+        body.light-mode #skills-sort-select {
+            background-color: #ffffff !important;
+            border-color: #cbd5e1 !important;
+            color: #0f172a !important;
+            font-weight: 500 !important;
+        }
+        body.light-mode .skill-cat-btn {
+            color: #475569 !important;
+        }
+        body.light-mode .skill-cat-btn:hover {
+            background-color: #f1f5f9 !important;
+            color: #0f172a !important;
+        }
+        body.light-mode .skill-cat-btn.active {
+            background-color: #e0e7ff !important;
+            border-color: #c7d2fe !important;
+            color: #3730a3 !important;
+            font-weight: 700 !important;
+        }
+        body.light-mode .skill-cat-count-badge {
+            background-color: #e2e8f0 !important;
+            color: #0f172a !important;
+            font-weight: 700 !important;
+        }
+        body.light-mode .skill-cat-btn.active .skill-cat-count-badge {
+            background-color: #c7d2fe !important;
+            color: #3730a3 !important;
+            font-weight: 700 !important;
+        }
         body.light-mode .skill-card-container {
             background-color: #ffffff !important;
             border-color: #e2e8f0 !important;
@@ -283,14 +332,6 @@
             background-color: #f1f5f9 !important;
             border-color: #cbd5e1 !important;
             color: #475569 !important;
-        }
-        body.light-mode .skill-cat-count-badge {
-            background-color: #e2e8f0 !important;
-            color: #475569 !important;
-        }
-        body.light-mode .skill-cat-btn.active .skill-cat-count-badge {
-            background-color: #c7d2fe !important;
-            color: #3730a3 !important;
         }
         body.light-mode .skill-action-btn-details {
             background-color: #f8fafc !important;
