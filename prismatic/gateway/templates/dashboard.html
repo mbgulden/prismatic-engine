@@ -296,8 +296,28 @@
             height: 1rem !important;
             flex-shrink: 0 !important;
         }
-        body.light-mode .search-icon-wrapper svg {
-            color: #64748b !important;
+        /* Canonical Header Action Button Design System */
+        .canonical-header-btn {
+            background-color: rgba(15, 23, 42, 0.9) !important;
+            border-color: rgba(51, 65, 85, 0.8) !important;
+            color: #cbd5e1 !important;
+            font-weight: 600 !important;
+        }
+        .canonical-header-btn:hover {
+            background-color: #1e293b !important;
+            color: #ffffff !important;
+        }
+        body.light-mode .canonical-header-btn {
+            background-color: #ffffff !important;
+            border-color: #cbd5e1 !important;
+            color: #0f172a !important;
+            font-weight: 600 !important;
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05) !important;
+        }
+        body.light-mode .canonical-header-btn:hover {
+            background-color: #f8fafc !important;
+            border-color: #94a3b8 !important;
+            color: #020617 !important;
         }
 
         /* Light Mode Polish for Skill Search, Sidebar Nav, and Count Badges */
@@ -1914,15 +1934,15 @@
                                     <div id="workspace-preview-name" class="text-sm font-bold text-slate-200 mt-1 font-mono break-all">Select an entry from the tree.</div>
                                 </div>
                                 <div class="flex flex-wrap items-center gap-2 flex-shrink-0">
-                                    <button id="workspace-copy-link" type="button" onclick="copyWorkspaceDeepLink()" class="px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:text-white hover:border-cyan-500 text-xs font-semibold flex items-center gap-1.5 transition">
+                                    <button id="workspace-copy-link" type="button" onclick="copyWorkspaceDeepLink()" class="canonical-header-btn px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:text-white hover:border-cyan-500 text-xs font-semibold flex items-center gap-1.5 transition">
                                         <svg class="w-3.5 h-3.5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
                                         Copy Link
                                     </button>
-                                    <button id="workspace-download-btn" type="button" onclick="downloadWorkspaceFile()" title="Download file" class="px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:text-white hover:border-emerald-500 text-xs font-semibold flex items-center gap-1.5 transition">
+                                    <button id="workspace-download-btn" type="button" onclick="downloadWorkspaceFile()" title="Download file" class="canonical-header-btn px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:text-white hover:border-emerald-500 text-xs font-semibold flex items-center gap-1.5 transition">
                                         <svg class="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
                                         Download
                                     </button>
-                                    <a id="workspace-legacy-link" href="/workspace-tree" target="_blank" class="px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:text-white hover:border-cyan-500 text-xs font-semibold flex items-center gap-1.5 transition">
+                                    <a id="workspace-legacy-link" href="/workspace-tree" target="_blank" class="canonical-header-btn px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:text-white hover:border-cyan-500 text-xs font-semibold flex items-center gap-1.5 transition">
                                         <svg class="w-3.5 h-3.5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
                                         Open Raw
                                     </a>
@@ -1950,12 +1970,12 @@
                         Installed Agent Capabilities &amp; Skills Registry
                     </span>
                     <div class="flex items-center gap-2 flex-shrink-0">
-                        <button id="btn-upload-skill" type="button" onclick="openUploadSkillModal()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition shadow-sm flex items-center gap-1.5 border border-emerald-500/50">
-                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                        <button id="btn-upload-skill" type="button" onclick="openUploadSkillModal()" class="canonical-header-btn px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:text-white hover:border-emerald-500 text-xs font-semibold flex items-center gap-1.5 transition shadow-sm">
+                            <svg class="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
                             <span>Upload Skill</span>
                         </button>
-                        <button id="btn-sync-skills" type="button" onclick="renderSkillsView()" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition flex items-center gap-1.5 border border-indigo-500/50">
-                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                        <button id="btn-sync-skills" type="button" onclick="renderSkillsView()" class="canonical-header-btn px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:text-white hover:border-indigo-500 text-xs font-semibold flex items-center gap-1.5 transition shadow-sm">
+                            <svg class="w-3.5 h-3.5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
                             <span>Sync Registry</span>
                         </button>
                     </div>

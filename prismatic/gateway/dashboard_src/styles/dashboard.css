@@ -285,8 +285,28 @@
             height: 1rem !important;
             flex-shrink: 0 !important;
         }
-        body.light-mode .search-icon-wrapper svg {
-            color: #64748b !important;
+        /* Canonical Header Action Button Design System */
+        .canonical-header-btn {
+            background-color: rgba(15, 23, 42, 0.9) !important;
+            border-color: rgba(51, 65, 85, 0.8) !important;
+            color: #cbd5e1 !important;
+            font-weight: 600 !important;
+        }
+        .canonical-header-btn:hover {
+            background-color: #1e293b !important;
+            color: #ffffff !important;
+        }
+        body.light-mode .canonical-header-btn {
+            background-color: #ffffff !important;
+            border-color: #cbd5e1 !important;
+            color: #0f172a !important;
+            font-weight: 600 !important;
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05) !important;
+        }
+        body.light-mode .canonical-header-btn:hover {
+            background-color: #f8fafc !important;
+            border-color: #94a3b8 !important;
+            color: #020617 !important;
         }
 
         /* Light Mode Polish for Skill Search, Sidebar Nav, and Count Badges */
