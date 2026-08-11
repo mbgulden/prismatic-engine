@@ -3874,7 +3874,7 @@
             const rootsEl = document.getElementById("workspace-tree-roots");
             const statusEl = document.getElementById("workspace-tree-status");
             if (!rootsEl) return;
-            if (workspaceTreeState.rendering) return;
+            if (workspaceTreeState.initialized || workspaceTreeState.rendering) return;
             workspaceTreeState.rendering = true;
             updateWorkspaceSortUI();
             rootsEl.innerHTML = `<div class="text-slate-500 italic">Loading workspace tree…</div>`;
