@@ -267,6 +267,28 @@
                 min-width: 0 !important;
             }
         }
+        /* Search Icon Wrapper Centering & Alignment */
+        .search-icon-wrapper {
+            position: relative;
+            display: flex;
+            align-items: center;
+            width: 100%;
+        }
+        .search-icon-wrapper svg {
+            position: absolute !important;
+            left: 0.875rem !important; /* 14px centered padding boundary */
+            top: 50% !important;
+            transform: translateY(-50%) !important;
+            pointer-events: none !important;
+            z-index: 10 !important;
+            width: 1rem !important;
+            height: 1rem !important;
+            flex-shrink: 0 !important;
+        }
+        body.light-mode .search-icon-wrapper svg {
+            color: #64748b !important;
+        }
+
         /* Light Mode Polish for Skill Search, Sidebar Nav, and Count Badges */
         body.light-mode #skills-splitter-container {
             background-color: #ffffff !important;
