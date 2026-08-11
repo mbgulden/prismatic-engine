@@ -641,18 +641,12 @@ def resolve_legacy_file(
     if not matches:
         raise WorkspaceTreeError(404, "workspace object unavailable")
     if len(matches) != 1:
-                fd = child
-                child = -1
-            finally:
-                if child >= 0:
-                    os.close(child)
-        metadata = os.fstat(fd)
-        mount_id = _mount_id(fd)
-        return fd, mount_id, (metadata.st_dev, metadata.st_ino)
-    except Exception:
-        if fd >= 0:
-            os.close(fd)
-        raise
+        raise WorkspaceTreeError(409, "workspace path is ambiguous")
+    return {
+        "ok": True,
+        "workspace_id": matches[0].workspace_id,
+        "relative_path": normalized,
+    }
 
 
 def _format_mtime(st_mtime: float) -> str:
