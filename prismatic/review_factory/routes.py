@@ -97,7 +97,7 @@ def _attach_routes(router: Any) -> None:
     if not _HAS_FASTAPI or router is None:
         return
 
-    @router.get("/queue", dependencies=[Depends(get_rf_principal)])
+    @router.get("/queue")
     async def get_queue_depth() -> Dict[str, Any]:
         """Queue depth breakdown by state."""
         q = _get_queue()
@@ -109,7 +109,7 @@ def _attach_routes(router: Any) -> None:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
-    @router.get("/jobs", dependencies=[Depends(get_rf_principal)])
+    @router.get("/jobs")
     async def list_jobs(
         state: Optional[str] = Query(None, description="Filter by state"),
         tier: Optional[int] = Query(None, description="Filter by risk tier"),
@@ -150,7 +150,7 @@ def _attach_routes(router: Any) -> None:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
-    @router.get("/job/{job_id}", dependencies=[Depends(get_rf_principal)])
+    @router.get("/job/{job_id}")
     async def get_job_detail(job_id: str) -> Dict[str, Any]:
         """Get full detail for a specific review job."""
         q = _get_queue()
@@ -335,7 +335,7 @@ def _attach_routes(router: Any) -> None:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
-    @router.get("/stats", dependencies=[Depends(get_rf_principal)])
+    @router.get("/stats")
     async def get_stats() -> Dict[str, Any]:
         """Aggregate review factory statistics."""
         q = _get_queue()
@@ -356,7 +356,7 @@ def _attach_routes(router: Any) -> None:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
-    @router.get("/metrics", dependencies=[Depends(get_rf_principal)])
+    @router.get("/metrics")
     async def get_prometheus_metrics() -> Response:
         """Prometheus metrics exposition format."""
         q = _get_queue()
