@@ -4650,11 +4650,22 @@ async def workspace_tree_resolve(file: str = Query(...)) -> dict[str, Any]:
 
 @app.get("/api/workspace-tree/preview")
 async def workspace_tree_preview(
-    workspace_id: str = Query(...), path: str = Query(...)
-) -> dict[str, Any]:
+    workspace_id: str = Query(...),
+    path: str = Query(...),
+    download: bool = Query(False),
+) -> Any:
     try:
         with load_registry() as registry:
-            return get_preview(registry, workspace_id, path)
+            data = get_preview(registry, workspace_id, path)
+            if download:
+                filename = data.get("name") or path.rsplit("/", 1)[-1] or "download.txt"
+                content = data.get("content", "")
+                return Response(
+                    content=content.encode("utf-8"),
+                    media_type="application/octet-stream",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+                )
+            return data
     except WorkspaceTreeError as exc:
         raise _workspace_http_error(exc) from None
 

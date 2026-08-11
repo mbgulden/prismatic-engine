@@ -93,6 +93,33 @@
             background-color: #ffffff;
             border-color: #e2e8f0;
         }
+        body.light-mode #workspace-sort-btn,
+        body.light-mode #workspace-copy-link,
+        body.light-mode #workspace-download-btn,
+        body.light-mode #workspace-legacy-link {
+            background-color: #ffffff !important;
+            border-color: #cbd5e1 !important;
+            color: #334155 !important;
+            box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+        }
+        body.light-mode #workspace-sort-btn:hover,
+        body.light-mode #workspace-copy-link:hover,
+        body.light-mode #workspace-download-btn:hover,
+        body.light-mode #workspace-legacy-link:hover {
+            background-color: #f1f5f9 !important;
+            border-color: #94a3b8 !important;
+            color: #0f172a !important;
+        }
+        body.light-mode #workspace-sort-menu {
+            background-color: #ffffff !important;
+            border-color: #cbd5e1 !important;
+            color: #0f172a !important;
+            box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+        }
+        body.light-mode #workspace-sort-menu button:hover {
+            background-color: #f1f5f9 !important;
+            color: #0f172a !important;
+        }
         body.light-mode #workspace-file-preview {
             background-color: #ffffff !important;
             border-color: #e2e8f0 !important;

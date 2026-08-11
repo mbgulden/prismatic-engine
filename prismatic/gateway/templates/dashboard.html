@@ -104,6 +104,33 @@
             background-color: #ffffff;
             border-color: #e2e8f0;
         }
+        body.light-mode #workspace-sort-btn,
+        body.light-mode #workspace-copy-link,
+        body.light-mode #workspace-download-btn,
+        body.light-mode #workspace-legacy-link {
+            background-color: #ffffff !important;
+            border-color: #cbd5e1 !important;
+            color: #334155 !important;
+            box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+        }
+        body.light-mode #workspace-sort-btn:hover,
+        body.light-mode #workspace-copy-link:hover,
+        body.light-mode #workspace-download-btn:hover,
+        body.light-mode #workspace-legacy-link:hover {
+            background-color: #f1f5f9 !important;
+            border-color: #94a3b8 !important;
+            color: #0f172a !important;
+        }
+        body.light-mode #workspace-sort-menu {
+            background-color: #ffffff !important;
+            border-color: #cbd5e1 !important;
+            color: #0f172a !important;
+            box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+        }
+        body.light-mode #workspace-sort-menu button:hover {
+            background-color: #f1f5f9 !important;
+            color: #0f172a !important;
+        }
         body.light-mode #workspace-file-preview {
             background-color: #ffffff !important;
             border-color: #e2e8f0 !important;
@@ -1593,6 +1620,10 @@
                                     <button id="workspace-copy-link" type="button" onclick="copyWorkspaceDeepLink()" class="px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:text-white hover:border-cyan-500 text-xs font-semibold flex items-center gap-1.5 transition">
                                         <svg class="w-3.5 h-3.5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
                                         Copy Link
+                                    </button>
+                                    <button id="workspace-download-btn" type="button" onclick="downloadWorkspaceFile()" title="Download file" class="px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:text-white hover:border-emerald-500 text-xs font-semibold flex items-center gap-1.5 transition">
+                                        <svg class="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                                        Download
                                     </button>
                                     <a id="workspace-legacy-link" href="/workspace-tree" target="_blank" class="px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:text-white hover:border-cyan-500 text-xs font-semibold flex items-center gap-1.5 transition">
                                         <svg class="w-3.5 h-3.5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
@@ -4217,6 +4248,14 @@
             if (relativePath) url.searchParams.set("path", relativePath);
             url.hash = "workspaces";
             navigator.clipboard?.writeText(url.toString());
+        }
+
+        function downloadWorkspaceFile() {
+            const workspaceId = workspaceTreeState.selectedWorkspaceId;
+            const relativePath = workspaceTreeState.selectedRelativePath;
+            if (!workspaceId || !relativePath) return;
+            const query = new URLSearchParams({ workspace_id: workspaceId, path: relativePath, download: "true" });
+            window.open(`/api/workspace-tree/preview?${query.toString()}`, "_blank");
         }
 
         async function renderDashboardWorkspacesSummary() {

@@ -2185,6 +2185,14 @@
             navigator.clipboard?.writeText(url.toString());
         }
 
+        function downloadWorkspaceFile() {
+            const workspaceId = workspaceTreeState.selectedWorkspaceId;
+            const relativePath = workspaceTreeState.selectedRelativePath;
+            if (!workspaceId || !relativePath) return;
+            const query = new URLSearchParams({ workspace_id: workspaceId, path: relativePath, download: "true" });
+            window.open(`/api/workspace-tree/preview?${query.toString()}`, "_blank");
+        }
+
         async function renderDashboardWorkspacesSummary() {
             const wsSummary = document.getElementById("dashboard-workspaces");
             if (!wsSummary) return;
