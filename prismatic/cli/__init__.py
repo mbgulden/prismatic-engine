@@ -102,6 +102,32 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     merge_factory.add_argument("args", nargs=argparse.REMAINDER)
 
+    verify = subparsers.add_parser(
+        "verify",
+        help="Run clean-room execution verification in an isolated temporary worktree",
+    )
+    verify.add_argument(
+        "--clean-room",
+        action="store_true",
+        default=True,
+        help="Spawn an ephemeral detached worktree stripped of ambient environment variables",
+    )
+    verify.add_argument(
+        "--remote",
+        default="origin",
+        help="Remote name to verify reachability against (default: origin)",
+    )
+    verify.add_argument(
+        "--branch",
+        default=None,
+        help="Branch name to verify reachability against (default: current branch)",
+    )
+    verify.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit machine-readable JSON verification payload",
+    )
+
     return parser
 
 
@@ -183,6 +209,35 @@ def run(argv: Sequence[str] | None = None) -> int:
         from prismatic.cli.merge_factory import main as merge_factory_cli_main
 
         return int(merge_factory_cli_main(args.args) or 0)
+
+    if args.command == "verify":
+        import json
+        from prismatic.quality.clean_room import CleanRoomRunner
+
+        runner = CleanRoomRunner()
+        res = runner.run_clean_room_verification(
+            remote_name=args.remote,
+            branch=args.branch,
+            cleanup=True,
+        )
+
+        if args.json:
+            print(json.dumps(res.to_dict(), indent=2))
+        else:
+            print("=================== PRISMATIC CLEAN-ROOM VERIFICATION ===================")
+            print(f"Marker:                 {res.marker}")
+            print(f"Status:                 {res.status}")
+            print(f"Candidate Head SHA:     {res.candidate_head}")
+            print(f"Candidate Tree SHA:     {res.candidate_tree}")
+            print(f"Remote Name:            {res.remote_name}")
+            print(f"Remote Ref Matched:     {res.remote_ref_matched}")
+            print(f"Environment Sanitized:  {res.environment_sanitized}")
+            print(f"Tests Passed:           {res.tests_passed}")
+            print(f"Tests Failed:           {res.tests_failed}")
+            print(f"Deterministic SHA-256:  {res.deterministic_log_sha256}")
+            print("=========================================================================")
+
+        return 0 if res.status == "PASS" else 1
 
     parser.print_help()
     return 0
