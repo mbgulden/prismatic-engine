@@ -425,7 +425,7 @@ def _create_review_router() -> Any:
 def _create_review_factory_canonical_router() -> Any:
     if not _HAS_FASTAPI:
         return None
-    r = APIRouter(prefix="/review-factory", tags=["review-factory"])
+    r = APIRouter(tags=["review-factory"])
     _attach_routes(r)
     return r
 
