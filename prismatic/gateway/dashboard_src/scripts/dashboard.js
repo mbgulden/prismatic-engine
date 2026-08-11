@@ -1726,7 +1726,70 @@
             selectedRelativePath: null,
             initialized: false,
             rendering: false,
+            sortBy: localStorage.getItem("ws_sort_by") || "name",
+            sortOrder: localStorage.getItem("ws_sort_order") || "asc",
+            expandedPaths: new Set(JSON.parse(localStorage.getItem("ws_expanded_paths") || "[]")),
         };
+
+        function saveWorkspaceTreeState() {
+            try {
+                localStorage.setItem("ws_sort_by", workspaceTreeState.sortBy);
+                localStorage.setItem("ws_sort_order", workspaceTreeState.sortOrder);
+                localStorage.setItem("ws_expanded_paths", JSON.stringify(Array.from(workspaceTreeState.expandedPaths)));
+            } catch (e) {}
+        }
+
+        function formatDateTime(isoString) {
+            if (!isoString) return "";
+            try {
+                const d = new Date(isoString);
+                if (isNaN(d.getTime())) return "";
+                const pad = n => String(n).padStart(2, "0");
+                return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+            } catch (e) {
+                return "";
+            }
+        }
+
+        function toggleWorkspaceSortMenu() {
+            const menu = document.getElementById("workspace-sort-menu");
+            if (menu) menu.classList.toggle("hidden");
+        }
+
+        function updateWorkspaceSortUI() {
+            const labelEl = document.getElementById("workspace-sort-label");
+            const names = { name: "Name", date: "Date modified", type: "Type", size: "Size" };
+            if (labelEl) labelEl.textContent = `Sort: ${names[workspaceTreeState.sortBy] || "Name"}`;
+            
+            ["name", "date", "type", "size"].forEach(s => {
+                const el = document.getElementById(`sort-check-${s}`);
+                if (el) el.className = s === workspaceTreeState.sortBy ? "text-cyan-400 font-bold" : "hidden text-cyan-400 font-bold";
+            });
+            ["asc", "desc"].forEach(o => {
+                const el = document.getElementById(`order-check-${o}`);
+                if (el) el.className = o === workspaceTreeState.sortOrder ? "text-cyan-400 font-bold" : "hidden text-cyan-400 font-bold";
+            });
+        }
+
+        function setWorkspaceSort(sortBy) {
+            workspaceTreeState.sortBy = sortBy;
+            saveWorkspaceTreeState();
+            updateWorkspaceSortUI();
+            const menu = document.getElementById("workspace-sort-menu");
+            if (menu) menu.classList.add("hidden");
+            workspaceTreeState.initialized = false;
+            void renderWorkspacesView();
+        }
+
+        function setWorkspaceOrder(sortOrder) {
+            workspaceTreeState.sortOrder = sortOrder;
+            saveWorkspaceTreeState();
+            updateWorkspaceSortUI();
+            const menu = document.getElementById("workspace-sort-menu");
+            if (menu) menu.classList.add("hidden");
+            workspaceTreeState.initialized = false;
+            void renderWorkspacesView();
+        }
 
         function workspaceNodeIcon(node) {
             return node.type === "directory" ? "▸" : "•";
@@ -1749,10 +1812,17 @@
             const childHtml = children.length
                 ? `<div class="workspace-node-children ml-3 border-l border-slate-800/80 pl-2">${children.map(child => renderWorkspaceNode(workspaceId, child, depth + 1)).join("")}</div>`
                 : `<div class="workspace-node-children ml-3 border-l border-slate-800/80 pl-2 hidden"></div>`;
+            const mtimeFormatted = node.mtime ? formatDateTime(node.mtime) : "";
+            const sizeFormatted = node.size != null ? (node.size > 1048576 ? `${(node.size/1048576).toFixed(1)}MB` : node.size > 1024 ? `${(node.size/1024).toFixed(1)}KB` : `${node.size}b`) : "";
+            const metaInfo = [mtimeFormatted, sizeFormatted].filter(Boolean).join(" · ");
+
             return `<div class="workspace-node" data-workspace-id="${escapeHTML(workspaceId)}" data-relative-path="${escapeHTML(relativePath)}" style="margin-left:${indent}px">
-                <button type="button" data-workspace-action="${action}" class="w-full text-left px-2 py-1.5 rounded ${buttonClass}" ${disabled}>
-                    <span class="inline-block w-4 text-slate-500">${workspaceNodeIcon(node)}</span><span>${escapeHTML(label)}</span>
-                    ${node.size ? `<span class="float-right text-[10px] text-slate-600">${node.size}b</span>` : ""}
+                <button type="button" data-workspace-action="${action}" class="w-full text-left px-2 py-1.5 rounded flex items-center justify-between gap-2 ${buttonClass}" ${disabled}>
+                    <span class="flex items-center gap-1.5 min-w-0 truncate">
+                        <span class="inline-block w-4 text-slate-500 flex-shrink-0">${workspaceNodeIcon(node)}</span>
+                        <span class="truncate">${escapeHTML(label)}</span>
+                    </span>
+                    ${metaInfo ? `<span class="text-[10px] font-mono text-slate-500 whitespace-nowrap flex-shrink-0 ml-2">${escapeHTML(metaInfo)}</span>` : ""}
                 </button>
                 ${isDir ? childHtml : ""}
             </div>`;
@@ -1764,15 +1834,28 @@
             const relativePath = wrapper?.dataset.relativePath || "";
             const childrenEl = wrapper?.querySelector(":scope > .workspace-node-children");
             if (!childrenEl) return;
+            const stateKey = `${workspaceId}:${relativePath}`;
             if (childrenEl.dataset.loaded === "true") {
                 childrenEl.classList.toggle("hidden");
-                button.querySelector("span").textContent = childrenEl.classList.contains("hidden") ? "▸" : "▾";
+                const isHidden = childrenEl.classList.contains("hidden");
+                button.querySelector("span").textContent = isHidden ? "▸" : "▾";
+                if (isHidden) workspaceTreeState.expandedPaths.delete(stateKey);
+                else workspaceTreeState.expandedPaths.add(stateKey);
+                saveWorkspaceTreeState();
                 return;
             }
+            workspaceTreeState.expandedPaths.add(stateKey);
+            saveWorkspaceTreeState();
             childrenEl.classList.remove("hidden");
             childrenEl.innerHTML = `<div class="px-2 py-1 text-slate-500 italic">Loading…</div>`;
             try {
-                const query = new URLSearchParams({ workspace_id: workspaceId, path: relativePath, depth: "1" });
+                const query = new URLSearchParams({
+                    workspace_id: workspaceId,
+                    path: relativePath,
+                    depth: "1",
+                    sort_by: workspaceTreeState.sortBy,
+                    sort_order: workspaceTreeState.sortOrder,
+                });
                 const res = await fetch(`/api/workspace-tree/node?${query.toString()}`);
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
@@ -1852,15 +1935,16 @@
             const rootsEl = document.getElementById("workspace-tree-roots");
             const statusEl = document.getElementById("workspace-tree-status");
             if (!rootsEl) return;
-            if (workspaceTreeState.initialized || workspaceTreeState.rendering) return;
+            if (workspaceTreeState.rendering) return;
             workspaceTreeState.rendering = true;
+            updateWorkspaceSortUI();
             rootsEl.innerHTML = `<div class="text-slate-500 italic">Loading workspace tree…</div>`;
             try {
                 const res = await fetch("/api/workspaces");
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const data = await res.json();
                 workspaceTreeState.workspaces = data.workspaces || [];
-                if (statusEl) statusEl.textContent = `${data.workspace_count || workspaceTreeState.workspaces.length} workspaces · trees load only when expanded`;
+                if (statusEl) statusEl.textContent = `${data.workspace_count || workspaceTreeState.workspaces.length} workspaces · sorted by ${workspaceTreeState.sortBy} (${workspaceTreeState.sortOrder})`;
                 rootsEl.innerHTML = workspaceTreeState.workspaces.map(ws => {
                     const rootNode = { name: ws.name, type: "directory", relative_path: "", previewable: false, children: [] };
                     return `<div class="rounded-lg border border-slate-800/70 bg-slate-950/50 p-2">

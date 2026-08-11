@@ -4630,11 +4630,20 @@ async def workspace_tree_node(
     workspace_id: str = Query(...),
     path: str = Query(""),
     depth: int = Query(1, ge=0, le=3),
+    sort_by: str = Query("name"),
+    sort_order: str = Query("asc"),
 ) -> dict[str, Any]:
     """Return a bounded descriptor-relative subtree."""
     try:
         with load_registry() as registry:
-            return get_node(registry, workspace_id, path, depth)
+            return get_node(
+                registry,
+                workspace_id,
+                path,
+                depth,
+                sort_by=sort_by,
+                sort_order=sort_order,
+            )
     except WorkspaceTreeError as exc:
         raise _workspace_http_error(exc) from None
 

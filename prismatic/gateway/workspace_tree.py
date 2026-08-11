@@ -641,12 +641,24 @@ def resolve_legacy_file(
     if not matches:
         raise WorkspaceTreeError(404, "workspace object unavailable")
     if len(matches) != 1:
-        raise WorkspaceTreeError(409, "workspace path is ambiguous")
-    return {
-        "ok": True,
-        "workspace_id": matches[0].workspace_id,
-        "relative_path": normalized,
-    }
+                fd = child
+                child = -1
+            finally:
+                if child >= 0:
+                    os.close(child)
+        metadata = os.fstat(fd)
+        mount_id = _mount_id(fd)
+        return fd, mount_id, (metadata.st_dev, metadata.st_ino)
+    except Exception:
+        if fd >= 0:
+            os.close(fd)
+        raise
+
+
+def _format_mtime(st_mtime: float) -> str:
+    from datetime import datetime, timezone
+
+    return datetime.fromtimestamp(st_mtime, timezone.utc).isoformat()
 
 
 def _public_node(
@@ -655,20 +667,25 @@ def _public_node(
     relative_path: str,
     name: str,
     depth: int,
+    sort_by: str = "name",
+    sort_order: str = "asc",
 ) -> dict[str, Any]:
     metadata = os.fstat(fd)
+    mtime_str = _format_mtime(metadata.st_mtime)
     if stat.S_ISREG(metadata.st_mode):
         return {
             "name": name,
             "type": "file",
             "relative_path": relative_path,
             "size": metadata.st_size,
+            "mtime": mtime_str,
             "previewable": _is_previewable(relative_path, metadata),
         }
     node: dict[str, Any] = {
         "name": name,
         "type": "directory",
         "relative_path": relative_path,
+        "mtime": mtime_str,
         "previewable": False,
         "children": [],
     }
@@ -676,10 +693,10 @@ def _public_node(
         return node
     children: list[dict[str, Any]] = []
     try:
-        names = sorted(os.listdir(fd), key=lambda value: value.casefold())
+        raw_names = os.listdir(fd)
     except OSError:
         return node
-    for child_name in names:
+    for child_name in raw_names:
         if len(children) >= MAX_CHILDREN:
             break
         if child_name.startswith(".") or child_name in IGNORED_NAMES:
@@ -691,6 +708,7 @@ def _public_node(
         child_relative = (
             f"{relative_path}/{child_name}" if relative_path else child_name
         )
+        child_mtime = _format_mtime(child_stat.st_mtime)
         if stat.S_ISDIR(child_stat.st_mode):
             try:
                 child_fd = _secure_open(workspace, child_relative, directory=True)
@@ -699,7 +717,13 @@ def _public_node(
             try:
                 children.append(
                     _public_node(
-                        workspace, child_fd, child_relative, child_name, depth - 1
+                        workspace,
+                        child_fd,
+                        child_relative,
+                        child_name,
+                        depth - 1,
+                        sort_by=sort_by,
+                        sort_order=sort_order,
                     )
                 )
             finally:
@@ -711,9 +735,23 @@ def _public_node(
                     "type": "file",
                     "relative_path": child_relative,
                     "size": child_stat.st_size,
+                    "mtime": child_mtime,
                     "previewable": _is_previewable(child_relative, child_stat),
                 }
             )
+
+    # Sort children according to sort_by and sort_order
+    reverse = sort_order.lower() == "desc"
+    if sort_by == "date" or sort_by == "mtime":
+        children.sort(key=lambda x: x.get("mtime", ""), reverse=reverse)
+    elif sort_by == "size":
+        children.sort(key=lambda x: (x.get("type") == "file", x.get("size", 0)), reverse=reverse)
+    elif sort_by == "type":
+        children.sort(key=lambda x: (x.get("type", ""), x.get("name", "").casefold()), reverse=reverse)
+    else:  # default: name
+        # Directories first, then files (or reverse)
+        children.sort(key=lambda x: (x.get("type") != "directory", x.get("name", "").casefold()), reverse=reverse)
+
     node["children"] = children
     return node
 
@@ -723,6 +761,8 @@ def get_node(
     workspace_id: str,
     relative_path: str = "",
     depth: int = 1,
+    sort_by: str = "name",
+    sort_order: str = "asc",
 ) -> dict[str, Any]:
     workspace = registry.resolve(workspace_id)
     normalized, _ = validate_relative_path(relative_path, allow_empty=True)
@@ -735,7 +775,15 @@ def get_node(
         raise WorkspaceTreeError(status_code, "workspace object unavailable") from None
     try:
         name = normalized.rsplit("/", 1)[-1] if normalized else workspace.display_name
-        tree = _public_node(workspace, fd, normalized, name, depth)
+        tree = _public_node(
+            workspace,
+            fd,
+            normalized,
+            name,
+            depth,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
     finally:
         os.close(fd)
     return {
