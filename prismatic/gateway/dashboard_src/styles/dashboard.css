@@ -44,8 +44,48 @@
         body.light-mode .text-slate-400 { color: #475569; }
         body.light-mode .text-slate-500 { color: #64748b; }
         body.light-mode header {
-            background-color: rgba(255, 255, 255, 0.85);
-            border-color: #e2e8f0;
+            background-color: rgba(255, 255, 255, 0.95) !important;
+            border-color: #e2e8f0 !important;
+            box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.05);
+        }
+        body.light-mode header .bg-slate-950 {
+            background-color: #f1f5f9 !important;
+            border-color: #cbd5e1 !important;
+        }
+        body.light-mode header .bg-slate-950 span.text-slate-500 {
+            color: #64748b !important;
+        }
+        body.light-mode header button[onclick="toggleTheme()"] {
+            background-color: #ffffff !important;
+            border-color: #cbd5e1 !important;
+            color: #475569 !important;
+            box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+        }
+        body.light-mode header button[onclick="toggleTheme()"]:hover {
+            background-color: #f1f5f9 !important;
+            border-color: #94a3b8 !important;
+        }
+        body.light-mode header #theme-icon {
+            color: #475569 !important;
+        }
+        body.light-mode header div.bg-slate-800\/80 {
+            background-color: #ffffff !important;
+            border-color: #cbd5e1 !important;
+            box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+        }
+        body.light-mode header #status-text {
+            color: #475569 !important;
+        }
+        body.light-mode nav {
+            background-color: rgba(248, 250, 252, 0.9) !important;
+            border-color: #e2e8f0 !important;
+        }
+        body.light-mode nav a.text-slate-400 {
+            color: #475569 !important;
+        }
+        body.light-mode nav a.text-slate-400:hover {
+            color: #0f172a !important;
+            background-color: #f1f5f9 !important;
         }
         body.light-mode footer {
             border-color: #e2e8f0;
