@@ -1009,11 +1009,14 @@ class MergeCandidateManifest:
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(tmp_name, target)
-            directory_fd = os.open(target.parent, os.O_RDONLY)
             try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
+                directory_fd = os.open(target.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            except (PermissionError, OSError):
+                pass
         finally:
             try:
                 os.unlink(tmp_name)

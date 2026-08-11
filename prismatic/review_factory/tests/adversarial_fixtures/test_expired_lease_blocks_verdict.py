@@ -1,5 +1,4 @@
-from datetime import datetime, timedelta, timezone
-
+from datetime import datetime, timezone, timedelta
 from prismatic.review_factory.models import ReviewJob, ReviewJobState
 
 

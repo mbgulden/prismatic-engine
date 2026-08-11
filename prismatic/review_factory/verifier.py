@@ -18,20 +18,15 @@ Three integrity invariants (baked in, not bolt-on):
 from __future__ import annotations
 
 import hashlib
-import io
 import json
 import logging
-import os
-import posixpath
 import re
-import shutil
 import subprocess
 import sys
-import tarfile
 import tempfile
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
-from typing import Any
+from pathlib import Path
+from typing import Optional
 
 from prismatic.merge_candidate_manifest import (
     MergeCandidateManifest,
@@ -119,309 +114,26 @@ class CheckResult:
     passed: bool = True
 
 
-@dataclass(frozen=True)
-class MaterializedArchive:
-    """Exact Git archive extracted into a read-only verification root."""
-
-    path: Path
-    artifact_sha256: str
-
-
 class VerificationWorker:
     """RF-2: Run deterministic verification and produce VerificationEvidence."""
 
     def __init__(
         self,
-        repo_path: Path | None = None,
-        log_dir: Path | None = None,
+        repo_path: Optional[Path] = None,
+        log_dir: Optional[Path] = None,
         test_mode: bool = False,
-        queue: object | None = None,
     ):
         self.repo_path = repo_path or Path(".")
         self.log_dir = log_dir or Path(tempfile.mkdtemp(prefix="rf-verify-"))
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.test_mode = test_mode
-        self.queue = queue
-
-    def _materialize_immutable_archive(
-        self,
-        candidate_commit: str,
-        candidate_tree: str = "",
-    ) -> MaterializedArchive:
-        """Materialize exact Git bytes and bind identity to the archive digest."""
-        sha_pattern = re.compile(r"[0-9a-f]{40}")
-        if not sha_pattern.fullmatch(candidate_commit):
-            raise ValueError(
-                "Candidate commit must be exactly 40 lowercase hex characters"
-            )
-        if not sha_pattern.fullmatch(candidate_tree):
-            raise ValueError(
-                "Candidate tree must be exactly 40 lowercase hex characters"
-            )
-
-        repo = self.repo_path.resolve()
-        if not repo.exists():
-            raise ValueError(f"Repository path does not exist: {repo}")
-
-        def git_text(*args: str) -> str:
-            return subprocess.run(
-                ["git", "-C", str(repo), *args],
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=60,
-            ).stdout
-
-        def git_bytes(*args: str) -> bytes:
-            return subprocess.run(
-                ["git", "-C", str(repo), *args],
-                check=True,
-                capture_output=True,
-                timeout=60,
-            ).stdout
-
-        resolved_commit = git_text(
-            "rev-parse", f"{candidate_commit}^{{commit}}"
-        ).strip()
-        if resolved_commit != candidate_commit:
-            raise ValueError("Candidate commit did not resolve exactly")
-        resolved_tree = git_text("rev-parse", f"{candidate_commit}^{{tree}}").strip()
-        if resolved_tree != candidate_tree:
-            raise ValueError(
-                f"Candidate tree mismatch: expected {candidate_tree}, got {resolved_tree}"
-            )
-
-        archive_bytes = git_bytes("archive", "--format=tar", candidate_commit)
-        artifact_sha256 = hashlib.sha256(archive_bytes).hexdigest()
-        archive_dir = Path(
-            tempfile.mkdtemp(prefix=f"rf-archive-{artifact_sha256[:12]}-")
-        )
-
-        try:
-            with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:") as archive:
-                for member in archive.getmembers():
-                    member_path = PurePosixPath(member.name)
-                    if (
-                        member_path.is_absolute()
-                        or ".." in member_path.parts
-                        or not member_path.parts
-                    ):
-                        raise ValueError(f"Unsafe archive member: {member.name}")
-                    # A tracked development venv contains an absolute interpreter
-                    # symlink. Its bytes remain covered by artifact_sha256, but it
-                    # is never extracted or used as verification input.
-                    if member_path.parts[0] == ".venv_dev":
-                        continue
-                    if member.islnk():
-                        raise ValueError(f"Hard links are not allowed: {member.name}")
-                    if member.issym():
-                        target = PurePosixPath(member.linkname)
-                        resolved = posixpath.normpath(str(member_path.parent / target))
-                        if (
-                            target.is_absolute()
-                            or resolved == ".."
-                            or resolved.startswith("../")
-                        ):
-                            raise ValueError(f"Unsafe symbolic link: {member.name}")
-                    elif not (member.isfile() or member.isdir()):
-                        raise ValueError(f"Unsupported archive member: {member.name}")
-                    archive.extract(member, path=archive_dir, filter="data")
-
-            for path in sorted(archive_dir.rglob("*"), reverse=True):
-                if path.is_symlink():
-                    continue
-                os.chmod(path, 0o555 if path.is_dir() else 0o444)
-            os.chmod(archive_dir, 0o555)
-            return MaterializedArchive(archive_dir, artifact_sha256)
-        except Exception:
-            os.chmod(archive_dir, 0o755)
-            shutil.rmtree(archive_dir, ignore_errors=True)
-            raise
-
-    @staticmethod
-    def _cleanup_materialized_archive(path: Path) -> None:
-        for item in path.rglob("*"):
-            if not item.is_symlink():
-                os.chmod(item, 0o755 if item.is_dir() else 0o644)
-        os.chmod(path, 0o755)
-        shutil.rmtree(path)
-
-    def _build_command_manifest(
-        self,
-        job: ReviewJob,
-        manifest: MergeCandidateManifest,
-        required_proof_classes: set[str],
-    ) -> list[dict[str, Any]]:
-        """Build a canonical command manifest before execution detailing all sub-commands, flags, and environment variables."""
-        manifest_items = []
-
-        for proof_class in sorted(required_proof_classes):
-            if self.test_mode:
-                cmd_str = f"test-stub-{proof_class}"
-            else:
-                if proof_class == "focused":
-                    changed = (
-                        json.loads(job.changed_paths_json)
-                        if job.changed_paths_json
-                        else []
-                    )
-                    test_patterns = []
-                    for path in changed:
-                        if "/test_" in path or path.startswith("test_"):
-                            test_patterns.append(path)
-                        else:
-                            base = Path(path).stem
-                            test_patterns.append(f"**/test_{base}.py")
-                    if test_patterns:
-                        cmd_args = [
-                            sys.executable,
-                            "-m",
-                            "pytest",
-                            *test_patterns[:5],
-                            "-x",
-                            "-q",
-                            "--no-header",
-                            "-p",
-                            "no:cacheprovider",
-                        ]
-                        cmd_str = " ".join(cmd_args)
-                    else:
-                        cmd_str = "rf-verify-focused"
-                elif proof_class == "canonical":
-                    cmd_str = " ".join(
-                        [
-                            sys.executable,
-                            "-m",
-                            "pytest",
-                            "tests/",
-                            "-x",
-                            "-q",
-                            "--no-header",
-                            "-p",
-                            "no:cacheprovider",
-                        ]
-                    )
-                elif proof_class == "package":
-                    cmd_str = " ".join(
-                        [sys.executable, "-m", "py_compile", "prismatic/__init__.py"]
-                    )
-                else:
-                    cmd_str = f"rf-verify-{proof_class}"
-
-            manifest_items.append(
-                {
-                    "name": proof_class,
-                    "proof_class": proof_class,
-                    "command": cmd_str,
-                    "env": {},
-                }
-            )
-
-        changed = json.loads(job.changed_paths_json) if job.changed_paths_json else []
-        for path in changed:
-            if not path.endswith(".py"):
-                continue
-
-            import_contract = INTEGRATION_IMPORT_CONTRACTS.get(path, [])
-            if import_contract:
-                manifest_items.append(
-                    {
-                        "name": f"integration-import:{Path(path).stem}",
-                        "proof_class": "focused",
-                        "command": f"grep '{import_contract[0]}' {path}",
-                        "env": {},
-                    }
-                )
-
-            if "/test_" in path or path.startswith("test_"):
-                manifest_items.append(
-                    {
-                        "name": f"circular-proof:{Path(path).stem}",
-                        "proof_class": "focused",
-                        "command": f"grep PE-surface-import {path}",
-                        "env": {},
-                    }
-                )
-            else:
-                test_path = self._derive_test_path(path)
-                if test_path:
-                    manifest_items.append(
-                        {
-                            "name": f"circular-proof:{Path(test_path).stem}",
-                            "proof_class": "focused",
-                            "command": f"grep PE-surface-import {test_path}",
-                            "env": {},
-                        }
-                    )
-
-            callsite_contract = INTEGRATION_CALLSITE_CONTRACTS.get(path, [])
-            if callsite_contract:
-                manifest_items.append(
-                    {
-                        "name": f"callsite:{Path(path).stem}",
-                        "proof_class": "focused",
-                        "command": f"grep '{callsite_contract[0]}' {path}",
-                        "env": {},
-                    }
-                )
-
-        return manifest_items
-
-    @staticmethod
-    def compute_provenance_hash(
-        repository: str,
-        commit: str,
-        tree: str,
-        commands: list[str],
-        policy_version: str,
-        exit_codes: dict[str, int],
-        archive_sha256: str,
-        log_hashes: dict[str, str],
-    ) -> str:
-        """Compute content-addressed provenance record bound to repository identity, commit, tree, command manifest, environment policy, exit codes, artifact hashes, and log hashes."""
-        sorted_commands = sorted(commands)
-        sorted_exits = sorted(f"{k}:{v}" for k, v in exit_codes.items())
-        sorted_logs = sorted(f"{k}:{v}" for k, v in log_hashes.items())
-
-        parts = [
-            repository,
-            commit,
-            tree,
-            ",".join(sorted_commands),
-            policy_version,
-            ",".join(sorted_exits),
-            f"sha256:{archive_sha256}",
-            ",".join(sorted_logs),
-        ]
-        raw = "\0".join(parts)
-        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     def verify(
         self,
         job: ReviewJob,
         manifest: MergeCandidateManifest,
     ) -> tuple[VerificationReceipt, MergeCandidateManifest]:
-        """Materialize once, execute only there, and bind receipt to bytes."""
-        materialized = self._materialize_immutable_archive(
-            job.candidate_commit, job.candidate_tree
-        )
-        mutable_repo_path = self.repo_path
-        self.repo_path = materialized.path
-        try:
-            return self._verify_materialized(
-                job, manifest, materialized.artifact_sha256
-            )
-        finally:
-            self.repo_path = mutable_repo_path
-            self._cleanup_materialized_archive(materialized.path)
-
-    def _verify_materialized(
-        self,
-        job: ReviewJob,
-        manifest: MergeCandidateManifest,
-        artifact_sha256: str,
-    ) -> tuple[VerificationReceipt, MergeCandidateManifest]:
-        """Run all proof classes against the materialized archive."""
+        """Run verification and advance the manifest."""
         tier_str = (
             manifest.risk_tier.value
             if hasattr(manifest.risk_tier, "value")
@@ -430,9 +142,6 @@ class VerificationWorker:
         required = set(_PROOF_REQUIREMENTS.get(tier_str, {"focused"}))
         if manifest.dashboard_change:
             required |= _DASHBOARD_EXTRA
-
-        # 6. Command Manifest: Build canonical manifest BEFORE execution
-        _command_manifest = self._build_command_manifest(job, manifest, required)
 
         results: list[CheckResult] = []
         for proof_class in sorted(required):
@@ -470,35 +179,14 @@ class VerificationWorker:
         updated_manifest = manifest.request_review(evidence_list)
 
         invariance_proof = self._compute_invariance_proof(list(manifest.changed_paths))
-        archive_identity = f"sha256:{artifact_sha256}"
-
-        exit_codes_dict = {r.name: r.exit_code for r in results}
-        log_sha_dict = {r.name: r.log_sha256 for r in results}
-
-        # 7. Content-Addressed Provenance: Compute content-addressed provenance record
-        provenance_identity = self.compute_provenance_hash(
-            repository=job.repository,
-            commit=job.candidate_commit,
-            tree=job.candidate_tree,
-            commands=[r.command for r in results],
-            policy_version=job.policy_version
-            if hasattr(job, "policy_version")
-            else "v1",
-            exit_codes=exit_codes_dict,
-            archive_sha256=artifact_sha256,
-            log_hashes=log_sha_dict,
-        )
-
         receipt = VerificationReceipt(
-            receipt_id=provenance_identity,
             review_job_id=job.review_job_id,
             candidate_commit=job.candidate_commit,
-            candidate_tree=job.candidate_tree,
-            immutable_archive_id=archive_identity,
+            candidate_tree=job.candidate_tree or job.candidate_commit,
             commands=json.dumps([r.command for r in results]),
-            exit_codes=json.dumps(exit_codes_dict),
+            exit_codes=json.dumps({r.name: r.exit_code for r in results}),
             log_paths=json.dumps({r.name: r.log_path for r in results}),
-            log_sha256=json.dumps(log_sha_dict),
+            log_sha256=json.dumps({r.name: r.log_sha256 for r in results}),
             classification=self._classify_verification(results),
             changed_path_invariance_proof=invariance_proof,
             explicit_non_claims=json.dumps(non_claims),
@@ -758,8 +446,6 @@ class VerificationWorker:
             "-x",
             "-q",
             "--no-header",
-            "-p",
-            "no:cacheprovider",
         ]
         return self._execute_subproc("focused", "focused", args)
 
@@ -775,17 +461,7 @@ class VerificationWorker:
                 passed=False,
             )
 
-        args = [
-            sys.executable,
-            "-m",
-            "pytest",
-            "tests/",
-            "-x",
-            "-q",
-            "--no-header",
-            "-p",
-            "no:cacheprovider",
-        ]
+        args = [sys.executable, "-m", "pytest", "tests/", "-x", "-q", "--no-header"]
         return self._execute_subproc("canonical", "canonical", args)
 
     def _run_package_check(self) -> CheckResult:
@@ -822,29 +498,6 @@ class VerificationWorker:
             stdout = proc.stdout
             stderr = proc.stderr
             passed = exit_code == 0
-            # Normalize stdout/stderr to strip non-deterministic timing and paths
-            repo_str = str(self.repo_path)
-            if repo_str:
-                stdout = stdout.replace(repo_str, "_REPOSITORY_ROOT_")
-                stderr = stderr.replace(repo_str, "_REPOSITORY_ROOT_")
-                # Normalize the randomized directory suffix
-                suffix = self.repo_path.name.split("-")[-1]
-                if suffix:
-                    stdout = stdout.replace(suffix, "_RANDOM_SUFFIX_")
-                    stderr = stderr.replace(suffix, "_RANDOM_SUFFIX_")
-            stdout = re.sub(r"in \d+\.\d+s", "in X.XXs", stdout)
-            stderr = re.sub(r"in \d+\.\d+s", "in X.XXs", stderr)
-            # Normalize randomized pytest cache filenames
-            stdout = re.sub(
-                r"pytest-cache-files-[a-zA-Z0-9_]+",
-                "pytest-cache-files-placeholder",
-                stdout,
-            )
-            stderr = re.sub(
-                r"pytest-cache-files-[a-zA-Z0-9_]+",
-                "pytest-cache-files-placeholder",
-                stderr,
-            )
         except subprocess.TimeoutExpired:
             exit_code = -1
             stdout = ""
@@ -882,7 +535,7 @@ class VerificationWorker:
         )
 
     @staticmethod
-    def _derive_test_path(source_path: str) -> str | None:
+    def _derive_test_path(source_path: str) -> Optional[str]:
         p = Path(source_path)
         test_dir = p.parent / "tests"
         test_file = f"test_{p.stem}.py"

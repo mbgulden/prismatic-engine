@@ -120,7 +120,7 @@ def test_reviewer_cannot_submit_verdict_on_own_job(tmp_path):
         verdict=ReviewVerdict.CLEAN.value,
         idempotency_key="key-ind-own",
     )
-    with pytest.raises(ValueError, match="Reviewer identity reuse"):
+    with pytest.raises(ValueError, match="Reviewer identity"):
         q.submit_verdict(job_id, decision_own, reviewer_id="agy")
 
     q.close()

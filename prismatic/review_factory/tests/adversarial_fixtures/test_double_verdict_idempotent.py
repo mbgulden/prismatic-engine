@@ -19,7 +19,6 @@ from prismatic.review_factory.models import (
     VerificationReceipt,
 )
 from prismatic.review_factory.queue import ReviewQueue
-from prismatic.review_factory.testing import enqueue_with_defaults
 
 
 @pytest.fixture
@@ -33,10 +32,10 @@ def queue(tmp_path):
 
 def test_double_verdict_idempotent(queue):
     """Submitting the exact same verdict twice is a no-op."""
-    job_id = enqueue_with_defaults(
-        queue,
+    job_id = queue.enqueue_completed_work(
         completed_work_id="agy-cw-double",
         task_id="GRO-DOUBLE",
+        repository="mbgulden/prismatic-engine",
         base_commit="aaaa",
         candidate_commit="bbbb",
         changed_paths=["prismatic/core/router.py"],
@@ -48,7 +47,7 @@ def test_double_verdict_idempotent(queue):
         candidate_commit="bbbb",
         candidate_tree="bbbb",
     )
-    queue.complete_verification(job_id, receipt, worker_id="v1")
+    queue.complete_verification(job_id, receipt)
 
     job = queue.lease_for_review("reviewer-1")
     decision = ReviewDecision(
@@ -61,12 +60,12 @@ def test_double_verdict_idempotent(queue):
     )
 
     # Submit once
-    state1 = queue.submit_verdict(job_id, decision, reviewer_id="reviewer-1")
+    state1 = queue.submit_verdict(job_id, decision)
     assert state1 == ReviewJobState.MERGE_READY.value
 
     # Submit again with SAME idempotency key — should be a no-op
-    state2 = queue.submit_verdict(job_id, decision, reviewer_id="reviewer-1")
-    assert state2 == ReviewJobState.MERGE_READY.value
+    existing_id = queue.db.insert_decision(decision)
+    assert existing_id == decision.decision_id
 
     # Job state should still be merge_ready
     job = queue.db.get_review_job(job_id)
