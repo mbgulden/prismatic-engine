@@ -4567,6 +4567,9 @@ async def serve_governance_index() -> HTMLResponse:
 @app.get("/foundation", response_class=HTMLResponse)
 @app.get("/skills", response_class=HTMLResponse)
 @app.get("/review-factory", response_class=HTMLResponse)
+async def serve_review_factory_tab() -> HTMLResponse:
+    """Serve canonical governance dashboard for /review-factory direct URL."""
+    return _serve_governance_dashboard_html()
 @app.get("/signals", response_class=HTMLResponse)
 @app.get("/crons", response_class=HTMLResponse)
 @app.get("/pwp", response_class=HTMLResponse)
