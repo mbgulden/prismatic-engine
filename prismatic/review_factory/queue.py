@@ -545,6 +545,27 @@ class ReviewQueue:
             lease_expires_at="",
         )
 
+    def dispatch_repair_task(self, review_job_id: str, failure_reason: str = "") -> Optional[str]:
+        """Submit a high-priority self-healing repair task to task_admission outbox."""
+        job = self.db.get_review_job(review_job_id)
+        if not job:
+            return None
+        try:
+            from prismatic.task_admission import submit_task
+            repair_title = f"REPAIR: Auto-remediate defect for {job.task_id}"
+            repair_desc = f"Review Factory detected defect in candidate {job.candidate_commit[:8]}:\n{failure_reason}"
+            task_id = submit_task(
+                title=repair_title,
+                description=repair_desc,
+                repository=job.repository,
+                priority="HIGH",
+            )
+            logger.info("Auto-repair task submitted for job %s: %s", review_job_id, task_id)
+            return task_id
+        except Exception as exc:
+            logger.warning("Auto-repair task dispatch warning for %s: %s", review_job_id, exc)
+            return None
+
     # ── Janitor ──────────────────────────────────────────────────────
 
     def force_release_lease(

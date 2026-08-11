@@ -331,9 +331,55 @@
                     { headers: reviewFactoryHeaders() },
                 );
                 if (!response.ok) throw new Error(`http_${response.status}`);
-                body.innerHTML = `<pre class="whitespace-pre-wrap break-words">${escapeHtml(JSON.stringify(await response.json(), null, 2))}</pre>`;
+                const jobData = await response.json();
+                body.innerHTML = `
+                    <div class="space-y-4">
+                        <div class="flex items-center justify-between gap-2 border-b border-slate-800 pb-3">
+                            <span class="text-xs font-bold text-indigo-400 uppercase">State: ${escapeHtml(jobData.state || 'unknown')}</span>
+                            <div class="flex gap-2">
+                                <button onclick="approveRFJobMerge('${encodeURIComponent(jobId)}')" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-3 py-1.5 rounded transition text-xs">Approve &amp; Merge</button>
+                                <button onclick="rejectRFJobRepair('${encodeURIComponent(jobId)}')" class="bg-rose-600 hover:bg-rose-500 text-white font-bold px-3 py-1.5 rounded transition text-xs">Request Repair</button>
+                            </div>
+                        </div>
+                        <pre class="whitespace-pre-wrap break-words text-[11px] bg-slate-950 p-3 rounded-lg border border-slate-900">${escapeHtml(JSON.stringify(jobData, null, 2))}</pre>
+                    </div>
+                `;
             } catch (error) {
                 body.textContent = `Job detail unavailable: ${String(error?.message || error)}`;
+            }
+        }
+
+        async function approveRFJobMerge(encodedJobId) {
+            const jobId = decodeURIComponent(encodedJobId);
+            try {
+                const response = await fetch(`/api/review-factory/job/${encodeURIComponent(jobId)}/authorize`, {
+                    method: 'POST',
+                    headers: reviewFactoryHeaders(),
+                    body: JSON.stringify({ actor: 'operator' })
+                });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                showToast(`Authorized merge for job ${jobId}`);
+                closeRFModal();
+                await loadReviewFactory();
+            } catch (err) {
+                showToast(`Approve merge failed: ${err.message || err}`, true);
+            }
+        }
+
+        async function rejectRFJobRepair(encodedJobId) {
+            const jobId = decodeURIComponent(encodedJobId);
+            try {
+                const response = await fetch(`/api/review-factory/job/${encodeURIComponent(jobId)}/reject`, {
+                    method: 'POST',
+                    headers: reviewFactoryHeaders(),
+                    body: JSON.stringify({ reason: 'Rejected from dashboard' })
+                });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                showToast(`Rejected job ${jobId}; auto-repair queued.`);
+                closeRFModal();
+                await loadReviewFactory();
+            } catch (err) {
+                showToast(`Reject job failed: ${err.message || err}`, true);
             }
         }
 
