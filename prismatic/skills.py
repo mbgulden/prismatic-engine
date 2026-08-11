@@ -46,19 +46,36 @@ def _user_skills_dir() -> Path:
 
 
 def _load_manifest(skill_dir: Path) -> dict[str, Any] | None:
-    """Load and validate a skill manifest from *skill_dir*."""
+    """Load and validate a skill manifest from *skill_dir* (supports manifest.yaml and SKILL.md)."""
     manifest_path = skill_dir / "manifest.yaml"
-    if not manifest_path.is_file():
-        return None
-    try:
-        raw = manifest_path.read_text(encoding="utf-8")
-        if yaml is None:
-            raise RuntimeError("PyYAML is required for skill management")
-        data = yaml.safe_load(raw)
-    except Exception:
-        return None
+    skill_md_path = skill_dir / "SKILL.md"
+
+    data: dict[str, Any] | None = None
+    if manifest_path.is_file():
+        try:
+            raw = manifest_path.read_text(encoding="utf-8")
+            if yaml is not None:
+                data = yaml.safe_load(raw)
+        except Exception:
+            pass
+
+    if not data and skill_md_path.is_file():
+        try:
+            content = skill_md_path.read_text(encoding="utf-8")
+            if content.startswith("---"):
+                parts = content.split("---", 2)
+                if len(parts) >= 3 and yaml is not None:
+                    parsed = yaml.safe_load(parts[1])
+                    if isinstance(parsed, dict):
+                        data = parsed
+            if not data:
+                data = {"name": skill_dir.name, "description": "Antigravity Agent Skill"}
+        except Exception:
+            data = {"name": skill_dir.name, "description": "Antigravity Agent Skill"}
+
     if not isinstance(data, dict) or "name" not in data:
         return None
+
     data["_path"] = str(skill_dir.resolve())
     return data
 
