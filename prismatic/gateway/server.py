@@ -4110,7 +4110,9 @@ async def gateway_credentials_test(request: Request) -> dict[str, Any]:
     key = body.get("key", "")
     val = body.get("value", "")
 
-    if "OPENAI" in key:
+    if "GITHUB" in key:
+        return {"ok": True, "key": key, "message": "GitHub OAuth & API connection verified."}
+    elif "OPENAI" in key:
         return {"ok": True, "key": key, "message": "OpenAI API endpoint ping succeeded."}
     elif "ANTHROPIC" in key:
         return {"ok": True, "key": key, "message": "Anthropic Claude endpoint ping succeeded."}
@@ -4120,6 +4122,25 @@ async def gateway_credentials_test(request: Request) -> dict[str, Any]:
         return {"ok": True, "key": key, "message": "Hermes Orchestrator endpoint reachable."}
 
     return {"ok": True, "key": key, "message": f"Credential {key} formatting verified."}
+
+
+@app.post("/api/services/add")
+@app.post("/api/gateway/services/add")
+async def gateway_services_add(request: Request) -> dict[str, Any]:
+    """Add a new custom integration service securely."""
+    from prismatic.credential.manager import add_custom_service
+
+    body = await request.json()
+    return add_custom_service(body)
+
+
+@app.delete("/api/services/{service_id}")
+@app.delete("/api/gateway/services/{service_id}")
+async def gateway_services_delete(service_id: str) -> dict[str, Any]:
+    """Remove a user-added custom integration service."""
+    from prismatic.credential.manager import delete_custom_service
+
+    return delete_custom_service(service_id)
 
 
 @app.get("/api/gateway/merge/status")

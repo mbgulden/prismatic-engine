@@ -9,6 +9,10 @@
                 <p class="text-xs text-slate-500 mt-1">Interactive credentials marketplace: Google Antigravity OAuth, Jules CLI, AI Models, GitHub &amp; Infrastructure.</p>
             </div>
             <div class="flex items-center gap-2 flex-shrink-0">
+                <button type="button" onclick="openAddServiceModal()" class="canonical-header-btn px-3 py-1.5 rounded-lg border border-indigo-500/40 bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/30 hover:text-white hover:border-indigo-400 text-xs font-semibold flex items-center gap-1.5 transition shadow-sm">
+                    <svg class="w-3.5 h-3.5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                    <span>+ Add Service</span>
+                </button>
                 <button type="button" onclick="saveSettingsCredentials()" class="canonical-header-btn px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:text-white hover:border-emerald-500 text-xs font-semibold flex items-center gap-1.5 transition shadow-sm">
                     <svg class="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
                     <span>Save All Credentials</span>
@@ -125,6 +129,98 @@
                     <input id="setting-GEMINI_API_KEY" type="password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="AIzaSy••••••••••••••••">
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- Interactive Add Service Modal -->
+    <div id="add-service-modal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-slate-900 border border-slate-800 rounded-xl max-w-lg w-full p-6 space-y-5 shadow-2xl">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                <h3 class="text-sm font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
+                    <span class="text-indigo-400 text-base">🔌</span> Add Integration Service &amp; OAuth Credentials
+                </h3>
+                <button type="button" onclick="closeAddServiceModal()" class="text-slate-400 hover:text-white text-lg font-bold">&times;</button>
+            </div>
+
+            <form id="add-service-form" onsubmit="submitAddService(event)" class="space-y-4 text-xs">
+                <!-- Preset Service Selector -->
+                <div class="space-y-1.5">
+                    <label class="block font-bold text-slate-300">Select Integration Service Preset</label>
+                    <select id="new-service-preset" onchange="applyServicePreset(this.value)" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-slate-200 focus:outline-none focus:border-indigo-500">
+                        <optgroup label="Git &amp; Repository Services">
+                            <option value="github">GitHub (OAuth / Personal Access Token)</option>
+                            <option value="gitlab">GitLab (Self-Hosted / Cloud PAT)</option>
+                            <option value="bitbucket">Bitbucket Cloud / Server</option>
+                        </optgroup>
+                        <optgroup label="Task &amp; Project Management">
+                            <option value="linear">Linear Task Manager</option>
+                            <option value="jira">Atlassian Jira</option>
+                            <option value="asana">Asana Workspace</option>
+                            <option value="trello">Trello Board API</option>
+                            <option value="clickup">ClickUp Workspace</option>
+                        </optgroup>
+                        <optgroup label="Agent Harnesses &amp; Frameworks">
+                            <option value="hermes">Hermes Orchestrator Hub</option>
+                            <option value="agy">Antigravity (AGY CLI)</option>
+                            <option value="jules">Jules CLI Capacity Ledger</option>
+                            <option value="devin">Devin AI Harness</option>
+                        </optgroup>
+                        <optgroup label="AI Models &amp; Cloud Infrastructure">
+                            <option value="openai">OpenAI API (GPT-4o)</option>
+                            <option value="anthropic">Anthropic Claude API</option>
+                            <option value="gemini">Google Gemini API</option>
+                            <option value="deepseek">DeepSeek AI</option>
+                            <option value="cloudflare">Cloudflare API Token</option>
+                            <option value="custom">Custom Service...</option>
+                        </optgroup>
+                    </select>
+                </div>
+
+                <!-- Service Display Name -->
+                <div class="space-y-1">
+                    <label class="block font-bold text-slate-300">Service Name</label>
+                    <input id="new-service-name" type="text" required class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-slate-200 focus:outline-none focus:border-indigo-500" value="GitHub (OAuth / Personal Access Token)">
+                </div>
+
+                <!-- Category & Auth Type -->
+                <div class="grid grid-cols-2 gap-3">
+                    <div class="space-y-1">
+                        <label class="block font-bold text-slate-300">Category</label>
+                        <select id="new-service-category" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-slate-200 focus:outline-none focus:border-indigo-500">
+                            <option value="oauth">OAuth Credentials</option>
+                            <option value="ai">AI &amp; Agent Models</option>
+                            <option value="infra">Infrastructure &amp; Cloud</option>
+                            <option value="workspace">Task &amp; Workspace Sync</option>
+                        </select>
+                    </div>
+                    <div class="space-y-1">
+                        <label class="block font-bold text-slate-300">Auth Type</label>
+                        <select id="new-service-authtype" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-slate-200 focus:outline-none focus:border-indigo-500">
+                            <option value="oauth2">OAuth 2.0 Flow</option>
+                            <option value="api_key">API Key</option>
+                            <option value="pat">Personal Access Token</option>
+                            <option value="endpoint">Endpoint URL</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Environment Variable / Secret Key Name -->
+                <div class="space-y-1">
+                    <label class="block font-bold text-slate-300">Environment Key Name</label>
+                    <input id="new-service-key" type="text" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-slate-200 focus:outline-none focus:border-indigo-500" value="GITHUB_TOKEN">
+                </div>
+
+                <!-- Token / Value Input -->
+                <div class="space-y-1">
+                    <label class="block font-bold text-slate-300">Secret Token / API Key Value</label>
+                    <input id="new-service-value" type="password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="ghp_••••••••••••••••">
+                </div>
+
+                <div class="pt-3 border-t border-slate-800 flex items-center justify-end gap-2">
+                    <button type="button" onclick="closeAddServiceModal()" class="px-4 py-2 rounded-lg border border-slate-800 bg-slate-900 text-slate-400 hover:text-slate-200 text-xs font-semibold">Cancel</button>
+                    <button type="submit" class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold uppercase tracking-wider transition shadow-lg shadow-indigo-600/20">Save Service</button>
+                </div>
+            </form>
         </div>
     </div>
 </section>

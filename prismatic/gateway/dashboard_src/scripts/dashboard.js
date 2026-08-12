@@ -3932,6 +3932,92 @@
             }
         }
 
+        function openAddServiceModal() {
+            const modal = document.getElementById("add-service-modal");
+            if (modal) modal.classList.remove("hidden");
+        }
+
+        function closeAddServiceModal() {
+            const modal = document.getElementById("add-service-modal");
+            if (modal) modal.classList.add("hidden");
+        }
+
+        function applyServicePreset(preset) {
+            const presets = {
+                github: { name: "GitHub (OAuth / Personal Access Token)", category: "oauth", authtype: "oauth2", key: "GITHUB_TOKEN" },
+                gitlab: { name: "GitLab (Self-Hosted / Cloud PAT)", category: "oauth", authtype: "pat", key: "GITLAB_TOKEN" },
+                bitbucket: { name: "Bitbucket Cloud / Server", category: "oauth", authtype: "pat", key: "BITBUCKET_TOKEN" },
+                linear: { name: "Linear Task Manager", category: "workspace", authtype: "api_key", key: "LINEAR_API_KEY" },
+                jira: { name: "Atlassian Jira API", category: "workspace", authtype: "api_key", key: "JIRA_API_TOKEN" },
+                asana: { name: "Asana Workspace PAT", category: "workspace", authtype: "pat", key: "ASANA_PAT" },
+                trello: { name: "Trello Board API Key", category: "workspace", authtype: "api_key", key: "TRELLO_API_KEY" },
+                clickup: { name: "ClickUp Workspace API", category: "workspace", authtype: "api_key", key: "CLICKUP_API_KEY" },
+                hermes: { name: "Hermes Orchestrator Hub", category: "infra", authtype: "endpoint", key: "HERMES_ENDPOINT" },
+                agy: { name: "Antigravity (AGY CLI)", category: "oauth", authtype: "oauth2", key: "AGY_MODEL" },
+                jules: { name: "Jules CLI Capacity Ledger", category: "oauth", authtype: "oauth2", key: "JULES_DB_PATH" },
+                devin: { name: "Devin AI Harness", category: "ai", authtype: "api_key", key: "DEVIN_API_KEY" },
+                openai: { name: "OpenAI API (GPT-4o)", category: "ai", authtype: "api_key", key: "OPENAI_API_KEY" },
+                anthropic: { name: "Anthropic Claude API", category: "ai", authtype: "api_key", key: "ANTHROPIC_API_KEY" },
+                gemini: { name: "Google Gemini API", category: "ai", authtype: "api_key", key: "GEMINI_API_KEY" },
+                deepseek: { name: "DeepSeek AI API", category: "ai", authtype: "api_key", key: "DEEPSEEK_API_KEY" },
+                cloudflare: { name: "Cloudflare API Token", category: "infra", authtype: "pat", key: "CLOUDFLARE_API_TOKEN" },
+                custom: { name: "Custom Integration", category: "workspace", authtype: "api_key", key: "CUSTOM_SERVICE_KEY" }
+            };
+
+            const cfg = presets[preset] || presets.custom;
+            const nameEl = document.getElementById("new-service-name");
+            const catEl = document.getElementById("new-service-category");
+            const authEl = document.getElementById("new-service-authtype");
+            const keyEl = document.getElementById("new-service-key");
+
+            if (nameEl) nameEl.value = cfg.name;
+            if (catEl) catEl.value = cfg.category;
+            if (authEl) authEl.value = cfg.authtype;
+            if (keyEl) keyEl.value = cfg.key;
+        }
+
+        async function submitAddService(event) {
+            event.preventDefault();
+            const name = document.getElementById("new-service-name")?.value || "Custom Service";
+            const category = document.getElementById("new-service-category")?.value || "workspace";
+            const authType = document.getElementById("new-service-authtype")?.value || "api_key";
+            const key = document.getElementById("new-service-key")?.value || "";
+            const value = document.getElementById("new-service-value")?.value || "";
+
+            showToast(`Saving integration service ${name}...`);
+            try {
+                const res = await fetch("/api/gateway/services/add", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ name, category, auth_type: authType, key, value })
+                });
+                const data = await res.json();
+                if (!res.ok || data.ok === false) throw new Error(data.error || "Save service failed");
+                showToast(`Service "${name}" added successfully!`);
+                closeAddServiceModal();
+                await loadSettingsCredentials();
+            } catch (err) {
+                console.error("Add service error:", err);
+                showToast(`Failed to add service: ${err.message || err}`, true);
+            }
+        }
+
+        async function removeCustomService(serviceId, name) {
+            if (!confirm(`Are you sure you want to remove the integration service "${name || serviceId}"?`)) return;
+
+            showToast(`Removing service ${serviceId}...`);
+            try {
+                const res = await fetch(`/api/gateway/services/${encodeURIComponent(serviceId)}`, { method: "DELETE" });
+                const data = await res.json();
+                if (!res.ok || data.ok === false) throw new Error(data.error || "Delete failed");
+                showToast(`Service "${name || serviceId}" removed.`);
+                await loadSettingsCredentials();
+            } catch (err) {
+                console.error("Remove service error:", err);
+                showToast(`Failed to remove service: ${err.message || err}`, true);
+            }
+        }
+
         function renderSettingsCards() {
             const grid = document.getElementById("settings-service-cards-grid");
             if (!grid) return;
@@ -3956,6 +4042,16 @@
                     fulfilled: Boolean(latestCredentialsPayload.oauth_services?.jules_cli?.fulfilled),
                     details: latestCredentialsPayload.oauth_services?.jules_cli?.details || "Jules Capacity Ledger & Daily Quota Store",
                     actionLabel: latestCredentialsPayload.oauth_services?.jules_cli?.action_label || "Authorize Jules OAuth"
+                },
+                {
+                    key: "github_oauth",
+                    name: "GitHub OAuth & CLI Token",
+                    icon: "🐙",
+                    category: "oauth",
+                    type: "oauth2",
+                    fulfilled: Boolean(latestCredentialsPayload.oauth_services?.github_oauth?.fulfilled || latestCredentialsPayload.credentials?.GITHUB_TOKEN?.configured),
+                    details: latestCredentialsPayload.oauth_services?.github_oauth?.details || "GitHub OAuth & CLI Token (~/.config/gh)",
+                    actionLabel: latestCredentialsPayload.oauth_services?.github_oauth?.action_label || "Connect GitHub OAuth"
                 },
                 {
                     key: "OPENAI_API_KEY",
@@ -3994,15 +4090,6 @@
                     details: latestCredentialsPayload.credentials?.HERMES_ENDPOINT?.redacted_value || "http://100.83.32.92:9000"
                 },
                 {
-                    key: "GITHUB_TOKEN",
-                    name: "GitHub Personal Access Token",
-                    icon: "🐙",
-                    category: "workspace",
-                    type: "token",
-                    fulfilled: Boolean(latestCredentialsPayload.credentials?.GITHUB_TOKEN?.configured),
-                    details: latestCredentialsPayload.credentials?.GITHUB_TOKEN?.redacted_value || "PR Evidence & Repo Access"
-                },
-                {
                     key: "LINEAR_API_KEY",
                     name: "Linear API Key",
                     icon: "📐",
@@ -4022,6 +4109,22 @@
                 }
             ];
 
+            // Merge user-added custom services
+            const customServices = latestCredentialsPayload.custom_services || [];
+            customServices.forEach(cs => {
+                cards.push({
+                    key: cs.service_id,
+                    name: cs.name,
+                    icon: cs.icon || "🔌",
+                    category: cs.category || "workspace",
+                    type: cs.auth_type || "api_key",
+                    fulfilled: Boolean(cs.fulfilled),
+                    details: cs.details || "Custom Service",
+                    removable: true,
+                    serviceId: cs.service_id
+                });
+            });
+
             const filtered = activeSettingsCategoryFilter === "all"
                 ? cards
                 : cards.filter(c => c.category === activeSettingsCategoryFilter);
@@ -4032,6 +4135,10 @@
                 const badge = isFulfilled
                     ? `<span class="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">🟢 Connected / Fulfilled</span>`
                     : `<span class="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-slate-800 text-slate-400 border border-slate-700">⚪ Not Configured</span>`;
+
+                const removeBtn = c.removable
+                    ? `<button type="button" onclick="removeCustomService('${c.serviceId}', '${escapeHtml(c.name)}')" class="text-xs text-rose-400 hover:text-rose-300 font-bold ml-2" title="Remove Service">&times;</button>`
+                    : "";
 
                 const actionBtns = c.category === "oauth"
                     ? `<button type="button" onclick="initiateOAuthFlow('${c.key}')" class="px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-200 hover:text-white hover:border-indigo-500 text-xs font-semibold flex items-center gap-1 transition shadow-sm">${escapeHtml(c.actionLabel || 'Connect OAuth')}</button>`
@@ -4044,6 +4151,7 @@
                                 <div class="flex items-center gap-2">
                                     <span class="text-base">${c.icon}</span>
                                     <h4 class="service-card-title text-xs font-bold text-slate-200 uppercase tracking-wider">${escapeHtml(c.name)}</h4>
+                                    ${removeBtn}
                                 </div>
                                 ${badge}
                             </div>

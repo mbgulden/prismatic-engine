@@ -124,6 +124,90 @@ def check_jules_cli_oauth() -> Dict[str, Any]:
     }
 
 
+def check_github_oauth() -> Dict[str, Any]:
+    """Check if GitHub OAuth token or gh CLI credentials exist and are fulfilled."""
+    home = Path(PRISMATIC_HOME)
+    gh_hosts_file = home / ".config" / "gh" / "hosts.yml"
+
+    fulfilled = False
+    details = "Not Connected"
+
+    val = os.environ.get("GITHUB_TOKEN", "").strip()
+    if val:
+        fulfilled = True
+        details = f"Fulfilled via GITHUB_TOKEN ({_redact_value('GITHUB_TOKEN', val)})"
+    elif gh_hosts_file.exists():
+        fulfilled = True
+        details = f"Fulfilled via GitHub CLI ({gh_hosts_file})"
+
+    return {
+        "service": "github_oauth",
+        "name": "GitHub OAuth & CLI Token",
+        "category": "oauth",
+        "auth_type": "oauth2",
+        "fulfilled": fulfilled,
+        "details": details,
+        "icon": "🐙",
+        "action_label": "Re-authenticate GitHub" if fulfilled else "Connect GitHub OAuth",
+    }
+
+
+CUSTOM_SERVICES_FILE = Path(PRISMATIC_HOME) / ".prismatic" / "custom_services.json"
+
+
+def load_custom_services() -> list[Dict[str, Any]]:
+    """Load user-added custom integration services."""
+    if not CUSTOM_SERVICES_FILE.exists():
+        return []
+    try:
+        data = json.loads(CUSTOM_SERVICES_FILE.read_text(encoding="utf-8"))
+        return data.get("services", [])
+    except Exception:
+        return []
+
+
+def add_custom_service(service_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Add a new custom integration service securely."""
+    services = load_custom_services()
+    service_id = service_data.get("service_id") or f"custom_{int(time.time())}"
+
+    # Also persist API key / secret to .env if provided
+    key_name = service_data.get("key", "").upper()
+    val = service_data.get("value", "")
+    if key_name and val:
+        update_credentials({key_name: val})
+
+    entry = {
+        "service_id": service_id,
+        "name": service_data.get("name", "Custom Integration"),
+        "category": service_data.get("category", "workspace"),
+        "auth_type": service_data.get("auth_type", "api_key"),
+        "icon": service_data.get("icon", "🔌"),
+        "key": key_name,
+        "details": f"Configured ({key_name})" if key_name else service_data.get("details", "Custom Service"),
+        "fulfilled": True,
+        "removable": True,
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+
+    # Deduplicate by service_id
+    services = [s for s in services if s.get("service_id") != service_id]
+    services.append(entry)
+
+    CUSTOM_SERVICES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CUSTOM_SERVICES_FILE.write_text(json.dumps({"services": services}, indent=2), encoding="utf-8")
+    return {"ok": True, "service": entry}
+
+
+def delete_custom_service(service_id: str) -> Dict[str, Any]:
+    """Remove a user-added custom integration service."""
+    services = load_custom_services()
+    filtered = [s for s in services if s.get("service_id") != service_id]
+    CUSTOM_SERVICES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CUSTOM_SERVICES_FILE.write_text(json.dumps({"services": filtered}, indent=2), encoding="utf-8")
+    return {"ok": True, "removed_service_id": service_id}
+
+
 def get_credentials_status() -> Dict[str, Any]:
     """Inspect current credential status across os.environ, OAuth stores, and .env files."""
     status = {}
@@ -157,12 +241,16 @@ def get_credentials_status() -> Dict[str, Any]:
     oauth_services = {
         "google_antigravity": check_google_antigravity_oauth(),
         "jules_cli": check_jules_cli_oauth(),
+        "github_oauth": check_github_oauth(),
     }
+
+    custom_services = load_custom_services()
 
     return {
         "ok": True,
         "credentials": status,
         "oauth_services": oauth_services,
+        "custom_services": custom_services,
         "target_env_file": str(target_env),
         "settings_tab_url": "https://prismatic.growthwebdev.com/tab/settings",
     }
