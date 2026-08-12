@@ -328,6 +328,36 @@
             color: #475569 !important;
         }
 
+        /* Service Cards & Interactive OAuth Styling */
+        .service-integration-card {
+            background-color: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(51, 65, 85, 0.6);
+            transition: all 0.2s ease-in-out;
+        }
+        .service-integration-card:hover {
+            border-color: rgba(99, 102, 241, 0.5);
+            transform: translateY(-1px);
+        }
+        .service-card-fulfilled {
+            border-color: rgba(16, 185, 129, 0.4) !important;
+            background-color: rgba(6, 78, 59, 0.15) !important;
+        }
+        body.light-mode .service-integration-card {
+            background-color: #ffffff !important;
+            border-color: #e2e8f0 !important;
+            box-shadow: 0 1px 3px 0 rgba(0,0,0,0.05) !important;
+        }
+        body.light-mode .service-card-fulfilled {
+            background-color: #f0fdf4 !important;
+            border-color: #86efac !important;
+        }
+        body.light-mode .service-card-title {
+            color: #0f172a !important;
+        }
+        body.light-mode .service-card-desc {
+            color: #475569 !important;
+        }
+
         /* Light Mode Polish for Skill Search, Sidebar Nav, and Count Badges */
         body.light-mode #skills-splitter-container {
             background-color: #ffffff !important;

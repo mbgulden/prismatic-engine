@@ -34,6 +34,12 @@ MANAGED_KEYS = [
     "GITHUB_TOKEN",
     "LINEAR_API_KEY",
     "UBERSUGGEST_ACCESS_TOKEN",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GEMINI_API_KEY",
+    "HERMES_ENDPOINT",
+    "AGY_MODEL",
+    "JULES_DB_PATH",
 ]
 
 
@@ -57,8 +63,69 @@ def _redact_value(key: str, val: str) -> str:
     return f"{val[:4]}...{val[-4:]}"
 
 
+def check_google_antigravity_oauth() -> Dict[str, Any]:
+    """Check if Google Antigravity OAuth credentials exist and are fulfilled."""
+    home = Path(PRISMATIC_HOME)
+    cache_dir = home / ".gemini" / "antigravity"
+
+    fulfilled = False
+    details = "Not Connected"
+
+    if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") or os.environ.get("GEMINI_API_KEY"):
+        fulfilled = True
+        details = "Fulfilled via Environment API Key / Credentials"
+    elif cache_dir.exists():
+        fulfilled = True
+        details = f"Fulfilled via Google OAuth ({cache_dir})"
+
+    return {
+        "service": "google_antigravity",
+        "name": "Google Antigravity OAuth",
+        "category": "oauth",
+        "auth_type": "oauth2",
+        "fulfilled": fulfilled,
+        "details": details,
+        "icon": "⚡",
+        "action_label": "Re-authenticate OAuth" if fulfilled else "Connect Google OAuth",
+    }
+
+
+def check_jules_cli_oauth() -> Dict[str, Any]:
+    """Check if Jules CLI OAuth credentials & daily capacity ledger are active."""
+    home = Path(PRISMATIC_HOME)
+    db_path = home / ".prismatic" / "db" / "jules_capacity.sqlite3"
+
+    fulfilled = False
+    details = "Not Configured"
+
+    try:
+        from prismatic.jules_capacity import capacity_payload
+
+        payload = capacity_payload()
+        if payload.get("ok"):
+            fulfilled = True
+            details = f"Fulfilled (Daily Limit 300 / Observed: {payload.get('observed_launches', 0)})"
+    except Exception:
+        pass
+
+    if not fulfilled and db_path.exists():
+        fulfilled = True
+        details = "Fulfilled via Jules Capacity Store"
+
+    return {
+        "service": "jules_cli",
+        "name": "Jules CLI OAuth",
+        "category": "oauth",
+        "auth_type": "oauth2",
+        "fulfilled": fulfilled,
+        "details": details,
+        "icon": "🚀",
+        "action_label": "Re-setup Jules OAuth" if fulfilled else "Authorize Jules OAuth",
+    }
+
+
 def get_credentials_status() -> Dict[str, Any]:
-    """Inspect current credential status across os.environ and .env files."""
+    """Inspect current credential status across os.environ, OAuth stores, and .env files."""
     status = {}
     target_env = _get_target_env_file()
 
@@ -87,9 +154,15 @@ def get_credentials_status() -> Dict[str, Any]:
             "settings_tab_url": "https://prismatic.growthwebdev.com/tab/settings",
         }
 
+    oauth_services = {
+        "google_antigravity": check_google_antigravity_oauth(),
+        "jules_cli": check_jules_cli_oauth(),
+    }
+
     return {
         "ok": True,
         "credentials": status,
+        "oauth_services": oauth_services,
         "target_env_file": str(target_env),
         "settings_tab_url": "https://prismatic.growthwebdev.com/tab/settings",
     }

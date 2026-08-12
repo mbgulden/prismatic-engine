@@ -231,6 +231,10 @@ async def required_role(request: Request) -> str | None:
         or path.startswith("/api/gateway/signals")
         or path.startswith("/api/agents")
         or path.startswith("/api/gateway/agents")
+        or path.startswith("/api/credentials")
+        or path.startswith("/api/gateway/credentials")
+        or path.startswith("/api/oauth")
+        or path.startswith("/api/gateway/oauth")
         or path.startswith("/api/workspace-tree/")
     ):
         return None

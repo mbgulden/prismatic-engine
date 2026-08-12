@@ -160,30 +160,9 @@
 
         async function fetchSettingsData() {
             try {
-                const res = await fetch("/api/settings/credentials");
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                const data = await res.json();
-                const creds = data.credentials || {};
-                const grid = document.getElementById("settings-credentials-status-grid");
-                if (grid) {
-                    grid.innerHTML = Object.values(creds).map(item => {
-                        const conf = item.configured;
-                        const badgeClass = conf ? "bg-emerald-500/10 text-emerald-300 border-emerald-500/20" : "bg-slate-800 text-slate-500 border-slate-700";
-                        const label = conf ? "CONNECTED" : "NOT CONFIGURED";
-                        return `
-                            <div class="rounded-xl border border-slate-800/80 bg-slate-950/40 p-3 space-y-1">
-                                <div class="flex justify-between items-center">
-                                    <span class="font-bold text-slate-300 font-mono text-[11px]">${item.key}</span>
-                                    <span class="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase border ${badgeClass}">${label}</span>
-                                </div>
-                                <div class="text-[11px] font-mono text-slate-400">${item.redacted_value || '—'}</div>
-                                <div class="text-[10px] text-slate-500">Source: ${item.source || 'none'}</div>
-                            </div>
-                        `;
-                    }).join("");
-                }
+                await loadSettingsCredentials();
             } catch (err) {
-                console.error("Error loading settings data:", err);
+                console.error("fetchSettingsData error:", err);
             }
         }
 
@@ -3905,6 +3884,213 @@
             } finally {
                 if (tokenInput) tokenInput.value = "";
                 if (button) button.disabled = false;
+            }
+        }
+
+        let activeSettingsCategoryFilter = "all";
+        let latestCredentialsPayload = {};
+
+        function filterSettingsCards(category) {
+            activeSettingsCategoryFilter = category;
+            document.querySelectorAll(".settings-filter-btn").forEach(btn => {
+                const isMatch = btn.getAttribute("data-settings-filter") === category;
+                btn.className = `settings-filter-btn px-3 py-1.5 rounded-lg text-xs uppercase border transition ${isMatch ? "bg-indigo-600/20 text-indigo-300 border-indigo-500/30 font-bold" : "bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200"}`;
+            });
+            renderSettingsCards();
+        }
+
+        async function initiateOAuthFlow(service) {
+            showToast(`Initiating OAuth for ${service}...`);
+            try {
+                const res = await fetch(`/api/gateway/oauth/${encodeURIComponent(service)}/initiate`, { method: "POST" });
+                const data = await res.json();
+                if (!res.ok || data.ok === false) throw new Error(data.error || "OAuth initiation failed");
+                showToast(`OAuth Connected: ${data.message || 'Verification complete'}`);
+                await loadSettingsCredentials();
+            } catch (err) {
+                console.error("OAuth error:", err);
+                showToast(`OAuth Failed: ${err.message || err}`, true);
+            }
+        }
+
+        async function testCredentialKey(key) {
+            const input = document.getElementById(`setting-${key}`);
+            const value = input?.value || "";
+            showToast(`Testing connectivity for ${key}...`);
+            try {
+                const res = await fetch("/api/gateway/credentials/test", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ key, value })
+                });
+                const data = await res.json();
+                if (!res.ok || data.ok === false) throw new Error(data.error || "Test failed");
+                showToast(data.message || "Credential verified successfully!");
+            } catch (err) {
+                console.error("Test error:", err);
+                showToast(`Test failed: ${err.message || err}`, true);
+            }
+        }
+
+        function renderSettingsCards() {
+            const grid = document.getElementById("settings-service-cards-grid");
+            if (!grid) return;
+
+            const cards = [
+                {
+                    key: "google_antigravity",
+                    name: "Google Antigravity OAuth",
+                    icon: "⚡",
+                    category: "oauth",
+                    type: "oauth2",
+                    fulfilled: Boolean(latestCredentialsPayload.oauth_services?.google_antigravity?.fulfilled),
+                    details: latestCredentialsPayload.oauth_services?.google_antigravity?.details || "Google OAuth 2.0 Credentials (~/.gemini/antigravity)",
+                    actionLabel: latestCredentialsPayload.oauth_services?.google_antigravity?.action_label || "Connect Google OAuth"
+                },
+                {
+                    key: "jules_cli",
+                    name: "Jules CLI OAuth",
+                    icon: "🚀",
+                    category: "oauth",
+                    type: "oauth2",
+                    fulfilled: Boolean(latestCredentialsPayload.oauth_services?.jules_cli?.fulfilled),
+                    details: latestCredentialsPayload.oauth_services?.jules_cli?.details || "Jules Capacity Ledger & Daily Quota Store",
+                    actionLabel: latestCredentialsPayload.oauth_services?.jules_cli?.action_label || "Authorize Jules OAuth"
+                },
+                {
+                    key: "OPENAI_API_KEY",
+                    name: "OpenAI (George Reviewer)",
+                    icon: "🤖",
+                    category: "ai",
+                    type: "api_key",
+                    fulfilled: Boolean(latestCredentialsPayload.credentials?.OPENAI_API_KEY?.configured),
+                    details: latestCredentialsPayload.credentials?.OPENAI_API_KEY?.redacted_value || "GPT-4o Peer Reviewer Engine"
+                },
+                {
+                    key: "ANTHROPIC_API_KEY",
+                    name: "Anthropic Claude (Kai & Fred)",
+                    icon: "🧠",
+                    category: "ai",
+                    type: "api_key",
+                    fulfilled: Boolean(latestCredentialsPayload.credentials?.ANTHROPIC_API_KEY?.configured),
+                    details: latestCredentialsPayload.credentials?.ANTHROPIC_API_KEY?.redacted_value || "Claude 3.7 Sonnet Execution Engine"
+                },
+                {
+                    key: "GEMINI_API_KEY",
+                    name: "Google Gemini API Key",
+                    icon: "✨",
+                    category: "ai",
+                    type: "api_key",
+                    fulfilled: Boolean(latestCredentialsPayload.credentials?.GEMINI_API_KEY?.configured),
+                    details: latestCredentialsPayload.credentials?.GEMINI_API_KEY?.redacted_value || "Google Gemini 2.5 Pro Engine"
+                },
+                {
+                    key: "HERMES_ENDPOINT",
+                    name: "Hermes Orchestrator Hub",
+                    icon: "🌐",
+                    category: "infra",
+                    type: "endpoint",
+                    fulfilled: Boolean(latestCredentialsPayload.credentials?.HERMES_ENDPOINT?.configured),
+                    details: latestCredentialsPayload.credentials?.HERMES_ENDPOINT?.redacted_value || "http://100.83.32.92:9000"
+                },
+                {
+                    key: "GITHUB_TOKEN",
+                    name: "GitHub Personal Access Token",
+                    icon: "🐙",
+                    category: "workspace",
+                    type: "token",
+                    fulfilled: Boolean(latestCredentialsPayload.credentials?.GITHUB_TOKEN?.configured),
+                    details: latestCredentialsPayload.credentials?.GITHUB_TOKEN?.redacted_value || "PR Evidence & Repo Access"
+                },
+                {
+                    key: "LINEAR_API_KEY",
+                    name: "Linear API Key",
+                    icon: "📐",
+                    category: "workspace",
+                    type: "api_key",
+                    fulfilled: Boolean(latestCredentialsPayload.credentials?.LINEAR_API_KEY?.configured),
+                    details: latestCredentialsPayload.credentials?.LINEAR_API_KEY?.redacted_value || "Task Backlog & Swarm Sync"
+                },
+                {
+                    key: "CLOUDFLARE_API_TOKEN",
+                    name: "Cloudflare API Token",
+                    icon: "☁️",
+                    category: "infra",
+                    type: "token",
+                    fulfilled: Boolean(latestCredentialsPayload.credentials?.CLOUDFLARE_API_TOKEN?.configured),
+                    details: latestCredentialsPayload.credentials?.CLOUDFLARE_API_TOKEN?.redacted_value || "DNS & Tunnels Governance"
+                }
+            ];
+
+            const filtered = activeSettingsCategoryFilter === "all"
+                ? cards
+                : cards.filter(c => c.category === activeSettingsCategoryFilter);
+
+            grid.innerHTML = filtered.map(c => {
+                const isFulfilled = c.fulfilled;
+                const cardClass = isFulfilled ? "service-card-fulfilled" : "";
+                const badge = isFulfilled
+                    ? `<span class="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">🟢 Connected / Fulfilled</span>`
+                    : `<span class="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-slate-800 text-slate-400 border border-slate-700">⚪ Not Configured</span>`;
+
+                const actionBtns = c.category === "oauth"
+                    ? `<button type="button" onclick="initiateOAuthFlow('${c.key}')" class="px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-200 hover:text-white hover:border-indigo-500 text-xs font-semibold flex items-center gap-1 transition shadow-sm">${escapeHtml(c.actionLabel || 'Connect OAuth')}</button>`
+                    : `<button type="button" onclick="testCredentialKey('${c.key}')" class="px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:text-white hover:border-cyan-500 text-xs font-semibold transition">Test Ping</button>`;
+
+                return `
+                    <div class="service-integration-card p-4 rounded-xl space-y-3 flex flex-col justify-between ${cardClass}">
+                        <div class="space-y-1.5">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-base">${c.icon}</span>
+                                    <h4 class="service-card-title text-xs font-bold text-slate-200 uppercase tracking-wider">${escapeHtml(c.name)}</h4>
+                                </div>
+                                ${badge}
+                            </div>
+                            <p class="service-card-desc text-[11px] text-slate-400 font-mono break-all">${escapeHtml(c.details)}</p>
+                        </div>
+                        <div class="pt-2 border-t border-slate-800/60 flex items-center justify-between">
+                            <span class="text-[10px] text-slate-500 uppercase tracking-wider font-bold">${c.type}</span>
+                            ${actionBtns}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function loadSettingsCredentials() {
+            try {
+                const res = await fetch("/api/gateway/credentials/status");
+                if (res.ok) {
+                    latestCredentialsPayload = await res.json();
+                    renderSettingsCards();
+                }
+            } catch (err) {
+                console.error("Error loading credentials status:", err);
+            }
+        }
+
+        async function saveSettingsCredentials() {
+            const keys = ["GOOGLE_SA_JSON", "GA4_ACCOUNT_ID", "GTM_ACCOUNT_ID", "GSC_VERIFICATION_TOKEN", "CLOUDFLARE_API_TOKEN", "VERCEL_TOKEN", "GITHUB_TOKEN", "LINEAR_API_KEY", "HERMES_ENDPOINT", "AGY_MODEL", "JULES_DB_PATH", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"];
+            const payload = {};
+            keys.forEach(k => {
+                const el = document.getElementById(`setting-${k}`);
+                if (el && el.value) payload[k] = el.value.trim();
+            });
+
+            try {
+                const res = await fetch("/api/gateway/credentials/update", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                if (!res.ok || data.ok === false) throw new Error(data.error || "Save failed");
+                showToast("Successfully updated and persisted service credentials!");
+                await loadSettingsCredentials();
+            } catch (err) {
+                console.error("Save credentials failed:", err);
+                showToast(`Save failed: ${err.message || err}`, true);
             }
         }
 

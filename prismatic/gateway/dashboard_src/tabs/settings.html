@@ -1,127 +1,129 @@
 <section id="section-settings" class="space-y-6 hidden">
-    <div class="flex flex-wrap items-center justify-between gap-4">
-        <div>
-            <h2 class="text-xl font-bold bg-gradient-to-r from-cyan-400 to-indigo-400 bg-clip-text text-transparent">Central Credentials & System Settings</h2>
-            <p class="text-xs text-slate-400 mt-1">Manage global API keys, tokens, and service credentials securely.</p>
-        </div>
-        <div class="flex items-center space-x-3">
-            <button onclick="saveSettingsCredentials()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-bold uppercase tracking-wider transition-all duration-200 shadow-lg shadow-indigo-600/20">
-                Save Changes
-            </button>
-        </div>
-    </div>
-
-    <!-- Active Credential Status Grid -->
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4" id="settings-credentials-grid">
-        <div class="bg-slate-900/60 border border-slate-800 rounded-xl p-4 animate-pulse">
-            <div class="h-4 bg-slate-800 rounded w-1/2 mb-2"></div>
-            <div class="h-3 bg-slate-800/60 rounded w-3/4"></div>
-        </div>
-    </div>
-
-    <!-- Edit Credentials Form -->
-    <div class="bg-slate-900/60 border border-slate-800 rounded-xl p-6 space-y-6">
-        <h3 class="text-sm font-bold uppercase tracking-wider text-slate-300 border-b border-slate-800 pb-3">Service Credentials Editor</h3>
-        
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <!-- Google Service Account JSON -->
-            <div class="space-y-2 md:col-span-2">
-                <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">Google SA JSON Key (GA4 / GTM / GSC)</label>
-                <textarea id="setting-GOOGLE_SA_JSON" rows="4" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder='{"type": "service_account", "project_id": "...", ...}'></textarea>
-            </div>
-
-            <!-- GA4 Property ID -->
-            <div class="space-y-2">
-                <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">GA4 Account / Property ID</label>
-                <input id="setting-GA4_ACCOUNT_ID" type="text" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="properties/123456789">
-            </div>
-
-            <!-- GTM Container ID -->
-            <div class="space-y-2">
-                <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">GTM Account / Container ID</label>
-                <input id="setting-GTM_ACCOUNT_ID" type="text" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="accounts/123/containers/456">
-            </div>
-
-            <!-- GSC Verification Token -->
-            <div class="space-y-2">
-                <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">GSC Verification Token</label>
-                <input id="setting-GSC_VERIFICATION_TOKEN" type="text" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="google-site-verification=...">
-            </div>
-
-            <!-- Cloudflare API Token -->
-            <div class="space-y-2">
-                <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">Cloudflare API Token</label>
-                <input id="setting-CLOUDFLARE_API_TOKEN" type="password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="••••••••••••••••••••••••">
-            </div>
-
-            <!-- Vercel Token -->
-            <div class="space-y-2">
-                <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">Vercel API Token</label>
-                <input id="setting-VERCEL_TOKEN" type="password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="••••••••••••••••••••••••">
-            </div>
-
-            <!-- GitHub Token -->
-            <div class="space-y-2">
-                <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">GitHub Personal Access Token</label>
-                <input id="setting-GITHUB_TOKEN" type="password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="ghp_••••••••••••••••••••">
-            </div>
-
-            <!-- Linear API Key -->
-            <div class="space-y-2">
-                <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">Linear API Key</label>
-                <input id="setting-LINEAR_API_KEY" type="password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="lin_api_••••••••••••••••">
-            </div>
-        </div>
-    </div>
-
-    <!-- Agent Harness & Discovery Connections -->
-    <div class="bg-slate-900/60 border border-slate-800 rounded-xl p-6 space-y-6">
-        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+    <div class="glass-panel p-5 rounded-xl space-y-4">
+        <div class="border-b border-slate-800 pb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
-                <h3 class="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
-                    <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
-                    Agent Harness &amp; Dynamic Discovery Connections
-                </h3>
-                <p class="text-xs text-slate-500 mt-1">Configure live provider endpoints, CLI binary paths, and model defaults for portable agent discovery.</p>
+                <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+                    <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                    Service Integrations &amp; OAuth Credentials Hub
+                </h2>
+                <p class="text-xs text-slate-500 mt-1">Interactive credentials marketplace: Google Antigravity OAuth, Jules CLI, AI Models, GitHub &amp; Infrastructure.</p>
             </div>
-            <span class="px-2.5 py-1 rounded text-[10px] font-bold uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Dynamic Discovery</span>
+            <div class="flex items-center gap-2 flex-shrink-0">
+                <button type="button" onclick="saveSettingsCredentials()" class="canonical-header-btn px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:text-white hover:border-emerald-500 text-xs font-semibold flex items-center gap-1.5 transition shadow-sm">
+                    <svg class="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                    <span>Save All Credentials</span>
+                </button>
+            </div>
         </div>
-        
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <!-- Hermes Orchestrator Hub Endpoint -->
-            <div class="space-y-2">
-                <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">Hermes Orchestrator Hub Endpoint</label>
-                <input id="setting-HERMES_ENDPOINT" type="text" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="http://100.83.32.92:9000">
-            </div>
 
-            <!-- AGY CLI Default Model -->
-            <div class="space-y-2">
-                <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">AGY CLI Active Model</label>
-                <input id="setting-AGY_MODEL" type="text" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="gemini-2.5-pro">
-            </div>
+        <!-- Service Category Filter Bar -->
+        <div class="flex gap-2 overflow-x-auto pb-1 border-b border-slate-800/60 pt-1" id="settings-category-filters">
+            <button type="button" onclick="filterSettingsCards('all')" data-settings-filter="all" class="settings-filter-btn px-3 py-1.5 rounded-lg text-xs uppercase border transition bg-indigo-600/20 text-indigo-300 border-indigo-500/30 font-bold">All Services</button>
+            <button type="button" onclick="filterSettingsCards('oauth')" data-settings-filter="oauth" class="settings-filter-btn px-3 py-1.5 rounded-lg text-xs uppercase border transition bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200">OAuth Credentials</button>
+            <button type="button" onclick="filterSettingsCards('ai')" data-settings-filter="ai" class="settings-filter-btn px-3 py-1.5 rounded-lg text-xs uppercase border transition bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200">AI &amp; Agent Models</button>
+            <button type="button" onclick="filterSettingsCards('infra')" data-settings-filter="infra" class="settings-filter-btn px-3 py-1.5 rounded-lg text-xs uppercase border transition bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200">Infrastructure &amp; Cloud</button>
+            <button type="button" onclick="filterSettingsCards('workspace')" data-settings-filter="workspace" class="settings-filter-btn px-3 py-1.5 rounded-lg text-xs uppercase border transition bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200">Task &amp; Workspace Sync</button>
+        </div>
 
-            <!-- Jules CLI DB Path -->
-            <div class="space-y-2">
-                <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">Jules Capacity Database Path</label>
-                <input id="setting-JULES_DB_PATH" type="text" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="~/.prismatic/db/jules_capacity.sqlite3">
-            </div>
+        <!-- Dynamic Service Cards Grid -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" id="settings-service-cards-grid">
+            <!-- Populated dynamically via renderSettingsCards() -->
+        </div>
 
-            <!-- OpenAI API Key -->
-            <div class="space-y-2">
-                <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">OpenAI API Key (George Peer Reviewer)</label>
-                <input id="setting-OPENAI_API_KEY" type="password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="sk-proj-••••••••••••••••">
+        <!-- Detailed Credentials Input Accordion -->
+        <div class="bg-slate-950/60 border border-slate-800/80 rounded-xl p-5 space-y-4">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                <h3 class="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                    <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+                    Direct Key &amp; Environment Store Editor
+                </h3>
+                <span class="text-[10px] text-slate-500 font-mono">Persists to ~/.env</span>
             </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                <!-- Google SA JSON -->
+                <div class="space-y-1.5 md:col-span-2">
+                    <label class="block font-bold text-slate-300">Google Service Account JSON (GA4 / GTM / GSC)</label>
+                    <textarea id="setting-GOOGLE_SA_JSON" rows="3" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder='{"type": "service_account", ...}'></textarea>
+                </div>
 
-            <!-- Anthropic API Key -->
-            <div class="space-y-2">
-                <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">Anthropic API Key (Kai &amp; Fred)</label>
-                <input id="setting-ANTHROPIC_API_KEY" type="password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="sk-ant-••••••••••••••••">
-            </div>
+                <!-- GA4 -->
+                <div class="space-y-1">
+                    <label class="block font-bold text-slate-300">GA4 Property ID</label>
+                    <input id="setting-GA4_ACCOUNT_ID" type="text" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="properties/123456789">
+                </div>
 
-            <!-- Google Gemini API Key -->
-            <div class="space-y-2">
-                <label class="block text-xs font-semibold text-slate-400 uppercase tracking-wider">Google Gemini API Key (AGY Engine)</label>
-                <input id="setting-GEMINI_API_KEY" type="password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="AIzaSy••••••••••••••••">
+                <!-- GTM -->
+                <div class="space-y-1">
+                    <label class="block font-bold text-slate-300">GTM Container ID</label>
+                    <input id="setting-GTM_ACCOUNT_ID" type="text" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="accounts/123/containers/456">
+                </div>
+
+                <!-- GSC -->
+                <div class="space-y-1">
+                    <label class="block font-bold text-slate-300">GSC Verification Token</label>
+                    <input id="setting-GSC_VERIFICATION_TOKEN" type="text" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="google-site-verification=...">
+                </div>
+
+                <!-- Cloudflare -->
+                <div class="space-y-1">
+                    <label class="block font-bold text-slate-300">Cloudflare API Token</label>
+                    <input id="setting-CLOUDFLARE_API_TOKEN" type="password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="••••••••••••••••">
+                </div>
+
+                <!-- Vercel -->
+                <div class="space-y-1">
+                    <label class="block font-bold text-slate-300">Vercel API Token</label>
+                    <input id="setting-VERCEL_TOKEN" type="password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="••••••••••••••••">
+                </div>
+
+                <!-- GitHub -->
+                <div class="space-y-1">
+                    <label class="block font-bold text-slate-300">GitHub Personal Access Token</label>
+                    <input id="setting-GITHUB_TOKEN" type="password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="ghp_••••••••••••••••">
+                </div>
+
+                <!-- Linear -->
+                <div class="space-y-1">
+                    <label class="block font-bold text-slate-300">Linear API Key</label>
+                    <input id="setting-LINEAR_API_KEY" type="password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="lin_api_••••••••••••••••">
+                </div>
+
+                <!-- Hermes Endpoint -->
+                <div class="space-y-1">
+                    <label class="block font-bold text-slate-300">Hermes Orchestrator Endpoint</label>
+                    <input id="setting-HERMES_ENDPOINT" type="text" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="http://100.83.32.92:9000">
+                </div>
+
+                <!-- AGY Model -->
+                <div class="space-y-1">
+                    <label class="block font-bold text-slate-300">AGY Active Model</label>
+                    <input id="setting-AGY_MODEL" type="text" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="gemini-2.5-pro">
+                </div>
+
+                <!-- Jules DB Path -->
+                <div class="space-y-1">
+                    <label class="block font-bold text-slate-300">Jules Capacity Database Path</label>
+                    <input id="setting-JULES_DB_PATH" type="text" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="~/.prismatic/db/jules_capacity.sqlite3">
+                </div>
+
+                <!-- OpenAI Key -->
+                <div class="space-y-1">
+                    <label class="block font-bold text-slate-300">OpenAI API Key (George Peer Reviewer)</label>
+                    <input id="setting-OPENAI_API_KEY" type="password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="sk-proj-••••••••••••••••">
+                </div>
+
+                <!-- Anthropic Key -->
+                <div class="space-y-1">
+                    <label class="block font-bold text-slate-300">Anthropic API Key (Kai &amp; Fred)</label>
+                    <input id="setting-ANTHROPIC_API_KEY" type="password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="sk-ant-••••••••••••••••">
+                </div>
+
+                <!-- Gemini Key -->
+                <div class="space-y-1">
+                    <label class="block font-bold text-slate-300">Google Gemini API Key (AGY Engine)</label>
+                    <input id="setting-GEMINI_API_KEY" type="password" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-slate-200 focus:outline-none focus:border-indigo-500" placeholder="AIzaSy••••••••••••••••">
+                </div>
             </div>
         </div>
     </div>
