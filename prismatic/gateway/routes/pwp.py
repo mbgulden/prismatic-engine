@@ -1,4 +1,4 @@
-"""PWP Gateway Router — API routes for the PWP Web Publisher Studio & Control Plane."""
+"""PWP Gateway Router — API routes for the PWP Web Publisher Studio, Multi-Workspace Manager & Control Plane."""
 
 from __future__ import annotations
 
@@ -43,64 +43,121 @@ def _atomic_write_json(path: Path, payload: Any) -> None:
 def _default_studio_state() -> Dict[str, Any]:
     return {
         "connected": True,
-        "active_client_id": "acme-software",
+        "active_workspace": "active-oahu",
+        "workspaces": [
+            {
+                "slug": "active-oahu",
+                "name": "Active Oahu Tours",
+                "domain": "activeoahutours.com",
+                "tenant_id": "tenant-growthwebdev",
+                "gsc_property": "sc-domain:activeoahutours.com",
+                "ga4_measurement_id": "G-AOT992001",
+                "gtm_container_id": "GTM-AOT8812",
+                "stripe_account_id": "acct_1PWP99001",
+                "zapier_webhook_url": "https://hooks.zapier.com/hooks/catch/9921/aot",
+                "status": "active",
+                "kpi_status": "configured",
+                "linear_task": "GRO-4356",
+                "lcp": "0.7s",
+                "cls": "0.00",
+                "visitors_24h": 2840,
+                "leads_24h": 74,
+            },
+            {
+                "slug": "acme-software",
+                "name": "Acme Software Corp",
+                "domain": "acme-software.com",
+                "tenant_id": "tenant-acme",
+                "gsc_property": "sc-domain:acme-software.com",
+                "ga4_measurement_id": "G-ACM882012",
+                "gtm_container_id": "GTM-ACM7721",
+                "stripe_account_id": "acct_1ACM22911",
+                "zapier_webhook_url": "https://hooks.zapier.com/hooks/catch/1102/acme",
+                "status": "active",
+                "kpi_status": "in_progress",
+                "linear_task": "GRO-4363",
+                "lcp": "0.8s",
+                "cls": "0.01",
+                "visitors_24h": 1420,
+                "leads_24h": 38,
+            },
+            {
+                "slug": "growthwebdev",
+                "name": "Growth Web Dev Core",
+                "domain": "growthwebdev.com",
+                "tenant_id": "tenant-growthwebdev",
+                "gsc_property": "sc-domain:growthwebdev.com",
+                "ga4_measurement_id": "G-GWD119283",
+                "gtm_container_id": "GTM-GWD5519",
+                "stripe_account_id": "acct_1GWD3391",
+                "zapier_webhook_url": "https://hooks.zapier.com/hooks/catch/4429/gwd",
+                "status": "active",
+                "kpi_status": "configured",
+                "linear_task": "GRO-3723",
+                "lcp": "0.5s",
+                "cls": "0.00",
+                "visitors_24h": 5120,
+                "leads_24h": 162,
+            },
+        ],
         "ingested_graph": {
-            "client_name": "Acme Software Corp",
+            "client_name": "Active Oahu Tours",
             "brand_voice": {
-                "tone": ["Professional", "Authoritative", "Innovative"],
-                "prohibited_words": ["cheap", "disruptive", "synergy"],
+                "tone": ["Authentic", "Adventurous", "Professional"],
+                "prohibited_words": ["cheap", "tourist-trap", "fake"],
             },
             "icp_personas": [
-                {"title": "CTO / VP Engineering", "pain_points": ["Scalability", "Security", "Maintenance"]},
-                {"title": "Head of Product", "pain_points": ["Speed to market", "UX consistency"]},
+                {"title": "Visiting Families", "pain_points": ["Safety", "Child-friendly activities", "Group pricing"]},
+                {"title": "Adventure Travelers", "pain_points": ["Unique spots", "Local guides", "Seamless booking"]},
             ],
             "product_catalog": [
-                {"sku": "PWP-CORE", "name": "Prismatic Engine Web Publisher", "price": "$299/mo"},
-                {"sku": "PWP-ENTERPRISE", "name": "Custom Swarm Publishing System", "price": "$1499/mo"},
+                {"sku": "AOT-KAYAK", "name": "Kaneohe Sandbar Kayak Tour", "price": "$129/person"},
+                {"sku": "AOT-SNORKEL", "name": "North Shore Snorkel Adventure", "price": "$89/person"},
             ],
-            "content_pillars": ["Design Systems", "Agentic Automation", "Headless Web Publishing"],
-            "seo_keywords": ["web publisher", "design tokens", "linear swarm builder"],
+            "content_pillars": ["Oahu Eco-Tours", "Kayak Guides", "Hawaiian Marine Life"],
+            "seo_keywords": ["oahu kayak tour", "kaneohe sandbar", "north shore snorkeling"],
         },
         "build_plan": {
-            "site_name": "Acme Software Platform",
-            "theme": "corporate",
+            "site_name": "Active Oahu Platform",
+            "theme": "saas",
             "pages": [
-                {"slug": "/", "title": "Home", "type": "landing", "modules": ["hero", "value_props", "lead_capture"]},
-                {"slug": "/products", "title": "Products", "type": "catalog", "modules": ["product_grid", "pricing_table"]},
-                {"slug": "/docs", "title": "Documentation", "type": "docs", "modules": ["docs_sidebar", "article_content"]},
+                {"slug": "/", "title": "Home", "type": "landing", "modules": ["hero", "tour_grid", "lead_capture"]},
+                {"slug": "/tours", "title": "All Tours", "type": "catalog", "modules": ["tour_list", "booking_form"]},
+                {"slug": "/guides", "title": "Local Guides & Blog", "type": "docs", "modules": ["guide_list", "article_content"]},
+                {"slug": "/contact", "title": "Contact & Booking", "type": "contact", "modules": ["contact_info", "fareharbor_embed"]},
             ],
         },
         "epics": [
             {
-                "epic_id": "GRO-3723",
-                "project": "Prismatic Web Publisher",
+                "epic_id": "GRO-4356",
+                "project": "PE-KPI-FUNNEL",
                 "priority": "High",
-                "task_count": 12,
+                "task_count": 10,
                 "status": "In Progress",
-                "created_at": "2026-08-16T23:00:00Z",
+                "created_at": "2026-08-16T23:30:00Z",
                 "swarm_allocations": [
-                    {"role": "Design Token Specialist", "agent": "AGY", "tasks": 3},
-                    {"role": "Astro Component Developer", "agent": "George", "tasks": 5},
-                    {"role": "QA & Accessibility Auditor", "agent": "Autobot", "tasks": 4},
+                    {"role": "Linear Integration Specialist", "agent": "Ned", "tasks": 3},
+                    {"role": "Astro & Funnel Architect", "agent": "AGY", "tasks": 4},
+                    {"role": "QA & KPI Auditor", "agent": "Autobot", "tasks": 3},
                 ],
             }
         ],
         "theme_tokens": {
             "colors": {
-                "primary": "#3b82f6",
-                "secondary": "#6366f1",
+                "primary": "#059669",
+                "secondary": "#0284c7",
                 "surface": "#0f172a",
                 "text": "#f8fafc",
-                "accent": "#06b6d4",
+                "accent": "#f59e0b",
             },
             "typography": {
-                "fontFamily": "Inter, sans-serif",
-                "headingFont": "Plus Jakarta Sans, sans-serif",
+                "fontFamily": "Plus Jakarta Sans, sans-serif",
+                "headingFont": "Outfit, sans-serif",
                 "baseSize": "16px",
             },
             "spacing": {
                 "containerWidth": "1280px",
-                "borderRadius": "8px",
+                "borderRadius": "12px",
             },
         },
         "credentials": {
@@ -109,26 +166,8 @@ def _default_studio_state() -> Dict[str, Any]:
             "vercel": {"status": "connected", "team": "prismatic-web"},
             "stripe": {"status": "connected", "account": "acct_1PWP99001"},
             "zapier": {"status": "connected", "hooks": 4},
-            "ubersuggest": {"status": "disconnected", "account": None},
+            "ubersuggest": {"status": "connected", "account": "mbgulden@gmail.com"},
         },
-        "sites": [
-            {
-                "domain": "acme-software.com",
-                "status": "active",
-                "lcp": "0.8s",
-                "cls": "0.01",
-                "visitors_24h": 1420,
-                "leads_24h": 38,
-            },
-            {
-                "domain": "docs.acme-software.com",
-                "status": "active",
-                "lcp": "0.6s",
-                "cls": "0.00",
-                "visitors_24h": 890,
-                "leads_24h": 12,
-            },
-        ],
     }
 
 
@@ -155,16 +194,22 @@ def save_pwp_studio_state(state: Dict[str, Any]) -> None:
 def get_pwp_status() -> Dict[str, Any]:
     """Retrieve current connection status and summary metrics for PWP."""
     st = load_pwp_studio_state()
+    active_ws = st.get("active_workspace", "active-oahu")
+    workspaces = st.get("workspaces", [])
+    current = next((w for w in workspaces if w["slug"] == active_ws), workspaces[0] if workspaces else {})
+    
     return {
         "ok": True,
         "plugin_id": "pwp-design-token-plugin",
         "state": "connected" if st.get("connected", True) else "disconnected",
-        "capabilities_count": 8,
-        "active_client_id": st.get("active_client_id", "default-client"),
+        "capabilities_count": 12,
+        "active_workspace": active_ws,
+        "active_client_id": current.get("name", "Active Oahu Tours"),
+        "active_tenant_id": current.get("tenant_id", "tenant-growthwebdev"),
+        "workspaces_count": len(workspaces),
         "credentials_connected": sum(
             1 for c in st.get("credentials", {}).values() if c.get("status") == "connected"
         ),
-        "active_sites_count": len(st.get("sites", [])),
     }
 
 
@@ -186,6 +231,73 @@ def disconnect_pwp() -> Dict[str, Any]:
     return {"ok": True, "state": "disconnected", "plugin_id": "pwp-design-token-plugin"}
 
 
+# --- Multi-Property Workspace Manager Endpoints ---
+
+@pwp_router.get("/workspaces")
+def get_workspaces() -> Dict[str, Any]:
+    """List all registered website workspaces/properties."""
+    st = load_pwp_studio_state()
+    return {
+        "ok": True,
+        "active_workspace": st.get("active_workspace", "active-oahu"),
+        "workspaces": st.get("workspaces", []),
+    }
+
+
+@pwp_router.post("/workspaces")
+def create_workspace(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    """Register a new website property / app workspace."""
+    st = load_pwp_studio_state()
+    workspaces = st.get("workspaces", [])
+    
+    domain = payload.get("domain", "new-property.com")
+    slug = payload.get("slug") or domain.replace(".", "-").lower()
+    name = payload.get("name", domain.title())
+    tenant_id = payload.get("tenant_id", "tenant-growthwebdev")
+
+    ws = {
+        "slug": slug,
+        "name": name,
+        "domain": domain,
+        "tenant_id": tenant_id,
+        "gsc_property": payload.get("gsc_property", f"sc-domain:{domain}"),
+        "ga4_measurement_id": payload.get("ga4_measurement_id", f"G-{slug[:3].upper()}99120"),
+        "gtm_container_id": payload.get("gtm_container_id", f"GTM-{slug[:3].upper()}4421"),
+        "stripe_account_id": payload.get("stripe_account_id", f"acct_{slug[:3].lower()}8810"),
+        "zapier_webhook_url": payload.get("zapier_webhook_url", f"https://hooks.zapier.com/hooks/catch/9921/{slug}"),
+        "status": "active",
+        "kpi_status": "unconfigured",
+        "linear_task": None,
+        "lcp": "0.9s",
+        "cls": "0.00",
+        "visitors_24h": 0,
+        "leads_24h": 0,
+    }
+    
+    # Replace if exists, else append
+    existing = [i for i, w in enumerate(workspaces) if w["slug"] == slug]
+    if existing:
+        workspaces[existing[0]] = ws
+    else:
+        workspaces.append(ws)
+        
+    st["workspaces"] = workspaces
+    st["active_workspace"] = slug
+    save_pwp_studio_state(st)
+    
+    return {"ok": True, "workspace": ws, "workspaces": workspaces}
+
+
+@pwp_router.post("/workspaces/select")
+def select_workspace(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    """Switch active website workspace context."""
+    st = load_pwp_studio_state()
+    slug = payload.get("slug", "active-oahu")
+    st["active_workspace"] = slug
+    save_pwp_studio_state(st)
+    return {"ok": True, "active_workspace": slug}
+
+
 # --- Component 1: Ingest & Content Studio ---
 
 @pwp_router.get("/ingest/graph")
@@ -194,7 +306,7 @@ def get_content_graph(client_id: Optional[str] = None) -> Dict[str, Any]:
     st = load_pwp_studio_state()
     return {
         "ok": True,
-        "client_id": client_id or st.get("active_client_id", "default-client"),
+        "client_id": client_id or st.get("active_workspace", "active-oahu"),
         "graph": st.get("ingested_graph", {}),
     }
 
@@ -252,7 +364,7 @@ def synthesize_build_plan(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]
     st = load_pwp_studio_state()
     theme = payload.get("theme", "corporate")
     site_name = payload.get(
-        "site_name", st.get("ingested_graph", {}).get("client_name", "Acme") + " Site"
+        "site_name", st.get("ingested_graph", {}).get("client_name", "Active Oahu") + " Site"
     )
 
     plan = {
@@ -283,7 +395,6 @@ def add_or_update_sitemap_node(payload: Dict[str, Any] = Body(...)) -> Dict[str,
         "type": payload.get("type", "custom"),
         "modules": payload.get("modules", ["hero", "content_body"]),
     }
-    # Update if slug exists, otherwise append
     existing = [i for i, p in enumerate(pages) if p["slug"] == new_page["slug"]]
     if existing:
         pages[existing[0]] = new_page
@@ -296,32 +407,40 @@ def add_or_update_sitemap_node(payload: Dict[str, Any] = Body(...)) -> Dict[str,
     return {"ok": True, "build_plan": plan}
 
 
-# --- Component 3: Linear Swarm Task Distiller ---
+# --- Component 3: Linear Swarm Task Distiller & KPI Funnel Dispatcher ---
 
 @pwp_router.post("/distill")
 def distill_to_linear(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
-    """Distill active build plan into Linear Epics and swarm tasks."""
+    """Distill active build plan or website KPI config into Linear Epics."""
     st = load_pwp_studio_state()
-    project = payload.get("project", "Prismatic Web Publisher")
+    project = payload.get("project", "PE-KPI-FUNNEL")
     priority = payload.get("priority", "High")
     epics = st.get("epics", [])
 
-    epic_num = 3723 + len(epics) * 10
+    epic_num = 4356 + len(epics) * 7
     epic = {
         "epic_id": f"GRO-{epic_num}",
         "project": project,
         "priority": priority,
-        "task_count": 12,
+        "task_count": 10,
         "status": "In Progress",
-        "created_at": "2026-08-16T23:50:00Z",
+        "created_at": "2026-08-17T00:30:00Z",
         "swarm_allocations": [
-            {"role": "Design Token Specialist", "agent": "AGY", "tasks": 3},
-            {"role": "Astro Component Developer", "agent": "George", "tasks": 5},
-            {"role": "QA & Accessibility Auditor", "agent": "Autobot", "tasks": 4},
+            {"role": "Linear Integration Specialist", "agent": "Ned", "tasks": 3},
+            {"role": "Astro & Funnel Architect", "agent": "AGY", "tasks": 4},
+            {"role": "QA & KPI Auditor", "agent": "Autobot", "tasks": 3},
         ],
     }
     epics.insert(0, epic)
     st["epics"] = epics
+    
+    # Update active workspace linear_task
+    active_ws = st.get("active_workspace", "active-oahu")
+    for ws in st.get("workspaces", []):
+        if ws["slug"] == active_ws:
+            ws["linear_task"] = epic["epic_id"]
+            ws["kpi_status"] = "in_progress"
+
     save_pwp_studio_state(st)
     return {"ok": True, "epic": epic, "all_epics": epics}
 
@@ -331,6 +450,53 @@ def get_epics() -> Dict[str, Any]:
     """Get active Linear Epics created by PWP Distiller."""
     st = load_pwp_studio_state()
     return {"ok": True, "epics": st.get("epics", [])}
+
+
+@pwp_router.post("/workspaces/{slug}/kpi/configure")
+def configure_workspace_kpi(slug: str, payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    """Configure website KPI funnels and dispatch Linear task for agent swarm."""
+    st = load_pwp_studio_state()
+    workspaces = st.get("workspaces", [])
+    target = next((w for w in workspaces if w["slug"] == slug), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="Workspace not found")
+
+    context = payload.get("context", "Audit funnels and events")
+    goals = payload.get("goals", ["Increase booking conversion", "Track GA4 checkout events"])
+    tenant_id = target.get("tenant_id", "tenant-growthwebdev")
+
+    epic_num = 4356 + len(st.get("epics", [])) * 3
+    task_id = f"GRO-{epic_num}"
+    
+    target["kpi_status"] = "in_progress"
+    target["linear_task"] = task_id
+
+    # Record epic entry
+    epics = st.get("epics", [])
+    epics.insert(0, {
+        "epic_id": task_id,
+        "project": "PE-KPI-FUNNEL",
+        "priority": "High",
+        "task_count": 8,
+        "status": "Audit in Progress",
+        "created_at": "2026-08-17T00:35:00Z",
+        "swarm_allocations": [
+            {"role": "Funnel Event Auditor", "agent": "Ned", "tasks": 3},
+            {"role": "GA4 / GTM Specialist", "agent": "AGY", "tasks": 3},
+            {"role": "Revenue Metric Auditor", "agent": "Autobot", "tasks": 2},
+        ],
+    })
+    st["epics"] = epics
+    save_pwp_studio_state(st)
+
+    return {
+        "ok": True,
+        "workspace": slug,
+        "task_id": task_id,
+        "task_url": f"https://prismatic.growthwebdev.com/tab/tasks?issue={task_id}",
+        "eta": "6 minutes",
+        "status": "Audit in progress",
+    }
 
 
 # --- Component 4: Theme & Token Workbench ---
@@ -384,8 +550,8 @@ def diff_themes(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     return {
         "ok": True,
         "diff": {
-            "additive": ["New spacing token: borderRadius = 8px"],
-            "updates": ["Color primary changed from #1e40af to #3b82f6"],
+            "additive": ["New spacing token: borderRadius = 12px"],
+            "updates": ["Color primary changed to #059669 (Active Oahu Green)"],
             "breaking": [],
             "total_changes": 2,
         },
@@ -419,24 +585,36 @@ def provision_site(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
     """Execute site provisioning pipeline (Vercel, Stripe, Zapier)."""
     st = load_pwp_studio_state()
     domain = payload.get("domain", "new-client-site.com")
-    sites = st.get("sites", [])
+    workspaces = st.get("workspaces", [])
+    slug = domain.replace(".", "-").lower()
 
     site = {
+        "slug": slug,
+        "name": domain.title(),
         "domain": domain,
+        "tenant_id": "tenant-growthwebdev",
+        "gsc_property": f"sc-domain:{domain}",
+        "ga4_measurement_id": f"G-{slug[:3].upper()}9921",
+        "gtm_container_id": f"GTM-{slug[:3].upper()}881",
+        "stripe_account_id": f"acct_{slug[:3].lower()}771",
+        "zapier_webhook_url": f"https://hooks.zapier.com/hooks/catch/9921/{slug}",
         "status": "active",
+        "kpi_status": "unconfigured",
+        "linear_task": None,
         "lcp": "0.7s",
         "cls": "0.00",
         "visitors_24h": 0,
         "leads_24h": 0,
     }
-    sites.append(site)
-    st["sites"] = sites
+    workspaces.append(site)
+    st["workspaces"] = workspaces
+    st["active_workspace"] = slug
     save_pwp_studio_state(st)
-    return {"ok": True, "site": site}
+    return {"ok": True, "site": site, "workspace": site}
 
 
 @pwp_router.get("/sites/kpi")
 def get_sites_kpi() -> Dict[str, Any]:
     """Get multi-site KPI analytics."""
     st = load_pwp_studio_state()
-    return {"ok": True, "sites": st.get("sites", [])}
+    return {"ok": True, "sites": st.get("workspaces", [])}

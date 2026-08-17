@@ -2176,8 +2176,6 @@
                 </div>
             </div>
         </div>
-
-        <!-- SECTION: SIGNALS & SWARM LOCK COCKPIT -->
         <div id="section-signals" class="hidden space-y-6" data-proof-marker="assigned-agent-signals-dashboard">
             <div class="glass-panel p-5 rounded-xl space-y-4">
                 <div class="border-b border-slate-800 pb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
@@ -2207,45 +2205,16 @@
                         <div id="sig-metric-total" class="text-xl font-bold font-mono text-slate-200 mt-0.5">6</div>
                     </div>
                     <div class="glass-panel p-3.5 rounded-xl border border-slate-800 bg-slate-900/40">
-                        <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Active Workspace Locks</div>
-                        <div id="sig-metric-active-locks" class="text-xl font-bold font-mono text-cyan-400 mt-0.5">0</div>
+                        <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Active Executing</div>
+                        <div id="sig-metric-active" class="text-xl font-bold font-mono text-emerald-400 mt-0.5">0</div>
                     </div>
                     <div class="glass-panel p-3.5 rounded-xl border border-slate-800 bg-slate-900/40">
-                        <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Collisions Deflected 🛡️</div>
-                        <div id="sig-metric-deflections" class="text-xl font-bold font-mono text-amber-400 mt-0.5">0</div>
+                        <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Total Signal Events</div>
+                        <div id="sig-metric-events" class="text-xl font-bold font-mono text-indigo-400 mt-0.5">0</div>
                     </div>
                     <div class="glass-panel p-3.5 rounded-xl border border-slate-800 bg-slate-900/40">
-                        <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Swarm Concurrency State</div>
-                        <div id="sig-metric-status" class="text-xl font-bold font-mono text-emerald-400 mt-0.5">Optimal (Free)</div>
-                    </div>
-                </div>
-
-                <!-- 🔒 SWARM LOCK CONCURRENCY COCKPIT PANEL -->
-                <div id="swarmlock-cockpit-panel" class="rounded-xl border border-slate-800/90 bg-slate-950/60 p-4 space-y-4 shadow-xl">
-                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/80 pb-3">
-                        <div class="flex items-center gap-2.5">
-                            <span class="flex h-3 w-3 relative">
-                                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
-                                <span class="relative inline-flex rounded-full h-3 w-3 bg-cyan-500"></span>
-                            </span>
-                            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-200 flex items-center gap-2">
-                                <span>Swarm Lock Concurrency Matrix</span>
-                                <span class="px-2 py-0.5 rounded text-[10px] font-mono bg-cyan-950/60 text-cyan-300 border border-cyan-800/60">Live Lease Visualizer</span>
-                            </h3>
-                        </div>
-                        <div class="flex items-center gap-2 text-xs">
-                            <span id="swarmlock-sync-badge" class="px-2.5 py-1 rounded-lg text-[10px] font-mono bg-emerald-950/40 text-emerald-300 border border-emerald-800/40 flex items-center gap-1.5">
-                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                                WebSocket Synchronized
-                            </span>
-                        </div>
-                    </div>
-
-                    <!-- Active Leases Grid -->
-                    <div id="swarmlock-leases-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                        <div class="col-span-full p-6 text-center text-slate-500 text-xs italic bg-slate-900/30 rounded-xl border border-slate-800/50">
-                            🛡️ No active lock contention — Swarm is in optimal free state (0 collisions).
-                        </div>
+                        <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Process Status</div>
+                        <div id="sig-metric-status" class="text-xl font-bold font-mono text-cyan-400 mt-0.5">Healthy</div>
                     </div>
                 </div>
 
@@ -2271,53 +2240,6 @@
                     <div class="p-4 space-y-2 max-h-[360px] overflow-y-auto" id="signals-log-box">
                         <div class="text-slate-500 italic">Listening for live agent signals...</div>
                     </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- 👁️ Operator Lease Inspector Modal -->
-        <div id="swarmlock-inspect-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
-            <div class="pe-modal-card glass-panel w-full max-w-[560px] p-6 rounded-2xl border border-slate-700/80 space-y-4 shadow-2xl bg-slate-900 font-mono text-xs" style="max-width: 560px !important;">
-                <div class="flex justify-between items-center border-b border-slate-800 pb-3">
-                    <h3 class="text-sm font-bold uppercase text-slate-200 tracking-wider flex items-center gap-2">
-                        <span>👁️ Swarm Lease Detailed Inspector</span>
-                    </h3>
-                    <button type="button" onclick="closeInspectLockModal()" class="text-slate-400 hover:text-white text-lg font-bold">&times;</button>
-                </div>
-                <div id="swarmlock-inspect-body" class="space-y-3">
-                    <!-- Dynamic Lease Information -->
-                </div>
-                <div class="flex justify-end pt-2 border-t border-slate-800">
-                    <button type="button" onclick="closeInspectLockModal()" class="px-4 py-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 transition">Close</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- 🔓 Operator Force Evict Modal -->
-        <div id="swarmlock-evict-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
-            <div class="pe-modal-card glass-panel w-full max-w-[480px] p-6 rounded-2xl border border-rose-800/60 space-y-4 shadow-2xl bg-slate-900 text-xs" style="max-width: 480px !important;">
-                <div class="flex justify-between items-center border-b border-rose-900/60 pb-3">
-                    <h3 class="text-sm font-bold uppercase text-rose-300 tracking-wider flex items-center gap-2">
-                        <span>⚠️ Operator Force Lock Eviction</span>
-                    </h3>
-                    <button type="button" onclick="closeEvictLockModal()" class="text-slate-400 hover:text-white text-lg font-bold">&times;</button>
-                </div>
-                <div class="space-y-3 text-slate-300">
-                    <p class="text-rose-200 font-semibold leading-relaxed">
-                        Are you sure you want to forcibly break this active lease? This will remove the lock and allow pending agents to acquire it immediately.
-                    </p>
-                    <div class="p-3 rounded-lg bg-slate-950 border border-slate-800 font-mono text-[11px] space-y-1">
-                        <div><span class="text-slate-500">Resource:</span> <span id="swarmlock-evict-resource" class="text-amber-300 font-bold"></span></div>
-                        <div><span class="text-slate-500">Current Holder:</span> <span id="swarmlock-evict-holder" class="text-slate-300"></span></div>
-                    </div>
-                    <div>
-                        <label class="block font-bold text-slate-300 mb-1">Eviction Reason / Audit Note</label>
-                        <input id="swarmlock-evict-reason" type="text" value="Operator manual eviction" class="w-full px-3 py-2 rounded-lg border border-slate-800 bg-slate-950 text-slate-200 font-mono focus:border-rose-500 focus:outline-none">
-                    </div>
-                </div>
-                <div class="flex justify-end gap-2 pt-2 border-t border-slate-800">
-                    <button type="button" onclick="closeEvictLockModal()" class="px-4 py-2 rounded-lg text-xs font-semibold text-slate-400 hover:bg-slate-800 transition">Cancel</button>
-                    <button type="button" onclick="confirmEvictLock()" class="px-4 py-2 rounded-lg text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white transition shadow-sm border border-rose-500">Confirm Force Eviction</button>
                 </div>
             </div>
         </div>
@@ -2410,17 +2332,17 @@
 
         <!-- SECTION 8: PWP PLUGIN -->
         <div id="section-pwp" class="hidden space-y-6">
-            <!-- PWP STUDIO HEADER -->
+            <!-- PWP STUDIO HEADER & MULTI-PROPERTY WORKSPACE SWITCHER -->
             <div class="glass-panel p-5 rounded-xl space-y-5 border border-slate-800 bg-slate-950/80">
                 <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
                     <div class="flex items-center gap-3">
-                        <div class="w-10 h-10 rounded-lg bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 font-bold text-lg">PWP</div>
+                        <div class="w-10 h-10 rounded-lg bg-emerald-600/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold text-lg">PWP</div>
                         <div>
                             <div class="flex items-center gap-2">
                                 <h2 class="text-base font-bold text-slate-100 uppercase tracking-wider">Prismatic Web Publisher Studio</h2>
                                 <span id="pwp-connection-badge" class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">Connected</span>
                             </div>
-                            <p class="text-xs text-slate-400 mt-0.5">Standalone Web Publisher Engine & Autonomous Swarm Control Plane</p>
+                            <p class="text-xs text-slate-400 mt-0.5">Multi-Property Website & App Workspace Manager • Autonomous Swarm Control Plane</p>
                         </div>
                     </div>
                     <div class="flex flex-wrap items-center gap-2">
@@ -2434,26 +2356,52 @@
                     </div>
                 </div>
 
+                <!-- MULTI-PROPERTY WORKSPACE SELECTOR BAR -->
+                <div class="bg-slate-900/90 border border-slate-800 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3">
+                    <div class="flex items-center gap-3">
+                        <span class="text-xs font-bold text-slate-300 uppercase tracking-wider">Active Website Workspace:</span>
+                        <select id="pwp-workspace-selector" onchange="pwpSwitchActiveWorkspace(this.value)" class="bg-slate-950 text-emerald-400 font-bold border border-emerald-500/30 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-emerald-500">
+                            <!-- Workspace options dynamically rendered -->
+                        </select>
+                        <span id="pwp-workspace-tenant-badge" class="bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2.5 py-0.5 rounded-full text-[10px] font-semibold">Tenant: growthwebdev</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="pwpOpenConfigureKPIModal()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold px-3 py-1.5 rounded-lg text-xs transition shadow-sm">⚙️ Configure Website KPIs</button>
+                        <button onclick="pwpPromptAddWorkspace()" class="bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/30 border border-indigo-500/30 px-3 py-1.5 rounded-lg text-xs font-medium transition">+ Add New Property Workspace</button>
+                    </div>
+                </div>
+
                 <!-- SUB-TAB NAVIGATION BAR (Schema 4 Capsule / Segmented Control) -->
                 <nav class="flex flex-wrap gap-2 border-b border-slate-800 pb-3" aria-label="PWP Studio Navigation">
-                    <button id="pwp-nav-ingest" onclick="switchPwpSubtab('ingest')" class="pwp-tab-btn bg-indigo-600 text-white px-3.5 py-1.5 rounded-lg text-xs font-medium transition shadow-sm">📥 1. Content Ingest Studio</button>
-                    <button id="pwp-nav-synthesize" onclick="switchPwpSubtab('synthesize')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">🏗️ 2. Build Plan Synthesizer</button>
-                    <button id="pwp-nav-distill" onclick="switchPwpSubtab('distill')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">⚡ 3. Linear Swarm Distiller</button>
-                    <button id="pwp-nav-theme" onclick="switchPwpSubtab('theme')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">🎨 4. Theme & Token Workbench</button>
-                    <button id="pwp-nav-provision" onclick="switchPwpSubtab('provision')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">🚀 5. Provisioning & Site Analytics</button>
+                    <button id="pwp-nav-workspaces" onclick="switchPwpSubtab('workspaces')" class="pwp-tab-btn bg-emerald-600 text-white px-3.5 py-1.5 rounded-lg text-xs font-medium transition shadow-sm">🌐 1. Property Workspaces Grid</button>
+                    <button id="pwp-nav-ingest" onclick="switchPwpSubtab('ingest')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">📥 2. Content Ingest Studio</button>
+                    <button id="pwp-nav-synthesize" onclick="switchPwpSubtab('synthesize')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">🏗️ 3. Build Plan Synthesizer</button>
+                    <button id="pwp-nav-distill" onclick="switchPwpSubtab('distill')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">⚡ 4. Linear Swarm Distiller</button>
+                    <button id="pwp-nav-theme" onclick="switchPwpSubtab('theme')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">🎨 5. Theme & Token Workbench</button>
+                    <button id="pwp-nav-provision" onclick="switchPwpSubtab('provision')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">🚀 6. Provisioning & Analytics</button>
                 </nav>
 
-                <!-- SUB-TAB 1: DUAL-MODE INGEST STUDIO -->
-                <div id="pwp-subtab-ingest" class="pwp-subtab-pane space-y-4">
+                <!-- SUB-TAB 1: PROPERTY WORKSPACES GRID -->
+                <div id="pwp-subtab-workspaces" class="pwp-subtab-pane space-y-4">
+                    <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+                        <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Registered Website Properties & Auth Workspaces</h3>
+                        <span id="pwp-workspaces-count-badge" class="text-[11px] font-medium text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/20">3 Workspaces Active</span>
+                    </div>
+                    <div id="pwp-workspaces-cards-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-xs">
+                        <!-- Property cards dynamically rendered here -->
+                    </div>
+                </div>
+
+                <!-- SUB-TAB 2: DUAL-MODE INGEST STUDIO -->
+                <div id="pwp-subtab-ingest" class="pwp-subtab-pane hidden space-y-4">
                     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
                         <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-4">
                             <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Dual-Mode Framework Importer</h3>
                             <div>
-                                <label class="block text-[11px] font-medium text-slate-400 mb-1">Client Identifier</label>
-                                <input id="pwp-ingest-client" type="text" value="Acme Software Corp" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                                <label class="block text-[11px] font-medium text-slate-400 mb-1">Target Client Property</label>
+                                <input id="pwp-ingest-client" type="text" value="Active Oahu Tours" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
                             </div>
                             
-                            <!-- Importer Mode Selector -->
                             <div class="space-y-2">
                                 <label class="block text-[11px] font-medium text-slate-400">Import Method</label>
                                 <div class="flex gap-2">
@@ -2478,7 +2426,7 @@
                         <div class="lg:col-span-2 bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-3">
                             <div class="flex items-center justify-between">
                                 <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Client Knowledge Graph</h3>
-                                <span id="pwp-ingest-client-badge" class="text-[11px] font-medium text-indigo-400 bg-indigo-500/10 px-2.5 py-0.5 rounded-full border border-indigo-500/20">Acme Software Corp</span>
+                                <span id="pwp-ingest-client-badge" class="text-[11px] font-medium text-indigo-400 bg-indigo-500/10 px-2.5 py-0.5 rounded-full border border-indigo-500/20">Active Oahu Tours</span>
                             </div>
                             <div id="pwp-graph-viewer" class="bg-slate-950 border border-slate-800 rounded-lg p-3 max-h-[320px] overflow-y-auto text-xs font-mono text-slate-300">
                                 <!-- Knowledge graph JSON rendered here -->
@@ -2487,20 +2435,20 @@
                     </div>
                 </div>
 
-                <!-- SUB-TAB 2: BUILD PLAN SYNTHESIZER -->
+                <!-- SUB-TAB 3: BUILD PLAN SYNTHESIZER -->
                 <div id="pwp-subtab-synthesize" class="pwp-subtab-pane hidden space-y-4">
                     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
                         <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-3">
                             <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Site Synthesis Configurator</h3>
                             <div>
                                 <label class="block text-[11px] font-medium text-slate-400 mb-1">Target Site Name</label>
-                                <input id="pwp-synth-sitename" type="text" value="Acme Software Platform" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                                <input id="pwp-synth-sitename" type="text" value="Active Oahu Platform" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
                             </div>
                             <div>
                                 <label class="block text-[11px] font-medium text-slate-400 mb-1">Base Theme Blueprint</label>
                                 <select id="pwp-synth-theme" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
-                                    <option value="corporate">Corporate (B2B SaaS)</option>
-                                    <option value="saas">SaaS Product Focus</option>
+                                    <option value="saas">SaaS / Activity Product Focus</option>
+                                    <option value="corporate">Corporate (B2B)</option>
                                     <option value="portfolio">Modern Portfolio / Agency</option>
                                     <option value="ecommerce">E-Commerce Storefront</option>
                                 </select>
@@ -2520,14 +2468,14 @@
                     </div>
                 </div>
 
-                <!-- SUB-TAB 3: LINEAR SWARM DISTILLER -->
+                <!-- SUB-TAB 4: LINEAR SWARM DISTILLER -->
                 <div id="pwp-subtab-distill" class="pwp-subtab-pane hidden space-y-4">
                     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
                         <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-3">
                             <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Linear Epic Distiller</h3>
                             <div>
                                 <label class="block text-[11px] font-medium text-slate-400 mb-1">Target Linear Project</label>
-                                <input id="pwp-distill-project" type="text" value="Prismatic Web Publisher" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                                <input id="pwp-distill-project" type="text" value="PE-KPI-FUNNEL" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
                             </div>
                             <div>
                                 <label class="block text-[11px] font-medium text-slate-400 mb-1">Priority</label>
@@ -2549,7 +2497,7 @@
                     </div>
                 </div>
 
-                <!-- SUB-TAB 4: THEME & TOKEN WORKBENCH -->
+                <!-- SUB-TAB 5: THEME & TOKEN WORKBENCH -->
                 <div id="pwp-subtab-theme" class="pwp-subtab-pane hidden space-y-4">
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
                         <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-4">
@@ -2563,11 +2511,11 @@
                             <div class="grid grid-cols-2 gap-3 text-xs">
                                 <div>
                                     <label class="block text-slate-400 mb-1">Primary Color</label>
-                                    <input id="pwp-token-primary" type="color" value="#3b82f6" onchange="pwpCompileTheme()" class="w-full h-8 bg-slate-950 border border-slate-800 rounded px-1 cursor-pointer">
+                                    <input id="pwp-token-primary" type="color" value="#059669" onchange="pwpCompileTheme()" class="w-full h-8 bg-slate-950 border border-slate-800 rounded px-1 cursor-pointer">
                                 </div>
                                 <div>
                                     <label class="block text-slate-400 mb-1">Secondary Color</label>
-                                    <input id="pwp-token-secondary" type="color" value="#6366f1" onchange="pwpCompileTheme()" class="w-full h-8 bg-slate-950 border border-slate-800 rounded px-1 cursor-pointer">
+                                    <input id="pwp-token-secondary" type="color" value="#0284c7" onchange="pwpCompileTheme()" class="w-full h-8 bg-slate-950 border border-slate-800 rounded px-1 cursor-pointer">
                                 </div>
                                 <div>
                                     <label class="block text-slate-400 mb-1">Surface Color</label>
@@ -2575,7 +2523,7 @@
                                 </div>
                                 <div>
                                     <label class="block text-slate-400 mb-1">Accent Color</label>
-                                    <input id="pwp-token-accent" type="color" value="#06b6d4" onchange="pwpCompileTheme()" class="w-full h-8 bg-slate-950 border border-slate-800 rounded px-1 cursor-pointer">
+                                    <input id="pwp-token-accent" type="color" value="#f59e0b" onchange="pwpCompileTheme()" class="w-full h-8 bg-slate-950 border border-slate-800 rounded px-1 cursor-pointer">
                                 </div>
                             </div>
                             <button onclick="pwpComputeThemeDiff()" class="w-full bg-slate-800 hover:bg-slate-700 text-slate-200 py-1.5 rounded text-xs transition">Compute Theme Diff</button>
@@ -2591,7 +2539,7 @@
                     </div>
                 </div>
 
-                <!-- SUB-TAB 5: PROVISIONING & SITE ANALYTICS -->
+                <!-- SUB-TAB 6: PROVISIONING & ANALYTICS -->
                 <div id="pwp-subtab-provision" class="pwp-subtab-pane hidden space-y-4">
                     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
                         <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-3">
@@ -2620,7 +2568,7 @@
             function switchPwpSubtab(tabName) {
                 document.querySelectorAll('.pwp-subtab-pane').forEach(el => el.classList.add('hidden'));
                 document.querySelectorAll('.pwp-tab-btn').forEach(el => {
-                    el.classList.remove('bg-indigo-600', 'text-white');
+                    el.classList.remove('bg-emerald-600', 'text-white');
                     el.classList.add('bg-slate-900', 'text-slate-300');
                 });
                 
@@ -2629,8 +2577,17 @@
                 if (targetPane) targetPane.classList.remove('hidden');
                 if (targetBtn) {
                     targetBtn.classList.remove('bg-slate-900', 'text-slate-300');
-                    targetBtn.classList.add('bg-indigo-600', 'text-white');
+                    targetBtn.classList.add('bg-emerald-600', 'text-white');
                 }
+            }
+
+            async function pwpSwitchActiveWorkspace(slug) {
+                await fetch('/api/pwp/workspaces/select', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({slug})
+                });
+                loadPWPStudioState();
             }
 
             function pwpSetIngestMode(mode) {
@@ -2664,6 +2621,12 @@
                             : 'px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/30';
                     }
 
+                    // Load Workspaces
+                    const wsRes = await fetch('/api/pwp/workspaces');
+                    const wsData = await wsRes.json();
+                    renderWorkspaceSelector(wsData.workspaces, wsData.active_workspace);
+                    renderWorkspaceGridCards(wsData.workspaces, wsData.active_workspace);
+
                     // Load Graph
                     const graphRes = await fetch('/api/pwp/ingest/graph');
                     const graphData = await graphRes.json();
@@ -2692,6 +2655,57 @@
                 } catch (err) {
                     console.error('Failed to load PWP Studio state:', err);
                 }
+            }
+
+            function renderWorkspaceSelector(workspaces, activeSlug) {
+                const select = document.getElementById('pwp-workspace-selector');
+                const tenantBadge = document.getElementById('pwp-workspace-tenant-badge');
+                if (!select) return;
+
+                let html = '';
+                let currentTenant = 'tenant-growthwebdev';
+                workspaces.forEach(w => {
+                    const isSel = w.slug === activeSlug;
+                    if (isSel) currentTenant = w.tenant_id;
+                    html += `<option value="${w.slug}" ${isSel ? 'selected' : ''}>${w.name} (${w.domain})</option>`;
+                });
+                select.innerHTML = html;
+                if (tenantBadge) tenantBadge.textContent = 'Tenant: ' + currentTenant;
+            }
+
+            function renderWorkspaceGridCards(workspaces, activeSlug) {
+                const container = document.getElementById('pwp-workspaces-cards-grid');
+                const countBadge = document.getElementById('pwp-workspaces-count-badge');
+                if (!container) return;
+                if (countBadge) countBadge.textContent = workspaces.length + ' Workspaces Active';
+
+                let html = '';
+                workspaces.forEach(w => {
+                    const isActive = w.slug === activeSlug;
+                    html += `
+                        <div class="bg-slate-950 border ${isActive ? 'border-emerald-500 shadow-md shadow-emerald-950' : 'border-slate-800'} rounded-xl p-4 space-y-3">
+                            <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+                                <div>
+                                    <h4 class="font-bold text-slate-100">${w.name}</h4>
+                                    <a href="https://${w.domain}" target="_blank" class="text-emerald-400 hover:underline text-[11px]">${w.domain}</a>
+                                </div>
+                                <span class="${isActive ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : 'bg-slate-800 text-slate-400 border-slate-700'} border px-2 py-0.5 rounded text-[10px] font-semibold">${isActive ? 'Active Workspace' : 'Inactive'}</span>
+                            </div>
+                            <div class="space-y-1.5 text-[11px] text-slate-400">
+                                <div>Tenant: <span class="text-indigo-300 font-mono">${w.tenant_id}</span></div>
+                                <div>GSC: <span class="text-slate-300 font-mono">${w.gsc_property}</span></div>
+                                <div>GA4: <span class="text-slate-300 font-mono">${w.ga4_measurement_id || 'Not Set'}</span></div>
+                                <div>Stripe: <span class="text-slate-300 font-mono">${w.stripe_account_id}</span></div>
+                                <div>Linear Task: ${w.linear_task ? `<a href="https://prismatic.growthwebdev.com/tab/tasks?issue=${w.linear_task}" target="_blank" class="text-emerald-400 hover:underline font-bold">${w.linear_task}</a>` : '<span class="text-slate-500">None</span>'}</div>
+                            </div>
+                            <div class="pt-2 flex gap-2">
+                                <button onclick="pwpSwitchActiveWorkspace('${w.slug}')" class="flex-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 py-1 rounded text-[11px] font-semibold transition">Select Workspace</button>
+                                <button onclick="pwpConfigureWorkspaceKPIPrompt('${w.slug}')" class="bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 px-2 py-1 rounded text-[11px] font-medium transition">Configure KPIs</button>
+                            </div>
+                        </div>
+                    `;
+                });
+                container.innerHTML = html;
             }
 
             function renderSitemapTree(plan) {
@@ -2799,6 +2813,37 @@
                 container.innerHTML = html;
             }
 
+            async function pwpPromptAddWorkspace() {
+                const domain = prompt('Enter new website domain (e.g. mysite.com):', 'mysite.com');
+                if (!domain) return;
+                const name = prompt('Enter site workspace name:', domain.split('.')[0].toUpperCase());
+                await fetch('/api/pwp/workspaces', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({domain, name})
+                });
+                loadPWPStudioState();
+            }
+
+            async function pwpConfigureWorkspaceKPIPrompt(slug) {
+                const context = prompt('Enter website goals & KPI funnel notes:', 'Track purchase & lead funnels for ' + slug);
+                if (!context) return;
+                const res = await fetch(`/api/pwp/workspaces/${slug}/kpi/configure`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({context, goals: ['Track conversions', 'Monitor LCP/CLS']})
+                });
+                const data = await res.json();
+                alert(`Linear Task Dispatched: ${data.task_id}\nURL: ${data.task_url}\nETA: ${data.eta}`);
+                loadPWPStudioState();
+            }
+
+            function pwpOpenConfigureKPIModal() {
+                const select = document.getElementById('pwp-workspace-selector');
+                const slug = select ? select.value : 'active-oahu';
+                pwpConfigureWorkspaceKPIPrompt(slug);
+            }
+
             async function pwpExecuteIngest() {
                 const client = document.getElementById('pwp-ingest-client').value;
                 const url = document.getElementById('pwp-ingest-url').value;
@@ -2884,7 +2929,7 @@
                 const res = await fetch('/api/pwp/theme/validate', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({tokens: {colors: {primary: '#3b82f6'}}})
+                    body: JSON.stringify({tokens: {colors: {primary: '#059669'}}})
                 });
                 const data = await res.json();
                 alert(data.valid ? 'Theme Schema Valid ✅' : 'Validation Failed: ' + data.errors.join(', '));
@@ -3354,61 +3399,6 @@
         let pendingCronDeleteId = null;
         let pollingInterval = null;
         let reviewFactoryToken = "";
-
-        // ═════════════════════════════════════════════════════════════════
-        // CANONICAL PRISMATIC DESIGN SYSTEM & THEME REFERENCE
-        // Single source of truth for icons, surfaces, badges, and tokens
-        // ═════════════════════════════════════════════════════════════════
-        const PRISMATIC_THEME = {
-            icons: {
-                file: function(ext = "") {
-                    const clean = String(ext || "").toLowerCase().replace(/^\./, "");
-                    if (["py", "js", "ts", "jsx", "tsx", "sh", "json", "html", "css", "ps1", "c", "cpp", "go", "rs", "java"].includes(clean)) {
-                        return `<svg class="w-4 h-4 text-sky-500 dark:text-sky-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>`;
-                    }
-                    if (["md", "txt", "log", "rst", "doc", "pdf"].includes(clean)) {
-                        return `<svg class="w-4 h-4 text-indigo-500 dark:text-indigo-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>`;
-                    }
-                    if (["env", "yml", "yaml", "toml", "ini", "conf", "config"].includes(clean)) {
-                        return `<svg class="w-4 h-4 text-emerald-500 dark:text-emerald-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>`;
-                    }
-                    if (["png", "jpg", "jpeg", "gif", "svg", "ico", "webp"].includes(clean)) {
-                        return `<svg class="w-4 h-4 text-purple-500 dark:text-purple-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>`;
-                    }
-                    return `<svg class="w-4 h-4 text-slate-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>`;
-                },
-                folder: function(isOpen = false) {
-                    return isOpen
-                        ? `<svg class="w-4 h-4 text-amber-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z"/></svg>`
-                        : `<svg class="w-4 h-4 text-amber-500/90 dark:text-amber-400/90 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>`;
-                },
-                lock: `<svg class="w-4 h-4 text-cyan-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>`,
-                unlock: `<svg class="w-4 h-4 text-emerald-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z"/></svg>`,
-                shield: `<svg class="w-4 h-4 text-amber-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>`,
-                heartbeat: `<svg class="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg>`,
-                warning: `<svg class="w-3.5 h-3.5 text-amber-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>`,
-                externalLink: `<svg class="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>`,
-                linear: `<svg class="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor"><path d="M3.52 1.48L1.48 3.52l18.96 18.96 2.04-2.04L3.52 1.48zM1.48 10.52L10.52 1.48l1.44 1.44-9.04 9.04-1.44-1.44zM13.48 22.52l9.04-9.04-1.44-1.44-9.04 9.04 1.44 1.44z"/></svg>`,
-                github: `<svg class="w-3.5 h-3.5 text-slate-300 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>`,
-                kanban: `<svg class="w-3.5 h-3.5 text-cyan-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"/></svg>`,
-                robot: `<svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>`,
-                agent: `<svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>`,
-                branch: `<svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M7 7h.01M7 3a4 4 0 00-4 4v10a4 4 0 004 4h10a4 4 0 004-4V7a4 4 0 00-4-4H7z"/></svg>`,
-            },
-            badge: function(type, label) {
-                const key = String(type || "").toUpperCase();
-                if (key.includes("MUTATION")) {
-                    return `<span class="px-2 py-0.5 rounded text-[9px] font-mono font-bold uppercase bg-rose-950/60 text-rose-300 border border-rose-800/60">${escapeHtml(label || "Exclusive Mutation")}</span>`;
-                }
-                if (key.includes("REFACTOR")) {
-                    return `<span class="px-2 py-0.5 rounded text-[9px] font-mono font-bold uppercase bg-cyan-950/60 text-cyan-300 border border-cyan-800/60">${escapeHtml(label || "Safe Refactor")}</span>`;
-                }
-                if (key.includes("READ")) {
-                    return `<span class="px-2 py-0.5 rounded text-[9px] font-mono font-bold uppercase bg-indigo-950/60 text-indigo-300 border border-indigo-800/60">${escapeHtml(label || "Reentrant Read")}</span>`;
-                }
-                return `<span class="px-2 py-0.5 rounded text-[9px] font-mono font-bold uppercase bg-slate-800 text-slate-300 border border-slate-700">${escapeHtml(label || key)}</span>`;
-            }
-        };
 
         let agentStatusCache = { agents: [], status_counts: {}, evidence: {}, source: "not-loaded" };
 
@@ -5375,13 +5365,25 @@
 
         function workspaceNodeIcon(node, isExpanded = false) {
             if (node.type === "directory") {
-                const prefix = isExpanded
-                    ? '<span class="text-[10px] text-slate-400 font-mono flex-shrink-0 w-3">▾</span>'
-                    : '<span class="text-[10px] text-slate-400 font-mono flex-shrink-0 w-3">▸</span>';
-                return `${prefix}${PRISMATIC_THEME.icons.folder(isExpanded)}`;
+                if (isExpanded) {
+                    return `<span class="text-[10px] text-slate-400 font-mono flex-shrink-0 w-3">▾</span><svg class="w-4 h-4 text-amber-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z"/></svg>`;
+                }
+                return `<span class="text-[10px] text-slate-400 font-mono flex-shrink-0 w-3">▸</span><svg class="w-4 h-4 text-amber-500/90 dark:text-amber-400/90 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>`;
             }
             const ext = (node.name || "").split(".").pop().toLowerCase();
-            return `<span class="w-3 flex-shrink-0"></span>${PRISMATIC_THEME.icons.file(ext)}`;
+            if (["py", "js", "ts", "jsx", "tsx", "sh", "json", "html", "css", "ps1", "c", "cpp", "go", "rs", "java"].includes(ext)) {
+                return `<span class="w-3 flex-shrink-0"></span><svg class="w-4 h-4 text-sky-600 dark:text-sky-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>`;
+            }
+            if (["md", "txt", "log", "rst", "doc", "pdf"].includes(ext)) {
+                return `<span class="w-3 flex-shrink-0"></span><svg class="w-4 h-4 text-indigo-600 dark:text-indigo-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>`;
+            }
+            if (["env", "yml", "yaml", "toml", "ini", "conf", "config"].includes(ext)) {
+                return `<span class="w-3 flex-shrink-0"></span><svg class="w-4 h-4 text-emerald-600 dark:text-emerald-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>`;
+            }
+            if (["png", "jpg", "jpeg", "gif", "svg", "ico", "webp"].includes(ext)) {
+                return `<span class="w-3 flex-shrink-0"></span><svg class="w-4 h-4 text-purple-600 dark:text-purple-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>`;
+            }
+            return `<span class="w-3 flex-shrink-0"></span><svg class="w-4 h-4 text-slate-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>`;
         }
 
         function renderWorkspaceNode(workspaceId, node, depth = 0) {
@@ -6110,255 +6112,6 @@
             }).join('') : `<div class="text-slate-500 italic">No assigned-agent signals recorded yet.</div>`;
         }
 
-        let latestSwarmLockData = { locks: [], deflected_collisions: 0 };
-        let activeEvictTarget = { resource: '', holder: '' };
-
-        function getAgentColor(agentId) {
-            let hash = 0;
-            const str = String(agentId || "unknown");
-            for (let i = 0; i < str.length; i++) {
-                hash = str.charCodeAt(i) + ((hash << 5) - hash);
-            }
-            const hue = Math.abs(hash % 360);
-            return `hsl(${hue}, 75%, 45%)`;
-        }
-
-        function resolveTaskLink(taskId, provider) {
-            if (!taskId) return null;
-            const clean = String(taskId).trim();
-            if (/^GRO-\d+/i.test(clean)) {
-                return {
-                    label: clean,
-                    provider: 'Linear',
-                    url: `https://prismatic.growthwebdev.com/tab/tasks?issue=${encodeURIComponent(clean)}`,
-                    iconSvg: PRISMATIC_THEME.icons.linear
-                };
-            }
-            if (/^#\d+/i.test(clean) || /^gh-\d+/i.test(clean)) {
-                return {
-                    label: clean,
-                    provider: 'GitHub',
-                    url: `https://github.com/mbgulden/prismatic-engine/issues/${encodeURIComponent(clean.replace('#', ''))}`,
-                    iconSvg: PRISMATIC_THEME.icons.github
-                };
-            }
-            if (/^task-/i.test(clean) || provider === 'hermes') {
-                return {
-                    label: clean,
-                    provider: 'Hermes Kanban',
-                    url: `/tab/tasks?task=${encodeURIComponent(clean)}`,
-                    iconSvg: PRISMATIC_THEME.icons.kanban
-                };
-            }
-            return {
-                label: clean,
-                provider: provider || 'Task',
-                url: `/tab/tasks?search=${encodeURIComponent(clean)}`,
-                iconSvg: PRISMATIC_THEME.icons.externalLink
-            };
-        }
-
-        function renderSwarmLockCockpit(data) {
-            latestSwarmLockData = data || latestSwarmLockData || { locks: [], deflected_collisions: 0 };
-            const locks = latestSwarmLockData.locks || [];
-            const deflections = latestSwarmLockData.deflected_collisions || 0;
-
-            const activeLocksEl = document.getElementById("sig-metric-active-locks");
-            const deflectionsEl = document.getElementById("sig-metric-deflections");
-            const statusEl = document.getElementById("sig-metric-status");
-            const gridEl = document.getElementById("swarmlock-leases-grid");
-
-            if (activeLocksEl) activeLocksEl.textContent = locks.length;
-            if (deflectionsEl) deflectionsEl.textContent = `${deflections} 🛡️`;
-
-            if (statusEl) {
-                const hasContention = locks.some(l => l.contentions && l.contentions.length > 0);
-                if (hasContention) {
-                    statusEl.textContent = "Contention Deflected";
-                    statusEl.className = "text-xl font-bold font-mono text-amber-400 mt-0.5";
-                } else if (locks.length > 0) {
-                    statusEl.textContent = `${locks.length} Active Lease${locks.length > 1 ? 's' : ''}`;
-                    statusEl.className = "text-xl font-bold font-mono text-cyan-400 mt-0.5";
-                } else {
-                    statusEl.textContent = "Optimal (Free)";
-                    statusEl.className = "text-xl font-bold font-mono text-emerald-400 mt-0.5";
-                }
-            }
-
-            if (!gridEl) return;
-
-            if (!locks.length) {
-                gridEl.innerHTML = `
-                    <div class="col-span-full p-6 text-center text-slate-500 text-xs italic bg-slate-900/30 rounded-xl border border-slate-800/50">
-                        🛡️ No active lock contention — Swarm is in optimal free state (${deflections} collisions deflected).
-                    </div>
-                `;
-                return;
-            }
-
-            gridEl.innerHTML = locks.map(lock => {
-                const agentBg = getAgentColor(lock.holder);
-                const ext = String(lock.resource || "").split(".").pop();
-                const fileIconSvg = PRISMATIC_THEME.icons.file(ext);
-                const taskInfo = resolveTaskLink(lock.task_id, lock.task_provider);
-                const remaining = Math.max(0, Math.round(lock.remaining_seconds || 0));
-                const ttl = Math.max(1, Math.round(lock.ttl_seconds || 300));
-                const pct = Math.min(100, Math.max(0, Math.round((remaining / ttl) * 100)));
-                const barColor = pct > 40 ? 'bg-emerald-500' : pct > 15 ? 'bg-amber-500' : 'bg-rose-500';
-
-                const intentionBadge = PRISMATIC_THEME.badge(lock.intention);
-
-                // Group contentions by agent
-                const groupedContentions = {};
-                (lock.contentions || []).forEach(c => {
-                    const aid = c.agent_id || 'unknown';
-                    if (!groupedContentions[aid]) {
-                        groupedContentions[aid] = { count: 0, last_seen: c.attempted_at };
-                    }
-                    groupedContentions[aid].count += 1;
-                    if (c.attempted_at > groupedContentions[aid].last_seen) {
-                        groupedContentions[aid].last_seen = c.attempted_at;
-                    }
-                });
-
-                const contentionsList = Object.entries(groupedContentions).map(([aid, info]) => {
-                    const countStr = info.count > 1 ? ` (${info.count}× backoff attempts)` : '';
-                    return `
-                        <div class="p-2 rounded-lg bg-amber-950/50 border border-amber-800/50 text-[11px] text-amber-300 flex items-center justify-between shadow-inner">
-                            <span class="flex items-center gap-1.5 truncate">
-                                ${PRISMATIC_THEME.icons.warning}
-                                <span><strong>${escapeHtml(aid)}</strong> contended${countStr}</span>
-                            </span>
-                            <span class="font-mono text-[9px] px-2 py-0.5 rounded bg-amber-900/60 text-amber-200 border border-amber-700/60 flex-shrink-0">Deflected to Backoff</span>
-                        </div>
-                    `;
-                }).join('');
-
-                return `
-                    <div class="p-3.5 rounded-xl border border-slate-800 bg-slate-900/60 space-y-3 font-mono text-xs shadow-md">
-                        <div class="flex items-start justify-between gap-2 border-b border-slate-800/80 pb-2">
-                            <div class="space-y-1 min-w-0">
-                                <div class="font-bold text-slate-200 truncate flex items-center gap-1.5 text-xs">
-                                    ${fileIconSvg}
-                                    <span title="${escapeHtml(lock.resource)}">${escapeHtml(lock.resource)}</span>
-                                </div>
-                                <div class="flex flex-wrap items-center gap-1.5 text-[10px]">
-                                    <span class="px-2 py-0.5 rounded-full text-white font-bold flex items-center gap-1 shadow-sm" style="background-color: ${agentBg}">
-                                        ${PRISMATIC_THEME.icons.robot}
-                                        <span>${escapeHtml(lock.holder)}</span>
-                                    </span>
-                                    ${lock.model ? `<span class="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">${escapeHtml(lock.model)}</span>` : ''}
-                                    ${intentionBadge}
-                                </div>
-                            </div>
-                        </div>
-
-                        ${taskInfo ? `
-                            <div class="p-2 rounded-lg bg-slate-950/60 border border-slate-800 text-[11px] flex items-center justify-between">
-                                <span class="text-slate-400 flex items-center gap-1.5">${taskInfo.iconSvg} <span>${escapeHtml(taskInfo.provider)}:</span></span>
-                                <a href="${taskInfo.url}" target="_blank" class="text-indigo-400 hover:text-indigo-300 font-bold underline flex items-center gap-1">
-                                    <span>${escapeHtml(taskInfo.label)}</span>
-                                    ${PRISMATIC_THEME.icons.externalLink}
-                                </a>
-                            </div>
-                        ` : ''}
-
-                        <!-- Live Heartbeat & TTL Countdown Bar -->
-                        <div class="space-y-1.5">
-                            <div class="flex justify-between items-center text-[10px]">
-                                <span class="text-slate-400 flex items-center gap-1.5">
-                                    <span class="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-                                    <span class="flex items-center gap-1">${PRISMATIC_THEME.icons.heartbeat} <span>Heartbeat Active</span></span>
-                                </span>
-                                <span class="text-slate-300 font-bold">${remaining}s / ${ttl}s TTL</span>
-                            </div>
-                            <div class="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
-                                <div class="${barColor} h-1.5 rounded-full transition-all duration-500" style="width: ${pct}%"></div>
-                            </div>
-                        </div>
-
-                        ${contentionsList ? `<div class="space-y-1">${contentionsList}</div>` : ''}
-
-                        <div class="flex items-center justify-between pt-1 border-t border-slate-800/80">
-                            <button type="button" onclick="openInspectLockModal('${escapeHtml(lock.resource)}')" class="px-2.5 py-1 rounded text-[10px] text-cyan-400 hover:text-cyan-300 bg-cyan-950/40 hover:bg-cyan-950/80 border border-cyan-800/40 transition">
-                                👁️ Inspect Lease
-                            </button>
-                            <button type="button" onclick="openEvictLockModal('${escapeHtml(lock.resource)}', '${escapeHtml(lock.holder)}')" class="px-2.5 py-1 rounded text-[10px] text-rose-400 hover:text-rose-300 bg-rose-950/40 hover:bg-rose-950/80 border border-rose-800/40 transition">
-                                🔓 Force Evict
-                            </button>
-                        </div>
-                    </div>
-                `;
-            }).join('');
-        }
-
-        function openInspectLockModal(resource) {
-            const lock = (latestSwarmLockData.locks || []).find(l => l.resource === resource);
-            if (!lock) return;
-            const body = document.getElementById("swarmlock-inspect-body");
-            if (!body) return;
-
-            const taskInfo = resolveTaskLink(lock.task_id, lock.task_provider);
-            const ext = String(lock.resource || "").split(".").pop();
-            body.innerHTML = `
-                <div class="p-3 rounded-lg bg-slate-950 border border-slate-800 space-y-2">
-                    <div class="flex items-center gap-2"><span class="text-slate-500">Resource:</span> ${PRISMATIC_THEME.icons.file(ext)} <span class="text-cyan-300 font-bold">${escapeHtml(lock.resource)}</span></div>
-                    <div><span class="text-slate-500">Lock Holder:</span> <span class="text-amber-300 font-bold">${escapeHtml(lock.holder)}</span></div>
-                    <div><span class="text-slate-500">Lease ID:</span> <span class="text-slate-300">${escapeHtml(lock.lease_id || '—')}</span></div>
-                    <div><span class="text-slate-500">Intention:</span> ${PRISMATIC_THEME.badge(lock.intention)}</div>
-                    <div><span class="text-slate-500">Active Model:</span> <span class="text-slate-300">${escapeHtml(lock.model || 'default')}</span></div>
-                    ${taskInfo ? `<div><span class="text-slate-500">Task Link:</span> <a href="${taskInfo.url}" target="_blank" class="text-indigo-400 underline font-bold inline-flex items-center gap-1">${taskInfo.iconSvg} ${escapeHtml(taskInfo.label)} (${escapeHtml(taskInfo.provider)})</a></div>` : ''}
-                    <div><span class="text-slate-500">Remaining TTL:</span> <span class="text-emerald-400 font-bold">${Math.round(lock.remaining_seconds || 0)}s / ${Math.round(lock.ttl_seconds || 300)}s</span></div>
-                    <div><span class="text-slate-500">Idempotency Key:</span> <span class="text-slate-400">${escapeHtml(lock.idempotency_key || 'None (Direct)')}</span></div>
-                    <div><span class="text-slate-500">Contention Events:</span> <span class="text-slate-300">${(lock.contentions || []).length}</span></div>
-                </div>
-            `;
-            const modal = document.getElementById("swarmlock-inspect-modal");
-            if (modal) modal.classList.remove("hidden");
-        }
-
-        function closeInspectLockModal() {
-            const modal = document.getElementById("swarmlock-inspect-modal");
-            if (modal) modal.classList.add("hidden");
-        }
-
-        function openEvictLockModal(resource, holder) {
-            activeEvictTarget = { resource, holder };
-            const rEl = document.getElementById("swarmlock-evict-resource");
-            const hEl = document.getElementById("swarmlock-evict-holder");
-            if (rEl) rEl.textContent = resource;
-            if (hEl) hEl.textContent = holder;
-            const modal = document.getElementById("swarmlock-evict-modal");
-            if (modal) modal.classList.remove("hidden");
-        }
-
-        function closeEvictLockModal() {
-            const modal = document.getElementById("swarmlock-evict-modal");
-            if (modal) modal.classList.add("hidden");
-        }
-
-        async function confirmEvictLock() {
-            const reasonInput = document.getElementById("swarmlock-evict-reason");
-            const reason = reasonInput ? reasonInput.value : "Operator manual eviction";
-            try {
-                const res = await fetch("/api/gateway/swarmlock/evict", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ resource: activeEvictTarget.resource, reason: reason })
-                });
-                if (res.ok) {
-                    showToast(`Evicted lock on ${activeEvictTarget.resource}`);
-                    closeEvictLockModal();
-                    await renderSignalsView();
-                } else {
-                    const err = await res.json();
-                    showToast(`Eviction failed: ${err.detail || 'Error'}`, true);
-                }
-            } catch (err) {
-                showToast(`Eviction error: ${err.message}`, true);
-            }
-        }
-
         async function renderSignalsView() {
             const container = document.getElementById("signals-log-box");
             if (container && !container.children.length) {
@@ -6366,10 +6119,9 @@
             }
 
             try {
-                const [agentsRes, signalsRes, swarmlockRes] = await Promise.all([
+                const [agentsRes, signalsRes] = await Promise.all([
                     fetch("/api/gateway/agents").catch(() => null),
-                    fetch("/api/gateway/signals?limit=200").catch(() => null),
-                    fetch("/api/gateway/swarmlock/status").catch(() => null)
+                    fetch("/api/gateway/signals?limit=200").catch(() => null)
                 ]);
 
                 if (agentsRes && agentsRes.ok) {
@@ -6380,11 +6132,6 @@
                     if (totalEl) totalEl.textContent = discoveredAgentsList.length;
                     if (activeEl) activeEl.textContent = agentData.active_agents || 0;
                     renderAgentTabs(discoveredAgentsList);
-                }
-
-                if (swarmlockRes && swarmlockRes.ok) {
-                    const lockData = await swarmlockRes.json();
-                    renderSwarmLockCockpit(lockData);
                 }
 
                 if (signalsRes && signalsRes.ok) {
