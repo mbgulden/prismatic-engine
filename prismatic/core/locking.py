@@ -33,6 +33,27 @@ DEFAULT_LOCK_FILE = Path(PRISMATIC_HOME) / ".antigravity" / "swarm_locks.json"
 DEFAULT_STALE_TTL_MS = 300_000  # 5 minutes
 
 
+try:
+    from prismatic.gateway.ipc_bridge import send_event_via_socket
+    _HAS_IPC = True
+except ImportError:
+    _HAS_IPC = False
+
+
+def _emit_lock_event(event_type: str, filepath: str, agent_id: str, **extra: Any) -> None:
+    """Emit a lock lifecycle event to the IPC bridge."""
+    if not _HAS_IPC:
+        return
+    try:
+        send_event_via_socket(
+            event_type=event_type,
+            source=f"lock:{agent_id}",
+            payload={"file": filepath, "agent": agent_id, **extra},
+        )
+    except Exception:
+        pass
+
+
 class SwarmLockManager:
     """
     Workspace-scoped concurrency mutex backed by Swarmlock v0.2.0.
@@ -73,6 +94,7 @@ class SwarmLockManager:
             try:
                 lease = self._sw.acquire(req)
                 logger.info(f"Acquired lock: {resource_id} -> {agent_id} (Lease ID: {lease.lease_id})")
+                _emit_lock_event("lock", resource_id, agent_id)
                 return True
             except LockConflictError as err:
                 if time.time() - start_time >= timeout_s:
@@ -100,6 +122,7 @@ class SwarmLockManager:
             success = self._sw.release(rel_req)
             if success:
                 logger.info(f"Released lock: {resource_id} (held by {agent_id})")
+                _emit_lock_event("unlock", resource_id, agent_id)
             return success
         except Exception as e:
             logger.error(f"Error releasing lock for {resource_id}: {e}")
@@ -119,6 +142,7 @@ class SwarmLockManager:
                 extend_seconds=self._stale_ttl_ms / 1000.0,
             )
             self._sw.renew(renew_req)
+            _emit_lock_event("heartbeat", resource_id, agent_id)
             return True
         except Exception:
             return False

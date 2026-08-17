@@ -44,7 +44,7 @@ DEFAULT_SOCKET_PATH: str = os.path.join(
 
 REQUIRED_FIELDS = {"type", "source"}
 VALID_TYPES = {
-    "lock", "unlock", "heartbeat", "telemetry",
+    "lock", "unlock", "heartbeat", "expire", "telemetry",
     "agent_launched", "agent_completed", "agent_failed",
     "agent_heartbeat",
     "governor_allocate", "governor_release",
