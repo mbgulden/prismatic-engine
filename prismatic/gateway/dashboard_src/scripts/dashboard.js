@@ -6,6 +6,61 @@
         let pollingInterval = null;
         let reviewFactoryToken = "";
 
+        // ═════════════════════════════════════════════════════════════════
+        // CANONICAL PRISMATIC DESIGN SYSTEM & THEME REFERENCE
+        // Single source of truth for icons, surfaces, badges, and tokens
+        // ═════════════════════════════════════════════════════════════════
+        const PRISMATIC_THEME = {
+            icons: {
+                file: function(ext = "") {
+                    const clean = String(ext || "").toLowerCase().replace(/^\./, "");
+                    if (["py", "js", "ts", "jsx", "tsx", "sh", "json", "html", "css", "ps1", "c", "cpp", "go", "rs", "java"].includes(clean)) {
+                        return `<svg class="w-4 h-4 text-sky-500 dark:text-sky-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>`;
+                    }
+                    if (["md", "txt", "log", "rst", "doc", "pdf"].includes(clean)) {
+                        return `<svg class="w-4 h-4 text-indigo-500 dark:text-indigo-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>`;
+                    }
+                    if (["env", "yml", "yaml", "toml", "ini", "conf", "config"].includes(clean)) {
+                        return `<svg class="w-4 h-4 text-emerald-500 dark:text-emerald-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>`;
+                    }
+                    if (["png", "jpg", "jpeg", "gif", "svg", "ico", "webp"].includes(clean)) {
+                        return `<svg class="w-4 h-4 text-purple-500 dark:text-purple-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>`;
+                    }
+                    return `<svg class="w-4 h-4 text-slate-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>`;
+                },
+                folder: function(isOpen = false) {
+                    return isOpen
+                        ? `<svg class="w-4 h-4 text-amber-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z"/></svg>`
+                        : `<svg class="w-4 h-4 text-amber-500/90 dark:text-amber-400/90 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>`;
+                },
+                lock: `<svg class="w-4 h-4 text-cyan-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>`,
+                unlock: `<svg class="w-4 h-4 text-emerald-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z"/></svg>`,
+                shield: `<svg class="w-4 h-4 text-amber-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>`,
+                heartbeat: `<svg class="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/></svg>`,
+                warning: `<svg class="w-3.5 h-3.5 text-amber-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>`,
+                externalLink: `<svg class="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>`,
+                linear: `<svg class="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor"><path d="M3.52 1.48L1.48 3.52l18.96 18.96 2.04-2.04L3.52 1.48zM1.48 10.52L10.52 1.48l1.44 1.44-9.04 9.04-1.44-1.44zM13.48 22.52l9.04-9.04-1.44-1.44-9.04 9.04 1.44 1.44z"/></svg>`,
+                github: `<svg class="w-3.5 h-3.5 text-slate-300 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor"><path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>`,
+                kanban: `<svg class="w-3.5 h-3.5 text-cyan-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"/></svg>`,
+                robot: `<svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>`,
+                agent: `<svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>`,
+                branch: `<svg class="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M7 7h.01M7 3a4 4 0 00-4 4v10a4 4 0 004 4h10a4 4 0 004-4V7a4 4 0 00-4-4H7z"/></svg>`,
+            },
+            badge: function(type, label) {
+                const key = String(type || "").toUpperCase();
+                if (key.includes("MUTATION")) {
+                    return `<span class="px-2 py-0.5 rounded text-[9px] font-mono font-bold uppercase bg-rose-950/60 text-rose-300 border border-rose-800/60">${escapeHtml(label || "Exclusive Mutation")}</span>`;
+                }
+                if (key.includes("REFACTOR")) {
+                    return `<span class="px-2 py-0.5 rounded text-[9px] font-mono font-bold uppercase bg-cyan-950/60 text-cyan-300 border border-cyan-800/60">${escapeHtml(label || "Safe Refactor")}</span>`;
+                }
+                if (key.includes("READ")) {
+                    return `<span class="px-2 py-0.5 rounded text-[9px] font-mono font-bold uppercase bg-indigo-950/60 text-indigo-300 border border-indigo-800/60">${escapeHtml(label || "Reentrant Read")}</span>`;
+                }
+                return `<span class="px-2 py-0.5 rounded text-[9px] font-mono font-bold uppercase bg-slate-800 text-slate-300 border border-slate-700">${escapeHtml(label || key)}</span>`;
+            }
+        };
+
         let agentStatusCache = { agents: [], status_counts: {}, evidence: {}, source: "not-loaded" };
 
         function escapeHtml(value) {
@@ -1971,25 +2026,13 @@
 
         function workspaceNodeIcon(node, isExpanded = false) {
             if (node.type === "directory") {
-                if (isExpanded) {
-                    return `<span class="text-[10px] text-slate-400 font-mono flex-shrink-0 w-3">▾</span><svg class="w-4 h-4 text-amber-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z"/></svg>`;
-                }
-                return `<span class="text-[10px] text-slate-400 font-mono flex-shrink-0 w-3">▸</span><svg class="w-4 h-4 text-amber-500/90 dark:text-amber-400/90 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>`;
+                const chevron = isExpanded
+                    ? `<span class="text-[10px] text-slate-400 font-mono flex-shrink-0 w-3">▾</span>`
+                    : `<span class="text-[10px] text-slate-400 font-mono flex-shrink-0 w-3">▸</span>`;
+                return `${chevron}${PRISMATIC_THEME.icons.folder(isExpanded)}`;
             }
             const ext = (node.name || "").split(".").pop().toLowerCase();
-            if (["py", "js", "ts", "jsx", "tsx", "sh", "json", "html", "css", "ps1", "c", "cpp", "go", "rs", "java"].includes(ext)) {
-                return `<span class="w-3 flex-shrink-0"></span><svg class="w-4 h-4 text-sky-600 dark:text-sky-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>`;
-            }
-            if (["md", "txt", "log", "rst", "doc", "pdf"].includes(ext)) {
-                return `<span class="w-3 flex-shrink-0"></span><svg class="w-4 h-4 text-indigo-600 dark:text-indigo-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>`;
-            }
-            if (["env", "yml", "yaml", "toml", "ini", "conf", "config"].includes(ext)) {
-                return `<span class="w-3 flex-shrink-0"></span><svg class="w-4 h-4 text-emerald-600 dark:text-emerald-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>`;
-            }
-            if (["png", "jpg", "jpeg", "gif", "svg", "ico", "webp"].includes(ext)) {
-                return `<span class="w-3 flex-shrink-0"></span><svg class="w-4 h-4 text-purple-600 dark:text-purple-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>`;
-            }
-            return `<span class="w-3 flex-shrink-0"></span><svg class="w-4 h-4 text-slate-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>`;
+            return `<span class="w-3 flex-shrink-0"></span>${PRISMATIC_THEME.icons.file(ext)}`;
         }
 
         function renderWorkspaceNode(workspaceId, node, depth = 0) {
@@ -2718,6 +2761,211 @@
             }).join('') : `<div class="text-slate-500 italic">No assigned-agent signals recorded yet.</div>`;
         }
 
+        let latestSwarmLockData = null;
+        let activeEvictTarget = null;
+
+        function getAgentColor(agentName) {
+            let hash = 0;
+            const str = String(agentName || "unknown");
+            for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+            const h = Math.abs(hash) % 360;
+            return `hsl(${h}, 65%, 45%)`;
+        }
+
+        function renderSwarmLockCockpit(data) {
+            latestSwarmLockData = data;
+            const grid = document.getElementById("swarmlock-leases-grid");
+            const activeLocksCountEl = document.getElementById("sig-metric-active-locks");
+            const deflectionsEl = document.getElementById("sig-metric-deflections");
+            const statusEl = document.getElementById("sig-metric-status");
+
+            const activeLocks = data?.locks || [];
+            const activeLockCount = data?.active_lock_count ?? activeLocks.length;
+            const deflections = data?.deflected_collisions ?? 0;
+
+            if (activeLocksCountEl) activeLocksCountEl.textContent = activeLockCount;
+            if (deflectionsEl) deflectionsEl.textContent = deflections;
+            if (statusEl) {
+                if (activeLockCount > 0) {
+                    statusEl.textContent = `${activeLockCount} Active Leases`;
+                    statusEl.className = "text-xl font-bold font-mono text-cyan-400 mt-0.5";
+                } else {
+                    statusEl.textContent = "Optimal (Free)";
+                    statusEl.className = "text-xl font-bold font-mono text-emerald-400 mt-0.5";
+                }
+            }
+
+            if (!grid) return;
+
+            if (!activeLocks.length) {
+                grid.innerHTML = `
+                    <div class="col-span-full p-6 text-center text-slate-500 text-xs italic bg-slate-900/30 rounded-xl border border-slate-800/50 flex flex-col items-center justify-center gap-2">
+                        <div class="flex items-center gap-2 text-slate-400">
+                            ${PRISMATIC_THEME.icons.shield}
+                            <span class="font-semibold">No Active Resource Contention</span>
+                        </div>
+                        <p class="text-[11px] text-slate-500">All workspaces and files are free for agent dispatch. Collisions deflected to date: <strong class="text-amber-400 font-mono">${deflections}</strong>.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            grid.innerHTML = activeLocks.map((lock, idx) => {
+                const resource = lock.resource || "unknown_resource";
+                const ext = resource.split(".").pop().toLowerCase();
+                const isFile = resource.includes(".");
+                const resourceIcon = isFile ? PRISMATIC_THEME.icons.file(ext) : PRISMATIC_THEME.icons.folder(true);
+                const holder = lock.holder || "unknown_agent";
+                const intention = (lock.intention || "EXCLUSIVE_MUTATION").toUpperCase();
+                const intentionBadge = PRISMATIC_THEME.badge(intention, intention);
+                const agentColor = getAgentColor(holder);
+                const ttlRemaining = Math.max(0, Math.round((lock.expires_at || 0) - Date.now() / 1000));
+                const ttlTotal = lock.ttl_seconds || 30;
+                const ttlPct = Math.min(100, Math.max(0, (ttlRemaining / ttlTotal) * 100));
+
+                let taskLinkHtml = `<span class="text-slate-500 text-[10px]">No task bound</span>`;
+                if (lock.linear_issue || lock.task_id) {
+                    const taskId = lock.linear_issue || lock.task_id;
+                    const isLinear = taskId.startsWith("GRO-") || /^[A-Z]{2,}-\d+$/.test(taskId);
+                    const taskIcon = isLinear ? PRISMATIC_THEME.icons.linear : PRISMATIC_THEME.icons.kanban;
+                    taskLinkHtml = `
+                        <a href="https://prismatic.growthwebdev.com/tab/tasks?issue=${encodeURIComponent(taskId)}" target="_blank" class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-950/60 border border-indigo-800/60 text-indigo-300 hover:text-white text-[10px] font-mono transition">
+                            ${taskIcon}
+                            <span>${escapeHtml(taskId)}</span>
+                            ${PRISMATIC_THEME.icons.externalLink}
+                        </a>
+                    `;
+                }
+
+                let collisionHtml = "";
+                if (lock.contenders && lock.contenders.length > 0) {
+                    collisionHtml = `
+                        <div class="mt-2 p-2 rounded-lg bg-amber-950/30 border border-amber-800/40 text-[10px] text-amber-300 space-y-1">
+                            <div class="flex items-center gap-1 font-bold">
+                                ${PRISMATIC_THEME.icons.warning}
+                                <span>Contention Deflected (${lock.contenders.length} waiting)</span>
+                            </div>
+                            <div class="font-mono text-[9px] text-amber-200/80">
+                                ${lock.contenders.map(c => `${escapeHtml(c.agent)} contended (${c.attempts || 1}× backoff attempts)`).join(", ")}
+                            </div>
+                        </div>
+                    `;
+                }
+
+                return `
+                    <div class="p-3.5 rounded-xl border border-slate-800 bg-slate-900/60 flex flex-col justify-between space-y-3 relative overflow-hidden shadow-lg hover:border-slate-700 transition" data-lock-id="${idx}">
+                        <div class="flex items-start justify-between gap-2">
+                            <div class="flex items-center gap-2 min-w-0">
+                                <span class="p-1.5 rounded-lg bg-slate-800/80 border border-slate-700/60">${resourceIcon}</span>
+                                <div class="min-w-0">
+                                    <div class="font-mono font-bold text-xs text-slate-200 truncate" title="${escapeHtml(resource)}">${escapeHtml(resource)}</div>
+                                    <div class="text-[10px] text-slate-500 truncate mt-0.5">Lease token: <span class="font-mono text-slate-400">${escapeHtml(String(lock.token || "").slice(0, 8))}...</span></div>
+                                </div>
+                            </div>
+                            <div class="flex-shrink-0">${intentionBadge}</div>
+                        </div>
+
+                        <div class="flex items-center justify-between gap-2 pt-1 border-t border-slate-800/80">
+                            <div class="flex items-center gap-1.5">
+                                <span class="w-2.5 h-2.5 rounded-full flex-shrink-0" style="background-color: ${agentColor};"></span>
+                                <span class="font-bold text-xs text-slate-200">${escapeHtml(holder)}</span>
+                            </div>
+                            <div class="flex items-center gap-1.5">${taskLinkHtml}</div>
+                        </div>
+
+                        <div>
+                            <div class="flex items-center justify-between text-[10px] text-slate-400 font-mono mb-1">
+                                <span class="flex items-center gap-1 text-emerald-400">
+                                    ${PRISMATIC_THEME.icons.heartbeat}
+                                    <span>Heartbeat TTL</span>
+                                </span>
+                                <span>${ttlRemaining}s remaining</span>
+                            </div>
+                            <div class="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
+                                <div class="h-full bg-gradient-to-r from-emerald-500 to-cyan-400 transition-all duration-1000" style="width: ${ttlPct}%;"></div>
+                            </div>
+                        </div>
+
+                        ${collisionHtml}
+
+                        <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-800/60">
+                            <button type="button" onclick="openInspectLockModal(${idx})" class="px-2.5 py-1 rounded-lg text-[10px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 transition flex items-center gap-1">
+                                <span>Inspect Lease</span>
+                            </button>
+                            <button type="button" onclick="openEvictLockModal(${idx})" class="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-rose-950/60 hover:bg-rose-900/80 text-rose-300 border border-rose-800/60 transition flex items-center gap-1">
+                                <span>Force Evict</span>
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join("");
+        }
+
+        function openInspectLockModal(idx) {
+            const modal = document.getElementById("swarmlock-inspect-modal");
+            const body = document.getElementById("swarmlock-inspect-body");
+            if (!modal || !body || !latestSwarmLockData || !latestSwarmLockData.locks || !latestSwarmLockData.locks[idx]) return;
+
+            const lock = latestSwarmLockData.locks[idx];
+            body.innerHTML = `
+                <div class="p-3 rounded-lg bg-slate-950 border border-slate-800 space-y-2">
+                    <div><span class="text-slate-500">Resource:</span> <span class="text-cyan-300 font-bold">${escapeHtml(lock.resource)}</span></div>
+                    <div><span class="text-slate-500">Holder Agent:</span> <span class="text-slate-200 font-bold">${escapeHtml(lock.holder)}</span></div>
+                    <div><span class="text-slate-500">Intention:</span> <span class="text-amber-300">${escapeHtml(lock.intention || "EXCLUSIVE_MUTATION")}</span></div>
+                    <div><span class="text-slate-500">Lease Token:</span> <span class="text-slate-400 break-all">${escapeHtml(lock.token)}</span></div>
+                    <div><span class="text-slate-500">Expires At:</span> <span class="text-slate-300">${new Date((lock.expires_at || 0) * 1000).toLocaleString()}</span></div>
+                    <div><span class="text-slate-500">Associated Task:</span> <span class="text-indigo-400 font-bold">${escapeHtml(lock.task_id || lock.linear_issue || "None")}</span></div>
+                    ${lock.transcript_ref ? `<div><span class="text-slate-500">Transcript Ref:</span> <span class="text-slate-400">${escapeHtml(lock.transcript_ref)}</span></div>` : ""}
+                </div>
+            `;
+            modal.classList.remove("hidden");
+        }
+
+        function closeInspectLockModal() {
+            const modal = document.getElementById("swarmlock-inspect-modal");
+            if (modal) modal.classList.add("hidden");
+        }
+
+        function openEvictLockModal(idx) {
+            const modal = document.getElementById("swarmlock-evict-modal");
+            const resEl = document.getElementById("swarmlock-evict-resource");
+            const holderEl = document.getElementById("swarmlock-evict-holder");
+            if (!modal || !latestSwarmLockData || !latestSwarmLockData.locks || !latestSwarmLockData.locks[idx]) return;
+
+            const lock = latestSwarmLockData.locks[idx];
+            activeEvictTarget = lock;
+            if (resEl) resEl.textContent = lock.resource;
+            if (holderEl) holderEl.textContent = lock.holder;
+            modal.classList.remove("hidden");
+        }
+
+        function closeEvictLockModal() {
+            const modal = document.getElementById("swarmlock-evict-modal");
+            if (modal) modal.classList.add("hidden");
+            activeEvictTarget = null;
+        }
+
+        async function confirmEvictLock() {
+            if (!activeEvictTarget) return;
+            const reason = document.getElementById("swarmlock-evict-reason")?.value || "Operator manual eviction";
+            try {
+                const res = await fetch("/api/gateway/swarmlock/evict", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ resource: activeEvictTarget.resource, token: activeEvictTarget.token, reason: reason })
+                });
+                if (res.ok) {
+                    closeEvictLockModal();
+                    await renderSignalsView();
+                } else {
+                    const err = await res.json();
+                    alert(`Failed to evict lock: ${err.detail || err.error || 'Unknown error'}`);
+                }
+            } catch (e) {
+                alert(`Error executing eviction: ${e.message}`);
+            }
+        }
+
         async function renderSignalsView() {
             const container = document.getElementById("signals-log-box");
             if (container && !container.children.length) {
@@ -2725,25 +2973,27 @@
             }
 
             try {
-                const [agentsRes, signalsRes] = await Promise.all([
+                const [agentsRes, signalsRes, swarmlockRes] = await Promise.all([
                     fetch("/api/gateway/agents").catch(() => null),
-                    fetch("/api/gateway/signals?limit=200").catch(() => null)
+                    fetch("/api/gateway/signals?limit=200").catch(() => null),
+                    fetch("/api/gateway/swarmlock/status").catch(() => null)
                 ]);
+
+                if (swarmlockRes && swarmlockRes.ok) {
+                    const swarmData = await swarmlockRes.json();
+                    renderSwarmLockCockpit(swarmData);
+                }
 
                 if (agentsRes && agentsRes.ok) {
                     const agentData = await agentsRes.json();
                     discoveredAgentsList = agentData.agents || [];
                     const totalEl = document.getElementById("sig-metric-total");
-                    const activeEl = document.getElementById("sig-metric-active");
                     if (totalEl) totalEl.textContent = discoveredAgentsList.length;
-                    if (activeEl) activeEl.textContent = agentData.active_agents || 0;
                     renderAgentTabs(discoveredAgentsList);
                 }
 
                 if (signalsRes && signalsRes.ok) {
                     const payload = await signalsRes.json();
-                    const eventsEl = document.getElementById("sig-metric-events");
-                    if (eventsEl) eventsEl.textContent = payload.count || 0;
                     renderSignalPanes(payload);
                 }
             } catch (err) {

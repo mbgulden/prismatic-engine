@@ -27,16 +27,45 @@
                         <div id="sig-metric-total" class="text-xl font-bold font-mono text-slate-200 mt-0.5">6</div>
                     </div>
                     <div class="glass-panel p-3.5 rounded-xl border border-slate-800 bg-slate-900/40">
-                        <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Active Executing</div>
-                        <div id="sig-metric-active" class="text-xl font-bold font-mono text-emerald-400 mt-0.5">0</div>
+                        <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Active Workspace Locks</div>
+                        <div id="sig-metric-active-locks" class="text-xl font-bold font-mono text-cyan-400 mt-0.5">0</div>
                     </div>
                     <div class="glass-panel p-3.5 rounded-xl border border-slate-800 bg-slate-900/40">
-                        <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Total Signal Events</div>
-                        <div id="sig-metric-events" class="text-xl font-bold font-mono text-indigo-400 mt-0.5">0</div>
+                        <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Collisions Deflected 🛡️</div>
+                        <div id="sig-metric-deflections" class="text-xl font-bold font-mono text-amber-400 mt-0.5">0</div>
                     </div>
                     <div class="glass-panel p-3.5 rounded-xl border border-slate-800 bg-slate-900/40">
-                        <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Process Status</div>
-                        <div id="sig-metric-status" class="text-xl font-bold font-mono text-cyan-400 mt-0.5">Healthy</div>
+                        <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Swarm Concurrency State</div>
+                        <div id="sig-metric-status" class="text-xl font-bold font-mono text-emerald-400 mt-0.5">Optimal (Free)</div>
+                    </div>
+                </div>
+
+                <!-- 🔒 SWARM LOCK CONCURRENCY COCKPIT PANEL -->
+                <div id="swarmlock-cockpit-panel" class="rounded-xl border border-slate-800/90 bg-slate-950/60 p-4 space-y-4 shadow-xl">
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/80 pb-3">
+                        <div class="flex items-center gap-2.5">
+                            <span class="flex h-3 w-3 relative">
+                                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+                                <span class="relative inline-flex rounded-full h-3 w-3 bg-cyan-500"></span>
+                            </span>
+                            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-200 flex items-center gap-2">
+                                <span>Swarm Lock Concurrency Matrix</span>
+                                <span class="px-2 py-0.5 rounded text-[10px] font-mono bg-cyan-950/60 text-cyan-300 border border-cyan-800/60">Live Lease Visualizer</span>
+                            </h3>
+                        </div>
+                        <div class="flex items-center gap-2 text-xs">
+                            <span id="swarmlock-sync-badge" class="px-2.5 py-1 rounded-lg text-[10px] font-mono bg-emerald-950/40 text-emerald-300 border border-emerald-800/40 flex items-center gap-1.5">
+                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                                WebSocket Synchronized
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- Active Leases Grid -->
+                    <div id="swarmlock-leases-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                        <div class="col-span-full p-6 text-center text-slate-500 text-xs italic bg-slate-900/30 rounded-xl border border-slate-800/50">
+                            🛡️ No active lock contention — Swarm is in optimal free state (0 collisions).
+                        </div>
                     </div>
                 </div>
 
@@ -62,6 +91,53 @@
                     <div class="p-4 space-y-2 max-h-[360px] overflow-y-auto" id="signals-log-box">
                         <div class="text-slate-500 italic">Listening for live agent signals...</div>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 👁️ Operator Lease Inspector Modal -->
+        <div id="swarmlock-inspect-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+            <div class="pe-modal-card glass-panel w-full max-w-[560px] p-6 rounded-2xl border border-slate-700/80 space-y-4 shadow-2xl bg-slate-900 font-mono text-xs" style="max-width: 560px !important;">
+                <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+                    <h3 class="text-sm font-bold uppercase text-slate-200 tracking-wider flex items-center gap-2">
+                        <span>👁️ Swarm Lease Detailed Inspector</span>
+                    </h3>
+                    <button type="button" onclick="closeInspectLockModal()" class="text-slate-400 hover:text-white text-lg font-bold">&times;</button>
+                </div>
+                <div id="swarmlock-inspect-body" class="space-y-3">
+                    <!-- Dynamic Lease Information -->
+                </div>
+                <div class="flex justify-end pt-2 border-t border-slate-800">
+                    <button type="button" onclick="closeInspectLockModal()" class="px-4 py-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 transition">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 🔓 Operator Force Evict Modal -->
+        <div id="swarmlock-evict-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+            <div class="pe-modal-card glass-panel w-full max-w-[480px] p-6 rounded-2xl border border-rose-800/60 space-y-4 shadow-2xl bg-slate-900 text-xs" style="max-width: 480px !important;">
+                <div class="flex justify-between items-center border-b border-rose-900/60 pb-3">
+                    <h3 class="text-sm font-bold uppercase text-rose-300 tracking-wider flex items-center gap-2">
+                        <span>⚠️ Operator Force Lock Eviction</span>
+                    </h3>
+                    <button type="button" onclick="closeEvictLockModal()" class="text-slate-400 hover:text-white text-lg font-bold">&times;</button>
+                </div>
+                <div class="space-y-3 text-slate-300">
+                    <p class="text-rose-200 font-semibold leading-relaxed">
+                        Are you sure you want to forcibly break this active lease? This will remove the lock and allow pending agents to acquire it immediately.
+                    </p>
+                    <div class="p-3 rounded-lg bg-slate-950 border border-slate-800 font-mono text-[11px] space-y-1">
+                        <div><span class="text-slate-500">Resource:</span> <span id="swarmlock-evict-resource" class="text-amber-300 font-bold"></span></div>
+                        <div><span class="text-slate-500">Current Holder:</span> <span id="swarmlock-evict-holder" class="text-slate-300"></span></div>
+                    </div>
+                    <div>
+                        <label class="block font-bold text-slate-300 mb-1">Eviction Reason / Audit Note</label>
+                        <input id="swarmlock-evict-reason" type="text" value="Operator manual eviction" class="w-full px-3 py-2 rounded-lg border border-slate-800 bg-slate-950 text-slate-200 font-mono focus:border-rose-500 focus:outline-none">
+                    </div>
+                </div>
+                <div class="flex justify-end gap-2 pt-2 border-t border-slate-800">
+                    <button type="button" onclick="closeEvictLockModal()" class="px-4 py-2 rounded-lg text-xs font-semibold text-slate-400 hover:bg-slate-800 transition">Cancel</button>
+                    <button type="button" onclick="confirmEvictLock()" class="px-4 py-2 rounded-lg text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white transition shadow-sm border border-rose-500">Confirm Force Eviction</button>
                 </div>
             </div>
         </div>
