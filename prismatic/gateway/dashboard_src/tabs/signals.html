@@ -125,6 +125,40 @@
                     </div>
                 </div>
 
+                <!-- Console Stream Box -->
+                <div class="bg-slate-950 rounded-xl border border-slate-800/80 overflow-hidden font-mono text-xs shadow-inner">
+                    <div class="bg-slate-900 border-b border-slate-800 px-4 py-2.5 text-slate-400 font-bold uppercase flex flex-wrap justify-between items-center gap-2 text-[11px]">
+                        <div class="flex items-center gap-2">
+                            <span id="signals-live-dot" class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                            <span class="text-slate-200">Live Multi-Agent Signal Stream</span>
+                            <span id="signals-stream-count" class="px-1.5 py-0.2 rounded bg-slate-800 text-slate-400 font-normal text-[10px]">0</span>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <!-- Search filter -->
+                            <div class="relative">
+                                <input id="signals-search-input" type="text" placeholder="Search signals (agent, task, text)..." oninput="filterSignalStream()" class="bg-slate-950 border border-slate-700/80 rounded px-2.5 py-1 text-[11px] text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 w-44 sm:w-60 font-sans">
+                            </div>
+                            <!-- Severity filter chips -->
+                            <div class="flex items-center gap-1 text-[10px]" id="signals-severity-filters">
+                                <button type="button" onclick="setSignalSeverityFilter('all')" data-sev-filter="all" class="px-2 py-0.5 rounded bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 font-bold">ALL</button>
+                                <button type="button" onclick="setSignalSeverityFilter('lease')" data-sev-filter="lease" class="px-2 py-0.5 rounded bg-slate-900 text-cyan-400 border border-slate-800 hover:text-cyan-300 font-bold">LEASE</button>
+                                <button type="button" onclick="setSignalSeverityFilter('info')" data-sev-filter="info" class="px-2 py-0.5 rounded bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200 font-bold">INFO</button>
+                                <button type="button" onclick="setSignalSeverityFilter('warning')" data-sev-filter="warning" class="px-2 py-0.5 rounded bg-slate-900 text-amber-400 border border-slate-800 hover:text-amber-300 font-bold">WARN</button>
+                                <button type="button" onclick="setSignalSeverityFilter('error')" data-sev-filter="error" class="px-2 py-0.5 rounded bg-slate-900 text-rose-400 border border-slate-800 hover:text-rose-300 font-bold">ERROR</button>
+                            </div>
+                            <!-- Controls -->
+                            <button type="button" id="signals-pause-btn" onclick="toggleSignalsPause()" class="px-2 py-1 rounded text-[10px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition">Pause</button>
+                            <button type="button" onclick="openEmitSignalModal()" class="px-2.5 py-1 rounded text-[10px] font-bold bg-indigo-600 hover:bg-indigo-500 text-white transition border border-indigo-500">+ Emit</button>
+                            <button type="button" onclick="clearSignalConsole()" class="px-2 py-1 rounded text-[10px] font-semibold text-slate-500 hover:text-slate-300 transition" title="Clear console view">&times; Clear</button>
+                        </div>
+                    </div>
+                    <div class="p-3 max-h-64 overflow-y-auto space-y-1.5 text-slate-400 font-mono text-[11px]" id="signals-console-stream">
+                        <div id="signals-log-box" class="space-y-1.5">
+                            <div class="text-slate-500 italic">Streaming active telemetry signals...</div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Dynamic Agent Selection Tabs -->
                 <div class="flex gap-2 overflow-x-auto pb-1 border-b border-slate-800/60 pt-2" id="signals-agent-tabs">
                     <!-- Populated dynamically via renderSignalsView -->
@@ -133,20 +167,6 @@
                 <!-- Agent Process & Telemetry Panes -->
                 <div id="signals-agent-panes" class="grid grid-cols-1 xl:grid-cols-2 gap-4">
                     <!-- Populated dynamically with one pane per agent -->
-                </div>
-
-                <!-- Console Stream Box -->
-                <div class="bg-slate-950 rounded-xl border border-slate-800/80 overflow-hidden font-mono text-xs shadow-inner">
-                    <div class="bg-slate-900 border-b border-slate-800 px-4 py-2.5 text-slate-400 font-bold uppercase flex justify-between items-center text-[11px]">
-                        <span class="flex items-center gap-2">
-                            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                            Live Multi-Agent Signal Stream
-                        </span>
-                        <span class="text-slate-500 font-normal">ws://.../ws &amp; /api/gateway/signals</span>
-                    </div>
-                    <div class="p-3 max-h-48 overflow-y-auto space-y-1 text-slate-400 font-mono text-[11px]" id="signals-console-stream">
-                        <div class="text-slate-500 italic">Streaming active telemetry signals...</div>
-                    </div>
                 </div>
             </div>
         </div>
@@ -257,9 +277,51 @@
                         <textarea id="nudge-message-text" rows="4" placeholder="e.g. Focus on TDD regression testing for workspace tree state persistence..." class="w-full px-3 py-2 rounded-lg border border-slate-800 bg-slate-950 text-slate-200 font-mono focus:border-amber-500 focus:outline-none leading-relaxed"></textarea>
                     </div>
                 </div>
+        <!-- 📡 Operator Emit Signal Modal -->
+        <div id="agent-emit-signal-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+            <div class="pe-modal-card glass-panel w-full max-w-[520px] p-6 rounded-2xl border border-indigo-700/80 space-y-4 shadow-2xl bg-slate-900" style="max-width: 520px !important;">
+                <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+                    <h3 class="text-sm font-bold uppercase text-slate-200 tracking-wider flex items-center gap-2">
+                        <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                        Emit Real-Time Multi-Agent Signal
+                    </h3>
+                    <button type="button" onclick="closeEmitSignalModal()" class="text-slate-400 hover:text-white text-lg font-bold">&times;</button>
+                </div>
+                <div class="space-y-3 text-xs">
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block font-bold text-slate-300 mb-1">Target Agent</label>
+                            <input id="emit-signal-agent" type="text" value="agy" placeholder="e.g. agy, hermes, kai, fred..." class="w-full px-3 py-2 rounded-lg border border-slate-800 bg-slate-950 text-slate-200 font-mono focus:border-indigo-500 focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-300 mb-1">Severity Level</label>
+                            <select id="emit-signal-severity" class="w-full px-3 py-2 rounded-lg border border-slate-800 bg-slate-950 text-slate-200 font-mono focus:border-indigo-500 focus:outline-none">
+                                <option value="info">INFO</option>
+                                <option value="success">SUCCESS</option>
+                                <option value="lease">LEASE</option>
+                                <option value="warning">WARNING</option>
+                                <option value="error">ERROR</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block font-bold text-slate-300 mb-1">Event Type</label>
+                            <input id="emit-signal-type" type="text" value="task_progress" placeholder="e.g. build_passed, test_run, lease" class="w-full px-3 py-2 rounded-lg border border-slate-800 bg-slate-950 text-slate-200 font-mono focus:border-indigo-500 focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="block font-bold text-slate-300 mb-1">Linear Task / Issue ID</label>
+                            <input id="emit-signal-issue" type="text" value="GRO-4457" placeholder="e.g. GRO-4457" class="w-full px-3 py-2 rounded-lg border border-slate-800 bg-slate-950 text-slate-200 font-mono focus:border-indigo-500 focus:outline-none">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block font-bold text-slate-300 mb-1">Signal Message / Telemetry Text</label>
+                        <textarea id="emit-signal-message" rows="3" placeholder="Describe the signal event..." class="w-full px-3 py-2 rounded-lg border border-slate-800 bg-slate-950 text-slate-200 font-mono focus:border-indigo-500 focus:outline-none leading-relaxed"></textarea>
+                    </div>
+                </div>
                 <div class="flex justify-end gap-2 pt-2 border-t border-slate-800">
-                    <button type="button" onclick="closeAgentNudgeModal()" class="px-4 py-2 rounded-lg text-xs font-semibold text-slate-400 hover:bg-slate-800 transition">Cancel</button>
-                    <button type="button" onclick="submitAgentNudge()" class="px-4 py-2 rounded-lg text-xs font-bold bg-amber-600 hover:bg-amber-500 text-white transition shadow-sm border border-amber-500">Inject Guidance</button>
+                    <button type="button" onclick="closeEmitSignalModal()" class="px-4 py-2 rounded-lg text-xs font-semibold text-slate-400 hover:bg-slate-800 transition">Cancel</button>
+                    <button type="button" onclick="submitCustomSignal()" class="px-4 py-2 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white transition shadow-sm border border-indigo-500">Emit Signal</button>
                 </div>
             </div>
         </div>

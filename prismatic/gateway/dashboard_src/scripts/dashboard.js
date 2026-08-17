@@ -624,20 +624,34 @@
             activeSignalsAgent = agent || 'all';
             document.querySelectorAll('.signals-agent-tab').forEach(btn => {
                 const active = btn.dataset.agentTab === activeSignalsAgent;
-                btn.className = `signals-agent-tab px-3 py-1.5 rounded-lg text-xs font-bold uppercase border ${active ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500/30' : 'bg-slate-900 text-slate-400 border-slate-800'}`;
+                btn.className = `signals-agent-tab px-3 py-1.5 rounded-lg text-xs font-bold uppercase border transition ${active ? 'bg-indigo-600/20 text-indigo-300 border-indigo-500/30' : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'}`;
             });
             renderSignalPanes(latestSignalsPayload);
         }
 
-        function addLocalSignal(source, text) {
-            const container = document.getElementById("signals-log-box");
+        function addLocalSignal(source, text, severity) {
+            const container = document.getElementById("signals-log-box") || document.getElementById("signals-console-stream");
             if (!container) return;
             const time = new Date().toLocaleTimeString();
             const div = document.createElement("div");
-            div.className = "text-slate-300";
-            div.innerHTML = `<span class="text-slate-500 font-bold">[${time}]</span> <span class="text-indigo-400 font-semibold">[${source}]</span> ${escapeHtml(text)}`;
+            div.className = "text-slate-300 border-b border-slate-900/60 pb-1.5 mb-1.5 flex flex-wrap items-baseline gap-1.5 signal-log-item";
+            const sev = String(severity || "info").toLowerCase();
+            const sevColor = sev.includes("error") ? "text-rose-400" : sev.includes("warn") ? "text-amber-400" : sev.includes("lease") ? "text-cyan-400" : "text-indigo-400";
+            div.innerHTML = `<span class="text-slate-500 font-bold flex-shrink-0 text-[10px]">[${time}]</span> <span class="${sevColor} font-semibold flex-shrink-0 px-1.5 py-0.2 rounded bg-slate-900 border border-slate-800">[${escapeHtml(source)}]</span> <span class="text-slate-300 break-all">${escapeHtml(text)}</span>`;
+            
+            // Remove initial placeholder text if present
+            if (container.children.length === 1 && container.children[0].classList.contains("italic")) {
+                container.innerHTML = "";
+            }
             container.appendChild(div);
-            container.scrollTop = container.scrollHeight;
+            if (typeof signalStreamPaused === "undefined" || !signalStreamPaused) {
+                const scrollParent = document.getElementById("signals-console-stream") || container;
+                scrollParent.scrollTop = scrollParent.scrollHeight;
+            }
+            const countEl = document.getElementById("signals-stream-count");
+            if (countEl) {
+                countEl.textContent = container.children.length;
+            }
         }
 
         // Badges
@@ -2651,22 +2665,31 @@
             const severity = String(value || 'info').toLowerCase();
             if (severity.includes('error') || severity.includes('fail')) return 'text-rose-400 border-rose-500/20 bg-rose-500/10';
             if (severity.includes('warn') || severity.includes('block')) return 'text-amber-400 border-amber-500/20 bg-amber-500/10';
+            if (severity.includes('lease') || severity.includes('lock')) return 'text-cyan-400 border-cyan-500/20 bg-cyan-500/10';
             if (severity.includes('success') || severity.includes('complete') || severity.includes('dispatch')) return 'text-emerald-400 border-emerald-500/20 bg-emerald-500/10';
             return 'text-indigo-400 border-indigo-500/20 bg-indigo-500/10';
         }
 
         function signalCard(item) {
             const ts = item.timestamp || item.created_at || item.started_at;
-            const color = signalSeverityColor(item.severity || item.status);
+            const isLease = (item.event_type || '').includes('lock_') || item.source === 'swarmlock';
+            const sev = item.severity || item.status;
+            const color = isLease ? 'text-cyan-400 border-cyan-500/20 bg-cyan-500/10' : signalSeverityColor(sev);
             const transcript = item.transcript ? `<pre class="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-lg bg-slate-950/80 border border-slate-900 p-2 text-[10px] leading-relaxed text-slate-400">${escapeHtml(item.transcript)}</pre>` : '';
+            const issueLink = item.issue_id 
+                ? `<a href="https://prismatic.growthwebdev.com/tab/tasks?issue=${encodeURIComponent(item.issue_id)}" target="_blank" class="text-[10px] text-indigo-400 hover:text-indigo-300 underline font-mono font-semibold">${escapeHtml(item.issue_id)}</a>`
+                : '';
             return `
                 <div class="rounded-lg border border-slate-900 bg-slate-950/60 p-3 space-y-2" data-agent-signal-card>
-                    <div class="flex flex-wrap items-center gap-2">
-                        <span class="text-slate-500 font-mono text-[10px]">${escapeHtml(ts ? formatDate(ts) : '—')}</span>
-                        <span class="px-2 py-0.5 rounded border text-[10px] font-bold uppercase ${color}">${escapeHtml(item.event_type || item.status || 'event')}</span>
-                        ${item.issue_id ? `<span class="text-[10px] text-slate-400 font-mono">${escapeHtml(item.issue_id)}</span>` : ''}
+                    <div class="flex flex-wrap items-center justify-between gap-2">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <span class="text-slate-500 font-mono text-[10px]">${escapeHtml(ts ? formatDate(ts) : '—')}</span>
+                            <span class="px-2 py-0.5 rounded border text-[10px] font-bold uppercase ${color}">${escapeHtml(item.event_type || item.status || 'event')}</span>
+                            ${issueLink}
+                        </div>
+                        ${item.metadata?.duration_seconds ? `<span class="text-[10px] text-slate-500 font-mono">${item.metadata.duration_seconds}s</span>` : ''}
                     </div>
-                    <div class="text-xs text-slate-300 whitespace-pre-wrap">${escapeHtml(item.message || item.status || 'Signal event')}</div>
+                    <div class="text-xs text-slate-300 whitespace-pre-wrap leading-relaxed">${escapeHtml(item.message || item.status || 'Signal event')}</div>
                     <div class="flex flex-wrap gap-2 text-[10px] text-slate-500">
                         ${item.run_id ? `<span>run=${escapeHtml(item.run_id)}</span>` : ''}
                         ${item.log_path ? `<span>log=${escapeHtml(item.log_path)}</span>` : ''}
@@ -2678,6 +2701,9 @@
         }
 
         let discoveredAgentsList = [];
+        let signalSeverityFilter = 'all';
+        let signalSearchQuery = '';
+        let signalStreamPaused = false;
 
         function openAgentNudgeModal() {
             const modal = document.getElementById("agent-nudge-modal");
@@ -2687,6 +2713,61 @@
         function closeAgentNudgeModal() {
             const modal = document.getElementById("agent-nudge-modal");
             if (modal) modal.classList.add("hidden");
+        }
+
+        function openEmitSignalModal() {
+            const modal = document.getElementById("agent-emit-signal-modal");
+            if (modal) modal.classList.remove("hidden");
+        }
+
+        function closeEmitSignalModal() {
+            const modal = document.getElementById("agent-emit-signal-modal");
+            if (modal) modal.classList.add("hidden");
+        }
+
+        function setSignalSeverityFilter(sev) {
+            signalSeverityFilter = sev || 'all';
+            document.querySelectorAll('#signals-severity-filters button').forEach(btn => {
+                const isMatch = btn.dataset.sevFilter === signalSeverityFilter;
+                btn.className = `px-2 py-0.5 rounded text-[10px] font-bold border transition ${
+                    isMatch 
+                        ? 'bg-indigo-600/30 text-indigo-300 border-indigo-500/50' 
+                        : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                }`;
+            });
+            renderSignalStreamConsole();
+        }
+
+        function filterSignalStream() {
+            const input = document.getElementById("signals-search-input");
+            signalSearchQuery = (input?.value || "").toLowerCase().trim();
+            renderSignalStreamConsole();
+        }
+
+        function toggleSignalsPause() {
+            signalStreamPaused = !signalStreamPaused;
+            const btn = document.getElementById("signals-pause-btn");
+            const dot = document.getElementById("signals-live-dot");
+            if (btn) {
+                btn.textContent = signalStreamPaused ? "Resume" : "Pause";
+                btn.className = signalStreamPaused
+                    ? "px-2 py-1 rounded text-[10px] font-semibold bg-amber-600/30 text-amber-300 border border-amber-500/50 transition"
+                    : "px-2 py-1 rounded text-[10px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition";
+            }
+            if (dot) {
+                dot.className = signalStreamPaused
+                    ? "w-2 h-2 rounded-full bg-amber-500"
+                    : "w-2 h-2 rounded-full bg-emerald-500 animate-pulse";
+            }
+        }
+
+        function clearSignalConsole() {
+            const consoleBox = document.getElementById("signals-log-box") || document.getElementById("signals-console-stream");
+            if (consoleBox) {
+                consoleBox.innerHTML = '<div class="text-slate-500 italic py-2">Console cleared. Waiting for active telemetry signals...</div>';
+            }
+            const countEl = document.getElementById("signals-stream-count");
+            if (countEl) countEl.textContent = "0";
         }
 
         async function submitAgentNudge() {
@@ -2718,17 +2799,48 @@
             }
         }
 
+        async function submitCustomSignal() {
+            const agent = document.getElementById("emit-signal-agent")?.value.trim() || "agy";
+            const severity = document.getElementById("emit-signal-severity")?.value || "info";
+            const event_type = document.getElementById("emit-signal-type")?.value.trim() || "custom";
+            const issue_id = document.getElementById("emit-signal-issue")?.value.trim() || "";
+            const message = document.getElementById("emit-signal-message")?.value.trim() || "";
+
+            if (!message) {
+                showToast("Please enter a signal message.", true);
+                return;
+            }
+
+            try {
+                const res = await fetch("/api/gateway/signals/emit", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ agent, severity, event_type, issue_id, message, source: "operator_console" })
+                });
+                const data = await res.json();
+                if (!res.ok || data.ok === false) throw new Error(data.detail || "Failed to emit signal");
+                showToast(`Emitted signal for agent "${agent}"`);
+                closeEmitSignalModal();
+                const msgInput = document.getElementById("emit-signal-message");
+                if (msgInput) msgInput.value = "";
+                await renderSignalsView();
+            } catch (err) {
+                console.error("Signal emit error:", err);
+                showToast(`Signal emit failed: ${err.message || err}`, true);
+            }
+        }
+
         function renderAgentTabs(agents) {
             const tabsBox = document.getElementById("signals-agent-tabs");
             if (!tabsBox) return;
             const allActive = activeSignalsAgent === "all" ? "bg-indigo-600/20 text-indigo-300 border-indigo-500/30 font-bold" : "bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200";
-            let html = `<button onclick="setSignalsAgent('all')" data-agent-tab="all" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs uppercase border transition ${allActive}">All (${agents.length})</button>`;
+            let html = `<button onclick="setSignalsAgent('all')" data-agent-tab="all" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs uppercase border transition flex-shrink-0 ${allActive}">All (${agents.length})</button>`;
             
             agents.forEach(a => {
                 const aid = a.agent_id;
                 const isActive = activeSignalsAgent === aid;
                 const activeClass = isActive ? "bg-indigo-600/20 text-indigo-300 border-indigo-500/30 font-bold" : "bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200";
-                html += `<button onclick="setSignalsAgent('${aid}')" data-agent-tab="${aid}" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs uppercase border transition ${activeClass}">${a.icon || '🤖'} ${escapeHtml(aid)} (${a.signal_count || 0})</button>`;
+                html += `<button onclick="setSignalsAgent('${aid}')" data-agent-tab="${aid}" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs uppercase border transition flex-shrink-0 ${activeClass}">${a.icon || '🤖'} ${escapeHtml(aid)} (${a.signal_count || 0})</button>`;
             });
             tabsBox.innerHTML = html;
         }
@@ -2736,8 +2848,7 @@
         function renderSignalPanes(payload) {
             latestSignalsPayload = payload || latestSignalsPayload || { items: [], by_agent: {}, counts: {} };
             const panes = document.getElementById('signals-agent-panes');
-            const consoleBox = document.getElementById('signals-log-box');
-            if (!panes || !consoleBox) return;
+            if (!panes) return;
 
             const knownAgents = discoveredAgentsList.length ? discoveredAgentsList : [
                 { agent_id: 'agy', name: 'Antigravity (AGY)', icon: '⚡', active_model: 'gemini-2.5-pro', status: 'idle' },
@@ -2749,7 +2860,6 @@
             ];
 
             const byAgent = latestSignalsPayload.by_agent || {};
-            const items = latestSignalsPayload.items || [];
             const visibleAgents = activeSignalsAgent === 'all' 
                 ? knownAgents 
                 : knownAgents.filter(a => a.agent_id === activeSignalsAgent);
@@ -2761,6 +2871,8 @@
                     ? '<span class="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Executing</span>'
                     : ag.status === 'errored'
                     ? '<span class="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-rose-500/10 text-rose-400 border border-rose-500/20">Errored</span>'
+                    : ag.status === 'waiting_input'
+                    ? '<span class="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-amber-500/10 text-amber-400 border border-amber-500/20">Waiting</span>'
                     : '<span class="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-slate-800 text-slate-400 border border-slate-700">Idle</span>';
 
                 return `
@@ -2786,7 +2898,7 @@
                             ${ag.current_task ? `
                                 <div class="p-2 rounded-lg bg-slate-900/80 border border-slate-800 text-[11px] text-slate-300 flex items-center justify-between">
                                     <span class="text-slate-400 font-mono">Active Task:</span>
-                                    <span class="font-bold font-mono text-cyan-400">${escapeHtml(ag.current_task)}</span>
+                                    <a href="https://prismatic.growthwebdev.com/tab/tasks?issue=${encodeURIComponent(ag.current_task)}" target="_blank" class="font-bold font-mono text-cyan-400 hover:text-cyan-300 underline">${escapeHtml(ag.current_task)}</a>
                                 </div>
                             ` : ''}
                             ${agentItems.length ? agentItems.slice(0, 25).map(signalCard).join('') : `<div class="agent-desc-text text-xs text-slate-500 italic py-6 text-center">No ${escapeHtml(aid)} signals recorded yet. Ready for dispatch.</div>`}
@@ -2795,11 +2907,74 @@
                 `;
             }).join('');
 
-            consoleBox.innerHTML = items.length ? items.slice(0, 80).map(item => {
+            renderSignalStreamConsole();
+        }
+
+        function renderSignalStreamConsole() {
+            const consoleBox = document.getElementById("signals-log-box") || document.getElementById("signals-console-stream");
+            if (!consoleBox) return;
+
+            let items = latestSignalsPayload?.items || [];
+            
+            // Filter by agent if not "all"
+            if (activeSignalsAgent && activeSignalsAgent !== "all") {
+                items = items.filter(i => (i.agent || "").toLowerCase() === activeSignalsAgent.toLowerCase());
+            }
+
+            // Filter by severity
+            if (signalSeverityFilter && signalSeverityFilter !== "all") {
+                items = items.filter(i => {
+                    const sev = (i.severity || i.status || "").toLowerCase();
+                    const evt = (i.event_type || "").toLowerCase();
+                    if (signalSeverityFilter === "lease") return sev.includes("lease") || evt.includes("lock_") || i.source === "swarmlock";
+                    if (signalSeverityFilter === "warning") return sev.includes("warn");
+                    if (signalSeverityFilter === "error") return sev.includes("err") || sev.includes("fail");
+                    if (signalSeverityFilter === "info") return !sev.includes("warn") && !sev.includes("err") && !sev.includes("lease") && !evt.includes("lock_");
+                    return true;
+                });
+            }
+
+            // Filter by search query
+            if (signalSearchQuery) {
+                items = items.filter(i => {
+                    const blob = `${i.agent || ''} ${i.event_type || ''} ${i.issue_id || ''} ${i.message || ''} ${i.source || ''}`.toLowerCase();
+                    return blob.includes(signalSearchQuery);
+                });
+            }
+
+            const countEl = document.getElementById("signals-stream-count");
+            if (countEl) countEl.textContent = items.length;
+
+            if (!items.length) {
+                consoleBox.innerHTML = '<div class="text-slate-500 italic py-2">No matching telemetry signals found.</div>';
+                return;
+            }
+
+            consoleBox.innerHTML = items.slice(0, 100).map(item => {
                 const ts = item.timestamp || item.created_at || item.started_at;
-                const color = signalSeverityColor(item.severity || item.status).split(' ')[0];
-                return `<div class="text-slate-300 border-b border-slate-900/80 pb-2 mb-2"><span class="text-slate-500 font-bold">[${escapeHtml(ts ? formatDate(ts) : '—')}]</span> <span class="${color} font-semibold">[${escapeHtml(item.agent || item.source || 'signal')}]</span> <span>${escapeHtml(item.event_type || item.status || 'event')}</span> <span class="text-slate-500">${escapeHtml(item.issue_id || '')}</span></div>`;
-            }).join('') : `<div class="text-slate-500 italic">No assigned-agent signals recorded yet.</div>`;
+                const isLease = (item.event_type || '').includes('lock_') || item.source === 'swarmlock';
+                const sev = item.severity || item.status;
+                const color = isLease ? 'text-cyan-400' : signalSeverityColor(sev).split(' ')[0];
+                const issueMarkup = item.issue_id 
+                    ? `<a href="https://prismatic.growthwebdev.com/tab/tasks?issue=${encodeURIComponent(item.issue_id)}" target="_blank" class="text-indigo-400 hover:text-indigo-300 underline font-semibold text-[10px]">[${escapeHtml(item.issue_id)}]</a>`
+                    : '';
+                const agentBadge = `<span class="px-1.5 py-0.2 rounded bg-slate-900 border border-slate-800 font-bold ${color}">[${escapeHtml(item.agent || item.source || 'signal')}]</span>`;
+
+                return `
+                    <div class="border-b border-slate-900/80 pb-1.5 mb-1.5 flex flex-wrap items-baseline gap-1.5 text-slate-300 signal-log-item">
+                        <span class="text-slate-500 font-bold text-[10px] flex-shrink-0">[${escapeHtml(ts ? formatDate(ts) : '—')}]</span>
+                        ${agentBadge}
+                        <span class="text-slate-400 font-medium text-[10px]">${escapeHtml(item.event_type || item.status || 'event')}</span>
+                        ${issueMarkup}
+                        <span class="text-slate-300 break-all">${escapeHtml(item.message || '')}</span>
+                    </div>
+                `;
+            }).join('');
+
+            if (!signalStreamPaused) {
+                const scrollParent = document.getElementById("signals-console-stream") || consoleBox;
+                scrollParent.scrollTop = scrollParent.scrollHeight;
+            }
         }
 
         let latestSwarmLockData = null;
@@ -4689,8 +4864,16 @@
                             fetchSwarmLockHistory();
                         }
                     }
-                    // Append event to signals console log
-                    addLocalSignal(event.type.replace("webhook_", "").toUpperCase(), event.message || JSON.stringify(event));
+                    if (event.type === "signal.emitted" || event.type === "signal") {
+                        if (activeTab === "signals") {
+                            renderSignalsView();
+                        }
+                        const sig = event.payload || event.signal || {};
+                        addLocalSignal(sig.agent || event.type, sig.message || event.message || "Signal received", sig.severity || "info");
+                    } else {
+                        // Append event to signals console log
+                        addLocalSignal(event.type.replace("webhook_", "").toUpperCase(), event.message || JSON.stringify(event), "info");
+                    }
                 } catch (err) {}
             };
 

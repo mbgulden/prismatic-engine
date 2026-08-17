@@ -3799,6 +3799,10 @@ async def gateway_emit_signal(body: dict[str, Any]) -> dict[str, Any]:
         get_event_bus().publish(SwarmEvent("signal.emitted", item))
     except Exception:
         pass
+    try:
+        await broadcast_ws_json({"type": "signal.emitted", "signal": item})
+    except Exception:
+        pass
     return {"ok": True, "signal": item}
 
 
@@ -3821,6 +3825,10 @@ async def gateway_nudge_agent(body: dict[str, Any]) -> dict[str, Any]:
     try:
         from prismatic.gateway.event_bus import SwarmEvent, get_event_bus
         get_event_bus().publish(SwarmEvent("agent.nudged", {"agent": agent, "message": message}))
+    except Exception:
+        pass
+    try:
+        await broadcast_ws_json({"type": "signal.emitted", "signal": item})
     except Exception:
         pass
     return {"ok": True, "nudge": item}

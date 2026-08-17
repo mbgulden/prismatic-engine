@@ -126,12 +126,93 @@ def _tail_file(path_text: str, *, max_chars: int = 2400) -> str:
         return ""
 
 
+def _candidate_signal_paths() -> list[Path]:
+    paths = [
+        signal_stream_path(),
+        Path(os.path.expanduser("~/.prismatic/db/agent_signal_stream.jsonl")),
+        Path(os.path.expanduser("~/.prismatic/prismatic_state/agent_signal_stream.jsonl")),
+        Path(os.path.expanduser("~/.prismatic/state/agent_signal_stream.jsonl")),
+        Path(os.path.expanduser("~/.antigravity/signals/signals.jsonl")),
+        _state_dir() / "agent_signal_stream.jsonl",
+    ]
+    seen: set[str] = set()
+    result: list[Path] = []
+    for p in paths:
+        norm = str(p.resolve()) if p.exists() else str(p)
+        if norm not in seen:
+            seen.add(norm)
+            result.append(p)
+    return result
+
+
+def _synthesize_swarmlock_signals() -> list[dict[str, Any]]:
+    """Synthesize live agent signals from SwarmLock audit stream."""
+    candidates = [
+        Path(os.path.expanduser("~/.antigravity/audit/swarmlock_audit.jsonl")),
+        Path(os.path.expanduser("~/.prismatic/.antigravity/audit/swarmlock_audit.jsonl")),
+        Path(os.environ.get("PRISMATIC_HOME", "/home/ubuntu")) / ".antigravity" / "audit" / "swarmlock_audit.jsonl",
+    ]
+    signals: list[dict[str, Any]] = []
+    for candidate in candidates:
+        if candidate.exists():
+            for rec in _read_jsonl(candidate):
+                evt_id = rec.get("id") or f"sig-lock-{rec.get('timestamp')}"
+                ts = rec.get("iso_timestamp")
+                if not ts and rec.get("timestamp"):
+                    try:
+                        ts = datetime.fromtimestamp(float(rec["timestamp"]), tz=timezone.utc).isoformat()
+                    except Exception:
+                        ts = utc_now()
+                evt_type = rec.get("event_type", "lease")
+                res = rec.get("resource", "resource")
+                agent = str(rec.get("agent_id") or rec.get("holder") or "swarmlock").lower()
+                intention = rec.get("intention") or rec.get("reason") or ""
+                dur = rec.get("duration_seconds")
+                
+                msg = f"{evt_type.capitalize()} lease on {res}"
+                if intention:
+                    msg += f" — {intention}"
+                if dur:
+                    msg += f" ({dur}s)"
+
+                signals.append({
+                    "id": f"swl-{evt_id}",
+                    "timestamp": ts or utc_now(),
+                    "agent": agent,
+                    "event_type": f"lock_{evt_type}",
+                    "status": evt_type,
+                    "issue_id": rec.get("task_id") or "",
+                    "run_id": rec.get("lease_id") or "",
+                    "source": "swarmlock",
+                    "severity": "lease" if evt_type in {"acquired", "released"} else "warning",
+                    "message": _redact(msg),
+                    "log_path": "",
+                    "transcript": "",
+                    "metadata": rec,
+                })
+    return signals
+
+
 def list_agent_signals(
     *, limit: int = 200, agent: str | None = None, include_log_tails: bool = True
 ) -> dict[str, Any]:
     safe_limit = max(1, min(int(limit or 200), 1000))
     agent_filter = (agent or "").strip().lower()
-    items = _read_jsonl(signal_stream_path())
+    
+    # Collect items from all known signal stream files
+    items_by_id: dict[str, dict[str, Any]] = {}
+    for path in _candidate_signal_paths():
+        for item in _read_jsonl(path):
+            item_id = item.get("id") or f"sig-{item.get('timestamp')}-{item.get('agent')}"
+            items_by_id[item_id] = item
+
+    # Synthesize SwarmLock lease lifecycle events
+    for syn in _synthesize_swarmlock_signals():
+        if syn["id"] not in items_by_id:
+            items_by_id[syn["id"]] = syn
+
+    items = list(items_by_id.values())
+
     if agent_filter and agent_filter != "all":
         items = [
             item

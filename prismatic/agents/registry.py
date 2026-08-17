@@ -54,7 +54,7 @@ class AgentRegistryManager:
                 jules_status = "waiting_input"
                 jules_task = f"Awaiting Plan ({awaiting})"
 
-        return [
+        core_agents = [
             {
                 "agent_id": "agy",
                 "name": "Antigravity (AGY)",
@@ -134,7 +134,97 @@ class AgentRegistryManager:
                 "icon": "🤖",
                 "source": "Subagent Registry",
             },
+            {
+                "agent_id": "swarmproof",
+                "name": "SwarmProof Verifier",
+                "type": "truth_oracle",
+                "executable": "swarmproof",
+                "active_model": "rule-based-oracle-v0.3.0",
+                "model_provider": "Prismatic Core",
+                "capabilities": ["ast_analysis", "anti_deception", "manifest_verify"],
+                "icon": "⚖️",
+                "source": "SwarmProof Core v0.3.0",
+            },
+            {
+                "agent_id": "curator",
+                "name": "Curator Ingestion",
+                "type": "ingestion_worker",
+                "executable": "curator",
+                "active_model": "gemini-2.5-flash",
+                "model_provider": "Google DeepMind",
+                "capabilities": ["document_curation", "vector_index", "evidence_db"],
+                "icon": "📚",
+                "source": "Curator Ingestion Daemon",
+            },
+            {
+                "agent_id": "supervisor",
+                "name": "Supervisor Dispatcher",
+                "type": "coordinator",
+                "executable": "supervisor",
+                "active_model": "gemini-3.1-pro-high",
+                "model_provider": "Google DeepMind",
+                "capabilities": ["lane_lock", "dispatcher", "linear_sync"],
+                "icon": "🎯",
+                "source": "Prismatic Supervisor",
+            },
         ]
+
+        discovered_map: dict[str, dict[str, Any]] = {a["agent_id"]: a for a in core_agents}
+
+        # Ingest dynamic agent inventory files
+        inventory_candidates = [
+            Path(os.path.expanduser("~/.prismatic/prismatic_state/discovered_agents.json")),
+            Path(os.path.expanduser("~/.prismatic/prismatic_state/agent_inventory.json")),
+            Path("./prismatic_state/discovered_agents.json"),
+            Path("./prismatic_state/agent_inventory.json"),
+        ]
+
+        icon_map = {
+            "kai-css": "🎨",
+            "kai-js": "⚡",
+            "kai-content": "📝",
+            "codex-5-5": "💻",
+            "codex-5-4": "💻",
+            "orchestrator": "🌐",
+            "hermeslocal": "🖥️",
+            "qwenlocal": "🧠",
+            "deepseekv4": "🔮",
+            "hdengine": "✨",
+            "ai-consulting": "💼",
+            "google-ai-toolkit": "🧰",
+            "google": "🔍",
+        }
+
+        for inv_path in inventory_candidates:
+            doc = _read_json(inv_path)
+            if isinstance(doc, dict):
+                agents_list = doc.get("agents") or doc.get("services") or []
+                if isinstance(agents_list, list):
+                    for item in agents_list:
+                        if not isinstance(item, dict):
+                            continue
+                        raw_name = item.get("name") or item.get("label") or ""
+                        aid = raw_name.replace("agent:", "").strip().lower()
+                        if not aid or aid in discovered_map or aid in {"bot", "gpg-agent"}:
+                            continue
+                        
+                        agent_type = item.get("type") or "hermes-profile"
+                        model = item.get("model") or "default"
+                        icon = icon_map.get(aid, "🤖")
+
+                        discovered_map[aid] = {
+                            "agent_id": aid,
+                            "name": item.get("display_name") or f"{aid.upper()} (Hermes)",
+                            "type": agent_type,
+                            "executable": aid,
+                            "active_model": str(model),
+                            "model_provider": item.get("provider") or "Hermes Node / Cloud",
+                            "capabilities": item.get("capabilities") or ["chat", "tools"],
+                            "icon": icon,
+                            "source": f"Hermes Profile ({item.get('config_path') or 'registered'})",
+                        }
+
+        return list(discovered_map.values())
 
     @classmethod
     def get_active_agents(cls) -> list[dict[str, Any]]:
