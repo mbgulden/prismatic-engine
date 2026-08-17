@@ -65,6 +65,7 @@ Objective → Key Result → Function → Evidence
 | **`swarmlock`** | [`github.com/mbgulden/swarmlock`](https://github.com/mbgulden/swarmlock) | Atomic distributed file locking & multi-worker race fencing. | Python API, CLI, FastAPI Router |
 | **`swarmcron`** | [`github.com/mbgulden/swarmcron`](https://github.com/mbgulden/swarmcron) | Zero-dependency DAG cron scheduler, machine execution receipts, and self-healing recovery. | Python API, CLI (`swarmcron`), FastAPI Router |
 | **`swarmrouter`**| [`github.com/mbgulden/swarmrouter`](https://github.com/mbgulden/swarmrouter)| Deterministic task capability taxonomy, token cost estimation, budget ceilings, and model routing. | Python API, CLI (`swarmrouter`), FastAPI Router |
+| **`swarmcurator`**| [`github.com/mbgulden/swarmcurator`](https://github.com/mbgulden/swarmcurator)| Universal task admission, anti-starvation priority aging, and lane-locking queue. | Python API, CLI (`swarmcurator`), FastAPI Router |
 | **`swarmproof`** | [`github.com/mbgulden/swarmproof`](https://github.com/mbgulden/swarmproof) | Deterministic RED $\to$ GREEN test oracle, exact-head commit/tree receipts, and verification ledgers. | Python API, CLI (`swarmproof`), Verification Gate |
 
 ---

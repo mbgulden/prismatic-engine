@@ -14,6 +14,7 @@ PRIMITIVES=(
   "swarmlock"
   "swarmcron"
   "swarmrouter"
+  "swarmcurator"
   "swarmproof"
 )
 

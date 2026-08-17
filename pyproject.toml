@@ -33,6 +33,7 @@ dependencies = [
     "pytest>=8.0",
     "pyyaml>=6.0",
     "swarmcron>=0.3.0",
+    "swarmcurator>=0.1.0",
     "swarmlock>=0.2.0",
     "swarmrouter>=0.1.0",
     "tomli>=2.0; python_version < '3.11'",
@@ -46,6 +47,7 @@ primitives = [
     "swarmlock @ git+https://github.com/mbgulden/swarmlock.git@main",
     "swarmcron @ git+https://github.com/mbgulden/swarmcron.git@main",
     "swarmrouter @ git+https://github.com/mbgulden/swarmrouter.git@main",
+    "swarmcurator @ git+https://github.com/mbgulden/swarmcurator.git@main",
 ]
 verification = [
     "swarmproof @ git+https://github.com/mbgulden/swarmproof.git@main",
