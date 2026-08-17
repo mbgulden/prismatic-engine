@@ -116,3 +116,69 @@ def test_api_swarmproof_verify_evaluates_manifest():
     data = response.json()
     assert data.get("passed") is False
     assert len(data.get("violations", [])) > 0
+
+
+def test_api_swarmproof_run_test_security_guards_reject_unsafe_commands():
+    """Verify POST /api/swarmproof/run-test enforces whitelist and blocks shell operators."""
+    # Empty command
+    r1 = client.post("/api/swarmproof/run-test", json={"command": ""})
+    assert r1.status_code == 400
+
+    # Shell chaining semicolon
+    r2 = client.post("/api/swarmproof/run-test", json={"command": "pytest tests/ ; rm -rf /"})
+    assert r2.status_code == 400
+    assert "disallowed shell token ';'" in r2.json().get("detail", "")
+
+    # Shell chaining &&
+    r3 = client.post("/api/swarmproof/run-test", json={"command": "pytest tests/ && echo pwned"})
+    assert r3.status_code == 400
+    assert "disallowed shell token '&&'" in r3.json().get("detail", "")
+
+    # Shell pipe |
+    r4 = client.post("/api/swarmproof/run-test", json={"command": "pytest tests/ | cat"})
+    assert r4.status_code == 400
+    assert "disallowed shell token '|'" in r4.json().get("detail", "")
+
+    # Non-whitelisted binary
+    r5 = client.post("/api/swarmproof/run-test", json={"command": "curl http://malicious.com"})
+    assert r5.status_code == 400
+    assert "approved test runner" in r5.json().get("detail", "")
+
+
+def test_api_swarmproof_ast_analysis_structured_syntax_error():
+    """Verify POST /api/swarmproof/analyze-ast safely flags unparsable syntax as a violation."""
+    payload = {
+        "baseline": "def test_a():\n    assert token.is_valid()\n",
+        "candidate": "def test_a():\n    assert ((\n",  # Syntax error unclosed parenthesis
+    }
+    response = client.post("/api/swarmproof/analyze-ast", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data.get("is_clean") is False
+    assert len(data.get("violations", [])) > 0
+    assert any("SYNTAX_ERROR" in v or "ASSERTION_DEGRADED" in v for v in data.get("violations", []))
+
+
+def test_dashboard_template_contains_accessibility_modal_attributes():
+    """Verify all 5 modals possess role=dialog, aria-modal=true, and aria-labelledby."""
+    html = DASHBOARD_HTML_PATH.read_text(encoding="utf-8")
+    for modal_id in (
+        "swarmproof-verify-modal",
+        "swarmproof-ast-modal",
+        "swarmproof-run-modal",
+        "swarmproof-hooks-modal",
+        "swarmproof-receipt-modal",
+    ):
+        assert f'id="{modal_id}"' in html
+        assert f'role="dialog"' in html
+        assert f'aria-modal="true"' in html
+    assert 'aria-label="Close modal"' in html
+    assert 'Escape' in html
+
+
+def test_dashboard_template_contains_light_mode_styles():
+    """Verify compiled dashboard contains light mode contrast overrides for SwarmProof."""
+    html = DASHBOARD_HTML_PATH.read_text(encoding="utf-8")
+    assert "body.light-mode #section-swarmproof .glass-panel" in html
+    assert "body.light-mode #swarmproof-receipts-table" in html
+

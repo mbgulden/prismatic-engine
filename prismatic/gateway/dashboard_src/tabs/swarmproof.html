@@ -58,25 +58,25 @@
                 </div>
 
                 <!-- 4 Top KPI Metric Cards -->
-                <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                     <div class="glass-panel p-3.5 rounded-xl border border-slate-800 bg-slate-900/40">
                         <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Enforced Invariants</div>
-                        <div id="sp-metric-invariants" class="text-xl font-bold font-mono text-emerald-400 mt-0.5">10 / 10 Active</div>
+                        <div id="sp-metric-invariants" class="text-lg sm:text-xl font-bold font-mono text-emerald-400 mt-0.5">10 / 10 Active</div>
                         <div class="text-[10px] text-slate-500 mt-0.5">Fail-closed boundary fences</div>
                     </div>
                     <div class="glass-panel p-3.5 rounded-xl border border-slate-800 bg-slate-900/40">
                         <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Sealed Evidence Ledgers</div>
-                        <div id="sp-metric-ledgers" class="text-xl font-bold font-mono text-cyan-400 mt-0.5">0</div>
+                        <div id="sp-metric-ledgers" class="text-lg sm:text-xl font-bold font-mono text-cyan-400 mt-0.5">0</div>
                         <div class="text-[10px] text-slate-500 mt-0.5">Cryptographically bound</div>
                     </div>
                     <div class="glass-panel p-3.5 rounded-xl border border-slate-800 bg-slate-900/40">
                         <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">RED → GREEN Traces</div>
-                        <div id="sp-metric-red-green" class="text-xl font-bold font-mono text-indigo-400 mt-0.5">0</div>
+                        <div id="sp-metric-red-green" class="text-lg sm:text-xl font-bold font-mono text-indigo-400 mt-0.5">0</div>
                         <div class="text-[10px] text-slate-500 mt-0.5">Verified defect closures</div>
                     </div>
                     <div class="glass-panel p-3.5 rounded-xl border border-slate-800 bg-slate-900/40">
                         <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Adversarial Deflections 🛡️</div>
-                        <div id="sp-metric-deflections" class="text-xl font-bold font-mono text-amber-400 mt-0.5">0</div>
+                        <div id="sp-metric-deflections" class="text-lg sm:text-xl font-bold font-mono text-amber-400 mt-0.5">0</div>
                         <div class="text-[10px] text-slate-500 mt-0.5">Tautologies &amp; leaks blocked</div>
                     </div>
                 </div>
@@ -294,27 +294,27 @@
         <!-- ================= MODALS ================= -->
 
         <!-- 1. Verify Packet Modal -->
-        <div id="swarmproof-verify-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
-            <div class="glass-panel w-full max-w-2xl rounded-xl p-6 border border-slate-700 bg-slate-900 shadow-2xl space-y-4">
+        <div id="swarmproof-verify-modal" role="dialog" aria-modal="true" aria-labelledby="sp-verify-title" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+            <div class="glass-panel w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl p-6 border border-slate-700 bg-slate-900 shadow-2xl space-y-4">
                 <div class="flex items-center justify-between border-b border-slate-800 pb-3">
                     <div class="flex items-center gap-2">
                         <span class="p-1 rounded bg-indigo-500/20 text-indigo-400">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                         </span>
-                        <h3 class="text-sm font-bold text-slate-200 uppercase tracking-wider">Fail-Closed Packet Verifier</h3>
+                        <h3 id="sp-verify-title" class="text-sm font-bold text-slate-200 uppercase tracking-wider">Fail-Closed Packet Verifier</h3>
                     </div>
-                    <button onclick="closeSwarmProofVerifyModal()" class="text-slate-400 hover:text-white">&times;</button>
+                    <button type="button" onclick="closeSwarmProofVerifyModal()" aria-label="Close modal" class="text-slate-400 hover:text-white text-lg font-bold p-1">&times;</button>
                 </div>
                 <div class="space-y-3 text-xs">
                     <p class="text-slate-400">Paste raw <code>result-packet.json</code> or <code>RESULT.md</code> payload below to evaluate against all 10 Anti-Deception Invariants:</p>
                     <textarea id="sp-verify-input" rows="8" placeholder='{"manifest_version": "0.2.0", "task_id": "GRO-...", "status": "VERIFIED_SUCCESS", "ledger": { ... }}' class="w-full font-mono text-[11px] bg-slate-950 border border-slate-800 rounded-lg p-3 text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500"></textarea>
                     
-                    <div class="flex items-center justify-between pt-2">
+                    <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2">
                         <label class="flex items-center gap-2 text-slate-300 text-xs cursor-pointer">
                             <input type="checkbox" id="sp-verify-strict" checked class="rounded bg-slate-950 border-slate-800 text-indigo-600 focus:ring-0"/>
                             <span>Strict Mode (Enforce Invariant 2 RED-GREEN Decision Trace)</span>
                         </label>
-                        <button onclick="executeSwarmProofVerify()" class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs uppercase tracking-wider transition">
+                        <button type="button" onclick="executeSwarmProofVerify()" class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs uppercase tracking-wider transition">
                             Verify Now
                         </button>
                     </div>
@@ -327,16 +327,16 @@
         </div>
 
         <!-- 2. AST Assertion Guard Modal -->
-        <div id="swarmproof-ast-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
-            <div class="glass-panel w-full max-w-3xl rounded-xl p-6 border border-slate-700 bg-slate-900 shadow-2xl space-y-4">
+        <div id="swarmproof-ast-modal" role="dialog" aria-modal="true" aria-labelledby="sp-ast-title" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+            <div class="glass-panel w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-xl p-6 border border-slate-700 bg-slate-900 shadow-2xl space-y-4">
                 <div class="flex items-center justify-between border-b border-slate-800 pb-3">
                     <div class="flex items-center gap-2">
                         <span class="p-1 rounded bg-cyan-500/20 text-cyan-400">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
                         </span>
-                        <h3 class="text-sm font-bold text-slate-200 uppercase tracking-wider">AST Assertion &amp; Anti-Weakening Guard</h3>
+                        <h3 id="sp-ast-title" class="text-sm font-bold text-slate-200 uppercase tracking-wider">AST Assertion &amp; Anti-Weakening Guard</h3>
                     </div>
-                    <button onclick="closeSwarmProofASTModal()" class="text-slate-400 hover:text-white">&times;</button>
+                    <button type="button" onclick="closeSwarmProofASTModal()" aria-label="Close modal" class="text-slate-400 hover:text-white text-lg font-bold p-1">&times;</button>
                 </div>
                 <div class="space-y-3 text-xs">
                     <p class="text-slate-400">Compare baseline and candidate test files to detect weakened assertions, tautologies (<code>assert True</code>), or skip suppressions:</p>
@@ -351,7 +351,7 @@
                         </div>
                     </div>
                     <div class="flex justify-end pt-2">
-                        <button onclick="executeSwarmProofASTAnalyze()" class="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs uppercase tracking-wider transition">
+                        <button type="button" onclick="executeSwarmProofASTAnalyze()" class="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs uppercase tracking-wider transition">
                             Analyze AST Diff
                         </button>
                     </div>
@@ -364,23 +364,23 @@
         </div>
 
         <!-- 3. Test Runner Modal -->
-        <div id="swarmproof-run-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
-            <div class="glass-panel w-full max-w-xl rounded-xl p-6 border border-slate-700 bg-slate-900 shadow-2xl space-y-4">
+        <div id="swarmproof-run-modal" role="dialog" aria-modal="true" aria-labelledby="sp-run-title" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+            <div class="glass-panel w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-xl p-6 border border-slate-700 bg-slate-900 shadow-2xl space-y-4">
                 <div class="flex items-center justify-between border-b border-slate-800 pb-3">
                     <div class="flex items-center gap-2">
                         <span class="p-1 rounded bg-amber-500/20 text-amber-400">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                         </span>
-                        <h3 class="text-sm font-bold text-slate-200 uppercase tracking-wider">Execute Isolated Test Oracle</h3>
+                        <h3 id="sp-run-title" class="text-sm font-bold text-slate-200 uppercase tracking-wider">Execute Isolated Test Oracle</h3>
                     </div>
-                    <button onclick="closeSwarmProofRunModal()" class="text-slate-400 hover:text-white">&times;</button>
+                    <button type="button" onclick="closeSwarmProofRunModal()" aria-label="Close modal" class="text-slate-400 hover:text-white text-lg font-bold p-1">&times;</button>
                 </div>
                 <div class="space-y-3 text-xs">
                     <div>
                         <label class="text-[10px] font-bold uppercase text-slate-400 block mb-1">Test Command</label>
                         <input type="text" id="sp-run-command" placeholder="pytest tests/test_contracts.py" class="w-full font-mono text-xs bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500"/>
                     </div>
-                    <div class="grid grid-cols-2 gap-3">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
                             <label class="text-[10px] font-bold uppercase text-slate-400 block mb-1">Verification Stage</label>
                             <select id="sp-run-stage" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs text-slate-200 focus:outline-none focus:border-amber-500">
@@ -396,7 +396,7 @@
                         </div>
                     </div>
                     <div class="flex justify-end pt-2">
-                        <button onclick="executeSwarmProofRunTest()" class="px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs uppercase tracking-wider transition">
+                        <button type="button" onclick="executeSwarmProofRunTest()" class="px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs uppercase tracking-wider transition">
                             Execute &amp; Capture Receipt
                         </button>
                     </div>
@@ -409,16 +409,16 @@
         </div>
 
         <!-- 4. Git Hooks Manager Modal -->
-        <div id="swarmproof-hooks-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
-            <div class="glass-panel w-full max-w-lg rounded-xl p-6 border border-slate-700 bg-slate-900 shadow-2xl space-y-4">
+        <div id="swarmproof-hooks-modal" role="dialog" aria-modal="true" aria-labelledby="sp-hooks-title" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+            <div class="glass-panel w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl p-6 border border-slate-700 bg-slate-900 shadow-2xl space-y-4">
                 <div class="flex items-center justify-between border-b border-slate-800 pb-3">
                     <div class="flex items-center gap-2">
                         <span class="p-1 rounded bg-slate-700 text-slate-300">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
                         </span>
-                        <h3 class="text-sm font-bold text-slate-200 uppercase tracking-wider">Universal Git Hook Guard</h3>
+                        <h3 id="sp-hooks-title" class="text-sm font-bold text-slate-200 uppercase tracking-wider">Universal Git Hook Guard</h3>
                     </div>
-                    <button onclick="closeSwarmProofHooksModal()" class="text-slate-400 hover:text-white">&times;</button>
+                    <button type="button" onclick="closeSwarmProofHooksModal()" aria-label="Close modal" class="text-slate-400 hover:text-white text-lg font-bold p-1">&times;</button>
                 </div>
                 <div class="space-y-3 text-xs">
                     <p class="text-slate-400">Install fail-closed Git hooks into <code>.git/hooks/</code> to prevent commits or pushes with unverified receipts or weakened test suites:</p>
@@ -435,10 +435,10 @@
                     </div>
 
                     <div class="flex items-center justify-end gap-2 pt-2">
-                        <button onclick="executeSwarmProofHookAction('uninstall')" class="px-3 py-1.5 rounded-lg border border-rose-800/60 bg-rose-950/40 text-rose-300 hover:bg-rose-900 text-xs font-semibold transition">
+                        <button type="button" onclick="executeSwarmProofHookAction('uninstall')" class="px-3 py-1.5 rounded-lg border border-rose-800/60 bg-rose-950/40 text-rose-300 hover:bg-rose-900 text-xs font-semibold transition">
                             Uninstall Hooks
                         </button>
-                        <button onclick="executeSwarmProofHookAction('install')" class="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wider transition">
+                        <button type="button" onclick="executeSwarmProofHookAction('install')" class="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wider transition">
                             Install / Activate Hooks
                         </button>
                     </div>
@@ -449,7 +449,7 @@
         </div>
 
         <!-- 5. Proof Inspection Deep Modal -->
-        <div id="swarmproof-receipt-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+        <div id="swarmproof-receipt-modal" role="dialog" aria-modal="true" aria-labelledby="sp-modal-title" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
             <div class="glass-panel w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-xl p-6 border border-slate-700 bg-slate-900 shadow-2xl space-y-4">
                 <div class="flex items-center justify-between border-b border-slate-800 pb-3 sticky top-0 bg-slate-900 z-10">
                     <div class="flex items-center gap-2">
@@ -458,7 +458,7 @@
                         </span>
                         <h3 id="sp-modal-title" class="text-sm font-bold text-slate-200 uppercase tracking-wider">Proof Inspection</h3>
                     </div>
-                    <button onclick="closeSwarmProofReceiptModal()" class="text-slate-400 hover:text-white">&times;</button>
+                    <button type="button" onclick="closeSwarmProofReceiptModal()" aria-label="Close modal" class="text-slate-400 hover:text-white text-lg font-bold p-1">&times;</button>
                 </div>
                 <div id="sp-modal-content" class="space-y-4 text-xs font-mono">
                     <!-- Populated dynamically by dashboard.js -->

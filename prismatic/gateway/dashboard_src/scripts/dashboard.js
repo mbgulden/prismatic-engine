@@ -4890,11 +4890,20 @@
                     `;
                 } else {
                     resBox.className = 'mt-3 p-3 rounded-lg border border-rose-500/50 bg-rose-950/30 font-mono text-[11px] space-y-1.5';
+                    let syntaxExtra = '';
+                    if (data.syntax_error) {
+                        syntaxExtra = `
+                            <div class="mt-2 p-2 rounded bg-slate-900 border border-slate-800 text-[10px] text-slate-300">
+                                <div><span class="text-rose-400 font-bold">Line ${data.syntax_error.lineno}:</span> ${escapeHtml(data.syntax_error.text || '')}</div>
+                            </div>
+                        `;
+                    }
                     resBox.innerHTML = `
                         <div class="text-rose-400 font-bold">✗ WEAKENING DETECTED: AST Anti-Weakening Guard Tripped</div>
                         <div class="space-y-1 text-[10px]">
                             ${(data.violations || []).map(v => `<div class="text-rose-300">• ${escapeHtml(v)}</div>`).join('')}
                         </div>
+                        ${syntaxExtra}
                     `;
                 }
             } catch (err) {
@@ -4930,20 +4939,36 @@
                 });
                 const data = await res.json();
                 
-                resBox.className = `mt-3 p-3 rounded-lg border ${data.passed ? 'border-emerald-500/50 bg-emerald-950/30' : 'border-rose-500/50 bg-rose-950/30'} font-mono text-[11px] space-y-2`;
-                resBox.innerHTML = `
-                    <div class="flex items-center justify-between">
-                        <span class="font-bold ${data.passed ? 'text-emerald-400' : 'text-rose-400'}">${data.passed ? '✓ PASSED' : '✗ FAILED'} (Exit Code: ${data.exit_code})</span>
-                        <span class="text-slate-400">${(data.duration_seconds || 0).toFixed(2)}s</span>
-                    </div>
-                    <div class="text-[10px] text-slate-400">Stdout SHA-256: <span class="font-mono text-slate-300">${(data.stdout_sha256 || '').substring(0, 16)}...</span></div>
-                    <pre class="bg-black/40 p-2 rounded max-h-32 overflow-y-auto text-[10px] text-slate-300 whitespace-pre-wrap">${escapeHtml(data.stdout_preview || data.stderr_preview || 'No output')}</pre>
-                `;
-                // Refresh receipts
+                if (!res.ok) {
+                    resBox.className = 'mt-3 p-3 rounded-lg border border-rose-500/50 bg-rose-950/30 font-mono text-[11px] space-y-1.5';
+                    resBox.innerHTML = `
+                        <div class="text-rose-400 font-bold">✗ Execution Rejected: ${escapeHtml(data.detail || 'Error')}</div>
+                    `;
+                    return;
+                }
+
+                if (data.passed) {
+                    resBox.className = 'mt-3 p-3 rounded-lg border border-emerald-500/50 bg-emerald-950/30 font-mono text-[11px] space-y-1.5';
+                    resBox.innerHTML = `
+                        <div class="text-emerald-400 font-bold">✓ TEST PASSED (Exit Code 0)</div>
+                        <div class="text-slate-300 text-[10px]">
+                            Duration: ${(data.duration_seconds || 0).toFixed(3)}s | Tree SHA: ${escapeHtml(data.tree_sha || 'N/A')}
+                        </div>
+                    `;
+                } else {
+                    resBox.className = 'mt-3 p-3 rounded-lg border border-rose-500/50 bg-rose-950/30 font-mono text-[11px] space-y-1.5';
+                    resBox.innerHTML = `
+                        <div class="text-rose-400 font-bold">✗ TEST FAILED (Exit Code ${data.exit_code})</div>
+                        <div class="text-slate-300 text-[10px]">
+                            Stage: ${escapeHtml(data.stage || stage)} | Duration: ${(data.duration_seconds || 0).toFixed(3)}s
+                        </div>
+                    `;
+                }
+                // Refresh receipts table
                 renderSwarmProofView();
             } catch (err) {
                 resBox.className = 'mt-3 p-3 rounded-lg border border-rose-500/50 bg-rose-950/30 font-mono text-[11px]';
-                resBox.innerHTML = `<div class="text-rose-400">Test runner error: ${escapeHtml(err.message)}</div>`;
+                resBox.innerHTML = `<div class="text-rose-400">Run test error: ${escapeHtml(err.message)}</div>`;
             }
         }
 
@@ -4958,37 +4983,42 @@
         }
 
         async function checkSwarmProofHookStatus() {
-            const commitEl = document.getElementById('sp-hook-status-commit');
-            const pushEl = document.getElementById('sp-hook-status-push');
+            const statusCommit = document.getElementById('sp-hook-status-commit');
+            const statusPush = document.getElementById('sp-hook-status-push');
             try {
                 const res = await fetch('/api/swarmproof/status');
-                if (res.ok) {
-                    const data = await res.json();
-                    if (commitEl) commitEl.innerHTML = data.hooks_installed?.pre_commit ? '<span class="text-emerald-400 font-bold">INSTALLED</span>' : '<span class="text-slate-500">NOT INSTALLED</span>';
-                    if (pushEl) pushEl.innerHTML = data.hooks_installed?.pre_push ? '<span class="text-emerald-400 font-bold">INSTALLED</span>' : '<span class="text-slate-500">NOT INSTALLED</span>';
+                const data = await res.json();
+                if (statusCommit) {
+                    statusCommit.textContent = data.hooks_installed?.pre_commit ? 'ACTIVE (Protected)' : 'NOT INSTALLED';
+                    statusCommit.className = data.hooks_installed?.pre_commit ? 'text-emerald-400 font-bold' : 'text-slate-500';
                 }
-            } catch(e) {}
+                if (statusPush) {
+                    statusPush.textContent = data.hooks_installed?.pre_push ? 'ACTIVE (Protected)' : 'NOT INSTALLED';
+                    statusPush.className = data.hooks_installed?.pre_push ? 'text-emerald-400 font-bold' : 'text-slate-500';
+                }
+            } catch (e) {
+                if (statusCommit) statusCommit.textContent = 'Status Unavailable';
+                if (statusPush) statusPush.textContent = 'Status Unavailable';
+            }
         }
 
         async function executeSwarmProofHookAction(action) {
             const fb = document.getElementById('sp-hook-feedback');
             if (fb) {
                 fb.classList.remove('hidden');
-                fb.textContent = `Executing ${action}...`;
+                fb.innerHTML = `<span class="text-slate-400">${action === 'install' ? 'Installing' : 'Uninstalling'} git hooks...</span>`;
             }
             try {
                 const res = await fetch(`/api/swarmproof/hooks/${action}`, { method: 'POST' });
                 const data = await res.json();
                 if (fb) {
-                    fb.textContent = data.message || `Hooks ${action} completed`;
-                    fb.className = 'text-xs text-emerald-400 font-mono mt-2';
+                    fb.innerHTML = data.success
+                        ? `<span class="text-emerald-400 font-bold">✓ ${escapeHtml(data.message)}</span>`
+                        : `<span class="text-rose-400 font-bold">✗ ${escapeHtml(data.message)}</span>`;
                 }
                 checkSwarmProofHookStatus();
-            } catch(err) {
-                if (fb) {
-                    fb.textContent = `Error: ${err.message}`;
-                    fb.className = 'text-xs text-rose-400 font-mono mt-2';
-                }
+            } catch (err) {
+                if (fb) fb.innerHTML = `<span class="text-rose-400 font-bold">✗ Error: ${escapeHtml(err.message)}</span>`;
             }
         }
 
@@ -5107,7 +5137,39 @@
                 if (event.target === cronModal) {
                     closeCronDeleteModal();
                 }
+                // SwarmProof modals backdrop click
+                const spModals = [
+                    'swarmproof-verify-modal',
+                    'swarmproof-ast-modal',
+                    'swarmproof-run-modal',
+                    'swarmproof-hooks-modal',
+                    'swarmproof-receipt-modal'
+                ];
+                spModals.forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el && event.target === el) {
+                        el.classList.add('hidden');
+                    }
+                });
             };
+
+            // Global Escape key dismisses modals
+            window.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' || e.key === 'Esc') {
+                    closeModal();
+                    closeCronDeleteModal();
+                    [
+                        'swarmproof-verify-modal',
+                        'swarmproof-ast-modal',
+                        'swarmproof-run-modal',
+                        'swarmproof-hooks-modal',
+                        'swarmproof-receipt-modal'
+                    ].forEach(id => {
+                        const el = document.getElementById(id);
+                        if (el) el.classList.add('hidden');
+                    });
+                }
+            });
             
             // Show AGY as default agent details
             showAgentDetail('agy');

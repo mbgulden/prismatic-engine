@@ -825,4 +825,91 @@
             color: #334155 !important;
         }
 
+        /* ═════════════════════════════════════════════════════════════════
+           SWARMPROOF LIGHT MODE CONTRAST AND THEME SYSTEM
+           ═════════════════════════════════════════════════════════════════ */
+        body.light-mode #section-swarmproof .glass-panel {
+            background-color: #ffffff !important;
+            border-color: #e2e8f0 !important;
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px -1px rgba(0, 0, 0, 0.05) !important;
+        }
+        body.light-mode #section-swarmproof .bg-slate-900\/40,
+        body.light-mode #section-swarmproof .bg-slate-950\/40 {
+            background-color: #f8fafc !important;
+            border-color: #e2e8f0 !important;
+        }
+        body.light-mode #section-swarmproof h2,
+        body.light-mode #section-swarmproof h3,
+        body.light-mode #section-swarmproof h4 {
+            color: #0f172a !important;
+        }
+        body.light-mode #section-swarmproof p,
+        body.light-mode #section-swarmproof .text-slate-500,
+        body.light-mode #section-swarmproof .text-slate-400 {
+            color: #475569 !important;
+        }
+        body.light-mode #section-swarmproof .border-slate-800,
+        body.light-mode #section-swarmproof .border-slate-800\/80,
+        body.light-mode #section-swarmproof .border-slate-900 {
+            border-color: #e2e8f0 !important;
+        }
+        body.light-mode #section-swarmproof input,
+        body.light-mode #section-swarmproof select,
+        body.light-mode #section-swarmproof textarea {
+            background-color: #ffffff !important;
+            border-color: #cbd5e1 !important;
+            color: #0f172a !important;
+        }
+        body.light-mode #section-swarmproof input::placeholder,
+        body.light-mode #section-swarmproof textarea::placeholder {
+            color: #94a3b8 !important;
+        }
+        body.light-mode #swarmproof-receipts-table thead tr {
+            border-color: #cbd5e1 !important;
+        }
+        body.light-mode #swarmproof-receipts-table thead th {
+            color: #334155 !important;
+        }
+        body.light-mode #swarmproof-receipts-tbody tr {
+            border-color: #f1f5f9 !important;
+        }
+        body.light-mode #swarmproof-receipts-tbody tr:hover {
+            background-color: #f1f5f9 !important;
+        }
+        body.light-mode #swarmproof-receipts-tbody td {
+            color: #334155 !important;
+        }
+        body.light-mode [id^="swarmproof-"][id$="-modal"] .glass-panel {
+            background-color: #ffffff !important;
+            border-color: #cbd5e1 !important;
+            color: #0f172a !important;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15) !important;
+        }
+        body.light-mode [id^="swarmproof-"][id$="-modal"] h3,
+        body.light-mode [id^="swarmproof-"][id$="-modal"] h4 {
+            color: #0f172a !important;
+        }
+        body.light-mode [id^="swarmproof-"][id$="-modal"] .border-slate-800,
+        body.light-mode [id^="swarmproof-"][id$="-modal"] .border-slate-700 {
+            border-color: #e2e8f0 !important;
+        }
+        body.light-mode [id^="swarmproof-"][id$="-modal"] .bg-slate-950,
+        body.light-mode [id^="swarmproof-"][id$="-modal"] .bg-slate-900 {
+            background-color: #f8fafc !important;
+            border-color: #e2e8f0 !important;
+            color: #334155 !important;
+        }
+        body.light-mode [id^="swarmproof-"][id$="-modal"] input,
+        body.light-mode [id^="swarmproof-"][id$="-modal"] textarea,
+        body.light-mode [id^="swarmproof-"][id$="-modal"] select {
+            background-color: #ffffff !important;
+            border-color: #cbd5e1 !important;
+            color: #0f172a !important;
+        }
+        body.light-mode [id^="swarmproof-"][id$="-modal"] pre {
+            background-color: #f1f5f9 !important;
+            border-color: #cbd5e1 !important;
+            color: #0f172a !important;
+        }
+
 

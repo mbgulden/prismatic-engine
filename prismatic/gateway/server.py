@@ -5451,6 +5451,19 @@ async def gateway_swarmproof_analyze_ast(request_data: dict[str, Any]) -> dict[s
             "candidate_asserts": report.candidate_asserts,
             "violations": report.violations,
         }
+    except SyntaxError as syn_err:
+        return {
+            "is_clean": False,
+            "baseline_asserts": 0,
+            "candidate_asserts": 0,
+            "violations": [f"SyntaxError (line {syn_err.lineno}, col {syn_err.offset}): {syn_err.msg}"],
+            "syntax_error": {
+                "lineno": syn_err.lineno,
+                "offset": syn_err.offset,
+                "msg": syn_err.msg,
+                "text": syn_err.text.strip() if syn_err.text else "",
+            },
+        }
     except Exception as exc:
         return {
             "is_clean": False,
@@ -5460,16 +5473,46 @@ async def gateway_swarmproof_analyze_ast(request_data: dict[str, Any]) -> dict[s
         }
 
 
+ALLOWED_TEST_PREFIXES = (
+    "pytest",
+    "python -m pytest",
+    "python -m unittest",
+    "python3 -m pytest",
+    "python3 -m unittest",
+    "npm test",
+    "npm run test",
+    "agy test",
+    "agy ",
+)
+
+DISALLOWED_SHELL_TOKENS = (";", "&&", "||", "|", "`", "$(", ">", "<", "\n", "\r")
+
+
 @app.post("/api/swarmproof/run-test")
 @app.post("/api/gateway/swarmproof/run-test")
 async def gateway_swarmproof_run_test(request_data: dict[str, Any]) -> dict[str, Any]:
     """Execute a deterministic test run and generate a VerificationReceipt."""
-    command = request_data.get("command", "")
-    stage_str = request_data.get("stage", "POST_REPAIR_GREEN")
-    task_id = request_data.get("task_id", "LOCAL")
+    command = str(request_data.get("command", "")).strip()
+    stage_str = str(request_data.get("stage", "POST_REPAIR_GREEN")).strip()
+    task_id = str(request_data.get("task_id", "LOCAL")).strip()
 
     if not command:
         raise HTTPException(status_code=400, detail="Command string is required")
+
+    # Security check: disallow shell chaining and operator characters
+    for token in DISALLOWED_SHELL_TOKENS:
+        if token in command:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Security rejection: Command contains disallowed shell token '{token}'",
+            )
+
+    # Security check: verify prefix is an allowed test harness
+    if not any(command.startswith(prefix) for prefix in ALLOWED_TEST_PREFIXES):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Security rejection: Command must begin with an approved test runner: {ALLOWED_TEST_PREFIXES}",
+        )
 
     try:
         from swarmproof.core.runner import TestRunner
@@ -5478,6 +5521,8 @@ async def gateway_swarmproof_run_test(request_data: dict[str, Any]) -> dict[str,
         runner = TestRunner()
         receipt = runner.run_command(command=command, stage=stage, task_id=task_id)
         return receipt.to_dict()
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Execution error: {str(exc)}")
 
