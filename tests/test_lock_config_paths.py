@@ -41,6 +41,7 @@ def test_lock_module_expands_tilde_in_configured_lock_file(tmp_path, monkeypatch
         encoding="utf-8",
     )
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.delenv("PRISMATIC_HOME", raising=False)
     importlib.reload(lock_module)
 
@@ -58,6 +59,7 @@ def test_lock_module_falls_back_to_prismatic_home_without_repo_config(tmp_path, 
 def test_pre_push_hook_expands_tilde_in_configured_lock_file(tmp_path, monkeypatch):
     home = tmp_path / "home"
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.delenv("PRISMATIC_HOME", raising=False)
     hook = _load_pre_push_hook()
     config = {"locks": {"file": "~/.prismatic/hook-locks.json"}}

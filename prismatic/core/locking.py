@@ -1,27 +1,29 @@
 """
-SwarmLockManager — workspace concurrency mutexes.
+SwarmLockManager — workspace concurrency mutexes backed by Swarmlock v0.2.0.
 
 Ensures that at most one agent writes to a given workspace at a time.
-Acquires a file-backed (or Redis-backed) mutex before any file-mutating
+Acquires a file-backed or distributed mutex before any file-mutating
 operation and releases it on completion.
 
-Wraps the primitives in ``prismatic/lock.py`` with workspace-aware
-locking semantics.
+Wraps the swarmlock production primitive while maintaining exact backward
+compatibility for all callers across the Prismatic Engine governance layer.
 """
 
 from __future__ import annotations
 
-try:
-    import fcntl
-except (ImportError, ModuleNotFoundError):
-    fcntl = None
-import json
 import logging
 import os
 import time
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from swarmlock import (
+    AcquireRequest,
+    LockConflictError,
+    ReleaseRequest,
+    RenewRequest,
+    SyncSwarmlock,
+)
 
 logger = logging.getLogger("prismatic.core.locking")
 
@@ -33,57 +35,23 @@ DEFAULT_STALE_TTL_MS = 300_000  # 5 minutes
 
 class SwarmLockManager:
     """
-    Workspace-scoped concurrency mutex.
+    Workspace-scoped concurrency mutex backed by Swarmlock v0.2.0.
 
     Manages locks for workspaces and individual files to ensure safe
-    multi-agent collaboration.
+    multi-agent collaboration. Works cross-platform on Windows and Linux.
     """
 
-    def __init__(self, lock_file: Optional[str | Path] = None, stale_ttl_ms: int = DEFAULT_STALE_TTL_MS) -> None:
+    def __init__(
+        self,
+        lock_file: Optional[str | Path] = None,
+        stale_ttl_ms: int = DEFAULT_STALE_TTL_MS,
+    ) -> None:
         self._lock_file_path = Path(lock_file) if lock_file else DEFAULT_LOCK_FILE
-        self._lock_mutex_path = self._lock_file_path.with_suffix(".lock")
         self._stale_ttl_ms = stale_ttl_ms
-
-        # Ensure parent directory exists
         self._lock_file_path.parent.mkdir(parents=True, exist_ok=True)
 
-    @contextmanager
-    def _lock_registry(self):
-        """Lock the mutex file for thread-safe access to the registry."""
-        self._lock_mutex_path.touch(exist_ok=True)
-        with open(self._lock_mutex_path, "r+") as f:
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
-
-    def _read_locks(self) -> List[Dict[str, Any]]:
-        if not self._lock_file_path.exists():
-            return []
-        try:
-            with open(self._lock_file_path, "r") as f:
-                data = json.load(f)
-                return data if isinstance(data, list) else []
-        except (json.JSONDecodeError, OSError):
-            return []
-
-    def _write_locks(self, locks: List[Dict[str, Any]]) -> None:
-        tmp = self._lock_file_path.with_suffix(".tmp")
-        with open(tmp, "w") as f:
-            json.dump(locks, f, indent=2)
-        os.replace(tmp, self._lock_file_path)
-
-    def _prune_stale(self, locks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        now_ms = int(time.time() * 1000)
-        kept = []
-        for lock in locks:
-            last_hb = lock.get("lastHeartbeat", lock.get("timestamp", 0))
-            if now_ms - last_hb <= self._stale_ttl_ms:
-                kept.append(lock)
-            else:
-                logger.info(f"Pruned stale lock: {lock.get('filePath')} held by {lock.get('agentId')}")
-        return kept
+        # Delegate storage and lock mechanics to Swarmlock FileBackend
+        self._sw = SyncSwarmlock(backend="file", registry_file=str(self._lock_file_path))
 
     def acquire(self, resource_id: str, agent_id: str, timeout_s: float = 30.0) -> bool:
         """
@@ -98,39 +66,22 @@ class SwarmLockManager:
             True if acquired, False otherwise.
         """
         start_time = time.time()
+        ttl_seconds = self._stale_ttl_ms / 1000.0
+        req = AcquireRequest(resource=resource_id, holder=agent_id, ttl_seconds=ttl_seconds)
+
         while True:
-            with self._lock_registry():
-                locks = self._read_locks()
-                locks = self._prune_stale(locks)
-
-                # Check if resource is already locked
-                existing_lock = next((l for l in locks if l["filePath"] == resource_id), None)
-
-                if existing_lock:
-                    if existing_lock["agentId"] == agent_id:
-                        # Refresh heartbeat
-                        existing_lock["lastHeartbeat"] = int(time.time() * 1000)
-                        self._write_locks(locks)
-                        return True
-                    else:
-                        # Locked by someone else
-                        if time.time() - start_time > timeout_s:
-                            logger.warning(f"Timeout acquiring lock for {resource_id} (held by {existing_lock['agentId']})")
-                            return False
-                else:
-                    # Resource is free
-                    now_ms = int(time.time() * 1000)
-                    locks.append({
-                        "filePath": resource_id,
-                        "agentId": agent_id,
-                        "timestamp": now_ms,
-                        "lastHeartbeat": now_ms
-                    })
-                    self._write_locks(locks)
-                    logger.info(f"Acquired lock: {resource_id} -> {agent_id}")
-                    return True
-
-            time.sleep(1.0)
+            try:
+                lease = self._sw.acquire(req)
+                logger.info(f"Acquired lock: {resource_id} -> {agent_id} (Lease ID: {lease.lease_id})")
+                return True
+            except LockConflictError as err:
+                if time.time() - start_time >= timeout_s:
+                    logger.warning(f"Timeout acquiring lock for {resource_id} (held by {err.holder})")
+                    return False
+                time.sleep(0.05)
+            except Exception as e:
+                logger.error(f"Error acquiring lock for {resource_id}: {e}")
+                return False
 
     def release(self, resource_id: str, agent_id: str) -> bool:
         """
@@ -139,35 +90,54 @@ class SwarmLockManager:
         Returns:
             True if released, False if not held by this agent.
         """
-        with self._lock_registry():
-            locks = self._read_locks()
-            locks = self._prune_stale(locks)
-
-            new_locks = [l for l in locks if not (l["filePath"] == resource_id and l["agentId"] == agent_id)]
-
-            if len(new_locks) < len(locks):
-                self._write_locks(new_locks)
-                logger.info(f"Released lock: {resource_id} (held by {agent_id})")
-                return True
-            else:
+        try:
+            lease = self._sw.get_lease(resource_id)
+            if lease is None or lease.holder != agent_id:
                 logger.warning(f"Attempted to release lock not held by {agent_id}: {resource_id}")
                 return False
 
+            rel_req = ReleaseRequest(lease_id=lease.lease_id, resource=resource_id, holder=agent_id)
+            success = self._sw.release(rel_req)
+            if success:
+                logger.info(f"Released lock: {resource_id} (held by {agent_id})")
+            return success
+        except Exception as e:
+            logger.error(f"Error releasing lock for {resource_id}: {e}")
+            return False
+
     def heartbeat(self, resource_id: str, agent_id: str) -> bool:
         """Refresh heartbeat for an active lock."""
-        with self._lock_registry():
-            locks = self._read_locks()
-            locks = self._prune_stale(locks)
+        try:
+            lease = self._sw.get_lease(resource_id)
+            if lease is None or lease.holder != agent_id:
+                return False
 
-            for lock in locks:
-                if lock["filePath"] == resource_id and lock["agentId"] == agent_id:
-                    lock["lastHeartbeat"] = int(time.time() * 1000)
-                    self._write_locks(locks)
-                    return True
+            renew_req = RenewRequest(
+                lease_id=lease.lease_id,
+                resource=resource_id,
+                holder=agent_id,
+                extend_seconds=self._stale_ttl_ms / 1000.0,
+            )
+            self._sw.renew(renew_req)
+            return True
+        except Exception:
             return False
 
     def get_status(self) -> List[Dict[str, Any]]:
-        """Returns all active (non-stale) locks."""
-        with self._lock_registry():
-            locks = self._read_locks()
-            return self._prune_stale(locks)
+        """Returns all active (non-stale) locks in JSON-compatible format."""
+        status_list = []
+        try:
+            raw_data = self._sw.async_client.backend._read_data()
+            raw_data = self._sw.async_client.backend._prune(raw_data)
+            now = time.time()
+            for res, entry in raw_data.items():
+                if now < entry.get("expires_at", 0):
+                    status_list.append({
+                        "filePath": res,
+                        "agentId": entry.get("holder", "unknown"),
+                        "timestamp": int(entry.get("created_at", now) * 1000),
+                        "lastHeartbeat": int((entry.get("expires_at", now) - entry.get("ttl_seconds", 300)) * 1000),
+                    })
+        except Exception as e:
+            logger.error(f"Error reading lock status: {e}")
+        return status_list
