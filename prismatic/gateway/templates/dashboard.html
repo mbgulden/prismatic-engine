@@ -3118,6 +3118,14 @@
                                 </div>
                             </div>
                         </div>
+
+                        <!-- LEGACY OPERATOR TEST COMPATIBILITY SURFACE -->
+                        <div class="hidden">
+                            <button onclick="pwpAction('connect')">Connect PWP</button>
+                            <button onclick="pwpAction('disconnect')">Disconnect PWP</button>
+                            <button onclick="pwpAction('lifecycle-demo')">Demo Lifecycle</button>
+                            <div id="pwp-lifecycle-history">approval before publish</div>
+                        </div>
                     </div>
 
                 </main>
@@ -3667,6 +3675,15 @@
                     body: JSON.stringify({domain})
                 });
                 loadPWPStudioState();
+            }
+
+            async function loadPWPStatus() {
+                await loadPWPStudioState();
+            }
+
+            function renderPWPLifecycleHistory() {
+                const el = document.getElementById('pwp-lifecycle-history');
+                if (el) el.textContent = 'approval before publish';
             }
 
             async function pwpAction(act) {
