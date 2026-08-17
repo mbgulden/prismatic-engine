@@ -1,0 +1,38 @@
+# Feature with Cron Pipeline Template (GRO-4287)
+# Standard 5-stage chain: okf -> linear -> pe_cron_register -> ingest -> verification
+name: feature-with-cron-workflow
+version: "1.0"
+stages:
+  - id: okf
+    name: Operational Knowledge Framework Check
+    action: okf.verify_standards
+    parameters:
+      standard: okf/standards/linear-handoff-okf-build-out-v1.md
+
+  - id: linear
+    name: Linear Task Dispatch & Agent Allocation
+    action: linear.create_epic
+    parameters:
+      project: PE-CRON-WORKFLOW
+      agents: ["AGY", "Ned", "Autobot"]
+
+  - id: pe_cron_register
+    name: Register Portable PE Native Cron
+    action: pe.register_native_cron
+    parameters:
+      id: cron-feature-auto-sync
+      schedule: "*/5 * * * *"
+      command: ["python3", "-m", "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.cron_orchestrator"]
+      output_policy: silent_on_success
+
+  - id: ingest
+    name: Ingest Framework & Token Synthesis
+    action: pwp.ingest_content_graph
+    parameters:
+      sources: ["google_drive", "markdown"]
+
+  - id: verification
+    name: Execute Verification & Receipt Emission
+    action: pe.verify_suite
+    parameters:
+      test_cmd: "pytest tests/test_native_crons.py"

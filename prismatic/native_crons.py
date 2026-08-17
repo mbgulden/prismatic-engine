@@ -18,7 +18,32 @@ CRON_STATE_DELETED = "deleted"
 QUEUE_STATES = {CRON_STATE_ACTIVE, CRON_STATE_PAUSED}
 NON_QUEUE_STATES = {CRON_STATE_DEACTIVATED, CRON_STATE_DELETED}
 
-Action = Literal["pause", "resume", "deactivate", "activate", "delete", "run"]
+Action = Literal["pause", "resume", "deactivate", "activate", "delete", "run", "recover"]
+
+
+def validate_cron_dag_cycles(crons: Sequence[NativeCron]) -> list[str]:
+    """Detect circular dependencies in depends_on DAG using Depth-First Search."""
+    graph = {c.id: set(c.depends_on) for c in crons}
+    visited: set[str] = set()
+    rec_stack: set[str] = set()
+    cycles: list[str] = []
+
+    def dfs(node: str, path: list[str]) -> None:
+        visited.add(node)
+        rec_stack.add(node)
+        for dep in graph.get(node, []):
+            if dep not in visited:
+                dfs(dep, path + [dep])
+            elif dep in rec_stack:
+                cycle_str = " -> ".join(path + [dep])
+                cycles.append(cycle_str)
+        rec_stack.remove(node)
+
+    for cron_id in graph:
+        if cron_id not in visited:
+            dfs(cron_id, [cron_id])
+
+    return cycles
 
 
 def repo_root() -> Path:
@@ -324,6 +349,23 @@ class NativeCronStore:
                 crons[index] = cron
                 self.save(crons)
                 return {"success": result["status"] == "success", "cron": cron.to_dict(), "run": result}
+            elif action == "recover":
+                # Replay up to 3 missed executions
+                replays = []
+                for _ in range(3):
+                    res = run_native_cron(cron)
+                    replays.append(res)
+                    if res["status"] != "success":
+                        break
+                last_res = replays[-1]
+                cron.last_run_at = last_res["ran_at"]
+                cron.last_status = last_res["status"]
+                cron.last_exit_code = last_res["exit_code"]
+                cron.last_stdout = last_res["stdout"][-4000:]
+                cron.last_stderr = last_res["stderr"][-4000:]
+                crons[index] = cron
+                self.save(crons)
+                return {"success": last_res["status"] == "success", "cron": cron.to_dict(), "replays_count": len(replays), "replays": replays}
             else:
                 raise ValueError(f"Unsupported native cron action: {action}")
             cron.updated_at = _now()

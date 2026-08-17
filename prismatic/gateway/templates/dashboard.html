@@ -5188,7 +5188,7 @@
                         <td class="p-3 align-top">${cronBadge(cron.state)}</td>
                         <td class="p-3 align-top">${cronBadge(cron.queue_state)}</td>
                         <td class="p-3 align-top text-slate-400">${last}</td>
-                        <td class="p-3 align-top"><div class="flex flex-wrap gap-2 text-xs font-bold">${pauseResume}${activateDeactivate}<button onclick="nativeCronAction('${cron.id}', 'run')" class="text-indigo-300 hover:text-indigo-200">Run</button><button onclick="openCronDeleteModal('${cron.id}')" class="text-rose-300 hover:text-rose-200">Delete</button></div></td>
+                        <td class="p-3 align-top"><div class="flex flex-wrap gap-2 text-xs font-bold">${pauseResume}${activateDeactivate}<button onclick="nativeCronAction('${cron.id}', 'run')" class="text-indigo-300 hover:text-indigo-200">Run</button><button onclick="nativeCronAction('${cron.id}', 'recover')" class="text-cyan-300 hover:text-cyan-200">Recover</button><button onclick="openCronDeleteModal('${cron.id}')" class="text-rose-300 hover:text-rose-200">Delete</button></div></td>
                     </tr>
                 `;
             }).join('');
