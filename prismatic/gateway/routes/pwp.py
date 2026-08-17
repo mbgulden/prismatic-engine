@@ -219,7 +219,16 @@ def load_pwp_studio_state() -> Dict[str, Any]:
         _atomic_write_json(sf, state)
         return state
     try:
-        return json.loads(sf.read_text(encoding="utf-8"))
+        data = json.loads(sf.read_text(encoding="utf-8"))
+        defaults = _default_studio_state()
+        updated = False
+        for k, v in defaults.items():
+            if k not in data or (isinstance(v, list) and not data[k] and v):
+                data[k] = v
+                updated = True
+        if updated:
+            _atomic_write_json(sf, data)
+        return data
     except Exception as exc:
         logger.error("Failed to load studio state from %s: %s", sf, exc)
         return _default_studio_state()
