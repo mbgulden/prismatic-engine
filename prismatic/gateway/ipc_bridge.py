@@ -148,14 +148,18 @@ class UnixSocketListener:
 
         try:
             sock_path.parent.mkdir(parents=True, exist_ok=True)
-            self._server = await asyncio.start_unix_server(
-                self._handle_connection,
-                path=self._socket_path,
-            )
-            logger.info(
-                "IPC bridge Unix socket listening on %s", self._socket_path
-            )
-        except OSError as exc:
+            if hasattr(asyncio, "start_unix_server"):
+                self._server = await asyncio.start_unix_server(
+                    self._handle_connection,
+                    path=self._socket_path,
+                )
+                logger.info(
+                    "IPC bridge Unix socket listening on %s", self._socket_path
+                )
+            else:
+                logger.info("Unix domain sockets not supported on this OS (e.g. Windows). IPC bridge HTTP endpoint active.")
+                self._server = None
+        except Exception as exc:
             logger.warning("IPC bridge Unix socket listener disabled: %s", exc)
             self._server = None
 

@@ -3026,6 +3026,8 @@
                 renderSkillsView();
             } else if (tab === 'workspaces') {
                 renderWorkspacesView();
+            } else if (tab === 'signals') {
+                renderSignalsView();
             }
         }
 
@@ -5689,12 +5691,31 @@
                     ? '<span class="px-2 py-0.5 rounded text-[9px] font-mono font-bold uppercase bg-cyan-950/60 text-cyan-300 border border-cyan-800/60">Safe Refactor</span>'
                     : '<span class="px-2 py-0.5 rounded text-[9px] font-mono font-bold uppercase bg-indigo-950/60 text-indigo-300 border border-indigo-800/60">Reentrant Read</span>';
 
-                const contentionsList = (lock.contentions || []).map(c => `
-                    <div class="p-1.5 rounded bg-amber-950/40 border border-amber-800/40 text-[10px] text-amber-300 flex items-center justify-between">
-                        <span>⚠️ <strong>${escapeHtml(c.agent_id)}</strong> contended for lock</span>
-                        <span class="font-mono text-amber-400">Deflected to backoff</span>
-                    </div>
-                `).join('');
+                // Group contentions by agent
+                const groupedContentions = {};
+                (lock.contentions || []).forEach(c => {
+                    const aid = c.agent_id || 'unknown';
+                    if (!groupedContentions[aid]) {
+                        groupedContentions[aid] = { count: 0, last_seen: c.attempted_at };
+                    }
+                    groupedContentions[aid].count += 1;
+                    if (c.attempted_at > groupedContentions[aid].last_seen) {
+                        groupedContentions[aid].last_seen = c.attempted_at;
+                    }
+                });
+
+                const contentionsList = Object.entries(groupedContentions).map(([aid, info]) => {
+                    const countStr = info.count > 1 ? ` (${info.count}× backoff attempts)` : '';
+                    return `
+                        <div class="p-2 rounded-lg bg-amber-950/50 border border-amber-800/50 text-[11px] text-amber-300 flex items-center justify-between shadow-inner">
+                            <span class="flex items-center gap-1.5 truncate">
+                                <span class="text-amber-400 font-bold">⚠️</span>
+                                <span><strong>${escapeHtml(aid)}</strong> contended${countStr}</span>
+                            </span>
+                            <span class="font-mono text-[9px] px-2 py-0.5 rounded bg-amber-900/60 text-amber-200 border border-amber-700/60 flex-shrink-0">Deflected to Backoff</span>
+                        </div>
+                    `;
+                }).join('');
 
                 return `
                     <div class="p-3.5 rounded-xl border border-slate-800 bg-slate-900/60 space-y-3 font-mono text-xs shadow-md">
