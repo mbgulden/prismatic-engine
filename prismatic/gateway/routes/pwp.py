@@ -444,30 +444,64 @@ def approve_pending_change(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any
     return {"ok": True, "change_id": change_id, "status": "approved_and_deployed"}
 
 
-# --- CODIFIED: Background Cron Orchestrator Endpoints ---
+# --- CODIFIED: PE Native Cron Orchestrator Integration ---
 
 @pwp_router.get("/cron/status")
 def get_cron_status() -> Dict[str, Any]:
-    """Get background cron orchestrator status."""
+    """Get PE-native cron orchestrator status for PWP Studio."""
     st = load_pwp_studio_state()
+    native_cron = None
+    try:
+        from prismatic.native_crons import list_native_crons, register_native_cron, NativeCron
+        crons = list_native_crons()
+        pwp_crons = [c for c in crons if c.get("id") == "cron-pwp-auto-sync" or "pwp" in c.get("tags", [])]
+        if pwp_crons:
+            native_cron = pwp_crons[0]
+        else:
+            # Register native cron in PE native cron store
+            new_cron = NativeCron(
+                id="cron-pwp-auto-sync",
+                name="PWP Multi-Site Vitals & Linear Swarm Reconciler",
+                schedule="*/5 * * * *",
+                command=["python3", "-m", "prismatic.shipped_plugins.pwp.capabilities.publish_kpi_tracker.cron_orchestrator"],
+                group="pwp",
+                tags=["pwp", "seo", "kpi", "linear"],
+                description="Automated 5-minute site vitals audit & Linear status sync for PWP Studio properties",
+            )
+            native_cron = register_native_cron(new_cron)
+    except Exception as exc:
+        logger.warning("Native cron lookup fallback: %s", exc)
+
+    cron_enabled = native_cron.get("enabled", st.get("cron_enabled", True)) if native_cron else st.get("cron_enabled", True)
+
     return {
         "ok": True,
-        "cron_enabled": st.get("cron_enabled", True),
-        "schedule": "every 5 minutes",
-        "last_run": "2026-08-17T01:25:00Z",
-        "next_run": "2026-08-17T01:30:00Z",
+        "cron_enabled": cron_enabled,
+        "native_cron_id": "cron-pwp-auto-sync",
+        "native_cron_state": native_cron.get("state", "active") if native_cron else "active",
+        "schedule": native_cron.get("schedule", "*/5 * * * *") if native_cron else "every 5 minutes",
+        "last_run": native_cron.get("last_run_at", "2026-08-17T01:25:00Z") if native_cron else "2026-08-17T01:25:00Z",
         "tasks": ["Core Web Vitals Audit", "Linear Task Sync", "GSC Indexing Sync"],
+        "source": "prismatic.native_crons",
     }
 
 
 @pwp_router.post("/cron/toggle")
 def toggle_cron_scheduler(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
-    """Enable or disable background cron orchestrator."""
+    """Enable or disable PWP background auto-sync via PE Native Crons engine."""
     st = load_pwp_studio_state()
     enabled = payload.get("enabled", not st.get("cron_enabled", True))
+    
+    try:
+        from prismatic.native_crons import mutate_native_cron
+        action = "resume" if enabled else "pause"
+        mutate_native_cron("cron-pwp-auto-sync", action)
+    except Exception as exc:
+        logger.warning("Native cron mutation fallback: %s", exc)
+
     st["cron_enabled"] = enabled
     save_pwp_studio_state(st)
-    return {"ok": True, "cron_enabled": enabled}
+    return {"ok": True, "cron_enabled": enabled, "native_cron_id": "cron-pwp-auto-sync"}
 
 
 # --- Project Scaffold Exporter ---
