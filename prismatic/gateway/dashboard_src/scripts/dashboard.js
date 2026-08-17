@@ -190,8 +190,9 @@
             
             if (updateHistory && window.history && window.history.pushState) {
                 const targetPath = tab === "dashboard" ? "/" : `/${tab}`;
+                const search = window.location.search || "";
                 if (window.location.pathname !== targetPath) {
-                    window.history.pushState({ tab }, "", targetPath);
+                    window.history.pushState({ tab }, "", targetPath + search);
                 }
             }
 
@@ -2253,6 +2254,33 @@
             window.open(`/api/workspace-tree/preview?${query.toString()}`, "_blank");
         }
 
+        async function openWorkspaceFile(filePath, event) {
+            if (event) {
+                if (event.ctrlKey || event.metaKey || event.button === 1) return;
+                event.preventDefault();
+            }
+            if (!filePath) return;
+
+            const cleanPath = String(filePath).replace(/^file:\/\//, "").replace(/^[a-zA-Z]:[/\\]/, "").replace(/\\/g, "/");
+            
+            // Switch to workspaces tab
+            switchTab('workspaces');
+
+            try {
+                const query = new URLSearchParams({ file: cleanPath });
+                const resolveResponse = await fetch(`/api/workspace-tree/resolve?${query.toString()}`);
+                const resolved = await resolveResponse.json();
+                if (!resolveResponse.ok) {
+                    showToast(`File unavailable in workspaces: ${resolved.detail || 'Not found'}`);
+                    return;
+                }
+                await previewWorkspaceFile(resolved.workspace_id, resolved.relative_path);
+            } catch (err) {
+                console.error("Failed to open workspace file:", err);
+                showToast(`Failed to open workspace file: ${err.message}`);
+            }
+        }
+
         async function renderDashboardWorkspacesSummary() {
             const wsSummary = document.getElementById("dashboard-workspaces");
             if (!wsSummary) return;
@@ -3001,12 +3029,25 @@
 
                 const dur = e.duration_seconds ? `${e.duration_seconds}s` : "—";
                 const details = e.reason || (e.holder ? `held by ${e.holder}` : (e.intention || "—"));
+                const resName = e.resource || "—";
+                
+                // Format resource as clickable link to /workspaces
+                let resourceHtml = escapeHtml(resName);
+                if (resName && resName !== "—" && !resName.startsWith("workspace:")) {
+                    const cleanPath = String(resName).replace(/^file:\/\//, "").replace(/^[a-zA-Z]:[/\\]/, "").replace(/\\/g, "/");
+                    resourceHtml = `
+                        <a href="/workspaces?file=${encodeURIComponent(cleanPath)}" onclick="openWorkspaceFile('${escapeHtml(cleanPath)}', event)" class="text-cyan-300 hover:text-cyan-100 hover:underline flex items-center gap-1 font-mono group" title="View in Workspaces: ${escapeHtml(cleanPath)}">
+                            <span class="truncate max-w-[180px]">${escapeHtml(cleanPath)}</span>
+                            <svg class="w-2.5 h-2.5 opacity-60 group-hover:opacity-100 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                        </a>
+                    `;
+                }
 
                 return `
                     <tr class="hover:bg-slate-900/40 transition">
                         <td class="py-1.5 px-2 text-slate-400 text-[10px] whitespace-nowrap">${escapeHtml(ts)}</td>
                         <td class="py-1.5 px-2 whitespace-nowrap"><span class="px-1.5 py-0.5 rounded border text-[9px] font-bold uppercase ${badgeClass}">${escapeHtml(type)}</span></td>
-                        <td class="py-1.5 px-2 font-mono text-cyan-300 truncate max-w-[180px]" title="${escapeHtml(e.resource)}">${escapeHtml(e.resource)}</td>
+                        <td class="py-1.5 px-2 max-w-[200px]">${resourceHtml}</td>
                         <td class="py-1.5 px-2 font-semibold text-slate-200">${escapeHtml(e.agent_id || e.holder || "—")}</td>
                         <td class="py-1.5 px-2 text-slate-400 font-mono text-[10px]">${escapeHtml(dur)}</td>
                         <td class="py-1.5 px-2 text-slate-400 text-[10px] truncate max-w-[200px]" title="${escapeHtml(details)}">${escapeHtml(details)}</td>
@@ -5111,7 +5152,7 @@
                 ? "workspaces"
                 : (dashboardTabFromURL() || "dashboard");
             if (initialTab !== "dashboard") {
-                switchTab(initialTab);
+                switchTab(initialTab, null, false);
             } else {
                 fetchData();
             }

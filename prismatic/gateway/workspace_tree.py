@@ -36,6 +36,7 @@ PREVIEW_EXTENSIONS = frozenset(
         ".ini",
         ".js",
         ".json",
+        ".jsonl",
         ".jsx",
         ".log",
         ".md",
@@ -47,6 +48,14 @@ PREVIEW_EXTENSIONS = frozenset(
         ".txt",
         ".yaml",
         ".yml",
+    }
+)
+ALLOWED_HIDDEN_DIRS = frozenset(
+    {
+        ".agents",
+        ".antigravity",
+        ".github",
+        ".prismatic",
     }
 )
 IGNORED_NAMES = frozenset(
@@ -412,8 +421,12 @@ def _open_root(root: str) -> tuple[int, int, tuple[int, int]]:
 
 @contextlib.contextmanager
 def load_registry(path: str | None = None) -> Iterator[WorkspaceRegistry]:
-    """Load and pin the strict registry. Missing configuration is empty."""
+    """Load and pin the strict registry. Missing configuration falls back to standard user config."""
     configured = os.environ.get(REGISTRY_ENV) if path is None else path
+    if not configured:
+        default_config = os.path.expanduser("~/.prismatic/config/workspace-registry.json")
+        if os.path.exists(default_config):
+            configured = default_config
     if not configured:
         registry = WorkspaceRegistry([])
         with registry:
@@ -508,7 +521,7 @@ def validate_relative_path(value: str, *, allow_empty: bool) -> tuple[str, list[
     for component in components:
         if (
             component in {"", ".", ".."}
-            or component.startswith(".")
+            or (component.startswith(".") and component not in ALLOWED_HIDDEN_DIRS)
             or len(component.encode("utf-8")) > 255
         ):
             raise WorkspaceTreeError(400, "invalid workspace path")
@@ -518,7 +531,7 @@ def validate_relative_path(value: str, *, allow_empty: bool) -> tuple[str, list[
 def _is_previewable(relative_path: str, metadata: os.stat_result | None = None) -> bool:
     components = relative_path.split("/")
     name = components[-1].lower()
-    if any(part.startswith(".") for part in components):
+    if any(part.startswith(".") and part not in ALLOWED_HIDDEN_DIRS for part in components):
         return False
     if (
         name in _SENSITIVE_EXACT
@@ -702,7 +715,7 @@ def _public_node(
     for child_name in raw_names:
         if len(children) >= MAX_CHILDREN:
             break
-        if child_name.startswith(".") or child_name in IGNORED_NAMES:
+        if (child_name.startswith(".") and child_name not in ALLOWED_HIDDEN_DIRS) or child_name in IGNORED_NAMES:
             continue
         try:
             child_stat = os.stat(child_name, dir_fd=fd, follow_symlinks=False)

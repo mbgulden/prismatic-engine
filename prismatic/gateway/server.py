@@ -4846,7 +4846,6 @@ async def serve_governance_index() -> HTMLResponse:
 
 @app.get("/dashboard", response_class=HTMLResponse)
 @app.get("/settings", response_class=HTMLResponse)
-@app.get("/workspaces", response_class=HTMLResponse)
 @app.get("/tasks", response_class=HTMLResponse)
 @app.get("/telemetry", response_class=HTMLResponse)
 @app.get("/merge", response_class=HTMLResponse)
@@ -4860,6 +4859,15 @@ async def serve_governance_index() -> HTMLResponse:
 @app.get("/quota", response_class=HTMLResponse)
 async def serve_governance_tabs() -> HTMLResponse:
     """Serve canonical governance dashboard for top-level tab routes."""
+    return _serve_governance_dashboard_html()
+
+
+@app.get("/workspaces", response_class=HTMLResponse)
+async def serve_workspaces_tab_route(file: str | None = None) -> Any:
+    """Serve canonical governance dashboard or redirect deep links."""
+    if file:
+        query = urlencode({"file": file})
+        return RedirectResponse(url=f"/dashboard?{query}#workspaces", status_code=307)
     return _serve_governance_dashboard_html()
 
 
@@ -4916,13 +4924,6 @@ async def save_workspace_tree_state_endpoint(request: Request) -> dict[str, Any]
     except Exception as exc:
         return {"ok": False, "detail": str(exc)}
     return {"ok": True}
-
-
-@app.get("/workspaces")
-async def legacy_workspaces_deep_link(file: str = Query(...)) -> RedirectResponse:
-    """Redirect retired workspace links into the canonical Hub Workspaces tab."""
-    query = urlencode({"file": file})
-    return RedirectResponse(url=f"/dashboard?{query}#workspaces", status_code=307)
 
 
 @app.get("/api/workspace-tree/resolve")

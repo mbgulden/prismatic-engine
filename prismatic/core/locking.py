@@ -293,8 +293,35 @@ class SwarmLockManager:
             return False
 
     def get_history(self, limit: int = 50, resource: Optional[str] = None, agent_id: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Return rolling list of lease lifecycle events."""
-        events = list(SwarmLockManager._event_history)
+        """Return rolling list of lease lifecycle events, combining in-memory buffer with persistent audit log."""
+        import json
+        events_dict: Dict[str, Dict[str, Any]] = {
+            e.get("id", str(idx)): e for idx, e in enumerate(SwarmLockManager._event_history)
+        }
+        
+        candidates = [
+            DEFAULT_AUDIT_LOG_FILE,
+            Path(os.path.expanduser("~/.antigravity/audit/swarmlock_audit.jsonl")),
+            Path(os.path.expanduser("~/.prismatic/.antigravity/audit/swarmlock_audit.jsonl")),
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                try:
+                    with open(candidate, "r", encoding="utf-8") as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                record = json.loads(line)
+                                if record.get("id"):
+                                    events_dict[record["id"]] = record
+                            except Exception:
+                                continue
+                except Exception as e:
+                    logger.warning(f"Failed to read SwarmLock audit log {candidate}: {e}")
+
+        events = list(events_dict.values())
         if resource:
             events = [e for e in events if resource in e.get("resource", "")]
         if agent_id:
