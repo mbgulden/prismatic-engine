@@ -161,11 +161,17 @@
             }
         }
         function applyTheme() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const queryTheme = urlParams.get("theme");
+            if (queryTheme === "light" || queryTheme === "dark") {
+                localStorage.setItem("theme", queryTheme);
+            }
             const saved = localStorage.getItem("theme");
             if (saved === "light") {
                 document.body.classList.add("light-mode");
                 updateThemeIcon(true);
             } else {
+                document.body.classList.remove("light-mode");
                 updateThemeIcon(false);
             }
         }
