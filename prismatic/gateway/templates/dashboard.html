@@ -3326,13 +3326,21 @@
             async function pwpExportProjectScaffold() {
                 const select = document.getElementById('pwp-workspace-selector');
                 const slug = select ? select.value : 'active-oahu';
-                const res = await fetch(`/api/pwp/workspaces/${slug}/export`, {method: 'POST'});
+                const res = await fetch('/api/pwp/export-project', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({slug})
+                });
                 const data = await res.json();
                 alert(`Exported Astro Project Scaffold for ${slug}!\nFiles: ${data.scaffold.pages.length + 2} files ready.`);
             }
 
             async function pwpSyncWorkspaceLinearStatus(slug) {
-                const res = await fetch(`/api/pwp/workspaces/${slug}/sync-linear`, {method: 'POST'});
+                const res = await fetch('/api/pwp/sync-linear', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({slug})
+                });
                 const data = await res.json();
                 alert(`Synced Linear Status for ${slug}: ${data.kpi_status}`);
                 loadPWPStudioState();

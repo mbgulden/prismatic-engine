@@ -112,7 +112,7 @@ def test_pwp_multi_property_and_gap_routes() -> None:
     assert len(resp_ws.json()["workspaces"]) >= 1
 
     # Project Export
-    resp_exp = client.post("/api/pwp/workspaces/active-oahu/export")
+    resp_exp = client.post("/api/pwp/export-project", json={"slug": "active-oahu"})
     assert resp_exp.status_code == 200
     assert "scaffold" in resp_exp.json()
 
@@ -122,7 +122,7 @@ def test_pwp_multi_property_and_gap_routes() -> None:
     assert resp_zap.json()["ok"] is True
 
     # Linear Sync
-    resp_sync = client.post("/api/pwp/workspaces/active-oahu/sync-linear")
+    resp_sync = client.post("/api/pwp/sync-linear", json={"slug": "active-oahu"})
     assert resp_sync.status_code == 200
     assert resp_sync.json()["kpi_status"] == "configured"
 
