@@ -109,3 +109,25 @@ def test_gateway_swarmlock_status_and_evict_api(tmp_path, monkeypatch):
     # Verify evicted
     res_final = client.get("/api/gateway/swarmlock/status")
     assert len(res_final.json()["locks"]) == 0
+
+    # Test History endpoint
+    history_res = client.get("/api/gateway/swarmlock/history?limit=10")
+    assert history_res.status_code == 200
+    history_data = history_res.json()
+    assert history_data["ok"] is True
+    assert history_data["count"] >= 1
+    events = history_data["events"]
+    assert any(e["event_type"] == "evicted" for e in events)
+
+    # Test Config endpoints
+    config_res = client.get("/api/gateway/swarmlock/config")
+    assert config_res.status_code == 200
+    assert "stale_ttl_seconds" in config_res.json()
+
+    config_update_res = client.post(
+        "/api/gateway/swarmlock/config",
+        json={"stale_ttl_seconds": 60.0},
+    )
+    assert config_update_res.status_code == 200
+    assert config_update_res.json()["config"]["stale_ttl_seconds"] == 60.0
+

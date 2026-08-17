@@ -2769,6 +2769,7 @@
 
         let latestSwarmLockData = null;
         let activeEvictTarget = null;
+        let activeSwarmWorkspace = "all";
 
         function getAgentColor(agentName) {
             let hash = 0;
@@ -2778,15 +2779,21 @@
             return `hsl(${h}, 65%, 45%)`;
         }
 
+        function setSwarmWorkspace(ws) {
+            activeSwarmWorkspace = ws;
+            if (latestSwarmLockData) renderSwarmLockCockpit(latestSwarmLockData);
+        }
+
         function renderSwarmLockCockpit(data) {
             latestSwarmLockData = data;
             const grid = document.getElementById("swarmlock-leases-grid");
+            const filterBar = document.getElementById("swarmlock-workspace-filters");
             const activeLocksCountEl = document.getElementById("sig-metric-active-locks");
             const deflectionsEl = document.getElementById("sig-metric-deflections");
             const statusEl = document.getElementById("sig-metric-status");
 
-            const activeLocks = data?.locks || [];
-            const activeLockCount = data?.active_lock_count ?? activeLocks.length;
+            const allLocks = data?.locks || [];
+            const activeLockCount = data?.active_lock_count ?? allLocks.length;
             const deflections = data?.deflected_collisions ?? 0;
 
             if (activeLocksCountEl) activeLocksCountEl.textContent = activeLockCount;
@@ -2801,14 +2808,43 @@
                 }
             }
 
+            // Render Workspace Filter Chips
+            if (filterBar) {
+                const workspaces = {};
+                workspaces["all"] = allLocks.length;
+                allLocks.forEach(l => {
+                    const ws = l.workspace || "prismatic-engine";
+                    workspaces[ws] = (workspaces[ws] || 0) + 1;
+                });
+
+                let filterHtml = "";
+                for (const [wsName, count] of Object.entries(workspaces)) {
+                    const isActive = activeSwarmWorkspace === wsName;
+                    const activeClass = isActive
+                        ? "bg-cyan-600/30 text-cyan-300 border-cyan-500/50 font-bold"
+                        : "bg-slate-900/80 text-slate-400 border-slate-800 hover:text-slate-200";
+                    filterHtml += `
+                        <button type="button" onclick="setSwarmWorkspace('${escapeHtml(wsName)}')" class="swarmlock-ws-chip px-2.5 py-1 rounded-lg text-[11px] font-mono border transition flex items-center gap-1.5 ${activeClass}">
+                            <span>${escapeHtml(wsName === 'all' ? 'All Workspaces' : wsName)}</span>
+                            <span class="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-800 border border-slate-700/60">${count}</span>
+                        </button>
+                    `;
+                }
+                filterBar.innerHTML = filterHtml;
+            }
+
             if (!grid) return;
 
-            if (!activeLocks.length) {
+            const visibleLocks = activeSwarmWorkspace === "all"
+                ? allLocks
+                : allLocks.filter(l => (l.workspace || "prismatic-engine") === activeSwarmWorkspace);
+
+            if (!visibleLocks.length) {
                 grid.innerHTML = `
                     <div class="col-span-full p-6 text-center text-slate-500 text-xs italic bg-slate-900/30 rounded-xl border border-slate-800/50 flex flex-col items-center justify-center gap-2">
                         <div class="flex items-center gap-2 text-slate-400">
                             ${PRISMATIC_THEME.icons.shield}
-                            <span class="font-semibold">No Active Resource Contention</span>
+                            <span class="font-semibold">No Active Resource Contention ${activeSwarmWorkspace !== 'all' ? `in workspace "${activeSwarmWorkspace}"` : ''}</span>
                         </div>
                         <p class="text-[11px] text-slate-500">All workspaces and files are free for agent dispatch. Collisions deflected to date: <strong class="text-amber-400 font-mono">${deflections}</strong>.</p>
                     </div>
@@ -2816,7 +2852,7 @@
                 return;
             }
 
-            grid.innerHTML = activeLocks.map((lock, idx) => {
+            grid.innerHTML = visibleLocks.map((lock, idx) => {
                 const resource = lock.resource || "unknown_resource";
                 const ext = resource.split(".").pop().toLowerCase();
                 const isFile = resource.includes(".");
@@ -2834,8 +2870,11 @@
                     const taskId = lock.linear_issue || lock.task_id;
                     const isLinear = taskId.startsWith("GRO-") || /^[A-Z]{2,}-\d+$/.test(taskId);
                     const taskIcon = isLinear ? PRISMATIC_THEME.icons.linear : PRISMATIC_THEME.icons.kanban;
+                    const taskUrl = isLinear
+                        ? `https://prismatic.growthwebdev.com/tab/tasks?issue=${encodeURIComponent(taskId)}`
+                        : `https://prismatic.growthwebdev.com/tab/tasks?task=${encodeURIComponent(taskId)}`;
                     taskLinkHtml = `
-                        <a href="https://prismatic.growthwebdev.com/tab/tasks?issue=${encodeURIComponent(taskId)}" target="_blank" class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-950/60 border border-indigo-800/60 text-indigo-300 hover:text-white text-[10px] font-mono transition">
+                        <a href="${taskUrl}" target="_blank" class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-950/60 border border-indigo-800/60 text-indigo-300 hover:text-white text-[10px] font-mono transition">
                             ${taskIcon}
                             <span>${escapeHtml(taskId)}</span>
                             ${PRISMATIC_THEME.icons.externalLink}
@@ -2844,28 +2883,29 @@
                 }
 
                 let collisionHtml = "";
-                if (lock.contenders && lock.contenders.length > 0) {
+                const contenders = lock.contentions || lock.contenders || [];
+                if (contenders && contenders.length > 0) {
                     collisionHtml = `
-                        <div class="mt-2 p-2 rounded-lg bg-amber-950/30 border border-amber-800/40 text-[10px] text-amber-300 space-y-1">
+                        <div class="mt-2 p-2 rounded-lg bg-amber-950/30 border border-amber-800/40 text-[10px] text-amber-300 space-y-1 animate-pulse">
                             <div class="flex items-center gap-1 font-bold">
                                 ${PRISMATIC_THEME.icons.warning}
-                                <span>Contention Deflected (${lock.contenders.length} waiting)</span>
+                                <span>Contention Deflected (${contenders.length} waiting)</span>
                             </div>
                             <div class="font-mono text-[9px] text-amber-200/80">
-                                ${lock.contenders.map(c => `${escapeHtml(c.agent)} contended (${c.attempts || 1}× backoff attempts)`).join(", ")}
+                                ${contenders.map(c => `${escapeHtml(c.agent_id || c.agent)} contended`).join(", ")}
                             </div>
                         </div>
                     `;
                 }
 
                 return `
-                    <div class="p-3.5 rounded-xl border border-slate-800 bg-slate-900/60 flex flex-col justify-between space-y-3 relative overflow-hidden shadow-lg hover:border-slate-700 transition" data-lock-id="${idx}">
+                    <div class="swarmlock-lease-card p-3.5 rounded-xl border border-slate-800 bg-slate-900/60 flex flex-col justify-between space-y-3 relative overflow-hidden shadow-lg hover:border-slate-700 transition" data-lock-id="${idx}">
                         <div class="flex items-start justify-between gap-2">
                             <div class="flex items-center gap-2 min-w-0">
                                 <span class="p-1.5 rounded-lg bg-slate-800/80 border border-slate-700/60">${resourceIcon}</span>
                                 <div class="min-w-0">
                                     <div class="font-mono font-bold text-xs text-slate-200 truncate" title="${escapeHtml(resource)}">${escapeHtml(resource)}</div>
-                                    <div class="text-[10px] text-slate-500 truncate mt-0.5">Lease token: <span class="font-mono text-slate-400">${escapeHtml(String(lock.token || "").slice(0, 8))}...</span></div>
+                                    <div class="text-[10px] text-slate-500 truncate mt-0.5">Lease token: <span class="font-mono text-slate-400">${escapeHtml(String(lock.lease_id || lock.token || "").slice(0, 8))}...</span></div>
                                 </div>
                             </div>
                             <div class="flex-shrink-0">${intentionBadge}</div>
@@ -2907,6 +2947,109 @@
             }).join("");
         }
 
+        // 📜 SwarmLock Audit History Drawer Operations
+        function toggleSwarmLockHistoryDrawer() {
+            const drawer = document.getElementById("swarmlock-history-drawer");
+            if (!drawer) return;
+            const isHidden = drawer.classList.contains("hidden");
+            if (isHidden) {
+                drawer.classList.remove("hidden");
+                fetchSwarmLockHistory();
+            } else {
+                drawer.classList.add("hidden");
+            }
+        }
+
+        async function fetchSwarmLockHistory() {
+            const tbody = document.getElementById("swarmlock-history-tbody");
+            if (!tbody) return;
+            try {
+                const res = await fetch("/api/gateway/swarmlock/history?limit=50");
+                if (res.ok) {
+                    const data = await res.json();
+                    renderSwarmLockHistory(data.events || []);
+                }
+            } catch (err) {
+                console.error("Failed to load lock history:", err);
+            }
+        }
+
+        function renderSwarmLockHistory(events) {
+            const tbody = document.getElementById("swarmlock-history-tbody");
+            if (!tbody) return;
+            if (!events.length) {
+                tbody.innerHTML = `<tr><td colspan="6" class="py-4 text-center text-slate-500 italic">No historical events recorded in current session.</td></tr>`;
+                return;
+            }
+            tbody.innerHTML = events.map(e => {
+                const ts = e.timestamp ? formatDate(e.timestamp) : "—";
+                const type = e.event_type || "event";
+                let badgeClass = "bg-slate-800 text-slate-400 border-slate-700";
+                if (type === "acquired") badgeClass = "bg-emerald-950/60 text-emerald-300 border-emerald-800/60";
+                else if (type === "deflected") badgeClass = "bg-amber-950/60 text-amber-300 border-amber-800/60";
+                else if (type === "evicted") badgeClass = "bg-rose-950/60 text-rose-300 border-rose-800/60";
+                else if (type === "released") badgeClass = "bg-indigo-950/60 text-indigo-300 border-indigo-800/60";
+
+                const dur = e.duration_seconds ? `${e.duration_seconds}s` : "—";
+                const details = e.reason || (e.holder ? `held by ${e.holder}` : (e.intention || "—"));
+
+                return `
+                    <tr class="hover:bg-slate-900/40 transition">
+                        <td class="py-1.5 px-2 text-slate-400 text-[10px] whitespace-nowrap">${escapeHtml(ts)}</td>
+                        <td class="py-1.5 px-2 whitespace-nowrap"><span class="px-1.5 py-0.5 rounded border text-[9px] font-bold uppercase ${badgeClass}">${escapeHtml(type)}</span></td>
+                        <td class="py-1.5 px-2 font-mono text-cyan-300 truncate max-w-[180px]" title="${escapeHtml(e.resource)}">${escapeHtml(e.resource)}</td>
+                        <td class="py-1.5 px-2 font-semibold text-slate-200">${escapeHtml(e.agent_id || e.holder || "—")}</td>
+                        <td class="py-1.5 px-2 text-slate-400 font-mono text-[10px]">${escapeHtml(dur)}</td>
+                        <td class="py-1.5 px-2 text-slate-400 text-[10px] truncate max-w-[200px]" title="${escapeHtml(details)}">${escapeHtml(details)}</td>
+                    </tr>
+                `;
+            }).join("");
+        }
+
+        // ⚙️ SwarmLock Policy Configuration Modal
+        async function openSwarmLockConfigModal() {
+            const modal = document.getElementById("swarmlock-config-modal");
+            const ttlInput = document.getElementById("swarmlock-config-ttl");
+            const deflectionsEl = document.getElementById("swarmlock-config-deflections");
+            if (!modal) return;
+            try {
+                const res = await fetch("/api/gateway/swarmlock/config");
+                if (res.ok) {
+                    const data = await res.json();
+                    if (ttlInput) ttlInput.value = data.stale_ttl_seconds || 300;
+                    if (deflectionsEl) deflectionsEl.textContent = data.total_deflected_collisions || 0;
+                }
+            } catch (e) {}
+            modal.classList.remove("hidden");
+        }
+
+        function closeSwarmLockConfigModal() {
+            const modal = document.getElementById("swarmlock-config-modal");
+            if (modal) modal.classList.add("hidden");
+        }
+
+        async function saveSwarmLockConfig() {
+            const ttlInput = document.getElementById("swarmlock-config-ttl");
+            const ttl = parseFloat(ttlInput?.value || "300");
+            try {
+                const res = await fetch("/api/gateway/swarmlock/config", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ stale_ttl_seconds: ttl })
+                });
+                if (res.ok) {
+                    showToast(`Updated SwarmLock TTL to ${ttl}s`);
+                    closeSwarmLockConfigModal();
+                    await renderSignalsView();
+                } else {
+                    const err = await res.json();
+                    alert(`Failed to save config: ${err.detail || err.error}`);
+                }
+            } catch (err) {
+                alert(`Error saving config: ${err.message}`);
+            }
+        }
+
         function openInspectLockModal(idx) {
             const modal = document.getElementById("swarmlock-inspect-modal");
             const body = document.getElementById("swarmlock-inspect-body");
@@ -2917,8 +3060,9 @@
                 <div class="p-3 rounded-lg bg-slate-950 border border-slate-800 space-y-2">
                     <div><span class="text-slate-500">Resource:</span> <span class="text-cyan-300 font-bold">${escapeHtml(lock.resource)}</span></div>
                     <div><span class="text-slate-500">Holder Agent:</span> <span class="text-slate-200 font-bold">${escapeHtml(lock.holder)}</span></div>
+                    <div><span class="text-slate-500">Workspace Domain:</span> <span class="text-emerald-300 font-bold">${escapeHtml(lock.workspace || "prismatic-engine")}</span></div>
                     <div><span class="text-slate-500">Intention:</span> <span class="text-amber-300">${escapeHtml(lock.intention || "EXCLUSIVE_MUTATION")}</span></div>
-                    <div><span class="text-slate-500">Lease Token:</span> <span class="text-slate-400 break-all">${escapeHtml(lock.token)}</span></div>
+                    <div><span class="text-slate-500">Lease Token:</span> <span class="text-slate-400 break-all font-mono">${escapeHtml(lock.lease_id || lock.token || "—")}</span></div>
                     <div><span class="text-slate-500">Expires At:</span> <span class="text-slate-300">${new Date((lock.expires_at || 0) * 1000).toLocaleString()}</span></div>
                     <div><span class="text-slate-500">Associated Task:</span> <span class="text-indigo-400 font-bold">${escapeHtml(lock.task_id || lock.linear_issue || "None")}</span></div>
                     ${lock.transcript_ref ? `<div><span class="text-slate-500">Transcript Ref:</span> <span class="text-slate-400">${escapeHtml(lock.transcript_ref)}</span></div>` : ""}
@@ -4486,6 +4630,13 @@
                         fetchData();
                         if (activeTab === "review-factory") {
                             loadReviewFactory();
+                        }
+                    }
+                    if (event.type === "swarmlock_status" && event.payload) {
+                        renderSwarmLockCockpit(event.payload);
+                        const drawer = document.getElementById("swarmlock-history-drawer");
+                        if (drawer && !drawer.classList.contains("hidden")) {
+                            fetchSwarmLockHistory();
                         }
                     }
                     // Append event to signals console log

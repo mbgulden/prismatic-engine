@@ -61,9 +61,11 @@ class SwarmLockManager:
     multi-agent collaboration. Works cross-platform on Windows and Linux.
     """
 
-    # In-memory tracking for contention/deflection metrics across the process
+    # In-memory tracking for contention/deflection metrics and event audit history
     _contentions_by_resource: Dict[str, List[Dict[str, Any]]] = {}
     _total_deflected_collisions: int = 0
+    _event_history: List[Dict[str, Any]] = []
+    _active_lease_start_times: Dict[str, float] = {}
 
     def __init__(
         self,
@@ -76,6 +78,23 @@ class SwarmLockManager:
 
         # Delegate storage and lock mechanics to Swarmlock FileBackend
         self._sw = SyncSwarmlock(backend="file", registry_file=str(self._lock_file_path))
+
+    @classmethod
+    def _record_audit_event(cls, event_type: str, resource: str, agent_id: str, **kwargs: Any) -> None:
+        """Record an immutable lifecycle audit event into the rolling history buffer."""
+        import uuid
+        now = time.time()
+        record = {
+            "id": f"evt-{int(now * 1000)}-{str(uuid.uuid4())[:6]}",
+            "timestamp": now,
+            "event_type": event_type,
+            "resource": resource,
+            "agent_id": agent_id,
+            **kwargs,
+        }
+        cls._event_history.append(record)
+        if len(cls._event_history) > 150:
+            cls._event_history = cls._event_history[-100:]
 
     def acquire(
         self,
@@ -110,6 +129,16 @@ class SwarmLockManager:
             try:
                 lease = self._sw.acquire(req)
                 logger.info(f"Acquired lock: {resource_id} -> {agent_id} (Lease ID: {lease.lease_id})")
+                SwarmLockManager._active_lease_start_times[resource_id] = start_time
+                SwarmLockManager._record_audit_event(
+                    "acquired",
+                    resource_id,
+                    agent_id,
+                    lease_id=lease.lease_id,
+                    intention=meta.get("intention", "EXCLUSIVE_MUTATION"),
+                    task_id=meta.get("task_id", ""),
+                    model=meta.get("model", ""),
+                )
                 _emit_lock_event("lock", resource_id, agent_id, lease_id=lease.lease_id, metadata=meta)
                 return True
             except LockConflictError as err:
@@ -121,6 +150,15 @@ class SwarmLockManager:
                     "metadata": meta,
                 }
                 SwarmLockManager._contentions_by_resource.setdefault(resource_id, []).append(contention_record)
+                SwarmLockManager._record_audit_event(
+                    "deflected",
+                    resource_id,
+                    agent_id,
+                    holder=err.holder,
+                    deflected_total=SwarmLockManager._total_deflected_collisions,
+                    intention=meta.get("intention", "EXCLUSIVE_MUTATION"),
+                    task_id=meta.get("task_id", ""),
+                )
                 _emit_lock_event(
                     "contention",
                     resource_id,
@@ -153,7 +191,16 @@ class SwarmLockManager:
             rel_req = ReleaseRequest(lease_id=lease.lease_id, resource=resource_id, holder=agent_id)
             success = self._sw.release(rel_req)
             if success:
-                logger.info(f"Released lock: {resource_id} (held by {agent_id})")
+                start_ts = SwarmLockManager._active_lease_start_times.pop(resource_id, time.time())
+                duration = max(0.0, time.time() - start_ts)
+                logger.info(f"Released lock: {resource_id} (held by {agent_id}) after {duration:.2f}s")
+                SwarmLockManager._record_audit_event(
+                    "released",
+                    resource_id,
+                    agent_id,
+                    lease_id=lease.lease_id,
+                    duration_seconds=round(duration, 2),
+                )
                 _emit_lock_event("unlock", resource_id, agent_id, lease_id=lease.lease_id)
                 SwarmLockManager._contentions_by_resource.pop(resource_id, None)
             return success
@@ -175,6 +222,12 @@ class SwarmLockManager:
                 extend_seconds=self._stale_ttl_ms / 1000.0,
             )
             self._sw.renew(renew_req)
+            SwarmLockManager._record_audit_event(
+                "renewed",
+                resource_id,
+                agent_id,
+                lease_id=lease.lease_id,
+            )
             _emit_lock_event("heartbeat", resource_id, agent_id, lease_id=lease.lease_id)
             return True
         except Exception:
@@ -187,7 +240,18 @@ class SwarmLockManager:
             if resource_id in raw_data:
                 evicted_lease = raw_data.pop(resource_id)
                 self._sw.async_client.backend._write_data(raw_data)
-                _emit_lock_event("expire", resource_id, evicted_lease.get("holder", "unknown"), reason=reason)
+                holder = evicted_lease.get("holder", "unknown")
+                start_ts = SwarmLockManager._active_lease_start_times.pop(resource_id, time.time())
+                duration = max(0.0, time.time() - start_ts)
+                SwarmLockManager._record_audit_event(
+                    "evicted",
+                    resource_id,
+                    holder,
+                    reason=reason,
+                    lease_id=evicted_lease.get("lease_id", ""),
+                    duration_seconds=round(duration, 2),
+                )
+                _emit_lock_event("expire", resource_id, holder, reason=reason)
                 SwarmLockManager._contentions_by_resource.pop(resource_id, None)
                 logger.info(f"Evicted lock on {resource_id}: {reason}")
                 return True
@@ -195,6 +259,33 @@ class SwarmLockManager:
         except Exception as e:
             logger.error(f"Error evicting lock for {resource_id}: {e}")
             return False
+
+    def get_history(self, limit: int = 50, resource: Optional[str] = None, agent_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Return rolling list of lease lifecycle events."""
+        events = list(SwarmLockManager._event_history)
+        if resource:
+            events = [e for e in events if resource in e.get("resource", "")]
+        if agent_id:
+            events = [e for e in events if e.get("agent_id") == agent_id]
+        events.sort(key=lambda e: e.get("timestamp", 0), reverse=True)
+        return events[:limit]
+
+    def get_config(self) -> Dict[str, Any]:
+        """Return current lock governance configuration parameters."""
+        return {
+            "lock_file": str(self._lock_file_path),
+            "stale_ttl_ms": self._stale_ttl_ms,
+            "stale_ttl_seconds": self._stale_ttl_ms / 1000.0,
+            "backend": "file (SyncSwarmlock v0.2.0)",
+            "heartbeat_interval_seconds": 15,
+            "total_deflected_collisions": SwarmLockManager._total_deflected_collisions,
+        }
+
+    def update_config(self, stale_ttl_seconds: Optional[float] = None) -> Dict[str, Any]:
+        """Update runtime lock configuration parameters."""
+        if stale_ttl_seconds and stale_ttl_seconds >= 5.0:
+            self._stale_ttl_ms = int(stale_ttl_seconds * 1000)
+        return self.get_config()
 
     def get_status(self) -> List[Dict[str, Any]]:
         """Returns all active (non-stale) locks in JSON-compatible format."""
@@ -232,8 +323,20 @@ class SwarmLockManager:
                     meta = entry.get("metadata") or {}
                     contentions = SwarmLockManager._contentions_by_resource.get(res, [])
 
+                    # Detect workspace from resource path prefix
+                    workspace_name = "prismatic-engine"
+                    if "/" in res:
+                        prefix = res.split("/")[0]
+                        if prefix in ["guest_hermes_setup", "scratch"]:
+                            workspace_name = "Hermes"
+                        elif prefix in ["swarmlock"]:
+                            workspace_name = "swarmlock"
+                        elif prefix in ["hd-platform", "api"]:
+                            workspace_name = "hd-platform"
+
                     locks.append({
                         "resource": res,
+                        "workspace": meta.get("workspace", workspace_name),
                         "holder": holder,
                         "lease_id": entry.get("lease_id", ""),
                         "intention": meta.get("intention", "EXCLUSIVE_MUTATION"),

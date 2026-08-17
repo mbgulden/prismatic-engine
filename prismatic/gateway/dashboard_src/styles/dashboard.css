@@ -741,3 +741,72 @@
             box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05) !important;
         }
 
+        /* ═════════════════════════════════════════════════════════════════
+           SWARM LOCK ADVANCED CONTROLS & AUDIT DRAWER SYSTEM
+           ═════════════════════════════════════════════════════════════════ */
+        body.light-mode .swarmlock-ws-chip {
+            background-color: #f8fafc !important;
+            border-color: #cbd5e1 !important;
+            color: #475569 !important;
+        }
+        body.light-mode .swarmlock-ws-chip:hover {
+            background-color: #f1f5f9 !important;
+            color: #0f172a !important;
+        }
+        body.light-mode .swarmlock-ws-chip.font-bold {
+            background-color: #e0f2fe !important;
+            border-color: #7dd3fc !important;
+            color: #0369a1 !important;
+        }
+        body.light-mode .swarmlock-ws-chip span.bg-slate-800 {
+            background-color: #e2e8f0 !important;
+            border-color: #cbd5e1 !important;
+            color: #0f172a !important;
+        }
+        body.light-mode #swarmlock-cockpit-panel button[onclick*="toggleSwarmLockHistoryDrawer"],
+        body.light-mode #swarmlock-cockpit-panel button[onclick*="openSwarmLockConfigModal"] {
+            background-color: #ffffff !important;
+            border-color: #cbd5e1 !important;
+            color: #0f172a !important;
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05) !important;
+        }
+        body.light-mode #swarmlock-cockpit-panel button[onclick*="toggleSwarmLockHistoryDrawer"]:hover,
+        body.light-mode #swarmlock-cockpit-panel button[onclick*="openSwarmLockConfigModal"]:hover {
+            background-color: #f1f5f9 !important;
+            color: #020617 !important;
+        }
+        body.light-mode #swarmlock-history-drawer {
+            background-color: #ffffff !important;
+            border-color: #e2e8f0 !important;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05) !important;
+        }
+        body.light-mode #swarmlock-history-drawer tr.border-b {
+            border-color: #e2e8f0 !important;
+        }
+        body.light-mode #swarmlock-history-drawer tbody tr:hover {
+            background-color: #f8fafc !important;
+        }
+        body.light-mode #swarmlock-history-tbody tr {
+            border-color: #f1f5f9 !important;
+        }
+        body.light-mode #swarmlock-history-tbody td {
+            color: #334155 !important;
+        }
+        body.light-mode #swarmlock-config-modal .pe-modal-card {
+            background-color: #ffffff !important;
+            border-color: #cbd5e1 !important;
+            color: #0f172a !important;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15) !important;
+        }
+        body.light-mode #swarmlock-config-modal input {
+            background-color: #ffffff !important;
+            border-color: #cbd5e1 !important;
+            color: #0f172a !important;
+        }
+        body.light-mode #swarmlock-config-modal .bg-slate-950 {
+            background-color: #f8fafc !important;
+            border-color: #e2e8f0 !important;
+            color: #334155 !important;
+        }
+
+

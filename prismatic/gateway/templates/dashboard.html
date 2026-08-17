@@ -752,6 +752,75 @@
             box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05) !important;
         }
 
+        /* ═════════════════════════════════════════════════════════════════
+           SWARM LOCK ADVANCED CONTROLS & AUDIT DRAWER SYSTEM
+           ═════════════════════════════════════════════════════════════════ */
+        body.light-mode .swarmlock-ws-chip {
+            background-color: #f8fafc !important;
+            border-color: #cbd5e1 !important;
+            color: #475569 !important;
+        }
+        body.light-mode .swarmlock-ws-chip:hover {
+            background-color: #f1f5f9 !important;
+            color: #0f172a !important;
+        }
+        body.light-mode .swarmlock-ws-chip.font-bold {
+            background-color: #e0f2fe !important;
+            border-color: #7dd3fc !important;
+            color: #0369a1 !important;
+        }
+        body.light-mode .swarmlock-ws-chip span.bg-slate-800 {
+            background-color: #e2e8f0 !important;
+            border-color: #cbd5e1 !important;
+            color: #0f172a !important;
+        }
+        body.light-mode #swarmlock-cockpit-panel button[onclick*="toggleSwarmLockHistoryDrawer"],
+        body.light-mode #swarmlock-cockpit-panel button[onclick*="openSwarmLockConfigModal"] {
+            background-color: #ffffff !important;
+            border-color: #cbd5e1 !important;
+            color: #0f172a !important;
+            box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05) !important;
+        }
+        body.light-mode #swarmlock-cockpit-panel button[onclick*="toggleSwarmLockHistoryDrawer"]:hover,
+        body.light-mode #swarmlock-cockpit-panel button[onclick*="openSwarmLockConfigModal"]:hover {
+            background-color: #f1f5f9 !important;
+            color: #020617 !important;
+        }
+        body.light-mode #swarmlock-history-drawer {
+            background-color: #ffffff !important;
+            border-color: #e2e8f0 !important;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05) !important;
+        }
+        body.light-mode #swarmlock-history-drawer tr.border-b {
+            border-color: #e2e8f0 !important;
+        }
+        body.light-mode #swarmlock-history-drawer tbody tr:hover {
+            background-color: #f8fafc !important;
+        }
+        body.light-mode #swarmlock-history-tbody tr {
+            border-color: #f1f5f9 !important;
+        }
+        body.light-mode #swarmlock-history-tbody td {
+            color: #334155 !important;
+        }
+        body.light-mode #swarmlock-config-modal .pe-modal-card {
+            background-color: #ffffff !important;
+            border-color: #cbd5e1 !important;
+            color: #0f172a !important;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15) !important;
+        }
+        body.light-mode #swarmlock-config-modal input {
+            background-color: #ffffff !important;
+            border-color: #cbd5e1 !important;
+            color: #0f172a !important;
+        }
+        body.light-mode #swarmlock-config-modal .bg-slate-950 {
+            background-color: #f8fafc !important;
+            border-color: #e2e8f0 !important;
+            color: #334155 !important;
+        }
+
+
     </style>
 </head>
 <body class="text-slate-200 min-h-screen flex flex-col max-w-full overflow-x-hidden">
@@ -2461,6 +2530,52 @@
                         </div>
                     </div>
 
+                    <!-- Workspace Selector & Control Actions -->
+                    <div class="flex flex-wrap items-center justify-between gap-2 pt-1 border-b border-slate-800/60 pb-3 text-xs">
+                        <div id="swarmlock-workspace-filters" class="flex flex-wrap items-center gap-1.5">
+                            <!-- Populated dynamically via renderSwarmLockCockpit -->
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button type="button" onclick="toggleSwarmLockHistoryDrawer()" class="px-2.5 py-1 rounded-lg border border-slate-700 bg-slate-900/80 hover:bg-slate-800 text-slate-300 font-mono text-[11px] flex items-center gap-1.5 transition">
+                                <span>📜</span>
+                                <span>Audit History</span>
+                            </button>
+                            <button type="button" onclick="openSwarmLockConfigModal()" class="px-2.5 py-1 rounded-lg border border-slate-700 bg-slate-900/80 hover:bg-slate-800 text-slate-300 font-mono text-[11px] flex items-center gap-1.5 transition">
+                                <span>⚙️</span>
+                                <span>TTL Policy</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Expandable Audit History Ledger Drawer -->
+                    <div id="swarmlock-history-drawer" class="hidden rounded-xl border border-slate-800/80 bg-slate-950/70 p-3 space-y-2.5 font-mono text-xs">
+                        <div class="flex items-center justify-between border-b border-slate-800/80 pb-2">
+                            <span class="font-bold text-slate-200 flex items-center gap-1.5">
+                                <span>📜</span> Recent Lease Audit Ledger (Last 50 Swarm Events)
+                            </span>
+                            <button type="button" onclick="fetchSwarmLockHistory()" class="text-[11px] text-cyan-400 hover:underline">Refresh Ledger</button>
+                        </div>
+                        <div class="max-h-60 overflow-y-auto">
+                            <table class="w-full text-left text-[11px] border-collapse">
+                                <thead>
+                                    <tr class="border-b border-slate-800 text-slate-500">
+                                        <th class="py-1.5 px-2">Time</th>
+                                        <th class="py-1.5 px-2">Action</th>
+                                        <th class="py-1.5 px-2">Resource</th>
+                                        <th class="py-1.5 px-2">Agent</th>
+                                        <th class="py-1.5 px-2">Duration</th>
+                                        <th class="py-1.5 px-2">Details</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="swarmlock-history-tbody" class="divide-y divide-slate-900 text-slate-300">
+                                    <tr>
+                                        <td colspan="6" class="py-3 px-2 text-center text-slate-500 italic">Loading audit history...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
                     <!-- Active Leases Grid -->
                     <div id="swarmlock-leases-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
                         <div class="col-span-full p-6 text-center text-slate-500 text-xs italic bg-slate-900/30 rounded-xl border border-slate-800/50">
@@ -2509,6 +2624,34 @@
                 </div>
                 <div class="flex justify-end pt-2 border-t border-slate-800">
                     <button type="button" onclick="closeInspectLockModal()" class="px-4 py-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 transition">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ⚙️ Operator SwarmLock Policy Config Modal -->
+        <div id="swarmlock-config-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+            <div class="pe-modal-card glass-panel w-full max-w-[480px] p-6 rounded-2xl border border-slate-700/80 space-y-4 shadow-2xl bg-slate-900 text-xs font-mono" style="max-width: 480px !important;">
+                <div class="flex justify-between items-center border-b border-slate-800 pb-3">
+                    <h3 class="text-sm font-bold uppercase text-slate-200 tracking-wider flex items-center gap-2">
+                        <span>⚙️ Swarm Lock Governance Settings</span>
+                    </h3>
+                    <button type="button" onclick="closeSwarmLockConfigModal()" class="text-slate-400 hover:text-white text-lg font-bold">&times;</button>
+                </div>
+                <div class="space-y-3 text-slate-300">
+                    <div>
+                        <label class="block font-bold text-slate-300 mb-1">Stale Lock Heartbeat TTL (Seconds)</label>
+                        <input id="swarmlock-config-ttl" type="number" min="5" max="3600" value="300" class="w-full px-3 py-2 rounded-lg border border-slate-800 bg-slate-950 text-slate-200 font-mono focus:border-cyan-500 focus:outline-none">
+                        <p class="text-[10px] text-slate-500 mt-1">Locks without a heartbeat renewal within this TTL window are automatically marked stale and subject to clean reclamation.</p>
+                    </div>
+                    <div class="p-3 rounded-lg bg-slate-950 border border-slate-800 text-[11px] space-y-1">
+                        <div><span class="text-slate-500">Storage Backend:</span> <span class="text-emerald-400 font-bold">SyncSwarmlock FileBackend</span></div>
+                        <div><span class="text-slate-500">Heartbeat Interval:</span> <span class="text-slate-300">15 seconds</span></div>
+                        <div><span class="text-slate-500">Total Swarm Collisions Deflected:</span> <span id="swarmlock-config-deflections" class="text-amber-400 font-bold">0</span></div>
+                    </div>
+                </div>
+                <div class="flex justify-end gap-2 pt-2 border-t border-slate-800">
+                    <button type="button" onclick="closeSwarmLockConfigModal()" class="px-4 py-2 rounded-lg text-xs font-semibold text-slate-400 hover:bg-slate-800 transition">Cancel</button>
+                    <button type="button" onclick="saveSwarmLockConfig()" class="px-4 py-2 rounded-lg text-xs font-bold bg-cyan-600 hover:bg-cyan-500 text-white transition shadow-sm border border-cyan-500">Save Policy</button>
                 </div>
             </div>
         </div>
@@ -6545,6 +6688,7 @@
 
         let latestSwarmLockData = null;
         let activeEvictTarget = null;
+        let activeSwarmWorkspace = "all";
 
         function getAgentColor(agentName) {
             let hash = 0;
@@ -6554,15 +6698,21 @@
             return `hsl(${h}, 65%, 45%)`;
         }
 
+        function setSwarmWorkspace(ws) {
+            activeSwarmWorkspace = ws;
+            if (latestSwarmLockData) renderSwarmLockCockpit(latestSwarmLockData);
+        }
+
         function renderSwarmLockCockpit(data) {
             latestSwarmLockData = data;
             const grid = document.getElementById("swarmlock-leases-grid");
+            const filterBar = document.getElementById("swarmlock-workspace-filters");
             const activeLocksCountEl = document.getElementById("sig-metric-active-locks");
             const deflectionsEl = document.getElementById("sig-metric-deflections");
             const statusEl = document.getElementById("sig-metric-status");
 
-            const activeLocks = data?.locks || [];
-            const activeLockCount = data?.active_lock_count ?? activeLocks.length;
+            const allLocks = data?.locks || [];
+            const activeLockCount = data?.active_lock_count ?? allLocks.length;
             const deflections = data?.deflected_collisions ?? 0;
 
             if (activeLocksCountEl) activeLocksCountEl.textContent = activeLockCount;
@@ -6577,14 +6727,43 @@
                 }
             }
 
+            // Render Workspace Filter Chips
+            if (filterBar) {
+                const workspaces = {};
+                workspaces["all"] = allLocks.length;
+                allLocks.forEach(l => {
+                    const ws = l.workspace || "prismatic-engine";
+                    workspaces[ws] = (workspaces[ws] || 0) + 1;
+                });
+
+                let filterHtml = "";
+                for (const [wsName, count] of Object.entries(workspaces)) {
+                    const isActive = activeSwarmWorkspace === wsName;
+                    const activeClass = isActive
+                        ? "bg-cyan-600/30 text-cyan-300 border-cyan-500/50 font-bold"
+                        : "bg-slate-900/80 text-slate-400 border-slate-800 hover:text-slate-200";
+                    filterHtml += `
+                        <button type="button" onclick="setSwarmWorkspace('${escapeHtml(wsName)}')" class="swarmlock-ws-chip px-2.5 py-1 rounded-lg text-[11px] font-mono border transition flex items-center gap-1.5 ${activeClass}">
+                            <span>${escapeHtml(wsName === 'all' ? 'All Workspaces' : wsName)}</span>
+                            <span class="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-800 border border-slate-700/60">${count}</span>
+                        </button>
+                    `;
+                }
+                filterBar.innerHTML = filterHtml;
+            }
+
             if (!grid) return;
 
-            if (!activeLocks.length) {
+            const visibleLocks = activeSwarmWorkspace === "all"
+                ? allLocks
+                : allLocks.filter(l => (l.workspace || "prismatic-engine") === activeSwarmWorkspace);
+
+            if (!visibleLocks.length) {
                 grid.innerHTML = `
                     <div class="col-span-full p-6 text-center text-slate-500 text-xs italic bg-slate-900/30 rounded-xl border border-slate-800/50 flex flex-col items-center justify-center gap-2">
                         <div class="flex items-center gap-2 text-slate-400">
                             ${PRISMATIC_THEME.icons.shield}
-                            <span class="font-semibold">No Active Resource Contention</span>
+                            <span class="font-semibold">No Active Resource Contention ${activeSwarmWorkspace !== 'all' ? `in workspace "${activeSwarmWorkspace}"` : ''}</span>
                         </div>
                         <p class="text-[11px] text-slate-500">All workspaces and files are free for agent dispatch. Collisions deflected to date: <strong class="text-amber-400 font-mono">${deflections}</strong>.</p>
                     </div>
@@ -6592,7 +6771,7 @@
                 return;
             }
 
-            grid.innerHTML = activeLocks.map((lock, idx) => {
+            grid.innerHTML = visibleLocks.map((lock, idx) => {
                 const resource = lock.resource || "unknown_resource";
                 const ext = resource.split(".").pop().toLowerCase();
                 const isFile = resource.includes(".");
@@ -6610,8 +6789,11 @@
                     const taskId = lock.linear_issue || lock.task_id;
                     const isLinear = taskId.startsWith("GRO-") || /^[A-Z]{2,}-\d+$/.test(taskId);
                     const taskIcon = isLinear ? PRISMATIC_THEME.icons.linear : PRISMATIC_THEME.icons.kanban;
+                    const taskUrl = isLinear
+                        ? `https://prismatic.growthwebdev.com/tab/tasks?issue=${encodeURIComponent(taskId)}`
+                        : `https://prismatic.growthwebdev.com/tab/tasks?task=${encodeURIComponent(taskId)}`;
                     taskLinkHtml = `
-                        <a href="https://prismatic.growthwebdev.com/tab/tasks?issue=${encodeURIComponent(taskId)}" target="_blank" class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-950/60 border border-indigo-800/60 text-indigo-300 hover:text-white text-[10px] font-mono transition">
+                        <a href="${taskUrl}" target="_blank" class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-950/60 border border-indigo-800/60 text-indigo-300 hover:text-white text-[10px] font-mono transition">
                             ${taskIcon}
                             <span>${escapeHtml(taskId)}</span>
                             ${PRISMATIC_THEME.icons.externalLink}
@@ -6620,28 +6802,29 @@
                 }
 
                 let collisionHtml = "";
-                if (lock.contenders && lock.contenders.length > 0) {
+                const contenders = lock.contentions || lock.contenders || [];
+                if (contenders && contenders.length > 0) {
                     collisionHtml = `
-                        <div class="mt-2 p-2 rounded-lg bg-amber-950/30 border border-amber-800/40 text-[10px] text-amber-300 space-y-1">
+                        <div class="mt-2 p-2 rounded-lg bg-amber-950/30 border border-amber-800/40 text-[10px] text-amber-300 space-y-1 animate-pulse">
                             <div class="flex items-center gap-1 font-bold">
                                 ${PRISMATIC_THEME.icons.warning}
-                                <span>Contention Deflected (${lock.contenders.length} waiting)</span>
+                                <span>Contention Deflected (${contenders.length} waiting)</span>
                             </div>
                             <div class="font-mono text-[9px] text-amber-200/80">
-                                ${lock.contenders.map(c => `${escapeHtml(c.agent)} contended (${c.attempts || 1}× backoff attempts)`).join(", ")}
+                                ${contenders.map(c => `${escapeHtml(c.agent_id || c.agent)} contended`).join(", ")}
                             </div>
                         </div>
                     `;
                 }
 
                 return `
-                    <div class="p-3.5 rounded-xl border border-slate-800 bg-slate-900/60 flex flex-col justify-between space-y-3 relative overflow-hidden shadow-lg hover:border-slate-700 transition" data-lock-id="${idx}">
+                    <div class="swarmlock-lease-card p-3.5 rounded-xl border border-slate-800 bg-slate-900/60 flex flex-col justify-between space-y-3 relative overflow-hidden shadow-lg hover:border-slate-700 transition" data-lock-id="${idx}">
                         <div class="flex items-start justify-between gap-2">
                             <div class="flex items-center gap-2 min-w-0">
                                 <span class="p-1.5 rounded-lg bg-slate-800/80 border border-slate-700/60">${resourceIcon}</span>
                                 <div class="min-w-0">
                                     <div class="font-mono font-bold text-xs text-slate-200 truncate" title="${escapeHtml(resource)}">${escapeHtml(resource)}</div>
-                                    <div class="text-[10px] text-slate-500 truncate mt-0.5">Lease token: <span class="font-mono text-slate-400">${escapeHtml(String(lock.token || "").slice(0, 8))}...</span></div>
+                                    <div class="text-[10px] text-slate-500 truncate mt-0.5">Lease token: <span class="font-mono text-slate-400">${escapeHtml(String(lock.lease_id || lock.token || "").slice(0, 8))}...</span></div>
                                 </div>
                             </div>
                             <div class="flex-shrink-0">${intentionBadge}</div>
@@ -6683,6 +6866,109 @@
             }).join("");
         }
 
+        // 📜 SwarmLock Audit History Drawer Operations
+        function toggleSwarmLockHistoryDrawer() {
+            const drawer = document.getElementById("swarmlock-history-drawer");
+            if (!drawer) return;
+            const isHidden = drawer.classList.contains("hidden");
+            if (isHidden) {
+                drawer.classList.remove("hidden");
+                fetchSwarmLockHistory();
+            } else {
+                drawer.classList.add("hidden");
+            }
+        }
+
+        async function fetchSwarmLockHistory() {
+            const tbody = document.getElementById("swarmlock-history-tbody");
+            if (!tbody) return;
+            try {
+                const res = await fetch("/api/gateway/swarmlock/history?limit=50");
+                if (res.ok) {
+                    const data = await res.json();
+                    renderSwarmLockHistory(data.events || []);
+                }
+            } catch (err) {
+                console.error("Failed to load lock history:", err);
+            }
+        }
+
+        function renderSwarmLockHistory(events) {
+            const tbody = document.getElementById("swarmlock-history-tbody");
+            if (!tbody) return;
+            if (!events.length) {
+                tbody.innerHTML = `<tr><td colspan="6" class="py-4 text-center text-slate-500 italic">No historical events recorded in current session.</td></tr>`;
+                return;
+            }
+            tbody.innerHTML = events.map(e => {
+                const ts = e.timestamp ? formatDate(e.timestamp) : "—";
+                const type = e.event_type || "event";
+                let badgeClass = "bg-slate-800 text-slate-400 border-slate-700";
+                if (type === "acquired") badgeClass = "bg-emerald-950/60 text-emerald-300 border-emerald-800/60";
+                else if (type === "deflected") badgeClass = "bg-amber-950/60 text-amber-300 border-amber-800/60";
+                else if (type === "evicted") badgeClass = "bg-rose-950/60 text-rose-300 border-rose-800/60";
+                else if (type === "released") badgeClass = "bg-indigo-950/60 text-indigo-300 border-indigo-800/60";
+
+                const dur = e.duration_seconds ? `${e.duration_seconds}s` : "—";
+                const details = e.reason || (e.holder ? `held by ${e.holder}` : (e.intention || "—"));
+
+                return `
+                    <tr class="hover:bg-slate-900/40 transition">
+                        <td class="py-1.5 px-2 text-slate-400 text-[10px] whitespace-nowrap">${escapeHtml(ts)}</td>
+                        <td class="py-1.5 px-2 whitespace-nowrap"><span class="px-1.5 py-0.5 rounded border text-[9px] font-bold uppercase ${badgeClass}">${escapeHtml(type)}</span></td>
+                        <td class="py-1.5 px-2 font-mono text-cyan-300 truncate max-w-[180px]" title="${escapeHtml(e.resource)}">${escapeHtml(e.resource)}</td>
+                        <td class="py-1.5 px-2 font-semibold text-slate-200">${escapeHtml(e.agent_id || e.holder || "—")}</td>
+                        <td class="py-1.5 px-2 text-slate-400 font-mono text-[10px]">${escapeHtml(dur)}</td>
+                        <td class="py-1.5 px-2 text-slate-400 text-[10px] truncate max-w-[200px]" title="${escapeHtml(details)}">${escapeHtml(details)}</td>
+                    </tr>
+                `;
+            }).join("");
+        }
+
+        // ⚙️ SwarmLock Policy Configuration Modal
+        async function openSwarmLockConfigModal() {
+            const modal = document.getElementById("swarmlock-config-modal");
+            const ttlInput = document.getElementById("swarmlock-config-ttl");
+            const deflectionsEl = document.getElementById("swarmlock-config-deflections");
+            if (!modal) return;
+            try {
+                const res = await fetch("/api/gateway/swarmlock/config");
+                if (res.ok) {
+                    const data = await res.json();
+                    if (ttlInput) ttlInput.value = data.stale_ttl_seconds || 300;
+                    if (deflectionsEl) deflectionsEl.textContent = data.total_deflected_collisions || 0;
+                }
+            } catch (e) {}
+            modal.classList.remove("hidden");
+        }
+
+        function closeSwarmLockConfigModal() {
+            const modal = document.getElementById("swarmlock-config-modal");
+            if (modal) modal.classList.add("hidden");
+        }
+
+        async function saveSwarmLockConfig() {
+            const ttlInput = document.getElementById("swarmlock-config-ttl");
+            const ttl = parseFloat(ttlInput?.value || "300");
+            try {
+                const res = await fetch("/api/gateway/swarmlock/config", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ stale_ttl_seconds: ttl })
+                });
+                if (res.ok) {
+                    showToast(`Updated SwarmLock TTL to ${ttl}s`);
+                    closeSwarmLockConfigModal();
+                    await renderSignalsView();
+                } else {
+                    const err = await res.json();
+                    alert(`Failed to save config: ${err.detail || err.error}`);
+                }
+            } catch (err) {
+                alert(`Error saving config: ${err.message}`);
+            }
+        }
+
         function openInspectLockModal(idx) {
             const modal = document.getElementById("swarmlock-inspect-modal");
             const body = document.getElementById("swarmlock-inspect-body");
@@ -6693,8 +6979,9 @@
                 <div class="p-3 rounded-lg bg-slate-950 border border-slate-800 space-y-2">
                     <div><span class="text-slate-500">Resource:</span> <span class="text-cyan-300 font-bold">${escapeHtml(lock.resource)}</span></div>
                     <div><span class="text-slate-500">Holder Agent:</span> <span class="text-slate-200 font-bold">${escapeHtml(lock.holder)}</span></div>
+                    <div><span class="text-slate-500">Workspace Domain:</span> <span class="text-emerald-300 font-bold">${escapeHtml(lock.workspace || "prismatic-engine")}</span></div>
                     <div><span class="text-slate-500">Intention:</span> <span class="text-amber-300">${escapeHtml(lock.intention || "EXCLUSIVE_MUTATION")}</span></div>
-                    <div><span class="text-slate-500">Lease Token:</span> <span class="text-slate-400 break-all">${escapeHtml(lock.token)}</span></div>
+                    <div><span class="text-slate-500">Lease Token:</span> <span class="text-slate-400 break-all font-mono">${escapeHtml(lock.lease_id || lock.token || "—")}</span></div>
                     <div><span class="text-slate-500">Expires At:</span> <span class="text-slate-300">${new Date((lock.expires_at || 0) * 1000).toLocaleString()}</span></div>
                     <div><span class="text-slate-500">Associated Task:</span> <span class="text-indigo-400 font-bold">${escapeHtml(lock.task_id || lock.linear_issue || "None")}</span></div>
                     ${lock.transcript_ref ? `<div><span class="text-slate-500">Transcript Ref:</span> <span class="text-slate-400">${escapeHtml(lock.transcript_ref)}</span></div>` : ""}
@@ -8262,6 +8549,13 @@
                         fetchData();
                         if (activeTab === "review-factory") {
                             loadReviewFactory();
+                        }
+                    }
+                    if (event.type === "swarmlock_status" && event.payload) {
+                        renderSwarmLockCockpit(event.payload);
+                        const drawer = document.getElementById("swarmlock-history-drawer");
+                        if (drawer && !drawer.classList.contains("hidden")) {
+                            fetchSwarmLockHistory();
                         }
                     }
                     // Append event to signals console log

@@ -1183,6 +1183,20 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         logger.info("WebSocket client disconnected (total=%d)", len(_ws_clients))
 
 
+async def broadcast_ws_json(message: dict[str, Any]) -> None:
+    """Broadcast JSON payload to all connected FastAPI WebSocket clients."""
+    if not _ws_clients:
+        return
+    dead = set()
+    for ws in list(_ws_clients):
+        try:
+            await ws.send_json(message)
+        except Exception:
+            dead.add(ws)
+    for ws in dead:
+        _ws_clients.discard(ws)
+
+
 # ── Lock Management API ─────────────────────────────────────────────
 
 
@@ -3702,7 +3716,47 @@ async def gateway_swarmlock_evict(body: dict[str, Any]) -> dict[str, Any]:
 
     mgr = _get_lock_manager()
     evicted = mgr.evict(resource, reason=reason)
+    enriched = mgr.get_enriched_status()
+    await broadcast_ws_json({"type": "swarmlock_status", "payload": enriched})
     return {"ok": evicted, "resource": resource, "reason": reason}
+
+
+@app.get("/api/swarmlock/history")
+@app.get("/api/gateway/swarmlock/history")
+async def gateway_swarmlock_history(
+    limit: int = Query(50, ge=1, le=200),
+    resource: str | None = None,
+    agent: str | None = None,
+) -> dict[str, Any]:
+    """Return historical rolling audit log of lease acquisitions, releases, and evictions."""
+    from prismatic.lock import _get_lock_manager
+
+    mgr = _get_lock_manager()
+    events = mgr.get_history(limit=limit, resource=resource, agent_id=agent)
+    return {"ok": True, "count": len(events), "events": events}
+
+
+@app.get("/api/swarmlock/config")
+@app.get("/api/gateway/swarmlock/config")
+async def gateway_swarmlock_get_config() -> dict[str, Any]:
+    """Return lock manager configuration parameters."""
+    from prismatic.lock import _get_lock_manager
+
+    mgr = _get_lock_manager()
+    return mgr.get_config()
+
+
+@app.post("/api/swarmlock/config")
+@app.post("/api/gateway/swarmlock/config")
+async def gateway_swarmlock_update_config(body: dict[str, Any]) -> dict[str, Any]:
+    """Update lock manager configuration parameters (e.g. TTL)."""
+    from prismatic.lock import _get_lock_manager
+
+    stale_ttl = body.get("stale_ttl_seconds")
+    mgr = _get_lock_manager()
+    updated = mgr.update_config(stale_ttl_seconds=stale_ttl)
+    await broadcast_ws_json({"type": "swarmlock_status", "payload": mgr.get_enriched_status()})
+    return {"ok": True, "config": updated}
 
 
 @app.get("/api/agents")
