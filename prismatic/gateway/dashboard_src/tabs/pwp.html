@@ -1,48 +1,426 @@
         <div id="section-pwp" class="hidden space-y-6">
-            <div class="glass-panel p-5 rounded-xl space-y-5">
-                <div class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-800 pb-3">
-                    <div>
-                        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider">PWP Additive Plugin Surface</h2>
-                        <p class="text-xs text-slate-500 mt-1">Portable Website Plugin capabilities connected into PE without becoming PE core. Connect/disconnect is explicit, reversible, and dashboard-visible.</p>
-                    </div>
-                    <div class="flex flex-wrap gap-2">
-                        <button onclick="pwpAction('connect')" class="bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-300 border border-emerald-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Connect</button>
-                        <button onclick="pwpAction('lifecycle-demo')" class="bg-cyan-600/10 hover:bg-cyan-600/20 text-cyan-300 border border-cyan-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Run Lifecycle Demo</button>
-                        <button onclick="pwpAction('disconnect')" class="bg-rose-600/10 hover:bg-rose-600/20 text-rose-300 border border-rose-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Disconnect</button>
-                        <button onclick="loadPWPStatus()" class="bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 border border-indigo-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Refresh</button>
-                    </div>
-                </div>
-                <div id="pwp-summary" class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs"></div>
-                <div id="pwp-blockers" class="space-y-2"></div>
-                <div class="grid grid-cols-1 lg:grid-cols-3 gap-4" id="pwp-capabilities"></div>
-                <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 text-xs">
-                    <div class="bg-slate-950/70 border border-slate-800 rounded-xl p-4">
-                        <div class="text-slate-400 uppercase tracking-wider font-bold mb-2">Connect Points</div>
-                        <ul id="pwp-connect-points" class="space-y-2 text-slate-300 list-disc list-inside"></ul>
-                    </div>
-                    <div class="bg-slate-950/70 border border-slate-800 rounded-xl p-4">
-                        <div class="text-slate-400 uppercase tracking-wider font-bold mb-2">Disconnect Points</div>
-                        <ul id="pwp-disconnect-points" class="space-y-2 text-slate-300 list-disc list-inside"></ul>
-                    </div>
-                    <div class="bg-slate-950/70 border border-slate-800 rounded-xl p-4">
-                        <div class="text-slate-400 uppercase tracking-wider font-bold mb-2">Tools / Workflows</div>
-                        <div id="pwp-tools" class="flex flex-wrap gap-2"></div>
-                    </div>
-                </div>
-                <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-4 text-xs">
-                    <div class="bg-slate-950/70 border border-slate-800 rounded-xl overflow-hidden">
-                        <div class="p-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2">
-                            <div>
-                                <div class="text-slate-400 uppercase tracking-wider font-bold">PWP Reference Lifecycle History</div>
-                                <p class="mt-1 text-slate-500">Canonical full lifecycle: connect → job → artifact/provenance → approval → publish/export → safe disconnect.</p>
+            <!-- PWP STUDIO HEADER -->
+            <div class="glass-panel p-5 rounded-xl space-y-5 border border-slate-800 bg-slate-950/80">
+                <div class="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-lg bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 font-bold text-lg">PWP</div>
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <h2 class="text-base font-bold text-slate-100 uppercase tracking-wider">Prismatic Web Publisher Studio</h2>
+                                <span id="pwp-connection-badge" class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">Connected</span>
                             </div>
-                            <button onclick="pwpAction('lifecycle-demo')" class="bg-cyan-600/10 hover:bg-cyan-600/20 text-cyan-300 border border-cyan-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Run Demo</button>
+                            <p class="text-xs text-slate-400 mt-0.5">Standalone Web Publisher Engine & Autonomous Swarm Control Plane</p>
                         </div>
-                        <div id="pwp-lifecycle-history" class="divide-y divide-slate-800/70"></div>
                     </div>
-                    <aside id="pwp-lifecycle-detail" class="bg-slate-950/70 border border-slate-800 rounded-xl p-4 min-h-[220px]"></aside>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button onclick="pwpAction('connect')" class="bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-300 border border-emerald-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Connect</button>
+                        <button onclick="pwpAction('disconnect')" class="bg-rose-600/10 hover:bg-rose-600/20 text-rose-300 border border-rose-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Disconnect</button>
+                        <button onclick="loadPWPStudioState()" class="bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 border border-indigo-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                            Refresh
+                        </button>
+                    </div>
+                </div>
+
+                <!-- SUB-TAB NAVIGATION BAR -->
+                <nav class="flex flex-wrap gap-2 border-b border-slate-800 pb-3" aria-label="PWP Studio Navigation">
+                    <button id="pwp-nav-ingest" onclick="switchPwpSubtab('ingest')" class="pwp-tab-btn bg-indigo-600 text-white px-3.5 py-1.5 rounded-lg text-xs font-medium transition shadow-sm">📥 1. Ingest & Content Studio</button>
+                    <button id="pwp-nav-synthesize" onclick="switchPwpSubtab('synthesize')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">🏗️ 2. Build Plan Synthesizer</button>
+                    <button id="pwp-nav-distill" onclick="switchPwpSubtab('distill')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">⚡ 3. Linear Swarm Distiller</button>
+                    <button id="pwp-nav-theme" onclick="switchPwpSubtab('theme')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">🎨 4. Theme & Token Workbench</button>
+                    <button id="pwp-nav-provision" onclick="switchPwpSubtab('provision')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">🚀 5. Provisioning & Site Analytics</button>
+                </nav>
+
+                <!-- SUB-TAB 1: INGEST & CONTENT STUDIO -->
+                <div id="pwp-subtab-ingest" class="pwp-subtab-pane space-y-4">
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                        <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-3">
+                            <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Google Drive 5-Doc Parser</h3>
+                            <p class="text-xs text-slate-400">Ingest client knowledge framework from Google Drive folder containing the 5 core docs.</p>
+                            <div>
+                                <label class="block text-[11px] font-medium text-slate-400 mb-1">Client Name</label>
+                                <input id="pwp-ingest-client" type="text" value="Acme Software Corp" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-medium text-slate-400 mb-1">Google Drive Folder URL / ID</label>
+                                <input id="pwp-ingest-url" type="text" placeholder="https://drive.google.com/drive/folders/..." class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                            </div>
+                            <button onclick="pwpExecuteIngest()" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-2 rounded-lg text-xs transition">Run 5-Doc Framework Ingest</button>
+                        </div>
+
+                        <div class="lg:col-span-2 bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-3">
+                            <div class="flex items-center justify-between">
+                                <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Client Knowledge Graph</h3>
+                                <span id="pwp-ingest-client-badge" class="text-[11px] font-medium text-indigo-400 bg-indigo-500/10 px-2.5 py-0.5 rounded-full border border-indigo-500/20">Acme Software Corp</span>
+                            </div>
+                            <div id="pwp-graph-viewer" class="bg-slate-950 border border-slate-800 rounded-lg p-3 max-h-[280px] overflow-y-auto text-xs font-mono text-slate-300">
+                                <!-- Knowledge graph JSON rendered here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SUB-TAB 2: BUILD PLAN SYNTHESIZER -->
+                <div id="pwp-subtab-synthesize" class="pwp-subtab-pane hidden space-y-4">
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                        <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-3">
+                            <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Site Synthesis Configurator</h3>
+                            <div>
+                                <label class="block text-[11px] font-medium text-slate-400 mb-1">Target Site Name</label>
+                                <input id="pwp-synth-sitename" type="text" value="Acme Software Platform" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-medium text-slate-400 mb-1">Base Theme Blueprint</label>
+                                <select id="pwp-synth-theme" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                                    <option value="corporate">Corporate (B2B SaaS)</option>
+                                    <option value="saas">SaaS Product Focus</option>
+                                    <option value="portfolio">Modern Portfolio / Agency</option>
+                                    <option value="ecommerce">E-Commerce Storefront</option>
+                                </select>
+                            </div>
+                            <button onclick="pwpExecuteSynthesize()" class="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-semibold py-2 rounded-lg text-xs transition">Synthesize Website Build Plan</button>
+                        </div>
+
+                        <div class="lg:col-span-2 bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-3">
+                            <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Synthesized Sitemap & Module Matrix</h3>
+                            <div id="pwp-sitemap-tree" class="space-y-2 text-xs">
+                                <!-- Sitemap nodes rendered here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SUB-TAB 3: LINEAR SWARM DISTILLER -->
+                <div id="pwp-subtab-distill" class="pwp-subtab-pane hidden space-y-4">
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                        <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-3">
+                            <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Linear Epic Distiller</h3>
+                            <div>
+                                <label class="block text-[11px] font-medium text-slate-400 mb-1">Target Linear Project</label>
+                                <input id="pwp-distill-project" type="text" value="Prismatic Web Publisher" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-medium text-slate-400 mb-1">Priority</label>
+                                <select id="pwp-distill-priority" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                                    <option value="High">High Priority</option>
+                                    <option value="Urgent">Urgent</option>
+                                    <option value="Normal">Normal</option>
+                                </select>
+                            </div>
+                            <button onclick="pwpExecuteDistill()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2 rounded-lg text-xs transition">Distill to Linear Swarm Epics</button>
+                        </div>
+
+                        <div class="lg:col-span-2 bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-3">
+                            <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Active Linear Epics & Agent Allocations</h3>
+                            <div id="pwp-epics-list" class="space-y-2 text-xs">
+                                <!-- Linear Epics list rendered here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SUB-TAB 4: THEME & TOKEN WORKBENCH -->
+                <div id="pwp-subtab-theme" class="pwp-subtab-pane hidden space-y-4">
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-4">
+                            <div class="flex items-center justify-between">
+                                <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Design Token Editor</h3>
+                                <div class="flex gap-2">
+                                    <button onclick="pwpValidateTheme()" class="bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 px-2.5 py-1 rounded text-[11px] hover:bg-indigo-600/30 transition">Validate</button>
+                                    <button onclick="pwpCompileTheme()" class="bg-emerald-600 text-white px-2.5 py-1 rounded text-[11px] font-semibold hover:bg-emerald-500 transition">Compile CSS</button>
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-2 gap-3 text-xs">
+                                <div>
+                                    <label class="block text-slate-400 mb-1">Primary Color</label>
+                                    <input id="pwp-token-primary" type="color" value="#3b82f6" onchange="pwpUpdateTokensFromUI()" class="w-full h-8 bg-slate-950 border border-slate-800 rounded px-1 cursor-pointer">
+                                </div>
+                                <div>
+                                    <label class="block text-slate-400 mb-1">Secondary Color</label>
+                                    <input id="pwp-token-secondary" type="color" value="#6366f1" onchange="pwpUpdateTokensFromUI()" class="w-full h-8 bg-slate-950 border border-slate-800 rounded px-1 cursor-pointer">
+                                </div>
+                                <div>
+                                    <label class="block text-slate-400 mb-1">Surface Color</label>
+                                    <input id="pwp-token-surface" type="color" value="#0f172a" onchange="pwpUpdateTokensFromUI()" class="w-full h-8 bg-slate-950 border border-slate-800 rounded px-1 cursor-pointer">
+                                </div>
+                                <div>
+                                    <label class="block text-slate-400 mb-1">Accent Color</label>
+                                    <input id="pwp-token-accent" type="color" value="#06b6d4" onchange="pwpUpdateTokensFromUI()" class="w-full h-8 bg-slate-950 border border-slate-800 rounded px-1 cursor-pointer">
+                                </div>
+                            </div>
+                            <button onclick="pwpComputeThemeDiff()" class="w-full bg-slate-800 hover:bg-slate-700 text-slate-200 py-1.5 rounded text-xs transition">Compute Theme Diff</button>
+                        </div>
+
+                        <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-3">
+                            <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Compiled CSS Output</h3>
+                            <pre id="pwp-compiled-css" class="bg-slate-950 border border-slate-800 rounded-lg p-3 h-[240px] overflow-y-auto text-xs font-mono text-emerald-400">// Click "Compile CSS" to view generated custom properties</pre>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SUB-TAB 5: PROVISIONING & SITE ANALYTICS -->
+                <div id="pwp-subtab-provision" class="pwp-subtab-pane hidden space-y-4">
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                        <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-3">
+                            <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">OAuth Credential Vault</h3>
+                            <div id="pwp-credentials-list" class="space-y-2 text-xs">
+                                <!-- OAuth Provider cards rendered here -->
+                            </div>
+                        </div>
+
+                        <div class="lg:col-span-2 bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-4">
+                            <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                                <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Deployed Site Health & KPIs</h3>
+                                <button onclick="pwpProvisionNewSitePrompt()" class="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded text-xs font-semibold transition">+ Provision New Site</button>
+                            </div>
+                            <div id="pwp-sites-grid" class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                                <!-- Deployed site cards rendered here -->
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <!-- SECTION 8: NATIVE CRONS -->
+        <!-- PWP STUDIO INLINE APPLICATION ENGINE -->
+        <script>
+            function switchPwpSubtab(tabName) {
+                document.querySelectorAll('.pwp-subtab-pane').forEach(el => el.classList.add('hidden'));
+                document.querySelectorAll('.pwp-tab-btn').forEach(el => {
+                    el.classList.remove('bg-indigo-600', 'text-white');
+                    el.classList.add('bg-slate-900', 'text-slate-300');
+                });
+                
+                const targetPane = document.getElementById('pwp-subtab-' + tabName);
+                const targetBtn = document.getElementById('pwp-nav-' + tabName);
+                if (targetPane) targetPane.classList.remove('hidden');
+                if (targetBtn) {
+                    targetBtn.classList.remove('bg-slate-900', 'text-slate-300');
+                    targetBtn.classList.add('bg-indigo-600', 'text-white');
+                }
+            }
+
+            async function loadPWPStudioState() {
+                try {
+                    const res = await fetch('/api/pwp/status');
+                    const data = await res.json();
+                    const badge = document.getElementById('pwp-connection-badge');
+                    if (badge) {
+                        badge.textContent = data.state === 'connected' ? 'Connected' : 'Disconnected';
+                        badge.className = data.state === 'connected' 
+                            ? 'px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+                            : 'px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/30';
+                    }
+
+                    // Load Graph
+                    const graphRes = await fetch('/api/pwp/ingest/graph');
+                    const graphData = await graphRes.json();
+                    document.getElementById('pwp-graph-viewer').textContent = JSON.stringify(graphData.graph, null, 2);
+
+                    // Load Build Plan
+                    const planRes = await fetch('/api/pwp/build-plan');
+                    const planData = await planRes.json();
+                    renderSitemapTree(planData.build_plan);
+
+                    // Load Epics
+                    const epicsRes = await fetch('/api/pwp/distill/epics');
+                    const epicsData = await epicsRes.json();
+                    renderEpicsList(epicsData.epics);
+
+                    // Load Credentials
+                    const credsRes = await fetch('/api/pwp/credentials/status');
+                    const credsData = await credsRes.json();
+                    renderCredentialsList(credsData.credentials);
+
+                    // Load Sites
+                    const sitesRes = await fetch('/api/pwp/sites/kpi');
+                    const sitesData = await sitesRes.json();
+                    renderSitesGrid(sitesData.sites);
+
+                } catch (err) {
+                    console.error('Failed to load PWP Studio state:', err);
+                }
+            }
+
+            function renderSitemapTree(plan) {
+                const container = document.getElementById('pwp-sitemap-tree');
+                if (!container || !plan || !plan.pages) return;
+                
+                let html = '<div class="space-y-2">';
+                plan.pages.forEach(page => {
+                    html += `
+                        <div class="bg-slate-950 border border-slate-800 rounded-lg p-3 flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                                <span class="font-bold text-indigo-300">${page.title}</span>
+                                <span class="text-slate-500 text-[11px] ml-2">(${page.slug})</span>
+                            </div>
+                            <div class="flex gap-1.5">
+                                ${page.modules.map(m => `<span class="bg-slate-800 text-slate-300 px-2 py-0.5 rounded text-[10px]">${m}</span>`).join('')}
+                            </div>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+                container.innerHTML = html;
+            }
+
+            function renderEpicsList(epics) {
+                const container = document.getElementById('pwp-epics-list');
+                if (!container) return;
+                if (!epics || epics.length === 0) {
+                    container.innerHTML = '<p class="text-slate-500 italic">No active distillation epics. Click "Distill to Linear Swarm Epics" to start.</p>';
+                    return;
+                }
+
+                let html = '<div class="space-y-2">';
+                epics.forEach(epic => {
+                    html += `
+                        <div class="bg-slate-950 border border-slate-800 rounded-lg p-3 flex items-center justify-between">
+                            <div>
+                                <a href="https://prismatic.growthwebdev.com/tab/tasks?issue=${epic.epic_id}" target="_blank" class="font-bold text-emerald-400 hover:underline">${epic.epic_id}</a>
+                                <span class="text-slate-400 ml-2">${epic.project}</span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <span class="bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2 py-0.5 rounded text-[10px]">${epic.task_count} Tasks</span>
+                                <span class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded text-[10px]">${epic.priority}</span>
+                            </div>
+                        </div>
+                    `;
+                });
+                html += '</div>';
+                container.innerHTML = html;
+            }
+
+            function renderCredentialsList(creds) {
+                const container = document.getElementById('pwp-credentials-list');
+                if (!container || !creds) return;
+
+                let html = '';
+                Object.entries(creds).forEach(([key, val]) => {
+                    const isConn = val.status === 'connected';
+                    html += `
+                        <div class="bg-slate-950 border border-slate-800 rounded-lg p-2.5 flex items-center justify-between">
+                            <span class="font-semibold text-slate-300 capitalize">${key.replace('_', ' ')}</span>
+                            <span class="${isConn ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' : 'text-rose-400 bg-rose-500/10 border-rose-500/20'} px-2 py-0.5 rounded text-[10px] border">${val.status}</span>
+                        </div>
+                    `;
+                });
+                container.innerHTML = html;
+            }
+
+            function renderSitesGrid(sites) {
+                const container = document.getElementById('pwp-sites-grid');
+                if (!container || !sites) return;
+
+                let html = '';
+                sites.forEach(site => {
+                    html += `
+                        <div class="bg-slate-950 border border-slate-800 rounded-xl p-3 space-y-2">
+                            <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+                                <a href="https://${site.domain}" target="_blank" class="font-bold text-indigo-300 hover:underline">${site.domain}</a>
+                                <span class="text-emerald-400 text-[10px] bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded">${site.status}</span>
+                            </div>
+                            <div class="grid grid-cols-2 gap-2 text-[11px] text-slate-400">
+                                <div>LCP: <span class="text-slate-200 font-mono">${site.lcp}</span></div>
+                                <div>CLS: <span class="text-slate-200 font-mono">${site.cls}</span></div>
+                                <div>Visitors (24h): <span class="text-slate-200 font-mono">${site.visitors_24h}</span></div>
+                                <div>Leads (24h): <span class="text-slate-200 font-mono">${site.leads_24h}</span></div>
+                            </div>
+                        </div>
+                    `;
+                });
+                container.innerHTML = html;
+            }
+
+            async function pwpExecuteIngest() {
+                const client = document.getElementById('pwp-ingest-client').value;
+                const url = document.getElementById('pwp-ingest-url').value;
+                const res = await fetch('/api/pwp/ingest/drive', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({client_name: client, folder_url: url})
+                });
+                loadPWPStudioState();
+            }
+
+            async function pwpExecuteSynthesize() {
+                const siteName = document.getElementById('pwp-synth-sitename').value;
+                const theme = document.getElementById('pwp-synth-theme').value;
+                const res = await fetch('/api/pwp/synthesize', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({site_name: siteName, theme: theme})
+                });
+                loadPWPStudioState();
+            }
+
+            async function pwpExecuteDistill() {
+                const project = document.getElementById('pwp-distill-project').value;
+                const priority = document.getElementById('pwp-distill-priority').value;
+                const res = await fetch('/api/pwp/distill', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({project: project, priority: priority})
+                });
+                loadPWPStudioState();
+            }
+
+            async function pwpCompileTheme() {
+                const primary = document.getElementById('pwp-token-primary').value;
+                const secondary = document.getElementById('pwp-token-secondary').value;
+                const surface = document.getElementById('pwp-token-surface').value;
+                const accent = document.getElementById('pwp-token-accent').value;
+                
+                const tokens = {
+                    colors: { primary, secondary, surface, text: '#f8fafc', accent }
+                };
+
+                const res = await fetch('/api/pwp/theme/compile', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({tokens})
+                });
+                const data = await res.json();
+                document.getElementById('pwp-compiled-css').textContent = data.css;
+            }
+
+            async function pwpValidateTheme() {
+                const res = await fetch('/api/pwp/theme/validate', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({tokens: {colors: {primary: '#3b82f6'}}})
+                });
+                const data = await res.json();
+                alert(data.valid ? 'Theme Schema Valid ✅' : 'Validation Failed: ' + data.errors.join(', '));
+            }
+
+            async function pwpComputeThemeDiff() {
+                const res = await fetch('/api/pwp/theme/diff', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({})
+                });
+                const data = await res.json();
+                alert('Semantic Diff:\n' + JSON.stringify(data.diff, null, 2));
+            }
+
+            async function pwpProvisionNewSitePrompt() {
+                const domain = prompt('Enter domain name to provision:', 'client-demo.com');
+                if (!domain) return;
+                const res = await fetch('/api/pwp/provision', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({domain})
+                });
+                loadPWPStudioState();
+            }
+
+            async function pwpAction(act) {
+                if (act === 'connect') await fetch('/api/pwp/connect', {method: 'POST'});
+                if (act === 'disconnect') await fetch('/api/pwp/disconnect', {method: 'POST'});
+                loadPWPStudioState();
+            }
+
+            // Auto-initialize on dashboard load
+            document.addEventListener('DOMContentLoaded', loadPWPStudioState);
+        </script>

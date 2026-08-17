@@ -5180,6 +5180,10 @@ _dep_router = create_deploy_router()
 if _dep_router:
     app.include_router(_dep_router, prefix="/api")
 
+from prismatic.gateway.routes.pwp import pwp_router  # noqa: E402
+app.include_router(pwp_router)
+
+
 
 @app.get("/api/workspace/tree")
 async def gateway_workspace_tree(
