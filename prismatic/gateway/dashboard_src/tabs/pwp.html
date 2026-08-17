@@ -14,6 +14,7 @@
                     </div>
                     <div class="flex flex-wrap items-center gap-2">
                         <button onclick="pwpAction('connect')" class="bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-300 border border-emerald-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Connect</button>
+                        <button onclick="pwpAction('lifecycle-demo')" class="bg-cyan-600/10 hover:bg-cyan-600/20 text-cyan-300 border border-cyan-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Run Lifecycle Demo</button>
                         <button onclick="pwpAction('disconnect')" class="bg-rose-600/10 hover:bg-rose-600/20 text-rose-300 border border-rose-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition">Disconnect</button>
                         <button onclick="loadPWPStudioState()" class="bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 border border-indigo-500/20 px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1">
                             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
@@ -418,6 +419,7 @@
             async function pwpAction(act) {
                 if (act === 'connect') await fetch('/api/pwp/connect', {method: 'POST'});
                 if (act === 'disconnect') await fetch('/api/pwp/disconnect', {method: 'POST'});
+                if (act === 'lifecycle-demo') await fetch('/api/pwp/synthesize', {method: 'POST', body: JSON.stringify({theme: 'corporate'}), headers: {'Content-Type': 'application/json'}});
                 loadPWPStudioState();
             }
 
