@@ -103,3 +103,30 @@ def test_pwp_credentials_and_provision_routes() -> None:
     resp_kpi = client.get("/api/pwp/sites/kpi")
     assert resp_kpi.status_code == 200
     assert any(s["domain"] == "client-test.com" for s in resp_kpi.json()["sites"])
+
+
+def test_pwp_multi_property_and_gap_routes() -> None:
+    # Workspaces
+    resp_ws = client.get("/api/pwp/workspaces")
+    assert resp_ws.status_code == 200
+    assert len(resp_ws.json()["workspaces"]) >= 1
+
+    # Project Export
+    resp_exp = client.post("/api/pwp/workspaces/active-oahu/export")
+    assert resp_exp.status_code == 200
+    assert "scaffold" in resp_exp.json()
+
+    # Webhooks
+    resp_zap = client.post("/api/pwp/webhooks/zapier", json={"site_slug": "active-oahu", "event": "lead_captured"})
+    assert resp_zap.status_code == 200
+    assert resp_zap.json()["ok"] is True
+
+    # Linear Sync
+    resp_sync = client.post("/api/pwp/workspaces/active-oahu/sync-linear")
+    assert resp_sync.status_code == 200
+    assert resp_sync.json()["kpi_status"] == "configured"
+
+    # SEO Rankings
+    resp_seo = client.get("/api/pwp/seo/rankings")
+    assert resp_seo.status_code == 200
+    assert "rankings" in resp_seo.json()
