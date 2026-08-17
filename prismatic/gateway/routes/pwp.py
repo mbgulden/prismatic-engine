@@ -404,7 +404,7 @@ def sync_workspace_linear_status(slug: str) -> Dict[str, Any]:
 
 # --- GAP-4: SEO & Competitor Velocity Endpoints ---
 
-@pwp_router.get("/seo/rankings")
+@pwp_router.get("/seo-rankings")
 def get_seo_rankings(slug: Optional[str] = None) -> Dict[str, Any]:
     """Get keyword rankings and competitor velocity alerts."""
     st = load_pwp_studio_state()

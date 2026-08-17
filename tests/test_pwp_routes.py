@@ -127,6 +127,6 @@ def test_pwp_multi_property_and_gap_routes() -> None:
     assert resp_sync.json()["kpi_status"] == "configured"
 
     # SEO Rankings
-    resp_seo = client.get("/api/pwp/seo/rankings")
+    resp_seo = client.get("/api/pwp/seo-rankings")
     assert resp_seo.status_code == 200
     assert "rankings" in resp_seo.json()

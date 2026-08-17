@@ -322,7 +322,7 @@
                     renderWorkspaceGridCards(wsData.workspaces, wsData.active_workspace);
 
                     // Load SEO Rankings (GAP-4)
-                    const seoRes = await fetch('/api/pwp/seo/rankings');
+                    const seoRes = await fetch('/api/pwp/seo-rankings');
                     const seoData = await seoRes.json();
                     renderSEORankingsList(seoData.rankings, seoData.competitor_alerts);
 
