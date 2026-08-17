@@ -2664,19 +2664,21 @@
                         <span id="pwp-workspace-tenant-badge" class="bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2.5 py-0.5 rounded-full text-[10px] font-semibold">Tenant: growthwebdev</span>
                     </div>
                     <div class="flex items-center gap-2">
+                        <button onclick="pwpExportProjectScaffold()" class="bg-cyan-600 hover:bg-cyan-500 text-white font-semibold px-3 py-1.5 rounded-lg text-xs transition shadow-sm">📦 Export Project Scaffold</button>
                         <button onclick="pwpOpenConfigureKPIModal()" class="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold px-3 py-1.5 rounded-lg text-xs transition shadow-sm">⚙️ Configure Website KPIs</button>
-                        <button onclick="pwpPromptAddWorkspace()" class="bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/30 border border-indigo-500/30 px-3 py-1.5 rounded-lg text-xs font-medium transition">+ Add New Property Workspace</button>
+                        <button onclick="pwpPromptAddWorkspace()" class="bg-indigo-600/20 text-indigo-300 hover:bg-indigo-600/30 border border-indigo-500/30 px-3 py-1.5 rounded-lg text-xs font-medium transition">+ Add Property</button>
                     </div>
                 </div>
 
                 <!-- SUB-TAB NAVIGATION BAR (Schema 4 Capsule / Segmented Control) -->
                 <nav class="flex flex-wrap gap-2 border-b border-slate-800 pb-3" aria-label="PWP Studio Navigation">
                     <button id="pwp-nav-workspaces" onclick="switchPwpSubtab('workspaces')" class="pwp-tab-btn bg-emerald-600 text-white px-3.5 py-1.5 rounded-lg text-xs font-medium transition shadow-sm">🌐 1. Property Workspaces Grid</button>
-                    <button id="pwp-nav-ingest" onclick="switchPwpSubtab('ingest')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">📥 2. Content Ingest Studio</button>
-                    <button id="pwp-nav-synthesize" onclick="switchPwpSubtab('synthesize')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">🏗️ 3. Build Plan Synthesizer</button>
-                    <button id="pwp-nav-distill" onclick="switchPwpSubtab('distill')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">⚡ 4. Linear Swarm Distiller</button>
-                    <button id="pwp-nav-theme" onclick="switchPwpSubtab('theme')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">🎨 5. Theme & Token Workbench</button>
-                    <button id="pwp-nav-provision" onclick="switchPwpSubtab('provision')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">🚀 6. Provisioning & Analytics</button>
+                    <button id="pwp-nav-seo" onclick="switchPwpSubtab('seo')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">🔍 2. SEO & Competitor Velocity</button>
+                    <button id="pwp-nav-ingest" onclick="switchPwpSubtab('ingest')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">📥 3. Content Ingest Studio</button>
+                    <button id="pwp-nav-synthesize" onclick="switchPwpSubtab('synthesize')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">🏗️ 4. Build Plan Synthesizer</button>
+                    <button id="pwp-nav-distill" onclick="switchPwpSubtab('distill')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">⚡ 5. Linear Swarm Distiller</button>
+                    <button id="pwp-nav-theme" onclick="switchPwpSubtab('theme')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">🎨 6. Theme & Token Workbench</button>
+                    <button id="pwp-nav-provision" onclick="switchPwpSubtab('provision')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">🚀 7. Provisioning & Analytics</button>
                 </nav>
 
                 <!-- SUB-TAB 1: PROPERTY WORKSPACES GRID -->
@@ -2690,7 +2692,32 @@
                     </div>
                 </div>
 
-                <!-- SUB-TAB 2: DUAL-MODE INGEST STUDIO -->
+                <!-- SUB-TAB 2: GAP-4: SEO & COMPETITOR VELOCITY AUDITOR -->
+                <div id="pwp-subtab-seo" class="pwp-subtab-pane hidden space-y-4">
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-3">
+                            <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+                                <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Search Console Keyword Rankings</h3>
+                                <span class="text-[10px] bg-emerald-500/10 text-emerald-400 px-2 py-0.5 rounded border border-emerald-500/20">GSC Verified</span>
+                            </div>
+                            <div id="pwp-seo-rankings-list" class="space-y-2 text-xs">
+                                <!-- Keyword ranking items rendered here -->
+                            </div>
+                        </div>
+
+                        <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-3">
+                            <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+                                <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Competitor Velocity & Territory Alerts</h3>
+                                <span class="text-[10px] bg-amber-500/10 text-amber-400 px-2 py-0.5 rounded border border-amber-500/20">Ubersuggest Tracker</span>
+                            </div>
+                            <div id="pwp-competitor-alerts-list" class="space-y-2 text-xs">
+                                <!-- Competitor alert items rendered here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SUB-TAB 3: DUAL-MODE INGEST STUDIO -->
                 <div id="pwp-subtab-ingest" class="pwp-subtab-pane hidden space-y-4">
                     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
                         <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-4">
@@ -2733,7 +2760,7 @@
                     </div>
                 </div>
 
-                <!-- SUB-TAB 3: BUILD PLAN SYNTHESIZER -->
+                <!-- SUB-TAB 4: BUILD PLAN SYNTHESIZER -->
                 <div id="pwp-subtab-synthesize" class="pwp-subtab-pane hidden space-y-4">
                     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
                         <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-3">
@@ -2766,7 +2793,7 @@
                     </div>
                 </div>
 
-                <!-- SUB-TAB 4: LINEAR SWARM DISTILLER -->
+                <!-- SUB-TAB 5: LINEAR SWARM DISTILLER -->
                 <div id="pwp-subtab-distill" class="pwp-subtab-pane hidden space-y-4">
                     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
                         <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-3">
@@ -2795,7 +2822,7 @@
                     </div>
                 </div>
 
-                <!-- SUB-TAB 5: THEME & TOKEN WORKBENCH -->
+                <!-- SUB-TAB 6: THEME & TOKEN WORKBENCH -->
                 <div id="pwp-subtab-theme" class="pwp-subtab-pane hidden space-y-4">
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
                         <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-4">
@@ -2837,7 +2864,7 @@
                     </div>
                 </div>
 
-                <!-- SUB-TAB 6: PROVISIONING & ANALYTICS -->
+                <!-- SUB-TAB 7: PROVISIONING & ANALYTICS -->
                 <div id="pwp-subtab-provision" class="pwp-subtab-pane hidden space-y-4">
                     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
                         <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-3">
@@ -2925,6 +2952,11 @@
                     renderWorkspaceSelector(wsData.workspaces, wsData.active_workspace);
                     renderWorkspaceGridCards(wsData.workspaces, wsData.active_workspace);
 
+                    // Load SEO Rankings (GAP-4)
+                    const seoRes = await fetch('/api/pwp/seo/rankings');
+                    const seoData = await seoRes.json();
+                    renderSEORankingsList(seoData.rankings, seoData.competitor_alerts);
+
                     // Load Graph
                     const graphRes = await fetch('/api/pwp/ingest/graph');
                     const graphData = await graphRes.json();
@@ -2998,12 +3030,49 @@
                             </div>
                             <div class="pt-2 flex gap-2">
                                 <button onclick="pwpSwitchActiveWorkspace('${w.slug}')" class="flex-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 py-1 rounded text-[11px] font-semibold transition">Select Workspace</button>
-                                <button onclick="pwpConfigureWorkspaceKPIPrompt('${w.slug}')" class="bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 px-2 py-1 rounded text-[11px] font-medium transition">Configure KPIs</button>
+                                <button onclick="pwpSyncWorkspaceLinearStatus('${w.slug}')" class="bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 px-2 py-1 rounded text-[11px] font-medium transition">Sync Linear</button>
                             </div>
                         </div>
                     `;
                 });
                 container.innerHTML = html;
+            }
+
+            function renderSEORankingsList(rankings, alerts) {
+                const rankContainer = document.getElementById('pwp-seo-rankings-list');
+                const alertContainer = document.getElementById('pwp-competitor-alerts-list');
+
+                if (rankContainer && rankings) {
+                    let html = '';
+                    rankings.forEach(r => {
+                        html += `
+                            <div class="bg-slate-950 border border-slate-800 rounded-lg p-2.5 flex items-center justify-between">
+                                <div>
+                                    <span class="font-bold text-slate-200">${r.keyword}</span>
+                                    <span class="text-slate-500 text-[10px] block">Vol: ${r.volume} / mo</span>
+                                </div>
+                                <span class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold px-2 py-0.5 rounded text-xs">Rank #${r.position}</span>
+                            </div>
+                        `;
+                    });
+                    rankContainer.innerHTML = html;
+                }
+
+                if (alertContainer && alerts) {
+                    let html = '';
+                    alerts.forEach(a => {
+                        html += `
+                            <div class="bg-slate-950 border border-slate-800 rounded-lg p-2.5 flex items-center justify-between">
+                                <div>
+                                    <span class="font-bold text-amber-400">${a.domain}</span>
+                                    <span class="text-slate-400 text-[10px] block">Territory: ${a.territory}</span>
+                                </div>
+                                <span class="bg-amber-500/10 text-amber-300 border border-amber-500/20 px-2 py-0.5 rounded text-[10px]">${a.threat_level} Threat (${a.rank_change})</span>
+                            </div>
+                        `;
+                    });
+                    alertContainer.innerHTML = html;
+                }
             }
 
             function renderSitemapTree(plan) {
@@ -3109,6 +3178,21 @@
                     `;
                 });
                 container.innerHTML = html;
+            }
+
+            async function pwpExportProjectScaffold() {
+                const select = document.getElementById('pwp-workspace-selector');
+                const slug = select ? select.value : 'active-oahu';
+                const res = await fetch(`/api/pwp/workspaces/${slug}/export`, {method: 'POST'});
+                const data = await res.json();
+                alert(`Exported Astro Project Scaffold for ${slug}!\nFiles: ${data.scaffold.pages.length + 2} files ready.`);
+            }
+
+            async function pwpSyncWorkspaceLinearStatus(slug) {
+                const res = await fetch(`/api/pwp/workspaces/${slug}/sync-linear`, {method: 'POST'});
+                const data = await res.json();
+                alert(`Synced Linear Status for ${slug}: ${data.kpi_status}`);
+                loadPWPStudioState();
             }
 
             async function pwpPromptAddWorkspace() {
