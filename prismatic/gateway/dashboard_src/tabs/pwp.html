@@ -8,6 +8,7 @@
                             <div class="flex items-center gap-2">
                                 <h2 class="text-base font-bold text-slate-100 uppercase tracking-wider">Prismatic Web Publisher Studio</h2>
                                 <span id="pwp-connection-badge" class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">Connected</span>
+                                <span id="pwp-cron-badge" onclick="pwpToggleCronScheduler()" class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 cursor-pointer hover:bg-cyan-500/20 transition">⏱️ Cron Auto-Sync: Active</span>
                             </div>
                             <p class="text-xs text-slate-400 mt-0.5">Multi-Property Website & App Workspace Manager • Autonomous Swarm Control Plane</p>
                         </div>
@@ -42,12 +43,13 @@
                 <!-- SUB-TAB NAVIGATION BAR (Schema 4 Capsule / Segmented Control) -->
                 <nav class="flex flex-wrap gap-2 border-b border-slate-800 pb-3" aria-label="PWP Studio Navigation">
                     <button id="pwp-nav-workspaces" onclick="switchPwpSubtab('workspaces')" class="pwp-tab-btn bg-emerald-600 text-white px-3.5 py-1.5 rounded-lg text-xs font-medium transition shadow-sm">🌐 1. Property Workspaces Grid</button>
-                    <button id="pwp-nav-seo" onclick="switchPwpSubtab('seo')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">🔍 2. SEO & Competitor Velocity</button>
-                    <button id="pwp-nav-ingest" onclick="switchPwpSubtab('ingest')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">📥 3. Content Ingest Studio</button>
-                    <button id="pwp-nav-synthesize" onclick="switchPwpSubtab('synthesize')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">🏗️ 4. Build Plan Synthesizer</button>
-                    <button id="pwp-nav-distill" onclick="switchPwpSubtab('distill')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">⚡ 5. Linear Swarm Distiller</button>
-                    <button id="pwp-nav-theme" onclick="switchPwpSubtab('theme')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">🎨 6. Theme & Token Workbench</button>
-                    <button id="pwp-nav-provision" onclick="switchPwpSubtab('provision')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">🚀 7. Provisioning & Analytics</button>
+                    <button id="pwp-nav-staging" onclick="switchPwpSubtab('staging')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">📋 2. Draft Staging Queue</button>
+                    <button id="pwp-nav-seo" onclick="switchPwpSubtab('seo')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">🔍 3. SEO & Competitor Velocity</button>
+                    <button id="pwp-nav-ingest" onclick="switchPwpSubtab('ingest')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">📥 4. Content Ingest Studio</button>
+                    <button id="pwp-nav-synthesize" onclick="switchPwpSubtab('synthesize')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">🏗️ 5. Build Plan Synthesizer</button>
+                    <button id="pwp-nav-distill" onclick="switchPwpSubtab('distill')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">⚡ 6. Linear Swarm Distiller</button>
+                    <button id="pwp-nav-theme" onclick="switchPwpSubtab('theme')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">🎨 7. Theme & Token Workbench</button>
+                    <button id="pwp-nav-provision" onclick="switchPwpSubtab('provision')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">🚀 8. Provisioning & Analytics</button>
                 </nav>
 
                 <!-- SUB-TAB 1: PROPERTY WORKSPACES GRID -->
@@ -61,7 +63,23 @@
                     </div>
                 </div>
 
-                <!-- SUB-TAB 2: GAP-4: SEO & COMPETITOR VELOCITY AUDITOR -->
+                <!-- SUB-TAB 2: CODIFIED: DRAFT STAGING & APPROVAL QUEUE -->
+                <div id="pwp-subtab-staging" class="pwp-subtab-pane hidden space-y-4">
+                    <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-4">
+                        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                            <div>
+                                <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Draft Staging & Approval Queue (pending_changes.py)</h3>
+                                <p class="text-[11px] text-slate-400">Review pending content & token modifications before publishing to live production.</p>
+                            </div>
+                            <span id="pwp-staging-count-badge" class="text-[11px] font-semibold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2.5 py-0.5 rounded-full">2 Changes Pending</span>
+                        </div>
+                        <div id="pwp-pending-changes-list" class="space-y-3 text-xs">
+                            <!-- Pending changes list rendered here -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SUB-TAB 3: SEO & COMPETITOR VELOCITY AUDITOR -->
                 <div id="pwp-subtab-seo" class="pwp-subtab-pane hidden space-y-4">
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
                         <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-3">
@@ -86,7 +104,7 @@
                     </div>
                 </div>
 
-                <!-- SUB-TAB 3: DUAL-MODE INGEST STUDIO -->
+                <!-- SUB-TAB 4: DUAL-MODE INGEST STUDIO -->
                 <div id="pwp-subtab-ingest" class="pwp-subtab-pane hidden space-y-4">
                     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
                         <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-4">
@@ -129,7 +147,7 @@
                     </div>
                 </div>
 
-                <!-- SUB-TAB 4: BUILD PLAN SYNTHESIZER -->
+                <!-- SUB-TAB 5: BUILD PLAN SYNTHESIZER -->
                 <div id="pwp-subtab-synthesize" class="pwp-subtab-pane hidden space-y-4">
                     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
                         <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-3">
@@ -162,7 +180,7 @@
                     </div>
                 </div>
 
-                <!-- SUB-TAB 5: LINEAR SWARM DISTILLER -->
+                <!-- SUB-TAB 6: LINEAR SWARM DISTILLER -->
                 <div id="pwp-subtab-distill" class="pwp-subtab-pane hidden space-y-4">
                     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
                         <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-3">
@@ -191,7 +209,7 @@
                     </div>
                 </div>
 
-                <!-- SUB-TAB 6: THEME & TOKEN WORKBENCH -->
+                <!-- SUB-TAB 7: THEME & TOKEN WORKBENCH -->
                 <div id="pwp-subtab-theme" class="pwp-subtab-pane hidden space-y-4">
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
                         <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-4">
@@ -233,7 +251,7 @@
                     </div>
                 </div>
 
-                <!-- SUB-TAB 7: PROVISIONING & ANALYTICS -->
+                <!-- SUB-TAB 8: PROVISIONING & ANALYTICS -->
                 <div id="pwp-subtab-provision" class="pwp-subtab-pane hidden space-y-4">
                     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
                         <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-3">
@@ -245,7 +263,7 @@
 
                         <div class="lg:col-span-2 bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-4">
                             <div class="flex items-center justify-between border-b border-slate-800 pb-3">
-                                <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Deployed Site Health & KPIs</h3>
+                                <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Deployed Site Health & Provisioned Services</h3>
                                 <button onclick="pwpProvisionNewSitePrompt()" class="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded text-xs font-semibold transition">+ Provision New Site</button>
                             </div>
                             <div id="pwp-sites-grid" class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
@@ -308,11 +326,15 @@
                     const res = await fetch('/api/pwp/status');
                     const data = await res.json();
                     const badge = document.getElementById('pwp-connection-badge');
+                    const cronBadge = document.getElementById('pwp-cron-badge');
                     if (badge) {
                         badge.textContent = data.state === 'connected' ? 'Connected' : 'Disconnected';
                         badge.className = data.state === 'connected' 
                             ? 'px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
                             : 'px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/30';
+                    }
+                    if (cronBadge) {
+                        cronBadge.textContent = data.cron_enabled ? '⏱️ Cron Auto-Sync: Active' : '⏱️ Cron Auto-Sync: Paused';
                     }
 
                     // Load Workspaces
@@ -321,7 +343,12 @@
                     renderWorkspaceSelector(wsData.workspaces, wsData.active_workspace);
                     renderWorkspaceGridCards(wsData.workspaces, wsData.active_workspace);
 
-                    // Load SEO Rankings (GAP-4)
+                    // Load Pending Draft Changes
+                    const changesRes = await fetch('/api/pwp/changes/pending');
+                    const changesData = await changesRes.json();
+                    renderPendingChangesList(changesData.pending_changes);
+
+                    // Load SEO Rankings
                     const seoRes = await fetch('/api/pwp/seo-rankings');
                     const seoData = await seoRes.json();
                     renderSEORankingsList(seoData.rankings, seoData.competitor_alerts);
@@ -392,14 +419,51 @@
                             </div>
                             <div class="space-y-1.5 text-[11px] text-slate-400">
                                 <div>Tenant: <span class="text-indigo-300 font-mono">${w.tenant_id}</span></div>
+                                <div>Cloudflare DNS: <span class="text-emerald-400 font-semibold">${w.cloudflare_status || 'configured'}</span></div>
+                                <div>Vercel Deploy: <span class="text-cyan-400 font-semibold">${w.vercel_status || 'deployed'}</span></div>
                                 <div>GSC: <span class="text-slate-300 font-mono">${w.gsc_property}</span></div>
                                 <div>GA4: <span class="text-slate-300 font-mono">${w.ga4_measurement_id || 'Not Set'}</span></div>
                                 <div>Stripe: <span class="text-slate-300 font-mono">${w.stripe_account_id}</span></div>
                                 <div>Linear Task: ${w.linear_task ? `<a href="https://prismatic.growthwebdev.com/tab/tasks?issue=${w.linear_task}" target="_blank" class="text-emerald-400 hover:underline font-bold">${w.linear_task}</a>` : '<span class="text-slate-500">None</span>'}</div>
                             </div>
-                            <div class="pt-2 flex gap-2">
-                                <button onclick="pwpSwitchActiveWorkspace('${w.slug}')" class="flex-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 py-1 rounded text-[11px] font-semibold transition">Select Workspace</button>
-                                <button onclick="pwpSyncWorkspaceLinearStatus('${w.slug}')" class="bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 px-2 py-1 rounded text-[11px] font-medium transition">Sync Linear</button>
+                            <div class="pt-2 flex flex-wrap gap-1.5">
+                                <button onclick="pwpSwitchActiveWorkspace('${w.slug}')" class="flex-1 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 py-1 rounded text-[10px] font-semibold transition">Select Workspace</button>
+                                <button onclick="pwpAuditSiteVitals('${w.slug}')" class="bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/30 px-2 py-1 rounded text-[10px] font-medium transition">⚡ Audit Vitals</button>
+                                <button onclick="pwpVerifyDomainDNS('${w.domain}')" class="bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 px-2 py-1 rounded text-[10px] font-medium transition">🔍 Verify DNS</button>
+                            </div>
+                        </div>
+                    `;
+                });
+                container.innerHTML = html;
+            }
+
+            function renderPendingChangesList(changes) {
+                const container = document.getElementById('pwp-pending-changes-list');
+                const badge = document.getElementById('pwp-staging-count-badge');
+                if (!container) return;
+                if (!changes || changes.length === 0) {
+                    container.innerHTML = '<p class="text-slate-500 italic">No pending draft changes in staging queue.</p>';
+                    if (badge) badge.textContent = '0 Changes Pending';
+                    return;
+                }
+                if (badge) badge.textContent = changes.length + ' Changes Pending';
+
+                let html = '';
+                changes.forEach(c => {
+                    html += `
+                        <div class="bg-slate-950 border border-slate-800 rounded-lg p-3 space-y-2">
+                            <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+                                <div>
+                                    <span class="font-bold text-amber-400">${c.change_id}</span>
+                                    <span class="text-slate-200 ml-2 font-semibold">${c.title}</span>
+                                    <span class="text-slate-500 text-[10px] ml-2">(${c.site_slug})</span>
+                                </div>
+                                <span class="bg-amber-500/10 text-amber-300 border border-amber-500/20 px-2 py-0.5 rounded text-[10px]">${c.status}</span>
+                            </div>
+                            <p class="text-slate-400 text-[11px]">${c.diff_summary}</p>
+                            <div class="flex items-center justify-between pt-1 text-[10px]">
+                                <span class="text-slate-500">Author: <span class="text-indigo-400">${c.author}</span> • ${c.created_at}</span>
+                                <button onclick="pwpApprovePendingChange('${c.change_id}')" class="bg-emerald-600 hover:bg-emerald-500 text-white font-semibold px-3 py-1 rounded text-[11px] transition">Approve & Publish</button>
                             </div>
                         </div>
                     `;
@@ -549,6 +613,44 @@
                 container.innerHTML = html;
             }
 
+            async function pwpAuditSiteVitals(slug) {
+                const res = await fetch('/api/pwp/audit-vitals', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({slug})
+                });
+                const data = await res.json();
+                alert(`Audited Core Web Vitals for ${slug}:\nLCP: ${data.metrics.lcp}\nCLS: ${data.metrics.cls}\nPerformance Score: ${data.metrics.score}/100`);
+                loadPWPStudioState();
+            }
+
+            async function pwpVerifyDomainDNS(domain) {
+                const res = await fetch('/api/pwp/provision/verify-dns', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({domain})
+                });
+                const data = await res.json();
+                alert(`DNS Check for ${domain}:\nStatus: ${data.dns_status}\nTarget: ${data.cname_target}\nSSL: ${data.ssl_status}`);
+            }
+
+            async function pwpApprovePendingChange(change_id) {
+                await fetch('/api/pwp/changes/approve', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({change_id})
+                });
+                alert(`Approved change ${change_id} and published to live!`);
+                loadPWPStudioState();
+            }
+
+            async function pwpToggleCronScheduler() {
+                const res = await fetch('/api/pwp/cron/toggle', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({})});
+                const data = await res.json();
+                alert(`Cron Scheduler set to: ${data.cron_enabled ? 'Active' : 'Paused'}`);
+                loadPWPStudioState();
+            }
+
             async function pwpExportProjectScaffold() {
                 const select = document.getElementById('pwp-workspace-selector');
                 const slug = select ? select.value : 'active-oahu';
@@ -559,17 +661,6 @@
                 });
                 const data = await res.json();
                 alert(`Exported Astro Project Scaffold for ${slug}!\nFiles: ${data.scaffold.pages.length + 2} files ready.`);
-            }
-
-            async function pwpSyncWorkspaceLinearStatus(slug) {
-                const res = await fetch('/api/pwp/sync-linear', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({slug})
-                });
-                const data = await res.json();
-                alert(`Synced Linear Status for ${slug}: ${data.kpi_status}`);
-                loadPWPStudioState();
             }
 
             async function pwpPromptAddWorkspace() {

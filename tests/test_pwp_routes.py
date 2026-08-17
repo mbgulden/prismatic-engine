@@ -130,3 +130,20 @@ def test_pwp_multi_property_and_gap_routes() -> None:
     resp_seo = client.get("/api/pwp/seo-rankings")
     assert resp_seo.status_code == 200
     assert "rankings" in resp_seo.json()
+
+    # Codified CLI Capabilities (DNS, Vitals Audit, Staging Queue, Cron)
+    resp_dns = client.post("/api/pwp/provision/verify-dns", json={"domain": "activeoahutours.com"})
+    assert resp_dns.status_code == 200
+    assert resp_dns.json()["dns_status"] == "propagated"
+
+    resp_vitals = client.post("/api/pwp/audit-vitals", json={"slug": "active-oahu"})
+    assert resp_vitals.status_code == 200
+    assert "metrics" in resp_vitals.json()
+
+    resp_staging = client.get("/api/pwp/changes/pending")
+    assert resp_staging.status_code == 200
+    assert len(resp_staging.json()["pending_changes"]) >= 1
+
+    resp_cron = client.get("/api/pwp/cron/status")
+    assert resp_cron.status_code == 200
+    assert resp_cron.json()["cron_enabled"] is True
