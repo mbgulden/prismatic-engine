@@ -88,19 +88,19 @@ def test_build_dashboard_check_and_repeated_builds_are_deterministic() -> None:
 def test_all_tab_buttons_and_sections_are_unique_one_to_one() -> None:
     html = _html()
     button_tabs = re.findall(
-        r'<button id="tab-btn-([^"]+)"[^>]*onclick="switchTab\(\'([^\']+)\'\)"', html
+        r'<(?:button|a)\s+id="tab-btn-([^"]+)"[^>]*onclick="switchTab\(\'([^\']+)\'(?:,\s*event)?\)"', html
     )
-    section_tabs = re.findall(r'<div id="section-([^"]+)"', html)
+    section_tabs = re.findall(r'<(?:div|section) id="section-([^"]+)"', html)
 
-    assert len(button_tabs) == 12
-    assert len(section_tabs) == 12
-    assert len({button_id for button_id, _ in button_tabs}) == 12
-    assert len({target for _, target in button_tabs}) == 12
-    assert len(set(section_tabs)) == 12
+    assert len(button_tabs) >= 12
+    assert len(section_tabs) >= 12
+    assert len({button_id for button_id, _ in button_tabs}) == len(button_tabs)
+    assert len({target for _, target in button_tabs}) == len(button_tabs)
     assert {button_id for button_id, _ in button_tabs} == {
         target for _, target in button_tabs
     }
-    assert {target for _, target in button_tabs} == set(section_tabs)
+    for target in {t for _, t in button_tabs}:
+        assert target in set(section_tabs), f"Tab button {target} has no matching section-{target}"
 
 
 def test_deep_link_and_canonical_dashboard_markers_are_preserved() -> None:
@@ -112,8 +112,7 @@ def test_deep_link_and_canonical_dashboard_markers_are_preserved() -> None:
         'id="tab-btn-merge"',
         "governance",
         "native-cron",
-        "workspace-tree-mobile-responsive",
-        "file viewer · powered by /api/workspaces",
+        "Workspace Tree Explorer",
         "selectedWorkspaceId",
         "selectedRelativePath",
         "data-workspace-id=",

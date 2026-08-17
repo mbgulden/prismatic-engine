@@ -196,7 +196,7 @@
             }
 
             // Toggle Tab Buttons
-            const tabs = ['dashboard', 'telemetry', 'merge', 'review-factory', 'workspaces', 'skills', 'signals', 'pwp', 'plugins', 'crons', 'quota', 'foundation', 'settings'];
+            const tabs = ['dashboard', 'telemetry', 'merge', 'review-factory', 'workspaces', 'skills', 'signals', 'swarmproof', 'pwp', 'plugins', 'crons', 'quota', 'foundation', 'settings'];
             tabs.forEach(t => {
                 const btn = document.getElementById(`tab-btn-${t}`);
                 const sec = document.getElementById(`section-${t}`);
@@ -221,6 +221,8 @@
                 renderSkillsView();
             } else if (tab === 'workspaces') {
                 renderWorkspacesView();
+            } else if (tab === 'swarmproof') {
+                renderSwarmProofView();
             }
         }
 
@@ -4667,9 +4669,391 @@
             };
         }
 
+        // ==========================================
+        // SwarmProof Truth Oracle & Verification UI
+        // ==========================================
+
+        let swarmProofReceiptsData = [];
+
+        async function renderSwarmProofView() {
+            try {
+                // Fetch stats and receipts in parallel
+                const [statusRes, receiptsRes] = await Promise.all([
+                    fetch('/api/swarmproof/status').catch(() => null),
+                    fetch('/api/swarmproof/receipts').catch(() => null),
+                ]);
+
+                if (statusRes && statusRes.ok) {
+                    const statusData = await statusRes.json();
+                    const invEl = document.getElementById('sp-metric-invariants');
+                    if (invEl) invEl.textContent = `${statusData.active_invariants || 10} / 10 Active`;
+                    
+                    const ledgersEl = document.getElementById('sp-metric-ledgers');
+                    if (ledgersEl) ledgersEl.textContent = statusData.total_receipts || '0';
+                    
+                    const redGreenEl = document.getElementById('sp-metric-red-green');
+                    if (redGreenEl) redGreenEl.textContent = statusData.red_green_traces || '0';
+                    
+                    const deflEl = document.getElementById('sp-metric-deflections');
+                    if (deflEl) deflEl.textContent = statusData.deflections_blocked || '0';
+                }
+
+                if (receiptsRes && receiptsRes.ok) {
+                    const receiptsData = await receiptsRes.json();
+                    swarmProofReceiptsData = Array.isArray(receiptsData) ? receiptsData : (receiptsData.receipts || []);
+                    renderSwarmProofReceiptsTable(swarmProofReceiptsData);
+                } else {
+                    renderSwarmProofReceiptsTable([]);
+                }
+            } catch (err) {
+                console.error("renderSwarmProofView error:", err);
+            }
+        }
+
+        function filterSwarmProofReceipts() {
+            const query = (document.getElementById('sp-search-input')?.value || '').toLowerCase().trim();
+            const stage = document.getElementById('sp-stage-filter')?.value || 'ALL';
+
+            const filtered = swarmProofReceiptsData.filter(r => {
+                const matchesStage = stage === 'ALL' || r.stage === stage;
+                if (!matchesStage) return false;
+                if (!query) return true;
+                const searchStr = `${r.task_id || ''} ${r.agent_id || ''} ${r.commit_sha || ''} ${r.command || ''}`.toLowerCase();
+                return searchStr.includes(query);
+            });
+
+            renderSwarmProofReceiptsTable(filtered);
+        }
+
+        function renderSwarmProofReceiptsTable(receipts) {
+            const tbody = document.getElementById('swarmproof-receipts-tbody');
+            const empty = document.getElementById('swarmproof-receipts-empty');
+            if (!tbody) return;
+
+            tbody.innerHTML = '';
+            if (!receipts || receipts.length === 0) {
+                if (empty) empty.classList.remove('hidden');
+                return;
+            }
+            if (empty) empty.classList.add('hidden');
+
+            receipts.forEach((r, idx) => {
+                const tr = document.createElement('tr');
+                tr.className = 'border-b border-slate-800/40 hover:bg-slate-900/60 transition';
+
+                // Stage badge
+                let stageBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700">${escapeHtml(r.stage || 'TEST')}</span>`;
+                if (r.stage === 'PRE_REPAIR_RED') {
+                    stageBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-950/60 text-rose-300 border border-rose-800/60">RED FAIL</span>`;
+                } else if (r.stage === 'POST_REPAIR_GREEN') {
+                    stageBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950/60 text-emerald-300 border border-emerald-800/60">GREEN PASS</span>`;
+                } else if (r.stage === 'SMOKE') {
+                    stageBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-cyan-950/60 text-cyan-300 border border-cyan-800/60">SMOKE</span>`;
+                }
+
+                // Task ID link
+                const taskLink = r.task_id
+                    ? `<a href="https://prismatic.growthwebdev.com/tab/tasks?issue=${escapeHtml(r.task_id)}" target="_blank" class="text-indigo-400 hover:underline flex items-center gap-1 font-bold">${escapeHtml(r.task_id)} ${PRISMATIC_THEME.icons.externalLink}</a>`
+                    : `<span class="text-slate-500 font-mono">LOCAL</span>`;
+
+                // Status
+                const statusBadge = r.passed
+                    ? `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950/60 text-emerald-400 border border-emerald-800/60">PASSED</span>`
+                    : `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-950/60 text-rose-400 border border-rose-800/60">FAILED</span>`;
+
+                tr.innerHTML = `
+                    <td class="py-2.5 px-3 whitespace-nowrap">${taskLink}</td>
+                    <td class="py-2.5 px-3 whitespace-nowrap">${stageBadge}</td>
+                    <td class="py-2.5 px-3 whitespace-nowrap">
+                        <span class="text-slate-200 font-semibold">${escapeHtml(r.agent_id || 'agy')}</span>
+                        <span class="text-[10px] text-slate-500">(${escapeHtml(r.model || 'inherit')})</span>
+                    </td>
+                    <td class="py-2.5 px-3 max-w-xs truncate" title="${escapeHtml(r.command || '')}">
+                        <span class="text-slate-300">${escapeHtml(r.command || 'N/A')}</span>
+                    </td>
+                    <td class="py-2.5 px-3 whitespace-nowrap">
+                        ${r.exit_code === 0 ? '<span class="text-emerald-400 font-bold">0</span>' : '<span class="text-rose-400 font-bold">' + (r.exit_code ?? 'ERR') + '</span>'}
+                    </td>
+                    <td class="py-2.5 px-3 whitespace-nowrap text-slate-400">
+                        ${(r.duration_seconds != null ? r.duration_seconds.toFixed(2) : '0.00')}s
+                    </td>
+                    <td class="py-2.5 px-3 whitespace-nowrap text-[11px] text-slate-500 font-mono">
+                        ${escapeHtml((r.commit_sha || '').substring(0, 7) || 'HEAD')}
+                    </td>
+                    <td class="py-2.5 px-3 whitespace-nowrap">${statusBadge}</td>
+                    <td class="py-2.5 px-3 whitespace-nowrap text-right">
+                        <button onclick="openSwarmProofReceiptModal(${idx})" class="px-2 py-1 rounded bg-indigo-950/50 hover:bg-indigo-900 text-indigo-300 border border-indigo-800/50 text-[10px] font-semibold transition inline-flex items-center gap-1">
+                            ${PRISMATIC_THEME.icons.inspect} Inspect
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // Modals management
+        function openSwarmProofVerifyModal() {
+            const modal = document.getElementById('swarmproof-verify-modal');
+            if (modal) modal.classList.remove('hidden');
+        }
+        function closeSwarmProofVerifyModal() {
+            const modal = document.getElementById('swarmproof-verify-modal');
+            if (modal) modal.classList.add('hidden');
+        }
+
+        async function executeSwarmProofVerify() {
+            const input = document.getElementById('sp-verify-input')?.value.trim();
+            const strict = document.getElementById('sp-verify-strict')?.checked ?? true;
+            const resBox = document.getElementById('sp-verify-results');
+            if (!input || !resBox) return;
+
+            resBox.classList.remove('hidden');
+            resBox.innerHTML = '<div class="text-slate-400">Evaluating payload against 10 Anti-Deception Invariants...</div>';
+
+            try {
+                let parsed;
+                try {
+                    parsed = JSON.parse(input);
+                } catch(e) {
+                    parsed = { text: input };
+                }
+
+                const res = await fetch('/api/swarmproof/verify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ payload: parsed, strict: strict })
+                });
+                const data = await res.json();
+                
+                if (data.passed) {
+                    resBox.className = 'mt-3 p-3 rounded-lg border border-emerald-500/50 bg-emerald-950/30 font-mono text-[11px] space-y-2';
+                    resBox.innerHTML = `
+                        <div class="flex items-center gap-2 text-emerald-400 font-bold text-xs">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                            VERIFIED SUCCESS: All Active Invariants Passed
+                        </div>
+                        <div class="text-slate-300 text-[10px]">
+                            ${(data.passed_invariants || []).map(inv => `<div class="text-emerald-400">✓ ${escapeHtml(inv)}</div>`).join('')}
+                        </div>
+                    `;
+                } else {
+                    resBox.className = 'mt-3 p-3 rounded-lg border border-rose-500/50 bg-rose-950/30 font-mono text-[11px] space-y-2';
+                    resBox.innerHTML = `
+                        <div class="flex items-center gap-2 text-rose-400 font-bold text-xs">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                            VERIFICATION REJECTED (Fail-Closed)
+                        </div>
+                        <div class="space-y-1 text-[10px]">
+                            ${(data.violations || []).map(v => `<div class="text-rose-300">✗ [INV-${v.invariant_number || '0'}] ${escapeHtml(v.name)}: ${escapeHtml(v.message)}</div>`).join('')}
+                        </div>
+                    `;
+                }
+            } catch (err) {
+                resBox.className = 'mt-3 p-3 rounded-lg border border-rose-500/50 bg-rose-950/30 font-mono text-[11px]';
+                resBox.innerHTML = `<div class="text-rose-400">Verification request error: ${escapeHtml(err.message)}</div>`;
+            }
+        }
+
+        function openSwarmProofASTModal() {
+            const modal = document.getElementById('swarmproof-ast-modal');
+            if (modal) modal.classList.remove('hidden');
+        }
+        function closeSwarmProofASTModal() {
+            const modal = document.getElementById('swarmproof-ast-modal');
+            if (modal) modal.classList.add('hidden');
+        }
+
+        async function executeSwarmProofASTAnalyze() {
+            const baseline = document.getElementById('sp-ast-baseline')?.value;
+            const candidate = document.getElementById('sp-ast-candidate')?.value;
+            const resBox = document.getElementById('sp-ast-results');
+            if (!resBox) return;
+
+            resBox.classList.remove('hidden');
+            resBox.innerHTML = '<div class="text-slate-400">Parsing AST structures and computing diff metrics...</div>';
+
+            try {
+                const res = await fetch('/api/swarmproof/analyze-ast', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ baseline: baseline || '', candidate: candidate || '' })
+                });
+                const data = await res.json();
+                
+                if (data.is_clean) {
+                    resBox.className = 'mt-3 p-3 rounded-lg border border-emerald-500/50 bg-emerald-950/30 font-mono text-[11px] space-y-1.5';
+                    resBox.innerHTML = `
+                        <div class="text-emerald-400 font-bold">✓ CLEAN: No Assertion Degradation or Weakening Detected</div>
+                        <div class="text-slate-300 text-[10px]">
+                            Assertions: Baseline (${data.baseline_asserts || 0}) → Candidate (${data.candidate_asserts || 0})
+                        </div>
+                    `;
+                } else {
+                    resBox.className = 'mt-3 p-3 rounded-lg border border-rose-500/50 bg-rose-950/30 font-mono text-[11px] space-y-1.5';
+                    resBox.innerHTML = `
+                        <div class="text-rose-400 font-bold">✗ WEAKENING DETECTED: AST Anti-Weakening Guard Tripped</div>
+                        <div class="space-y-1 text-[10px]">
+                            ${(data.violations || []).map(v => `<div class="text-rose-300">• ${escapeHtml(v)}</div>`).join('')}
+                        </div>
+                    `;
+                }
+            } catch (err) {
+                resBox.className = 'mt-3 p-3 rounded-lg border border-rose-500/50 bg-rose-950/30 font-mono text-[11px]';
+                resBox.innerHTML = `<div class="text-rose-400">AST analysis error: ${escapeHtml(err.message)}</div>`;
+            }
+        }
+
+        function openSwarmProofRunModal() {
+            const modal = document.getElementById('swarmproof-run-modal');
+            if (modal) modal.classList.remove('hidden');
+        }
+        function closeSwarmProofRunModal() {
+            const modal = document.getElementById('swarmproof-run-modal');
+            if (modal) modal.classList.add('hidden');
+        }
+
+        async function executeSwarmProofRunTest() {
+            const command = document.getElementById('sp-run-command')?.value.trim();
+            const stage = document.getElementById('sp-run-stage')?.value || 'POST_REPAIR_GREEN';
+            const taskId = document.getElementById('sp-run-task-id')?.value.trim() || 'LOCAL';
+            const resBox = document.getElementById('sp-run-results');
+            if (!command || !resBox) return;
+
+            resBox.classList.remove('hidden');
+            resBox.innerHTML = '<div class="text-slate-400">Executing deterministic test run...</div>';
+
+            try {
+                const res = await fetch('/api/swarmproof/run-test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ command: command, stage: stage, task_id: taskId })
+                });
+                const data = await res.json();
+                
+                resBox.className = `mt-3 p-3 rounded-lg border ${data.passed ? 'border-emerald-500/50 bg-emerald-950/30' : 'border-rose-500/50 bg-rose-950/30'} font-mono text-[11px] space-y-2`;
+                resBox.innerHTML = `
+                    <div class="flex items-center justify-between">
+                        <span class="font-bold ${data.passed ? 'text-emerald-400' : 'text-rose-400'}">${data.passed ? '✓ PASSED' : '✗ FAILED'} (Exit Code: ${data.exit_code})</span>
+                        <span class="text-slate-400">${(data.duration_seconds || 0).toFixed(2)}s</span>
+                    </div>
+                    <div class="text-[10px] text-slate-400">Stdout SHA-256: <span class="font-mono text-slate-300">${(data.stdout_sha256 || '').substring(0, 16)}...</span></div>
+                    <pre class="bg-black/40 p-2 rounded max-h-32 overflow-y-auto text-[10px] text-slate-300 whitespace-pre-wrap">${escapeHtml(data.stdout_preview || data.stderr_preview || 'No output')}</pre>
+                `;
+                // Refresh receipts
+                renderSwarmProofView();
+            } catch (err) {
+                resBox.className = 'mt-3 p-3 rounded-lg border border-rose-500/50 bg-rose-950/30 font-mono text-[11px]';
+                resBox.innerHTML = `<div class="text-rose-400">Test runner error: ${escapeHtml(err.message)}</div>`;
+            }
+        }
+
+        function openSwarmProofHooksModal() {
+            const modal = document.getElementById('swarmproof-hooks-modal');
+            if (modal) modal.classList.remove('hidden');
+            checkSwarmProofHookStatus();
+        }
+        function closeSwarmProofHooksModal() {
+            const modal = document.getElementById('swarmproof-hooks-modal');
+            if (modal) modal.classList.add('hidden');
+        }
+
+        async function checkSwarmProofHookStatus() {
+            const commitEl = document.getElementById('sp-hook-status-commit');
+            const pushEl = document.getElementById('sp-hook-status-push');
+            try {
+                const res = await fetch('/api/swarmproof/status');
+                if (res.ok) {
+                    const data = await res.json();
+                    if (commitEl) commitEl.innerHTML = data.hooks_installed?.pre_commit ? '<span class="text-emerald-400 font-bold">INSTALLED</span>' : '<span class="text-slate-500">NOT INSTALLED</span>';
+                    if (pushEl) pushEl.innerHTML = data.hooks_installed?.pre_push ? '<span class="text-emerald-400 font-bold">INSTALLED</span>' : '<span class="text-slate-500">NOT INSTALLED</span>';
+                }
+            } catch(e) {}
+        }
+
+        async function executeSwarmProofHookAction(action) {
+            const fb = document.getElementById('sp-hook-feedback');
+            if (fb) {
+                fb.classList.remove('hidden');
+                fb.textContent = `Executing ${action}...`;
+            }
+            try {
+                const res = await fetch(`/api/swarmproof/hooks/${action}`, { method: 'POST' });
+                const data = await res.json();
+                if (fb) {
+                    fb.textContent = data.message || `Hooks ${action} completed`;
+                    fb.className = 'text-xs text-emerald-400 font-mono mt-2';
+                }
+                checkSwarmProofHookStatus();
+            } catch(err) {
+                if (fb) {
+                    fb.textContent = `Error: ${err.message}`;
+                    fb.className = 'text-xs text-rose-400 font-mono mt-2';
+                }
+            }
+        }
+
+        function openSwarmProofReceiptModal(idx) {
+            const r = swarmProofReceiptsData[idx];
+            if (!r) return;
+            const modal = document.getElementById('swarmproof-receipt-modal');
+            const title = document.getElementById('sp-modal-title');
+            const content = document.getElementById('sp-modal-content');
+            if (!modal || !content) return;
+
+            if (title) title.textContent = `Proof Inspection — ${r.task_id || 'Verification Receipt'}`;
+
+            content.innerHTML = `
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-2.5 p-3 rounded-lg border border-slate-800 bg-slate-950">
+                    <div>
+                        <div class="text-[10px] text-slate-500 uppercase font-bold">Task Identifier</div>
+                        <div class="text-xs font-bold text-indigo-400">${escapeHtml(r.task_id || 'N/A')}</div>
+                    </div>
+                    <div>
+                        <div class="text-[10px] text-slate-500 uppercase font-bold">Stage</div>
+                        <div class="text-xs font-bold text-slate-200">${escapeHtml(r.stage || 'N/A')}</div>
+                    </div>
+                    <div>
+                        <div class="text-[10px] text-slate-500 uppercase font-bold">Exit Code</div>
+                        <div class="text-xs font-bold ${r.exit_code === 0 ? 'text-emerald-400' : 'text-rose-400'}">${r.exit_code ?? 'N/A'}</div>
+                    </div>
+                    <div>
+                        <div class="text-[10px] text-slate-500 uppercase font-bold">Duration</div>
+                        <div class="text-xs font-bold text-slate-300">${(r.duration_seconds != null ? r.duration_seconds.toFixed(3) : '0.000')}s</div>
+                    </div>
+                </div>
+
+                <div class="space-y-2 p-3 rounded-lg border border-slate-800 bg-slate-950">
+                    <div class="text-[10px] text-slate-500 uppercase font-bold">Cryptographic Fingerprints</div>
+                    <div class="text-[11px] space-y-1 font-mono">
+                        <div class="text-slate-400">Commit SHA: <span class="text-slate-200">${escapeHtml(r.commit_sha || 'N/A')}</span></div>
+                        <div class="text-slate-400">Tree SHA: <span class="text-slate-200">${escapeHtml(r.tree_sha || 'N/A')}</span></div>
+                        <div class="text-slate-400">Stdout SHA-256: <span class="text-slate-200">${escapeHtml(r.stdout_sha256 || 'N/A')}</span></div>
+                        <div class="text-slate-400">Stderr SHA-256: <span class="text-slate-200">${escapeHtml(r.stderr_sha256 || 'N/A')}</span></div>
+                    </div>
+                </div>
+
+                <div>
+                    <div class="text-[10px] text-slate-500 uppercase font-bold mb-1">Executed Command</div>
+                    <pre class="bg-black/60 p-2.5 rounded-lg border border-slate-800 text-[11px] text-slate-300 overflow-x-auto whitespace-pre-wrap">${escapeHtml(r.command || 'N/A')}</pre>
+                </div>
+
+                <div>
+                    <div class="text-[10px] text-slate-500 uppercase font-bold mb-1">Captured Output Preview</div>
+                    <pre class="bg-black/60 p-2.5 rounded-lg border border-slate-800 text-[11px] text-slate-300 overflow-x-auto max-h-48 overflow-y-auto whitespace-pre-wrap">${escapeHtml(r.stdout_preview || r.stderr_preview || 'No stdout/stderr captured.')}</pre>
+                </div>
+            `;
+
+            modal.classList.remove('hidden');
+        }
+
+        function closeSwarmProofReceiptModal() {
+            const modal = document.getElementById('swarmproof-receipt-modal');
+            if (modal) modal.classList.add('hidden');
+        }
+
         const dashboardTabIds = new Set([
             "dashboard", "telemetry", "merge", "review-factory", "workspaces",
-            "skills", "signals", "pwp", "plugins", "crons", "quota", "foundation", "settings",
+            "skills", "signals", "swarmproof", "pwp", "plugins", "crons", "quota", "foundation", "settings",
         ]);
 
         function dashboardTabFromURL() {
