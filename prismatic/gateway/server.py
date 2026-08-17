@@ -3679,6 +3679,32 @@ async def gateway_agent_signals(
     return list_agent_signals(limit=limit, agent=agent, include_log_tails=True)
 
 
+@app.get("/api/swarmlock/status")
+@app.get("/api/gateway/swarmlock/status")
+async def gateway_swarmlock_status() -> dict[str, Any]:
+    """Return enriched Swarm Lock concurrency matrix and telemetry for Signals tab."""
+    from prismatic.lock import _get_lock_manager
+
+    mgr = _get_lock_manager()
+    return mgr.get_enriched_status()
+
+
+@app.post("/api/swarmlock/evict")
+@app.post("/api/gateway/swarmlock/evict")
+async def gateway_swarmlock_evict(body: dict[str, Any]) -> dict[str, Any]:
+    """Operator endpoint to force-evict a stale or abandoned lock."""
+    from prismatic.lock import _get_lock_manager
+
+    resource = body.get("resource", "")
+    reason = body.get("reason", "operator_eviction")
+    if not resource:
+        raise HTTPException(status_code=400, detail="Missing 'resource' in request body")
+
+    mgr = _get_lock_manager()
+    evicted = mgr.evict(resource, reason=reason)
+    return {"ok": evicted, "resource": resource, "reason": reason}
+
+
 @app.get("/api/agents")
 @app.get("/api/gateway/agents")
 async def gateway_agents_summary() -> dict[str, Any]:
