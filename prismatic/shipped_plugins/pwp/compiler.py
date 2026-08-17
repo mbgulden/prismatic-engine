@@ -148,16 +148,12 @@ def _compiled_token_pairs(tokens: dict) -> list[Tuple[str, Any]]:
     for section in ["font_families", "font_sizes", "font_weights", "line_heights"]:
         values = typography.get(section, {})
         for key in sorted(values):
-            pairs.extend(
-                _iter_token_variables(f"{TOKEN_PREFIXES[section]}-{key}", values[key])
-            )
+            pairs.extend(_iter_token_variables(f"{TOKEN_PREFIXES[section]}-{key}", values[key]))
 
     for section in ["spacing", "radii", "shadows", "animations"]:
         values = tokens.get(section, {})
         for key in sorted(values):
-            pairs.extend(
-                _iter_token_variables(f"{TOKEN_PREFIXES[section]}-{key}", values[key])
-            )
+            pairs.extend(_iter_token_variables(f"{TOKEN_PREFIXES[section]}-{key}", values[key]))
 
     return sorted((f"--pwp-{name}", value) for name, value in pairs)
 
@@ -198,9 +194,7 @@ def render_template(template_name: str, tenant_id: str = None) -> str:
     """Renders the HTML for the specified template with the compiled CSS tokens."""
     template_html_path = TEMPLATES_DIR / template_name / "index.html"
     if not template_html_path.exists():
-        raise FileNotFoundError(
-            f"Template '{template_name}' not found at {template_html_path}"
-        )
+        raise FileNotFoundError(f"Template '{template_name}' not found at {template_html_path}")
 
     # Get and validate compiled CSS variables
     tokens = get_tokens_for_tenant(tenant_id)
