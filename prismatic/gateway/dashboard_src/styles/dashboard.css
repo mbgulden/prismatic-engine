@@ -744,6 +744,27 @@
         /* ═════════════════════════════════════════════════════════════════
            SWARM LOCK ADVANCED CONTROLS & AUDIT DRAWER SYSTEM
            ═════════════════════════════════════════════════════════════════ */
+        .swarmlock-ws-count-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 1.25rem;
+            height: 1.125rem;
+            padding: 0 0.375rem;
+            border-radius: 9999px;
+            font-size: 10px;
+            font-weight: 700;
+            line-height: 1;
+            background-color: rgba(30, 41, 59, 0.9);
+            color: #cbd5e1;
+            border: 1px solid rgba(51, 65, 85, 0.8);
+            margin-left: 0.25rem;
+        }
+        body.light-mode .swarmlock-ws-count-badge {
+            background-color: #e2e8f0 !important;
+            border-color: #cbd5e1 !important;
+            color: #0f172a !important;
+        }
         body.light-mode .swarmlock-ws-chip {
             background-color: #f8fafc !important;
             border-color: #cbd5e1 !important;
@@ -757,11 +778,6 @@
             background-color: #e0f2fe !important;
             border-color: #7dd3fc !important;
             color: #0369a1 !important;
-        }
-        body.light-mode .swarmlock-ws-chip span.bg-slate-800 {
-            background-color: #e2e8f0 !important;
-            border-color: #cbd5e1 !important;
-            color: #0f172a !important;
         }
         body.light-mode #swarmlock-cockpit-panel button[onclick*="toggleSwarmLockHistoryDrawer"],
         body.light-mode #swarmlock-cockpit-panel button[onclick*="openSwarmLockConfigModal"] {

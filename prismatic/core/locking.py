@@ -30,6 +30,8 @@ logger = logging.getLogger("prismatic.core.locking")
 # Default values if not provided
 PRISMATIC_HOME = os.environ.get("PRISMATIC_HOME", "/home/ubuntu")
 DEFAULT_LOCK_FILE = Path(PRISMATIC_HOME) / ".antigravity" / "swarm_locks.json"
+DEFAULT_AUDIT_LOG_DIR = Path(PRISMATIC_HOME) / ".antigravity" / "audit"
+DEFAULT_AUDIT_LOG_FILE = DEFAULT_AUDIT_LOG_DIR / "swarmlock_audit.jsonl"
 DEFAULT_STALE_TTL_MS = 300_000  # 5 minutes
 
 try:
@@ -75,26 +77,56 @@ class SwarmLockManager:
         self._lock_file_path = Path(lock_file) if lock_file else DEFAULT_LOCK_FILE
         self._stale_ttl_ms = stale_ttl_ms
         self._lock_file_path.parent.mkdir(parents=True, exist_ok=True)
+        DEFAULT_AUDIT_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
         # Delegate storage and lock mechanics to Swarmlock FileBackend
         self._sw = SyncSwarmlock(backend="file", registry_file=str(self._lock_file_path))
 
     @classmethod
     def _record_audit_event(cls, event_type: str, resource: str, agent_id: str, **kwargs: Any) -> None:
-        """Record an immutable lifecycle audit event into the rolling history buffer."""
+        """Record an immutable lifecycle audit event into in-memory ring buffer and persistent JSONL."""
+        import json
         import uuid
+        from datetime import datetime, timezone
+
         now = time.time()
+        iso_ts = datetime.fromtimestamp(now, tz=timezone.utc).isoformat()
         record = {
             "id": f"evt-{int(now * 1000)}-{str(uuid.uuid4())[:6]}",
             "timestamp": now,
+            "iso_timestamp": iso_ts,
             "event_type": event_type,
             "resource": resource,
             "agent_id": agent_id,
             **kwargs,
         }
         cls._event_history.append(record)
-        if len(cls._event_history) > 150:
+        if len(cls._event_history) > 200:
             cls._event_history = cls._event_history[-100:]
+
+        # Append to standardized persistent JSONL audit stream
+        try:
+            DEFAULT_AUDIT_LOG_DIR.mkdir(parents=True, exist_ok=True)
+            with open(DEFAULT_AUDIT_LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record) + "\n")
+        except Exception as e:
+            logger.warning(f"Failed to append to SwarmLock audit log: {e}")
+
+    @classmethod
+    def get_audit_file_info(cls) -> Dict[str, Any]:
+        """Return standardized relative and absolute paths for Workspaces tab deep linking."""
+        rel_path = ".antigravity/audit/swarmlock_audit.jsonl"
+        abs_path = str(DEFAULT_AUDIT_LOG_FILE)
+        size = DEFAULT_AUDIT_LOG_FILE.stat().st_size if DEFAULT_AUDIT_LOG_FILE.exists() else 0
+        return {
+            "ok": True,
+            "relative_path": rel_path,
+            "absolute_path": abs_path,
+            "exists": DEFAULT_AUDIT_LOG_FILE.exists(),
+            "size_bytes": size,
+            "total_events": len(cls._event_history),
+            "workspace_deep_link": f"/dashboard?file={rel_path}#workspaces",
+        }
 
     def acquire(
         self,

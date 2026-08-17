@@ -131,3 +131,12 @@ def test_gateway_swarmlock_status_and_evict_api(tmp_path, monkeypatch):
     assert config_update_res.status_code == 200
     assert config_update_res.json()["config"]["stale_ttl_seconds"] == 60.0
 
+    # Test Audit File endpoint
+    audit_file_res = client.get("/api/gateway/swarmlock/audit-file")
+    assert audit_file_res.status_code == 200
+    audit_file_data = audit_file_res.json()
+    assert audit_file_data["ok"] is True
+    assert "swarmlock_audit.jsonl" in audit_file_data["relative_path"]
+    assert "workspace_deep_link" in audit_file_data
+
+

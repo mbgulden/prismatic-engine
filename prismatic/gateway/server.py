@@ -3736,6 +3736,15 @@ async def gateway_swarmlock_history(
     return {"ok": True, "count": len(events), "events": events}
 
 
+@app.get("/api/swarmlock/audit-file")
+@app.get("/api/gateway/swarmlock/audit-file")
+async def gateway_swarmlock_audit_file() -> dict[str, Any]:
+    """Return raw audit log file path, size, and Workspaces tab deep link."""
+    from prismatic.core.locking import SwarmLockManager
+
+    return SwarmLockManager.get_audit_file_info()
+
+
 @app.get("/api/swarmlock/config")
 @app.get("/api/gateway/swarmlock/config")
 async def gateway_swarmlock_get_config() -> dict[str, Any]:
