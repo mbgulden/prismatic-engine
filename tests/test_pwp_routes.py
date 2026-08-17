@@ -3,7 +3,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from prismatic.gateway.routes.pwp import pwp_router, PWP_STUDIO_STATE
+from prismatic.gateway.routes.pwp import pwp_router, load_pwp_studio_state
 from prismatic.gateway.server import app
 
 client = TestClient(app)

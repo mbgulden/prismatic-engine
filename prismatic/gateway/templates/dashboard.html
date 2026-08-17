@@ -2356,30 +2356,45 @@
                     </div>
                 </div>
 
-                <!-- SUB-TAB NAVIGATION BAR -->
+                <!-- SUB-TAB NAVIGATION BAR (Schema 4 Capsule / Segmented Control) -->
                 <nav class="flex flex-wrap gap-2 border-b border-slate-800 pb-3" aria-label="PWP Studio Navigation">
-                    <button id="pwp-nav-ingest" onclick="switchPwpSubtab('ingest')" class="pwp-tab-btn bg-indigo-600 text-white px-3.5 py-1.5 rounded-lg text-xs font-medium transition shadow-sm">📥 1. Ingest & Content Studio</button>
+                    <button id="pwp-nav-ingest" onclick="switchPwpSubtab('ingest')" class="pwp-tab-btn bg-indigo-600 text-white px-3.5 py-1.5 rounded-lg text-xs font-medium transition shadow-sm">📥 1. Content Ingest Studio</button>
                     <button id="pwp-nav-synthesize" onclick="switchPwpSubtab('synthesize')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">🏗️ 2. Build Plan Synthesizer</button>
                     <button id="pwp-nav-distill" onclick="switchPwpSubtab('distill')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">⚡ 3. Linear Swarm Distiller</button>
                     <button id="pwp-nav-theme" onclick="switchPwpSubtab('theme')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">🎨 4. Theme & Token Workbench</button>
                     <button id="pwp-nav-provision" onclick="switchPwpSubtab('provision')" class="pwp-tab-btn bg-slate-900 hover:bg-slate-800 text-slate-300 px-3.5 py-1.5 rounded-lg text-xs font-medium transition border border-slate-800">🚀 5. Provisioning & Site Analytics</button>
                 </nav>
 
-                <!-- SUB-TAB 1: INGEST & CONTENT STUDIO -->
+                <!-- SUB-TAB 1: DUAL-MODE INGEST STUDIO -->
                 <div id="pwp-subtab-ingest" class="pwp-subtab-pane space-y-4">
                     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                        <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-3">
-                            <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Google Drive 5-Doc Parser</h3>
-                            <p class="text-xs text-slate-400">Ingest client knowledge framework from Google Drive folder containing the 5 core docs.</p>
+                        <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-4">
+                            <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Dual-Mode Framework Importer</h3>
                             <div>
-                                <label class="block text-[11px] font-medium text-slate-400 mb-1">Client Name</label>
+                                <label class="block text-[11px] font-medium text-slate-400 mb-1">Client Identifier</label>
                                 <input id="pwp-ingest-client" type="text" value="Acme Software Corp" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
                             </div>
-                            <div>
-                                <label class="block text-[11px] font-medium text-slate-400 mb-1">Google Drive Folder URL / ID</label>
-                                <input id="pwp-ingest-url" type="text" placeholder="https://drive.google.com/drive/folders/..." class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                            
+                            <!-- Importer Mode Selector -->
+                            <div class="space-y-2">
+                                <label class="block text-[11px] font-medium text-slate-400">Import Method</label>
+                                <div class="flex gap-2">
+                                    <button id="pwp-mode-drive-btn" onclick="pwpSetIngestMode('drive')" class="flex-1 bg-indigo-600/20 border border-indigo-500/30 text-indigo-300 py-1 rounded text-xs font-medium">Google Drive</button>
+                                    <button id="pwp-mode-text-btn" onclick="pwpSetIngestMode('text')" class="flex-1 bg-slate-800 border border-slate-700 text-slate-300 py-1 rounded text-xs font-medium">Markdown Text</button>
+                                </div>
                             </div>
-                            <button onclick="pwpExecuteIngest()" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-2 rounded-lg text-xs transition">Run 5-Doc Framework Ingest</button>
+
+                            <div id="pwp-ingest-drive-box" class="space-y-2">
+                                <label class="block text-[11px] font-medium text-slate-400">Google Drive Folder URL / ID</label>
+                                <input id="pwp-ingest-url" type="text" placeholder="https://drive.google.com/drive/folders/..." class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                                <button onclick="pwpExecuteIngest()" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-2 rounded-lg text-xs transition">Run 5-Doc Drive Ingest</button>
+                            </div>
+
+                            <div id="pwp-ingest-text-box" class="hidden space-y-2">
+                                <label class="block text-[11px] font-medium text-slate-400">Raw 5-Doc Markdown Input</label>
+                                <textarea id="pwp-ingest-markdown" rows="5" placeholder="# 01_brand_voice.md..." class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500"></textarea>
+                                <button onclick="pwpExecuteMarkdownIngest()" class="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-semibold py-2 rounded-lg text-xs transition">Parse Markdown Text</button>
+                            </div>
                         </div>
 
                         <div class="lg:col-span-2 bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-3">
@@ -2387,7 +2402,7 @@
                                 <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Client Knowledge Graph</h3>
                                 <span id="pwp-ingest-client-badge" class="text-[11px] font-medium text-indigo-400 bg-indigo-500/10 px-2.5 py-0.5 rounded-full border border-indigo-500/20">Acme Software Corp</span>
                             </div>
-                            <div id="pwp-graph-viewer" class="bg-slate-950 border border-slate-800 rounded-lg p-3 max-h-[280px] overflow-y-auto text-xs font-mono text-slate-300">
+                            <div id="pwp-graph-viewer" class="bg-slate-950 border border-slate-800 rounded-lg p-3 max-h-[320px] overflow-y-auto text-xs font-mono text-slate-300">
                                 <!-- Knowledge graph JSON rendered here -->
                             </div>
                         </div>
@@ -2416,7 +2431,10 @@
                         </div>
 
                         <div class="lg:col-span-2 bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-3">
-                            <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Synthesized Sitemap & Module Matrix</h3>
+                            <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+                                <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Synthesized Sitemap & Module Matrix</h3>
+                                <button onclick="pwpPromptAddPageNode()" class="bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 px-2 py-1 rounded text-[11px] hover:bg-indigo-600/30 transition">+ Add Page Node</button>
+                            </div>
                             <div id="pwp-sitemap-tree" class="space-y-2 text-xs">
                                 <!-- Sitemap nodes rendered here -->
                             </div>
@@ -2445,7 +2463,7 @@
                         </div>
 
                         <div class="lg:col-span-2 bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-3">
-                            <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Active Linear Epics & Agent Allocations</h3>
+                            <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Active Linear Epics & Swarm Allocation Matrix</h3>
                             <div id="pwp-epics-list" class="space-y-2 text-xs">
                                 <!-- Linear Epics list rendered here -->
                             </div>
@@ -2457,7 +2475,7 @@
                 <div id="pwp-subtab-theme" class="pwp-subtab-pane hidden space-y-4">
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
                         <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-4">
-                            <div class="flex items-center justify-between">
+                            <div class="flex items-center justify-between border-b border-slate-800 pb-2">
                                 <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Design Token Editor</h3>
                                 <div class="flex gap-2">
                                     <button onclick="pwpValidateTheme()" class="bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 px-2.5 py-1 rounded text-[11px] hover:bg-indigo-600/30 transition">Validate</button>
@@ -2467,26 +2485,29 @@
                             <div class="grid grid-cols-2 gap-3 text-xs">
                                 <div>
                                     <label class="block text-slate-400 mb-1">Primary Color</label>
-                                    <input id="pwp-token-primary" type="color" value="#3b82f6" onchange="pwpUpdateTokensFromUI()" class="w-full h-8 bg-slate-950 border border-slate-800 rounded px-1 cursor-pointer">
+                                    <input id="pwp-token-primary" type="color" value="#3b82f6" onchange="pwpCompileTheme()" class="w-full h-8 bg-slate-950 border border-slate-800 rounded px-1 cursor-pointer">
                                 </div>
                                 <div>
                                     <label class="block text-slate-400 mb-1">Secondary Color</label>
-                                    <input id="pwp-token-secondary" type="color" value="#6366f1" onchange="pwpUpdateTokensFromUI()" class="w-full h-8 bg-slate-950 border border-slate-800 rounded px-1 cursor-pointer">
+                                    <input id="pwp-token-secondary" type="color" value="#6366f1" onchange="pwpCompileTheme()" class="w-full h-8 bg-slate-950 border border-slate-800 rounded px-1 cursor-pointer">
                                 </div>
                                 <div>
                                     <label class="block text-slate-400 mb-1">Surface Color</label>
-                                    <input id="pwp-token-surface" type="color" value="#0f172a" onchange="pwpUpdateTokensFromUI()" class="w-full h-8 bg-slate-950 border border-slate-800 rounded px-1 cursor-pointer">
+                                    <input id="pwp-token-surface" type="color" value="#0f172a" onchange="pwpCompileTheme()" class="w-full h-8 bg-slate-950 border border-slate-800 rounded px-1 cursor-pointer">
                                 </div>
                                 <div>
                                     <label class="block text-slate-400 mb-1">Accent Color</label>
-                                    <input id="pwp-token-accent" type="color" value="#06b6d4" onchange="pwpUpdateTokensFromUI()" class="w-full h-8 bg-slate-950 border border-slate-800 rounded px-1 cursor-pointer">
+                                    <input id="pwp-token-accent" type="color" value="#06b6d4" onchange="pwpCompileTheme()" class="w-full h-8 bg-slate-950 border border-slate-800 rounded px-1 cursor-pointer">
                                 </div>
                             </div>
                             <button onclick="pwpComputeThemeDiff()" class="w-full bg-slate-800 hover:bg-slate-700 text-slate-200 py-1.5 rounded text-xs transition">Compute Theme Diff</button>
                         </div>
 
                         <div class="bg-slate-900/80 border border-slate-800 rounded-xl p-4 space-y-3">
-                            <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Compiled CSS Output</h3>
+                            <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+                                <h3 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Compiled CSS Custom Properties</h3>
+                                <button onclick="pwpCopyCSS()" class="bg-slate-800 text-slate-300 px-2 py-0.5 rounded text-[10px] hover:bg-slate-700 transition">Copy CSS</button>
+                            </div>
                             <pre id="pwp-compiled-css" class="bg-slate-950 border border-slate-800 rounded-lg p-3 h-[240px] overflow-y-auto text-xs font-mono text-emerald-400">// Click "Compile CSS" to view generated custom properties</pre>
                         </div>
                     </div>
@@ -2531,6 +2552,25 @@
                 if (targetBtn) {
                     targetBtn.classList.remove('bg-slate-900', 'text-slate-300');
                     targetBtn.classList.add('bg-indigo-600', 'text-white');
+                }
+            }
+
+            function pwpSetIngestMode(mode) {
+                const driveBox = document.getElementById('pwp-ingest-drive-box');
+                const textBox = document.getElementById('pwp-ingest-text-box');
+                const driveBtn = document.getElementById('pwp-mode-drive-btn');
+                const textBtn = document.getElementById('pwp-mode-text-btn');
+
+                if (mode === 'drive') {
+                    driveBox.classList.remove('hidden');
+                    textBox.classList.add('hidden');
+                    driveBtn.className = 'flex-1 bg-indigo-600/20 border border-indigo-500/30 text-indigo-300 py-1 rounded text-xs font-medium';
+                    textBtn.className = 'flex-1 bg-slate-800 border border-slate-700 text-slate-300 py-1 rounded text-xs font-medium';
+                } else {
+                    driveBox.classList.add('hidden');
+                    textBox.classList.remove('hidden');
+                    textBtn.className = 'flex-1 bg-indigo-600/20 border border-indigo-500/30 text-indigo-300 py-1 rounded text-xs font-medium';
+                    driveBtn.className = 'flex-1 bg-slate-800 border border-slate-700 text-slate-300 py-1 rounded text-xs font-medium';
                 }
             }
 
@@ -2587,9 +2627,12 @@
                             <div>
                                 <span class="font-bold text-indigo-300">${page.title}</span>
                                 <span class="text-slate-500 text-[11px] ml-2">(${page.slug})</span>
+                                <span class="ml-2 text-[10px] bg-indigo-500/10 text-indigo-400 px-1.5 py-0.5 rounded border border-indigo-500/20">${page.type}</span>
                             </div>
-                            <div class="flex gap-1.5">
-                                ${page.modules.map(m => `<span class="bg-slate-800 text-slate-300 px-2 py-0.5 rounded text-[10px]">${m}</span>`).join('')}
+                            <div class="flex items-center gap-2">
+                                <div class="flex gap-1.5">
+                                    ${page.modules.map(m => `<span class="bg-slate-800 text-slate-300 px-2 py-0.5 rounded text-[10px]">${m}</span>`).join('')}
+                                </div>
                             </div>
                         </div>
                     `;
@@ -2606,18 +2649,30 @@
                     return;
                 }
 
-                let html = '<div class="space-y-2">';
+                let html = '<div class="space-y-3">';
                 epics.forEach(epic => {
                     html += `
-                        <div class="bg-slate-950 border border-slate-800 rounded-lg p-3 flex items-center justify-between">
-                            <div>
-                                <a href="https://prismatic.growthwebdev.com/tab/tasks?issue=${epic.epic_id}" target="_blank" class="font-bold text-emerald-400 hover:underline">${epic.epic_id}</a>
-                                <span class="text-slate-400 ml-2">${epic.project}</span>
+                        <div class="bg-slate-950 border border-slate-800 rounded-lg p-3 space-y-2">
+                            <div class="flex items-center justify-between border-b border-slate-800/80 pb-2">
+                                <div>
+                                    <a href="https://prismatic.growthwebdev.com/tab/tasks?issue=${epic.epic_id}" target="_blank" class="font-bold text-emerald-400 hover:underline">${epic.epic_id}</a>
+                                    <span class="text-slate-400 ml-2">${epic.project}</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <span class="bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2 py-0.5 rounded text-[10px]">${epic.task_count} Tasks</span>
+                                    <span class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded text-[10px]">${epic.priority}</span>
+                                </div>
                             </div>
-                            <div class="flex items-center gap-2">
-                                <span class="bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2 py-0.5 rounded text-[10px]">${epic.task_count} Tasks</span>
-                                <span class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded text-[10px]">${epic.priority}</span>
+                            ${epic.swarm_allocations ? `
+                            <div class="grid grid-cols-3 gap-2 text-[10px] text-slate-400 pt-1">
+                                ${epic.swarm_allocations.map(a => `
+                                    <div class="bg-slate-900 border border-slate-800 rounded p-1.5">
+                                        <div class="text-indigo-300 font-semibold">${a.role}</div>
+                                        <div>Agent: <span class="text-emerald-400">${a.agent}</span> (${a.tasks} tasks)</div>
+                                    </div>
+                                `).join('')}
                             </div>
+                            ` : ''}
                         </div>
                     `;
                 });
@@ -2635,7 +2690,7 @@
                     html += `
                         <div class="bg-slate-950 border border-slate-800 rounded-lg p-2.5 flex items-center justify-between">
                             <span class="font-semibold text-slate-300 capitalize">${key.replace('_', ' ')}</span>
-                            <span class="${isConn ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' : 'text-rose-400 bg-rose-500/10 border-rose-500/20'} px-2 py-0.5 rounded text-[10px] border">${val.status}</span>
+                            <button onclick="pwpRefreshCredential('${key}')" class="${isConn ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' : 'text-rose-400 bg-rose-500/10 border-rose-500/20'} px-2 py-0.5 rounded text-[10px] border hover:opacity-80 transition">${val.status}</button>
                         </div>
                     `;
                 });
@@ -2669,7 +2724,7 @@
             async function pwpExecuteIngest() {
                 const client = document.getElementById('pwp-ingest-client').value;
                 const url = document.getElementById('pwp-ingest-url').value;
-                const res = await fetch('/api/pwp/ingest/drive', {
+                await fetch('/api/pwp/ingest/drive', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({client_name: client, folder_url: url})
@@ -2677,10 +2732,21 @@
                 loadPWPStudioState();
             }
 
+            async function pwpExecuteMarkdownIngest() {
+                const client = document.getElementById('pwp-ingest-client').value;
+                const md = document.getElementById('pwp-ingest-markdown').value;
+                await fetch('/api/pwp/ingest/markdown', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({client_name: client, markdown: md})
+                });
+                loadPWPStudioState();
+            }
+
             async function pwpExecuteSynthesize() {
                 const siteName = document.getElementById('pwp-synth-sitename').value;
                 const theme = document.getElementById('pwp-synth-theme').value;
-                const res = await fetch('/api/pwp/synthesize', {
+                await fetch('/api/pwp/synthesize', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({site_name: siteName, theme: theme})
@@ -2688,13 +2754,25 @@
                 loadPWPStudioState();
             }
 
+            async function pwpPromptAddPageNode() {
+                const slug = prompt('Enter Page Slug (e.g. /about):', '/about');
+                if (!slug) return;
+                const title = prompt('Enter Page Title:', 'About Us');
+                await fetch('/api/pwp/synthesize/node', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({slug, title, type: 'about', modules: ['hero', 'team_members', 'cta']})
+                });
+                loadPWPStudioState();
+            }
+
             async function pwpExecuteDistill() {
                 const project = document.getElementById('pwp-distill-project').value;
                 const priority = document.getElementById('pwp-distill-priority').value;
-                const res = await fetch('/api/pwp/distill', {
+                await fetch('/api/pwp/distill', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({project: project, priority: priority})
+                    body: JSON.stringify({project, priority})
                 });
                 loadPWPStudioState();
             }
@@ -2718,6 +2796,12 @@
                 document.getElementById('pwp-compiled-css').textContent = data.css;
             }
 
+            function pwpCopyCSS() {
+                const text = document.getElementById('pwp-compiled-css').textContent;
+                navigator.clipboard.writeText(text);
+                alert('CSS copied to clipboard!');
+            }
+
             async function pwpValidateTheme() {
                 const res = await fetch('/api/pwp/theme/validate', {
                     method: 'POST',
@@ -2735,13 +2819,22 @@
                     body: JSON.stringify({})
                 });
                 const data = await res.json();
-                alert('Semantic Diff:\n' + JSON.stringify(data.diff, null, 2));
+                alert('Semantic Theme Diff:\n' + JSON.stringify(data.diff, null, 2));
+            }
+
+            async function pwpRefreshCredential(provider) {
+                await fetch('/api/pwp/credentials/refresh', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({provider})
+                });
+                loadPWPStudioState();
             }
 
             async function pwpProvisionNewSitePrompt() {
                 const domain = prompt('Enter domain name to provision:', 'client-demo.com');
                 if (!domain) return;
-                const res = await fetch('/api/pwp/provision', {
+                await fetch('/api/pwp/provision', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({domain})
