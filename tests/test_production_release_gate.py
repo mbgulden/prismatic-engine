@@ -104,3 +104,56 @@ def test_review_factory_gate_rejects_sha_mismatch():
 
     assert result.admitted is False
     assert any("SHA mismatch" in v for v in result.violations)
+
+
+def test_review_factory_submit_api_endpoints():
+    from fastapi.testclient import TestClient
+    from prismatic.gateway.server import app
+
+    client = TestClient(app)
+
+    # 1. Happy path: Valid AST + valid receipt -> 200 OK
+    payload_valid = {
+        "task_id": "GRO-9010",
+        "candidate_sha": "sha_valid_123",
+        "changed_files": [
+            {
+                "filename": "tests/test_demo.py",
+                "old_code": "def test_demo():\n    assert 1 == 1\n",
+                "new_code": "def test_demo():\n    assert 1 + 1 == 2\n",
+            }
+        ],
+        "receipt_data": {
+            "exit_code": 0,
+            "commit_sha": "sha_valid_123",
+            "task_id": "GRO-9010",
+        },
+    }
+    resp = client.post("/api/gateway/review-factory/submit", json=payload_valid)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is True
+    assert data["result"]["admitted"] is True
+
+    # 2. Reject path: AST deletion -> 422 Unprocessable Entity
+    payload_invalid = {
+        "task_id": "GRO-9011",
+        "candidate_sha": "sha_invalid_456",
+        "changed_files": [
+            {
+                "filename": "tests/test_demo.py",
+                "old_code": "def test_a():\n    assert 1 == 1\ndef test_b():\n    assert 2 == 2\n",
+                "new_code": "def test_a():\n    assert 1 == 1\n", # test_b deleted!
+            }
+        ],
+        "receipt_data": {
+            "exit_code": 0,
+            "commit_sha": "sha_invalid_456",
+            "task_id": "GRO-9011",
+        },
+    }
+    resp_bad = client.post("/api/gateway/review-factory/submit", json=payload_invalid)
+    assert resp_bad.status_code == 422
+    err_data = resp_bad.json()
+    assert err_data["detail"]["error"] == "PR_ADMISSION_REJECTED"
+    assert len(err_data["detail"]["violations"]) > 0

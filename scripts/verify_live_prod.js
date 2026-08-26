@@ -58,8 +58,19 @@ async function testLiveProduction() {
     const overflow = scrollWidth > vp.width;
 
     // Capture screenshot
-    const screenshotPath = `/home/ubuntu/work/prismatic-engine/artifacts/${vp.screenshot}`;
+    const artifactsDir = process.env.ARTIFACTS_DIR || (fs.existsSync('/home/ubuntu/work/prismatic-engine/artifacts') ? '/home/ubuntu/work/prismatic-engine/artifacts' : require('path').join(__dirname, '..', 'artifacts'));
+    if (!fs.existsSync(artifactsDir)) {
+      fs.mkdirSync(artifactsDir, { recursive: true });
+    }
+    const screenshotPath = require('path').join(artifactsDir, vp.screenshot);
     await page.screenshot({ path: screenshotPath });
+
+    if (process.env.BRAIN_DIR && fs.existsSync(process.env.BRAIN_DIR)) {
+      const brainPath = require('path').join(process.env.BRAIN_DIR, vp.screenshot);
+      fs.copyFileSync(screenshotPath, brainPath);
+      console.log(`  ✓ Copied to Brain Directory: ${brainPath}`);
+    }
+
 
     console.log(`  ✓ HTTP Status: 200 OK`);
     console.log(`  ✓ Valid <!DOCTYPE html>: ${doctypeValid}`);

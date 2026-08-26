@@ -90,6 +90,13 @@ async function runVisualAudit() {
             const imgPath = path.join(outDir, `rf_dashboard_${vp.name}.png`);
             await page.screenshot({ path: imgPath, fullPage: false });
             console.log(`Saved screenshot: ${imgPath}`);
+
+            if (process.env.BRAIN_DIR && fs.existsSync(process.env.BRAIN_DIR)) {
+                const brainImg = path.join(process.env.BRAIN_DIR, `rf_dashboard_${vp.name}.png`);
+                fs.copyFileSync(imgPath, brainImg);
+                console.log(`Copied screenshot to brain dir: ${brainImg}`);
+            }
+
         } catch (err) {
             console.error(`Audit failed for ${vp.name}: ${err.message}`);
         } finally {

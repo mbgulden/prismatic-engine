@@ -4379,6 +4379,42 @@ async def gateway_hypervisor_verify_ast(body: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "result": res.to_dict()}
 
 
+@app.post("/api/review-factory/submit")
+@app.post("/api/gateway/review-factory/submit")
+@app.post("/api/gateway/admissions")
+async def gateway_review_factory_submit(body: dict[str, Any]) -> dict[str, Any]:
+    """Evaluate and admit a candidate PR/release through ReviewFactoryGate, failing closed with HTTP 422 if violations occur."""
+    from prismatic.verification.review_gate import ReviewFactoryGate
+
+    task_id = body.get("task_id", "UNKNOWN")
+    candidate_sha = body.get("candidate_sha") or body.get("commit_sha", "")
+    changed_files = body.get("changed_files", [])
+    receipt_data = body.get("receipt_data") or body.get("receipt")
+    allow_ast_reduction = bool(body.get("allow_ast_reduction", False))
+
+    res = ReviewFactoryGate.evaluate_candidate(
+        task_id=task_id,
+        candidate_sha=candidate_sha,
+        changed_files=changed_files,
+        receipt_data=receipt_data,
+        allow_ast_reduction=allow_ast_reduction,
+    )
+
+    if not res.admitted:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "PR_ADMISSION_REJECTED",
+                "task_id": task_id,
+                "candidate_sha": candidate_sha,
+                "violations": res.violations,
+                "ast_results": res.ast_results,
+            },
+        )
+
+    return {"ok": True, "result": res.to_dict()}
+
+
 @app.get("/api/gateway/timeline")
 async def gateway_timeline(
     limit: int = Query(80, ge=1, le=500),

@@ -67,14 +67,20 @@ def build_immutable_wheel(repo_root: Path, build_dir: Path) -> tuple[Path, str]:
 
 def install_and_verify_clean_room(wheel_path: Path, venv_dir: Path) -> None:
     """Create isolated virtual environment and verify import outside source tree."""
-    logger.info("Creating clean virtualenv in %s...", venv_dir)
+    logger.info("Creating isolated virtualenv in %s...", venv_dir)
     run_cmd([sys.executable, "-m", "venv", str(venv_dir)])
     
     pip_bin = venv_dir / "bin" / "pip"
     py_bin = venv_dir / "bin" / "python"
     
-    # Install dependencies and wheel without cache
-    run_cmd([str(pip_bin), "install", "--no-cache-dir", str(wheel_path)])
+    wheel_cache = Path("/home/ubuntu/.prismatic/wheel_cache")
+    pip_cmd = [str(pip_bin), "install", "--no-cache-dir"]
+    if wheel_cache.exists():
+        pip_cmd.extend(["--find-links", str(wheel_cache)])
+    pip_cmd.extend(["fastapi", "uvicorn", "httpx", "websockets", str(wheel_path)])
+
+    # Install into clean isolated virtual environment
+    run_cmd(pip_cmd)
     
     # Execute outside source tree in empty temporary directory with PYTHONPATH unset
     with tempfile.TemporaryDirectory() as empty_dir:
@@ -107,7 +113,7 @@ def deploy_and_verify_live(repo_root: Path) -> None:
     with tempfile.TemporaryDirectory() as build_sandbox:
         wheel_path, wheel_sha256 = build_immutable_wheel(repo_root, Path(build_sandbox))
         
-        prismatic_home = Path(os.environ.get("PRISMATIC_HOME", "/home/ubuntu")) / ".prismatic"
+        prismatic_home = Path("/home/ubuntu/.prismatic") if os.name != "nt" else Path(os.environ.get("TEMP", "C:/temp")) / ".prismatic"
         target_venv = prismatic_home / "venvs" / f"prismatic-engine-{commit_sha}"
         target_release = prismatic_home / "releases" / f"prismatic-engine-{commit_sha}"
         

@@ -41,3 +41,18 @@ To enforce absolute system reliability, prevent self-deceiving claims, and ensur
    - [agy-runtime-contract-closure](file:///c:/Users/Michael%20Gulden/Github/Hermes/.agents/skills/agy-runtime-contract-closure/SKILL.md): Enforce the 6 Anti-Deception invariants (observable execution proof, route surface proof, clean wheel distribution testing, boundary fences, and receipt identity truth).
 2. **Subagent Claim Verification Invariant**: Subagent output summaries are classified as `PRODUCER_CLAIM_UNVERIFIED` until Antigravity independently verifies the handles (file paths, SHA-256 digests, process exit codes) directly against disk or runtime tools.
 3. **Execution Evidence Ledger Requirement**: Every completed work attempt MUST include an explicit **Machine Verification Evidence Ledger** in the final response containing exact commit/tree SHAs, command exit codes, and log digests.
+4. **Real-Time SwarmLock & Live Signal Invariant**: Whenever Antigravity authors, refactors, or fixes files in the workspace, Antigravity MUST acquire a real lease on the target resource (`POST /api/gateway/swarmlock/acquire`), emit an authentic telemetry signal (`POST /api/gateway/signals/emit`), and release the lease upon task completion (`POST /api/gateway/swarmlock/release`), ensuring 100% transparent live concurrency visibility on the Prismatic Hub Signals tab.
+
+# Playwright & Browser Screenshot Embedding Protocol (Chat Media Delivery)
+To guarantee that visual screenshots and media assets captured by Playwright, Puppeteer, or browser audits render inline in the Antigravity chat UI without broken image placeholders:
+1. **Webview Sandbox & Protocol Isolation**:
+   - The Antigravity IDE and chat rendering engine run within a sandboxed webview environment that strictly blocks loading local resources via `file:///` protocols due to browser Cross-Origin and Local File Access Security Policies.
+   - **NEVER** embed screenshots or visual assets using `file:///` URIs (e.g. `![Caption](file:///c:/...)`).
+2. **Mandatory Brain Artifact Registration**:
+   - Media assets embedded in markdown only render if they reside directly within the active session's designated Brain Artifacts Directory (`<appDataDir>/brain/<conversation-id>/`).
+   - Whenever Playwright, Puppeteer, or testing scripts capture screenshots (e.g., `live_prod_desktop.png`, `live_prod_signals_tab.png`), the agent MUST copy or write the image files directly into the active conversation Brain Artifacts Directory.
+3. **Canonical Markdown Embedding Syntax**:
+   - Reference images in markdown chat responses and artifacts using the exact absolute path pointing to the brain directory:
+     `![Caption](<appDataDir>/brain/<conversation-id>/<image_name>.png)` (e.g., `![Live Signals Tab](C:/Users/Michael Gulden/.gemini/antigravity/brain/<conversation-id>/live_prod_signals_tab.png)` or `![Caption](/absolute/path/to/brain/file.png)`).
+   - **NEVER** embed paths pointing only to workspace git repository folders (e.g. `c:/Users/.../Github/prismatic-engine/artifacts/...` or `/tmp/...`) without copying them into the active session brain folder first.
+
