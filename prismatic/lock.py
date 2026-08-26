@@ -93,9 +93,11 @@ def _read_locks() -> list[dict[str, Any]]:
     try:
         with open(lock_file) as f:
             data = json.load(f)
-            if not isinstance(data, list):
-                return []
-            return data
+            if isinstance(data, list):
+                return data
+            elif isinstance(data, dict):
+                return list(data.values())
+            return []
     except (json.JSONDecodeError, OSError):
         return []
 

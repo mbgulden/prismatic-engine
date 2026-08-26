@@ -79,6 +79,24 @@ class SwarmLockManager:
         self._lock_file_path.parent.mkdir(parents=True, exist_ok=True)
         DEFAULT_AUDIT_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
+        # Normalize registry file to dict format if it was previously an empty or legacy list
+        if self._lock_file_path.exists():
+            try:
+                import json
+                content = self._lock_file_path.read_text(encoding="utf-8")
+                if content.strip():
+                    parsed = json.loads(content)
+                    if isinstance(parsed, list):
+                        dict_data = {}
+                        for item in parsed:
+                            if isinstance(item, dict):
+                                res = item.get("resource") or item.get("filePath")
+                                if res:
+                                    dict_data[res] = item
+                        self._lock_file_path.write_text(json.dumps(dict_data, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+
         # Delegate storage and lock mechanics to Swarmlock FileBackend
         self._sw = SyncSwarmlock(backend="file", registry_file=str(self._lock_file_path))
 
