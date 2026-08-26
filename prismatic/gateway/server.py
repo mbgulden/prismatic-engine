@@ -3990,6 +3990,7 @@ async def gateway_swarmlock_status() -> dict[str, Any]:
 @app.post("/api/gateway/swarmlock/acquire")
 async def gateway_swarmlock_acquire(body: dict[str, Any]) -> dict[str, Any]:
     """Acquire a workspace or file lock with rich metadata, emit signal, record to Hypervisor Ledger, and broadcast to WebSocket."""
+    import uuid
     from prismatic.lock import _get_lock_manager
     from prismatic.agent_signal_stream import record_agent_signal
 
