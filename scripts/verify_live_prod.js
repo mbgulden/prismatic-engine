@@ -18,6 +18,7 @@ async function testLiveProduction() {
     
     console.log(`[Viewport: ${vp.name}] Navigating...`);
     const resp = await page.goto('https://prismatic.growthwebdev.com/', { waitUntil: 'networkidle', timeout: 30000 });
+    await page.waitForTimeout(2000);
     
     const status = resp.status();
     if (status !== 200) {
