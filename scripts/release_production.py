@@ -65,7 +65,26 @@ def build_immutable_wheel(repo_root: Path, build_dir: Path) -> tuple[Path, str]:
     return wheel_path, sha256
 
 
-def install_and_verify_clean_room(wheel_path: Path, venv_dir: Path) -> None:
+PRIMITIVE_REPOS = [
+    "git+https://github.com/mbgulden/swarmlock.git@main",
+    "git+https://github.com/mbgulden/swarmcron.git@main",
+    "git+https://github.com/mbgulden/swarmcurator.git@main",
+    "git+https://github.com/mbgulden/swarmrouter.git@main",
+    "git+https://github.com/mbgulden/swarmproof.git@main",
+]
+
+
+def ensure_primitive_wheel_cache(cache_dir: Path, force_update: bool = False) -> None:
+    """Ensure all required swarm primitive wheels are present in wheel_cache."""
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    existing = list(cache_dir.glob("swarm*.whl"))
+    if force_update or len(existing) < len(PRIMITIVE_REPOS):
+        logger.info("Building/updating primitive wheels into %s...", cache_dir)
+        cmd = [sys.executable, "-m", "pip", "wheel", "--no-deps", "-w", str(cache_dir)] + PRIMITIVE_REPOS
+        run_cmd(cmd)
+
+
+def install_and_verify_clean_room(wheel_path: Path, venv_dir: Path, update_primitives: bool = False) -> None:
     """Create isolated virtual environment and verify import outside source tree."""
     logger.info("Creating isolated virtualenv in %s...", venv_dir)
     run_cmd([sys.executable, "-m", "venv", str(venv_dir)])
@@ -73,7 +92,9 @@ def install_and_verify_clean_room(wheel_path: Path, venv_dir: Path) -> None:
     pip_bin = venv_dir / "bin" / "pip"
     py_bin = venv_dir / "bin" / "python"
     
-    wheel_cache = Path("/home/ubuntu/.prismatic/wheel_cache")
+    wheel_cache = Path("/home/ubuntu/.prismatic/wheel_cache") if os.name != "nt" else Path(os.environ.get("TEMP", "C:/temp")) / "wheel_cache"
+    ensure_primitive_wheel_cache(wheel_cache, force_update=update_primitives)
+
     pip_cmd = [str(pip_bin), "install", "--no-cache-dir"]
     if wheel_cache.exists():
         pip_cmd.extend(["--find-links", str(wheel_cache)])

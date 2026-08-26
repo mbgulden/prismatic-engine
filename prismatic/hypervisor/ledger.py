@@ -22,7 +22,17 @@ from typing import Any
 
 logger = logging.getLogger("prismatic.hypervisor.ledger")
 
-DEFAULT_LEDGER_DB = Path("/tmp/prismatic_hypervisor_ledger.db") if os.name != "nt" else Path(os.environ.get("TEMP", "C:/temp")) / "prismatic_hypervisor_ledger.db"
+def _get_default_ledger_db() -> Path:
+    if os.environ.get("PRISMATIC_STATE_DIR"):
+        return Path(os.environ["PRISMATIC_STATE_DIR"]) / "hypervisor_ledger.db"
+    if os.name != "nt":
+        home = Path(os.environ.get("PRISMATIC_HOME", os.environ.get("HOME", "/home/ubuntu")))
+        return home / ".prismatic" / "db" / "hypervisor_ledger.db"
+    else:
+        return Path(os.environ.get("TEMP", "C:/temp")) / "prismatic_db" / "hypervisor_ledger.db"
+
+
+DEFAULT_LEDGER_DB = _get_default_ledger_db()
 
 
 @dataclass
@@ -84,6 +94,7 @@ class HypervisorLedger:
         self.db_path = Path(db_path) if db_path else DEFAULT_LEDGER_DB
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
+        self._events_since_checkpoint = 0
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
@@ -92,6 +103,16 @@ class HypervisorLedger:
         conn.execute("PRAGMA synchronous=NORMAL;")
         conn.row_factory = sqlite3.Row
         return conn
+
+    def checkpoint_wal(self, mode: str = "PASSIVE") -> dict[str, Any]:
+        """Explicitly checkpoint SQLite WAL log to prevent unbounded journal growth."""
+        with self._lock:
+            with self._get_connection() as conn:
+                cur = conn.execute(f"PRAGMA wal_checkpoint({mode});")
+                row = cur.fetchone()
+                busy, log_frames, checkpointed = row[0], row[1], row[2]
+                self._events_since_checkpoint = 0
+                return {"busy": busy, "log_frames": log_frames, "checkpointed": checkpointed}
 
     def _init_db(self) -> None:
         with self._lock:
@@ -142,6 +163,14 @@ class HypervisorLedger:
                 """, (eid, task_id, producer, action, payload_json, ts, prev_hash, entry_hash))
                 row_id = cur.lastrowid
                 conn.commit()
+
+                self._events_since_checkpoint += 1
+                if self._events_since_checkpoint >= 100:
+                    try:
+                        conn.execute("PRAGMA wal_checkpoint(PASSIVE);")
+                        self._events_since_checkpoint = 0
+                    except Exception as cp_err:
+                        logger.debug("WAL auto-checkpoint exception: %s", cp_err)
 
             return LedgerEntry(
                 id=row_id,

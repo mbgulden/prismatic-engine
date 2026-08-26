@@ -93,6 +93,38 @@ class _AssertionCounter(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+import re
+
+@dataclass
+class _JSAnalysis:
+    test_functions: dict[str, int]
+    assertion_count: int
+    trivial_assertions: list[str]
+
+
+def _analyze_js_source(code: str) -> _JSAnalysis:
+    test_pattern = re.compile(r"""(?:test|it|describe)\s*\(\s*['"`]([^'"`]+)['"`]""")
+    tests = test_pattern.findall(code)
+    test_dict = {t: 0 for t in tests}
+
+    assert_pattern = re.compile(r"""\b(?:expect|assert(?:\.\w+)?)\s*\(""")
+    assertions = assert_pattern.findall(code)
+
+    trivial = []
+    if re.search(r"""expect\s*\(\s*true\s*\)\s*\.\s*toBe\s*\(\s*true\s*\)""", code):
+        trivial.append("Trivial assertion `expect(true).toBe(true)` detected.")
+    if re.search(r"""assert\s*\(\s*true\s*\)""", code):
+        trivial.append("Trivial assertion `assert(true)` detected.")
+    if re.search(r"""assert\s*\.\s*(?:strictEqual|equal)\s*\(\s*1\s*,\s*1\s*\)""", code):
+        trivial.append("Trivial assertion constant comparison detected.")
+
+    return _JSAnalysis(
+        test_functions=test_dict,
+        assertion_count=len(assertions),
+        trivial_assertions=trivial,
+    )
+
+
 class ASTGuard:
     @staticmethod
     def analyze_source(code: str) -> tuple[_AssertionCounter | None, str | None]:
@@ -113,7 +145,44 @@ class ASTGuard:
         allow_reduction: bool = False,
     ) -> ASTValidationResult:
         """Validate that a code edit does not delete or weaken test assertions."""
-        is_test_file = "test" in filename.lower()
+        is_test_file = "test" in filename.lower() or "spec" in filename.lower()
+        is_js_ts = filename.endswith((".js", ".ts", ".mjs", ".cjs"))
+
+        if is_js_ts:
+            new_js = _analyze_js_source(new_code)
+            if not old_code.strip():
+                return ASTValidationResult(
+                    valid=len(new_js.trivial_assertions) == 0,
+                    filename=filename,
+                    violations=list(new_js.trivial_assertions),
+                    old_test_count=0,
+                    new_test_count=len(new_js.test_functions),
+                    old_assertion_count=0,
+                    new_assertion_count=new_js.assertion_count,
+                )
+
+            old_js = _analyze_js_source(old_code)
+            violations = list(new_js.trivial_assertions)
+
+            if is_test_file and not allow_reduction:
+                for test_name in old_js.test_functions:
+                    if test_name not in new_js.test_functions:
+                        violations.append(f"ANTI-WEAKENING VIOLATION: JS test `{test_name}` was deleted or renamed.")
+
+                if new_js.assertion_count < old_js.assertion_count and old_js.assertion_count > 0:
+                    violations.append(
+                        f"ANTI-WEAKENING VIOLATION: Total assertion count in {filename} decreased from {old_js.assertion_count} to {new_js.assertion_count}."
+                    )
+
+            return ASTValidationResult(
+                valid=len(violations) == 0,
+                filename=filename,
+                violations=violations,
+                old_test_count=len(old_js.test_functions),
+                new_test_count=len(new_js.test_functions),
+                old_assertion_count=old_js.assertion_count,
+                new_assertion_count=new_js.assertion_count,
+            )
 
         new_counter, new_err = cls.analyze_source(new_code)
         if new_err:

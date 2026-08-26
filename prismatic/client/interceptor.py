@@ -230,33 +230,54 @@ class HypervisorClient:
     def __init__(self, endpoint: str | None = None) -> None:
         self.endpoint = (endpoint or default_gateway_endpoint()).rstrip("/")
 
-    def _post(self, path: str, data: dict[str, Any]) -> dict[str, Any] | None:
-        """Helper to make HTTP POST requests to Gateway API."""
+    def _post(self, path: str, data: dict[str, Any], max_retries: int = 3) -> dict[str, Any] | None:
+        """Helper to make HTTP POST requests to Gateway API with exponential backoff."""
         url = f"{self.endpoint}{path}"
-        try:
-            req = urllib.request.Request(
-                url,
-                data=json.dumps(data).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                if resp.status < 300:
-                    return json.loads(resp.read().decode("utf-8"))
-        except Exception as err:
-            logger.debug("Failed POST to %s: %s", url, err)
+        headers = {"Content-Type": "application/json"}
+        token = os.environ.get("PRISMATIC_API_TOKEN") or os.environ.get("PRISMATIC_OPERATOR_TOKEN")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
+        body_bytes = json.dumps(data).encode("utf-8")
+        delay = 0.5
+        for attempt in range(max_retries):
+            try:
+                req = urllib.request.Request(
+                    url,
+                    data=body_bytes,
+                    headers=headers,
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    if resp.status < 300:
+                        return json.loads(resp.read().decode("utf-8"))
+            except Exception as err:
+                logger.debug("Attempt %d failed POST to %s: %s", attempt + 1, url, err)
+                if attempt < max_retries - 1:
+                    time.sleep(delay)
+                    delay *= 2
         return None
 
-    def _get(self, path: str) -> dict[str, Any] | None:
-        """Helper to make HTTP GET requests to Gateway API."""
+    def _get(self, path: str, max_retries: int = 3) -> dict[str, Any] | None:
+        """Helper to make HTTP GET requests to Gateway API with exponential backoff."""
         url = f"{self.endpoint}{path}"
-        try:
-            req = urllib.request.Request(url, method="GET")
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                if resp.status < 300:
-                    return json.loads(resp.read().decode("utf-8"))
-        except Exception as err:
-            logger.debug("Failed GET to %s: %s", url, err)
+        headers = {}
+        token = os.environ.get("PRISMATIC_API_TOKEN") or os.environ.get("PRISMATIC_OPERATOR_TOKEN")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+
+        delay = 0.5
+        for attempt in range(max_retries):
+            try:
+                req = urllib.request.Request(url, headers=headers, method="GET")
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    if resp.status < 300:
+                        return json.loads(resp.read().decode("utf-8"))
+            except Exception as err:
+                logger.debug("Attempt %d failed GET to %s: %s", attempt + 1, url, err)
+                if attempt < max_retries - 1:
+                    time.sleep(delay)
+                    delay *= 2
         return None
 
     @contextmanager

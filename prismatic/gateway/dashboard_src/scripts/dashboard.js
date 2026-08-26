@@ -405,6 +405,23 @@
             }
         }
 
+        function registerDynamicAgentPill(agentId) {
+            if (!agentId || agentId === "all" || agentId === "SYSTEM" || agentId === "unknown") return;
+            const container = document.getElementById("dag-agent-filters");
+            if (!container) return;
+            const sanitizedId = String(agentId).trim().toLowerCase();
+            const existing = container.querySelector(`[data-dag-agent="${sanitizedId}"]`);
+            if (!existing) {
+                const btn = document.createElement("button");
+                btn.type = "button";
+                btn.setAttribute("data-dag-agent", sanitizedId);
+                btn.className = "dag-agent-chip px-3 py-1 rounded-lg text-[11px] font-mono border transition bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200";
+                btn.textContent = `⚡ ${agentId}`;
+                btn.onclick = () => setDagAgentFilter(sanitizedId);
+                container.appendChild(btn);
+            }
+        }
+
         function toggleDagScrubber() {
             const bar = document.getElementById("dag-time-scrubber-bar");
             if (!bar) return;
@@ -5354,12 +5371,14 @@
                             fetchSwarmLockHistory();
                         }
                     }
-                    if (event.type === "signal.emitted" || event.type === "signal") {
+                    if (event.type === "signal.emitted" || event.type === "signal" || event.type === "agent.discovered") {
+                        const sig = event.payload || event.signal || {};
+                        const agentId = sig.agent || event.agent;
+                        if (agentId) registerDynamicAgentPill(agentId);
                         if (activeTab === "signals") {
                             renderSignalsView();
                         }
-                        const sig = event.payload || event.signal || {};
-                        addLocalSignal(sig.agent || event.type, sig.message || event.message || "Signal received", sig.severity || "info");
+                        addLocalSignal(agentId || event.type, sig.message || event.message || "Signal received", sig.severity || "info");
                     }
                     if (event.type === "fleet_control_status" && event.payload) {
                         isFleetPaused = !!event.payload.fleet_paused;
