@@ -1,302 +1,360 @@
-"""Agent Registry & Dynamic Discovery Engine for Prismatic Engine Signals.
-
-Provides dynamic agent discovery, active process inspection, model tracking,
-and active work telemetry across AGY, Hermes, Kai, Fred, Autobot, and custom subagents.
+"""
+Prismatic Dynamic Agent Registry & Multi-Host Discovery Engine.
+Tracks core swarm agents and dynamically discovers active nodes across harnesses and machines.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
+import socket
 import time
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 from prismatic.agent_signal_stream import list_agent_signals
-from prismatic.agy_activity import list_agy_activity_runs
+from prismatic.lock import _get_lock_manager
+
+logger = logging.getLogger("prismatic.agents.registry")
+
+REGISTRY_DB_PATH = Path(os.path.expanduser("~/.antigravity/agents/dynamic_registry.json"))
+
+# Patterns that should NEVER be registered as persistent fleet agents (test workers / chaos iterations)
+EPHEMERAL_TEST_AGENT_REGEX = re.compile(
+    r"^(agent_(contender|fault|zombie|disjoint)_\d+|test_|tmp_worker|mock_agent)",
+    re.IGNORECASE
+)
 
 
-def _read_json(path: Path) -> dict[str, Any] | None:
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _ensure_dir(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
     try:
-        if path.is_file():
-            return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        pass
-    return None
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.debug("Failed reading %s: %s", path, e)
+        return {}
 
 
-class AgentRegistryManager:
-    """Manages agent discovery, active process lifecycle, and model telemetry."""
+def _write_json(path: Path, data: dict[str, Any]) -> None:
+    _ensure_dir(path)
+    tmp = path.with_suffix(".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    tmp.replace(path)
+
+
+# Baseline canonical swarm fleet definition
+CORE_FLEET = [
+    {
+        "agent_id": "agy",
+        "name": "Lightbringer Antigravity",
+        "alias": ["lightbringer-agy", "antigravity", "lightbringer-antigravity"],
+        "host": "Lightbringer (Windows)",
+        "type": "lead_assistant",
+        "executable": "antigravity",
+        "active_model": "gemini-2.5-pro",
+        "model_provider": "Google DeepMind",
+        "capabilities": ["hypervisor_client", "code_authoring", "ast_refactor", "tool_calling"],
+        "icon": "⚡",
+        "source": "Primary Developer Host (Lightbringer)",
+    },
+    {
+        "agent_id": "hermes",
+        "name": "Hermes Orchestrator",
+        "alias": ["hermes-orchestrator", "webtop-hermes"],
+        "host": "webtop-hermes (Ubuntu VM)",
+        "type": "orchestrator",
+        "executable": "hermes",
+        "active_model": "claude-3-7-sonnet",
+        "model_provider": "Anthropic",
+        "capabilities": ["topological_dispatch", "lane_governance", "multi_agent_coordination"],
+        "icon": "🌐",
+        "source": "Prismatic Engine Core",
+    },
+    {
+        "agent_id": "kai",
+        "name": "Kai (UI Specialist)",
+        "alias": ["kai-ui", "kai-frontend"],
+        "host": "webtop-hermes",
+        "type": "ui_developer",
+        "executable": "kai",
+        "active_model": "gpt-4o",
+        "model_provider": "OpenAI",
+        "capabilities": ["dashboard_design", "tailwind_css", "visual_auditing", "accessibility"],
+        "icon": "🎨",
+        "source": "Subagent Registry",
+    },
+    {
+        "agent_id": "fred",
+        "name": "Fred (TDD Specialist)",
+        "alias": ["fred-tdd"],
+        "host": "webtop-hermes",
+        "type": "tdd_architect",
+        "executable": "fred",
+        "active_model": "claude-3-7-sonnet",
+        "model_provider": "Anthropic",
+        "capabilities": ["tdd_pipeline", "unit_testing", "regression_oracle", "red_green_refactor"],
+        "icon": "🧪",
+        "source": "Subagent Registry",
+    },
+    {
+        "agent_id": "george",
+        "name": "George (Peer Reviewer)",
+        "alias": ["george-review"],
+        "host": "webtop-hermes",
+        "type": "peer_reviewer",
+        "executable": "george",
+        "active_model": "claude-3-7-sonnet",
+        "model_provider": "Anthropic",
+        "capabilities": ["invariant_audit", "pr_handoff", "exact_head_verification"],
+        "icon": "🛡️",
+        "source": "Subagent Registry",
+    },
+    {
+        "agent_id": "autobot",
+        "name": "Autobot (CI Worker)",
+        "alias": ["autobot-ci"],
+        "host": "webtop-hermes",
+        "type": "ci_worker",
+        "executable": "autobot",
+        "active_model": "deepseek-r1",
+        "model_provider": "DeepSeek",
+        "capabilities": ["wheel_packaging", "isolated_venv", "clean_room_testing"],
+        "icon": "🤖",
+        "source": "Subagent Registry",
+    },
+    {
+        "agent_id": "swarmproof",
+        "name": "SwarmProof Verifier",
+        "alias": ["swarmproof-oracle"],
+        "host": "webtop-hermes",
+        "type": "truth_oracle",
+        "executable": "swarmproof",
+        "active_model": "rule-oracle-v0.3.0",
+        "model_provider": "Prismatic Core",
+        "capabilities": ["ast_analysis", "anti_deception", "manifest_verify"],
+        "icon": "⚖️",
+        "source": "SwarmProof Core v0.3.0",
+    }
+]
+
+
+class DynamicAgentRegistry:
+    """Manages multi-host agent discovery, live lease tracking, and dynamic registry storage."""
 
     @classmethod
-    def discover_known_agents(cls) -> list[dict[str, Any]]:
-        # Read environment or settings overrides
-        hermes_endpoint = os.environ.get("HERMES_ENDPOINT", "http://100.83.32.92:9000")
-        agy_model = os.environ.get("AGY_MODEL") or os.environ.get("GEMINI_MODEL") or "gemini-2.5-pro"
+    def get_registered_agents(cls) -> list[dict[str, Any]]:
+        """Return base fleet plus any dynamically registered external machine agents."""
+        stored = _read_json(REGISTRY_DB_PATH).get("agents", {})
         
-        # Check Jules Capacity Ledger
-        jules_payload = {}
-        try:
-            from prismatic.jules_capacity import capacity_payload
-            jules_payload = capacity_payload()
-        except Exception:
-            pass
+        fleet_map: dict[str, dict[str, Any]] = {}
+        for a in CORE_FLEET:
+            fleet_map[a["agent_id"]] = dict(a)
 
-        jules_status = "idle"
-        jules_task = ""
-        if jules_payload.get("ok"):
-            active = jules_payload.get("active", 0)
-            awaiting = jules_payload.get("awaiting", 0)
-            if active > 0:
-                jules_status = "executing"
-                jules_task = f"Active Sessions ({active})"
-            elif awaiting > 0:
-                jules_status = "waiting_input"
-                jules_task = f"Awaiting Plan ({awaiting})"
+        # Merge dynamically registered agents from other nodes (ignoring test patterns)
+        for aid, item in stored.items():
+            if EPHEMERAL_TEST_AGENT_REGEX.match(aid):
+                continue
+            if aid not in fleet_map:
+                fleet_map[aid] = item
+            else:
+                fleet_map[aid].update(item)
 
-        core_agents = [
-            {
-                "agent_id": "agy",
-                "name": "Antigravity (AGY)",
-                "type": "cli_harness",
-                "executable": "agy",
-                "active_model": agy_model,
-                "model_provider": "Google DeepMind",
-                "capabilities": ["architecture", "tdd", "verification", "refactoring"],
-                "icon": "⚡",
-                "source": "AGY CLI Connection",
-            },
-            {
-                "agent_id": "hermes",
-                "name": "Hermes Orchestrator",
-                "type": "hermes_node",
-                "executable": "hermes",
-                "active_model": "claude-3-7-sonnet",
-                "model_provider": "Anthropic / Proxmox Node",
-                "capabilities": ["infrastructure", "proxmox", "deployments", "dns"],
-                "icon": "🌐",
-                "source": f"Hermes Hub ({hermes_endpoint})",
-            },
-            {
-                "agent_id": "jules",
-                "name": "Jules CLI",
-                "type": "jules_harness",
-                "executable": "jules",
-                "active_model": "jules-agent-v1",
-                "model_provider": "Google Cloud",
-                "capabilities": ["multi_repo", "capacity_ledger", "auto_pr"],
-                "icon": "🚀",
-                "source": "Jules Capacity Store (300/day limit)",
-                "status_override": jules_status,
-                "current_task_override": jules_task,
-            },
-            {
-                "agent_id": "kai",
-                "name": "Kai (UI Specialist)",
-                "type": "specialist_subagent",
-                "executable": "kai",
-                "active_model": "claude-3-7-sonnet",
-                "model_provider": "Anthropic",
-                "capabilities": ["css", "ui_design", "accessibility", "playwright"],
-                "icon": "🎨",
-                "source": "Subagent Registry",
-            },
-            {
-                "agent_id": "fred",
-                "name": "Fred (TDD Specialist)",
-                "type": "specialist_subagent",
-                "executable": "fred",
-                "active_model": "claude-3-7-sonnet",
-                "model_provider": "Anthropic",
-                "capabilities": ["python_kernel", "fastapi", "pytest", "review_factory"],
-                "icon": "⚙️",
-                "source": "Subagent Registry",
-            },
-            {
-                "agent_id": "george",
-                "name": "George (Peer Reviewer)",
-                "type": "review_agent",
-                "executable": "george",
-                "active_model": "gpt-4o",
-                "model_provider": "OpenAI",
-                "capabilities": ["peer_review", "rebase_audit", "pr_evidence"],
-                "icon": "🛡️",
-                "source": "Subagent Registry",
-            },
-            {
-                "agent_id": "autobot",
-                "name": "Autobot (CI Worker)",
-                "type": "verification_worker",
-                "executable": "autobot",
-                "active_model": "deepseek-r1",
-                "model_provider": "DeepSeek",
-                "capabilities": ["ci_runner", "wheel_build", "clean_room"],
-                "icon": "🤖",
-                "source": "Subagent Registry",
-            },
-            {
-                "agent_id": "swarmproof",
-                "name": "SwarmProof Verifier",
-                "type": "truth_oracle",
-                "executable": "swarmproof",
-                "active_model": "rule-based-oracle-v0.3.0",
-                "model_provider": "Prismatic Core",
-                "capabilities": ["ast_analysis", "anti_deception", "manifest_verify"],
-                "icon": "⚖️",
-                "source": "SwarmProof Core v0.3.0",
-            },
-            {
-                "agent_id": "curator",
-                "name": "Curator Ingestion",
-                "type": "ingestion_worker",
-                "executable": "curator",
-                "active_model": "gemini-2.5-flash",
-                "model_provider": "Google DeepMind",
-                "capabilities": ["document_curation", "vector_index", "evidence_db"],
-                "icon": "📚",
-                "source": "Curator Ingestion Daemon",
-            },
-            {
-                "agent_id": "supervisor",
-                "name": "Supervisor Dispatcher",
-                "type": "coordinator",
-                "executable": "supervisor",
-                "active_model": "gemini-3.1-pro-high",
-                "model_provider": "Google DeepMind",
-                "capabilities": ["lane_lock", "dispatcher", "linear_sync"],
-                "icon": "🎯",
-                "source": "Prismatic Supervisor",
-            },
-        ]
+        return list(fleet_map.values())
 
-        discovered_map: dict[str, dict[str, Any]] = {a["agent_id"]: a for a in core_agents}
+    @classmethod
+    def register_or_update_agent(
+        cls,
+        agent_id: str,
+        name: Optional[str] = None,
+        host: Optional[str] = None,
+        model: Optional[str] = None,
+        capabilities: Optional[list[str]] = None,
+        icon: Optional[str] = None,
+    ) -> Optional[dict[str, Any]]:
+        """Dynamically register or update an agent node from any host/machine."""
+        clean_id = agent_id.strip().lower().replace(" ", "-")
+        if EPHEMERAL_TEST_AGENT_REGEX.match(clean_id):
+            return None
 
-        # Ingest dynamic agent inventory files
-        inventory_candidates = [
-            Path(os.path.expanduser("~/.prismatic/prismatic_state/discovered_agents.json")),
-            Path(os.path.expanduser("~/.prismatic/prismatic_state/agent_inventory.json")),
-            Path("./prismatic_state/discovered_agents.json"),
-            Path("./prismatic_state/agent_inventory.json"),
-        ]
+        stored_doc = _read_json(REGISTRY_DB_PATH)
+        agents_dict = stored_doc.get("agents", {})
 
-        icon_map = {
-            "kai-css": "🎨",
-            "kai-js": "⚡",
-            "kai-content": "📝",
-            "codex-5-5": "💻",
-            "codex-5-4": "💻",
-            "orchestrator": "🌐",
-            "hermeslocal": "🖥️",
-            "qwenlocal": "🧠",
-            "deepseekv4": "🔮",
-            "hdengine": "✨",
-            "ai-consulting": "💼",
-            "google-ai-toolkit": "🧰",
-            "google": "🔍",
-        }
+        record = agents_dict.get(clean_id, {
+            "agent_id": clean_id,
+            "name": name or f"{agent_id.title()} Agent",
+            "host": host or socket.gethostname(),
+            "type": "dynamic_node",
+            "executable": clean_id,
+            "active_model": model or "auto",
+            "model_provider": "External Node",
+            "capabilities": capabilities or ["tool_calling", "telemetry"],
+            "icon": icon or "⚡",
+            "source": f"Dynamic Registration ({host or socket.gethostname()})",
+            "created_at": _utc_now_iso(),
+        })
 
-        for inv_path in inventory_candidates:
-            doc = _read_json(inv_path)
-            if isinstance(doc, dict):
-                agents_list = doc.get("agents") or doc.get("services") or []
-                if isinstance(agents_list, list):
-                    for item in agents_list:
-                        if not isinstance(item, dict):
-                            continue
-                        raw_name = item.get("name") or item.get("label") or ""
-                        aid = raw_name.replace("agent:", "").strip().lower()
-                        if not aid or aid in discovered_map or aid in {"bot", "gpg-agent"}:
-                            continue
-                        
-                        agent_type = item.get("type") or "hermes-profile"
-                        model = item.get("model") or "default"
-                        icon = icon_map.get(aid, "🤖")
+        if name:
+            record["name"] = name
+        if host:
+            record["host"] = host
+        if model:
+            record["active_model"] = model
+        if capabilities:
+            record["capabilities"] = capabilities
+        if icon:
+            record["icon"] = icon
+        record["last_seen_at"] = _utc_now_iso()
 
-                        discovered_map[aid] = {
-                            "agent_id": aid,
-                            "name": item.get("display_name") or f"{aid.upper()} (Hermes)",
-                            "type": agent_type,
-                            "executable": aid,
-                            "active_model": str(model),
-                            "model_provider": item.get("provider") or "Hermes Node / Cloud",
-                            "capabilities": item.get("capabilities") or ["chat", "tools"],
-                            "icon": icon,
-                            "source": f"Hermes Profile ({item.get('config_path') or 'registered'})",
-                        }
+        agents_dict[clean_id] = record
+        stored_doc["agents"] = agents_dict
+        _write_json(REGISTRY_DB_PATH, stored_doc)
+        return record
 
-        return list(discovered_map.values())
+    @classmethod
+    def delete_agent(cls, agent_id: str) -> bool:
+        """Delete a dynamic agent from the registry."""
+        clean_id = agent_id.strip().lower()
+        stored_doc = _read_json(REGISTRY_DB_PATH)
+        agents_dict = stored_doc.get("agents", {})
+        if clean_id in agents_dict:
+            del agents_dict[clean_id]
+            stored_doc["agents"] = agents_dict
+            _write_json(REGISTRY_DB_PATH, stored_doc)
+            return True
+        return False
 
     @classmethod
     def get_active_agents(cls) -> list[dict[str, Any]]:
-        """Dynamically discover running/registered agents and their active telemetry."""
-        signals_data = list_agent_signals(limit=200, include_log_tails=False)
-        agy_runs_data = list_agy_activity_runs(limit=20)
+        """Return accurate live agent status, active lease holdings, and last telemetry."""
+        registered = cls.get_registered_agents()
+        registered_map = {a["agent_id"]: a for a in registered}
+        alias_map = {}
+        for a in registered:
+            alias_map[a["agent_id"]] = a["agent_id"]
+            for alias in a.get("alias", []):
+                alias_map[alias.lower()] = a["agent_id"]
 
+        # 1. Fetch active locks from SwarmLockManager
+        active_locks_by_agent: dict[str, list[dict[str, Any]]] = {}
+        try:
+            lock_mgr = _get_lock_manager()
+            lock_status = lock_mgr.get_enriched_status()
+            for l in lock_status.get("locks", []):
+                holder_raw = str(l.get("holder") or "unknown").strip().lower()
+                if EPHEMERAL_TEST_AGENT_REGEX.match(holder_raw):
+                    continue
+                canonical_id = alias_map.get(holder_raw, holder_raw)
+                
+                # Dynamically discover unknown genuine lock holders
+                if canonical_id not in registered_map:
+                    new_agent = cls.register_or_update_agent(
+                        agent_id=canonical_id,
+                        name=f"{l.get('holder')} Agent",
+                        host=l.get("workspace") or "Remote Host",
+                        model=l.get("model") or "gemini-2.5-pro",
+                        icon="🔒"
+                    )
+                    if new_agent:
+                        registered_map[canonical_id] = new_agent
+                        alias_map[holder_raw] = canonical_id
+
+                if canonical_id in registered_map:
+                    active_locks_by_agent.setdefault(canonical_id, []).append(l)
+        except Exception as e:
+            logger.debug("Error reading active locks in registry: %s", e)
+
+        # 2. Fetch live signals
+        signals_data = list_agent_signals(limit=150, include_log_tails=False)
         counts = signals_data.get("counts", {})
         recent_items = signals_data.get("items", [])
 
-        # Map last activity per agent from recent signals
         last_signal_by_agent: dict[str, dict[str, Any]] = {}
         for item in recent_items:
-            a = str(item.get("agent") or "").lower()
-            if a and a not in last_signal_by_agent:
-                last_signal_by_agent[a] = item
+            raw_agent = str(item.get("agent") or "").strip().lower()
+            if EPHEMERAL_TEST_AGENT_REGEX.match(raw_agent):
+                continue
+            canon = alias_map.get(raw_agent, raw_agent)
+            
+            # Dynamically discover unknown genuine signal emitters
+            if canon and canon not in registered_map:
+                new_agent = cls.register_or_update_agent(
+                    agent_id=canon,
+                    name=f"{raw_agent.title()} Agent",
+                    host="Discovered Node",
+                    icon="📡"
+                )
+                if new_agent:
+                    registered_map[canon] = new_agent
+                    alias_map[raw_agent] = canon
 
-        agents: list[dict[str, Any]] = []
+            if canon and canon not in last_signal_by_agent:
+                last_signal_by_agent[canon] = item
 
-        for meta in cls.discover_known_agents():
-            aid = meta["agent_id"]
+        agents_out: list[dict[str, Any]] = []
+
+        for aid, meta in registered_map.items():
+            held_locks = active_locks_by_agent.get(aid, [])
             last_sig = last_signal_by_agent.get(aid, {})
             signal_count = counts.get(aid, 0)
+            for alias in meta.get("alias", []):
+                signal_count += counts.get(alias.lower(), 0)
 
-            # Determine status & model override
-            status = meta.get("status_override", "idle")
-            current_task = meta.get("current_task_override", "")
-
-            if aid == "agy" and agy_runs_data.get("status") == "ok":
-                runs = agy_runs_data.get("runs", [])
-                active_runs = [r for r in runs if r.get("state") == "running"]
-                if active_runs:
-                    status = "executing"
-                    current_task = active_runs[0].get("task_ref", "")
-                elif runs:
-                    current_task = runs[0].get("task_ref", "")
-
-            if status == "idle" and last_sig:
-                sig_status = str(last_sig.get("status") or "").lower()
-                if "execut" in sig_status or "run" in sig_status or "active" in sig_status:
-                    status = "executing"
-                elif "error" in sig_status or "fail" in sig_status:
+            # Determine live execution status
+            if held_locks:
+                status = "executing"
+                current_task = held_locks[0].get("task_id") or held_locks[0].get("intention") or "Holding Active Lease"
+            elif last_sig:
+                sig_type = str(last_sig.get("event_type") or "").lower()
+                if "error" in sig_type or "fail" in sig_type:
                     status = "errored"
-                elif "wait" in sig_status or "nudge" in sig_status:
+                elif "wait" in sig_type or "nudge" in sig_type:
                     status = "waiting_input"
+                else:
+                    status = "idle"
                 current_task = last_sig.get("issue_id") or last_sig.get("run_id") or ""
+            else:
+                status = "idle"
+                current_task = ""
 
-            agents.append(
-                {
-                    "agent_id": aid,
-                    "name": meta["name"],
-                    "type": meta["type"],
-                    "executable": meta["executable"],
-                    "status": status,
-                    "active_model": meta["active_model"],
-                    "model_provider": meta["model_provider"],
-                    "capabilities": meta["capabilities"],
-                    "icon": meta["icon"],
-                    "source": meta["source"],
-                    "signal_count": signal_count,
-                    "current_task": current_task,
-                    "last_signal_at": last_sig.get("timestamp"),
-                    "last_message": last_sig.get("message") or "Ready for task assignments.",
-                    "severity": last_sig.get("severity", "info"),
-                }
-            )
+            agents_out.append({
+                "agent_id": aid,
+                "name": meta["name"],
+                "host": meta.get("host", "Unknown Host"),
+                "type": meta["type"],
+                "executable": meta.get("executable", aid),
+                "status": status,
+                "active_model": meta.get("active_model", "default"),
+                "model_provider": meta.get("model_provider", "Local / Cloud"),
+                "capabilities": meta.get("capabilities", ["tool_calling"]),
+                "icon": meta.get("icon", "🤖"),
+                "source": meta.get("source", "Swarm Fleet Registry"),
+                "active_locks": len(held_locks),
+                "signal_count": signal_count,
+                "current_task": current_task,
+                "last_signal_at": last_sig.get("timestamp"),
+                "last_message": last_sig.get("message") or "Ready for task assignments.",
+                "severity": last_sig.get("severity", "info"),
+            })
 
-        return agents
+        return agents_out
 
 
 def get_agent_telemetry_summary() -> dict[str, Any]:
-    agents = AgentRegistryManager.get_active_agents()
+    agents = DynamicAgentRegistry.get_active_agents()
     active_count = sum(1 for a in agents if a["status"] == "executing")
     errored_count = sum(1 for a in agents if a["status"] == "errored")
     total_signals = sum(a["signal_count"] for a in agents)
@@ -310,3 +368,6 @@ def get_agent_telemetry_summary() -> dict[str, Any]:
         "total_signals": total_signals,
         "agents": agents,
     }
+
+
+AgentRegistryManager = DynamicAgentRegistry

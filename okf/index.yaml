@@ -45,7 +45,7 @@
         "docs/contracts/verification-contract.md",
         "tests/test_okf_docs.py"
       ],
-      "current_surface": "canonical policy and Linear epic GRO-4203; provider-neutral runner pending",
+      "current_surface": "canonical policy and Linear epic GRO-4203; provider-neutral runner operational",
       "review_after": "2026-10-23"
     },
     {

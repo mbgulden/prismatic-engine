@@ -127,12 +127,13 @@ def _tail_file(path_text: str, *, max_chars: int = 2400) -> str:
 
 
 def _candidate_signal_paths() -> list[Path]:
+    home = Path(os.environ.get("PRISMATIC_HOME", os.path.expanduser("~")))
     paths = [
         signal_stream_path(),
-        Path(os.path.expanduser("~/.prismatic/db/agent_signal_stream.jsonl")),
-        Path(os.path.expanduser("~/.prismatic/prismatic_state/agent_signal_stream.jsonl")),
-        Path(os.path.expanduser("~/.prismatic/state/agent_signal_stream.jsonl")),
-        Path(os.path.expanduser("~/.antigravity/signals/signals.jsonl")),
+        home / ".prismatic" / "db" / "agent_signal_stream.jsonl",
+        home / ".prismatic" / "prismatic_state" / "agent_signal_stream.jsonl",
+        home / ".prismatic" / "state" / "agent_signal_stream.jsonl",
+        home / ".antigravity" / "signals" / "signals.jsonl",
         _state_dir() / "agent_signal_stream.jsonl",
     ]
     seen: set[str] = set()
@@ -147,10 +148,11 @@ def _candidate_signal_paths() -> list[Path]:
 
 def _synthesize_swarmlock_signals() -> list[dict[str, Any]]:
     """Synthesize live agent signals from SwarmLock audit stream."""
+    home = Path(os.environ.get("PRISMATIC_HOME", os.path.expanduser("~")))
     candidates = [
-        Path(os.path.expanduser("~/.antigravity/audit/swarmlock_audit.jsonl")),
-        Path(os.path.expanduser("~/.prismatic/.antigravity/audit/swarmlock_audit.jsonl")),
-        Path(os.environ.get("PRISMATIC_HOME", "/home/ubuntu")) / ".antigravity" / "audit" / "swarmlock_audit.jsonl",
+        home / ".antigravity" / "audit" / "swarmlock_audit.jsonl",
+        home / ".prismatic" / ".antigravity" / "audit" / "swarmlock_audit.jsonl",
+        _state_dir() / ".antigravity" / "audit" / "swarmlock_audit.jsonl",
     ]
     signals: list[dict[str, Any]] = []
     for candidate in candidates:

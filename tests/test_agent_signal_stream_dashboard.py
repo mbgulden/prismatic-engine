@@ -6,6 +6,9 @@ from pathlib import Path
 
 def test_agent_signal_stream_records_groups_and_redacts(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("PRISMATIC_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PRISMATIC_HOME", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     import prismatic.agent_signal_stream as signals
 
     signals = importlib.reload(signals)
@@ -50,6 +53,9 @@ def test_dashboard_signals_has_mobile_tabs_and_agent_panes():
 
 def test_gateway_signals_api_uses_durable_stream(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("PRISMATIC_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PRISMATIC_HOME", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     import prismatic.agent_signal_stream as signals
 
     signals = importlib.reload(signals)

@@ -9,6 +9,14 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+try:
+    from prismatic.interface.plugin import PluginContext, PrismaticPlugin
+except ImportError:
+    class PluginContext:  # type: ignore
+        pass
+    class PrismaticPlugin:  # type: ignore
+        pass
+
 from .compiler import get_tokens_for_tenant, render_template, set_tenant_tokens
 from .oauth_credentials import (
     PROVIDERS,
@@ -31,6 +39,10 @@ PWP_CAPABILITY_CONTRACT: Dict[str, Any] = {
 
 class PWPDomainTools:
     """Standalone PWP tools with no Prismatic Engine runtime dependency."""
+
+    def on_init(self, context: PluginContext) -> None:
+        """Initialize plugin inside Prismatic Engine dispatcher."""
+        return
 
     def capability_contract(self) -> Dict[str, Any]:
         return dict(PWP_CAPABILITY_CONTRACT)
@@ -113,5 +125,14 @@ class PWPDomainTools:
         return payload
 
 
-PWPDesignTokenPlugin = PWPDomainTools
+class PWPDesignTokenPlugin(PWPDomainTools, PrismaticPlugin):
+    """PWP Design Token Plugin fulfilling the PrismaticPlugin contract."""
+
+    def on_init(self, context: PluginContext) -> None:
+        """Initialize plugin inside Prismatic Engine dispatcher."""
+        return None
+
+    def register_tools(self) -> List[Dict[str, Any]]:
+        """Return registered tools for PWP."""
+        return super().register_tools()
 

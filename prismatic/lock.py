@@ -60,7 +60,7 @@ def _default_prismatic_home() -> Path:
 
 
 LOCK_FILE = _default_prismatic_home() / ".antigravity" / "swarm_locks.json"
-STALE_TTL_MS = 300_000  # 5 minutes
+STALE_TTL_MS = 3_600_000  # 5 minutes
 
 
 # ── Lock Registry Operations ───────────────────────────

@@ -531,15 +531,16 @@ def validate_relative_path(value: str, *, allow_empty: bool) -> tuple[str, list[
 def _is_previewable(relative_path: str, metadata: os.stat_result | None = None) -> bool:
     components = relative_path.split("/")
     name = components[-1].lower()
+    ext = os.path.splitext(name)[1]
     if any(part.startswith(".") and part not in ALLOWED_HIDDEN_DIRS for part in components):
         return False
-    if (
-        name in _SENSITIVE_EXACT
-        or name.endswith(_SENSITIVE_SUFFIXES)
-        or _SENSITIVE_WORD.search(name)
-    ):
+    if name in _SENSITIVE_EXACT or name.endswith(_SENSITIVE_SUFFIXES):
         return False
-    if os.path.splitext(name)[1] not in PREVIEW_EXTENSIONS:
+    # Only block sensitive words if not a standard source code file
+    if ext not in {".py", ".ts", ".tsx", ".js", ".jsx", ".json", ".jsonl", ".md", ".toml", ".yaml", ".yml", ".txt", ".html", ".css", ".sh"}:
+        if _SENSITIVE_WORD.search(name):
+            return False
+    if ext not in PREVIEW_EXTENSIONS:
         return False
     return metadata is None or (
         stat.S_ISREG(metadata.st_mode) and metadata.st_nlink == 1
@@ -644,30 +645,49 @@ def resolve_legacy_file(
     registry: WorkspaceRegistry, relative_path: str
 ) -> dict[str, Any]:
     """Resolve a legacy relative file path without exposing workspace roots."""
-    normalized, _ = validate_relative_path(relative_path, allow_empty=False)
+    clean = str(relative_path).strip()
+    # Strip protocol and absolute prefix roots
+    clean = re.sub(r"^file:///?", "", clean)
+    clean = re.sub(r"^file:", "", clean)
+    clean = re.sub(r"^[a-zA-Z]:[\/\\]", "", clean)
+    clean = re.sub(r"^/home/ubuntu/(work|Github)/", "", clean)
+    clean = clean.replace("\\", "/").strip("/")
+
+    normalized, _ = validate_relative_path(clean, allow_empty=False)
     if not _is_previewable(normalized):
         raise WorkspaceTreeError(403, "workspace preview denied")
 
-    matches: list[Workspace] = []
+    matches: list[tuple[Workspace, str]] = []
     for workspace in registry.enabled:
+        # Check direct normalized path
         try:
             fd = _secure_open(workspace, normalized, directory=False)
-        except OSError as exc:
-            if exc.errno in {errno.ENOENT, errno.ENOTDIR}:
-                continue
-            raise WorkspaceTreeError(403, "workspace object unavailable") from None
-        else:
             os.close(fd)
-            matches.append(workspace)
+            matches.append((workspace, normalized))
+            continue
+        except OSError:
+            pass
+
+        # Check if normalized starts with workspace name
+        ws_name = workspace.display_name or ""
+        if ws_name and normalized.startswith(f"{ws_name}/"):
+            sub_path = normalized[len(ws_name)+1:]
+            try:
+                fd = _secure_open(workspace, sub_path, directory=False)
+                os.close(fd)
+                matches.append((workspace, sub_path))
+                continue
+            except OSError:
+                pass
 
     if not matches:
-        raise WorkspaceTreeError(404, "workspace object unavailable")
-    if len(matches) != 1:
-        raise WorkspaceTreeError(409, "workspace path is ambiguous")
+        raise WorkspaceTreeError(404, f"File '{normalized}' not found in any active workspace")
+
+    chosen_ws, chosen_path = matches[0]
     return {
         "ok": True,
-        "workspace_id": matches[0].workspace_id,
-        "relative_path": normalized,
+        "workspace_id": chosen_ws.workspace_id,
+        "relative_path": chosen_path,
     }
 
 

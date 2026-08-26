@@ -54,6 +54,12 @@ from .github_adapter import (
     project_github_check_run,
     validate_trigger_receipt,
 )
+from .receipt_runner import (
+    PROVIDER_NEUTRAL_RECEIPT_RUNNER_MARKER,
+    CommandSpec,
+    ReceiptRunnerResult,
+    run_provider_neutral_verification,
+)
 
 __all__ = [
     "CLEAN_ROOM_RUNNER_V1_OK",
@@ -78,6 +84,7 @@ __all__ = [
     "validate_receipt_freshness",
     "OPTIONAL_HOSTED_SIGNAL",
     "PROVIDER_NEUTRAL_VERIFICATION_RECEIPT_MARKER",
+    "PROVIDER_NEUTRAL_RECEIPT_RUNNER_MARKER",
     "StoredVerificationReceipt",
     "VerificationReceiptStore",
     "get_verification_receipt",
@@ -97,4 +104,7 @@ __all__ = [
     "normalize_github_trigger",
     "project_github_check_run",
     "validate_trigger_receipt",
+    "CommandSpec",
+    "ReceiptRunnerResult",
+    "run_provider_neutral_verification",
 ]

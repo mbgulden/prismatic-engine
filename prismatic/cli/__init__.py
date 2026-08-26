@@ -147,12 +147,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Emit machine-readable JSON verification payload",
     )
 
+    receipt_run = subparsers.add_parser(
+        "receipt-run",
+        help="Provider-neutral clean-room verification receipt runner (GRO-4203)",
+    )
+    receipt_run.add_argument("args", nargs=argparse.REMAINDER)
+
     return parser
 
 
 def run(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
-    args = parser.parse_args(list(argv) if argv is not None else None)
+    args, extra = parser.parse_known_args(list(argv) if argv is not None else None)
 
     if args.command in {"status", "doctor"}:
         return doctor_cli_run(args)
@@ -303,6 +309,17 @@ def run(argv: Sequence[str] | None = None) -> int:
             print("==========================================================================")
 
         return 0 if res.status == "PASS" else 1
+
+    if args.command == "receipt-run":
+        from prismatic.verification.receipt_runner import cli as receipt_runner_cli
+
+        raw_argv = list(argv) if argv is not None else sys.argv[1:]
+        try:
+            cmd_idx = raw_argv.index("receipt-run")
+            forwarded = raw_argv[cmd_idx + 1 :]
+        except ValueError:
+            forwarded = list(args.args or []) + extra
+        return int(receipt_runner_cli(forwarded) or 0)
 
     parser.print_help()
     return 0

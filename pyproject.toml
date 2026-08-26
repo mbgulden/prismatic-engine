@@ -132,6 +132,6 @@ prismatic = [
 # declare their own entry points in their own pyproject.toml.
 
 [tool.pytest.ini_options]
-pythonpath = [".", "prismatic/shipped_plugins/pwp"]
-testpaths = ["prismatic/shipped_plugins/pwp"]
+pythonpath = [".", "prismatic/shipped_plugins", "prismatic/shipped_plugins/pwp"]
+testpaths = ["tests"]
 filterwarnings = ["ignore::DeprecationWarning", "ignore::UserWarning"]

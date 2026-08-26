@@ -1,4 +1,106 @@
-        body {
+/* =========================================================================
+   CANONICAL PRISMATIC UI COMPONENT DESIGN SYSTEM
+   Standardized Buttons, Badges, Chips & Form Controls
+   ========================================================================= */
+
+/* Button Base */
+.pe-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem; /* 8px */
+    font-size: 0.75rem; /* 12px */
+    font-weight: 600;
+    line-height: 1rem;
+    padding: 0.5rem 0.875rem; /* 8px 14px */
+    border-radius: 0.75rem; /* 12px */
+    border: 1px solid transparent;
+    transition: all 0.15s ease-in-out;
+    cursor: pointer;
+    white-space: nowrap;
+    user-select: none;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+}
+
+.pe-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.5);
+}
+
+/* Secondary Button (Default UI button across headers, action bars, tables) */
+.pe-btn-secondary {
+    background-color: rgba(15, 23, 42, 0.85);
+    border-color: rgba(51, 65, 85, 0.85);
+    color: #e2e8f0;
+}
+.pe-btn-secondary:hover {
+    background-color: rgba(30, 41, 59, 0.95);
+    border-color: #64748b;
+    color: #ffffff;
+    box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.3);
+}
+
+/* Primary Accent Button (Indigo / Cyan) */
+.pe-btn-primary {
+    background-color: #4f46e5;
+    border-color: #6366f1;
+    color: #ffffff;
+}
+.pe-btn-primary:hover {
+    background-color: #4338ca;
+    border-color: #818cf8;
+    box-shadow: 0 4px 14px -2px rgba(79, 70, 229, 0.4);
+}
+
+/* Light Mode Overrides for Canonical Buttons */
+body.light-mode .pe-btn-secondary {
+    background-color: #ffffff !important;
+    border-color: #cbd5e1 !important;
+    color: #1e293b !important;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05) !important;
+}
+body.light-mode .pe-btn-secondary:hover {
+    background-color: #f8fafc !important;
+    border-color: #94a3b8 !important;
+    color: #0f172a !important;
+    box-shadow: 0 4px 10px -2px rgba(0, 0, 0, 0.08) !important;
+}
+
+body.light-mode .pe-btn-primary {
+    background-color: #4f46e5 !important;
+    border-color: #6366f1 !important;
+    color: #ffffff !important;
+}
+body.light-mode .pe-btn-primary:hover {
+    background-color: #4338ca !important;
+}
+
+/* Canonical Badges */
+.pe-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.375rem 0.75rem;
+    border-radius: 0.75rem;
+    font-size: 0.6875rem; /* 11px */
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-weight: 600;
+    border: 1px solid transparent;
+}
+
+.pe-badge-success {
+    background-color: rgba(6, 78, 59, 0.4);
+    border-color: rgba(16, 185, 129, 0.4);
+    color: #6ee7b7;
+}
+
+body.light-mode .pe-badge-success {
+    background-color: #ecfdf5 !important;
+    border-color: #a7f3d0 !important;
+    color: #065f46 !important;
+}
+
+body {
             font-family: 'Plus Jakarta Sans', sans-serif;
             background-color: #080b11;
             transition: background-color 0.3s, color 0.3s;
@@ -911,5 +1013,274 @@
             border-color: #cbd5e1 !important;
             color: #0f172a !important;
         }
+/* =========================================================================
+   SIGNALS & SWARM CONCURRENCY HIGH-CONTRAST THEME ENHANCEMENTS
+   ========================================================================= */
 
+/* Dark Mode Signals Contrast */
+#section-signals .glass-panel {
+    background: rgba(15, 23, 42, 0.7);
+    border: 1px solid rgba(51, 65, 85, 0.8);
+    backdrop-filter: blur(12px);
+}
 
+#swarmlock-cockpit-panel {
+    background: rgba(2, 6, 23, 0.75);
+    border: 1px solid rgba(51, 65, 85, 0.9);
+}
+
+#swarmlock-history-drawer {
+    background: rgba(15, 23, 42, 0.85);
+    border: 1px solid rgba(51, 65, 85, 0.8);
+}
+
+#swarmlock-history-table-container {
+    background: #020617;
+    border: 1px solid #1e293b;
+}
+
+#swarmlock-history-table-container table thead tr {
+    background-color: #0b0f19 !important; /* 100% Solid Opaque to prevent bleed-through */
+    color: #f8fafc !important;
+    border-bottom: 2px solid #334155 !important;
+}
+
+#swarmlock-history-table-container table thead th {
+    background-color: #0b0f19 !important;
+    color: #f8fafc !important;
+}
+
+#swarmlock-history-table-container table tbody tr {
+    border-color: #1e293b !important;
+}
+
+#swarmlock-history-table-container table tbody tr:hover {
+    background-color: rgba(30, 41, 59, 0.5) !important;
+}
+
+#section-signals .swarmlock-lease-card {
+    background: rgba(15, 23, 42, 0.8);
+    border: 1px solid rgba(51, 65, 85, 0.85);
+    transition: all 0.2s ease-in-out;
+}
+
+#section-signals .swarmlock-lease-card:hover {
+    border-color: rgba(99, 102, 241, 0.7);
+    box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.5);
+}
+
+#signals-console-stream {
+    background: #020617 !important;
+    border: 1px solid #1e293b !important;
+}
+
+/* =========================================================================
+   Light Mode Signals High Contrast (WCAG AAA Optimized)
+   ========================================================================= */
+body.light-mode #section-signals .glass-panel {
+    background: #ffffff !important;
+    border: 1px solid #cbd5e1 !important;
+    box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.08) !important;
+}
+
+body.light-mode #section-signals .text-slate-100,
+body.light-mode #section-signals .text-slate-200 {
+    color: #0f172a !important;
+}
+
+body.light-mode #section-signals .text-slate-300 {
+    color: #1e293b !important;
+}
+
+body.light-mode #section-signals .text-slate-400 {
+    color: #334155 !important;
+}
+
+body.light-mode #section-signals .text-slate-500 {
+    color: #475569 !important;
+}
+
+body.light-mode #swarmlock-cockpit-panel {
+    background: #ffffff !important;
+    border: 1px solid #cbd5e1 !important;
+    box-shadow: 0 6px 18px -3px rgba(0, 0, 0, 0.08) !important;
+}
+
+body.light-mode #swarmlock-history-drawer {
+    background: #f8fafc !important;
+    border: 1px solid #cbd5e1 !important;
+}
+
+body.light-mode #swarmlock-history-table-container {
+    background: #ffffff !important;
+    border: 1px solid #cbd5e1 !important;
+}
+
+body.light-mode #swarmlock-history-table-container table thead tr {
+    background-color: #f1f5f9 !important; /* 100% Solid Opaque */
+    color: #0f172a !important;
+    border-bottom: 2px solid #cbd5e1 !important;
+}
+
+body.light-mode #swarmlock-history-table-container table thead th {
+    background-color: #f1f5f9 !important;
+    color: #0f172a !important;
+}
+
+body.light-mode #swarmlock-history-table-container table tbody tr {
+    border-color: #e2e8f0 !important;
+}
+
+body.light-mode #swarmlock-history-table-container table tbody tr:hover {
+    background-color: #f1f5f9 !important;
+}
+
+body.light-mode .swarmlock-lease-card {
+    background: #ffffff !important;
+    border: 1px solid #cbd5e1 !important;
+    box-shadow: 0 2px 6px -1px rgba(0, 0, 0, 0.05) !important;
+}
+
+body.light-mode .swarmlock-lease-card:hover {
+    border-color: #6366f1 !important;
+    box-shadow: 0 6px 16px -2px rgba(99, 102, 241, 0.15) !important;
+}
+
+body.light-mode #signals-console-stream {
+    background: #ffffff !important;
+    border: 1px solid #cbd5e1 !important;
+    color: #0f172a !important;
+    box-shadow: inset 0 2px 4px 0 rgba(0, 0, 0, 0.04) !important;
+}
+
+body.light-mode .signal-log-item {
+    border-bottom-color: #e2e8f0 !important;
+    color: #0f172a !important;
+}
+
+body.light-mode #signals-search-input {
+    background: #ffffff !important;
+    border: 1px solid #cbd5e1 !important;
+    color: #0f172a !important;
+}
+
+body.light-mode #signals-search-input::placeholder {
+    color: #64748b !important;
+}
+
+body.light-mode #signals-search-input:focus {
+    border-color: #6366f1 !important;
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2) !important;
+}
+
+body.light-mode .signals-agent-tab {
+    background: #ffffff !important;
+    border: 1px solid #cbd5e1 !important;
+    color: #334155 !important;
+}
+
+body.light-mode .signals-agent-tab:hover {
+    background: #f1f5f9 !important;
+    color: #0f172a !important;
+    border-color: #94a3b8 !important;
+}
+
+body.light-mode .agent-telemetry-pane {
+    background: #ffffff !important;
+    border: 1px solid #cbd5e1 !important;
+    box-shadow: 0 4px 12px -2px rgba(0, 0, 0, 0.06) !important;
+}
+
+body.light-mode .agent-telemetry-pane > div:first-child {
+    background: #f8fafc !important;
+    border-bottom: 1px solid #e2e8f0 !important;
+}
+
+body.light-mode button.canonical-header-btn,
+body.light-mode .swarmlock-history-expand-btn,
+body.light-mode .signals-console-expand-btn {
+    background: #ffffff !important;
+    border-color: #cbd5e1 !important;
+    color: #1e293b !important;
+}
+
+body.light-mode button.canonical-header-btn:hover,
+body.light-mode .swarmlock-history-expand-btn:hover,
+body.light-mode .signals-console-expand-btn:hover {
+    background: #f1f5f9 !important;
+    border-color: #94a3b8 !important;
+    color: #0f172a !important;
+}
+
+/* =========================================================================
+   REACTIVE TOPOLOGICAL MERKLE-DAG COCKPIT STYLES
+   ========================================================================= */
+
+@keyframes dagFlow {
+    from {
+        stroke-dashoffset: 20;
+    }
+    to {
+        stroke-dashoffset: 0;
+    }
+}
+
+.dag-animated-bezier {
+    animation: dagFlow 1.2s linear infinite;
+}
+
+.dag-node-card {
+    background: rgba(15, 23, 42, 0.85);
+    border: 1px solid rgba(51, 65, 85, 0.85);
+    backdrop-filter: blur(8px);
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.dag-node-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 0 15px rgba(99, 102, 241, 0.2);
+}
+
+/* Light Mode Overrides for Merkle-DAG Cockpit */
+body.light-mode #merkle-dag-cockpit-panel {
+    background: #ffffff !important;
+    border: 1px solid #cbd5e1 !important;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.08) !important;
+}
+
+body.light-mode #dag-viewport-container {
+    background: #f8fafc !important;
+    border-color: #cbd5e1 !important;
+}
+
+body.light-mode .dag-node-card {
+    background: #ffffff !important;
+    border-color: #cbd5e1 !important;
+    box-shadow: 0 2px 8px -1px rgba(0, 0, 0, 0.06) !important;
+}
+
+body.light-mode .dag-node-card:hover {
+    border-color: #6366f1 !important;
+    box-shadow: 0 8px 20px -3px rgba(99, 102, 241, 0.2) !important;
+}
+
+body.light-mode .dag-node-card .text-slate-200 {
+    color: #0f172a !important;
+}
+
+body.light-mode .dag-agent-chip {
+    background-color: #ffffff !important;
+    border-color: #cbd5e1 !important;
+    color: #334155 !important;
+}
+
+body.light-mode .dag-agent-chip:hover {
+    background-color: #f1f5f9 !important;
+    color: #0f172a !important;
+}
+
+body.light-mode #dag-node-inspector-drawer {
+    background-color: rgba(255, 255, 255, 0.98) !important;
+    border-left-color: #cbd5e1 !important;
+    color: #0f172a !important;
+}

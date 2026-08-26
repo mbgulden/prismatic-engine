@@ -32,7 +32,7 @@ PRISMATIC_HOME = os.environ.get("PRISMATIC_HOME", "/home/ubuntu")
 DEFAULT_LOCK_FILE = Path(PRISMATIC_HOME) / ".antigravity" / "swarm_locks.json"
 DEFAULT_AUDIT_LOG_DIR = Path(PRISMATIC_HOME) / ".antigravity" / "audit"
 DEFAULT_AUDIT_LOG_FILE = DEFAULT_AUDIT_LOG_DIR / "swarmlock_audit.jsonl"
-DEFAULT_STALE_TTL_MS = 300_000  # 5 minutes
+DEFAULT_STALE_TTL_MS = 3_600_000  # 5 minutes
 
 try:
     from prismatic.gateway.ipc_bridge import send_event_via_socket

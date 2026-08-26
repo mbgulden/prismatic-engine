@@ -1,48 +1,50 @@
+        <!-- SECTION 6: MULTI-AGENT SIGNALS & SWARM CONCURRENCY -->
         <div id="section-signals" class="hidden space-y-6" data-proof-marker="assigned-agent-signals-dashboard">
-            <div class="glass-panel p-5 rounded-xl space-y-4">
-                <div class="border-b border-slate-800 pb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div class="space-y-6">
+                <!-- Header with Live Pulse & Quick Action Controls -->
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800/80 dark:border-slate-800 pb-4">
                     <div>
-                        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
-                            <svg class="w-4 h-4 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                            Agent Signals Cockpit &amp; Live Telemetry
+                        <h2 class="text-base font-bold text-slate-100 dark:text-slate-100 uppercase tracking-wider flex items-center gap-2">
+                            <span class="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse"></span>
+                            Multi-Agent Signals &amp; Swarm Matrix
                         </h2>
-                        <p class="text-xs text-slate-500 mt-1">Real-time dynamic discovery for AGY, Hermes, Kai, Fred, George &amp; Autobot processes, model providers, and signal streams.</p>
+                        <p class="text-xs text-slate-400 mt-0.5">Real-time telemetry, live lock leases, and inter-agent coordination streams.</p>
                     </div>
-                    <div class="flex items-center gap-2 flex-shrink-0">
-                        <button type="button" onclick="openAgentNudgeModal()" class="canonical-header-btn px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:text-white hover:border-amber-500 text-xs font-semibold flex items-center gap-1.5 transition shadow-sm">
-                            <svg class="w-3.5 h-3.5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z"/></svg>
+                    <div class="flex flex-wrap items-center gap-3">
+                        <button type="button" onclick="openAgentNudgeModal()" class="pe-btn pe-btn-secondary flex items-center gap-2">
+                            <svg class="w-4 h-4 text-amber-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z"/></svg>
                             <span>Inject Guidance</span>
                         </button>
-                        <button type="button" onclick="renderSignalsView()" class="canonical-header-btn px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:text-white hover:border-indigo-500 text-xs font-semibold flex items-center gap-1.5 transition shadow-sm">
-                            <svg class="w-3.5 h-3.5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                        <button type="button" onclick="renderSignalsView()" class="pe-btn pe-btn-secondary flex items-center gap-2">
+                            <svg class="w-4 h-4 text-indigo-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
                             <span>Refresh Signals</span>
                         </button>
                     </div>
                 </div>
 
                 <!-- 4 Top Metric Cards -->
-                <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                    <div class="glass-panel p-3.5 rounded-xl border border-slate-800 bg-slate-900/40">
-                        <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Discovered Agents</div>
-                        <div id="sig-metric-total" class="text-xl font-bold font-mono text-slate-200 mt-0.5">6</div>
+                <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div class="glass-panel p-4 sm:p-5 rounded-2xl border border-slate-800 bg-slate-900/40 shadow-sm transition hover:border-slate-700">
+                        <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Fleet Agents</div>
+                        <div id="sig-metric-total" class="text-2xl font-bold font-mono text-slate-200 mt-1">--</div>
                     </div>
-                    <div class="glass-panel p-3.5 rounded-xl border border-slate-800 bg-slate-900/40">
-                        <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Active Workspace Locks</div>
-                        <div id="sig-metric-active-locks" class="text-xl font-bold font-mono text-cyan-400 mt-0.5">0</div>
+                    <div class="glass-panel p-4 sm:p-5 rounded-2xl border border-slate-800 bg-slate-900/40 shadow-sm transition hover:border-slate-700">
+                        <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Active Fleet Leases</div>
+                        <div id="sig-metric-active-locks" class="text-2xl font-bold font-mono text-cyan-400 mt-1">0</div>
                     </div>
-                    <div class="glass-panel p-3.5 rounded-xl border border-slate-800 bg-slate-900/40">
+                    <div class="glass-panel p-4 sm:p-5 rounded-2xl border border-slate-800 bg-slate-900/40 shadow-sm transition hover:border-slate-700">
                         <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Collisions Deflected 🛡️</div>
-                        <div id="sig-metric-deflections" class="text-xl font-bold font-mono text-amber-400 mt-0.5">0</div>
+                        <div id="sig-metric-deflections" class="text-2xl font-bold font-mono text-amber-400 mt-1">0</div>
                     </div>
-                    <div class="glass-panel p-3.5 rounded-xl border border-slate-800 bg-slate-900/40">
+                    <div class="glass-panel p-4 sm:p-5 rounded-2xl border border-slate-800 bg-slate-900/40 shadow-sm transition hover:border-slate-700">
                         <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">Swarm Concurrency State</div>
-                        <div id="sig-metric-status" class="text-xl font-bold font-mono text-emerald-400 mt-0.5">Optimal (Free)</div>
+                        <div id="sig-metric-status" class="text-2xl font-bold font-mono text-emerald-400 mt-1">Optimal (Free)</div>
                     </div>
                 </div>
 
                 <!-- 🔒 SWARM LOCK CONCURRENCY COCKPIT PANEL -->
-                <div id="swarmlock-cockpit-panel" class="rounded-xl border border-slate-800/90 bg-slate-950/60 p-4 space-y-4 shadow-xl">
-                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-3">
+                <div id="swarmlock-cockpit-panel" class="rounded-2xl border border-slate-800/90 bg-slate-950/60 p-5 sm:p-6 space-y-5 shadow-xl">
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-4">
                         <div class="flex items-center gap-3">
                             <div class="relative flex h-2.5 w-2.5 flex-shrink-0 mr-1">
                                 <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
@@ -50,122 +52,138 @@
                             </div>
                             <h3 class="text-xs font-bold uppercase tracking-wider text-slate-200 flex flex-wrap items-center gap-2">
                                 <span>Swarm Lock Concurrency Matrix</span>
-                                <span class="px-2 py-0.5 rounded text-[10px] font-mono bg-cyan-950/60 text-cyan-300 border border-cyan-800/60">Live Lease Visualizer</span>
+                                <span class="px-2.5 py-0.5 rounded text-[10px] font-mono bg-cyan-950/60 text-cyan-300 border border-cyan-800/60">Live Lease Visualizer</span>
                             </h3>
                         </div>
-                        <div class="flex items-center gap-2 text-xs">
-                            <span id="swarmlock-sync-badge" class="px-2.5 py-1 rounded-lg text-[10px] font-mono bg-emerald-950/40 text-emerald-300 border border-emerald-800/40 flex items-center gap-1.5">
-                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                                WebSocket Synchronized
+                        <div class="flex items-center gap-2">
+                            <span id="swarmlock-sync-badge" class="pe-badge pe-badge-success">
+                                <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                                <span>WebSocket Synchronized</span>
                             </span>
                         </div>
                     </div>
 
                     <!-- Filter Bar & Control Actions -->
-                    <div class="flex flex-wrap items-center justify-between gap-2 pt-1 border-b border-slate-800/60 pb-3 text-xs">
+                    <div class="flex flex-wrap items-center justify-between gap-3 pt-1 border-b border-slate-800/60 pb-3 text-xs">
                         <div id="swarmlock-workspace-filters" class="flex flex-wrap items-center gap-2">
                             <!-- Populated dynamically via renderSwarmLockCockpit -->
                         </div>
-                        <div class="flex items-center gap-2">
-                            <button type="button" onclick="toggleSwarmLockHistoryDrawer()" class="px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900/80 hover:bg-slate-800 text-slate-300 font-mono text-[11px] flex items-center gap-2 transition shadow-sm">
+                        <div class="flex items-center gap-3">
+                            <button type="button" id="swarmlock-history-toggle-btn" onclick="toggleSwarmLockHistoryDrawer()" class="pe-btn pe-btn-secondary flex items-center gap-2 font-mono text-[11px]">
                                 <svg class="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>
-                                <span>Audit History</span>
+                                <span>Audit Ledger</span>
                             </button>
-                            <button type="button" onclick="openSwarmLockConfigModal()" class="px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900/80 hover:bg-slate-800 text-slate-300 font-mono text-[11px] flex items-center gap-2 transition shadow-sm">
+                            <button type="button" onclick="openSwarmLockConfigModal()" class="pe-btn pe-btn-secondary flex items-center gap-2 font-mono text-[11px]">
                                 <svg class="w-3.5 h-3.5 text-cyan-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                                 <span>TTL Policy</span>
                             </button>
                         </div>
                     </div>
 
-                    <!-- Expandable Audit History Ledger Drawer -->
-                    <div id="swarmlock-history-drawer" class="hidden rounded-xl border border-slate-800/80 bg-slate-950/70 p-3.5 space-y-2.5 font-mono text-xs shadow-lg">
-                        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/80 pb-2.5">
+                    <!-- 📜 Rolling Lease Audit History Drawer -->
+                    <div id="swarmlock-history-drawer" class="rounded-xl border border-slate-800 bg-slate-950/80 p-4 sm:p-5 space-y-4 shadow-inner">
+                        <div class="flex flex-wrap items-center justify-between gap-3 text-xs border-b border-slate-800/80 pb-3">
                             <span class="font-bold text-slate-200 flex items-center gap-2">
                                 <svg class="w-4 h-4 text-indigo-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>
-                                <span>Recent Lease Audit Ledger (Last 50 Swarm Events)</span>
+                                <span>Recent Lease Audit Ledger</span>
                             </span>
-                            <div class="flex items-center gap-3 text-[11px]">
-                                <a href="/workspaces?file=.antigravity/audit/swarmlock_audit.jsonl" onclick="openWorkspaceFile('.antigravity/audit/swarmlock_audit.jsonl', event)" class="text-indigo-400 hover:text-indigo-300 underline flex items-center gap-1 font-semibold" title="Open swarmlock_audit.jsonl in Workspaces tab">
+                            <div class="flex flex-wrap items-center gap-3">
+                                <a href="/workspaces?file=.antigravity/audit/swarmlock_audit.jsonl" onclick="openWorkspaceFile('.antigravity/audit/swarmlock_audit.jsonl', event)" class="pe-btn pe-btn-secondary text-[11px] font-semibold flex items-center gap-1.5" title="Open swarmlock_audit.jsonl in Workspaces tab">
                                     <span>Raw Audit File (.jsonl)</span>
-                                    <svg class="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                                    <svg class="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
                                 </a>
-                                <button type="button" onclick="fetchSwarmLockHistory()" class="text-cyan-400 hover:underline flex items-center gap-1">
-                                    <svg class="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                                <button type="button" onclick="fetchSwarmLockHistory()" class="pe-btn pe-btn-secondary text-[11px] flex items-center gap-1.5">
+                                    <svg class="w-3.5 h-3.5 text-cyan-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
                                     <span>Refresh</span>
+                                </button>
+                                <button type="button" onclick="toggleSwarmLockHistoryHeight()" class="swarmlock-history-expand-btn pe-btn pe-btn-secondary text-[11px] flex items-center gap-1.5">
+                                    <span>⤢ Expand</span>
                                 </button>
                             </div>
                         </div>
-                        <div class="max-h-60 overflow-y-auto">
+                        <div id="swarmlock-history-table-container" style="max-height: 360px;" class="overflow-y-auto rounded-lg border border-slate-900 transition-all duration-300">
                             <table class="w-full text-left text-[11px] border-collapse">
                                 <thead>
-                                    <tr class="border-b border-slate-800 text-slate-500">
-                                        <th class="py-1.5 px-2">Time</th>
-                                        <th class="py-1.5 px-2">Action</th>
-                                        <th class="py-1.5 px-2">Resource</th>
-                                        <th class="py-1.5 px-2">Agent</th>
-                                        <th class="py-1.5 px-2">Duration</th>
-                                        <th class="py-1.5 px-2">Details</th>
+                                    <tr class="text-slate-200 border-b border-slate-700 bg-slate-950 sticky top-0 z-10">
+                                        <th class="py-2.5 px-3 font-bold">Time</th>
+                                        <th class="py-2.5 px-3 font-bold">Event</th>
+                                        <th class="py-2.5 px-3 font-bold">Resource</th>
+                                        <th class="py-2.5 px-3 font-bold">Agent</th>
+                                        <th class="py-2.5 px-3 font-bold">Duration</th>
+                                        <th class="py-2.5 px-3 font-bold">Details</th>
                                     </tr>
                                 </thead>
-                                <tbody id="swarmlock-history-tbody" class="divide-y divide-slate-900 text-slate-300">
-                                    <tr>
-                                        <td colspan="6" class="py-3 px-2 text-center text-slate-500 italic">Loading audit history...</td>
-                                    </tr>
+                                <tbody id="swarmlock-history-tbody" class="divide-y divide-slate-900/80 text-slate-300">
+                                    <tr><td colspan="6" class="py-6 text-center text-slate-500 italic">Click Refresh to load rolling lease events.</td></tr>
                                 </tbody>
                             </table>
                         </div>
+                        <!-- Mobile & Desktop Bottom Toggle Toolbar -->
+                        <div class="flex items-center justify-center pt-2.5 border-t border-slate-800/80">
+                            <button type="button" onclick="toggleSwarmLockHistoryHeight()" class="swarmlock-history-expand-btn pe-btn pe-btn-secondary w-full sm:w-auto text-xs flex items-center justify-center gap-2">
+                                <span>⤢ Expand Audit Ledger</span>
+                            </button>
+                        </div>
                     </div>
 
-                    <!-- Active Leases Grid -->
-                    <div id="swarmlock-leases-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                        <div class="col-span-full p-6 text-center text-slate-500 text-xs italic bg-slate-900/30 rounded-xl border border-slate-800/50">
-                            🛡️ No active lock contention — Swarm is in optimal free state (0 collisions).
-                        </div>
+                    <!-- Active Concurrency Lease Cards Grid -->
+                    <div id="swarmlock-leases-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                        <!-- Populated dynamically via renderSwarmLockCockpit -->
                     </div>
                 </div>
 
-                <!-- Console Stream Box -->
-                <div class="bg-slate-950 rounded-xl border border-slate-800/80 overflow-hidden font-mono text-xs shadow-inner">
-                    <div class="bg-slate-900 border-b border-slate-800 px-4 py-2.5 text-slate-400 font-bold uppercase flex flex-wrap justify-between items-center gap-2 text-[11px]">
-                        <div class="flex items-center gap-2">
-                            <span id="signals-live-dot" class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                            <span class="text-slate-200">Live Multi-Agent Signal Stream</span>
-                            <span id="signals-stream-count" class="px-1.5 py-0.2 rounded bg-slate-800 text-slate-400 font-normal text-[10px]">0</span>
+                <!-- 📡 Real-time Signal Stream Console -->
+                <div class="rounded-2xl border border-slate-800/90 bg-slate-950/60 p-5 sm:p-6 space-y-4 shadow-xl">
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-4">
+                        <div class="flex items-center gap-3">
+                            <span id="signals-live-dot" class="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-200">Live Signals Console</h3>
+                            <span id="signals-stream-count" class="px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono text-[10px]">0</span>
                         </div>
-                        <div class="flex flex-wrap items-center gap-2">
+                        <div class="flex flex-wrap items-center gap-2.5">
                             <!-- Search filter -->
                             <div class="relative">
-                                <input id="signals-search-input" type="text" placeholder="Search signals (agent, task, text)..." oninput="filterSignalStream()" class="bg-slate-950 border border-slate-700/80 rounded px-2.5 py-1 text-[11px] text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 w-44 sm:w-60 font-sans">
+                                <input id="signals-search-input" type="text" placeholder="Search signals (agent, task, text)..." oninput="filterSignalStream()" class="bg-slate-900/90 border border-slate-700/80 rounded-xl px-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 w-44 sm:w-64 font-sans shadow-inner">
                             </div>
                             <!-- Severity filter chips -->
-                            <div class="flex items-center gap-1 text-[10px]" id="signals-severity-filters">
-                                <button type="button" onclick="setSignalSeverityFilter('all')" data-sev-filter="all" class="px-2 py-0.5 rounded bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 font-bold">ALL</button>
-                                <button type="button" onclick="setSignalSeverityFilter('lease')" data-sev-filter="lease" class="px-2 py-0.5 rounded bg-slate-900 text-cyan-400 border border-slate-800 hover:text-cyan-300 font-bold">LEASE</button>
-                                <button type="button" onclick="setSignalSeverityFilter('info')" data-sev-filter="info" class="px-2 py-0.5 rounded bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200 font-bold">INFO</button>
-                                <button type="button" onclick="setSignalSeverityFilter('warning')" data-sev-filter="warning" class="px-2 py-0.5 rounded bg-slate-900 text-amber-400 border border-slate-800 hover:text-amber-300 font-bold">WARN</button>
-                                <button type="button" onclick="setSignalSeverityFilter('error')" data-sev-filter="error" class="px-2 py-0.5 rounded bg-slate-900 text-rose-400 border border-slate-800 hover:text-rose-300 font-bold">ERROR</button>
+                            <div class="flex items-center gap-1.5 text-[10px]" id="signals-severity-filters">
+                                <button type="button" onclick="setSignalSeverityFilter('all')" data-sev-filter="all" class="px-2.5 py-1 rounded-lg bg-indigo-600/30 text-indigo-300 border border-indigo-500/40 font-bold shadow-sm">ALL</button>
+                                <button type="button" onclick="setSignalSeverityFilter('lease')" data-sev-filter="lease" class="px-2.5 py-1 rounded-lg bg-slate-900 text-cyan-400 border border-slate-800 hover:text-cyan-300 font-bold shadow-sm">LEASE</button>
+                                <button type="button" onclick="setSignalSeverityFilter('info')" data-sev-filter="info" class="px-2.5 py-1 rounded-lg bg-slate-900 text-slate-400 border border-slate-800 hover:text-slate-200 font-bold shadow-sm">INFO</button>
+                                <button type="button" onclick="setSignalSeverityFilter('warning')" data-sev-filter="warning" class="px-2.5 py-1 rounded-lg bg-slate-900 text-amber-400 border border-slate-800 hover:text-amber-300 font-bold shadow-sm">WARN</button>
+                                <button type="button" onclick="setSignalSeverityFilter('error')" data-sev-filter="error" class="px-2.5 py-1 rounded-lg bg-slate-900 text-rose-400 border border-slate-800 hover:text-rose-300 font-bold shadow-sm">ERROR</button>
                             </div>
-                            <!-- Controls -->
-                            <button type="button" id="signals-pause-btn" onclick="toggleSignalsPause()" class="px-2 py-1 rounded text-[10px] font-semibold bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition">Pause</button>
-                            <button type="button" onclick="openEmitSignalModal()" class="px-2.5 py-1 rounded text-[10px] font-bold bg-indigo-600 hover:bg-indigo-500 text-white transition border border-indigo-500">+ Emit</button>
-                            <button type="button" onclick="clearSignalConsole()" class="px-2 py-1 rounded text-[10px] font-semibold text-slate-500 hover:text-slate-300 transition" title="Clear console view">&times; Clear</button>
+                            <button type="button" id="signals-pause-btn" onclick="toggleSignalsPause()" class="pe-btn pe-btn-secondary text-[11px] py-1 px-2.5">Pause</button>
+                            <button type="button" onclick="toggleSignalsConsoleHeight()" class="signals-console-expand-btn pe-btn pe-btn-secondary text-[11px] py-1 px-2.5 flex items-center gap-1"><span>⤢ Expand</span></button>
+                            <button type="button" onclick="openEmitSignalModal()" class="pe-btn pe-btn-primary text-[11px] py-1 px-3 shadow-sm">+ Emit</button>
+                            <button type="button" onclick="clearSignalConsole()" class="pe-btn pe-btn-secondary text-[11px] py-1 px-2 text-slate-400 hover:text-slate-200" title="Clear console view">&times; Clear</button>
                         </div>
                     </div>
-                    <div class="p-3 max-h-64 overflow-y-auto space-y-1.5 text-slate-400 font-mono text-[11px]" id="signals-console-stream">
-                        <div id="signals-log-box" class="space-y-1.5">
-                            <div class="text-slate-500 italic">Streaming active telemetry signals...</div>
+                    <!-- Height-contained signal console stream with expand/collapse capability -->
+                    <div id="signals-console-stream" style="max-height: 520px;" class="p-4 overflow-y-auto space-y-2 text-slate-300 font-mono text-[11px] rounded-xl border border-slate-900 bg-slate-950/90 transition-all duration-300 shadow-inner">
+                        <div id="signals-log-box" class="space-y-2">
+                            <div class="text-slate-500 italic py-4 text-center">Streaming active telemetry signals...</div>
                         </div>
+                    </div>
+                    <!-- Mobile & Desktop Bottom Toggle Toolbar -->
+                    <div class="flex items-center justify-center pt-2.5 border-t border-slate-800/80">
+                        <button type="button" onclick="toggleSignalsConsoleHeight()" class="signals-console-expand-btn pe-btn pe-btn-secondary w-full sm:w-auto text-xs flex items-center justify-center gap-2">
+                            <span>⤢ Expand Signal Stream</span>
+                        </button>
                     </div>
                 </div>
 
                 <!-- Dynamic Agent Selection Tabs -->
-                <div class="flex gap-2 overflow-x-auto pb-1 border-b border-slate-800/60 pt-2" id="signals-agent-tabs">
-                    <!-- Populated dynamically via renderSignalsView -->
+                <div class="flex gap-2 overflow-x-auto pb-2 border-b border-slate-800/80 pt-2" id="signals-agent-tabs" data-proof-marker="signals-mobile-agent-tabs">
+                    <button type="button" onclick="setSignalsAgent('all')" data-agent-tab="all" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs border transition flex-shrink-0 bg-indigo-600/30 text-indigo-300 border-indigo-500/40 font-bold shadow-sm">All</button>
+                    <button type="button" onclick="setSignalsAgent('agy')" data-agent-tab="agy" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs border transition flex-shrink-0 bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200">⚡ AGY</button>
+                    <button type="button" onclick="setSignalsAgent('kai')" data-agent-tab="kai" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs border transition flex-shrink-0 bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200">🧠 Kai</button>
+                    <button type="button" onclick="setSignalsAgent('fred')" data-agent-tab="fred" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs border transition flex-shrink-0 bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200">🛠️ Fred</button>
+                    <button type="button" onclick="setSignalsAgent('george')" data-agent-tab="george" class="signals-agent-tab px-3 py-1.5 rounded-lg text-xs border transition flex-shrink-0 bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200">⚖️ George</button>
                 </div>
 
                 <!-- Agent Process & Telemetry Panes -->
-                <div id="signals-agent-panes" class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                <div id="signals-agent-panes" class="grid grid-cols-1 xl:grid-cols-2 gap-5">
                     <!-- Populated dynamically with one pane per agent -->
                 </div>
             </div>
@@ -181,70 +199,59 @@
                     </h3>
                     <button type="button" onclick="closeInspectLockModal()" class="text-slate-400 hover:text-white text-lg font-bold">&times;</button>
                 </div>
-                <div id="swarmlock-inspect-body" class="space-y-3">
-                    <!-- Dynamic Lease Information -->
+                <div id="swarmlock-inspect-content" class="space-y-3 text-slate-300">
+                    <!-- Dynamic Lease Inspector Fields -->
                 </div>
-                <div class="flex justify-end pt-2 border-t border-slate-800">
-                    <button type="button" onclick="closeInspectLockModal()" class="px-4 py-2 rounded-lg text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 transition">Close</button>
+                <div class="flex justify-end gap-2 pt-2 border-t border-slate-800">
+                    <button type="button" onclick="closeInspectLockModal()" class="pe-btn pe-btn-secondary text-xs">Close</button>
                 </div>
             </div>
         </div>
 
-        <!-- ⚙️ Operator SwarmLock Policy Config Modal -->
+        <!-- ⚙️ SwarmLock TTL Policy Modal -->
         <div id="swarmlock-config-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
-            <div class="pe-modal-card glass-panel w-full max-w-[480px] p-6 rounded-2xl border border-slate-700/80 space-y-4 shadow-2xl bg-slate-900 text-xs font-mono" style="max-width: 480px !important;">
+            <div class="pe-modal-card glass-panel w-full max-w-[480px] p-6 rounded-2xl border border-slate-700/80 space-y-4 shadow-2xl bg-slate-900" style="max-width: 480px !important;">
                 <div class="flex justify-between items-center border-b border-slate-800 pb-3">
                     <h3 class="text-sm font-bold uppercase text-slate-200 tracking-wider flex items-center gap-2">
                         <svg class="w-4 h-4 text-cyan-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                        <span>Swarm Lock Governance Settings</span>
+                        <span>SwarmLock TTL &amp; Expiration Policy</span>
                     </h3>
                     <button type="button" onclick="closeSwarmLockConfigModal()" class="text-slate-400 hover:text-white text-lg font-bold">&times;</button>
                 </div>
-                <div class="space-y-3 text-slate-300">
+                <div class="space-y-3 text-xs">
                     <div>
-                        <label class="block font-bold text-slate-300 mb-1">Stale Lock Heartbeat TTL (Seconds)</label>
-                        <input id="swarmlock-config-ttl" type="number" min="5" max="3600" value="300" class="w-full px-3 py-2 rounded-lg border border-slate-800 bg-slate-950 text-slate-200 font-mono focus:border-cyan-500 focus:outline-none">
-                        <p class="text-[10px] text-slate-500 mt-1">Locks without a heartbeat renewal within this TTL window are automatically marked stale and subject to clean reclamation.</p>
-                    </div>
-                    <div class="p-3 rounded-lg bg-slate-950 border border-slate-800 text-[11px] space-y-1">
-                        <div><span class="text-slate-500">Storage Backend:</span> <span class="text-emerald-400 font-bold">SyncSwarmlock FileBackend</span></div>
-                        <div><span class="text-slate-500">Heartbeat Interval:</span> <span class="text-slate-300">15 seconds</span></div>
-                        <div><span class="text-slate-500">Total Swarm Collisions Deflected:</span> <span id="swarmlock-config-deflections" class="text-amber-400 font-bold">0</span></div>
+                        <label class="block font-bold text-slate-300 mb-1">Stale Lease Eviction TTL (Seconds)</label>
+                        <input id="swarmlock-config-ttl-input" type="number" min="10" max="86400" value="3600" class="w-full px-3 py-2 rounded-lg border border-slate-800 bg-slate-950 text-slate-200 font-mono focus:border-cyan-500 focus:outline-none">
+                        <p class="text-[11px] text-slate-500 mt-1">Default is 3600 seconds (1 hour). Leases with no heartbeats past this limit are automatically evicted.</p>
                     </div>
                 </div>
                 <div class="flex justify-end gap-2 pt-2 border-t border-slate-800">
-                    <button type="button" onclick="closeSwarmLockConfigModal()" class="px-4 py-2 rounded-lg text-xs font-semibold text-slate-400 hover:bg-slate-800 transition">Cancel</button>
-                    <button type="button" onclick="saveSwarmLockConfig()" class="px-4 py-2 rounded-lg text-xs font-bold bg-cyan-600 hover:bg-cyan-500 text-white transition shadow-sm border border-cyan-500">Save Policy</button>
+                    <button type="button" onclick="closeSwarmLockConfigModal()" class="pe-btn pe-btn-secondary text-xs">Cancel</button>
+                    <button type="button" onclick="saveSwarmLockConfig()" class="pe-btn pe-btn-primary bg-cyan-600 border-cyan-500 hover:bg-cyan-500 text-xs">Save TTL Policy</button>
                 </div>
             </div>
         </div>
 
-        <!-- 🔓 Operator Force Evict Modal -->
+        <!-- ⚠️ Force Evict Modal -->
         <div id="swarmlock-evict-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
-            <div class="pe-modal-card glass-panel w-full max-w-[480px] p-6 rounded-2xl border border-rose-800/60 space-y-4 shadow-2xl bg-slate-900 text-xs" style="max-width: 480px !important;">
-                <div class="flex justify-between items-center border-b border-rose-900/60 pb-3">
+            <div class="pe-modal-card glass-panel w-full max-w-[480px] p-6 rounded-2xl border border-rose-800/80 space-y-4 shadow-2xl bg-slate-900" style="max-width: 480px !important;">
+                <div class="flex justify-between items-center border-b border-slate-800 pb-3">
                     <h3 class="text-sm font-bold uppercase text-rose-300 tracking-wider flex items-center gap-2">
-                        <svg class="w-4 h-4 text-rose-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                        <span>Operator Force Lock Eviction</span>
+                        <svg class="w-4 h-4 text-rose-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+                        <span>Force Evict Active Concurrency Lease</span>
                     </h3>
                     <button type="button" onclick="closeEvictLockModal()" class="text-slate-400 hover:text-white text-lg font-bold">&times;</button>
                 </div>
-                <div class="space-y-3 text-slate-300">
-                    <p class="text-rose-200 font-semibold leading-relaxed">
-                        Are you sure you want to forcibly break this active lease? This will remove the lock and allow pending agents to acquire it immediately.
-                    </p>
-                    <div class="p-3 rounded-lg bg-slate-950 border border-slate-800 font-mono text-[11px] space-y-1">
-                        <div><span class="text-slate-500">Resource:</span> <span id="swarmlock-evict-resource" class="text-amber-300 font-bold"></span></div>
-                        <div><span class="text-slate-500">Current Holder:</span> <span id="swarmlock-evict-holder" class="text-slate-300"></span></div>
-                    </div>
-                    <div>
-                        <label class="block font-bold text-slate-300 mb-1">Eviction Reason / Audit Note</label>
-                        <input id="swarmlock-evict-reason" type="text" value="Operator manual eviction" class="w-full px-3 py-2 rounded-lg border border-slate-800 bg-slate-950 text-slate-200 font-mono focus:border-rose-500 focus:outline-none">
+                <div class="space-y-3 text-xs">
+                    <p class="text-slate-300">Are you sure you want to forcibly evict the following lease? This immediately frees the file lock for other agents.</p>
+                    <div class="p-3 rounded-lg bg-slate-950 border border-slate-800 text-slate-200 font-mono space-y-1">
+                        <div><span class="text-slate-500">Resource:</span> <span id="evict-modal-resource" class="text-rose-400 font-bold"></span></div>
+                        <div><span class="text-slate-500">Current Holder:</span> <span id="evict-modal-holder" class="text-slate-300"></span></div>
                     </div>
                 </div>
                 <div class="flex justify-end gap-2 pt-2 border-t border-slate-800">
-                    <button type="button" onclick="closeEvictLockModal()" class="px-4 py-2 rounded-lg text-xs font-semibold text-slate-400 hover:bg-slate-800 transition">Cancel</button>
-                    <button type="button" onclick="confirmEvictLock()" class="px-4 py-2 rounded-lg text-xs font-bold bg-rose-600 hover:bg-rose-500 text-white transition shadow-sm border border-rose-500">Confirm Force Eviction</button>
+                    <button type="button" onclick="closeEvictLockModal()" class="pe-btn pe-btn-secondary text-xs">Cancel</button>
+                    <button type="button" onclick="confirmEvictLock()" class="pe-btn pe-btn-primary bg-rose-600 border-rose-500 hover:bg-rose-500 text-xs">Confirm Force Eviction</button>
                 </div>
             </div>
         </div>
@@ -254,8 +261,8 @@
             <div class="pe-modal-card glass-panel w-full max-w-[520px] p-6 rounded-2xl border border-slate-700/80 space-y-4 shadow-2xl bg-slate-900" style="max-width: 520px !important;">
                 <div class="flex justify-between items-center border-b border-slate-800 pb-3">
                     <h3 class="text-sm font-bold uppercase text-slate-200 tracking-wider flex items-center gap-2">
-                        <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z"/></svg>
-                        Inject Operator Guidance / Nudge
+                        <svg class="w-4 h-4 text-amber-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z"/></svg>
+                        <span>Inject Operator Guidance / Nudge</span>
                     </h3>
                     <button type="button" onclick="closeAgentNudgeModal()" class="text-slate-400 hover:text-white text-lg font-bold">&times;</button>
                 </div>
@@ -264,7 +271,7 @@
                         <label class="block font-bold text-slate-300 mb-1">Target Agent</label>
                         <select id="nudge-target-agent" class="w-full px-3 py-2 rounded-lg border border-slate-800 bg-slate-950 text-slate-200 font-mono focus:border-amber-500 focus:outline-none">
                             <option value="all">All Active Agents</option>
-                            <option value="agy">Antigravity (AGY)</option>
+                            <option value="lightbringer-agy">Lightbringer Antigravity</option>
                             <option value="hermes">Hermes Orchestrator</option>
                             <option value="kai">Kai (UI Specialist)</option>
                             <option value="fred">Fred (TDD Specialist)</option>
@@ -277,13 +284,20 @@
                         <textarea id="nudge-message-text" rows="4" placeholder="e.g. Focus on TDD regression testing for workspace tree state persistence..." class="w-full px-3 py-2 rounded-lg border border-slate-800 bg-slate-950 text-slate-200 font-mono focus:border-amber-500 focus:outline-none leading-relaxed"></textarea>
                     </div>
                 </div>
+                <div class="flex justify-end gap-2 pt-2 border-t border-slate-800">
+                    <button type="button" onclick="closeAgentNudgeModal()" class="pe-btn pe-btn-secondary text-xs">Cancel</button>
+                    <button type="button" onclick="submitAgentNudge()" class="pe-btn pe-btn-primary bg-amber-600 border-amber-500 hover:bg-amber-500 text-xs">Inject Guidance</button>
+                </div>
+            </div>
+        </div>
+
         <!-- 📡 Operator Emit Signal Modal -->
         <div id="agent-emit-signal-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
             <div class="pe-modal-card glass-panel w-full max-w-[520px] p-6 rounded-2xl border border-indigo-700/80 space-y-4 shadow-2xl bg-slate-900" style="max-width: 520px !important;">
                 <div class="flex justify-between items-center border-b border-slate-800 pb-3">
                     <h3 class="text-sm font-bold uppercase text-slate-200 tracking-wider flex items-center gap-2">
-                        <svg class="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                        Emit Real-Time Multi-Agent Signal
+                        <svg class="w-4 h-4 text-indigo-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                        <span>Emit Real-Time Multi-Agent Signal</span>
                     </h3>
                     <button type="button" onclick="closeEmitSignalModal()" class="text-slate-400 hover:text-white text-lg font-bold">&times;</button>
                 </div>
@@ -291,7 +305,7 @@
                     <div class="grid grid-cols-2 gap-2">
                         <div>
                             <label class="block font-bold text-slate-300 mb-1">Target Agent</label>
-                            <input id="emit-signal-agent" type="text" value="agy" placeholder="e.g. agy, hermes, kai, fred..." class="w-full px-3 py-2 rounded-lg border border-slate-800 bg-slate-950 text-slate-200 font-mono focus:border-indigo-500 focus:outline-none">
+                            <input id="emit-signal-agent" type="text" value="lightbringer-agy" placeholder="e.g. lightbringer-agy, hermes, kai..." class="w-full px-3 py-2 rounded-lg border border-slate-800 bg-slate-950 text-slate-200 font-mono focus:border-indigo-500 focus:outline-none">
                         </div>
                         <div>
                             <label class="block font-bold text-slate-300 mb-1">Severity Level</label>
@@ -311,7 +325,7 @@
                         </div>
                         <div>
                             <label class="block font-bold text-slate-300 mb-1">Linear Task / Issue ID</label>
-                            <input id="emit-signal-issue" type="text" value="GRO-4457" placeholder="e.g. GRO-4457" class="w-full px-3 py-2 rounded-lg border border-slate-800 bg-slate-950 text-slate-200 font-mono focus:border-indigo-500 focus:outline-none">
+                            <input id="emit-signal-issue" type="text" value="GRO-3319" placeholder="e.g. GRO-3319" class="w-full px-3 py-2 rounded-lg border border-slate-800 bg-slate-950 text-slate-200 font-mono focus:border-indigo-500 focus:outline-none">
                         </div>
                     </div>
                     <div>
@@ -320,10 +334,8 @@
                     </div>
                 </div>
                 <div class="flex justify-end gap-2 pt-2 border-t border-slate-800">
-                    <button type="button" onclick="closeEmitSignalModal()" class="px-4 py-2 rounded-lg text-xs font-semibold text-slate-400 hover:bg-slate-800 transition">Cancel</button>
-                    <button type="button" onclick="submitCustomSignal()" class="px-4 py-2 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white transition shadow-sm border border-indigo-500">Emit Signal</button>
+                    <button type="button" onclick="closeEmitSignalModal()" class="pe-btn pe-btn-secondary text-xs">Cancel</button>
+                    <button type="button" onclick="submitCustomSignal()" class="pe-btn pe-btn-primary text-xs">Emit Signal</button>
                 </div>
             </div>
         </div>
-
-        <!-- SECTION 7: PLUGIN GOVERNANCE -->
