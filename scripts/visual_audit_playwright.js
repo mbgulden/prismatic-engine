@@ -45,11 +45,12 @@ async function runVisualAudit() {
             await page.waitForTimeout(500);
 
             // Switch to Review Factory tab if available
-            const rfTabBtn = await page.$('button[onclick*="review-factory"]');
-            if (rfTabBtn) {
-                await rfTabBtn.click();
-                await page.waitForTimeout(500);
-            }
+            await page.evaluate(() => {
+                if (typeof switchTab === 'function') {
+                    switchTab('review-factory');
+                }
+            });
+            await page.waitForTimeout(500);
 
             // Assert presence of Review Factory elements
             const sectionRF = await page.$('#section-review-factory');

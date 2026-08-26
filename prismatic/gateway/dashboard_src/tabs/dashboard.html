@@ -184,27 +184,32 @@
                         </div>
                         <p class="mt-1 text-xs text-slate-400"><strong>Records durable intent only; does not launch a producer.</strong></p>
                     </div>
-                    <button type="button" onclick="loadTaskAdmissions()" class="px-3 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider bg-slate-800 text-slate-200 border border-slate-700/50 hover:bg-slate-700/70 min-h-[36px]">Refresh readback</button>
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <button type="button" onclick="const f = document.getElementById('admission-fields-container'); f.classList.toggle('hidden');" class="px-3 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider bg-amber-500/10 text-amber-300 border border-amber-500/20 hover:bg-amber-500/20 min-h-[36px]">Toggle Form</button>
+                        <button type="button" onclick="loadTaskAdmissions()" class="px-3 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider bg-slate-800 text-slate-200 border border-slate-700/50 hover:bg-slate-700/70 min-h-[36px]">Refresh readback</button>
+                    </div>
                 </div>
-                <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 mt-4 text-xs">
-                    <label class="space-y-1"><span class="text-slate-400">Task ID</span><input id="admission-task-id" autocomplete="off" placeholder="GRO-4210" class="w-full bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
-                    <label class="space-y-1"><span class="text-slate-400">Producer identity</span><input id="admission-producer" autocomplete="off" placeholder="agy-pnv6" class="w-full bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
-                    <label class="space-y-1"><span class="text-slate-400">Writer cap</span><input id="admission-writer-cap" value="1" readonly class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-slate-400"></label>
-                    <label class="space-y-1"><span class="text-slate-400">Base commit</span><input id="admission-base-commit" autocomplete="off" maxlength="40" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
-                    <label class="space-y-1"><span class="text-slate-400">Base tree</span><input id="admission-base-tree" autocomplete="off" maxlength="40" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
-                    <label class="space-y-1"><span class="text-slate-400">Task-file SHA-256</span><input id="admission-task-sha" autocomplete="off" maxlength="64" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
-                    <label class="space-y-1"><span class="text-slate-400">Canonical worktree</span><input id="admission-worktree" autocomplete="off" placeholder="/absolute/allowlisted/worktree" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
-                    <label class="space-y-1"><span class="text-slate-400">Relative task file</span><input id="admission-task-file" autocomplete="off" placeholder="tasks/GRO-4210/TASK.md" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
-                    <label class="space-y-1"><span class="text-slate-400">Created at (UTC RFC3339)</span><input id="admission-created-at" autocomplete="off" placeholder="2026-07-24T20:45:00Z" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
-                    <label class="space-y-1"><span class="text-slate-400">Idempotency key</span><input id="admission-idempotency" autocomplete="off" minlength="32" maxlength="128" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
-                    <label class="space-y-1 md:col-span-2"><span class="text-slate-400">Transient operator bearer</span><input id="admission-token" type="password" autocomplete="off" aria-describedby="admission-token-note" class="w-full bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"><span id="admission-token-note" class="block text-[10px] text-slate-500">Used once and cleared. Never stored or rendered.</span></label>
+                <div id="admission-fields-container" class="space-y-4 mt-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 text-xs">
+                        <label class="space-y-1"><span class="text-slate-400">Task ID</span><input id="admission-task-id" autocomplete="off" placeholder="GRO-4210" class="w-full bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                        <label class="space-y-1"><span class="text-slate-400">Producer identity</span><input id="admission-producer" autocomplete="off" placeholder="agy-pnv6" class="w-full bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                        <label class="space-y-1"><span class="text-slate-400">Writer cap</span><input id="admission-writer-cap" value="1" readonly class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-slate-400"></label>
+                        <label class="space-y-1"><span class="text-slate-400">Base commit</span><input id="admission-base-commit" autocomplete="off" maxlength="40" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                        <label class="space-y-1"><span class="text-slate-400">Base tree</span><input id="admission-base-tree" autocomplete="off" maxlength="40" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                        <label class="space-y-1"><span class="text-slate-400">Task-file SHA-256</span><input id="admission-task-sha" autocomplete="off" maxlength="64" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                        <label class="space-y-1"><span class="text-slate-400">Canonical worktree</span><input id="admission-worktree" autocomplete="off" placeholder="/absolute/allowlisted/worktree" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                        <label class="space-y-1"><span class="text-slate-400">Relative task file</span><input id="admission-task-file" autocomplete="off" placeholder="tasks/GRO-4210/TASK.md" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                        <label class="space-y-1"><span class="text-slate-400">Created at (UTC RFC3339)</span><input id="admission-created-at" autocomplete="off" placeholder="2026-07-24T20:45:00Z" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                        <label class="space-y-1"><span class="text-slate-400">Idempotency key</span><input id="admission-idempotency" autocomplete="off" minlength="32" maxlength="128" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                        <label class="space-y-1 md:col-span-2"><span class="text-slate-400">Transient operator bearer</span><input id="admission-token" type="password" autocomplete="off" aria-describedby="admission-token-note" class="w-full bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"><span id="admission-token-note" class="block text-[10px] text-slate-500">Used once and cleared. Never stored or rendered.</span></label>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-3">
+                        <button type="button" id="admission-submit" onclick="submitTaskAdmission()" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider bg-amber-500/15 text-amber-200 border border-amber-500/30 hover:bg-amber-500/25 min-h-[40px]">Admit exact task</button>
+                        <span id="admission-status" role="status" class="text-xs text-slate-400">No admission submitted.</span>
+                    </div>
+                    <pre id="admission-proof" class="hidden overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-300 whitespace-pre-wrap"></pre>
+                    <div id="admission-history" class="text-xs text-slate-500">Authenticated readback not loaded.</div>
                 </div>
-                <div class="flex flex-wrap items-center gap-3 mt-4">
-                    <button type="button" id="admission-submit" onclick="submitTaskAdmission()" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider bg-amber-500/15 text-amber-200 border border-amber-500/30 hover:bg-amber-500/25 min-h-[40px]">Admit exact task</button>
-                    <span id="admission-status" role="status" class="text-xs text-slate-400">No admission submitted.</span>
-                </div>
-                <pre id="admission-proof" class="mt-3 hidden overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-300 whitespace-pre-wrap"></pre>
-                <div id="admission-history" class="mt-3 text-xs text-slate-500">Authenticated readback not loaded.</div>
             </section>
 
             <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-emerald-500/80 shadow-lg shadow-emerald-950/10" data-proof-marker="provider-neutral-verification-receipt-card" data-golden-marker="PROVIDER_NEUTRAL_VERIFICATION_RECEIPT_OK">

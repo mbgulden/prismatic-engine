@@ -1,14 +1,22 @@
         <div id="section-merge" class="hidden space-y-6 max-w-full overflow-x-hidden">
-            <section data-proof-marker="LEGACY_MERGE_PIPELINE_QUARANTINED" class="glass-panel p-5 rounded-xl border border-amber-500/30 bg-amber-500/5 space-y-3">
-                <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                        <h2 class="text-sm font-bold text-amber-300 uppercase tracking-wider">Legacy Merge Pipeline — Quarantined</h2>
-                        <p class="mt-1 text-xs text-slate-400">Historical sandbox snapshot only. This tab is not Review Factory merge authority and cannot authorize or execute merges.</p>
+            <section data-proof-marker="LEGACY_MERGE_PIPELINE_QUARANTINED" class="glass-panel p-5 rounded-2xl border border-amber-500/40 bg-amber-950/20 space-y-4 shadow-xl">
+                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-2">
+                            <span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase bg-amber-500/20 text-amber-300 border border-amber-500/40">Legacy Quarantine</span>
+                            <h2 class="text-sm font-bold text-amber-200 uppercase tracking-wider">Legacy Merge Pipeline — Displaced by Review Factory</h2>
+                        </div>
+                        <p class="text-xs text-slate-300">All merge authority, cryptographic receipts, and proof witnesses are strictly executed inside the canonical Review Factory.</p>
                     </div>
-                    <span id="merge-snapshot-status" class="self-start rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-300">Historical snapshot</span>
+                    <button type="button" onclick="switchTab('review-factory')" class="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white text-xs font-bold uppercase tracking-wider shadow-lg shadow-indigo-950/40 flex items-center justify-center gap-2 transition flex-shrink-0">
+                        <span>Open Review Factory</span>
+                        <span>→</span>
+                    </button>
                 </div>
-                <p id="merge-snapshot-meta" class="text-[11px] font-mono text-slate-500">Awaiting legacy snapshot metadata.</p>
-                <a class="inline-flex text-[11px] font-bold uppercase tracking-wider text-cyan-400 hover:text-cyan-300" href="#review-factory" onclick="switchTab('review-factory')">Open canonical Review Factory →</a>
+                <div class="flex items-center justify-between border-t border-amber-500/20 pt-2 text-[11px] font-mono text-slate-400">
+                    <span id="merge-snapshot-meta">Historical snapshot only · Cannot authorize merges</span>
+                    <span id="merge-snapshot-status" class="text-amber-400">Quarantined by Policy</span>
+                </div>
             </section>
             <!-- Stats Cards Grid -->
             <section class="grid grid-cols-2 md:grid-cols-4 gap-4">

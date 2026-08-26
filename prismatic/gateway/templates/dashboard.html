@@ -1595,27 +1595,32 @@ body.light-mode #dag-node-inspector-drawer {
                         </div>
                         <p class="mt-1 text-xs text-slate-400"><strong>Records durable intent only; does not launch a producer.</strong></p>
                     </div>
-                    <button type="button" onclick="loadTaskAdmissions()" class="px-3 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider bg-slate-800 text-slate-200 border border-slate-700/50 hover:bg-slate-700/70 min-h-[36px]">Refresh readback</button>
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <button type="button" onclick="const f = document.getElementById('admission-fields-container'); f.classList.toggle('hidden');" class="px-3 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider bg-amber-500/10 text-amber-300 border border-amber-500/20 hover:bg-amber-500/20 min-h-[36px]">Toggle Form</button>
+                        <button type="button" onclick="loadTaskAdmissions()" class="px-3 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider bg-slate-800 text-slate-200 border border-slate-700/50 hover:bg-slate-700/70 min-h-[36px]">Refresh readback</button>
+                    </div>
                 </div>
-                <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 mt-4 text-xs">
-                    <label class="space-y-1"><span class="text-slate-400">Task ID</span><input id="admission-task-id" autocomplete="off" placeholder="GRO-4210" class="w-full bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
-                    <label class="space-y-1"><span class="text-slate-400">Producer identity</span><input id="admission-producer" autocomplete="off" placeholder="agy-pnv6" class="w-full bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
-                    <label class="space-y-1"><span class="text-slate-400">Writer cap</span><input id="admission-writer-cap" value="1" readonly class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-slate-400"></label>
-                    <label class="space-y-1"><span class="text-slate-400">Base commit</span><input id="admission-base-commit" autocomplete="off" maxlength="40" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
-                    <label class="space-y-1"><span class="text-slate-400">Base tree</span><input id="admission-base-tree" autocomplete="off" maxlength="40" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
-                    <label class="space-y-1"><span class="text-slate-400">Task-file SHA-256</span><input id="admission-task-sha" autocomplete="off" maxlength="64" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
-                    <label class="space-y-1"><span class="text-slate-400">Canonical worktree</span><input id="admission-worktree" autocomplete="off" placeholder="/absolute/allowlisted/worktree" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
-                    <label class="space-y-1"><span class="text-slate-400">Relative task file</span><input id="admission-task-file" autocomplete="off" placeholder="tasks/GRO-4210/TASK.md" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
-                    <label class="space-y-1"><span class="text-slate-400">Created at (UTC RFC3339)</span><input id="admission-created-at" autocomplete="off" placeholder="2026-07-24T20:45:00Z" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
-                    <label class="space-y-1"><span class="text-slate-400">Idempotency key</span><input id="admission-idempotency" autocomplete="off" minlength="32" maxlength="128" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
-                    <label class="space-y-1 md:col-span-2"><span class="text-slate-400">Transient operator bearer</span><input id="admission-token" type="password" autocomplete="off" aria-describedby="admission-token-note" class="w-full bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"><span id="admission-token-note" class="block text-[10px] text-slate-500">Used once and cleared. Never stored or rendered.</span></label>
+                <div id="admission-fields-container" class="space-y-4 mt-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 text-xs">
+                        <label class="space-y-1"><span class="text-slate-400">Task ID</span><input id="admission-task-id" autocomplete="off" placeholder="GRO-4210" class="w-full bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                        <label class="space-y-1"><span class="text-slate-400">Producer identity</span><input id="admission-producer" autocomplete="off" placeholder="agy-pnv6" class="w-full bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                        <label class="space-y-1"><span class="text-slate-400">Writer cap</span><input id="admission-writer-cap" value="1" readonly class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-slate-400"></label>
+                        <label class="space-y-1"><span class="text-slate-400">Base commit</span><input id="admission-base-commit" autocomplete="off" maxlength="40" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                        <label class="space-y-1"><span class="text-slate-400">Base tree</span><input id="admission-base-tree" autocomplete="off" maxlength="40" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                        <label class="space-y-1"><span class="text-slate-400">Task-file SHA-256</span><input id="admission-task-sha" autocomplete="off" maxlength="64" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                        <label class="space-y-1"><span class="text-slate-400">Canonical worktree</span><input id="admission-worktree" autocomplete="off" placeholder="/absolute/allowlisted/worktree" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                        <label class="space-y-1"><span class="text-slate-400">Relative task file</span><input id="admission-task-file" autocomplete="off" placeholder="tasks/GRO-4210/TASK.md" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                        <label class="space-y-1"><span class="text-slate-400">Created at (UTC RFC3339)</span><input id="admission-created-at" autocomplete="off" placeholder="2026-07-24T20:45:00Z" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                        <label class="space-y-1"><span class="text-slate-400">Idempotency key</span><input id="admission-idempotency" autocomplete="off" minlength="32" maxlength="128" class="w-full font-mono bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"></label>
+                        <label class="space-y-1 md:col-span-2"><span class="text-slate-400">Transient operator bearer</span><input id="admission-token" type="password" autocomplete="off" aria-describedby="admission-token-note" class="w-full bg-slate-950/60 border border-slate-700 rounded-lg px-3 py-2 text-slate-100"><span id="admission-token-note" class="block text-[10px] text-slate-500">Used once and cleared. Never stored or rendered.</span></label>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-3">
+                        <button type="button" id="admission-submit" onclick="submitTaskAdmission()" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider bg-amber-500/15 text-amber-200 border border-amber-500/30 hover:bg-amber-500/25 min-h-[40px]">Admit exact task</button>
+                        <span id="admission-status" role="status" class="text-xs text-slate-400">No admission submitted.</span>
+                    </div>
+                    <pre id="admission-proof" class="hidden overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-300 whitespace-pre-wrap"></pre>
+                    <div id="admission-history" class="text-xs text-slate-500">Authenticated readback not loaded.</div>
                 </div>
-                <div class="flex flex-wrap items-center gap-3 mt-4">
-                    <button type="button" id="admission-submit" onclick="submitTaskAdmission()" class="px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider bg-amber-500/15 text-amber-200 border border-amber-500/30 hover:bg-amber-500/25 min-h-[40px]">Admit exact task</button>
-                    <span id="admission-status" role="status" class="text-xs text-slate-400">No admission submitted.</span>
-                </div>
-                <pre id="admission-proof" class="mt-3 hidden overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/60 p-3 text-[11px] text-slate-300 whitespace-pre-wrap"></pre>
-                <div id="admission-history" class="mt-3 text-xs text-slate-500">Authenticated readback not loaded.</div>
             </section>
 
             <section class="glass-panel p-4 sm:p-5 rounded-2xl border-l-2 border-l-emerald-500/80 shadow-lg shadow-emerald-950/10" data-proof-marker="provider-neutral-verification-receipt-card" data-golden-marker="PROVIDER_NEUTRAL_VERIFICATION_RECEIPT_OK">
@@ -2507,16 +2512,24 @@ body.light-mode #dag-node-inspector-drawer {
 
         <!-- SECTION 3: MERGE PIPELINE -->
         <div id="section-merge" class="hidden space-y-6 max-w-full overflow-x-hidden">
-            <section data-proof-marker="LEGACY_MERGE_PIPELINE_QUARANTINED" class="glass-panel p-5 rounded-xl border border-amber-500/30 bg-amber-500/5 space-y-3">
-                <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                        <h2 class="text-sm font-bold text-amber-300 uppercase tracking-wider">Legacy Merge Pipeline — Quarantined</h2>
-                        <p class="mt-1 text-xs text-slate-400">Historical sandbox snapshot only. This tab is not Review Factory merge authority and cannot authorize or execute merges.</p>
+            <section data-proof-marker="LEGACY_MERGE_PIPELINE_QUARANTINED" class="glass-panel p-5 rounded-2xl border border-amber-500/40 bg-amber-950/20 space-y-4 shadow-xl">
+                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-2">
+                            <span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase bg-amber-500/20 text-amber-300 border border-amber-500/40">Legacy Quarantine</span>
+                            <h2 class="text-sm font-bold text-amber-200 uppercase tracking-wider">Legacy Merge Pipeline — Displaced by Review Factory</h2>
+                        </div>
+                        <p class="text-xs text-slate-300">All merge authority, cryptographic receipts, and proof witnesses are strictly executed inside the canonical Review Factory.</p>
                     </div>
-                    <span id="merge-snapshot-status" class="self-start rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-amber-300">Historical snapshot</span>
+                    <button type="button" onclick="switchTab('review-factory')" class="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white text-xs font-bold uppercase tracking-wider shadow-lg shadow-indigo-950/40 flex items-center justify-center gap-2 transition flex-shrink-0">
+                        <span>Open Review Factory</span>
+                        <span>→</span>
+                    </button>
                 </div>
-                <p id="merge-snapshot-meta" class="text-[11px] font-mono text-slate-500">Awaiting legacy snapshot metadata.</p>
-                <a class="inline-flex text-[11px] font-bold uppercase tracking-wider text-cyan-400 hover:text-cyan-300" href="#review-factory" onclick="switchTab('review-factory')">Open canonical Review Factory →</a>
+                <div class="flex items-center justify-between border-t border-amber-500/20 pt-2 text-[11px] font-mono text-slate-400">
+                    <span id="merge-snapshot-meta">Historical snapshot only · Cannot authorize merges</span>
+                    <span id="merge-snapshot-status" class="text-amber-400">Quarantined by Policy</span>
+                </div>
             </section>
             <!-- Stats Cards Grid -->
             <section class="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -2748,8 +2761,11 @@ body.light-mode #dag-node-inspector-drawer {
             <!-- Stats Grid -->
             <section class="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <!-- Jules runs -->
-                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-indigo-500 min-h-[90px]">
-                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Jules CLI Sessions</span>
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-indigo-500 min-h-[90px] cursor-pointer hover:border-indigo-400 transition" onclick="switchTab('quota')">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">Jules Daily Capacity</span>
+                        <span class="text-[10px] text-indigo-400 font-mono">Quota Tab →</span>
+                    </div>
                     <div class="flex items-end justify-between mt-2">
                         <span id="stat-foundation-jules" class="text-2xl font-bold text-indigo-400">0</span>
                         <span class="text-xs text-slate-500">Limit: 300</span>
@@ -2765,8 +2781,11 @@ body.light-mode #dag-node-inspector-drawer {
                     <span id="stat-foundation-ned" class="text-2xl font-bold text-emerald-400 mt-2">0</span>
                 </div>
                 <!-- AGY runs -->
-                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-cyan-500 min-h-[90px]">
-                    <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">AGY CLI Sessions</span>
+                <div class="glass-panel p-4 rounded-xl flex flex-col justify-between border-l-2 border-l-cyan-500 min-h-[90px] cursor-pointer hover:border-cyan-400 transition" onclick="switchTab('signals')">
+                    <div class="flex items-center justify-between">
+                        <span class="text-[10px] sm:text-xs font-medium text-slate-400 uppercase tracking-wider">AGY CLI Sessions</span>
+                        <span class="text-[10px] text-cyan-400 font-mono">Signals Tab →</span>
+                    </div>
                     <span id="stat-foundation-agy" class="text-2xl font-bold text-cyan-400 mt-2">0</span>
                 </div>
                 <!-- Active reviewer route -->
