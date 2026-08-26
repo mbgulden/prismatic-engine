@@ -79,14 +79,17 @@ class LeaseContext:
 
     def acquire(self) -> bool:
         """Acquire lease from gateway."""
+        primary_resource = self.paths[0] if self.paths else "file:workspace"
         payload = {
             "paths": self.paths,
+            "resource": primary_resource,
             "owner": self.owner,
+            "agent_id": self.owner,
             "task_id": self.task_id,
             "ttl": self.ttl,
         }
         res = self.client._post("/api/gateway/swarmlock/acquire", payload)
-        if res and res.get("status") == "ok":
+        if res and (res.get("status") == "ok" or res.get("ok") is True):
             self.lease_id = res.get("lease_id")
             self.acquired = True
             self._start_heartbeat()
@@ -106,14 +109,18 @@ class LeaseContext:
         if not self.acquired:
             return True
 
+        primary_resource = self.paths[0] if self.paths else "file:workspace"
         payload = {
             "paths": self.paths,
+            "resource": primary_resource,
             "owner": self.owner,
+            "agent_id": self.owner,
+            "task_id": self.task_id,
             "lease_id": self.lease_id,
         }
         res = self.client._post("/api/gateway/swarmlock/release", payload)
         self.acquired = False
-        return bool(res and res.get("status") == "ok")
+        return bool(res and (res.get("status") == "ok" or res.get("ok") is True))
 
     def _start_heartbeat(self) -> None:
         """Start daemon heartbeat thread to renew lease every (ttl / 2) seconds."""
@@ -121,9 +128,13 @@ class LeaseContext:
 
         def _heartbeat_worker():
             while not self._stop_heartbeat.wait(interval):
+                primary_resource = self.paths[0] if self.paths else "file:workspace"
                 payload = {
                     "paths": self.paths,
+                    "resource": primary_resource,
                     "owner": self.owner,
+                    "agent_id": self.owner,
+                    "task_id": self.task_id,
                     "lease_id": self.lease_id,
                     "ttl": self.ttl,
                 }

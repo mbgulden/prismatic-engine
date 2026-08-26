@@ -71,6 +71,9 @@ PRIMITIVE_REPOS = [
     "git+https://github.com/mbgulden/swarmcurator.git@main",
     "git+https://github.com/mbgulden/swarmrouter.git@main",
     "git+https://github.com/mbgulden/swarmproof.git@main",
+    "git+https://github.com/mbgulden/swarmgate.git@main",
+    "git+https://github.com/mbgulden/swarmsaga.git@main",
+    "git+https://github.com/mbgulden/swarmledger.git@main",
 ]
 
 
@@ -98,7 +101,17 @@ def install_and_verify_clean_room(wheel_path: Path, venv_dir: Path, update_primi
     pip_cmd = [str(pip_bin), "install", "--no-cache-dir"]
     if wheel_cache.exists():
         pip_cmd.extend(["--find-links", str(wheel_cache)])
-    pip_cmd.extend(["fastapi", "uvicorn", "httpx", "websockets", str(wheel_path)])
+    primitives = [
+        "swarmlock",
+        "swarmcron",
+        "swarmcurator",
+        "swarmrouter",
+        "swarmproof",
+        "swarmgate",
+        "swarmsaga",
+        "swarmledger",
+    ]
+    pip_cmd.extend(["fastapi", "uvicorn", "httpx", "websockets"] + primitives + [str(wheel_path)])
 
     # Install into clean isolated virtual environment
     run_cmd(pip_cmd)
