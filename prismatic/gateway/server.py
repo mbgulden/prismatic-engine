@@ -5195,14 +5195,22 @@ _GOVERNANCE_DASHBOARD_CSS = Path(__file__).resolve().parent / "static" / "dashbo
 
 
 def _serve_governance_dashboard_html() -> HTMLResponse:
-    """Serve the canonical Prismatic governance/control-plane dashboard."""
+    """Serve the canonical Prismatic governance/control-plane dashboard with fail-closed integrity checks."""
     if not _GOVERNANCE_DASHBOARD_HTML.exists():
         return HTMLResponse(
             "Prismatic governance dashboard HTML not found",
             status_code=404,
         )
+    content = _GOVERNANCE_DASHBOARD_HTML.read_text(encoding="utf-8")
+    # Fail-closed integrity check: assert valid HTML document start
+    if not content.strip().lower().startswith("<!doctype html"):
+        logger.error("Corrupted or truncated dashboard.html detected! Refusing to serve malformed payload.")
+        return HTMLResponse(
+            "<!DOCTYPE html><html><body><h1>500 Internal Server Error: Corrupted Dashboard Template</h1></body></html>",
+            status_code=500,
+        )
     return HTMLResponse(
-        content=_GOVERNANCE_DASHBOARD_HTML.read_text(encoding="utf-8"),
+        content=content,
         headers={
             "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
             "Pragma": "no-cache",
