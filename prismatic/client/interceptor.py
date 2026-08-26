@@ -298,3 +298,17 @@ class HypervisorClient:
             "health": health,
             "locks": locks,
         }
+
+    def get_control_status(self) -> dict[str, Any]:
+        """Get live fleet control and pause status."""
+        res = self._get("/api/gateway/control/status")
+        return (res and res.get("status")) or {"fleet_paused": False, "paused_agents": []}
+
+    def is_paused(self, agent_id: str | None = None) -> bool:
+        """Check if fleet or agent is paused by operator."""
+        status = self.get_control_status()
+        if status.get("fleet_paused"):
+            return True
+        if agent_id and agent_id.lower() in status.get("paused_agents", []):
+            return True
+        return False

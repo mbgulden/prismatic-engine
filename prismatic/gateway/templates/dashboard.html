@@ -3122,6 +3122,29 @@ body.light-mode #dag-node-inspector-drawer {
                     </div>
                 </div>
 
+                <!-- 🚨 FLEET CONTROL & EMERGENCY CIRCUIT BREAKER STRIP -->
+                <div class="glass-panel p-4 rounded-2xl border border-slate-800 bg-slate-950/80 flex flex-wrap items-center justify-between gap-4 shadow-lg" data-proof-marker="signals-fleet-control-strip">
+                    <div class="flex items-center gap-3">
+                        <div class="w-8 h-8 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 font-bold text-sm">
+                            ⚡
+                        </div>
+                        <div>
+                            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-200">Swarm Fleet Steering &amp; Circuit Breakers</h3>
+                            <p class="text-[11px] text-slate-400">Remotely pause fleet, inject guidance, or force-evict all active file leases.</p>
+                        </div>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button type="button" id="btn-fleet-pause-toggle" onclick="toggleFleetPause()" class="pe-btn pe-btn-secondary text-xs flex items-center gap-1.5 border-amber-500/40 text-amber-300 hover:bg-amber-500/10">
+                            <span id="fleet-pause-indicator" class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                            <span id="fleet-pause-label">Pause Fleet</span>
+                        </button>
+                        <button type="button" onclick="evictAllSwarmLocks()" class="pe-btn pe-btn-danger text-xs flex items-center gap-1.5 bg-rose-950/40 border-rose-600/40 text-rose-300 hover:bg-rose-900/50">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                            <span>Evict All Locks</span>
+                        </button>
+                    </div>
+                </div>
+
                 <!-- 4 Top Metric Cards -->
                 <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
                     <div class="glass-panel p-4 sm:p-5 rounded-2xl border border-slate-800 bg-slate-900/40 shadow-sm transition hover:border-slate-700">
@@ -10632,6 +10655,10 @@ body.light-mode #dag-node-inspector-drawer {
                         const sig = event.payload || event.signal || {};
                         addLocalSignal(sig.agent || event.type, sig.message || event.message || "Signal received", sig.severity || "info");
                     }
+                    if (event.type === "fleet_control_status" && event.payload) {
+                        isFleetPaused = !!event.payload.fleet_paused;
+                        updateFleetPauseUI();
+                    }
                 } catch (err) {}
             };
 
@@ -11154,7 +11181,82 @@ body.light-mode #dag-node-inspector-drawer {
             
             // Show AGY as default agent details
             showAgentDetail('agy');
+            fetchFleetControlStatus();
         });
+
+        /* =========================================================================
+           FLEET STEERING & EMERGENCY CIRCUIT BREAKER CONTROLS
+           ========================================================================= */
+
+        let isFleetPaused = false;
+
+        async function fetchFleetControlStatus() {
+            try {
+                const res = await fetch("/api/gateway/control/status");
+                if (res.ok) {
+                    const data = await res.json();
+                    const status = data.status || {};
+                    isFleetPaused = !!status.fleet_paused;
+                    updateFleetPauseUI();
+                }
+            } catch (err) {
+                console.debug("Failed fetching fleet control status:", err);
+            }
+        }
+
+        function updateFleetPauseUI() {
+            const btn = document.getElementById("btn-fleet-pause-toggle");
+            const indicator = document.getElementById("fleet-pause-indicator");
+            const label = document.getElementById("fleet-pause-label");
+            if (!btn || !indicator || !label) return;
+
+            if (isFleetPaused) {
+                indicator.className = "w-2 h-2 rounded-full bg-rose-500 animate-ping";
+                label.textContent = "Resume Fleet";
+                btn.className = "pe-btn pe-btn-secondary text-xs flex items-center gap-1.5 border-rose-500/50 bg-rose-950/40 text-rose-300 hover:bg-rose-900/50";
+            } else {
+                indicator.className = "w-2 h-2 rounded-full bg-emerald-400";
+                label.textContent = "Pause Fleet";
+                btn.className = "pe-btn pe-btn-secondary text-xs flex items-center gap-1.5 border-amber-500/40 text-amber-300 hover:bg-amber-500/10";
+            }
+        }
+
+        async function toggleFleetPause() {
+            const endpoint = isFleetPaused ? "/api/gateway/control/resume" : "/api/gateway/control/pause";
+            try {
+                const res = await fetch(endpoint, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ reason: "operator_toggle" })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    isFleetPaused = !!(data.state && data.state.fleet_paused);
+                    updateFleetPauseUI();
+                    showToast(isFleetPaused ? "Swarm Fleet PAUSED by Operator" : "Swarm Fleet RESUMED");
+                }
+            } catch (err) {
+                showToast("Failed to toggle fleet pause state: " + err.message, true);
+            }
+        }
+
+        async function evictAllSwarmLocks() {
+            if (!confirm("Are you sure you want to force-evict ALL active SwarmLock leases across the entire fleet?")) return;
+            try {
+                const res = await fetch("/api/gateway/swarmlock/evict-all", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ reason: "operator_manual_evict_all" })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    showToast(`Successfully evicted ${data.count || 0} active lock leases!`);
+                    if (typeof renderSignalsView === "function") renderSignalsView();
+                }
+            } catch (err) {
+                showToast("Evict all locks failed: " + err.message, true);
+            }
+        }
     </script>
 </body>
 </html>

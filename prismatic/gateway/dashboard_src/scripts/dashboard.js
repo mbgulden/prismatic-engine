@@ -5361,6 +5361,10 @@
                         const sig = event.payload || event.signal || {};
                         addLocalSignal(sig.agent || event.type, sig.message || event.message || "Signal received", sig.severity || "info");
                     }
+                    if (event.type === "fleet_control_status" && event.payload) {
+                        isFleetPaused = !!event.payload.fleet_paused;
+                        updateFleetPauseUI();
+                    }
                 } catch (err) {}
             };
 
@@ -5883,4 +5887,79 @@
             
             // Show AGY as default agent details
             showAgentDetail('agy');
+            fetchFleetControlStatus();
         });
+
+        /* =========================================================================
+           FLEET STEERING & EMERGENCY CIRCUIT BREAKER CONTROLS
+           ========================================================================= */
+
+        let isFleetPaused = false;
+
+        async function fetchFleetControlStatus() {
+            try {
+                const res = await fetch("/api/gateway/control/status");
+                if (res.ok) {
+                    const data = await res.json();
+                    const status = data.status || {};
+                    isFleetPaused = !!status.fleet_paused;
+                    updateFleetPauseUI();
+                }
+            } catch (err) {
+                console.debug("Failed fetching fleet control status:", err);
+            }
+        }
+
+        function updateFleetPauseUI() {
+            const btn = document.getElementById("btn-fleet-pause-toggle");
+            const indicator = document.getElementById("fleet-pause-indicator");
+            const label = document.getElementById("fleet-pause-label");
+            if (!btn || !indicator || !label) return;
+
+            if (isFleetPaused) {
+                indicator.className = "w-2 h-2 rounded-full bg-rose-500 animate-ping";
+                label.textContent = "Resume Fleet";
+                btn.className = "pe-btn pe-btn-secondary text-xs flex items-center gap-1.5 border-rose-500/50 bg-rose-950/40 text-rose-300 hover:bg-rose-900/50";
+            } else {
+                indicator.className = "w-2 h-2 rounded-full bg-emerald-400";
+                label.textContent = "Pause Fleet";
+                btn.className = "pe-btn pe-btn-secondary text-xs flex items-center gap-1.5 border-amber-500/40 text-amber-300 hover:bg-amber-500/10";
+            }
+        }
+
+        async function toggleFleetPause() {
+            const endpoint = isFleetPaused ? "/api/gateway/control/resume" : "/api/gateway/control/pause";
+            try {
+                const res = await fetch(endpoint, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ reason: "operator_toggle" })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    isFleetPaused = !!(data.state && data.state.fleet_paused);
+                    updateFleetPauseUI();
+                    showToast(isFleetPaused ? "Swarm Fleet PAUSED by Operator" : "Swarm Fleet RESUMED");
+                }
+            } catch (err) {
+                showToast("Failed to toggle fleet pause state: " + err.message, true);
+            }
+        }
+
+        async function evictAllSwarmLocks() {
+            if (!confirm("Are you sure you want to force-evict ALL active SwarmLock leases across the entire fleet?")) return;
+            try {
+                const res = await fetch("/api/gateway/swarmlock/evict-all", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ reason: "operator_manual_evict_all" })
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    showToast(`Successfully evicted ${data.count || 0} active lock leases!`);
+                    if (typeof renderSignalsView === "function") renderSignalsView();
+                }
+            } catch (err) {
+                showToast("Evict all locks failed: " + err.message, true);
+            }
+        }

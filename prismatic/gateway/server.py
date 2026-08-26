@@ -4071,6 +4071,42 @@ async def gateway_swarmlock_evict(body: dict[str, Any]) -> dict[str, Any]:
     return {"ok": evicted, "resource": resource, "reason": reason}
 
 
+@app.post("/api/swarmlock/evict-all")
+@app.post("/api/gateway/swarmlock/evict-all")
+async def gateway_swarmlock_evict_all(body: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Operator endpoint to force-evict ALL active lock leases across the fleet."""
+    from prismatic.lock import _get_lock_manager
+    from prismatic.agent_signal_stream import record_agent_signal
+
+    body = body or {}
+    reason = body.get("reason", "operator_emergency_evict_all")
+    mgr = _get_lock_manager()
+    status = mgr.get_enriched_status()
+    active = status.get("active_leases", [])
+    evicted_resources = []
+
+    for item in active:
+        res = item.get("resource")
+        if res:
+            mgr.evict(res, reason=reason)
+            evicted_resources.append(res)
+
+    enriched = mgr.get_enriched_status()
+    try:
+        sig_item = record_agent_signal(
+            agent="operator",
+            severity="warning",
+            event_type="fleet_locks_evicted",
+            message=f"Operator force-evicted ALL active leases ({len(evicted_resources)} resources)"
+        )
+        await broadcast_ws_json({"type": "signal.emitted", "signal": sig_item})
+    except Exception as sig_err:
+        logger.debug("Failed emitting evict-all signal: %s", sig_err)
+
+    await broadcast_ws_json({"type": "swarmlock_status", "payload": enriched})
+    return {"ok": True, "count": len(evicted_resources), "evicted": evicted_resources, "reason": reason}
+
+
 @app.get("/api/swarmlock/history")
 @app.get("/api/gateway/swarmlock/history")
 async def gateway_swarmlock_history(
@@ -4213,6 +4249,71 @@ async def gateway_nudge_agent(body: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         pass
     return {"ok": True, "nudge": item}
+
+
+@app.post("/api/control/pause")
+@app.post("/api/gateway/control/pause")
+async def gateway_control_pause(body: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Pause the entire swarm fleet or a specific agent."""
+    from prismatic.core.fleet_control import FleetControlManager
+    from prismatic.agent_signal_stream import record_agent_signal
+
+    body = body or {}
+    agent_id = body.get("agent_id", "all")
+    reason = body.get("reason", "operator_pause")
+    mgr = FleetControlManager.get_instance()
+    state = mgr.pause(agent_id=agent_id, reason=reason)
+
+    try:
+        sig_item = record_agent_signal(
+            agent=agent_id,
+            severity="warning",
+            event_type="fleet_paused",
+            message=f"Swarm paused by operator (Target: {agent_id}, Reason: {reason})"
+        )
+        await broadcast_ws_json({"type": "signal.emitted", "signal": sig_item})
+    except Exception as sig_err:
+        logger.debug("Failed emitting pause signal: %s", sig_err)
+
+    await broadcast_ws_json({"type": "fleet_control_status", "payload": state})
+    return {"ok": True, "state": state}
+
+
+@app.post("/api/control/resume")
+@app.post("/api/gateway/control/resume")
+async def gateway_control_resume(body: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Resume the entire swarm fleet or a specific agent."""
+    from prismatic.core.fleet_control import FleetControlManager
+    from prismatic.agent_signal_stream import record_agent_signal
+
+    body = body or {}
+    agent_id = body.get("agent_id", "all")
+    mgr = FleetControlManager.get_instance()
+    state = mgr.resume(agent_id=agent_id)
+
+    try:
+        sig_item = record_agent_signal(
+            agent=agent_id,
+            severity="info",
+            event_type="fleet_resumed",
+            message=f"Swarm resumed by operator (Target: {agent_id})"
+        )
+        await broadcast_ws_json({"type": "signal.emitted", "signal": sig_item})
+    except Exception as sig_err:
+        logger.debug("Failed emitting resume signal: %s", sig_err)
+
+    await broadcast_ws_json({"type": "fleet_control_status", "payload": state})
+    return {"ok": True, "state": state}
+
+
+@app.get("/api/control/status")
+@app.get("/api/gateway/control/status")
+async def gateway_control_status() -> dict[str, Any]:
+    """Return live snapshot of fleet control, pause states, and active nudges."""
+    from prismatic.core.fleet_control import FleetControlManager
+
+    mgr = FleetControlManager.get_instance()
+    return {"ok": True, "status": mgr.get_status()}
 
 
 @app.get("/api/gateway/timeline")
