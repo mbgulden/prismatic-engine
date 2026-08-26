@@ -67,7 +67,9 @@ def test_update_event_index_stamps_legacy_false_on_keyed_rows(tmp_path):
     now = "2026-08-21T01:00:00Z"
     signals = [{"type": "cron_run", "job_name": "x", "idempotency_key": "k1"}]
     update_event_index(signals, now, config)
-    day = index_dir / "events-2026-08-21.json"
+    # update_event_index buckets the day file by wall-clock UTC today (not `now`),
+    # so read whichever events-*.json it actually wrote.
+    day = sorted(index_dir.glob("events-*.json"))[0]
     rows = json.loads(day.read_text())
     assert len(rows) == 1
     assert rows[0]["legacy"] is False
@@ -79,7 +81,8 @@ def test_update_event_index_stamps_legacy_true_on_unkeyed_rows(tmp_path):
     index_dir.mkdir(parents=True)
     now = "2026-08-21T01:00:00Z"
     update_event_index([{"type": "log_error", "source": "e.log"}], now, config)
-    rows = json.loads((index_dir / "events-2026-08-21.json").read_text())
+    day = sorted(index_dir.glob("events-*.json"))[0]
+    rows = json.loads(day.read_text())
     assert rows[0]["legacy"] is True
 
 
