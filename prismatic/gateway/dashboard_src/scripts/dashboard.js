@@ -5822,6 +5822,9 @@
         ]);
 
         function dashboardTabFromURL() {
+            const params = new URLSearchParams(window.location.search);
+            const queryTab = params.get("tab");
+            if (queryTab && dashboardTabIds.has(queryTab)) return queryTab;
             const requestedHash = window.location.hash.replace(/^#/, "");
             if (dashboardTabIds.has(requestedHash)) return requestedHash;
             const path = window.location.pathname.replace(/^\//, "").replace(/^tab\//, "");
