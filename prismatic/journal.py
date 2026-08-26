@@ -836,6 +836,12 @@ def build_compact_markdown(
     return "\n".join(blocks)
 
 
+def _ensure_era_flag(row: dict[str, Any]) -> None:
+    """Mark pre-incremental-era rows (no idempotency key) as legacy evidence (G2)."""
+    if "legacy" not in row:
+        row["legacy"] = not bool(row.get("idempotency_key"))
+
+
 def update_event_index(
     signals: list[dict[str, Any]], now: str, config: JournalConfig
 ) -> None:
@@ -848,6 +854,7 @@ def update_event_index(
     )
     for signal in signals:
         signal["_timestamp"] = now
+        _ensure_era_flag(signal)
         today_events.append(signal)
     today_events_path.write_text(
         json.dumps(today_events, indent=2, default=str), encoding="utf-8"
@@ -1008,6 +1015,66 @@ def write_quarantine(
     return len(accepted)
 
 
+def _quarantine_day(path: Path) -> dt.datetime | None:
+    m = re.match(r"^(\d{4}-\d{2}-\d{2})\.json$", path.name)
+    if not m:
+        return None
+    try:
+        return dt.datetime.strptime(m.group(1), "%Y-%m-%d").replace(
+            tzinfo=dt.timezone.utc
+        )
+    except ValueError:
+        return None
+
+
+def rotate_quarantine(config: JournalConfig, now: dt.datetime | None = None) -> int:
+    """Delete quarantine files older than QUARANTINE_RETENTION_DAYS (G6b). Returns files removed."""
+    folder = config.journal_root / ".quarantine"
+    if not folder.exists():
+        return 0
+    now = now or dt.datetime.now(dt.timezone.utc)
+    horizon = now - dt.timedelta(days=QUARANTINE_RETENTION_DAYS)
+    removed = 0
+    for path in folder.glob("*.json"):
+        day = _quarantine_day(path)
+        if day is None or day >= horizon:
+            continue
+        try:
+            path.unlink()
+            removed += 1
+        except OSError:
+            pass
+    return removed
+
+
+def quarantine_summary(
+    config: JournalConfig, start: dt.datetime, end: dt.datetime
+) -> dict[str, Any]:
+    """Top offending sources across quarantine files in the recap window (G6a)."""
+    folder = config.journal_root / ".quarantine"
+    if not folder.exists():
+        return {}
+    by_source: dict[str, int] = defaultdict(int)
+    total = 0
+    for path in sorted(folder.glob("*.json")):
+        day = _quarantine_day(path)
+        if day is None or not (start <= day <= end + dt.timedelta(days=1)):
+            continue
+        try:
+            records = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        for rec in records:
+            if not isinstance(rec, dict):
+                continue
+            total += 1
+            by_source[str(rec.get("source", "?"))] += 1
+    if total == 0:
+        return {}
+    top = sorted(by_source.items(), key=lambda kv: (-kv[1], kv[0]))[:5]
+    return {"total": total, "top": top}
+
+
 def recap_window(
     period: str, now: dt.datetime | None = None
 ) -> tuple[dt.datetime, dt.datetime]:
@@ -1094,6 +1161,8 @@ def live_cron_health(config: JournalConfig) -> list[dict[str, Any]]:
 MAX_RECAP_EVENTS = 50
 MAX_RECAP_BYTES = 32_768
 MAX_RECAP_MANIFEST_BYTES = 8_192
+# Quarantine is a malformed-noise sink, not the factual event stream: rotate it.
+QUARANTINE_RETENTION_DAYS = 90
 
 
 def _bounded_citation_id(event: dict[str, Any]) -> str:
@@ -1241,6 +1310,7 @@ def build_evidence_recap(
     end: dt.datetime,
     cron_health: list[dict[str, Any]],
     max_events: int = MAX_RECAP_EVENTS,
+    quarantine: dict[str, Any] | None = None,
 ) -> tuple[str, list[str]]:
     """Render a bounded deterministic draft; every displayed claim has an evidence ID."""
     if isinstance(max_events, bool) or not isinstance(max_events, int):
@@ -1284,6 +1354,13 @@ def build_evidence_recap(
         lines.append(
             f"- **{_rendered_field(job['name'], 120)}** — current `{_rendered_field(job['last_status'], 80)}` ({state})"
         )
+    if quarantine:
+        lines += ["", "### Quarantine (malformed noise, not signal)", ""]
+        lines.append(
+            f"- {quarantine['total']} quarantined line(s) in window; top sources:"
+        )
+        for src, cnt in quarantine["top"]:
+            lines.append(f"  - `{_rendered_field(src, 120)}` — {cnt}")
     lines += [
         "",
         "---",
@@ -1300,8 +1377,15 @@ def generate_recap(
     config = config or JournalConfig.from_env()
     start, end = recap_window(period, now)
     events = _recap_events(config, start, end)
+    quarantine = quarantine_summary(config, start, end)
     markdown, cited_ids = build_evidence_recap(
-        events, period, start, end, live_cron_health(config), MAX_RECAP_EVENTS
+        events,
+        period,
+        start,
+        end,
+        live_cron_health(config),
+        MAX_RECAP_EVENTS,
+        quarantine=quarantine,
     )
     encoded = markdown.encode("utf-8")
     if len(encoded) > MAX_RECAP_BYTES:
@@ -1426,6 +1510,7 @@ def run_snapshot(
         signals, existing_events if isinstance(existing_events, list) else []
     )
     quarantined_count = write_quarantine(quarantined_records, config, today)
+    quarantine_removed = rotate_quarantine(config)
     state_dir.mkdir(parents=True, exist_ok=True)
     state_payload = {"fingerprint": current_fp, "updated_at": now, "cursors": cursors}
     if not force and not accepted and not quarantined_count:
@@ -1464,6 +1549,7 @@ def run_snapshot(
         else 0,
         "deduped": deduped,
         "quarantined": quarantined_count,
+        "quarantine_rotated": quarantine_removed,
         "cursors": len(cursors),
         "prismatic_journal_path": __file__,
         "git_head_sha": git(config.research_repo, ["rev-parse", "HEAD"]),
