@@ -4217,6 +4217,16 @@ async def gateway_emit_signal(body: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         pass
     try:
+        from prismatic.hypervisor.ledger import get_hypervisor_ledger
+        get_hypervisor_ledger().record_event(
+            task_id=body.get("task_id") or body.get("issue_id") or "SYSTEM",
+            producer=body.get("agent", "unknown"),
+            action=body.get("event_type", "signal"),
+            payload=item,
+        )
+    except Exception as led_err:
+        logger.debug("Failed recording to hypervisor ledger: %s", led_err)
+    try:
         await broadcast_ws_json({"type": "signal.emitted", "signal": item})
     except Exception:
         pass
@@ -4314,6 +4324,59 @@ async def gateway_control_status() -> dict[str, Any]:
 
     mgr = FleetControlManager.get_instance()
     return {"ok": True, "status": mgr.get_status()}
+
+
+@app.get("/api/hypervisor/ledger")
+@app.get("/api/gateway/hypervisor/ledger")
+async def gateway_hypervisor_ledger(
+    limit: int = Query(50, ge=1, le=500),
+    task_id: str | None = None,
+    producer: str | None = None,
+) -> dict[str, Any]:
+    """Return immutable Hypervisor execution ledger entries with cryptographic hash chains."""
+    from prismatic.hypervisor.ledger import get_hypervisor_ledger
+
+    ledger = get_hypervisor_ledger()
+    events = ledger.list_events(limit=limit, task_id=task_id, producer=producer)
+    return {
+        "ok": True,
+        "count": len(events),
+        "events": [e.to_dict() for e in events],
+    }
+
+
+@app.get("/api/hypervisor/merkle-root")
+@app.get("/api/gateway/hypervisor/merkle-root")
+async def gateway_hypervisor_merkle_root(
+    task_id: str | None = None,
+    limit: int = Query(100, ge=1, le=1000),
+) -> dict[str, Any]:
+    """Compute and return the current Merkle root over recorded execution spans."""
+    from prismatic.hypervisor.ledger import get_hypervisor_ledger
+
+    ledger = get_hypervisor_ledger()
+    root_data = ledger.get_merkle_root(task_id=task_id, limit=limit)
+    return {"ok": True, **root_data}
+
+
+@app.post("/api/hypervisor/verify-ast")
+@app.post("/api/gateway/hypervisor/verify-ast")
+async def gateway_hypervisor_verify_ast(body: dict[str, Any]) -> dict[str, Any]:
+    """Analyze code modifications against the AST Anti-Weakening Guard."""
+    from prismatic.verification.ast_guard import ASTGuard
+
+    old_code = body.get("old_code", "")
+    new_code = body.get("new_code", "")
+    filename = body.get("filename", "unknown.py")
+    allow_reduction = bool(body.get("allow_reduction", False))
+
+    res = ASTGuard.validate_diff(
+        old_code=old_code,
+        new_code=new_code,
+        filename=filename,
+        allow_reduction=allow_reduction,
+    )
+    return {"ok": True, "result": res.to_dict()}
 
 
 @app.get("/api/gateway/timeline")
