@@ -1878,6 +1878,7 @@
             
             if (activeTab === 'dashboard') {
                 renderDashboardSummary();
+                fetchDagTopology();
                 await fetchQuotaSummary();
                 await fetchCompletedWorkGate();
                 await fetchPromotionDecisionLedger();
@@ -5847,6 +5848,7 @@
                 switchTab(initialTab, null, false);
             } else {
                 fetchData();
+                fetchDagTopology();
             }
             loadPluginGovernance();
             loadPWPStatus();
