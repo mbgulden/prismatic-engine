@@ -353,7 +353,14 @@ class SwarmLockManager:
             raw_data = self._sw.async_client.backend._read_data()
             raw_data = self._sw.async_client.backend._prune(raw_data)
             now = time.time()
-            for res, entry in raw_data.items():
+            if isinstance(raw_data, list):
+                iter_items = [(e.get("resource") or e.get("filePath", f"res_{i}"), e) for i, e in enumerate(raw_data) if isinstance(e, dict)]
+            elif isinstance(raw_data, dict):
+                iter_items = list(raw_data.items())
+            else:
+                iter_items = []
+
+            for res, entry in iter_items:
                 if now < entry.get("expires_at", 0):
                     status_list.append({
                         "filePath": res,
@@ -374,7 +381,14 @@ class SwarmLockManager:
         try:
             raw_data = self._sw.async_client.backend._read_data()
             raw_data = self._sw.async_client.backend._prune(raw_data)
-            for res, entry in raw_data.items():
+            if isinstance(raw_data, list):
+                iter_items = [(e.get("resource") or e.get("filePath", f"res_{i}"), e) for i, e in enumerate(raw_data) if isinstance(e, dict)]
+            elif isinstance(raw_data, dict):
+                iter_items = list(raw_data.items())
+            else:
+                iter_items = []
+
+            for res, entry in iter_items:
                 expires_at = entry.get("expires_at", 0)
                 if now < expires_at:
                     holder = entry.get("holder", "unknown")

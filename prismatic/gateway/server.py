@@ -4009,8 +4009,8 @@ async def gateway_swarmlock_acquire(body: dict[str, Any]) -> dict[str, Any]:
     lease_id = body.get("lease_id") or str(uuid.uuid4())
     metadata["task_id"] = task_id
     metadata["intention"] = intention
-    metadata["paths"] = paths
-    metadata["ttl"] = ttl
+    metadata["paths"] = ",".join(paths) if isinstance(paths, list) else str(paths)
+    metadata["ttl"] = str(ttl)
     metadata["lease_id"] = lease_id
 
     mgr = _get_lock_manager()
