@@ -5367,6 +5367,7 @@
                     }
                     if (event.type === "swarmlock_status" && event.payload) {
                         renderSwarmLockCockpit(event.payload);
+                        fetchDagTopology();
                         const drawer = document.getElementById("swarmlock-history-drawer");
                         if (drawer && !drawer.classList.contains("hidden")) {
                             fetchSwarmLockHistory();
@@ -5376,6 +5377,7 @@
                         const sig = event.payload || event.signal || {};
                         const agentId = sig.agent || event.agent;
                         if (agentId) registerDynamicAgentPill(agentId);
+                        fetchDagTopology();
                         if (activeTab === "signals") {
                             renderSignalsView();
                         }

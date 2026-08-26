@@ -1159,24 +1159,24 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     The connection stays open until the client disconnects.
     Events are broadcast to all connected clients.
     """
-    if os.environ.get("PRISMATIC_WS_AUTH_REQUIRED", "1") in ("1", "true", "TRUE"):
+    # Check WebSocket authentication if explicitly required and tokens are configured
+    ws_auth_env = os.environ.get("PRISMATIC_WS_AUTH_REQUIRED", "0")
+    if ws_auth_env in ("1", "true", "TRUE"):
         auth_hdr = websocket.headers.get("Authorization", "").strip()
-        if not auth_hdr.startswith("Bearer "):
-            await websocket.accept()
-            await websocket.close(code=1008, reason="Unauthorized")
-            return
-        token = auth_hdr[7:].strip()
-        allowed = [
-            t.strip()
-            for t in os.environ.get("PRISMATIC_WS_TOKENS", "").split(",")
-            if t.strip()
-        ]
-        import secrets
+        token = ""
+        if auth_hdr.startswith("Bearer "):
+            token = auth_hdr[7:].strip()
+        elif "token" in websocket.query_params:
+            token = websocket.query_params["token"].strip()
 
-        if not token or not any(secrets.compare_digest(token, t) for t in allowed):
-            await websocket.accept()
-            await websocket.close(code=1008, reason="Unauthorized")
-            return
+        allowed_raw = os.environ.get("PRISMATIC_WS_TOKENS", "").strip()
+        if allowed_raw:
+            allowed = [t.strip() for t in allowed_raw.split(",") if t.strip()]
+            import secrets
+            if not token or not any(secrets.compare_digest(token, t) for t in allowed):
+                await websocket.accept()
+                await websocket.close(code=1008, reason="Unauthorized")
+                return
 
     await websocket.accept()
     _ws_clients.add(websocket)
@@ -3985,7 +3985,6 @@ async def gateway_swarmlock_status() -> dict[str, Any]:
     return mgr.get_enriched_status()
 
 
-
 @app.post("/api/swarmlock/acquire")
 @app.post("/api/gateway/swarmlock/acquire")
 async def gateway_swarmlock_acquire(body: dict[str, Any]) -> dict[str, Any]:
@@ -4014,7 +4013,12 @@ async def gateway_swarmlock_acquire(body: dict[str, Any]) -> dict[str, Any]:
     metadata["lease_id"] = lease_id
 
     mgr = _get_lock_manager()
-    acquired = mgr.acquire(resource, agent_id, metadata=metadata)
+    acquired_all = True
+    for p in paths:
+        acq = mgr.acquire(p, agent_id, metadata=metadata)
+        if not acq:
+            acquired_all = False
+
     enriched = mgr.get_enriched_status()
 
     # Record to Hypervisor Ledger
@@ -4036,14 +4040,14 @@ async def gateway_swarmlock_acquire(body: dict[str, Any]) -> dict[str, Any]:
             severity="lease",
             event_type="lock_acquired",
             issue_id=task_id,
-            message=f"{agent_id} acquired lease on {resource} ({intention})"
+            message=f"{agent_id} acquired lease on {len(paths)} path(s): {', '.join(paths)} ({intention})"
         )
         await broadcast_ws_json({"type": "signal.emitted", "signal": sig_item})
     except Exception as sig_err:
         logger.debug("Failed emitting lock signal: %s", sig_err)
 
     await broadcast_ws_json({"type": "swarmlock_status", "payload": enriched})
-    return {"ok": acquired, "status": "ok", "lease_id": lease_id, "resource": resource, "agent_id": agent_id, "enriched": enriched}
+    return {"ok": acquired_all, "status": "ok", "lease_id": lease_id, "resource": resource, "paths": paths, "agent_id": agent_id, "enriched": enriched}
 
 
 @app.post("/api/swarmlock/heartbeat")
@@ -4055,14 +4059,16 @@ async def gateway_swarmlock_heartbeat(body: dict[str, Any]) -> dict[str, Any]:
     paths = body.get("paths") or ([body["resource"]] if body.get("resource") else [])
     resource = body.get("resource") or (paths[0] if paths else "")
     agent_id = body.get("agent_id") or body.get("agent") or body.get("owner", "unknown")
+    ttl = int(body.get("ttl", 300))
     if not resource or not agent_id:
         raise HTTPException(status_code=400, detail="Missing 'resource' or 'agent_id'")
 
     mgr = _get_lock_manager()
-    ok = mgr.heartbeat(resource, agent_id)
+    for p in paths:
+        mgr.heartbeat(p, agent_id, ttl_ms=ttl * 1000)
     enriched = mgr.get_enriched_status()
     await broadcast_ws_json({"type": "swarmlock_status", "payload": enriched})
-    return {"ok": ok, "status": "ok", "resource": resource, "agent_id": agent_id}
+    return {"ok": True, "status": "ok", "resource": resource, "paths": paths, "agent_id": agent_id}
 
 
 @app.post("/api/swarmlock/release")
@@ -4081,7 +4087,12 @@ async def gateway_swarmlock_release(body: dict[str, Any]) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="Missing 'resource' or 'agent_id'")
 
     mgr = _get_lock_manager()
-    ok = mgr.release(resource, agent_id)
+    released_all = True
+    for p in paths:
+        ok = mgr.release(p, agent_id)
+        if not ok:
+            released_all = False
+
     enriched = mgr.get_enriched_status()
 
     # Record to Hypervisor Ledger
