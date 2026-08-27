@@ -307,7 +307,7 @@ class ReviewFactoryDB:
                     job.changed_paths_json,
                     job.risk_tier,
                     job.policy_version,
-                    job.state,
+                    job.state.value if hasattr(job.state, "value") else str(job.state),
                     job.required_witnesses,
                     job.completed_witnesses,
                     job.created_at,
