@@ -44,9 +44,10 @@ def execute_drill():
     )
 
     # 2. Acquire Live SwarmLock Leases
-    SwarmLockManager.acquire("prismatic/orchestrator/status.json", owner="fred", task_id="TG-FRED-LIVE-01", intention="Telegram Task Execution")
-    SwarmLockManager.acquire("prismatic/core/locking.py", owner="agy", task_id="AGY-CLI-LIVE-02", intention="Kernel SwarmLock Verification")
-    SwarmLockManager.acquire("prismatic/gateway/dashboard_src/scripts/dashboard.js", owner="kai", task_id="GRO-5105", intention="UI Optimization")
+    lock_mgr = SwarmLockManager()
+    lock_mgr.acquire("prismatic/orchestrator/status.json", "fred", metadata={"task_id": "TG-FRED-LIVE-01", "intention": "Telegram Task Execution"})
+    lock_mgr.acquire("prismatic/core/locking.py", "agy", metadata={"task_id": "AGY-CLI-LIVE-02", "intention": "Kernel SwarmLock Verification"})
+    lock_mgr.acquire("prismatic/gateway/dashboard_src/scripts/dashboard.js", "kai", metadata={"task_id": "GRO-5105", "intention": "UI Optimization"})
 
     # 3. Execute SwarmProof Oracle Verification
     proof = SwarmProofOracle.verify_candidate(
