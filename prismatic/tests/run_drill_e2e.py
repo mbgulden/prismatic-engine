@@ -64,7 +64,10 @@ def execute_drill():
     db.ensure_tables()
     rq = ReviewQueue(db)
 
+    import uuid
     rj = ReviewJob(
+        review_job_id=str(uuid.uuid4()),
+        completed_work_id=str(uuid.uuid4()),
         task_id="GRO-5105",
         repository="mbgulden/prismatic-engine",
         base_commit="275949d5",
