@@ -53,13 +53,14 @@ from prismatic.review_factory.models import (
 
 
 def _agy_default_state_dir() -> Path:
-    """Mirror of agy_completed_work.default_state_dir().
-
-    We replicate instead of importing to avoid circular dependencies
-    during early module loading.  This MUST stay in sync with
-    ``prismatic.agy_completed_work.default_state_dir()``.
-    """
-    return Path(os.environ.get("PRISMATIC_STATE_DIR", "./prismatic_state")).expanduser()
+    """Mirror of agy_completed_work.default_state_dir()."""
+    if os.environ.get("PRISMATIC_STATE_DIR"):
+        return Path(os.environ["PRISMATIC_STATE_DIR"]).expanduser()
+    p_home = Path.home() / ".prismatic" / "db"
+    if p_home.parent.exists():
+        p_home.mkdir(parents=True, exist_ok=True)
+        return p_home
+    return Path("./prismatic_state").expanduser()
 
 
 def default_db_path() -> Path:
