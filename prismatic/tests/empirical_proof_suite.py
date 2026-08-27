@@ -54,16 +54,16 @@ def probe_3_merkle_ledger():
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
-        "SELECT event_id, block_height, prev_hash, current_hash, event_type, agent_id, timestamp "
-        "FROM ledger_entries ORDER BY block_height DESC LIMIT 5"
+        "SELECT id, event_id, task_id, producer, action, prev_hash, entry_hash, datetime(timestamp, 'unixepoch') as ts "
+        "FROM ledger_events ORDER BY id DESC LIMIT 5"
     ).fetchall()
 
-    print(f"{'Block':<5} | {'Agent':<8} | {'Event Type':<16} | {'Prev Hash (16)':<16} | {'Current Hash (16)':<16}")
-    print("-" * 80)
+    print(f"{'ID':<4} | {'Task':<16} | {'Producer':<8} | {'Action':<20} | {'Prev Hash (12)':<14} | {'Entry Hash (12)':<14}")
+    print("-" * 85)
     for r in rows:
-        prev = r['prev_hash'][:16] if r['prev_hash'] else 'GENESIS'
-        curr = r['current_hash'][:16] if r['current_hash'] else 'N/A'
-        print(f"{r['block_height']:<5} | {r['agent_id']:<8} | {r['event_type']:<16} | {prev:<16} | {curr:<16}")
+        prev = r['prev_hash'][:12] if r['prev_hash'] else '000000000000'
+        curr = r['entry_hash'][:12] if r['entry_hash'] else 'N/A'
+        print(f"{r['id']:<4} | {r['task_id']:<16} | {r['producer']:<8} | {r['action']:<20} | {prev:<14} | {curr:<14}")
 
 
 def probe_4_adversarial_ast_rejection():
