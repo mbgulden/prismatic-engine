@@ -252,3 +252,18 @@ class ASTGuard:
             old_assertion_count=old_counter.assertion_count,
             new_assertion_count=new_counter.assertion_count,
         )
+
+
+def validate_ast_change(
+    old_code: str,
+    new_code: str,
+    filename: str = "module.py",
+    allow_reduction: bool = False,
+) -> ASTValidationResult:
+    """Convenience top-level wrapper for ASTAntiWeakeningGuard.validate_ast_change."""
+    return ASTAntiWeakeningGuard.validate_ast_change(
+        old_code=old_code,
+        new_code=new_code,
+        filename=filename,
+        allow_reduction=allow_reduction,
+    )
