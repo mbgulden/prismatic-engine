@@ -254,14 +254,17 @@ class ASTGuard:
         )
 
 
+ASTAntiWeakeningGuard = ASTGuard
+
+
 def validate_ast_change(
     old_code: str,
     new_code: str,
     filename: str = "module.py",
     allow_reduction: bool = False,
 ) -> ASTValidationResult:
-    """Convenience top-level wrapper for ASTAntiWeakeningGuard.validate_ast_change."""
-    return ASTAntiWeakeningGuard.validate_ast_change(
+    """Convenience top-level wrapper for ASTGuard.validate_diff."""
+    return ASTGuard.validate_diff(
         old_code=old_code,
         new_code=new_code,
         filename=filename,

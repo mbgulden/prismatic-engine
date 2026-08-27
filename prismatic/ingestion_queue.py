@@ -344,7 +344,7 @@ def queue_payload(*, limit: int = 50, offset: int = 0, status: str | None = None
             """,
             [*params, limit, offset],
         ).fetchall()
-    return {
+    result = {
         "items": [normalize_row(row) for row in rows],
         "total": int(total or 0),
         "limit": limit,
