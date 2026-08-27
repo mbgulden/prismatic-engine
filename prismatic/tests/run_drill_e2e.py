@@ -82,9 +82,9 @@ def execute_drill():
     db.insert_review_job(rj)
 
     # 5. Emit high-priority telemetry signals
-    record_agent_signal("fred", "info", "task_admitted", issue_id="TG-FRED-LIVE-01", message="Fred executing admitted Telegram Task in Topological Wave 1")
-    record_agent_signal("agy", "info", "proof_verified", issue_id="AGY-CLI-LIVE-02", message=f"SwarmProof Oracle validated candidate 2a4f6852 (Proof ID: {proof.proof_id})")
-    record_agent_signal("kai", "info", "review_ready", issue_id="GRO-5105", message="Kai task admitted to Review Factory (Risk Tier: T1, State: REVIEW_READY)")
+    record_agent_signal(agent="fred", severity="info", event_type="task_admitted", issue_id="TG-FRED-LIVE-01", message="Fred executing admitted Telegram Task in Topological Wave 1")
+    record_agent_signal(agent="agy", severity="info", event_type="proof_verified", issue_id="AGY-CLI-LIVE-02", message=f"SwarmProof Oracle validated candidate 2a4f6852 (Proof ID: {proof.proof_id})")
+    record_agent_signal(agent="kai", severity="info", event_type="review_ready", issue_id="GRO-5105", message="Kai task admitted to Review Factory (Risk Tier: T1, State: REVIEW_READY)")
 
     print("DRILL_SUCCESS: " + json.dumps({
         "tasks": [t1["identifier"], t2["identifier"], t3["identifier"]],
