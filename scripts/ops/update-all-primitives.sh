@@ -1,21 +1,36 @@
 #!/usr/bin/env bash
 # scripts/ops/update-all-primitives.sh
-# Updates all Swarm primitives (Swarmlock, SwarmCron, SwarmRouter, SwarmProof) from GitHub across all Python venvs and restarts services.
+# Updates all 16 Swarm primitives from GitHub across all Python venvs and restarts services.
 
 set -e
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "======================================================================"
-echo "🐝 Updating All Swarm Primitives from GitHub @main..."
+echo "🐝 Updating All 16 Swarm Primitives from GitHub @main..."
 echo "======================================================================"
 
 PRIMITIVES=(
+  # Phase 1 — Original Core
   "swarmlock"
   "swarmcron"
   "swarmrouter"
   "swarmcurator"
   "swarmproof"
+  "swarmgate"
+  "swarmledger"
+  "swarmsaga"
+  # Phase 2 — Core Expansion
+  "swarmmesh"
+  "swarmmemory"
+  "swarmcas"
+  # Phase 3 — Robustness
+  "swarmsandbox"
+  "swarmmerge"
+  "swarmmeter"
+  # Phase 4 — Enterprise
+  "swarmvault"
+  "swarmconsensus"
 )
 
 VENVS=(
@@ -46,5 +61,5 @@ if command -v systemctl >/dev/null 2>&1; then
 fi
 
 echo -e "\n======================================================================"
-echo "🎉 All Swarm Primitives updated and services reloaded successfully!"
+echo "🎉 All 16 Swarm Primitives updated and services reloaded successfully!"
 echo "======================================================================"

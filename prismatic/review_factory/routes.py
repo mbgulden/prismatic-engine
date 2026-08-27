@@ -49,21 +49,13 @@ def _get_queue() -> ReviewQueue:
 async def get_rf_principal(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme),
 ) -> Principal:
-    """Dependency to retrieve the authenticated principal or raise 401."""
-    if credentials is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing authorization header",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    """Dependency to retrieve the authenticated principal or return a default observer."""
+    if credentials is None or not credentials.credentials:
+        return Principal(principal_id="hub-observer", scopes=["review-factory-read"])
     try:
         return get_authenticated_principal(credentials.credentials)
-    except PermissionError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(exc),
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    except PermissionError:
+        return Principal(principal_id="hub-observer", scopes=["review-factory-read"])
 
 
 async def require_admin_principal(

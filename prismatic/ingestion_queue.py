@@ -352,6 +352,80 @@ def queue_payload(*, limit: int = 50, offset: int = 0, status: str | None = None
         "source": "linear_webhook_queue.db",
         "db_path": str(queue_db_path()),
     }
+    # Compute topological waves across pending/processing tasks
+    try:
+        from prismatic.curator.topological_waves import partition_topological_waves
+        pending_items = [normalize_row(r) for r in rows if normalize_status(r["dispatch_status"]) in ("pending", "processing", "queued")]
+        waves = partition_topological_waves(pending_items)
+        result["topological_waves"] = [w.to_dict() for w in waves]
+        result["active_wave_count"] = len(waves)
+    except Exception:
+        result["topological_waves"] = []
+        result["active_wave_count"] = 0
+    return result
+
+
+def enqueue_multi_channel_task(
+    *,
+    identifier: str,
+    channel: str = "telegram",
+    target_agent: str = "fred",
+    title: str = "",
+    affected_paths: list[str] | None = None,
+    depends_on: list[str] | None = None,
+    priority: int = 1,
+    raw_payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Enqueue a task from Telegram, AGY CLI, Hub UI, or Linear into durable queue DB."""
+    ensure_queue_db()
+    event_id = f"evt_{channel}_{uuid.uuid4().hex[:12]}"
+    now = time.time()
+    raw_data = raw_payload or {}
+    if affected_paths:
+        raw_data["affected_paths"] = affected_paths
+    if depends_on:
+        raw_data["depends_on"] = depends_on
+    raw_json = json.dumps(raw_data)
+
+    with _connect() as conn:
+        conn.execute(
+            f"""
+            INSERT INTO {QUEUE_TABLE} (
+                event_id, identifier, event_type, action, received_at,
+                raw_json, dispatch_status, target_agent, agent_name,
+                routing_source, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+            """,
+            (
+                event_id,
+                identifier,
+                f"task.{channel}",
+                "admit",
+                now,
+                raw_json,
+                target_agent,
+                target_agent,
+                channel,
+                now,
+            ),
+        )
+        conn.commit()
+        row = conn.execute(f"SELECT * FROM {QUEUE_TABLE} WHERE event_id = ?", (event_id,)).fetchone()
+
+    # Emit signal & trigger WebSocket broadcast
+    try:
+        from prismatic.agent_signal_stream import record_agent_signal
+        record_agent_signal(
+            agent=target_agent,
+            severity="info",
+            event_type="task_enqueued",
+            issue_id=identifier,
+            message=f"[{channel.upper()}] Enqueued task {identifier} ({title or 'Task'}) assigned to {target_agent}"
+        )
+    except Exception:
+        pass
+
+    return normalize_row(row)
 
 
 def queue_stats_payload(extra_counters: dict[str, int] | None = None) -> dict[str, Any]:

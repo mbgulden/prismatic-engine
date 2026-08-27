@@ -48,12 +48,31 @@ primitives = [
     "swarmcron @ git+https://github.com/mbgulden/swarmcron.git@main",
     "swarmrouter @ git+https://github.com/mbgulden/swarmrouter.git@main",
     "swarmcurator @ git+https://github.com/mbgulden/swarmcurator.git@main",
+    "swarmgate @ git+https://github.com/mbgulden/swarmgate.git@main",
+    "swarmledger @ git+https://github.com/mbgulden/swarmledger.git@main",
+    "swarmsaga @ git+https://github.com/mbgulden/swarmsaga.git@main",
 ]
 verification = [
     "swarmproof @ git+https://github.com/mbgulden/swarmproof.git@main",
 ]
+mesh = [
+    "swarmmesh @ git+https://github.com/mbgulden/swarmmesh.git@main",
+    "swarmmemory @ git+https://github.com/mbgulden/swarmmemory.git@main",
+    "swarmcas @ git+https://github.com/mbgulden/swarmcas.git@main",
+]
+robustness = [
+    "swarmsandbox @ git+https://github.com/mbgulden/swarmsandbox.git@main",
+    "swarmmerge @ git+https://github.com/mbgulden/swarmmerge.git@main",
+    "swarmmeter @ git+https://github.com/mbgulden/swarmmeter.git@main",
+]
+security = [
+    "swarmvault @ git+https://github.com/mbgulden/swarmvault.git@main",
+]
+consensus = [
+    "swarmconsensus @ git+https://github.com/mbgulden/swarmconsensus.git@main",
+]
 dev = ["build>=1.0", "pytest>=8.0", "pytest-asyncio>=0.23", "pytest-cov>=4.1", "ruff>=0.5,<0.16", "twine>=5.0"]
-all = ["prismatic-engine[http,redis,gateway,primitives,verification]"]
+all = ["prismatic-engine[http,redis,gateway,primitives,verification,mesh,robustness,security,consensus]"]
 release = ["prismatic-engine[all,dev]"]
 
 [project.urls]

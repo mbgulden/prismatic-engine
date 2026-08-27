@@ -5917,6 +5917,7 @@ from prismatic.deploy.routes import create_deploy_router  # noqa: E402
 _rf_router = create_review_factory_router()
 if _rf_router:
     app.include_router(_rf_router, prefix="/api/review-factory")
+    app.include_router(_rf_router, prefix="/api/gateway/review-factory")
 
 _ws_router = create_workspace_router()
 if _ws_router:

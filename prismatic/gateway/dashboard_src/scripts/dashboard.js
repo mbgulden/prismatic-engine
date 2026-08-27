@@ -5359,15 +5359,20 @@
             ws.onmessage = (e) => {
                 try {
                     const event = JSON.parse(e.data);
-                    if (["webhook_queued", "webhook_processing", "webhook_completed", "webhook_failed", "dispatcher_cycle"].includes(event.type) || (event.type && event.type.startsWith("review_factory_"))) {
+                    if (["webhook_queued", "webhook_processing", "webhook_completed", "webhook_failed", "dispatcher_cycle", "task_enqueued"].includes(event.type) || (event.type && (event.type.startsWith("review_factory_") || event.type.startsWith("task.")))) {
                         fetchData();
                         if (activeTab === "review-factory") {
                             loadReviewFactory();
+                        }
+                        if (activeTab === "ingestion-queue") {
+                            fetchWebhookQueue();
                         }
                     }
                     if (event.type === "swarmlock_status" && event.payload) {
                         renderSwarmLockCockpit(event.payload);
                         fetchDagTopology();
+                        if (activeTab === "review-factory") loadReviewFactory();
+                        if (activeTab === "ingestion-queue") fetchWebhookQueue();
                         const drawer = document.getElementById("swarmlock-history-drawer");
                         if (drawer && !drawer.classList.contains("hidden")) {
                             fetchSwarmLockHistory();
@@ -5380,6 +5385,12 @@
                         fetchDagTopology();
                         if (activeTab === "signals") {
                             renderSignalsView();
+                        }
+                        if (activeTab === "ingestion-queue") {
+                            fetchWebhookQueue();
+                        }
+                        if (activeTab === "review-factory") {
+                            loadReviewFactory();
                         }
                         addLocalSignal(agentId || event.type, sig.message || event.message || "Signal received", sig.severity || "info");
                     }
