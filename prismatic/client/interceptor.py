@@ -449,7 +449,7 @@ class HypervisorClient:
         delay = 0.3
         for attempt in range(max_retries):
             for candidate in self._candidates:
-                probe_timeout = min(2.5, timeout)
+                probe_timeout = timeout
                 res = _execute_transport_request(candidate, method, path, data, headers, timeout=probe_timeout)
                 if res is not None:
                     self._active_transport = candidate

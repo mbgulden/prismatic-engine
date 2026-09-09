@@ -19,6 +19,7 @@ Config:
 from __future__ import annotations
 
 import argparse
+import asyncio
 try:
     import fcntl
 except ImportError:
@@ -41,9 +42,31 @@ except ImportError:
 
 
 def _emit_lock_event(event_type: str, filepath: str, agent_id: str, **extra: Any) -> None:
-    """Emit a lock event to the IPC bridge (best-effort, no-op if unavailable)."""
+    """Emit a lock event to the IPC bridge or in-process event bus."""
     if not _HAS_IPC:
         return
+
+    # If running inside an active asyncio event loop, dispatch directly to EventBus
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        try:
+            from prismatic.gateway.event_bus import get_event_bus
+            bus = get_event_bus()
+            loop.create_task(
+                bus.publish(
+                    event_type=event_type,
+                    source=f"lock:{agent_id}",
+                    payload={"file": filepath, "agent": agent_id, **extra},
+                )
+            )
+            return
+        except Exception:
+            pass
+
     try:
         send_event_via_socket(
             event_type=event_type,
