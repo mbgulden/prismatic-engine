@@ -113,17 +113,38 @@ class ArchetypeRegistry:
         # Default to Software
         return Archetype.SOFTWARE
 
-    @staticmethod
-    def get_lead_agents(archetype: Archetype) -> list[str]:
-        """Return canonical team of agents for an archetype."""
+    @classmethod
+    def _resolve_agent_for_role(cls, preferred_id: str, fallback_id: str) -> str:
+        """Dynamically resolve an agent ID for a functional role via AgentDiscoveryService."""
+        try:
+            from prismatic.agents.discovery import AgentDiscoveryService
+            agent = AgentDiscoveryService.get_agent(preferred_id)
+            if agent:
+                return agent.agent_id
+            agent = AgentDiscoveryService.find_agent_for_role(preferred_id)
+            if agent:
+                return agent.agent_id
+        except Exception:
+            pass
+        return fallback_id
+
+    @classmethod
+    def get_lead_agents(cls, archetype: Archetype) -> list[str]:
+        """Return dynamically matched team of agents for an archetype."""
+        content_id = cls._resolve_agent_for_role("kai", "content_specialist")
+        compiler_id = cls._resolve_agent_for_role("ned", "compiler_engineer")
+        deploy_id = cls._resolve_agent_for_role("autobot", "deployer_engineer")
+        review_id = cls._resolve_agent_for_role("george", "review_sentinel")
+        orch_id = cls._resolve_agent_for_role("orchestrator", "fleet_orchestrator")
+
         if archetype == Archetype.WEB_PROPERTY:
-            return ["fred", "kai", "ned", "autobot", "george"]
+            return [orch_id, content_id, compiler_id, deploy_id, review_id]
         elif archetype == Archetype.OPERATIONS:
-            return ["fred", "kai", "autobot", "george"]
+            return [orch_id, content_id, deploy_id, review_id]
         elif archetype == Archetype.PUBLICATION:
-            return ["kai", "george", "fred"]
+            return [content_id, review_id, orch_id]
         else:  # SOFTWARE
-            return ["fred", "ned", "george", "autobot"]
+            return [orch_id, compiler_id, review_id, deploy_id]
 
     @classmethod
     def decompose(
@@ -139,29 +160,35 @@ class ArchetypeRegistry:
         contracts: list[ArchetypeContract] = []
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
 
+        content_id = cls._resolve_agent_for_role("kai", "content_specialist")
+        compiler_id = cls._resolve_agent_for_role("ned", "compiler_engineer")
+        deploy_id = cls._resolve_agent_for_role("autobot", "deployer_engineer")
+        review_id = cls._resolve_agent_for_role("george", "review_sentinel")
+        orch_id = cls._resolve_agent_for_role("orchestrator", "fleet_orchestrator")
+
         if arch == Archetype.WEB_PROPERTY:
             # Contract 1: Creative Brand Voice & Copywriting
             contracts.append(
                 ArchetypeContract(
-                    thread_id=f"{task_id}-kai-{ts}",
+                    thread_id=f"{task_id}-{content_id}-{ts}",
                     role="Creative Director & Content Architect",
-                    agent_id="kai",
+                    agent_id=content_id,
                     task_description=(
                         f"Author compelling, high-converting offer copy for '{prompt}'. "
                         "Draft Hero headline, value propositions, product/service tiers, and FAQ."
                     ),
                     allowed_paths=["src/content/", "src/copy/", "deliverables/content.json"],
                     deliverable_keys=["hero_copy", "product_catalog", "faq_items", "meta_description"],
-                    required_reviewers=["george", "fred"],
+                    required_reviewers=[review_id, orch_id],
                 )
             )
 
             # Contract 2: Web Compiler & Integration
             contracts.append(
                 ArchetypeContract(
-                    thread_id=f"{task_id}-ned-{ts}",
+                    thread_id=f"{task_id}-{compiler_id}-{ts}",
                     role="PWP Web Compiler & Integration Engineer",
-                    agent_id="ned",
+                    agent_id=compiler_id,
                     task_description=(
                         f"Compile high-performance, mobile-first responsive HTML/UI templates for '{prompt}'. "
                         "Wire checkout/pricing hooks, responsive layouts, and accessible UI controls. "
@@ -169,32 +196,32 @@ class ArchetypeRegistry:
                     ),
                     allowed_paths=["src/pages/", "src/components/", "deliverables/site.html", "deliverables/checkout.json"],
                     deliverable_keys=["site_html", "checkout_config", "responsive_css"],
-                    required_reviewers=["george"],
+                    required_reviewers=[review_id],
                 )
             )
 
             # Contract 3: SEO & Edge Deployment
             contracts.append(
                 ArchetypeContract(
-                    thread_id=f"{task_id}-autobot-{ts}",
+                    thread_id=f"{task_id}-{deploy_id}-{ts}",
                     role="Deployment & SEO Automation Engineer",
-                    agent_id="autobot",
+                    agent_id=deploy_id,
                     task_description=(
                         f"Generate Schema.org structured data (Organization / WebSite / Product) for '{prompt}'. "
                         "Configure edge hosting headers, SSL termination, and run 375px mobile audit."
                     ),
                     allowed_paths=["public/schema.json", "deliverables/schema_ld.json", "wrangler.toml"],
                     deliverable_keys=["schema_ld", "edge_config", "mobile_audit_passed"],
-                    required_reviewers=["george"],
+                    required_reviewers=[review_id],
                 )
             )
 
-            # Contract 4: George — Security & Anti-Weakening Reviewer
+            # Contract 4: Security & Anti-Weakening Reviewer
             contracts.append(
                 ArchetypeContract(
-                    thread_id=f"{task_id}-george-{ts}",
+                    thread_id=f"{task_id}-{review_id}-{ts}",
                     role="Audit & Anti-Weakening Sentinel",
-                    agent_id="george",
+                    agent_id=review_id,
                     task_description=(
                         "Audit generated deliverables against security gates, XSS boundaries, valid JSON schemas, "
                         "and verify mobile layout at 375px viewport."
@@ -202,57 +229,57 @@ class ArchetypeRegistry:
                     allowed_paths=["reports/audit.json"],
                     read_only_paths=["deliverables/"],
                     deliverable_keys=["audit_attestation", "security_passed"],
-                    required_reviewers=["fred"],
+                    required_reviewers=[orch_id],
                 )
             )
 
         elif arch == Archetype.SOFTWARE:
             contracts.append(
                 ArchetypeContract(
-                    thread_id=f"{task_id}-ned-{ts}",
+                    thread_id=f"{task_id}-{compiler_id}-{ts}",
                     role="Backend Architecture & API Engineer",
-                    agent_id="ned",
+                    agent_id=compiler_id,
                     task_description=f"Implement core backend API endpoints, domain models, and schemas for: {prompt}",
                     allowed_paths=["src/", "api/", "tests/"],
                     deliverable_keys=["api_code", "schemas", "test_suite"],
-                    required_reviewers=["george"],
+                    required_reviewers=[review_id],
                 )
             )
             contracts.append(
                 ArchetypeContract(
-                    thread_id=f"{task_id}-george-{ts}",
+                    thread_id=f"{task_id}-{review_id}-{ts}",
                     role="Test Oracle & Anti-Weakening Reviewer",
-                    agent_id="george",
+                    agent_id=review_id,
                     task_description="Execute test suite, verify AST anti-weakening invariants, and prove code safety.",
                     allowed_paths=["tests/", "reports/"],
                     deliverable_keys=["test_results", "ast_proof"],
-                    required_reviewers=["fred"],
+                    required_reviewers=[orch_id],
                 )
             )
 
         elif arch == Archetype.OPERATIONS:
             contracts.append(
                 ArchetypeContract(
-                    thread_id=f"{task_id}-fred-{ts}",
+                    thread_id=f"{task_id}-{orch_id}-{ts}",
                     role="Executive Operations & Legal Architect",
-                    agent_id="fred",
+                    agent_id=orch_id,
                     task_description=f"Draft commercial operating agreements, merchant terms, and compliance matrix for: {prompt}",
                     allowed_paths=["docs/legal/", "config/pricing/"],
                     deliverable_keys=["operating_agreement", "terms_of_service", "pricing_matrix"],
-                    required_reviewers=["george"],
+                    required_reviewers=[review_id],
                 )
             )
 
         elif arch == Archetype.PUBLICATION:
             contracts.append(
                 ArchetypeContract(
-                    thread_id=f"{task_id}-kai-{ts}",
+                    thread_id=f"{task_id}-{content_id}-{ts}",
                     role="Lead Research Metabolizer & Author",
-                    agent_id="kai",
+                    agent_id=content_id,
                     task_description=f"Produce comprehensive deep-dive publication and E-E-A-T knowledge synthesis for: {prompt}",
                     allowed_paths=["docs/publications/", "reports/"],
                     deliverable_keys=["manuscript_md", "executive_summary", "citation_ledger"],
-                    required_reviewers=["george"],
+                    required_reviewers=[review_id],
                 )
             )
 

@@ -3303,18 +3303,48 @@
             tabsBox.innerHTML = html;
         }
 
+        function renderFleetPulseCards(agents) {
+            const container = document.getElementById("fleet-pulse-cards-container");
+            if (!container) return;
+            if (!agents || !agents.length) {
+                container.innerHTML = `<div class="p-6 rounded-xl bg-slate-950/70 border border-slate-800 text-center col-span-full text-slate-500 font-mono text-xs">No active agent nodes discovered.</div>`;
+                return;
+            }
+            container.innerHTML = agents.slice(0, 12).map(ag => {
+                const aid = ag.agent_id || "agent";
+                const isExecuting = ag.status && (ag.status.toLowerCase().includes("active") || ag.status.toLowerCase().includes("executing"));
+                const statusColor = isExecuting ? "text-cyan-400" : (ag.status && ag.status.toLowerCase().includes("error") ? "text-rose-400" : "text-emerald-400");
+                const statusLabel = ag.status || "Online";
+
+                return `
+                    <div class="p-4 rounded-xl bg-slate-950/70 border border-slate-800 space-y-2 hover:border-slate-700 transition" data-agent-card="${escapeHtml(aid)}">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-bold text-slate-200 font-mono flex items-center gap-1.5">
+                                <span>${ag.icon || '🤖'}</span><span>${escapeHtml(ag.name || aid)}</span>
+                            </span>
+                            <span class="px-2 py-0.5 rounded text-[10px] font-mono bg-indigo-950/60 text-indigo-300 border border-indigo-800/60">${escapeHtml(ag.role || 'Agent')}</span>
+                        </div>
+                        <p class="text-[11px] text-slate-400 line-clamp-2">${escapeHtml(ag.current_resource ? 'Lease: ' + ag.current_resource : (ag.active_model && ag.active_model !== 'auto' ? 'Model: ' + ag.active_model : (ag.role || 'Ready for tasks')))}</p>
+                        <div class="text-[10px] font-mono text-slate-500 pt-1 border-t border-slate-900 flex justify-between">
+                            <span>Host: ${escapeHtml(ag.host || 'local')}</span>
+                            <span class="${statusColor}">${escapeHtml(statusLabel)}</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
         function renderSignalPanes(payload) {
             latestSignalsPayload = payload || latestSignalsPayload || { items: [], by_agent: {}, counts: {} };
             const panes = document.getElementById('signals-agent-panes');
             if (!panes) return;
 
             const knownAgents = discoveredAgentsList.length ? discoveredAgentsList : [
-                { agent_id: 'agy', name: 'Antigravity (AGY)', icon: '⚡', active_model: 'gemini-2.5-pro', status: 'idle' },
-                { agent_id: 'hermes', name: 'Hermes Orchestrator', icon: '🌐', active_model: 'claude-3-7-sonnet', status: 'idle' },
-                { agent_id: 'kai', name: 'Kai (UI Specialist)', icon: '🎨', active_model: 'claude-3-7-sonnet', status: 'idle' },
-                { agent_id: 'fred', name: 'Fred (TDD Specialist)', icon: '⚙️', active_model: 'claude-3-7-sonnet', status: 'idle' },
-                { agent_id: 'george', name: 'George (Peer Reviewer)', icon: '🛡️', active_model: 'gpt-4o', status: 'idle' },
-                { agent_id: 'autobot', name: 'Autobot (CI Worker)', icon: '🤖', active_model: 'deepseek-r1', status: 'idle' }
+                { agent_id: 'orchestrator', name: 'Fleet Orchestrator', icon: '👑', active_model: 'auto', status: 'idle' },
+                { agent_id: 'architect', name: 'Systems Architect', icon: '⚙️', active_model: 'auto', status: 'idle' },
+                { agent_id: 'builder', name: 'Implementation Specialist', icon: '🛠️', active_model: 'auto', status: 'idle' },
+                { agent_id: 'reviewer', name: 'Quality Sentinel', icon: '🛡️', active_model: 'auto', status: 'idle' },
+                { agent_id: 'deployer', name: 'Edge Deployer', icon: '🚀', active_model: 'auto', status: 'idle' }
             ];
 
             const byAgent = latestSignalsPayload.by_agent || {};
@@ -3875,10 +3905,20 @@
 
                 if (agentsRes && agentsRes.ok) {
                     const agentData = await agentsRes.json();
-                    discoveredAgentsList = agentData.agents || [];
+                    if (Array.isArray(agentData.agents)) {
+                        discoveredAgentsList = agentData.agents;
+                    } else if (agentData.agents && typeof agentData.agents === 'object') {
+                        discoveredAgentsList = Object.entries(agentData.agents).map(([aid, a]) => ({
+                            agent_id: aid,
+                            ...(typeof a === 'object' ? a : { name: a })
+                        }));
+                    } else {
+                        discoveredAgentsList = [];
+                    }
                     const totalEl = document.getElementById("sig-metric-total");
                     if (totalEl) totalEl.textContent = discoveredAgentsList.length;
                     renderAgentTabs(discoveredAgentsList);
+                    renderFleetPulseCards(discoveredAgentsList);
                 }
 
                 if (signalsRes && signalsRes.ok) {

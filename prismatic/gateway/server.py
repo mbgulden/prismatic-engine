@@ -537,26 +537,12 @@ _ws_clients: set[WebSocket] = set()
 
 # ── Agent Dashboard API ─────────────────────────────────────────────
 
-_AGENT_DEFAULTS: dict[str, dict[str, str]] = {
-    "agy": {"name": "AGY", "role": "Vision & Research CLI"},
-    "jules": {"name": "Jules", "role": "Async Git & PR Agent"},
-    "fred": {"name": "Fred", "role": "Nudge/Staging Governor"},
-    "ned": {"name": "Ned", "role": "Research & Synthesis"},
-    "kai": {"name": "Kai", "role": "Tourism Orchestrator"},
-    "codex": {"name": "Codex", "role": "Coding Executor"},
-}
-
 
 def _agent_key(name: str | None) -> str:
     """Normalize agent/profile names for dashboard keys."""
-    key = (name or "unknown").strip().lower().replace("agent:", "")
-    aliases = {
-        "agy-cli": "agy",
-        "kai-content": "kai",
-        "kai-css": "kai",
-        "kai-js": "kai",
-    }
-    return aliases.get(key, key)
+    if not name:
+        return "unknown"
+    return name.strip().lower().replace("agent:", "").replace(" ", "-")
 
 
 def _read_agent_registry() -> dict[str, Any]:
@@ -635,23 +621,34 @@ async def gateway_agents_delete(agent_id: str) -> dict[str, Any]:
     return {"ok": deleted, "agent_id": agent_id}
 
 @app.get("/api/agents")
+@app.get("/api/gateway/agents")
 async def get_agents() -> dict[str, Any]:
-    """Return live agent status from registry plus recent run records."""
+    """Return live agent status dynamically discovered across profiles, registry, and mesh."""
+    from prismatic.agents.discovery import AgentDiscoveryService
+
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    agents: dict[str, dict[str, Any]] = {
-        key: {
-            "name": meta["name"],
-            "role": meta["role"],
-            "status": "Unknown",
-            "last_seen": None,
+    discovered = AgentDiscoveryService.get_agents()
+    agents: dict[str, dict[str, Any]] = {}
+    for prof in discovered:
+        agents[prof.agent_id] = {
+            "name": prof.name,
+            "role": prof.role,
+            "status": prof.status.title(),
+            "last_seen": prof.last_seen,
+            "host": prof.host,
+            "active_model": prof.active_model,
+            "model_provider": prof.model_provider,
+            "capabilities": prof.capabilities,
+            "icon": prof.icon,
+            "source": prof.source,
+            "current_issue": prof.current_issue,
+            "current_resource": prof.current_resource,
             "dispatched": 0,
             "duration": "—",
             "dedup": "—",
             "queue": [],
             "logs": [],
         }
-        for key, meta in _AGENT_DEFAULTS.items()
-    }
 
     registry = _read_agent_registry()
     for raw_name, info in registry.items():
@@ -3790,12 +3787,14 @@ async def gateway_agents_status() -> dict[str, Any]:
 
 @app.get("/api/gateway/agents/governance-status")
 async def gateway_agents_governance_status() -> dict[str, Any]:
-    """Return no-side-effect Kai/Fred governance status for the dashboard."""
+    """Return no-side-effect fleet governance status for the dashboard."""
     from prismatic.agent_governance_status import build_agent_governance_status
+    from prismatic.agents.discovery import AgentDiscoveryService
 
     inputs = _dashboard_agent_inputs()
+    discovered_ids = tuple(a.agent_id for a in AgentDiscoveryService.get_agents()[:6])
     return build_agent_governance_status(
-        agents=("kai", "fred"),
+        agents=discovered_ids or ("orchestrator", "architect"),
         run_records=inputs["run_records"],
         registry=inputs["registry"],
     )
