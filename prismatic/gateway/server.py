@@ -4442,6 +4442,107 @@ async def gateway_nudge_agent(body: dict[str, Any]) -> dict[str, Any]:
     return {"ok": True, "nudge": item}
 
 
+# ── Swarm 7-Step Loop & Deliverables API (Phase 4 / Sprint 3) ──────────────
+
+
+@app.post("/api/swarm/decompose")
+@app.post("/api/gateway/swarm/decompose")
+async def gateway_swarm_decompose(body: dict[str, Any]) -> dict[str, Any]:
+    """Step 1: Decompose a high-level vision into typed Archetype contracts."""
+    from prismatic.swarm.archetypes import Archetype, ArchetypeRegistry
+
+    prompt = body.get("prompt", "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Missing 'prompt'")
+
+    arch_str = body.get("archetype")
+    arch = Archetype(arch_str) if arch_str in [a.value for a in Archetype] else None
+    task_id = body.get("task_id", "GRO-4854")
+
+    contracts = ArchetypeRegistry.decompose(prompt, archetype=arch, task_id=task_id, options=body.get("options"))
+    detected = arch or ArchetypeRegistry.detect_archetype(prompt)
+    return {
+        "ok": True,
+        "archetype": detected.value,
+        "contracts": [c.to_dict() for c in contracts],
+        "total_contracts": len(contracts),
+    }
+
+
+@app.post("/api/swarm/run")
+@app.post("/api/gateway/swarm/run")
+@app.post("/api/gateway/studio/manifest")
+async def gateway_swarm_run(body: dict[str, Any]) -> dict[str, Any]:
+    """Execute the full 7-step iterative loop autonomously to manifest a living deliverable."""
+    from prismatic.swarm.loop_runner import SwarmLoopRunner
+
+    prompt = body.get("prompt", "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Missing 'prompt'")
+
+    task_id = body.get("task_id", "GRO-4854")
+    target_domain = body.get("target_domain", "activeoahu.growthwebdev.com")
+    voice = body.get("voice", "kai")
+
+    runner = SwarmLoopRunner(task_id=task_id)
+    result = runner.run(
+        prompt=prompt,
+        target_domain=target_domain,
+        voice=voice,
+        options=body.get("options"),
+    )
+
+    # Broadcast completion to WebSocket
+    await broadcast_ws_json({
+        "type": "swarm.manifestation_completed",
+        "task_id": task_id,
+        "project_slug": (result.deliverable or {}).get("project_slug"),
+        "deliverable": result.deliverable,
+    })
+
+    return {"ok": True, "result": result.to_dict()}
+
+
+@app.get("/api/swarm/deliverables")
+@app.get("/api/gateway/swarm/deliverables")
+@app.get("/api/gateway/deliverables")
+async def gateway_list_deliverables() -> dict[str, Any]:
+    """Return all manifested tangible project deliverables."""
+    from prismatic.swarm.loop_runner import load_all_deliverables
+
+    items = load_all_deliverables()
+    return {"ok": True, "total": len(items), "deliverables": items}
+
+
+@app.get("/api/deliverables/{project_slug}")
+@app.get("/api/gateway/deliverables/{project_slug}")
+async def gateway_get_deliverable(project_slug: str) -> dict[str, Any]:
+    """Return metadata and artifacts for a single manifested project."""
+    from prismatic.swarm.loop_runner import get_deliverable_by_slug
+
+    deliv = get_deliverable_by_slug(project_slug)
+    if not deliv:
+        raise HTTPException(status_code=404, detail=f"Deliverable '{project_slug}' not found")
+    return {"ok": True, "deliverable": deliv}
+
+
+@app.get("/api/deliverables/{project_slug}/preview", response_class=HTMLResponse)
+@app.get("/api/gateway/deliverables/{project_slug}/preview", response_class=HTMLResponse)
+async def gateway_preview_deliverable(project_slug: str) -> HTMLResponse:
+    """Serve the live compiled HTML bundle for an asset preview iframe."""
+    from prismatic.swarm.loop_runner import get_deliverable_by_slug
+
+    deliv = get_deliverable_by_slug(project_slug)
+    if not deliv:
+        raise HTTPException(status_code=404, detail=f"Deliverable '{project_slug}' not found")
+
+    html = (deliv.get("artifacts") or {}).get("html_bundle")
+    if not html:
+        raise HTTPException(status_code=404, detail=f"No HTML bundle compiled for '{project_slug}'")
+
+    return HTMLResponse(content=html, status_code=200)
+
+
 @app.post("/api/control/pause")
 @app.post("/api/gateway/control/pause")
 async def gateway_control_pause(body: dict[str, Any] | None = None) -> dict[str, Any]:

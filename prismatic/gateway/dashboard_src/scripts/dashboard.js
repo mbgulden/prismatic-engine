@@ -5949,60 +5949,56 @@
 
             if (btn) btn.disabled = true;
             if (statusCard) statusCard.classList.remove('hidden');
-            if (urlLink) {
-                urlLink.href = `https://${targetDomain}`;
-                urlLink.textContent = `https://${targetDomain}`;
-            }
+
+            if (stageBadge) stageBadge.textContent = "Step 1: DECOMPOSE (Fred)";
+            if (stepText) stepText.textContent = "Fred decomposing high-level vision into atomic agent lanes...";
+            if (progressBar) progressBar.style.width = "20%";
+            if (percentText) percentText.textContent = "20%";
 
             try {
-                await fetch("/api/gateway/signals/emit", {
+                const resp = await fetch("/api/gateway/studio/manifest", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({
-                        source: "creator_studio",
-                        action: "manifestation_dispatched",
-                        level: "INFO",
-                        details: {
-                            prompt_preview: promptText.slice(0, 100),
-                            target_domain: targetDomain,
-                            voice_profile: voice,
-                            linear_issue: "GRO-4851"
-                        }
+                        prompt: promptText,
+                        target_domain: targetDomain,
+                        voice: voice,
+                        task_id: "GRO-4854"
                     })
                 });
-            } catch (err) {
-                console.debug("Signal emit error:", err);
-            }
 
-            showToast("✨ Manifestation dispatched to Autonomous Fleet!");
+                if (stageBadge) stageBadge.textContent = "Step 3: EXECUTE (Kai + Ned)";
+                if (stepText) stepText.textContent = "Kai & Ned compiling Astro AST, Tailwind tokens, and Stripe checkout...";
+                if (progressBar) progressBar.style.width = "60%";
+                if (percentText) percentText.textContent = "60%";
 
-            if (stageBadge) stageBadge.textContent = "Fred (Orchestrating)";
-            if (stepText) stepText.textContent = "Fred decomposing high-level vision into atomic agent lanes...";
-            if (progressBar) progressBar.style.width = "25%";
-            if (percentText) percentText.textContent = "25%";
+                const data = await resp.json();
+                const deliv = (data.result && data.result.deliverable) || {};
+                const previewUrl = deliv.preview_url || `/api/deliverables/${deliv.project_slug || 'active-oahu'}/preview`;
 
-            setTimeout(() => {
-                if (stageBadge) stageBadge.textContent = "Kai (Content & Voice)";
-                if (stepText) stepText.textContent = "Kai authoring authentic Oahu rental copy, Hawaiian diacritics & SEO schema...";
-                if (progressBar) progressBar.style.width = "55%";
-                if (percentText) percentText.textContent = "55%";
-            }, 1200);
-
-            setTimeout(() => {
-                if (stageBadge) stageBadge.textContent = "Ned (PWP Compilation)";
-                if (stepText) stepText.textContent = "Ned compiling Astro AST, Tailwind tokens, and Stripe checkout hooks...";
-                if (progressBar) progressBar.style.width = "85%";
-                if (percentText) percentText.textContent = "85%";
-            }, 2500);
-
-            setTimeout(() => {
-                if (stageBadge) stageBadge.textContent = "Autobot (Cloudflare)";
-                if (stepText) stepText.textContent = `Asset live on Cloudflare Edge at https://${targetDomain}`;
+                if (stageBadge) stageBadge.textContent = "Step 7: INTEGRATE (Fred)";
+                if (stepText) stepText.textContent = `Asset live at ${targetDomain} (Compiled in ${data.result ? data.result.duration_seconds : 0.1}s)`;
                 if (progressBar) progressBar.style.width = "100%";
                 if (percentText) percentText.textContent = "100%";
+
+                if (urlLink) {
+                    urlLink.href = previewUrl;
+                    urlLink.textContent = `https://${targetDomain}`;
+                }
+
+                // Update preview iframe to live compiled deliverable
+                const iframe = document.getElementById('asset-preview-iframe');
+                if (iframe) {
+                    iframe.src = previewUrl;
+                }
+
+                showToast("🚀 7-Step Swarm Loop Complete! Living Reality Manifested.");
+            } catch (err) {
+                console.error("Manifestation error:", err);
+                showToast("Manifestation dispatch error: " + err.message, true);
+            } finally {
                 if (btn) btn.disabled = false;
-                showToast("🚀 Site scaffolded and live in Deployed Assets!");
-            }, 3800);
+            }
         }
 
         /* =========================================================================
@@ -6025,12 +6021,23 @@
             }
         }
 
-        function refreshDeployedAssets() {
+        async function refreshDeployedAssets() {
             const iframe = document.getElementById('asset-preview-iframe');
             if (iframe) {
-                const currentSrc = iframe.src;
-                iframe.src = '';
-                setTimeout(() => { iframe.src = currentSrc; }, 50);
+                try {
+                    const res = await fetch("/api/gateway/deliverables");
+                    const data = await res.json();
+                    if (data.deliverables && data.deliverables.length > 0) {
+                        const first = data.deliverables[0];
+                        if (first.preview_url) {
+                            iframe.src = first.preview_url;
+                        }
+                    }
+                } catch (e) {
+                    const currentSrc = iframe.src;
+                    iframe.src = '';
+                    setTimeout(() => { iframe.src = currentSrc; }, 50);
+                }
             }
             showToast("Deployed assets & live viewports refreshed.");
         }
