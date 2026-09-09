@@ -303,8 +303,28 @@ def dispatch_local_tasks(dedup: Any, local_task_queue: Any | None = None) -> int
                 f"[dispatcher] 🚫 Handoff preflight {preflight.status} "
                 f"for local task {task.id}: {preflight.reason}"
             )
-            continue
+        # Validate node affinity if specified
+        task_meta = getattr(task, "metadata", None)
+        if isinstance(task_meta, dict):
+            affinity = extract_node_affinity(task_meta)
+            if affinity:
+                aff_ok, aff_reason = check_node_affinity(affinity)
+                if not aff_ok:
+                    local_task_queue.update_status(
+                        task.id,
+                        "blocked",
+                        metadata_patch={
+                            "handoff_preflight_status": "blocked",
+                            "handoff_preflight_reason": f"node affinity failed: {aff_reason}",
+                        },
+                    )
+                    print(
+                        f"[dispatcher] 🚫 Node affinity check failed for local task {task.id}: {aff_reason}"
+                    )
+                    continue
+
         launcher = AGENT_LAUNCHERS.get(task.agent)
+
         if not launcher:
             continue
         result = launcher(task.id, title=task.title, workspace=task.workspace)
@@ -2679,6 +2699,103 @@ def resolve_assigned_agent(row_or_payload: dict[str, Any]) -> AssignedAgentResol
     )
 
 
+def extract_node_affinity(payload_or_row: dict[str, Any]) -> str | None:
+    """Extract requested node affinity (e.g. 'webtop-hermes', 'lightbringer-windows', 'any') from task/event."""
+    if not isinstance(payload_or_row, dict):
+        return None
+
+    # 1. Direct keys
+    for key in ("node_affinity", "affinity", "node", "target_node"):
+        val = payload_or_row.get(key)
+        if val and isinstance(val, str) and val.strip():
+            return val.strip().lower()
+
+    # 2. Metadata nested dict
+    meta = payload_or_row.get("metadata")
+    if isinstance(meta, dict):
+        for key in ("node_affinity", "affinity", "node", "target_node"):
+            val = meta.get(key)
+            if val and isinstance(val, str) and val.strip():
+                return val.strip().lower()
+
+    # 3. Data nested dict
+    data = payload_or_row.get("data")
+    if isinstance(data, dict):
+        for key in ("node_affinity", "affinity", "node", "target_node"):
+            val = data.get(key)
+            if val and isinstance(val, str) and val.strip():
+                return val.strip().lower()
+
+    # 4. Labels in payload/data
+    labels_obj = payload_or_row.get("labels") or (isinstance(data, dict) and data.get("labels"))
+    label_names: list[str] = []
+    if isinstance(labels_obj, list):
+        for item in labels_obj:
+            if isinstance(item, dict):
+                label_names.append(str(item.get("name", "")))
+            elif isinstance(item, str):
+                label_names.append(item)
+    elif isinstance(labels_obj, dict):
+        nodes = labels_obj.get("nodes", [])
+        if isinstance(nodes, list):
+            for item in nodes:
+                if isinstance(item, dict):
+                    label_names.append(str(item.get("name", "")))
+                elif isinstance(item, str):
+                    label_names.append(item)
+
+    for lname in label_names:
+        lname_clean = lname.strip().lower().replace("::", ":")
+        if lname_clean.startswith("node:") or lname_clean.startswith("affinity:"):
+            return lname_clean.split(":", 1)[1].strip()
+        if lname_clean.startswith("node-"):
+            return lname_clean[5:].strip()
+
+    return None
+
+
+def check_node_affinity(node_affinity: str | None) -> tuple[bool, str]:
+    """Check whether the requested node affinity is online and valid in the distributed mesh.
+
+    Returns (allowed, reason).
+    Allowed affinities:
+      - None, '', 'any', 'all', '*': always allowed.
+      - Hostname/IP: matches online nodes in /api/mesh/nodes or Tailscale LocalAPI.
+    """
+    if not node_affinity or node_affinity.strip().lower() in {"", "any", "all", "none", "*"}:
+        return (True, "affinity: any node accepted")
+
+    target = node_affinity.strip().lower()
+
+    try:
+        from prismatic.mesh.tailscale import get_tailscale_mesh_client
+        client = get_tailscale_mesh_client()
+        nodes = client.list_nodes_sync()
+        for node in nodes:
+            node_host = (node.hostname or "").lower()
+            node_dns = (node.dns_name or "").lower()
+            node_ips = [ip.lower() for ip in node.tailscale_ips]
+            if target == node_host or target in node_host or node_host in target or target == node_dns or target in node_ips:
+                if node.online:
+                    return (True, f"affinity target node '{node.hostname}' is online in mesh")
+                else:
+                    return (False, f"affinity target node '{node.hostname}' is offline in mesh")
+
+        # Check local hostname fallback
+        import socket
+        local_host = socket.gethostname().lower()
+        if target in local_host or local_host in target:
+            return (True, f"affinity target node '{target}' matches local host '{local_host}'")
+
+        return (False, f"affinity target node '{target}' not found in mesh")
+    except Exception as exc:
+        import socket
+        local_host = socket.gethostname().lower()
+        if target in local_host or local_host in target:
+            return (True, f"affinity target node '{target}' matches local host '{local_host}' (mesh check fallback: {exc})")
+        return (False, f"mesh node check failed: {exc}")
+
+
 def preflight_assigned_agent(
     row: dict[str, Any],
     resolution: AssignedAgentResolution,
@@ -2706,6 +2823,16 @@ def preflight_assigned_agent(
         )
     launcher_map = launchers or AGENT_LAUNCHERS
     payload = _assigned_agent_payload(row)
+
+    # Validate node affinity target in distributed mesh
+    affinity = extract_node_affinity(row) or extract_node_affinity(payload)
+    if affinity:
+        aff_ok, aff_reason = check_node_affinity(affinity)
+        if not aff_ok:
+            return AssignedAgentPreflight(
+                "blocked_preflight", False, f"node affinity check failed: {aff_reason}"
+            )
+
     handoff_result = handoff_dispatch_preflight(
         payload, agent, str(row.get("identifier") or "")
     )
@@ -2758,6 +2885,7 @@ def preflight_assigned_agent(
             "blocked_preflight", False, f"rate-limit gate unavailable: {exc}"
         )
     return AssignedAgentPreflight("passed", True, "ok")
+
 
 
 def dispatch_assigned_agent_event(

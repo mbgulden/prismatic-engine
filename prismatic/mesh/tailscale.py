@@ -186,6 +186,20 @@ class TailscaleMeshClient:
 
         return nodes
 
+    def list_nodes_sync(self) -> list[TailscaleNode]:
+        """Synchronous wrapper around list_nodes for non-async contexts."""
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(lambda: asyncio.run(self.list_nodes()))
+                    return future.result(timeout=self.timeout_seconds + 2.0)
+            else:
+                return loop.run_until_complete(self.list_nodes())
+        except RuntimeError:
+            return asyncio.run(self.list_nodes())
+
     async def whois(self, addr: str) -> TailscalePeerIdentity | None:
         """Resolve IP address to authenticated Tailscale peer identity with TTL caching."""
         # Strip port if present

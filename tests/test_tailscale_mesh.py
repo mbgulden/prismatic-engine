@@ -55,7 +55,7 @@ def test_tailscale_ip_detection():
 # 2. Cross-Platform Fallback & Offline Resilience (Invariant 1)
 # -----------------------------------------------------------------------------
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_mesh_client_graceful_offline_degradation():
     """Client must never crash when daemon socket is absent and CLI fails."""
     client = TailscaleMeshClient(socket_paths=[Path("/nonexistent/tailscaled.sock")])
@@ -76,7 +76,7 @@ async def test_mesh_client_graceful_offline_degradation():
         assert "binary not found" in ping_res["error"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_mesh_client_cli_fallback():
     """When Unix domain socket is absent, falls back to CLI output."""
     client = TailscaleMeshClient(socket_paths=[Path("/nonexistent/tailscaled.sock")])
@@ -122,7 +122,7 @@ async def test_mesh_client_cli_fallback():
 # 3. Async Non-Blocking /whois with TTL Caching (Invariant 2)
 # -----------------------------------------------------------------------------
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_whois_ttl_caching():
     """Subsequent lookups within TTL must be served from cache without extra calls."""
     client = TailscaleMeshClient(socket_paths=[Path("/nonexistent/tailscaled.sock")], ttl_seconds=60.0)

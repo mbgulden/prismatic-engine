@@ -25,6 +25,7 @@ import html
 import json
 import logging
 import os
+import socket
 import sys
 import threading
 import time
@@ -297,10 +298,90 @@ def _prune_terminal_linear_pending(
     return active, pruned, retained
 
 
+class GatewayUdsProxy:
+    """Proxies HTTP connections from a local Unix Domain Socket to the local TCP port."""
+
+    def __init__(self, socket_path: str = "/tmp/prismatic-gateway.sock", target_port: int = 9000) -> None:
+        self.socket_path = socket_path
+        self.target_port = target_port
+        self.server: asyncio.AbstractServer | None = None
+
+    async def start(self) -> None:
+        if os.name == "nt" or not hasattr(socket, "AF_UNIX"):
+            logger.debug("Unix domain sockets not supported on this platform; skipping Gateway UDS proxy")
+            return
+        try:
+            if os.path.exists(self.socket_path):
+                try:
+                    os.unlink(self.socket_path)
+                except OSError:
+                    pass
+            sock_dir = os.path.dirname(self.socket_path)
+            if sock_dir and not os.path.exists(sock_dir):
+                os.makedirs(sock_dir, exist_ok=True)
+            self.server = await asyncio.start_unix_server(self._handle_client, path=self.socket_path)
+            try:
+                os.chmod(self.socket_path, 0o666)
+            except OSError:
+                pass
+            logger.info("Gateway HTTP UDS proxy active on %s -> 127.0.0.1:%d", self.socket_path, self.target_port)
+        except Exception as exc:
+            logger.warning("Could not start Gateway UDS proxy on %s: %s", self.socket_path, exc)
+
+    async def _handle_client(self, client_reader: asyncio.StreamReader, client_writer: asyncio.StreamWriter) -> None:
+        try:
+            target_reader, target_writer = await asyncio.open_connection("127.0.0.1", self.target_port)
+            async def forward(src: asyncio.StreamReader, dst: asyncio.StreamWriter) -> None:
+                try:
+                    while True:
+                        data = await src.read(65536)
+                        if not data:
+                            break
+                        dst.write(data)
+                        await dst.drain()
+                except Exception:
+                    pass
+                finally:
+                    try:
+                        dst.close()
+                        await dst.wait_closed()
+                    except Exception:
+                        pass
+            await asyncio.gather(
+                forward(client_reader, target_writer),
+                forward(target_reader, client_writer),
+            )
+        except Exception:
+            pass
+        finally:
+            try:
+                client_writer.close()
+                await client_writer.wait_closed()
+            except Exception:
+                pass
+
+    async def stop(self) -> None:
+        if self.server:
+            self.server.close()
+            try:
+                await self.server.wait_closed()
+            except Exception:
+                pass
+            self.server = None
+            if os.path.exists(self.socket_path):
+                try:
+                    os.unlink(self.socket_path)
+                except OSError:
+                    pass
+
+
+_uds_proxy: GatewayUdsProxy | None = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifecycle manager for EventBus, IPC bridge, WebSocket broadcaster, and store."""
-    global _started_at, _run_store, _ipc_listener
+    global _started_at, _run_store, _ipc_listener, _uds_proxy
 
     _started_at = time.time()
 
@@ -310,6 +391,11 @@ async def lifespan(app: FastAPI):
     # Start IPC bridge Unix socket listener
     _ipc_listener = UnixSocketListener()
     await _ipc_listener.start()
+
+    # Start Gateway HTTP Unix socket proxy
+    port = int(os.environ.get("PRISMATIC_PORT", "9000"))
+    _uds_proxy = GatewayUdsProxy(socket_path="/tmp/prismatic-gateway.sock", target_port=port)
+    await _uds_proxy.start()
 
     # Start WebSocket broadcaster (daemon thread with its own event loop)
     start_ws_broadcaster()
@@ -327,12 +413,17 @@ async def lifespan(app: FastAPI):
         _ipc_listener.socket_path,
     )
     yield
+    if _uds_proxy:
+        await _uds_proxy.stop()
+        _uds_proxy = None
+
     if _ipc_listener:
         await _ipc_listener.stop()
         _ipc_listener = None
 
     stop_ws_broadcaster()
     stop_verification_daemon()
+
 
 
 # ── FastAPI Application ──────────────────────────────────────────────
@@ -1224,11 +1315,12 @@ async def broadcast_ws_json(message: dict[str, Any]) -> None:
     dead = set()
     for ws in list(_ws_clients):
         try:
-            await ws.send_json(message)
+            await asyncio.wait_for(ws.send_json(message), timeout=1.0)
         except Exception:
             dead.add(ws)
     for ws in dead:
         _ws_clients.discard(ws)
+
 
 
 # ── Lock Management API ─────────────────────────────────────────────

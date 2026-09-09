@@ -153,7 +153,14 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     receipt_run.add_argument("args", nargs=argparse.REMAINDER)
 
+    exec_cmd = subparsers.add_parser(
+        "exec",
+        help="Execute command wrapped inside a fail-safe SwarmLock lease and telemetry envelope",
+    )
+    exec_cmd.add_argument("args", nargs=argparse.REMAINDER)
+
     return parser
+
 
 
 def run(argv: Sequence[str] | None = None) -> int:
@@ -320,6 +327,17 @@ def run(argv: Sequence[str] | None = None) -> int:
         except ValueError:
             forwarded = list(args.args or []) + extra
         return int(receipt_runner_cli(forwarded) or 0)
+
+    if args.command == "exec":
+        from prismatic.client.exec import run_exec_cli
+
+        raw_argv = list(argv) if argv is not None else sys.argv[1:]
+        try:
+            cmd_idx = raw_argv.index("exec")
+            forwarded = raw_argv[cmd_idx + 1 :]
+        except ValueError:
+            forwarded = list(args.args or []) + extra
+        return int(run_exec_cli(forwarded) or 0)
 
     parser.print_help()
     return 0
