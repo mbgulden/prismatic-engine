@@ -4192,13 +4192,21 @@ async def gateway_swarmlock_acquire(body: dict[str, Any]) -> dict[str, Any]:
     metadata["lease_id"] = lease_id
 
     mgr = _get_lock_manager()
+    timeout_s = float(body.get("timeout_s") or body.get("timeout") or 0.2)
     acquired_all = True
     for p in paths:
-        acq = mgr.acquire(p, agent_id, metadata=metadata)
+        acq = mgr.acquire(p, agent_id, timeout_s=timeout_s, metadata=metadata)
         if not acq:
             acquired_all = False
 
     enriched = mgr.get_enriched_status()
+
+    holder = agent_id
+    if not acquired_all:
+        for lk in enriched.get("locks", []):
+            if lk.get("resource") == resource:
+                holder = lk.get("holder", "unknown")
+                break
 
     # Record to Hypervisor Ledger
     try:
@@ -4206,8 +4214,8 @@ async def gateway_swarmlock_acquire(body: dict[str, Any]) -> dict[str, Any]:
         get_hypervisor_ledger().record_event(
             task_id=task_id,
             producer=agent_id,
-            action="SWARMLOCK_ACQUIRE",
-            payload={"resource": resource, "paths": paths, "ttl": ttl, "intention": intention, "lease_id": lease_id},
+            action="SWARMLOCK_ACQUIRE" if acquired_all else "SWARMLOCK_COLLISION_DEFLECTED",
+            payload={"resource": resource, "paths": paths, "ttl": ttl, "intention": intention, "lease_id": lease_id, "holder": holder},
         )
     except Exception as led_err:
         logger.debug("Failed recording acquire to hypervisor ledger: %s", led_err)
@@ -4217,16 +4225,30 @@ async def gateway_swarmlock_acquire(body: dict[str, Any]) -> dict[str, Any]:
         sig_item = record_agent_signal(
             agent=agent_id,
             severity="lease",
-            event_type="lock_acquired",
+            event_type="lock_acquired" if acquired_all else "collision_deflected",
+            status="acquired" if acquired_all else "deflected",
             issue_id=task_id,
-            message=f"{agent_id} acquired lease on {len(paths)} path(s): {', '.join(paths)} ({intention})"
+            message=(
+                f"{agent_id} acquired lease on {len(paths)} path(s): {', '.join(paths)} ({intention})"
+                if acquired_all
+                else f"{agent_id} collision deflected on {resource} (held by {holder})"
+            ),
         )
         await broadcast_ws_json({"type": "signal.emitted", "signal": sig_item})
     except Exception as sig_err:
         logger.debug("Failed emitting lock signal: %s", sig_err)
 
     await broadcast_ws_json({"type": "swarmlock_status", "payload": enriched})
-    return {"ok": acquired_all, "status": "ok", "lease_id": lease_id, "resource": resource, "paths": paths, "agent_id": agent_id, "enriched": enriched}
+    return {
+        "ok": acquired_all,
+        "status": "ok" if acquired_all else "deflected",
+        "holder": holder,
+        "lease_id": lease_id if acquired_all else None,
+        "resource": resource,
+        "paths": paths,
+        "agent_id": agent_id,
+        "enriched": enriched,
+    }
 
 
 @app.post("/api/swarmlock/heartbeat")
@@ -4345,7 +4367,7 @@ async def gateway_swarmlock_evict_all(body: dict[str, Any] | None = None) -> dic
     reason = body.get("reason", "operator_emergency_evict_all")
     mgr = _get_lock_manager()
     status = mgr.get_enriched_status()
-    active = status.get("active_leases", [])
+    active = status.get("locks", []) or status.get("active_leases", [])
     evicted_resources = []
 
     for item in active:
