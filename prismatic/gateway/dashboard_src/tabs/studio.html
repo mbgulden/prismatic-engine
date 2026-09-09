@@ -1,0 +1,134 @@
+        <!-- SECTION: CREATOR STUDIO -->
+        <div id="section-studio" class="space-y-6 max-w-full overflow-x-hidden">
+            <!-- Studio Hero Banner -->
+            <section class="glass-panel p-6 sm:p-8 rounded-2xl border border-indigo-500/30 bg-gradient-to-br from-indigo-950/40 via-slate-900/60 to-cyan-950/30 space-y-4 shadow-2xl relative overflow-hidden">
+                <div class="absolute -right-12 -top-12 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none"></div>
+                <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-10">
+                    <div class="space-y-2">
+                        <div class="flex items-center gap-2">
+                            <span class="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">Creator Studio</span>
+                            <span class="text-xs font-mono text-slate-400">Input → Team → Reality</span>
+                        </div>
+                        <h2 class="text-xl sm:text-2xl font-bold bg-gradient-to-r from-cyan-300 via-indigo-200 to-white bg-clip-text text-transparent">
+                            What would you like to manifest today?
+                        </h2>
+                        <p class="text-xs sm:text-sm text-slate-300 max-w-2xl leading-relaxed">
+                            Describe your idea. Prismatic Engine agent fleet (<span class="text-indigo-400 font-semibold">Fred</span>, <span class="text-cyan-400 font-semibold">Kai</span>, <span class="text-emerald-400 font-semibold">Ned</span>, and <span class="text-amber-400 font-semibold">Autobot</span>) will decompose, write copy, scaffold the website, provision Stripe checkout, and publish a live URL.
+                        </p>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <button type="button" onclick="loadStudioPreset('activeoahu')" class="px-3 py-2 rounded-xl text-xs font-mono bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 transition flex items-center gap-1.5 shadow-sm">
+                            <span>🏄</span>
+                            <span>Active Oahu Preset</span>
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Main Prompt Studio Deck -->
+            <section class="glass-panel p-6 rounded-2xl border border-slate-800 space-y-6">
+                <div class="space-y-2">
+                    <label for="studio-prompt-input" class="block text-xs font-bold uppercase tracking-wider text-slate-300">
+                        1. Vision &amp; Core Offer (Natural Language)
+                    </label>
+                    <textarea id="studio-prompt-input" rows="4" class="w-full bg-slate-950/80 border border-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl p-4 text-sm text-slate-100 placeholder-slate-500 font-mono transition resize-y" placeholder="Describe the business or product... e.g. Launch a high-converting website for Oahu self-serve kayak, SUP, boogie board and beach gear rentals located at 134B Hamakua Dr (Kailua, HI) to replace activeoahu.com with instant online booking, Stripe checkout, mobile-responsive layout, and local SEO..."></textarea>
+                </div>
+
+                <!-- Quick Preset Pills -->
+                <div class="flex flex-wrap items-center gap-2">
+                    <span class="text-[11px] font-mono text-slate-500 uppercase tracking-wider">Quick Starters:</span>
+                    <button type="button" onclick="loadStudioPreset('activeoahu')" class="px-2.5 py-1 rounded-lg text-xs font-mono bg-slate-900 hover:bg-indigo-950/50 text-slate-300 hover:text-indigo-300 border border-slate-800 hover:border-indigo-500/40 transition">
+                        🏄 Active Oahu Rentals (134B Hamakua Dr)
+                    </button>
+                    <button type="button" onclick="loadStudioPreset('coffee')" class="px-2.5 py-1 rounded-lg text-xs font-mono bg-slate-900 hover:bg-indigo-950/50 text-slate-300 hover:text-indigo-300 border border-slate-800 hover:border-indigo-500/40 transition">
+                        ☕ North Shore Coffee Roasters
+                    </button>
+                    <button type="button" onclick="loadStudioPreset('service')" class="px-2.5 py-1 rounded-lg text-xs font-mono bg-slate-900 hover:bg-indigo-950/50 text-slate-300 hover:text-indigo-300 border border-slate-800 hover:border-indigo-500/40 transition">
+                        🎯 Local Equipment &amp; Service Hub
+                    </button>
+                </div>
+
+                <!-- Configuration Matrix (3 Columns) -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-slate-800/80">
+                    <!-- Column A: Brand Voice & Persona -->
+                    <div class="space-y-2">
+                        <label for="studio-voice-select" class="block text-xs font-bold uppercase tracking-wider text-slate-400">
+                            2. Brand Voice &amp; Persona
+                        </label>
+                        <select id="studio-voice-select" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs font-mono text-slate-200 focus:border-indigo-500">
+                            <option value="kai">🎨 Kai — Authentic Oahu Local Voice &amp; Content</option>
+                            <option value="fred">🧪 Fred — Direct, Clean, High-Conversion Executive</option>
+                            <option value="sentinel">🛡️ Technical Authority — Precision &amp; Logistics</option>
+                            <option value="custom">✨ Neutral / Adaptive Brand Guidelines</option>
+                        </select>
+                        <p class="text-[11px] text-slate-500">Guides copy nuance, cultural resonance, and tone.</p>
+                    </div>
+
+                    <!-- Column B: Domain & Publishing Target -->
+                    <div class="space-y-2">
+                        <label for="studio-target-input" class="block text-xs font-bold uppercase tracking-wider text-slate-400">
+                            3. Domain / Publishing Target
+                        </label>
+                        <input id="studio-target-input" type="text" value="activeoahu.growthwebdev.com" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs font-mono text-slate-200 focus:border-indigo-500" placeholder="e.g. activeoahu.com or *.growthwebdev.com">
+                        <p class="text-[11px] text-slate-500">Cloudflare Pages deployment target with instant SSL.</p>
+                    </div>
+
+                    <!-- Column C: Commerce & Integrations -->
+                    <div class="space-y-2">
+                        <label class="block text-xs font-bold uppercase tracking-wider text-slate-400">
+                            4. Enabled Capabilities
+                        </label>
+                        <div class="space-y-1.5 text-xs font-mono">
+                            <label class="flex items-center gap-2 text-slate-300 cursor-pointer">
+                                <input id="studio-check-stripe" type="checkbox" checked class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
+                                <span>Stripe Checkout &amp; Webhooks</span>
+                            </label>
+                            <label class="flex items-center gap-2 text-slate-300 cursor-pointer">
+                                <input id="studio-check-mobile" type="checkbox" checked class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
+                                <span>Playwright 375px Mobile Audit</span>
+                            </label>
+                            <label class="flex items-center gap-2 text-slate-300 cursor-pointer">
+                                <input id="studio-check-seo" type="checkbox" checked class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
+                                <span>Schema.org LocalBusiness SEO</span>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Action Bar & Manifest CTA -->
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-4 border-t border-slate-800/80">
+                    <div class="flex items-center gap-2 text-xs text-slate-400 font-mono">
+                        <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                        <span>Fleet Ready · SwarmLock Active · Zero Babysitting</span>
+                    </div>
+                    <button type="button" id="studio-manifest-btn" onclick="executeStudioManifestation()" class="px-6 py-3 rounded-xl bg-gradient-to-r from-cyan-500 via-indigo-600 to-indigo-700 hover:from-cyan-400 hover:to-indigo-600 text-white font-bold text-sm uppercase tracking-wider shadow-lg shadow-indigo-950/60 flex items-center justify-center gap-2 transition duration-200">
+                        <svg class="w-4 h-4 text-cyan-200 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                        <span>Manifest Idea → Reality</span>
+                    </button>
+                </div>
+            </section>
+
+            <!-- Manifestation In-Flight / Result Preview Card -->
+            <section id="studio-manifest-status-card" class="hidden glass-panel p-6 rounded-2xl border border-indigo-500/40 bg-indigo-950/20 space-y-4">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <div class="w-3 h-3 rounded-full bg-indigo-500 animate-ping"></div>
+                        <h3 class="text-sm font-bold text-slate-100 uppercase tracking-wider font-mono">Manifestation Pipeline Active</h3>
+                    </div>
+                    <span id="studio-manifest-stage-badge" class="px-2.5 py-0.5 rounded-full text-[10px] font-mono bg-indigo-600/30 text-indigo-300 border border-indigo-500/50">Dispatched</span>
+                </div>
+                <div class="space-y-2">
+                    <div class="flex items-center justify-between text-xs font-mono text-slate-400">
+                        <span id="studio-manifest-step-text">Fred decomposing goals into PWP compiler tasks...</span>
+                        <span id="studio-manifest-percent">25%</span>
+                    </div>
+                    <div class="w-full bg-slate-900 rounded-full h-2 overflow-hidden">
+                        <div id="studio-manifest-progress-bar" class="bg-gradient-to-r from-cyan-500 to-indigo-500 h-2 rounded-full transition-all duration-500" style="width: 25%"></div>
+                    </div>
+                </div>
+                <div class="flex items-center justify-between pt-2 text-xs font-mono">
+                    <span class="text-slate-400">Target URL: <a id="studio-manifest-url-link" href="https://activeoahu.growthwebdev.com" target="_blank" class="text-cyan-400 hover:underline">https://activeoahu.growthwebdev.com</a></span>
+                    <button type="button" onclick="switchTab('assets')" class="text-indigo-400 hover:text-indigo-300 underline">View in Deployed Assets →</button>
+                </div>
+            </section>
+        </div>

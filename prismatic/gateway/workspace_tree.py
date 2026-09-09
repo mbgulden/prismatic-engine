@@ -14,6 +14,7 @@ import os
 import platform
 import re
 import stat
+import sys
 import unicodedata
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -423,7 +424,7 @@ def _open_root(root: str) -> tuple[int, int, tuple[int, int]]:
 def load_registry(path: str | None = None) -> Iterator[WorkspaceRegistry]:
     """Load and pin the strict registry. Missing configuration falls back to standard user config."""
     configured = os.environ.get(REGISTRY_ENV) if path is None else path
-    if not configured:
+    if not configured and "PYTEST_CURRENT_TEST" not in os.environ and "pytest" not in sys.modules:
         default_config = os.path.expanduser("~/.prismatic/config/workspace-registry.json")
         if os.path.exists(default_config):
             configured = default_config
@@ -534,12 +535,12 @@ def _is_previewable(relative_path: str, metadata: os.stat_result | None = None) 
     ext = os.path.splitext(name)[1]
     if any(part.startswith(".") and part not in ALLOWED_HIDDEN_DIRS for part in components):
         return False
-    if name in _SENSITIVE_EXACT or name.endswith(_SENSITIVE_SUFFIXES):
+    if (
+        name in _SENSITIVE_EXACT
+        or name.endswith(_SENSITIVE_SUFFIXES)
+        or _SENSITIVE_WORD.search(name)
+    ):
         return False
-    # Only block sensitive words if not a standard source code file
-    if ext not in {".py", ".ts", ".tsx", ".js", ".jsx", ".json", ".jsonl", ".md", ".toml", ".yaml", ".yml", ".txt", ".html", ".css", ".sh"}:
-        if _SENSITIVE_WORD.search(name):
-            return False
     if ext not in PREVIEW_EXTENSIONS:
         return False
     return metadata is None or (

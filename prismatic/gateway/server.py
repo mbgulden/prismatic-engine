@@ -5525,6 +5525,9 @@ async def serve_governance_index() -> HTMLResponse:
     return _serve_governance_dashboard_html()
 
 
+@app.get("/studio", response_class=HTMLResponse)
+@app.get("/assets", response_class=HTMLResponse)
+@app.get("/pulse", response_class=HTMLResponse)
 @app.get("/dashboard", response_class=HTMLResponse)
 @app.get("/settings", response_class=HTMLResponse)
 @app.get("/tasks", response_class=HTMLResponse)
