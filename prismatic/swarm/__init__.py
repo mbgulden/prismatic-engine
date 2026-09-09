@@ -23,7 +23,6 @@ from .loop_runner import (
     load_all_deliverables,
     save_all_deliverables,
 )
-from .manifest_oahu import generate_active_oahu_deliverable
 
 __all__ = [
     "Archetype",
@@ -36,5 +35,4 @@ __all__ = [
     "load_all_deliverables",
     "get_deliverable_by_slug",
     "save_all_deliverables",
-    "generate_active_oahu_deliverable",
 ]

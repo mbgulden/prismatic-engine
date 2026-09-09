@@ -1467,9 +1467,9 @@ body.light-mode #dag-node-inspector-drawer {
                         </p>
                     </div>
                     <div class="flex items-center gap-3">
-                        <button type="button" onclick="loadStudioPreset('activeoahu')" class="px-3 py-2 rounded-xl text-xs font-mono bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 transition flex items-center gap-1.5 shadow-sm">
-                            <span>🏄</span>
-                            <span>Active Oahu Preset</span>
+                        <button type="button" onclick="loadStudioPreset('software')" class="px-3 py-2 rounded-xl text-xs font-mono bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 transition flex items-center gap-1.5 shadow-sm">
+                            <span>⚡</span>
+                            <span>Software Preset</span>
                         </button>
                     </div>
                 </div>
@@ -1481,20 +1481,20 @@ body.light-mode #dag-node-inspector-drawer {
                     <label for="studio-prompt-input" class="block text-xs font-bold uppercase tracking-wider text-slate-300">
                         1. Vision &amp; Core Offer (Natural Language)
                     </label>
-                    <textarea id="studio-prompt-input" rows="4" class="w-full bg-slate-950/80 border border-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl p-4 text-sm text-slate-100 placeholder-slate-500 font-mono transition resize-y" placeholder="Describe the business or product... e.g. Launch a high-converting website for Oahu self-serve kayak, SUP, boogie board and beach gear rentals located at 134B Hamakua Dr (Kailua, HI) to replace activeoahu.com with instant online booking, Stripe checkout, mobile-responsive layout, and local SEO..."></textarea>
+                    <textarea id="studio-prompt-input" rows="4" class="w-full bg-slate-950/80 border border-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl p-4 text-sm text-slate-100 placeholder-slate-500 font-mono transition resize-y" placeholder="Describe the system, web property, or engine... e.g. Build a high-performance distributed key-value store in Rust with Raft consensus, zero-copy serialization, and Tailscale mesh peer discovery..."></textarea>
                 </div>
 
                 <!-- Quick Preset Pills -->
                 <div class="flex flex-wrap items-center gap-2">
                     <span class="text-[11px] font-mono text-slate-500 uppercase tracking-wider">Quick Starters:</span>
-                    <button type="button" onclick="loadStudioPreset('activeoahu')" class="px-2.5 py-1 rounded-lg text-xs font-mono bg-slate-900 hover:bg-indigo-950/50 text-slate-300 hover:text-indigo-300 border border-slate-800 hover:border-indigo-500/40 transition">
-                        🏄 Active Oahu Rentals (134B Hamakua Dr)
+                    <button type="button" onclick="loadStudioPreset('software')" class="px-2.5 py-1 rounded-lg text-xs font-mono bg-slate-900 hover:bg-indigo-950/50 text-slate-300 hover:text-indigo-300 border border-slate-800 hover:border-indigo-500/40 transition">
+                        ⚡ Distributed Key-Value Engine
                     </button>
-                    <button type="button" onclick="loadStudioPreset('coffee')" class="px-2.5 py-1 rounded-lg text-xs font-mono bg-slate-900 hover:bg-indigo-950/50 text-slate-300 hover:text-indigo-300 border border-slate-800 hover:border-indigo-500/40 transition">
-                        ☕ North Shore Coffee Roasters
+                    <button type="button" onclick="loadStudioPreset('web')" class="px-2.5 py-1 rounded-lg text-xs font-mono bg-slate-900 hover:bg-indigo-950/50 text-slate-300 hover:text-indigo-300 border border-slate-800 hover:border-indigo-500/40 transition">
+                        🌐 Developer Tooling Web Portal
                     </button>
-                    <button type="button" onclick="loadStudioPreset('service')" class="px-2.5 py-1 rounded-lg text-xs font-mono bg-slate-900 hover:bg-indigo-950/50 text-slate-300 hover:text-indigo-300 border border-slate-800 hover:border-indigo-500/40 transition">
-                        🎯 Local Equipment &amp; Service Hub
+                    <button type="button" onclick="loadStudioPreset('ops')" class="px-2.5 py-1 rounded-lg text-xs font-mono bg-slate-900 hover:bg-indigo-950/50 text-slate-300 hover:text-indigo-300 border border-slate-800 hover:border-indigo-500/40 transition">
+                        📊 Autonomous Fleet Operations &amp; Cron
                     </button>
                 </div>
 
@@ -1506,12 +1506,12 @@ body.light-mode #dag-node-inspector-drawer {
                             2. Brand Voice &amp; Persona
                         </label>
                         <select id="studio-voice-select" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs font-mono text-slate-200 focus:border-indigo-500">
-                            <option value="kai">🎨 Kai — Authentic Oahu Local Voice &amp; Content</option>
-                            <option value="fred">🧪 Fred — Direct, Clean, High-Conversion Executive</option>
-                            <option value="sentinel">🛡️ Technical Authority — Precision &amp; Logistics</option>
-                            <option value="custom">✨ Neutral / Adaptive Brand Guidelines</option>
+                            <option value="technical">🛠️ Technical — Systems Architecture &amp; Engineering</option>
+                            <option value="executive">👔 Executive — Direct, High-Conversion Vision</option>
+                            <option value="creative">🎨 Creative — Expressive Brand &amp; Product Voice</option>
+                            <option value="neutral">✨ Neutral — Adaptive Domain Context</option>
                         </select>
-                        <p class="text-[11px] text-slate-500">Guides copy nuance, cultural resonance, and tone.</p>
+                        <p class="text-[11px] text-slate-500">Guides copy nuance, architectural conventions, and tone.</p>
                     </div>
 
                     <!-- Column B: Domain & Publishing Target -->
@@ -1519,7 +1519,7 @@ body.light-mode #dag-node-inspector-drawer {
                         <label for="studio-target-input" class="block text-xs font-bold uppercase tracking-wider text-slate-400">
                             3. Domain / Publishing Target
                         </label>
-                        <input id="studio-target-input" type="text" value="activeoahu.growthwebdev.com" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs font-mono text-slate-200 focus:border-indigo-500" placeholder="e.g. activeoahu.com or *.growthwebdev.com">
+                        <input id="studio-target-input" type="text" value="project.local" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs font-mono text-slate-200 focus:border-indigo-500" placeholder="e.g. engine.internal or *.domain.com">
                         <p class="text-[11px] text-slate-500">Cloudflare Pages deployment target with instant SSL.</p>
                     </div>
 
@@ -1577,7 +1577,7 @@ body.light-mode #dag-node-inspector-drawer {
                     </div>
                 </div>
                 <div class="flex items-center justify-between pt-2 text-xs font-mono">
-                    <span class="text-slate-400">Target URL: <a id="studio-manifest-url-link" href="https://activeoahu.growthwebdev.com" target="_blank" class="text-cyan-400 hover:underline">https://activeoahu.growthwebdev.com</a></span>
+                    <span class="text-slate-400">Target URL: <a id="studio-manifest-url-link" href="#" target="_blank" class="text-cyan-400 hover:underline">Ready for deployment</a></span>
                     <button type="button" onclick="switchTab('assets')" class="text-indigo-400 hover:text-indigo-300 underline">View in Deployed Assets →</button>
                 </div>
             </section>
@@ -1604,22 +1604,22 @@ body.light-mode #dag-node-inspector-drawer {
                 </div>
             </section>
 
-            <!-- Featured Deployment: Active Oahu Rentals -->
-            <section class="glass-panel p-6 rounded-2xl border border-cyan-500/40 bg-slate-950/80 space-y-4 shadow-xl">
+            <!-- Featured Deployment: Manifested Deliverable -->
+            <section class="glass-panel p-6 rounded-2xl border border-indigo-500/40 bg-slate-950/80 space-y-4 shadow-xl">
                 <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-800 pb-4">
                     <div class="space-y-1">
                         <div class="flex items-center gap-2 flex-wrap">
                             <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                            <h3 class="text-base font-bold text-white font-mono">Active Oahu Rentals &amp; Beach Gear</h3>
-                            <span class="px-2 py-0.5 rounded text-[10px] font-mono bg-cyan-950 text-cyan-300 border border-cyan-700/60 font-semibold">📍 134B Hamakua Dr, Kailua, HI</span>
-                            <span class="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-950 text-emerald-300 border border-emerald-700/60 font-semibold">Live Production</span>
+                            <h3 id="asset-featured-title" class="text-base font-bold text-white font-mono">Manifested Engine Deliverable</h3>
+                            <span id="asset-featured-badge" class="px-2 py-0.5 rounded text-[10px] font-mono bg-indigo-950 text-indigo-300 border border-indigo-700/60 font-semibold">Sovereign Swarm Output</span>
+                            <span class="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-950 text-emerald-300 border border-emerald-700/60 font-semibold">Active Preview</span>
                         </div>
-                        <p class="text-xs text-slate-400">Self-serve kayak, SUP, boogie board and beach gear rentals with real-time gear locker reservation &amp; Stripe checkout.</p>
+                        <p id="asset-featured-summary" class="text-xs text-slate-400">Autonomous 7-step swarm loop deliverable compiled by Prismatic Engine, validated by AST guards, and served locally.</p>
                     </div>
 
                     <div class="flex flex-wrap items-center gap-2">
-                        <a href="https://activeoahu.growthwebdev.com" target="_blank" class="pe-btn pe-btn-primary text-xs flex items-center gap-1 font-mono">
-                            <span>Open Live Site</span>
+                        <a id="asset-featured-link" href="#" target="_blank" class="pe-btn pe-btn-primary text-xs flex items-center gap-1 font-mono">
+                            <span>Open In Tab</span>
                             <span class="text-cyan-200">↗</span>
                         </a>
                         <button type="button" onclick="setAssetPreviewViewport(375)" class="pe-btn pe-btn-secondary text-xs font-mono">
@@ -1675,7 +1675,7 @@ body.light-mode #dag-node-inspector-drawer {
                     </div>
                     <div class="flex justify-center bg-slate-950/90 rounded-xl border border-slate-800 p-2 overflow-hidden min-h-[380px]">
                         <div id="asset-viewport-wrapper" class="w-full transition-all duration-300 flex justify-center">
-                            <iframe id="asset-preview-iframe" src="/api/deliverables/active-oahu/preview" class="w-full h-[420px] rounded-lg border border-slate-800 bg-white" title="Live Preview"></iframe>
+                            <iframe id="asset-preview-iframe" src="about:blank" class="w-full h-[420px] rounded-lg border border-slate-800 bg-white" title="Live Preview"></iframe>
                         </div>
                     </div>
                 </div>
@@ -11652,30 +11652,30 @@ body.light-mode #dag-node-inspector-drawer {
             const mobileEl = document.getElementById('studio-check-mobile');
             const seoEl = document.getElementById('studio-check-seo');
 
-            if (preset === 'activeoahu') {
+            if (preset === 'software') {
                 if (promptEl) {
-                    promptEl.value = "Launch high-converting self-serve rental booking platform for Oahu kayaks, SUP stand-up paddleboards, boogie boards, and beach gear at 134B Hamakua Dr (Kailua, HI) to replace activeoahu.com with instant locker code reservations, Stripe Checkout, mobile-responsive UI, and local Schema.org SEO.";
+                    promptEl.value = "Implement a high-performance distributed key-value store in Rust with Raft consensus, zero-copy serialization, and Tailscale mesh peer discovery.";
                 }
-                if (targetEl) targetEl.value = "activeoahu.growthwebdev.com";
-                if (voiceEl) voiceEl.value = "kai";
-                if (stripeEl) stripeEl.checked = true;
+                if (targetEl) targetEl.value = "kv-engine.local";
+                if (voiceEl) voiceEl.value = "technical";
+                if (stripeEl) stripeEl.checked = false;
                 if (mobileEl) mobileEl.checked = true;
                 if (seoEl) seoEl.checked = true;
-                showToast("🏄 Loaded Active Oahu Rentals preset (134B Hamakua Dr)");
-            } else if (preset === 'coffee') {
+                showToast("⚡ Loaded Software Archetype preset");
+            } else if (preset === 'web') {
                 if (promptEl) {
-                    promptEl.value = "Direct-to-consumer Hawaiian single-origin coffee subscription and whole bean retail storefront for North Shore Coffee Roasters with automated recurring checkout and origin storytelling.";
+                    promptEl.value = "Modern developer tooling landing page and documentation portal with interactive code playgrounds, theme switching, and stripe subscription tiers.";
                 }
-                if (targetEl) targetEl.value = "coffee.growthwebdev.com";
-                if (voiceEl) voiceEl.value = "fred";
-                showToast("☕ Loaded North Shore Coffee preset");
-            } else if (preset === 'service') {
+                if (targetEl) targetEl.value = "tooling.dev";
+                if (voiceEl) voiceEl.value = "creative";
+                showToast("🌐 Loaded Web Property Archetype preset");
+            } else if (preset === 'ops') {
                 if (promptEl) {
-                    promptEl.value = "On-demand island logistics and equipment rental depot with real-time gear locker reservations and automated customer text messaging.";
+                    promptEl.value = "Automated fleet monitoring and self-healing cron daemon with Tailscale node health attestation and incident escalation runbooks.";
                 }
-                if (targetEl) targetEl.value = "gearhub.growthwebdev.com";
-                if (voiceEl) voiceEl.value = "sentinel";
-                showToast("🎯 Loaded Equipment & Service Hub preset");
+                if (targetEl) targetEl.value = "ops.internal";
+                if (voiceEl) voiceEl.value = "executive";
+                showToast("📊 Loaded Operations Archetype preset");
             }
         }
 
@@ -11687,8 +11687,8 @@ body.light-mode #dag-node-inspector-drawer {
                 return;
             }
 
-            const targetDomain = (document.getElementById('studio-target-input') || {}).value || "activeoahu.growthwebdev.com";
-            const voice = (document.getElementById('studio-voice-select') || {}).value || "kai";
+            const targetDomain = (document.getElementById('studio-target-input') || {}).value || "project.local";
+            const voice = (document.getElementById('studio-voice-select') || {}).value || "default";
             const btn = document.getElementById('studio-manifest-btn');
             const statusCard = document.getElementById('studio-manifest-status-card');
             const stageBadge = document.getElementById('studio-manifest-stage-badge');
@@ -11700,8 +11700,8 @@ body.light-mode #dag-node-inspector-drawer {
             if (btn) btn.disabled = true;
             if (statusCard) statusCard.classList.remove('hidden');
 
-            if (stageBadge) stageBadge.textContent = "Step 1: DECOMPOSE (Fred)";
-            if (stepText) stepText.textContent = "Fred decomposing high-level vision into atomic agent lanes...";
+            if (stageBadge) stageBadge.textContent = "Step 1: DECOMPOSE (Orchestrator)";
+            if (stepText) stepText.textContent = "Decomposing high-level vision into atomic agent contracts...";
             if (progressBar) progressBar.style.width = "20%";
             if (percentText) percentText.textContent = "20%";
 
@@ -11713,20 +11713,20 @@ body.light-mode #dag-node-inspector-drawer {
                         prompt: promptText,
                         target_domain: targetDomain,
                         voice: voice,
-                        task_id: "GRO-4854"
+                        task_id: "GRO-SWARM-01"
                     })
                 });
 
-                if (stageBadge) stageBadge.textContent = "Step 3: EXECUTE (Kai + Ned)";
-                if (stepText) stepText.textContent = "Kai & Ned compiling Astro AST, Tailwind tokens, and Stripe checkout...";
+                if (stageBadge) stageBadge.textContent = "Step 3: EXECUTE (Worker Swarm)";
+                if (stepText) stepText.textContent = "Workers compiling deliverables, AST checks, and deployment schemas...";
                 if (progressBar) progressBar.style.width = "60%";
                 if (percentText) percentText.textContent = "60%";
 
                 const data = await resp.json();
                 const deliv = (data.result && data.result.deliverable) || {};
-                const previewUrl = deliv.preview_url || `/api/deliverables/${deliv.project_slug || 'active-oahu'}/preview`;
+                const previewUrl = deliv.preview_url || `/api/deliverables/${deliv.project_slug || 'project'}/preview`;
 
-                if (stageBadge) stageBadge.textContent = "Step 7: INTEGRATE (Fred)";
+                if (stageBadge) stageBadge.textContent = "Step 7: INTEGRATE (Complete)";
                 if (stepText) stepText.textContent = `Asset live at ${targetDomain} (Compiled in ${data.result ? data.result.duration_seconds : 0.1}s)`;
                 if (progressBar) progressBar.style.width = "100%";
                 if (percentText) percentText.textContent = "100%";

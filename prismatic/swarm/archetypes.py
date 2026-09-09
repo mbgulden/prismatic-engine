@@ -86,11 +86,10 @@ class ArchetypeRegistry:
         """Heuristically determine project archetype from prompt text."""
         p_lower = prompt.lower()
 
-        # Web Properties / Storefronts / Booking
+        # Web Properties / Storefronts / Portals
         web_keywords = [
-            "website", "rental", "rentals", "booking", "sup", "kayak", "boogie board",
-            "activeoahu", "hamakua", "storefront", "landing page", "astro", "html",
-            "checkout", "ecommerce", "beach gear", "cafe", "coffee", "roaster",
+            "website", "web property", "storefront", "landing page", "astro", "html",
+            "checkout", "ecommerce", "portal", "web app", "frontend", "site",
         ]
         if any(kw in p_lower for kw in web_keywords):
             return Archetype.WEB_PROPERTY
@@ -141,52 +140,51 @@ class ArchetypeRegistry:
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
 
         if arch == Archetype.WEB_PROPERTY:
-            # Contract 1: Kai — Creative Brand Voice, Copy, Hawaiian Diacritics, Hero Offer
+            # Contract 1: Creative Brand Voice & Copywriting
             contracts.append(
                 ArchetypeContract(
                     thread_id=f"{task_id}-kai-{ts}",
                     role="Creative Director & Content Architect",
                     agent_id="kai",
                     task_description=(
-                        f"Author authentic, high-converting offer copy for '{prompt}'. "
-                        "Ground in local Hawaiian context (Kailua, Hamakua Dr) with proper ʻokina/kahakō diacritics. "
-                        "Draft Hero headline, value props, gear rental inventory tiers, and FAQ."
+                        f"Author compelling, high-converting offer copy for '{prompt}'. "
+                        "Draft Hero headline, value propositions, product/service tiers, and FAQ."
                     ),
                     allowed_paths=["src/content/", "src/copy/", "deliverables/content.json"],
-                    deliverable_keys=["hero_copy", "inventory_catalog", "faq_items", "meta_description"],
+                    deliverable_keys=["hero_copy", "product_catalog", "faq_items", "meta_description"],
                     required_reviewers=["george", "fred"],
                 )
             )
 
-            # Contract 2: Ned — PWP Compilation, Astro / HTML Templates, Locker Reservation UI, Stripe
+            # Contract 2: Web Compiler & Integration
             contracts.append(
                 ArchetypeContract(
                     thread_id=f"{task_id}-ned-{ts}",
                     role="PWP Web Compiler & Integration Engineer",
                     agent_id="ned",
                     task_description=(
-                        "Compile high-performance, mobile-first responsive HTML/Astro markup. "
-                        "Wire interactive locker reservation form with Stripe Checkout pricing hooks. "
+                        f"Compile high-performance, mobile-first responsive HTML/UI templates for '{prompt}'. "
+                        "Wire checkout/pricing hooks, responsive layouts, and accessible UI controls. "
                         "Enforce strict Tailwind contrast (>= 4.5:1) and zero layout shifts."
                     ),
-                    allowed_paths=["src/pages/", "src/components/", "deliverables/site.html", "deliverables/stripe.json"],
-                    deliverable_keys=["site_html", "stripe_config", "responsive_css"],
+                    allowed_paths=["src/pages/", "src/components/", "deliverables/site.html", "deliverables/checkout.json"],
+                    deliverable_keys=["site_html", "checkout_config", "responsive_css"],
                     required_reviewers=["george"],
                 )
             )
 
-            # Contract 3: Autobot — Cloudflare Deployment, Schema.org LocalBusiness JSON-LD, Mobile Audit
+            # Contract 3: SEO & Edge Deployment
             contracts.append(
                 ArchetypeContract(
                     thread_id=f"{task_id}-autobot-{ts}",
                     role="Deployment & SEO Automation Engineer",
                     agent_id="autobot",
                     task_description=(
-                        "Generate Schema.org LocalBusiness JSON-LD structured data for 134B Hamakua Dr. "
-                        "Configure Cloudflare Pages edge hosting headers, SSL termination, and run 375px mobile audit."
+                        f"Generate Schema.org structured data (Organization / WebSite / Product) for '{prompt}'. "
+                        "Configure edge hosting headers, SSL termination, and run 375px mobile audit."
                     ),
                     allowed_paths=["public/schema.json", "deliverables/schema_ld.json", "wrangler.toml"],
-                    deliverable_keys=["schema_ld", "cloudflare_config", "mobile_audit_passed"],
+                    deliverable_keys=["schema_ld", "edge_config", "mobile_audit_passed"],
                     required_reviewers=["george"],
                 )
             )

@@ -5902,30 +5902,30 @@
             const mobileEl = document.getElementById('studio-check-mobile');
             const seoEl = document.getElementById('studio-check-seo');
 
-            if (preset === 'activeoahu') {
+            if (preset === 'software') {
                 if (promptEl) {
-                    promptEl.value = "Launch high-converting self-serve rental booking platform for Oahu kayaks, SUP stand-up paddleboards, boogie boards, and beach gear at 134B Hamakua Dr (Kailua, HI) to replace activeoahu.com with instant locker code reservations, Stripe Checkout, mobile-responsive UI, and local Schema.org SEO.";
+                    promptEl.value = "Implement a high-performance distributed key-value store in Rust with Raft consensus, zero-copy serialization, and Tailscale mesh peer discovery.";
                 }
-                if (targetEl) targetEl.value = "activeoahu.growthwebdev.com";
-                if (voiceEl) voiceEl.value = "kai";
-                if (stripeEl) stripeEl.checked = true;
+                if (targetEl) targetEl.value = "kv-engine.local";
+                if (voiceEl) voiceEl.value = "technical";
+                if (stripeEl) stripeEl.checked = false;
                 if (mobileEl) mobileEl.checked = true;
                 if (seoEl) seoEl.checked = true;
-                showToast("🏄 Loaded Active Oahu Rentals preset (134B Hamakua Dr)");
-            } else if (preset === 'coffee') {
+                showToast("⚡ Loaded Software Archetype preset");
+            } else if (preset === 'web') {
                 if (promptEl) {
-                    promptEl.value = "Direct-to-consumer Hawaiian single-origin coffee subscription and whole bean retail storefront for North Shore Coffee Roasters with automated recurring checkout and origin storytelling.";
+                    promptEl.value = "Modern developer tooling landing page and documentation portal with interactive code playgrounds, theme switching, and stripe subscription tiers.";
                 }
-                if (targetEl) targetEl.value = "coffee.growthwebdev.com";
-                if (voiceEl) voiceEl.value = "fred";
-                showToast("☕ Loaded North Shore Coffee preset");
-            } else if (preset === 'service') {
+                if (targetEl) targetEl.value = "tooling.dev";
+                if (voiceEl) voiceEl.value = "creative";
+                showToast("🌐 Loaded Web Property Archetype preset");
+            } else if (preset === 'ops') {
                 if (promptEl) {
-                    promptEl.value = "On-demand island logistics and equipment rental depot with real-time gear locker reservations and automated customer text messaging.";
+                    promptEl.value = "Automated fleet monitoring and self-healing cron daemon with Tailscale node health attestation and incident escalation runbooks.";
                 }
-                if (targetEl) targetEl.value = "gearhub.growthwebdev.com";
-                if (voiceEl) voiceEl.value = "sentinel";
-                showToast("🎯 Loaded Equipment & Service Hub preset");
+                if (targetEl) targetEl.value = "ops.internal";
+                if (voiceEl) voiceEl.value = "executive";
+                showToast("📊 Loaded Operations Archetype preset");
             }
         }
 
@@ -5937,8 +5937,8 @@
                 return;
             }
 
-            const targetDomain = (document.getElementById('studio-target-input') || {}).value || "activeoahu.growthwebdev.com";
-            const voice = (document.getElementById('studio-voice-select') || {}).value || "kai";
+            const targetDomain = (document.getElementById('studio-target-input') || {}).value || "project.local";
+            const voice = (document.getElementById('studio-voice-select') || {}).value || "default";
             const btn = document.getElementById('studio-manifest-btn');
             const statusCard = document.getElementById('studio-manifest-status-card');
             const stageBadge = document.getElementById('studio-manifest-stage-badge');
@@ -5950,8 +5950,8 @@
             if (btn) btn.disabled = true;
             if (statusCard) statusCard.classList.remove('hidden');
 
-            if (stageBadge) stageBadge.textContent = "Step 1: DECOMPOSE (Fred)";
-            if (stepText) stepText.textContent = "Fred decomposing high-level vision into atomic agent lanes...";
+            if (stageBadge) stageBadge.textContent = "Step 1: DECOMPOSE (Orchestrator)";
+            if (stepText) stepText.textContent = "Decomposing high-level vision into atomic agent contracts...";
             if (progressBar) progressBar.style.width = "20%";
             if (percentText) percentText.textContent = "20%";
 
@@ -5963,20 +5963,20 @@
                         prompt: promptText,
                         target_domain: targetDomain,
                         voice: voice,
-                        task_id: "GRO-4854"
+                        task_id: "GRO-SWARM-01"
                     })
                 });
 
-                if (stageBadge) stageBadge.textContent = "Step 3: EXECUTE (Kai + Ned)";
-                if (stepText) stepText.textContent = "Kai & Ned compiling Astro AST, Tailwind tokens, and Stripe checkout...";
+                if (stageBadge) stageBadge.textContent = "Step 3: EXECUTE (Worker Swarm)";
+                if (stepText) stepText.textContent = "Workers compiling deliverables, AST checks, and deployment schemas...";
                 if (progressBar) progressBar.style.width = "60%";
                 if (percentText) percentText.textContent = "60%";
 
                 const data = await resp.json();
                 const deliv = (data.result && data.result.deliverable) || {};
-                const previewUrl = deliv.preview_url || `/api/deliverables/${deliv.project_slug || 'active-oahu'}/preview`;
+                const previewUrl = deliv.preview_url || `/api/deliverables/${deliv.project_slug || 'project'}/preview`;
 
-                if (stageBadge) stageBadge.textContent = "Step 7: INTEGRATE (Fred)";
+                if (stageBadge) stageBadge.textContent = "Step 7: INTEGRATE (Complete)";
                 if (stepText) stepText.textContent = `Asset live at ${targetDomain} (Compiled in ${data.result ? data.result.duration_seconds : 0.1}s)`;
                 if (progressBar) progressBar.style.width = "100%";
                 if (percentText) percentText.textContent = "100%";

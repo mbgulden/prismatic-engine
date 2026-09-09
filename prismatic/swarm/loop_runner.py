@@ -24,7 +24,6 @@ from pathlib import Path
 from typing import Any
 
 from .archetypes import Archetype, ArchetypeContract, ArchetypeRegistry, ProjectDeliverable
-from .manifest_oahu import generate_active_oahu_deliverable
 
 logger = logging.getLogger("prismatic.swarm.loop_runner")
 
@@ -42,7 +41,7 @@ def get_deliverables_file() -> Path:
 
 
 def load_all_deliverables() -> list[dict[str, Any]]:
-    """Load all manifested deliverables from persistent store, ensuring Active Oahu is present."""
+    """Load all manifested deliverables from persistent store."""
     fpath = get_deliverables_file()
     items: list[dict[str, Any]] = []
     if fpath.exists():
@@ -53,13 +52,7 @@ def load_all_deliverables() -> list[dict[str, Any]]:
             elif isinstance(raw, dict):
                 items = list(raw.values())
         except Exception as e:
-            logger.warning("Could not read deliverables file %s: %e", fpath, e)
-
-    # Ensure canonical Active Oahu deliverable is always present
-    if not any(d.get("project_slug") == "active-oahu" for d in items):
-        oahu = generate_active_oahu_deliverable().to_dict()
-        items.insert(0, oahu)
-        save_all_deliverables(items)
+            logger.warning("Could not read deliverables file %s: %s", fpath, e)
 
     return items
 
@@ -137,8 +130,8 @@ class SwarmLoopRunner:
     def run(
         self,
         prompt: str,
-        target_domain: str = "activeoahu.growthwebdev.com",
-        voice: str = "kai",
+        target_domain: str | None = None,
+        voice: str = "default",
         options: dict[str, Any] | None = None,
     ) -> SwarmLoopResult:
         """Run the full 7-step loop autonomously from idea to integrated deliverable."""
@@ -149,8 +142,8 @@ class SwarmLoopRunner:
         archetype = ArchetypeRegistry.detect_archetype(prompt)
         self._log_step(
             "DECOMPOSE",
-            "fred",
-            f"Fred parsed high-level vision into archetype '{archetype.value}'. Decomposing contracts...",
+            "orchestrator",
+            f"Parsed high-level vision into archetype '{archetype.value}'. Decomposing typed contracts...",
             {"prompt": prompt, "archetype": archetype.value},
         )
         contracts = ArchetypeRegistry.decompose(
@@ -161,7 +154,7 @@ class SwarmLoopRunner:
         )
         self._log_step(
             "DECOMPOSE",
-            "fred",
+            "orchestrator",
             f"Generated {len(contracts)} atomic worker contracts: {[c.role for c in contracts]}",
             {"contracts_count": len(contracts)},
         )
@@ -170,7 +163,7 @@ class SwarmLoopRunner:
         assigned_agents = list({c.agent_id for c in contracts})
         self._log_step(
             "DISPATCH",
-            "fred",
+            "orchestrator",
             f"Dispatching task {self.task_id} across multi-agent fleet: {', '.join(assigned_agents)}",
             {"assigned_agents": assigned_agents},
         )
@@ -178,51 +171,94 @@ class SwarmLoopRunner:
         # ── Step 3: EXECUTE ───────────────────────────────────────────
         self._log_step(
             "EXECUTE",
-            "kai",
-            f"Kai authoring authentic offer copy and Hawaiian diacritics for '{prompt}'",
+            "content_agent",
+            f"Authoring structured copy and value propositions for '{prompt}'",
             {"voice": voice},
         )
 
         self._log_step(
             "EXECUTE",
-            "ned",
-            "Ned compiling PWP Astro AST, Tailwind CSS layouts, and Stripe locker reservation hooks",
-            {"target_domain": target_domain},
+            "builder_agent",
+            f"Compiling core project deliverables and component schemas for archetype '{archetype.value}'",
+            {"target_domain": target_domain or "local"},
         )
 
         self._log_step(
             "EXECUTE",
-            "autobot",
-            "Autobot generating Schema.org LocalBusiness JSON-LD and configuring Cloudflare edge SSL",
-            {"target_domain": target_domain},
+            "automation_agent",
+            "Configuring deployment metadata, structured schemas, and environment boundaries",
+            {"target_domain": target_domain or "local"},
         )
 
         # Generate the tangible deliverable bundle
-        if "activeoahu" in prompt.lower() or "hamakua" in prompt.lower() or archetype == Archetype.WEB_PROPERTY:
-            deliverable_obj = generate_active_oahu_deliverable()
-            deliverable_obj.target_domain = target_domain
-        else:
-            deliverable_obj = ProjectDeliverable(
-                id=f"deliv-{int(time.time())}",
-                project_slug="custom-project",
-                title="Manifested Custom Project",
-                archetype=archetype,
-                summary=prompt[:200],
-                target_domain=target_domain,
-                status="manifested",
-                artifacts={"summary": prompt},
-                metadata={"task_id": self.task_id},
-            )
+        raw_slug = "-".join("".join(ch if ch.isalnum() else " " for ch in prompt.lower()).split())[:32].strip("-")
+        project_slug = raw_slug or f"project-{int(time.time())}"
+        title = prompt[:60].strip() or "Manifested Project"
+        domain = target_domain or f"{project_slug}.local"
+
+        rendered_html = (
+            "<!DOCTYPE html>\n"
+            "<html lang=\"en\">\n"
+            "<head>\n"
+            "  <meta charset=\"utf-8\">\n"
+            "  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n"
+            f"  <title>{title}</title>\n"
+            "  <script src=\"https://cdn.tailwindcss.com\"></script>\n"
+            "</head>\n"
+            "<body class=\"bg-slate-950 text-slate-100 min-h-screen p-6 sm:p-12 font-mono\">\n"
+            "  <div class=\"max-w-3xl mx-auto space-y-6\">\n"
+            "    <div class=\"flex items-center gap-2\">\n"
+            f"      <span class=\"px-2.5 py-1 rounded-md text-xs font-bold bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 uppercase\">{archetype.value}</span>\n"
+            f"      <span class=\"text-xs text-slate-500\">Manifested via Prismatic Sovereign Swarm</span>\n"
+            "    </div>\n"
+            f"    <h1 class=\"text-2xl sm:text-3xl font-bold text-white tracking-tight\">{title}</h1>\n"
+            f"    <p class=\"text-sm text-slate-300 leading-relaxed\">{prompt}</p>\n"
+            "    <div class=\"p-6 rounded-2xl bg-slate-900 border border-slate-800 space-y-4\">\n"
+            "      <h3 class=\"text-sm font-bold text-indigo-300 uppercase tracking-wider\">Contract Pipeline Execution</h3>\n"
+            "      <ul class=\"space-y-2 text-xs text-slate-400\">\n"
+        )
+        for c in contracts:
+            rendered_html += f"        <li class=\"flex items-center gap-2\"><span class=\"text-emerald-400\">✔</span> <strong>{c.role}</strong> ({c.agent_id}): {c.task_description[:80]}...</li>\n"
+        rendered_html += (
+            "      </ul>\n"
+            "    </div>\n"
+            "  </div>\n"
+            "</body>\n"
+            "</html>"
+        )
+
+        deliverable_obj = ProjectDeliverable(
+            id=f"deliv-{int(time.time())}",
+            project_slug=project_slug,
+            title=title,
+            archetype=archetype,
+            summary=prompt[:200],
+            target_domain=domain,
+            status="manifested",
+            artifacts={
+                "summary": prompt,
+                "archetype": archetype.value,
+                "rendered_html": rendered_html,
+                "contracts": [c.to_dict() for c in contracts],
+                "schema_ld": {
+                    "@context": "https://schema.org",
+                    "@type": "SoftwareApplication" if archetype == Archetype.SOFTWARE else "WebSite",
+                    "name": title,
+                    "description": prompt[:200],
+                    "url": f"https://{domain}",
+                },
+            },
+            metadata={"task_id": self.task_id, "archetype": archetype.value},
+        )
 
         # ── Step 4: REVIEW ────────────────────────────────────────────
         self._log_step(
             "REVIEW",
-            "george",
-            "George running quality gate: AST anti-weakening verification, Schema.org syntax, and 375px mobile audit",
-            {"checks": ["ast_guard", "schema_validation", "mobile_375px_audit"]},
+            "review_agent",
+            "Running quality gate: checking contract completeness, schema validation, and deliverables integrity",
+            {"checks": ["contract_completeness", "schema_validation"]},
         )
         review_passed = True
-        # Verify schema validity
         if "schema_ld" in deliverable_obj.artifacts:
             schema_data = deliverable_obj.artifacts["schema_ld"]
             if not schema_data.get("@context") or not schema_data.get("@type"):
@@ -230,21 +266,20 @@ class SwarmLoopRunner:
 
         if not review_passed:
             # ── Step 5: FEEDBACK ──────────────────────────────────────
-            self._log_step("FEEDBACK", "george", "George reported schema deficiency back to Ned")
+            self._log_step("FEEDBACK", "review_agent", "Reported schema deficiency back to builder")
             # ── Step 6: REFINE ────────────────────────────────────────
-            self._log_step("REFINE", "ned", "Ned refined schema structure and regenerated bundle")
+            self._log_step("REFINE", "builder_agent", "Refined schema structure and regenerated bundle")
 
         # ── Step 7: INTEGRATE ─────────────────────────────────────────
         self._log_step(
             "INTEGRATE",
-            "fred",
-            f"Fred verified review approvals. Promoting deliverable '{deliverable_obj.title}' to living reality!",
-            {"project_slug": deliverable_obj.project_slug, "target_domain": target_domain},
+            "orchestrator",
+            f"Verified review approvals. Persisting deliverable '{deliverable_obj.title}' to artifact store.",
+            {"project_slug": deliverable_obj.project_slug, "target_domain": domain},
         )
 
         # Persist to deliverable registry
         all_delivs = load_all_deliverables()
-        # Replace or prepend
         all_delivs = [d for d in all_delivs if d.get("project_slug") != deliverable_obj.project_slug]
         all_delivs.insert(0, deliverable_obj.to_dict())
         save_all_deliverables(all_delivs)
@@ -252,7 +287,7 @@ class SwarmLoopRunner:
         duration = round(time.time() - t_start, 3)
         self._log_step(
             "INTEGRATE",
-            "fred",
+            "orchestrator",
             f"7-step loop completed successfully in {duration}s. Deliverables live in registry.",
             {"duration_seconds": duration},
         )

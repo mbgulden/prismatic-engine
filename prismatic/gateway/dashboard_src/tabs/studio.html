@@ -17,9 +17,9 @@
                         </p>
                     </div>
                     <div class="flex items-center gap-3">
-                        <button type="button" onclick="loadStudioPreset('activeoahu')" class="px-3 py-2 rounded-xl text-xs font-mono bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 transition flex items-center gap-1.5 shadow-sm">
-                            <span>🏄</span>
-                            <span>Active Oahu Preset</span>
+                        <button type="button" onclick="loadStudioPreset('software')" class="px-3 py-2 rounded-xl text-xs font-mono bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 transition flex items-center gap-1.5 shadow-sm">
+                            <span>⚡</span>
+                            <span>Software Preset</span>
                         </button>
                     </div>
                 </div>
@@ -31,20 +31,20 @@
                     <label for="studio-prompt-input" class="block text-xs font-bold uppercase tracking-wider text-slate-300">
                         1. Vision &amp; Core Offer (Natural Language)
                     </label>
-                    <textarea id="studio-prompt-input" rows="4" class="w-full bg-slate-950/80 border border-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl p-4 text-sm text-slate-100 placeholder-slate-500 font-mono transition resize-y" placeholder="Describe the business or product... e.g. Launch a high-converting website for Oahu self-serve kayak, SUP, boogie board and beach gear rentals located at 134B Hamakua Dr (Kailua, HI) to replace activeoahu.com with instant online booking, Stripe checkout, mobile-responsive layout, and local SEO..."></textarea>
+                    <textarea id="studio-prompt-input" rows="4" class="w-full bg-slate-950/80 border border-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl p-4 text-sm text-slate-100 placeholder-slate-500 font-mono transition resize-y" placeholder="Describe the system, web property, or engine... e.g. Build a high-performance distributed key-value store in Rust with Raft consensus, zero-copy serialization, and Tailscale mesh peer discovery..."></textarea>
                 </div>
 
                 <!-- Quick Preset Pills -->
                 <div class="flex flex-wrap items-center gap-2">
                     <span class="text-[11px] font-mono text-slate-500 uppercase tracking-wider">Quick Starters:</span>
-                    <button type="button" onclick="loadStudioPreset('activeoahu')" class="px-2.5 py-1 rounded-lg text-xs font-mono bg-slate-900 hover:bg-indigo-950/50 text-slate-300 hover:text-indigo-300 border border-slate-800 hover:border-indigo-500/40 transition">
-                        🏄 Active Oahu Rentals (134B Hamakua Dr)
+                    <button type="button" onclick="loadStudioPreset('software')" class="px-2.5 py-1 rounded-lg text-xs font-mono bg-slate-900 hover:bg-indigo-950/50 text-slate-300 hover:text-indigo-300 border border-slate-800 hover:border-indigo-500/40 transition">
+                        ⚡ Distributed Key-Value Engine
                     </button>
-                    <button type="button" onclick="loadStudioPreset('coffee')" class="px-2.5 py-1 rounded-lg text-xs font-mono bg-slate-900 hover:bg-indigo-950/50 text-slate-300 hover:text-indigo-300 border border-slate-800 hover:border-indigo-500/40 transition">
-                        ☕ North Shore Coffee Roasters
+                    <button type="button" onclick="loadStudioPreset('web')" class="px-2.5 py-1 rounded-lg text-xs font-mono bg-slate-900 hover:bg-indigo-950/50 text-slate-300 hover:text-indigo-300 border border-slate-800 hover:border-indigo-500/40 transition">
+                        🌐 Developer Tooling Web Portal
                     </button>
-                    <button type="button" onclick="loadStudioPreset('service')" class="px-2.5 py-1 rounded-lg text-xs font-mono bg-slate-900 hover:bg-indigo-950/50 text-slate-300 hover:text-indigo-300 border border-slate-800 hover:border-indigo-500/40 transition">
-                        🎯 Local Equipment &amp; Service Hub
+                    <button type="button" onclick="loadStudioPreset('ops')" class="px-2.5 py-1 rounded-lg text-xs font-mono bg-slate-900 hover:bg-indigo-950/50 text-slate-300 hover:text-indigo-300 border border-slate-800 hover:border-indigo-500/40 transition">
+                        📊 Autonomous Fleet Operations &amp; Cron
                     </button>
                 </div>
 
@@ -56,12 +56,12 @@
                             2. Brand Voice &amp; Persona
                         </label>
                         <select id="studio-voice-select" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs font-mono text-slate-200 focus:border-indigo-500">
-                            <option value="kai">🎨 Kai — Authentic Oahu Local Voice &amp; Content</option>
-                            <option value="fred">🧪 Fred — Direct, Clean, High-Conversion Executive</option>
-                            <option value="sentinel">🛡️ Technical Authority — Precision &amp; Logistics</option>
-                            <option value="custom">✨ Neutral / Adaptive Brand Guidelines</option>
+                            <option value="technical">🛠️ Technical — Systems Architecture &amp; Engineering</option>
+                            <option value="executive">👔 Executive — Direct, High-Conversion Vision</option>
+                            <option value="creative">🎨 Creative — Expressive Brand &amp; Product Voice</option>
+                            <option value="neutral">✨ Neutral — Adaptive Domain Context</option>
                         </select>
-                        <p class="text-[11px] text-slate-500">Guides copy nuance, cultural resonance, and tone.</p>
+                        <p class="text-[11px] text-slate-500">Guides copy nuance, architectural conventions, and tone.</p>
                     </div>
 
                     <!-- Column B: Domain & Publishing Target -->
@@ -69,7 +69,7 @@
                         <label for="studio-target-input" class="block text-xs font-bold uppercase tracking-wider text-slate-400">
                             3. Domain / Publishing Target
                         </label>
-                        <input id="studio-target-input" type="text" value="activeoahu.growthwebdev.com" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs font-mono text-slate-200 focus:border-indigo-500" placeholder="e.g. activeoahu.com or *.growthwebdev.com">
+                        <input id="studio-target-input" type="text" value="project.local" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs font-mono text-slate-200 focus:border-indigo-500" placeholder="e.g. engine.internal or *.domain.com">
                         <p class="text-[11px] text-slate-500">Cloudflare Pages deployment target with instant SSL.</p>
                     </div>
 
@@ -127,7 +127,7 @@
                     </div>
                 </div>
                 <div class="flex items-center justify-between pt-2 text-xs font-mono">
-                    <span class="text-slate-400">Target URL: <a id="studio-manifest-url-link" href="https://activeoahu.growthwebdev.com" target="_blank" class="text-cyan-400 hover:underline">https://activeoahu.growthwebdev.com</a></span>
+                    <span class="text-slate-400">Target URL: <a id="studio-manifest-url-link" href="#" target="_blank" class="text-cyan-400 hover:underline">Ready for deployment</a></span>
                     <button type="button" onclick="switchTab('assets')" class="text-indigo-400 hover:text-indigo-300 underline">View in Deployed Assets →</button>
                 </div>
             </section>

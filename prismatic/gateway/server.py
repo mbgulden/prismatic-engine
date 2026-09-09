@@ -4480,9 +4480,9 @@ async def gateway_swarm_run(body: dict[str, Any]) -> dict[str, Any]:
     if not prompt:
         raise HTTPException(status_code=400, detail="Missing 'prompt'")
 
-    task_id = body.get("task_id", "GRO-4854")
-    target_domain = body.get("target_domain", "activeoahu.growthwebdev.com")
-    voice = body.get("voice", "kai")
+    task_id = body.get("task_id", "GRO-SWARM-01")
+    target_domain = body.get("target_domain")
+    voice = body.get("voice", "default")
 
     runner = SwarmLoopRunner(task_id=task_id)
     result = runner.run(
@@ -4536,7 +4536,8 @@ async def gateway_preview_deliverable(project_slug: str) -> HTMLResponse:
     if not deliv:
         raise HTTPException(status_code=404, detail=f"Deliverable '{project_slug}' not found")
 
-    html = (deliv.get("artifacts") or {}).get("html_bundle")
+    artifacts = deliv.get("artifacts") or {}
+    html = artifacts.get("rendered_html") or artifacts.get("html_bundle")
     if not html:
         raise HTTPException(status_code=404, detail=f"No HTML bundle compiled for '{project_slug}'")
 

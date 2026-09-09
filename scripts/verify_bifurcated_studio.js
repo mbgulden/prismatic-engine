@@ -40,18 +40,18 @@ async function testBifurcatedStudio() {
   const hasVisionLabel = await page.innerText('label[for="studio-prompt-input"]');
   console.log(`  ✓ Vision Prompt Deck Ready: "${hasVisionLabel.trim()}"`);
 
-  // Step 2: Test Active Oahu Preset Click
-  console.log('2. Clicking Active Oahu Rentals starter preset pill...');
-  await page.click("button:has-text('Active Oahu Rentals (134B Hamakua Dr)')");
+  // Step 2: Test Software Preset Click
+  console.log('2. Clicking Software Preset starter pill...');
+  await page.click("button:has-text('Distributed Key-Value Engine')");
   await page.waitForTimeout(500);
 
   const promptValue = await page.inputValue('#studio-prompt-input');
-  console.log(`  ✓ Prompt updated with Active Oahu target: "${promptValue.slice(0, 85)}..."`);
-  if (!promptValue.includes('134B Hamakua Dr')) {
-    throw new Error('Preset did not load Active Oahu Hamakua Dr prompt text');
+  console.log(`  ✓ Prompt updated with Software Archetype target: "${promptValue.slice(0, 85)}..."`);
+  if (!promptValue.includes('key-value')) {
+    throw new Error('Preset did not load Software Archetype prompt text');
   }
 
-  await saveAuditScreenshot('live_creator_studio_activeoahu.png');
+  await saveAuditScreenshot('live_creator_studio_software.png');
 
   // Step 3: Navigate to Deployed Assets Tab
   console.log('3. Navigating to Deployed Assets Tab...');
@@ -59,10 +59,10 @@ async function testBifurcatedStudio() {
   await page.waitForTimeout(800);
 
   const assetsVisible = await page.isVisible('#section-assets');
-  const activeOahuHeading = await page.innerText('#section-assets h3');
+  const featuredHeading = await page.innerText('#section-assets h3');
   console.log(`  ✓ Deployed Assets Tab Visible: ${assetsVisible}`);
-  console.log(`  ✓ Featured Property: "${activeOahuHeading}"`);
-  await saveAuditScreenshot('live_deployed_assets_hamakua.png');
+  console.log(`  ✓ Featured Property: "${featuredHeading}"`);
+  await saveAuditScreenshot('live_deployed_assets_featured.png');
 
   // Step 4: Navigate to Fleet Pulse Tab
   console.log('4. Navigating to Fleet Pulse Tab...');

@@ -28,12 +28,11 @@ def test_dashboard_template_contains_creator_studio_bifurcation():
     assert 'id="section-assets"' in content
     assert 'id="section-pulse"' in content
 
-    # 4. Sprint 3 Grounded Active Oahu Preset (134B Hamakua Dr)
-    assert '134B Hamakua' in content
-    assert 'activeoahu' in content
+    # 4. Creator Studio Presets and Controls
     assert 'loadStudioPreset' in content
     assert 'executeStudioManifestation' in content
     assert 'setAssetPreviewViewport' in content
+    assert 'loadStudioPreset(\'software\')' in content or 'loadStudioPreset("software")' in content
 
     # 5. Engineering tabs preserved (14 tabs)
     for eng_tab in ['telemetry', 'merge', 'review-factory', 'workspaces', 'skills', 'signals', 'swarmproof', 'pwp', 'plugins', 'crons', 'quota', 'foundation', 'settings']:
@@ -53,11 +52,10 @@ def test_creator_studio_routes():
     res_studio = client.get("/studio")
     assert res_studio.status_code == 200
     assert "Creator Studio" in res_studio.text
-    assert "134B Hamakua" in res_studio.text
 
     res_assets = client.get("/assets")
     assert res_assets.status_code == 200
-    assert "Active Oahu Rentals" in res_assets.text
+    assert "Deployed Assets" in res_assets.text
 
     res_pulse = client.get("/pulse")
     assert res_pulse.status_code == 200
