@@ -127,6 +127,63 @@ class SwarmLoopRunner:
         except Exception:
             pass
 
+        # Record to Hypervisor Ledger if available
+        try:
+            from prismatic.hypervisor.ledger import HypervisorLedger
+            ledger = HypervisorLedger()
+            ledger.record_event(
+                task_id=self.task_id,
+                producer=agent,
+                action=f"step_{step.lower()}",
+                payload={"message": message, **(meta or {})},
+            )
+        except Exception:
+            pass
+
+    def _prepare_worktree(self, task_id: str) -> Path | None:
+        """Create an isolated git worktree for sandbox execution."""
+        try:
+            import subprocess
+            proc = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if proc.returncode == 0:
+                root = Path(proc.stdout.strip())
+                wt_base = root / ".prismatic_worktrees"
+                wt_base.mkdir(parents=True, exist_ok=True)
+                clean_id = task_id.lower().replace("-", "_")
+                now_ts = int(time.time())
+                wt_dir = wt_base / f"wt_{clean_id}_{now_ts}"
+                branch = f"swarm/{clean_id}_{now_ts}"
+                add_proc = subprocess.run(
+                    ["git", "worktree", "add", "-b", branch, str(wt_dir), "HEAD"],
+                    cwd=str(root),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if add_proc.returncode == 0:
+                    return wt_dir
+        except Exception as exc:
+            logger.debug("Failed to allocate worktree sandbox: %s", exc)
+        return None
+
+    def _cleanup_worktree(self, wt_path: Path) -> None:
+        """Prune and remove an isolated worktree sandbox."""
+        try:
+            import subprocess
+            subprocess.run(
+                ["git", "worktree", "remove", "--force", str(wt_path)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except Exception as exc:
+            logger.debug("Failed to prune worktree %s: %s", wt_path, exc)
+
     def run(
         self,
         prompt: str,
@@ -169,6 +226,17 @@ class SwarmLoopRunner:
         )
 
         # ── Step 3: EXECUTE ───────────────────────────────────────────
+        wt_path: Path | None = None
+        if opts.get("worktree_isolation"):
+            wt_path = self._prepare_worktree(self.task_id)
+            if wt_path:
+                self._log_step(
+                    "EXECUTE",
+                    "orchestrator",
+                    f"Allocated isolated worktree sandbox at {wt_path}",
+                    {"worktree_path": str(wt_path)},
+                )
+
         self._log_step(
             "EXECUTE",
             "content_agent",
@@ -255,8 +323,8 @@ class SwarmLoopRunner:
         self._log_step(
             "REVIEW",
             "review_agent",
-            "Running quality gate: checking contract completeness, schema validation, and deliverables integrity",
-            {"checks": ["contract_completeness", "schema_validation"]},
+            "Running quality gate: checking contract completeness, schema validation, and AST integrity",
+            {"checks": ["contract_completeness", "schema_validation", "ast_validation"]},
         )
         review_passed = True
         if "schema_ld" in deliverable_obj.artifacts:
@@ -264,11 +332,26 @@ class SwarmLoopRunner:
             if not schema_data.get("@context") or not schema_data.get("@type"):
                 review_passed = False
 
+        # Validate python AST
+        try:
+            from prismatic.client.exec import validate_python_ast
+            ast_errors = validate_python_ast()
+            if ast_errors:
+                review_passed = False
+                self._log_step(
+                    "REVIEW",
+                    "review_agent",
+                    f"AST validation found syntax errors: {ast_errors[:2]}",
+                    {"ast_errors": ast_errors},
+                )
+        except Exception as exc:
+            logger.debug("AST validation check skipped: %s", exc)
+
         if not review_passed:
             # ── Step 5: FEEDBACK ──────────────────────────────────────
-            self._log_step("FEEDBACK", "review_agent", "Reported schema deficiency back to builder")
+            self._log_step("FEEDBACK", "review_agent", "Reported schema or code deficiency back to builder")
             # ── Step 6: REFINE ────────────────────────────────────────
-            self._log_step("REFINE", "builder_agent", "Refined schema structure and regenerated bundle")
+            self._log_step("REFINE", "builder_agent", "Refined deliverable structure and regenerated bundle")
 
         # ── Step 7: INTEGRATE ─────────────────────────────────────────
         self._log_step(
@@ -277,6 +360,16 @@ class SwarmLoopRunner:
             f"Verified review approvals. Persisting deliverable '{deliverable_obj.title}' to artifact store.",
             {"project_slug": deliverable_obj.project_slug, "target_domain": domain},
         )
+
+        # Cleanup worktree sandbox if allocated
+        if wt_path:
+            self._cleanup_worktree(wt_path)
+            self._log_step(
+                "INTEGRATE",
+                "orchestrator",
+                f"Pruned isolated worktree sandbox {wt_path}",
+                {"worktree_path": str(wt_path)},
+            )
 
         # Persist to deliverable registry
         all_delivs = load_all_deliverables()

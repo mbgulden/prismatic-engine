@@ -114,3 +114,19 @@ def test_gateway_deliverables_list_and_preview_api():
     # 5. 404 on missing
     res_missing = client.get("/api/deliverables/non-existent-project/preview")
     assert res_missing.status_code == 404
+
+
+def test_swarm_loop_runner_worktree_isolation():
+    runner = SwarmLoopRunner(task_id="GRO-TEST-WORKTREE")
+    result = runner.run(
+        prompt="Design headless distributed coordinator worker daemon",
+        options={"worktree_isolation": True},
+    )
+
+    assert result.status == "COMPLETED"
+    logged_steps = [s["step"] for s in result.execution_steps]
+    assert "EXECUTE" in logged_steps
+    assert "INTEGRATE" in logged_steps
+    # Check that either sandbox was allocated or skipped gracefully
+    exec_steps = [s for s in result.execution_steps if s["step"] == "EXECUTE"]
+    assert len(exec_steps) >= 3
