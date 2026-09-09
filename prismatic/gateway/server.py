@@ -45,6 +45,8 @@ from fastapi import (
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
+from prismatic.mesh.tailscale import TailscaleAuthMiddleware, get_tailscale_mesh_client
+
 from prismatic.agent_packet_normalizer import RAW_AGENT_OUTPUT_REPAIR_QUEUE_MARKER
 from prismatic.agent_raw_output_queue import (
     get_raw_output,
@@ -386,6 +388,7 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
+app.add_middleware(TailscaleAuthMiddleware)
 
 # Auth check for observability endpoints (re-added 2026-06-30 after Phase D
 # cherry-pick conflict dropped it). Reuses the IP allowlist from
@@ -5565,6 +5568,54 @@ async def serve_review_factory_dashboard_page() -> HTMLResponse:
 async def serve_governance_tab_param(tab_name: str) -> HTMLResponse:
     """Serve canonical governance dashboard for /tab/{tab_name} routes."""
     return _serve_governance_dashboard_html()
+
+
+# =============================================================================
+# DISTRIBUTED TAILSCALE MESH & NODE REGISTRY (PHASE 2)
+# =============================================================================
+
+@app.get("/api/mesh/nodes")
+async def get_mesh_nodes(request: Request) -> dict[str, Any]:
+    """Return inventory of all discovered nodes across the Tailscale mesh."""
+    client = get_tailscale_mesh_client()
+    nodes = await client.list_nodes()
+    self_node = next((n.to_dict() for n in nodes if n.is_self), None)
+    return {
+        "ok": True,
+        "self": self_node,
+        "nodes": [n.to_dict() for n in nodes],
+        "total_nodes": len(nodes),
+        "online_nodes": sum(1 for n in nodes if n.online),
+    }
+
+
+@app.post("/api/mesh/ping")
+async def ping_mesh_node(request: Request) -> dict[str, Any]:
+    """Measure RTT latency to another node in the Tailscale mesh."""
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    target = data.get("target")
+    if not target:
+        raise HTTPException(status_code=400, detail="Missing required 'target' field in request body")
+
+    client = get_tailscale_mesh_client()
+    res = await client.ping(target)
+    return {"ok": res.get("success", False), "result": res}
+
+
+@app.get("/api/mesh/whois")
+async def whois_mesh_peer(request: Request, addr: str) -> dict[str, Any]:
+    """Look up authenticated peer identity for a given IP or address."""
+    if not addr:
+        raise HTTPException(status_code=400, detail="Missing required 'addr' query parameter")
+
+    client = get_tailscale_mesh_client()
+    identity = await client.whois(addr)
+    if not identity:
+        return {"ok": False, "error": f"Unable to resolve Tailscale identity for {addr}"}
+    return {"ok": True, "identity": identity.to_dict()}
 
 
 @app.get("/api/workspaces")

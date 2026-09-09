@@ -246,6 +246,7 @@ async def required_role(request: Request) -> str | None:
         or path.startswith("/api/services")
         or path.startswith("/api/gateway/services")
         or path.startswith("/api/workspace-tree/")
+        or path.startswith("/api/mesh")
     ):
         return None
 
